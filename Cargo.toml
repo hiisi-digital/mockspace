@@ -1,0 +1,19 @@
+[workspace]
+members = [".", "lint-rules"]
+
+[package]
+name = "mockspace"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Design-round workflow engine for mock workspaces"
+
+[[bin]]
+name = "mockspace"
+path = "src/main.rs"
+
+[dependencies]
+mockspace-lint-rules = { path = "lint-rules" }
+libloading = "0.8"
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"

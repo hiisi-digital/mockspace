@@ -1,0 +1,13 @@
+[package]
+name = "mockspace-lint-rules"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "AST lint rules for mockspace workspaces"
+
+[dependencies]
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+
+[dev-dependencies]
+tempfile = "3"
