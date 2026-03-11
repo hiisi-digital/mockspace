@@ -133,8 +133,8 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         for entry in entries {
             let path = entry.path();
             let raw = fs::read_to_string(&path).expect("failed to read rule template");
+            let raw = substitute_vars(&raw, &vars);
             let (frontmatter, body) = split_frontmatter(&raw);
-            let body = substitute_vars(&body, &vars);
             let apply_to = parse_apply_to(&frontmatter);
 
             let stem = path
