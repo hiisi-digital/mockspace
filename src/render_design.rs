@@ -164,7 +164,7 @@ fn compute_primary_items_per_crate(crates: &CrateMap, cfg: &Config) -> String {
     }
 
     if items_by_crate.is_empty() {
-        return format!("*No {label} found in any crate.*");
+        return format!("*No {} found in any crate.*", label.to_lowercase());
     }
 
     let mut table = String::new();
