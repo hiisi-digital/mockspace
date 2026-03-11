@@ -27,11 +27,7 @@ fn main() -> ExitCode {
     // 3. Fall back to cwd
     let mock_dir = if let Some(pos) = args.iter().position(|a| a == "--dir") {
         args.get(pos + 1)
-            .map(|p| {
-                let path = PathBuf::from(p);
-                // Canonicalize so repo_root detection works with relative paths.
-                fs::canonicalize(&path).unwrap_or(path)
-            })
+            .map(|p| resolve_mock_dir(p))
             .unwrap_or_else(|| {
                 eprintln!("error: --dir requires a path argument");
                 std::process::exit(1);
@@ -496,6 +492,58 @@ fn delete_all_rs(dir: &Path) -> u32 {
         }
     }
     count
+}
+
+/// Resolve a `--dir` argument to an absolute path containing `mockspace.toml`.
+///
+/// Tries in order:
+/// 1. Absolute path as-is (already absolute from bootstrap alias)
+/// 2. Relative path from CWD (user running from repo root)
+/// 3. Relative path from git repo root (user running from a subdirectory
+///    with a stale relative-path alias)
+///
+/// Falls back to the raw path if nothing matches, so downstream code
+/// can produce a clear "no mockspace.toml found" error.
+fn resolve_mock_dir(raw: &str) -> PathBuf {
+    let path = PathBuf::from(raw);
+
+    // Absolute and exists — use directly.
+    if path.is_absolute() && path.join("mockspace.toml").exists() {
+        return path;
+    }
+
+    // Relative from CWD.
+    if let Ok(canonical) = fs::canonicalize(&path) {
+        if canonical.join("mockspace.toml").exists() {
+            return canonical;
+        }
+    }
+
+    // Relative from repo root (handles CWD != repo root with relative alias).
+    if path.is_relative() {
+        if let Some(root) = find_repo_root_from_cwd() {
+            let from_root = root.join(&path);
+            if from_root.join("mockspace.toml").exists() {
+                return from_root;
+            }
+        }
+    }
+
+    // Nothing matched — return canonicalized or raw for a clear downstream error.
+    fs::canonicalize(&path).unwrap_or(path)
+}
+
+/// Walk up from CWD looking for a `.git` directory (repo root).
+fn find_repo_root_from_cwd() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
 }
 
 /// Walk up from the current directory looking for mockspace.toml.
