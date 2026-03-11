@@ -338,7 +338,7 @@ fn compute_template_vars(crates: &CrateMap, cfg: &Config) -> Vec<(String, String
     vars.push(("crate_table".to_string(), compute_crate_table(crates, cfg)));
 
     // {{macro_table}}
-    vars.push(("macro_table".to_string(), compute_macro_table(crates)));
+    vars.push(("macro_table".to_string(), compute_macro_table(crates, cfg)));
 
     vars
 }
@@ -388,23 +388,9 @@ fn infer_crate_purpose(info: &CrateInfo) -> String {
     format!("{}{suffix}", shown.join(", "))
 }
 
-/// Build the macros table for agent instructions.
-fn compute_macro_table(crates: &CrateMap) -> String {
-    let known: Vec<(&str, &str, &str)> = vec![
-        ("define_signal", "Signal type", "`define_signal!(Name { fields } buffering: Mode)`"),
-        ("define_record", "Record type (data shape)", "`define_record!(Name { field: Type = default })` or `#[derive(Record)]`"),
-        ("define_resource", "Resource (singleton record)", "`define_resource!(Name { field: Type = default })`"),
-        ("define_behavior", "Behavior (handler DSL)", "`define_behavior!(Name on Signal => handler { read/write/each/emit/bind/dispatch })`"),
-        ("define_id", "Typed ID", "`define_id!(Name)`, `define_id!(Name, sequential)`, or `define_id!(Name, uuid)`"),
-        ("define_handle", "Generational handle", "`define_handle!(Name)`"),
-        ("define_binding", "GPU binding", "`define_binding!(Name { fields } buffering: Double)`"),
-        ("define_marker", "Node marker", "`define_marker!(Name)`, `define_marker!(Name: Record)`, or `define_marker!(Name { fields })`"),
-        ("define_scope", "Scope", "`define_scope!(Name: DataType = default_value)`"),
-        ("define_action", "Action", "`define_action!(Name { fields } category: Cat, description: \"..\")`"),
-        ("define_blueprint", "Blueprint", "`define_blueprint!(Name { markers: [..], children: [..] })`"),
-        ("define_module", "Module", "`define_module!(Name { behaviors: [..], resources: [..] })`"),
-        ("define_error", "Error", "`define_error!(Name(code) { message: \"..\", hint: \"..\" })`"),
-    ];
+/// Build the macros table for agent instructions from config.
+fn compute_macro_table(crates: &CrateMap, cfg: &Config) -> String {
+    let macros = cfg.effective_agent_macros();
 
     // Check which macros actually exist
     let mut found = std::collections::BTreeSet::new();
@@ -422,9 +408,16 @@ fn compute_macro_table(crates: &CrateMap) -> String {
     writeln!(table, "| Macro | Purpose | Usage |").unwrap();
     writeln!(table, "|-------|---------|-------|").unwrap();
 
-    for (name, purpose, usage) in &known {
-        if found.contains(*name) {
+    for (name, purpose, usage) in macros {
+        if found.contains(name.as_str()) {
             writeln!(table, "| `{name}!` | {purpose} | {usage} |").unwrap();
+        }
+    }
+
+    // Any extra macros not in config
+    for name in &found {
+        if !macros.iter().any(|(n, _, _)| n == name) {
+            writeln!(table, "| `{name}!` | Custom | `{name}!(...)` |").unwrap();
         }
     }
 
