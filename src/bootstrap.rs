@@ -201,13 +201,19 @@ fn ensure_cargo_alias(
     let config_path = config_dir.join("config.toml");
 
     let manifest_path = mockspace_dir.join("Cargo.toml");
+    let mock_rel = mock_dir
+        .strip_prefix(repo_root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| mock_dir.display().to_string());
 
-    // Use absolute paths for both --manifest-path and --dir so the alias
-    // works regardless of CWD (e.g. running `cargo mock` from a subdirectory).
+    // --manifest-path is absolute (cargo git checkout, machine-specific).
+    // --dir is relative to repo root (portable). resolve_mock_dir() in
+    // main.rs handles CWD != repo root by falling back to repo-root-relative
+    // resolution.
     let alias_value = format!(
         "run --manifest-path {} -- --dir {}",
         manifest_path.display(),
-        mock_dir.display(),
+        mock_rel,
     );
     let alias_line = format!("mock = \"{alias_value}\"");
 
