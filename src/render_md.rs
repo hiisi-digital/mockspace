@@ -3,12 +3,14 @@ use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
+use crate::config::Config;
 use crate::graph;
 use crate::model::*;
 
 /// Generate STRUCTURE.md from parsed crate data + README.md contents.
-pub fn generate_structure_md(crates: &CrateMap, crates_dir: &Path, project_name: &str) -> String {
+pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
     let mut md = String::new();
+    let project_name = &cfg.project_name;
 
     // Compute depths and transitive reduction
     let mut depth_cache = BTreeMap::new();
@@ -22,7 +24,7 @@ pub fn generate_structure_md(crates: &CrateMap, crates_dir: &Path, project_name:
     writeln!(md, "# {project_name} — Structure Reference").unwrap();
     writeln!(md).unwrap();
     writeln!(md, "> Auto-generated from the mock workspace. This document is the canonical").unwrap();
-    writeln!(md, "> description of every crate, type, macro, and signal in the framework.").unwrap();
+    writeln!(md, "> description of every crate, type, and macro in the framework.").unwrap();
     writeln!(md).unwrap();
     writeln!(md, "See also: [STRUCTURE.GRAPH.svg](STRUCTURE.GRAPH.svg) for the visual dependency graph.").unwrap();
     writeln!(md).unwrap();
@@ -33,13 +35,9 @@ pub fn generate_structure_md(crates: &CrateMap, crates_dir: &Path, project_name:
 
     // Group by depth
     let max_depth = depths.values().copied().max().unwrap_or(0);
-    let depth_labels = [
-        "Foundation", "Foundation", "Domain", "Domain",
-        "Composition", "Integration", "Platform", "Testing",
-    ];
     let mut by_depth: Vec<Vec<&str>> = vec![Vec::new(); max_depth + 1];
     for (name, &d) in &depths {
-        if crates[name.as_str()].short_name == project_name {
+        if crates[name.as_str()].short_name == *project_name {
             continue;
         }
         by_depth[d].push(name.as_str());
@@ -47,7 +45,7 @@ pub fn generate_structure_md(crates: &CrateMap, crates_dir: &Path, project_name:
 
     for (d, names) in by_depth.iter().enumerate() {
         if names.is_empty() { continue; }
-        let label = depth_labels.get(d).unwrap_or(&"Other");
+        let label = cfg.layer_label(d);
         writeln!(md, "**Layer {d} — {label}**").unwrap();
         writeln!(md).unwrap();
         for name in names {
@@ -63,13 +61,13 @@ pub fn generate_structure_md(crates: &CrateMap, crates_dir: &Path, project_name:
     // Each crate section
     for (d, names) in by_depth.iter().enumerate() {
         if names.is_empty() { continue; }
-        let label = depth_labels.get(d).unwrap_or(&"Other");
+        let label = cfg.layer_label(d);
         writeln!(md, "## Layer {d} — {label}").unwrap();
         writeln!(md).unwrap();
 
         for dir_name in names {
             let info = &crates[*dir_name];
-            write_crate_section(&mut md, dir_name, info, &depths, &reduced, crates, crates_dir, project_name);
+            write_crate_section(&mut md, dir_name, info, &depths, &reduced, crates, &cfg.crates_dir, project_name, cfg);
         }
     }
 
@@ -85,6 +83,7 @@ fn write_crate_section(
     crates: &CrateMap,
     crates_dir: &Path,
     project_name: &str,
+    cfg: &Config,
 ) {
     let short = &info.short_name;
     let depth = depths.get(dir_name).copied().unwrap_or(0);
@@ -97,8 +96,6 @@ fn write_crate_section(
     // Include README.md content
     let readme_path = crates_dir.join(dir_name).join("README.md");
     if let Ok(readme) = fs::read_to_string(&readme_path) {
-        // Strip the first heading line (# <crate-name>) since we already have ### short
-        // Also bump all heading levels by 3 (## → #####) to nest under ### crate
         let content: String = readme
             .lines()
             .skip_while(|l| l.starts_with('#') || l.is_empty())
@@ -141,7 +138,7 @@ fn write_crate_section(
         writeln!(md).unwrap();
     }
 
-    // Dependees (who depends on this crate)
+    // Dependees
     let dependees: Vec<&str> = crates.iter()
         .filter(|(n, c)| c.short_name != project_name && c.deps.iter().any(|d| d == dir_name) && *n != dir_name)
         .map(|(_, c)| c.short_name.as_str())
@@ -170,11 +167,11 @@ fn write_crate_section(
         writeln!(md, "| Kind | Name | Via Macro |").unwrap();
         writeln!(md, "|------|------|-----------|").unwrap();
         for (item, mg) in &domain_items {
-            let kind = domain_kind(&mg.macro_name);
+            let kind = cfg.domain_kind(&mg.macro_name);
             writeln!(md, "| {kind} | `{}` | `{}!` |", item.name(), mg.macro_name).unwrap();
         }
         for mg in &extra_domain {
-            let kind = domain_kind(&mg.macro_name);
+            let kind = cfg.domain_kind(&mg.macro_name);
             writeln!(md, "| {kind} | `{}` | `{}!` |", mg.generated_name, mg.macro_name).unwrap();
         }
         writeln!(md).unwrap();
@@ -269,23 +266,4 @@ fn render_item_list(md: &mut String, items: &[&&Item]) {
     }
 
     writeln!(md).unwrap();
-}
-
-fn domain_kind(macro_name: &str) -> &'static str {
-    match macro_name {
-        "define_signal" => "📡 signal",
-        "define_resource" => "📦 resource",
-        "define_behavior" => "🔄 behavior",
-        "define_marker" => "🏷 marker",
-        "define_blueprint" => "📐 blueprint",
-        "define_registry" => "📋 registry",
-        "define_storage" => "🗄 storage",
-        "define_id" => "🆔 id",
-        "define_action" => "⚡ action",
-        "define_provider" => "🔐 provider",
-        "define_span" => "📊 span",
-        "define_scope" => "🔍 scope",
-        "define_error" => "⚠ error",
-        _ => "⚙ generated",
-    }
 }

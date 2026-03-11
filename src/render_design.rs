@@ -79,9 +79,9 @@ pub fn generate_design_md(crates: &CrateMap, cfg: &Config) -> Option<String> {
 
     let header = generation_header_md(cfg);
     let crate_count = crates.len().to_string();
-    let macros_table = compute_macros_table(crates);
-    let signals_per_crate = compute_signals_per_crate(crates, &cfg.project_name);
-    let crate_layers = compute_crate_layers(crates, &cfg.project_name);
+    let macros_table = compute_macros_table(crates, cfg);
+    let primary_items = compute_primary_items_per_crate(crates, cfg);
+    let crate_layers = compute_crate_layers(crates, cfg);
     let deep_dives = collect_deep_dives(&cfg.mock_dir);
     let crate_summaries = compute_crate_summaries(&cfg.mock_dir);
 
@@ -96,7 +96,9 @@ pub fn generate_design_md(crates: &CrateMap, cfg: &Config) -> Option<String> {
     result = result.replace("{{mock_dir}}", &mock_rel);
     result = result.replace("{{crate_count}}", &crate_count);
     result = result.replace("{{macros_table}}", &macros_table);
-    result = result.replace("{{signals_per_crate}}", &signals_per_crate);
+    // Provide both generic and legacy variable names
+    result = result.replace("{{signals_per_crate}}", &primary_items);
+    result = result.replace("{{primary_items_per_crate}}", &primary_items);
     result = result.replace("{{crate_layers}}", &crate_layers);
     result = result.replace("{{deep_dives}}", &deep_dives);
     result = result.replace("{{crate_summaries}}", &crate_summaries);
@@ -104,35 +106,15 @@ pub fn generate_design_md(crates: &CrateMap, cfg: &Config) -> Option<String> {
     Some(format!("{header}\n{result}"))
 }
 
-/// Compute the macros table by scanning all crates for define_* macro definitions.
-fn compute_macros_table(crates: &CrateMap) -> String {
-    // Known macros in canonical order with their "Need" descriptions
-    let known_macros: Vec<(&str, &str, &str)> = vec![
-        ("define_id", "An ID type", "`define_id!(Name)`, `define_id!(Name, sequential)`, or `define_id!(Name, uuid)`"),
-        ("define_signal", "A signal", "`define_signal!(Name { fields } buffering: Policy)`"),
-        ("define_record", "A record (data shape)", "`define_record!(Name { field: Type = default })` or `#[derive(Record)]`"),
-        ("define_resource", "A resource (singleton record)", "`define_resource!(Name { field: Type = default })`"),
-        ("define_behavior", "A behavior", "`define_behavior!(Name on Signal => handler { read/write/each/emit/bind/dispatch })`"),
-        ("define_marker", "A marker", "`define_marker!(Name)`, `define_marker!(Name: Record)`, or `define_marker!(Name { fields })`"),
-        ("define_blueprint", "A blueprint", "`define_blueprint!(Name { markers: [..], children: [..] })`"),
-        ("define_action", "An action", "`define_action!(Name { fields } category: Cat, description: \"..\")`"),
-        ("define_scope", "A scope", "`define_scope!(Name: DataType = default_value)`"),
-        ("define_provider", "A provider", "`define_provider!(Name risk_level = Low { fn method(&self); })`"),
-        ("define_error", "An error", "`define_error!(Name(code) { message: \"..\", hint: \"..\" })`"),
-        ("define_span", "A span", "`define_span!(Name = (StartSignal, EndSignal))`"),
-        ("define_registry", "A registry", "`define_registry!(Name for Trait with Entry)`"),
-        ("define_binding", "A GPU binding", "`define_binding!(Name { fields } buffering: Double)`"),
-        ("define_module", "A module", "`define_module!(Name { behaviors: [..], resources: [..] })`"),
-        ("define_projection", "A projection (tuple alias)", "`define_projection!(Name = (TypeA, TypeB, ...))`"),
-    ];
-
-    // Also scan for any macro definitions we didn't anticipate
-    let mut found_macros: BTreeMap<String, bool> = BTreeMap::new();
+/// Compute the macros table from config + crate scan.
+fn compute_macros_table(crates: &CrateMap, cfg: &Config) -> String {
+    // Scan for actually-present macros
+    let mut found: BTreeMap<String, bool> = BTreeMap::new();
     for info in crates.values() {
         for item in &info.items {
             if let Item::Macro(m) = item {
                 if m.name.starts_with("define_") {
-                    found_macros.insert(m.name.clone(), true);
+                    found.insert(m.name.clone(), true);
                 }
             }
         }
@@ -142,34 +124,38 @@ fn compute_macros_table(crates: &CrateMap) -> String {
     writeln!(table, "| Need | Macro |").unwrap();
     writeln!(table, "|------|-------|").unwrap();
 
-    for (macro_name, need, usage) in &known_macros {
-        // Only include if the macro actually exists in the codebase
-        if found_macros.contains_key(*macro_name) {
-            writeln!(table, "| {need} | {usage} |").unwrap();
-            found_macros.remove(*macro_name);
+    // Configured macros first (preserves config order)
+    for (name, desc, usage) in &cfg.known_macros {
+        if found.contains_key(name.as_str()) {
+            writeln!(table, "| {desc} | {usage} |").unwrap();
+            found.remove(name.as_str());
         }
     }
 
-    // Any extra macros we didn't know about
-    for name in found_macros.keys() {
+    // Any extra macros not in config
+    for name in found.keys() {
         writeln!(table, "| Custom | `{name}!(...)` |").unwrap();
     }
 
     table.trim_end().to_string()
 }
 
-/// Compute the signals-per-crate table from macro invocations.
-fn compute_signals_per_crate(crates: &CrateMap, project_name: &str) -> String {
-    let mut signals_by_crate: BTreeMap<String, Vec<String>> = BTreeMap::new();
+/// Compute per-crate table for the primary domain macro.
+fn compute_primary_items_per_crate(crates: &CrateMap, cfg: &Config) -> String {
+    let primary = match &cfg.primary_domain_macro {
+        Some(m) => m.as_str(),
+        None => return format!("*No primary domain macro configured.*"),
+    };
+    let label = &cfg.primary_domain_label;
+
+    let mut items_by_crate: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for info in crates.values() {
         let short = &info.short_name;
-        if short == project_name {
-            continue;
-        }
+        if short == &cfg.project_name { continue; }
         for mg in &info.macro_generated {
-            if mg.macro_name == "define_signal" {
-                signals_by_crate
+            if mg.macro_name == primary {
+                items_by_crate
                     .entry(short.clone())
                     .or_default()
                     .push(mg.generated_name.clone());
@@ -177,25 +163,25 @@ fn compute_signals_per_crate(crates: &CrateMap, project_name: &str) -> String {
         }
     }
 
-    if signals_by_crate.is_empty() {
-        return "*No signals found in any crate.*".to_string();
+    if items_by_crate.is_empty() {
+        return format!("*No {label} found in any crate.*");
     }
 
     let mut table = String::new();
-    writeln!(table, "| Crate | Signals |").unwrap();
-    writeln!(table, "|-------|---------|").unwrap();
+    writeln!(table, "| Crate | {label} |").unwrap();
+    writeln!(table, "|-------|{}|", "-".repeat(label.len() + 2)).unwrap();
 
-    for (crate_name, mut signals) in signals_by_crate {
-        signals.sort();
-        let sigs = signals.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ");
-        writeln!(table, "| {crate_name} | {sigs} |").unwrap();
+    for (crate_name, mut items) in items_by_crate {
+        items.sort();
+        let formatted = items.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ");
+        writeln!(table, "| {crate_name} | {formatted} |").unwrap();
     }
 
     table.trim_end().to_string()
 }
 
 /// Compute the crate layers section.
-fn compute_crate_layers(crates: &CrateMap, project_name: &str) -> String {
+fn compute_crate_layers(crates: &CrateMap, cfg: &Config) -> String {
     let mut depth_cache = BTreeMap::new();
     let mut depths = BTreeMap::new();
     for name in crates.keys() {
@@ -203,27 +189,18 @@ fn compute_crate_layers(crates: &CrateMap, project_name: &str) -> String {
     }
     let max_depth = depths.values().copied().max().unwrap_or(0);
 
-    let depth_labels = [
-        "Foundation", "Foundation", "Domain", "Domain",
-        "Composition", "Integration", "Platform", "Testing",
-    ];
-
     let mut by_depth: Vec<Vec<String>> = vec![Vec::new(); max_depth + 1];
     for (name, &d) in &depths {
         let short = &crates[name.as_str()].short_name;
-        if short == project_name {
-            continue;
-        }
+        if short == &cfg.project_name { continue; }
         by_depth[d].push(short.clone());
     }
 
     let mut layers = String::new();
     writeln!(layers, "```").unwrap();
     for (d, names) in by_depth.iter().enumerate() {
-        if names.is_empty() {
-            continue;
-        }
-        let label = depth_labels.get(d).unwrap_or(&"Other");
+        if names.is_empty() { continue; }
+        let label = cfg.layer_label(d);
         let mut sorted = names.clone();
         sorted.sort();
         let joined = sorted.join(", ");
@@ -276,7 +253,6 @@ fn collect_deep_dives(mock_dir: &Path) -> String {
 /// Get current timestamp as RFC 3339.
 fn now_rfc3339() -> String {
     use std::process::Command;
-    // Use system date command for simplicity (no chrono dependency)
     let output = Command::new("date")
         .arg("-u")
         .arg("+%Y-%m-%dT%H:%M:%SZ")
@@ -286,8 +262,6 @@ fn now_rfc3339() -> String {
         _ => "unknown".to_string(),
     }
 }
-
-// Removed: workspace_file_tree and walk_tree (no longer used in headers)
 
 /// Generate standalone DESIGN-DEEP-DIVES.md from per-crate DEEPDIVE_*.md.tmpl files.
 pub fn generate_deep_dives_md(cfg: &Config) -> String {
@@ -334,10 +308,8 @@ fn compute_crate_summaries(mock_dir: &Path) -> String {
         let readme_path = crate_path.join("README.md.tmpl");
 
         if let Ok(content) = fs::read_to_string(&readme_path) {
-            // Insert the README content (already short, 3-10 lines)
             writeln!(summaries, "{}", content.trim()).unwrap();
 
-            // Add links to overview and deep dives if they exist
             let has_design = crate_path.join("DESIGN.md.tmpl").exists();
             let deep_dives = find_deep_dives(&crate_path);
 
@@ -361,7 +333,6 @@ fn compute_crate_summaries(mock_dir: &Path) -> String {
 }
 
 /// Find DEEPDIVE_*.md.tmpl files in a crate directory.
-/// Returns (subject_name, full_path) pairs.
 fn find_deep_dives(crate_path: &Path) -> Vec<(String, std::path::PathBuf)> {
     let mut dives = Vec::new();
     if let Ok(entries) = fs::read_dir(crate_path) {
@@ -402,7 +373,6 @@ pub fn generate_per_crate_docs(cfg: &Config) {
         let crate_name = crate_entry.file_name().to_string_lossy().to_string();
         let crate_upper = crate_name.to_uppercase().replace('-', "_");
 
-        // Generate <CRATE>_OVERVIEW.md from DESIGN.md.tmpl
         let design_path = crate_path.join("DESIGN.md.tmpl");
         if let Ok(content) = fs::read_to_string(&design_path) {
             let out_name = format!("{crate_upper}_OVERVIEW.md");
@@ -412,7 +382,6 @@ pub fn generate_per_crate_docs(cfg: &Config) {
             count += 1;
         }
 
-        // Generate <CRATE>_<SUBJECT>.md from DEEPDIVE_*.md.tmpl
         for (subject, dd_path) in find_deep_dives(&crate_path) {
             if let Ok(content) = fs::read_to_string(&dd_path) {
                 let subject_upper = subject.to_uppercase();

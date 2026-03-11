@@ -272,7 +272,7 @@ fn main() -> ExitCode {
     // --- Dependency graph ---
     eprintln!("--- generating dependency graph ---");
     let dot_header = render_design::generation_header_dot(&cfg);
-    let dot_body = render::generate_dot(&crates, &cfg.project_name, &cfg.crate_prefix);
+    let dot_body = render::generate_dot(&crates, &cfg);
     let dot = format!("{dot_header}{dot_body}");
 
     let dot_path = cfg.docs_dir.join("STRUCTURE.GRAPH.dot");
@@ -314,7 +314,7 @@ fn main() -> ExitCode {
     // --- STRUCTURE.md ---
     eprintln!("--- generating STRUCTURE.md ---");
     let structure_header = render_design::generation_header_md(&cfg);
-    let structure_body = render_md::generate_structure_md(&crates, &cfg.crates_dir, &cfg.project_name);
+    let structure_body = render_md::generate_structure_md(&crates, &cfg);
     let structure_md = format!("{structure_header}\n{structure_body}");
     let structure_path = cfg.docs_dir.join("STRUCTURE.md");
     fs::write(&structure_path, &structure_md).expect("failed to write STRUCTURE.md");
