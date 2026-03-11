@@ -316,6 +316,17 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
 fn compute_template_vars(crates: &CrateMap, cfg: &Config) -> Vec<(String, String)> {
     let mut vars = Vec::new();
 
+    // {{project_name}}
+    vars.push(("project_name".to_string(), cfg.project_name.clone()));
+
+    // {{mock_dir}} — relative path from repo root to mock workspace
+    let mock_rel = cfg.mock_dir
+        .strip_prefix(&cfg.repo_root)
+        .unwrap_or(&cfg.mock_dir)
+        .to_string_lossy()
+        .to_string();
+    vars.push(("mock_dir".to_string(), mock_rel));
+
     // {{crate_count}}
     let crate_count = crates
         .values()

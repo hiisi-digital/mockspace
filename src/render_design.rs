@@ -85,7 +85,15 @@ pub fn generate_design_md(crates: &CrateMap, cfg: &Config) -> Option<String> {
     let deep_dives = collect_deep_dives(&cfg.mock_dir);
     let crate_summaries = compute_crate_summaries(&cfg.mock_dir);
 
+    let mock_rel = cfg.mock_dir
+        .strip_prefix(&cfg.repo_root)
+        .unwrap_or(&cfg.mock_dir)
+        .to_string_lossy()
+        .to_string();
+
     let mut result = template.clone();
+    result = result.replace("{{project_name}}", &cfg.project_name);
+    result = result.replace("{{mock_dir}}", &mock_rel);
     result = result.replace("{{crate_count}}", &crate_count);
     result = result.replace("{{macros_table}}", &macros_table);
     result = result.replace("{{signals_per_crate}}", &signals_per_crate);
