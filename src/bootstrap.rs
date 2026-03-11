@@ -197,22 +197,23 @@ fn ensure_cargo_alias(
     mockspace_dir: &Path,
     actions: &mut Vec<String>,
 ) {
+    // Generate the proxy crate that delegates to mockspace.
+    // Lives in target/ (gitignored), contains the machine-specific dep path.
+    ensure_proxy_crate(repo_root, mockspace_dir, actions);
+
     let config_dir = repo_root.join(".cargo");
     let config_path = config_dir.join("config.toml");
 
-    let manifest_path = mockspace_dir.join("Cargo.toml");
     let mock_rel = mock_dir
         .strip_prefix(repo_root)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| mock_dir.display().to_string());
 
-    // --manifest-path is absolute (cargo git checkout, machine-specific).
-    // --dir is relative to repo root (portable). resolve_mock_dir() in
-    // main.rs handles CWD != repo root by falling back to repo-root-relative
-    // resolution.
+    // Both paths are relative to repo root — fully portable.
+    // The machine-specific mockspace path lives inside the generated
+    // proxy crate at target/mockspace-proxy/ (gitignored).
     let alias_value = format!(
-        "run --manifest-path {} -- --dir {}",
-        manifest_path.display(),
+        "run --manifest-path target/mockspace-proxy/Cargo.toml -- --dir {}",
         mock_rel,
     );
     let alias_line = format!("mock = \"{alias_value}\"");
@@ -268,6 +269,60 @@ fn ensure_cargo_alias(
     };
     let _ = fs::write(&config_path, &new_content);
     actions.push(format!("wrote cargo mock alias"));
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Proxy crate (target/mockspace-proxy/)
+// ──────────────────────────────────────────────────────────────────────
+
+/// Generate a tiny proxy crate in `target/mockspace-proxy/` that depends on
+/// mockspace and delegates to `mockspace::run()`.
+///
+/// The proxy's Cargo.toml contains the machine-specific absolute path to the
+/// mockspace source. Since it lives in `target/` (gitignored), the checked-in
+/// `.cargo/config.toml` alias can use a portable relative path:
+/// `run --manifest-path target/mockspace-proxy/Cargo.toml -- --dir <mock_rel>`
+fn ensure_proxy_crate(repo_root: &Path, mockspace_dir: &Path, actions: &mut Vec<String>) {
+    let proxy_dir = repo_root.join("target").join("mockspace-proxy");
+    let proxy_cargo = proxy_dir.join("Cargo.toml");
+    let proxy_src = proxy_dir.join("src");
+    let proxy_main = proxy_src.join("main.rs");
+
+    let cargo_content = format!(
+        "[package]\n\
+         name = \"mockspace-proxy\"\n\
+         version = \"0.1.0\"\n\
+         edition = \"2021\"\n\
+         publish = false\n\
+         \n\
+         [workspace]\n\
+         \n\
+         [dependencies]\n\
+         mockspace = {{ path = \"{}\" }}\n",
+        mockspace_dir.display(),
+    );
+
+    let main_content = "\
+        fn main() -> std::process::ExitCode {\n\
+        \x20   mockspace::run()\n\
+        }\n";
+
+    // Check if already up-to-date.
+    let cargo_ok = fs::read_to_string(&proxy_cargo)
+        .map(|c| c == cargo_content)
+        .unwrap_or(false);
+    let main_ok = fs::read_to_string(&proxy_main)
+        .map(|c| c == main_content)
+        .unwrap_or(false);
+
+    if cargo_ok && main_ok {
+        return; // Healthy.
+    }
+
+    let _ = fs::create_dir_all(&proxy_src);
+    let _ = fs::write(&proxy_cargo, &cargo_content);
+    let _ = fs::write(&proxy_main, main_content);
+    actions.push("generated target/mockspace-proxy/".into());
 }
 
 // ──────────────────────────────────────────────────────────────────────
