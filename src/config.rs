@@ -204,7 +204,7 @@ impl Config {
     pub fn layer_label(&self, depth: usize) -> String {
         self.layer_labels.get(depth)
             .cloned()
-            .unwrap_or_else(|| format!("Layer {depth}"))
+            .unwrap_or_else(|| "Other".to_string())
     }
 
     /// Get the effective known_macros for agent templates.
