@@ -73,10 +73,12 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         return 0;
     }
 
-    let vars = compute_template_vars(crates, cfg);
+    let mut vars = compute_template_vars(crates, cfg);
     let header_md = render_design::generation_header_md(cfg);
     let preamble = read_optional_template(&agent_dir.join("PREAMBLE.md.tmpl"));
     let postamble = read_optional_template(&agent_dir.join("POSTAMBLE.md.tmpl"));
+    vars.push(("PREAMBLE".to_string(), preamble.clone()));
+    vars.push(("POSTAMBLE".to_string(), postamble.clone()));
     let mut count = 0;
 
     // --- MAIN.md.tmpl → .claude/CLAUDE.md + .github/copilot-instructions.md ---
@@ -255,6 +257,9 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             let out_name = tmpl_name.trim_end_matches(".tmpl");
 
             let template = fs::read_to_string(&path).expect("failed to read hook template");
+
+            // substitute general template variables first
+            let template = substitute_vars(&template, &vars);
 
             // Claude: tool_input.field, hookSpecificOutput wrapper
             let claude_content = template.replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS);
