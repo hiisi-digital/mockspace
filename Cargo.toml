@@ -17,3 +17,5 @@ mockspace-lint-rules = { path = "lint-rules" }
 libloading = "0.8"
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
+toml_edit = { version = "0.22", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }

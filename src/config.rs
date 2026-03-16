@@ -6,6 +6,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
+use serde::de::IntoDeserializer;
+
 use mockspace_lint_rules::{Level, Severity, parse_severity, LintConfig};
 
 /// How mockspace-managed content is installed into existing files.
@@ -122,6 +125,84 @@ impl Default for CommitStyle {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Serde deserialization structs
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawConfig {
+    project_name: Option<String>,
+    crate_prefix: Option<String>,
+    abi_version: Option<u32>,
+    proc_macro_crates: Vec<String>,
+    module_crates: Vec<String>,
+    layers: Vec<String>,
+    primary_domain_macro: Option<String>,
+    primary_domain_label: Option<String>,
+    install_git_hooks: Option<String>,
+    install_cargo_config: Option<String>,
+    install_agent_files: Option<String>,
+
+    // Sections (simple key=value maps)
+    domain_kinds: Option<BTreeMap<String, String>>,
+    known_macros: Option<BTreeMap<String, String>>,
+    agent_macros: Option<BTreeMap<String, String>>,
+    macro_styles: Option<BTreeMap<String, String>>,
+    crate_colors: Option<BTreeMap<String, String>>,
+    crate_grouping: Option<BTreeMap<String, String>>,
+
+    // Lints section is handled separately via toml_edit document API
+    // because it contains heterogeneous values (strings and tables).
+}
+
+/// A lint entry can be either a preset string or a table with config.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LintEntry {
+    Preset(String),
+    Config(LintTableConfig),
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct LintTableConfig {
+    commit: Option<String>,
+    build: Option<String>,
+    push: Option<String>,
+    severity: Option<String>,
+    findings: Option<BTreeMap<String, String>>,
+    rule: Option<BTreeMap<String, BTreeMap<String, StringOrOther>>>,
+    #[serde(flatten)]
+    params: BTreeMap<String, StringOrOther>,
+}
+
+/// Helper to deserialize heterogeneous TOML values as strings.
+/// Handles string, integer, float, and boolean values.
+#[derive(Deserialize, Clone)]
+#[serde(untagged)]
+enum StringOrOther {
+    String(String),
+    Integer(i64),
+    Float(f64),
+    Bool(bool),
+}
+
+impl StringOrOther {
+    fn into_string(self) -> String {
+        match self {
+            StringOrOther::String(s) => s,
+            StringOrOther::Integer(i) => i.to_string(),
+            StringOrOther::Float(f) => f.to_string(),
+            StringOrOther::Bool(b) => b.to_string(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Config construction
+// ---------------------------------------------------------------------------
+
 impl Config {
     pub fn from_dir(mock_dir: &Path) -> Self {
         let mock_dir = mock_dir.to_path_buf();
@@ -134,57 +215,54 @@ impl Config {
         let toml_path = mock_dir.join("mockspace.toml");
         let toml_content = fs::read_to_string(&toml_path).unwrap_or_default();
 
-        let project_name = parse_string(&toml_content, "project_name")
-            .unwrap_or_else(|| "project".into());
-        let crate_prefix = parse_string(&toml_content, "crate_prefix")
-            .unwrap_or_else(|| project_name.clone());
-        let proc_macro_crates = parse_string_array(&toml_content, "proc_macro_crates");
-        let module_crates = parse_string_array(&toml_content, "module_crates");
-        let abi_version = parse_u32(&toml_content, "abi_version").unwrap_or(1);
-        let nuke_marker = "Nuked by `cargo mock --nuke`".to_string();
+        let raw: RawConfig = toml_edit::de::from_str(&toml_content)
+            .unwrap_or_default();
 
-        let install_git_hooks = parse_string(&toml_content, "install_git_hooks")
+        let project_name = raw.project_name
+            .unwrap_or_else(|| "project".into());
+        let crate_prefix = raw.crate_prefix
+            .unwrap_or_else(|| project_name.clone());
+
+        let install_git_hooks = raw.install_git_hooks
             .and_then(|s| InstallMode::parse(&s))
             .unwrap_or(InstallMode::Replace);
-        let install_cargo_config = parse_string(&toml_content, "install_cargo_config")
+        let install_cargo_config = raw.install_cargo_config
             .and_then(|s| InstallMode::parse(&s))
             .unwrap_or(InstallMode::MergeAppend);
-        let install_agent_files = parse_string(&toml_content, "install_agent_files")
+        let install_agent_files = raw.install_agent_files
             .and_then(|s| InstallMode::parse(&s))
             .unwrap_or(InstallMode::Replace);
 
-        // --- Lint overrides ---
-        let lint_overrides = parse_lints_section(&toml_content, &crate_prefix);
+        let domain_kinds = raw.domain_kinds.unwrap_or_default();
 
-        // --- Domain-specific config ---
+        let known_macros = pipe2_section(raw.known_macros);
+        let agent_macros = pipe2_section(raw.agent_macros);
 
-        let domain_kinds = parse_section(&toml_content, "domain_kinds");
+        let macro_styles = convert_macro_styles(raw.macro_styles, &domain_kinds);
+        let crate_colors = convert_color_section(raw.crate_colors);
 
-        let known_macros = parse_section_pipe2(&toml_content, "known_macros");
-        let agent_macros = parse_section_pipe2(&toml_content, "agent_macros");
+        let lint_overrides = parse_lints_from_document(&toml_content, &crate_prefix);
 
-        let macro_styles = parse_macro_styles(&toml_content, &domain_kinds);
-        let crate_colors = parse_color_section(&toml_content, "crate_colors");
-
-        let layer_labels = parse_string_array(&toml_content, "layers");
-
-        let primary_domain_macro = parse_string(&toml_content, "primary_domain_macro");
-        let primary_domain_label = parse_string(&toml_content, "primary_domain_label")
+        let primary_domain_label = raw.primary_domain_label
             .unwrap_or_else(|| "Items".to_string());
-
-        let crate_grouping = parse_section(&toml_content, "crate_grouping");
 
         Config {
             mock_dir, crates_dir, repo_root, docs_dir,
             project_name, crate_prefix,
-            proc_macro_crates, module_crates, abi_version, nuke_marker,
+            proc_macro_crates: raw.proc_macro_crates,
+            module_crates: raw.module_crates,
+            abi_version: raw.abi_version.unwrap_or(1),
+            nuke_marker: "Nuked by `cargo mock --nuke`".to_string(),
             commit_style: CommitStyle::default(),
             install_git_hooks, install_cargo_config, install_agent_files,
             lint_overrides,
-            domain_kinds, known_macros, agent_macros,
-            macro_styles, crate_colors, layer_labels,
-            primary_domain_macro, primary_domain_label,
-            crate_grouping,
+            domain_kinds,
+            known_macros, agent_macros,
+            macro_styles, crate_colors,
+            layer_labels: raw.layers,
+            primary_domain_macro: raw.primary_domain_macro,
+            primary_domain_label,
+            crate_grouping: raw.crate_grouping.unwrap_or_default(),
         }
     }
 
@@ -232,103 +310,16 @@ impl Config {
 }
 
 // ---------------------------------------------------------------------------
-// NOTE: This hand-rolled parser does not handle multi-line inline tables.
-// All `[lints]` table values must be single-line (e.g. `key = { ... }` on one line).
-
-// TOML parsing helpers (minimal, no external dependency)
+// Post-processing helpers
 // ---------------------------------------------------------------------------
 
-fn find_repo_root(start: &Path) -> Option<PathBuf> {
-    let mut dir = start;
-    loop {
-        if dir.join(".git").exists() {
-            return Some(dir.to_path_buf());
-        }
-        dir = dir.parent()?;
-    }
-}
-
-/// Parse a top-level `key = "value"` (not inside any [section]).
-fn parse_string(content: &str, key: &str) -> Option<String> {
-    let mut in_section = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with("[[") {
-            in_section = true;
-            continue;
-        }
-        if in_section { continue; }
-        if let Some((k, v)) = trimmed.split_once('=') {
-            if k.trim() == key {
-                return Some(v.trim().trim_matches('"').to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Parse a top-level `key = [array]`.
-fn parse_string_array(content: &str, key: &str) -> Vec<String> {
-    let mut result = Vec::new();
-    let mut in_array = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if !in_array && (trimmed.starts_with(&format!("{key} ")) || trimmed.starts_with(&format!("{key}="))) && trimmed.contains('[') {
-            in_array = true;
-            // Inline array?
-            if let (Some(s), Some(e)) = (trimmed.find('['), trimmed.find(']')) {
-                for item in trimmed[s + 1..e].split(',') {
-                    let val = item.trim().trim_matches('"').trim_matches('\'');
-                    if !val.is_empty() { result.push(val.to_string()); }
-                }
-                return result;
-            }
-            continue;
-        }
-        if in_array {
-            if trimmed == "]" { break; }
-            let val = trimmed.trim_matches(',').trim().trim_matches('"').trim_matches('\'');
-            if !val.is_empty() { result.push(val.to_string()); }
-        }
-    }
-    result
-}
-
-fn parse_u32(content: &str, key: &str) -> Option<u32> {
-    parse_string(content, key)?.parse().ok()
-}
-
-/// Parse all key=value pairs inside a `[section_name]` block.
-fn parse_section(content: &str, section_name: &str) -> BTreeMap<String, String> {
-    let mut result = BTreeMap::new();
-    let mut in_section = false;
-    let header = format!("[{section_name}]");
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed == header {
-            in_section = true;
-            continue;
-        }
-        if in_section && trimmed.starts_with('[') { break; }
-        if in_section && !trimmed.is_empty() && !trimmed.starts_with('#') {
-            if let Some((k, v)) = trimmed.split_once('=') {
-                result.insert(
-                    k.trim().to_string(),
-                    v.trim().trim_matches('"').to_string(),
-                );
-            }
-        }
-    }
-    result
-}
-
-/// Parse a section with pipe-separated 2-field values.
-/// Format: `key = "field1 | field2"`
-/// Returns Vec<(key, field1, field2)> preserving insertion order.
-fn parse_section_pipe2(content: &str, section_name: &str) -> Vec<(String, String, String)> {
-    let raw = parse_section(content, section_name);
-    // Use BTreeMap ordering (alphabetical by key)
+/// Convert a pipe-separated 2-field section: `key = "field1 | field2"`
+/// Returns Vec<(key, field1, field2)> preserving BTreeMap ordering.
+fn pipe2_section(raw: Option<BTreeMap<String, String>>) -> Vec<(String, String, String)> {
+    let raw = match raw {
+        Some(m) => m,
+        None => return Vec::new(),
+    };
     raw.into_iter().map(|(key, val)| {
         let parts: Vec<&str> = val.splitn(2, '|').map(|s| s.trim()).collect();
         match parts.len() {
@@ -338,10 +329,16 @@ fn parse_section_pipe2(content: &str, section_name: &str) -> Vec<(String, String
     }).collect()
 }
 
-/// Parse `[macro_styles]` section.
+/// Convert `[macro_styles]` pipe-separated values into `MacroStyle` structs.
 /// Format: `define_foo = "label | icon | bg_color | fg_color"`
-fn parse_macro_styles(content: &str, domain_kinds: &BTreeMap<String, String>) -> BTreeMap<String, MacroStyle> {
-    let raw = parse_section(content, "macro_styles");
+fn convert_macro_styles(
+    raw: Option<BTreeMap<String, String>>,
+    domain_kinds: &BTreeMap<String, String>,
+) -> BTreeMap<String, MacroStyle> {
+    let raw = match raw {
+        Some(m) => m,
+        None => return BTreeMap::new(),
+    };
     let mut result = BTreeMap::new();
     for (name, val) in raw {
         let parts: Vec<&str> = val.splitn(4, '|').map(|s| s.trim()).collect();
@@ -369,9 +366,14 @@ fn parse_macro_styles(content: &str, domain_kinds: &BTreeMap<String, String>) ->
     result
 }
 
-/// Parse a section with pipe-separated color pairs: `key = "bg | fg"`
-fn parse_color_section(content: &str, section_name: &str) -> BTreeMap<String, (String, String)> {
-    let raw = parse_section(content, section_name);
+/// Convert a pipe-separated color pair section: `key = "bg | fg"`
+fn convert_color_section(
+    raw: Option<BTreeMap<String, String>>,
+) -> BTreeMap<String, (String, String)> {
+    let raw = match raw {
+        Some(m) => m,
+        None => return BTreeMap::new(),
+    };
     let mut result = BTreeMap::new();
     for (name, val) in raw {
         let parts: Vec<&str> = val.splitn(2, '|').map(|s| s.trim()).collect();
@@ -382,224 +384,143 @@ fn parse_color_section(content: &str, section_name: &str) -> BTreeMap<String, (S
     result
 }
 
-/// Parse the `[lints]` section from mockspace.toml.
+/// Parse the `[lints]` section from the TOML content using `toml_edit`'s
+/// document API to handle heterogeneous values (strings and tables).
 ///
-/// Supports multiple formats:
-///
-/// **String value** -- applies a preset to all gates:
-/// ```toml
-/// [lints]
-/// no-float = "off"
-/// no-todo = "advisory"
-/// ```
-///
-/// **Inline table value** -- per-gate levels (must be single-line):
-/// ```toml
-/// [lints]
-/// no-float = { commit = "warn", build = "error", push = "error" }
-/// ```
-///
-/// **Sub-table** -- severity + parameters:
-/// ```toml
-/// [lints.no-manual-id]
-/// severity = "error"
-/// allowed_patterns = "EntityId"
-/// ```
-///
-/// **Per-finding overrides**:
-/// ```toml
-/// [lints.no-manual-id.findings]
-/// struct-field = "error"
-/// type-alias = "warn"
-/// ```
-///
-/// **Named rule sub-tables** (for forbidden-imports):
-/// ```toml
-/// [lints.forbidden-imports.rule.no-std-in-sdk]
-/// scope = "{prefix}-sdk"
-/// forbidden = "std::*"
-/// reason = "SDK is #![no_std] + alloc"
-/// ```
-///
-/// Missing keys in an inline table default to `Level::Pass`.
-///
-/// If `[lints]` section is absent, returns an empty config (all lints use defaults).
-///
-/// NOTE: Multi-line inline tables are NOT supported. All inline table values
-/// must be on a single line.
-fn parse_lints_section(content: &str, crate_prefix: &str) -> LintConfig {
+/// Each lint entry is extracted as a `toml_edit::Value` and then deserialized
+/// via `IntoDeserializer` into a `LintEntry` enum.
+fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConfig {
+    let doc = match toml_content.parse::<toml_edit::DocumentMut>() {
+        Ok(d) => d,
+        Err(_) => return LintConfig::empty(),
+    };
+
+    let lints_item = match doc.get("lints") {
+        Some(item) => item,
+        None => return LintConfig::empty(),
+    };
+
+    let lints_table = match lints_item.as_table() {
+        Some(t) => t,
+        None => return LintConfig::empty(),
+    };
+
     let mut base = HashMap::new();
     let mut findings: HashMap<String, HashMap<String, Severity>> = HashMap::new();
     let mut params: HashMap<String, HashMap<String, String>> = HashMap::new();
 
-    // State machine for section tracking
-    enum Section {
-        None,
-        Lints,                              // [lints]
-        LintSub(String),                    // [lints.lint-name]
-        LintFindings(String),               // [lints.lint-name.findings]
-        LintRule(String, String),           // [lints.lint-name.rule.rule-name]
-        Other,                              // any other [section]
-    }
+    for (lint_name, item) in lints_table.iter() {
+        let lint_name = lint_name.to_string();
 
-    let mut section = Section::None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        // Section headers
-        if trimmed.starts_with('[') && !trimmed.starts_with("[[") {
-            let header = trimmed.trim_start_matches('[').trim_end_matches(']').trim();
-            if header == "lints" {
-                section = Section::Lints;
-            } else if let Some(rest) = header.strip_prefix("lints.") {
-                // Parse multi-level sub-sections:
-                // lints.lint-name
-                // lints.lint-name.findings
-                // lints.lint-name.rule.rule-name
-                let parts: Vec<&str> = rest.splitn(3, '.').collect();
-                match parts.len() {
-                    1 => {
-                        // [lints.lint-name]
-                        section = Section::LintSub(parts[0].to_string());
-                    }
-                    2 => {
-                        if parts[1] == "findings" {
-                            section = Section::LintFindings(parts[0].to_string());
-                        } else {
-                            section = Section::Other;
-                        }
-                    }
-                    3 => {
-                        if parts[1] == "rule" {
-                            // [lints.lint-name.rule.rule-name]
-                            section = Section::LintRule(parts[0].to_string(), parts[2].to_string());
-                        } else {
-                            section = Section::Other;
-                        }
-                    }
-                    _ => {
-                        section = Section::Other;
-                    }
-                }
-            } else {
-                section = Section::Other;
+        // Deserialize the lint entry.
+        // For inline values (strings, inline tables), use Value's IntoDeserializer.
+        // For standard tables ([lints.name] sections), serialize to a TOML
+        // fragment and re-parse via serde.
+        let entry: LintEntry = if let Some(v) = item.as_value() {
+            match LintEntry::deserialize(v.clone().into_deserializer()) {
+                Ok(e) => e,
+                Err(_) => continue,
             }
+        } else if let Some(tbl) = item.as_table() {
+            // Build a mini TOML document with just this table's contents
+            let mut doc = toml_edit::DocumentMut::new();
+            for (k, v) in tbl.iter() {
+                doc[k] = v.clone();
+            }
+            match toml_edit::de::from_str::<LintTableConfig>(&doc.to_string()) {
+                Ok(cfg) => LintEntry::Config(cfg),
+                Err(_) => continue,
+            }
+        } else {
             continue;
-        }
+        };
 
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
+        match entry {
+            LintEntry::Preset(s) => {
+                if let Some(severity) = parse_severity(&s) {
+                    base.insert(lint_name, severity);
+                }
+            }
+            LintEntry::Config(table) => {
+                // Determine base severity from "severity" key
+                if let Some(ref s) = table.severity {
+                    if let Some(severity) = parse_severity(s) {
+                        base.insert(lint_name.clone(), severity);
+                    }
+                }
 
-        match &section {
-            Section::None | Section::Other => continue,
-
-            Section::Lints => {
-                // [lints] section: key = "value" or key = { ... }
-                if let Some((key, val)) = trimmed.split_once('=') {
-                    let lint_name = key.trim().to_string();
-                    let val = val.trim();
-
-                    if val.starts_with('{') {
-                        // Inline table: { commit = "level", build = "level", push = "level" }
-                        let inner = val.trim_start_matches('{').trim_end_matches('}');
-                        let mut on_commit = Level::Pass;
-                        let mut on_build = Level::Pass;
-                        let mut on_push = Level::Pass;
-
-                        for pair in inner.split(',') {
-                            let pair = pair.trim();
-                            if pair.is_empty() { continue; }
-                            if let Some((k, v)) = pair.split_once('=') {
-                                let k = k.trim();
-                                let v = v.trim().trim_matches('"');
-                                if let Some(level) = Level::from_str_name(v) {
-                                    match k {
-                                        "commit" => on_commit = level,
-                                        "build" => on_build = level,
-                                        "push" => on_push = level,
-                                        _ => {}
-                                    }
-                                }
-                            }
+                // Per-gate severity from commit/build/push keys
+                let has_gates = table.commit.is_some()
+                    || table.build.is_some()
+                    || table.push.is_some();
+                if has_gates {
+                    let entry = base.entry(lint_name.clone()).or_insert(Severity::OFF);
+                    if let Some(ref s) = table.commit {
+                        if let Some(level) = Level::from_str_name(s) {
+                            entry.on_commit = level;
                         }
-
-                        base.insert(lint_name, Severity::new(on_commit, on_build, on_push));
-                    } else {
-                        // String value: preset name
-                        let val = val.trim_matches('"');
-                        if let Some(severity) = parse_severity(val) {
-                            base.insert(lint_name, severity);
+                    }
+                    if let Some(ref s) = table.build {
+                        if let Some(level) = Level::from_str_name(s) {
+                            entry.on_build = level;
+                        }
+                    }
+                    if let Some(ref s) = table.push {
+                        if let Some(level) = Level::from_str_name(s) {
+                            entry.on_push = level;
                         }
                     }
                 }
-            }
 
-            Section::LintSub(lint_name) => {
-                // [lints.lint-name] section
-                if let Some((key, val)) = trimmed.split_once('=') {
-                    let key = key.trim();
-                    let val = val.trim().trim_matches('"');
-
-                    if key == "severity" {
-                        if let Some(severity) = parse_severity(val) {
-                            base.insert(lint_name.clone(), severity);
+                // Per-finding severity overrides
+                if let Some(finding_map) = table.findings {
+                    let entry = findings.entry(lint_name.clone()).or_default();
+                    for (kind, val) in finding_map {
+                        if let Some(severity) = parse_severity(&val) {
+                            entry.insert(kind, severity);
                         }
-                    } else if key == "commit" || key == "build" || key == "push" {
-                        // Per-gate severity in sub-table form
-                        if let Some(level) = Level::from_str_name(val) {
-                            let entry = base.entry(lint_name.clone()).or_insert(Severity::OFF);
-                            match key {
-                                "commit" => entry.on_commit = level,
-                                "build" => entry.on_build = level,
-                                "push" => entry.on_push = level,
-                                _ => {}
-                            }
-                        }
-                    } else {
-                        // Other keys are lint parameters
-                        params
-                            .entry(lint_name.clone())
-                            .or_default()
-                            .insert(key.to_string(), val.to_string());
                     }
                 }
-            }
 
-            Section::LintFindings(lint_name) => {
-                // [lints.lint-name.findings] section
-                if let Some((kind, val)) = trimmed.split_once('=') {
-                    let kind = kind.trim().to_string();
-                    let val = val.trim().trim_matches('"');
-                    if let Some(severity) = parse_severity(val) {
-                        findings
-                            .entry(lint_name.clone())
-                            .or_default()
-                            .insert(kind, severity);
+                // Named rule sub-tables: [lints.lint-name.rule.rule-name]
+                if let Some(rule_map) = table.rule {
+                    let param_entry = params.entry(lint_name.clone()).or_default();
+                    for (rule_name, rule_fields) in rule_map {
+                        for (key, val) in rule_fields {
+                            let val_str = val.into_string()
+                                .replace("{prefix}", crate_prefix);
+                            let param_key = format!("rule.{rule_name}.{key}");
+                            param_entry.insert(param_key, val_str);
+                        }
                     }
                 }
-            }
 
-            Section::LintRule(lint_name, rule_name) => {
-                // [lints.lint-name.rule.rule-name] section
-                // Flatten into params as: "rule.rule-name.key" = "value"
-                if let Some((key, val)) = trimmed.split_once('=') {
-                    let key = key.trim();
-                    let val = val.trim().trim_matches('"');
-
-                    // Expand {prefix} placeholder in values
-                    let val = val.replace("{prefix}", crate_prefix);
-
-                    let param_key = format!("rule.{rule_name}.{key}");
-                    params
-                        .entry(lint_name.clone())
-                        .or_default()
-                        .insert(param_key, val);
+                // Remaining flattened params
+                if !table.params.is_empty() {
+                    let param_entry = params.entry(lint_name.clone()).or_default();
+                    for (key, val) in table.params {
+                        let val_str = val.into_string()
+                            .replace("{prefix}", crate_prefix);
+                        param_entry.insert(key, val_str);
+                    }
                 }
             }
         }
     }
 
     LintConfig { base, findings, params }
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
+fn find_repo_root(start: &Path) -> Option<PathBuf> {
+    let mut dir = start;
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir.to_path_buf());
+        }
+        dir = dir.parent()?;
+    }
 }
