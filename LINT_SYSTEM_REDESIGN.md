@@ -258,8 +258,9 @@ rules = [
 5. ✅ Auto-generated settings (done — Phase 7)
 6. ✅ Unified forbidden-imports lint (done — Phase 8)
 7. ✅ Replace parser with toml_edit + serde (done — Phase 10)
-8. Builtin agent templates (Phase 9 — in progress)
-9. Deprecate individual forbidden-type lints
+8. ✅ Builtin agent templates (done — Phase 9)
+9. ✅ Lint-derived agent rules + hooks (done — auto-generated from forbidden-imports config)
+10. Deprecate individual forbidden-type lints (docs only — lints already default to OFF)
 
 ## Code Review Findings (remaining)
 
