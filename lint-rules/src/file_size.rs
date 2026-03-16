@@ -1,26 +1,74 @@
-//! Lint: enforce the 500 LOC hard limit per file.
+//! Lint: enforce a configurable LOC limit per source file.
 //!
 //! Counts non-blank, non-comment lines in source. Block-comment interiors
 //! (lines starting with `*`) are treated as comments. If the count exceeds
-//! 500, a single error is emitted at line 1.
+//! the configured limit, a single error is emitted at line 1.
+//!
+//! Configuration in `mockspace.toml`:
+//! ```toml
+//! [lints.file-size]
+//! commit = "warn"
+//! build = "error"
+//! push = "error"
+//! max_lines = "300"
+//! exempt = "storage"
+//! ```
+//!
+//! Default limit: 500. Default exempt suffixes: none.
 
-use crate::{Lint, LintContext, LintError};
+use std::collections::HashMap;
 
-/// Crate suffixes with genuinely large API surfaces.
-/// NOTE: primitives was split in tier 0 round; storage will be split in
-/// tier 1 round. Remove exemptions as crates are brought into compliance.
-/// Full crate names are built as `<prefix>-<suffix>` at check time.
-const EXEMPT_SUFFIXES: &[&str] = &["storage"];
+use crate::{Lint, LintContext, LintError, Severity};
 
-pub struct FileSize;
+pub struct FileSize {
+    max_lines: usize,
+    exempt_suffixes: Vec<String>,
+}
+
+impl Default for FileSize {
+    fn default() -> Self {
+        Self {
+            max_lines: 500,
+            exempt_suffixes: Vec::new(),
+        }
+    }
+}
+
+impl FileSize {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
 impl Lint for FileSize {
     fn name(&self) -> &'static str {
         "file-size"
     }
 
+    fn default_severity(&self) -> Severity {
+        Severity::ADVISORY
+    }
+
+    fn config_keys(&self) -> &[&str] {
+        &["max_lines", "exempt"]
+    }
+
+    fn configure(&mut self, params: &HashMap<String, String>) {
+        if let Some(val) = params.get("max_lines") {
+            if let Ok(n) = val.parse::<usize>() {
+                self.max_lines = n;
+            }
+        }
+        if let Some(val) = params.get("exempt") {
+            self.exempt_suffixes = val.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
-        let is_exempt = EXEMPT_SUFFIXES.iter().any(|s| {
+        let is_exempt = self.exempt_suffixes.iter().any(|s| {
             let full = format!("{}-{}", ctx.crate_prefix, s);
             ctx.crate_name == full
         });
@@ -58,21 +106,21 @@ impl Lint for FileSize {
             }
 
             if trimmed.starts_with("*") {
-                // Stray block-comment continuation (e.g. after `/**`)
                 continue;
             }
 
             count += 1;
         }
 
-        if count > 500 {
+        if count > self.max_lines {
             vec![LintError {
                 crate_name: ctx.crate_name.to_string(),
                 line: 1,
                 lint_name: "file-size",
-                        severity: crate::Severity::HARD_ERROR,
+                severity: self.default_severity(),
                 message: format!(
-                    "file has {count} non-blank, non-comment lines (limit: 500)"
+                    "file has {count} non-blank, non-comment lines (limit: {}). Split into modules.",
+                    self.max_lines
                 ),
                 finding_kind: None,
             }]
@@ -88,16 +136,12 @@ mod tests {
     use std::collections::BTreeSet;
 
     fn make_ctx(source: &str) -> LintContext {
-        // tree-sitter is not needed for this lint; pass a minimal tree
-        // by leaking a parser result. In the test harness we only care
-        // about `source`.
         static EMPTY: &str = "";
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_rust::LANGUAGE.into())
             .unwrap();
         let tree = parser.parse(EMPTY, None).unwrap();
-        // SAFETY: we leak the tree so the reference lives long enough for tests.
         let tree: &'static tree_sitter::Tree = Box::leak(Box::new(tree));
 
         LintContext {
@@ -120,57 +164,61 @@ mod tests {
     fn under_limit_passes() {
         let src = "fn main() {}\n".repeat(100);
         let ctx = make_ctx(&src);
-        assert!(FileSize.check(&ctx).is_empty());
+        assert!(FileSize::new().check(&ctx).is_empty());
     }
 
     #[test]
-    fn at_limit_passes() {
+    fn at_default_limit_passes() {
         let src = "fn main() {}\n".repeat(500);
         let ctx = make_ctx(&src);
-        assert!(FileSize.check(&ctx).is_empty());
+        assert!(FileSize::new().check(&ctx).is_empty());
     }
 
     #[test]
-    fn over_limit_fails() {
+    fn over_default_limit_fails() {
         let src = "fn main() {}\n".repeat(501);
         let ctx = make_ctx(&src);
-        let errors = FileSize.check(&ctx);
+        let errors = FileSize::new().check(&ctx);
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].lint_name, "file-size");
         assert!(errors[0].message.contains("501"));
+    }
+
+    #[test]
+    fn configurable_limit() {
+        let src = "fn main() {}\n".repeat(301);
+        let ctx = make_ctx(&src);
+
+        let mut lint = FileSize::new();
+        let mut params = HashMap::new();
+        params.insert("max_lines".to_string(), "300".to_string());
+        lint.configure(&params);
+
+        let errors = lint.check(&ctx);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("301"));
+        assert!(errors[0].message.contains("limit: 300"));
     }
 
     #[test]
     fn blanks_and_comments_not_counted() {
         let mut lines = Vec::new();
-        // 300 code lines
-        for _ in 0..300 {
-            lines.push("let x = 1;");
-        }
-        // 300 blank lines
-        for _ in 0..300 {
-            lines.push("");
-        }
-        // 300 comment lines
-        for _ in 0..300 {
-            lines.push("// this is a comment");
-        }
+        for _ in 0..300 { lines.push("let x = 1;"); }
+        for _ in 0..300 { lines.push(""); }
+        for _ in 0..300 { lines.push("// comment"); }
         let src = lines.join("\n");
         let ctx = make_ctx(&src);
-        assert!(FileSize.check(&ctx).is_empty());
+        assert!(FileSize::new().check(&ctx).is_empty());
     }
 
     #[test]
     fn block_comments_not_counted() {
         let mut lines = Vec::new();
         lines.push("/*");
-        for _ in 0..600 {
-            lines.push(" * comment line");
-        }
+        for _ in 0..600 { lines.push(" * comment"); }
         lines.push(" */");
         lines.push("fn main() {}");
         let src = lines.join("\n");
         let ctx = make_ctx(&src);
-        assert!(FileSize.check(&ctx).is_empty());
+        assert!(FileSize::new().check(&ctx).is_empty());
     }
 }
