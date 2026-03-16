@@ -427,7 +427,7 @@ pub fn all_lints() -> Vec<Box<dyn Lint>> {
         Box::new(no_empty_crate::NoEmptyCrate),
         Box::new(design_doc_source_mismatch::DesignDocSourceMismatch),
         Box::new(actionable_errors::ActionableErrors),
-        Box::new(file_size::FileSize),
+        Box::new(file_size::FileSize::new()),
         Box::new(no_float::NoFloat),
         Box::new(export_count::ExportCount),
         Box::new(no_todo::NoTodo),
