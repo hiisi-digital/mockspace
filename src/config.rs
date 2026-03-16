@@ -173,9 +173,24 @@ struct LintTableConfig {
     severity: Option<String>,
     findings: Option<BTreeMap<String, String>>,
     rule: Option<BTreeMap<String, BTreeMap<String, StringOrOther>>>,
+    /// Inline array of tables format:
+    /// `rules = [{ scope = "...", forbidden = "...", reason = "..." }]`
+    rules: Option<Vec<InlineRule>>,
     #[serde(flatten)]
     params: BTreeMap<String, StringOrOther>,
 }
+
+/// A single forbidden-imports rule in inline array format.
+#[derive(Deserialize)]
+struct InlineRule {
+    scope: String,
+    forbidden: String,
+    reason: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+fn default_true() -> bool { true }
 
 /// Helper to deserialize heterogeneous TOML values as strings.
 /// Handles string, integer, float, and boolean values.
@@ -492,6 +507,21 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
                             let param_key = format!("rule.{rule_name}.{key}");
                             param_entry.insert(param_key, val_str);
                         }
+                    }
+                }
+
+                // Inline rules array: rules = [{ scope, forbidden, reason }]
+                if let Some(rules_array) = table.rules {
+                    let param_entry = params.entry(lint_name.clone()).or_default();
+                    for (idx, rule) in rules_array.into_iter().enumerate() {
+                        if !rule.enabled { continue; }
+                        let scope = rule.scope.replace("{prefix}", crate_prefix);
+                        let forbidden = rule.forbidden.replace("{prefix}", crate_prefix);
+                        let reason = rule.reason.replace("{prefix}", crate_prefix);
+                        let name = format!("rule-{idx}");
+                        param_entry.insert(format!("rule.{name}.scope"), scope);
+                        param_entry.insert(format!("rule.{name}.forbidden"), forbidden);
+                        param_entry.insert(format!("rule.{name}.reason"), reason);
                     }
                 }
 
