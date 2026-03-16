@@ -172,17 +172,36 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+
+            let mut touched = Vec::new();
+
+            // Step 1: deprecate the src CL
             match rename_cl(&dr, &cl, ClStatus::Deprecated) {
                 Ok(r) => {
                     eprintln!("deprecated src changelist: {} → {}", cl.filename, r.new_name);
-                    eprintln!("  phase transition: SRC → SRC-PLAN");
-                    eprintln!("  next: create a new src changelist");
-                    let msg = format!("chore: deprecate src changelist {}", cl.filename);
-                    commit_or_suggest(cfg, opts, &[r.old_path, r.new_path], &msg);
-                    ExitCode::SUCCESS
+                    touched.push(r.old_path);
+                    touched.push(r.new_path);
                 }
-                Err(e) => { eprintln!("error: {e}"); ExitCode::FAILURE }
+                Err(e) => { eprintln!("error: {e}"); return ExitCode::FAILURE; }
             }
+
+            // Step 2: unlock the doc CL (SRC-PLAN is a useless intermediate state)
+            if let Some(doc_cl) = changelist_helpers::find_locked_doc_cl(&dr) {
+                match rename_cl(&dr, &doc_cl, ClStatus::Active) {
+                    Ok(r) => {
+                        eprintln!("unlocked doc changelist: {} → {}", doc_cl.filename, r.new_name);
+                        touched.push(r.old_path);
+                        touched.push(r.new_path);
+                    }
+                    Err(e) => { eprintln!("error: {e}"); return ExitCode::FAILURE; }
+                }
+            }
+
+            eprintln!("  phase transition: SRC → DOC");
+            eprintln!("  next: update doc templates, then lock and create new src changelist");
+            let msg = format!("chore: deprecate src changelist {} and unlock doc CL", cl.filename);
+            commit_or_suggest(cfg, opts, &touched, &msg);
+            ExitCode::SUCCESS
         }
         Phase::Topic => {
             eprintln!("error: no changelist to deprecate (TOPIC phase)");
