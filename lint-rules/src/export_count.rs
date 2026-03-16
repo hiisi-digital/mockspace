@@ -28,6 +28,7 @@ const COUNTABLE_KINDS: &[&str] = &[
 pub struct ExportCount;
 
 impl Lint for ExportCount {
+    fn default_severity(&self) -> crate::Severity { crate::Severity::ADVISORY }
     fn name(&self) -> &'static str {
         "export-count"
     }

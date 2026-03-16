@@ -2,9 +2,11 @@
 //!
 //! Reads `mockspace.toml` from the mockspace root directory.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use mockspace_lint_rules::{Level, Severity, parse_severity};
 
 /// How mockspace-managed content is installed into existing files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +46,13 @@ pub struct Config {
     pub install_git_hooks: InstallMode,
     pub install_cargo_config: InstallMode,
     pub install_agent_files: InstallMode,
+
+    // --- Lint overrides ---
+
+    /// Per-lint severity overrides from `[lints]` section.
+    /// Key: lint name (e.g. "no-float"), Value: configured severity.
+    /// Empty if no `[lints]` section is present (all lints use defaults).
+    pub lint_overrides: HashMap<String, Severity>,
 
     // --- Domain-specific config ---
 
@@ -144,6 +153,9 @@ impl Config {
             .and_then(|s| InstallMode::parse(&s))
             .unwrap_or(InstallMode::Replace);
 
+        // --- Lint overrides ---
+        let lint_overrides = parse_lints_section(&toml_content);
+
         // --- Domain-specific config ---
 
         let domain_kinds = parse_section(&toml_content, "domain_kinds");
@@ -168,6 +180,7 @@ impl Config {
             proc_macro_crates, module_crates, abi_version, nuke_marker,
             commit_style: CommitStyle::default(),
             install_git_hooks, install_cargo_config, install_agent_files,
+            lint_overrides,
             domain_kinds, known_macros, agent_macros,
             macro_styles, crate_colors, layer_labels,
             primary_domain_macro, primary_domain_label,
@@ -363,5 +376,88 @@ fn parse_color_section(content: &str, section_name: &str) -> BTreeMap<String, (S
             result.insert(name, (parts[0].to_string(), parts[1].to_string()));
         }
     }
+    result
+}
+
+/// Parse the `[lints]` section from mockspace.toml.
+///
+/// Supports two value formats:
+///
+/// **String value** — applies a preset to all gates:
+/// ```toml
+/// [lints]
+/// no-float = "off"
+/// no-todo = "advisory"
+/// ```
+///
+/// **Table value** — per-gate levels:
+/// ```toml
+/// [lints]
+/// no-float = { commit = "warn", build = "error", push = "error" }
+/// ```
+///
+/// Missing keys in a table default to `Level::Pass`.
+///
+/// If `[lints]` section is absent, returns an empty map (all lints use defaults).
+fn parse_lints_section(content: &str) -> HashMap<String, Severity> {
+    let mut result = HashMap::new();
+    let mut in_section = false;
+    let header = "[lints]";
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed == header {
+            in_section = true;
+            continue;
+        }
+
+        if in_section && trimmed.starts_with('[') {
+            break;
+        }
+
+        if !in_section || trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if let Some((key, val)) = trimmed.split_once('=') {
+            let lint_name = key.trim().to_string();
+            let val = val.trim();
+
+            if val.starts_with('{') {
+                // Table value: { commit = "level", build = "level", push = "level" }
+                let inner = val.trim_start_matches('{').trim_end_matches('}');
+                let mut on_commit = Level::Pass;
+                let mut on_build = Level::Pass;
+                let mut on_push = Level::Pass;
+
+                for pair in inner.split(',') {
+                    let pair = pair.trim();
+                    if pair.is_empty() { continue; }
+                    if let Some((k, v)) = pair.split_once('=') {
+                        let k = k.trim();
+                        let v = v.trim().trim_matches('"');
+                        if let Some(level) = Level::from_str_name(v) {
+                            match k {
+                                "commit" => on_commit = level,
+                                "build" => on_build = level,
+                                "push" => on_push = level,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                result.insert(lint_name, Severity::new(on_commit, on_build, on_push));
+            } else {
+                // String value: preset name
+                let val = val.trim_matches('"');
+                if let Some(severity) = parse_severity(val) {
+                    result.insert(lint_name, severity);
+                }
+            }
+        }
+    }
+
     result
 }

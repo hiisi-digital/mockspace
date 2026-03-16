@@ -19,6 +19,7 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoBareString;
 
 impl Lint for NoBareString {
+    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
     fn name(&self) -> &'static str {
         "no-bare-string"
     }

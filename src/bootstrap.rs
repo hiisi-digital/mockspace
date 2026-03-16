@@ -31,6 +31,19 @@
 //! When deactivated (or mockspace removed): `core.hooksPath` unset → git
 //! falls back to `.git/hooks/` → user's hooks run directly. Identical
 //! behavior as if mockspace was never there.
+//!
+//! # Custom lints
+//!
+//! If `{mock_dir}/lints/` exists and contains `.rs` files, the proxy crate
+//! is generated with custom lint support. Each `.rs` file must define:
+//! - `pub fn lint() -> Box<dyn mockspace_lint_rules::Lint>` for per-crate lints
+//! - `pub fn cross_lint() -> Box<dyn mockspace_lint_rules::CrossCrateLint>` for cross-crate lints
+//!
+//! A file can define one or both. To signal which functions are available,
+//! the file names follow a convention: files ending in `_cross` are treated
+//! as cross-crate lints; all others are per-crate lints. If a file needs to
+//! provide both, it should define both functions and be named without the
+//! `_cross` suffix — both will be called.
 
 use std::env;
 use std::fs;
@@ -111,6 +124,12 @@ pub fn bootstrap_from_buildscript() {
             user_hooks.join(name).display()
         );
     }
+    // Rerun when custom lint files change.
+    let custom_lints_dir = mock_dir.join("lints");
+    println!(
+        "cargo::rerun-if-changed={}",
+        custom_lints_dir.display()
+    );
 }
 
 /// Run bootstrap health checks, fixing anything missing or stale.
@@ -199,7 +218,7 @@ fn ensure_cargo_alias(
 ) {
     // Generate the proxy crate that delegates to mockspace.
     // Lives in target/ (gitignored), contains the machine-specific dep path.
-    ensure_proxy_crate(repo_root, mockspace_dir, actions);
+    ensure_proxy_crate(repo_root, mock_dir, mockspace_dir, actions);
 
     let config_dir = repo_root.join(".cargo");
     let config_path = config_dir.join("config.toml");
@@ -282,30 +301,63 @@ fn ensure_cargo_alias(
 /// mockspace source. Since it lives in `target/` (gitignored), the checked-in
 /// `.cargo/config.toml` alias can use a portable relative path:
 /// `run --manifest-path target/mockspace-proxy/Cargo.toml -- --dir <mock_rel>`
-fn ensure_proxy_crate(repo_root: &Path, mockspace_dir: &Path, actions: &mut Vec<String>) {
+///
+/// If `{mock_dir}/lints/` exists and contains `.rs` files, the proxy is
+/// generated with custom lint support. Each `.rs` file must define:
+/// - `pub fn lint() -> Box<dyn mockspace_lint_rules::Lint>` for per-crate lints
+/// - `pub fn cross_lint() -> Box<dyn mockspace_lint_rules::CrossCrateLint>` for cross-crate lints
+fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, actions: &mut Vec<String>) {
     let proxy_dir = repo_root.join("target").join("mockspace-proxy");
     let proxy_cargo = proxy_dir.join("Cargo.toml");
     let proxy_src = proxy_dir.join("src");
     let proxy_main = proxy_src.join("main.rs");
 
-    let cargo_content = format!(
-        "[package]\n\
-         name = \"mockspace-proxy\"\n\
-         version = \"0.1.0\"\n\
-         edition = \"2021\"\n\
-         publish = false\n\
-         \n\
-         [workspace]\n\
-         \n\
-         [dependencies]\n\
-         mockspace = {{ path = \"{}\" }}\n",
-        mockspace_dir.display(),
-    );
+    // Check for custom lints directory
+    let lints_dir = mock_dir.join("lints");
+    let custom_lint_files = discover_custom_lint_files(&lints_dir);
+    let has_custom_lints = !custom_lint_files.is_empty();
 
-    let main_content = "\
-        fn main() -> std::process::ExitCode {\n\
+    let lint_rules_path = mockspace_dir.join("lint-rules");
+
+    let cargo_content = if has_custom_lints {
+        format!(
+            "[package]\n\
+             name = \"mockspace-proxy\"\n\
+             version = \"0.1.0\"\n\
+             edition = \"2021\"\n\
+             publish = false\n\
+             \n\
+             [workspace]\n\
+             \n\
+             [dependencies]\n\
+             mockspace = {{ path = \"{}\" }}\n\
+             mockspace-lint-rules = {{ path = \"{}\" }}\n",
+            mockspace_dir.display(),
+            lint_rules_path.display(),
+        )
+    } else {
+        format!(
+            "[package]\n\
+             name = \"mockspace-proxy\"\n\
+             version = \"0.1.0\"\n\
+             edition = \"2021\"\n\
+             publish = false\n\
+             \n\
+             [workspace]\n\
+             \n\
+             [dependencies]\n\
+             mockspace = {{ path = \"{}\" }}\n",
+            mockspace_dir.display(),
+        )
+    };
+
+    let main_content = if has_custom_lints {
+        generate_custom_lint_main(&custom_lint_files, &lints_dir)
+    } else {
+        "fn main() -> std::process::ExitCode {\n\
         \x20   mockspace::run()\n\
-        }\n";
+        }\n".to_string()
+    };
 
     // Check if already up-to-date.
     let cargo_ok = fs::read_to_string(&proxy_cargo)
@@ -321,8 +373,101 @@ fn ensure_proxy_crate(repo_root: &Path, mockspace_dir: &Path, actions: &mut Vec<
 
     let _ = fs::create_dir_all(&proxy_src);
     let _ = fs::write(&proxy_cargo, &cargo_content);
-    let _ = fs::write(&proxy_main, main_content);
+    let _ = fs::write(&proxy_main, &main_content);
     actions.push("generated target/mockspace-proxy/".into());
+}
+
+/// Discover `.rs` files in the custom lints directory.
+/// Returns a sorted list of file stems (e.g., "my_lint" from "my_lint.rs").
+fn discover_custom_lint_files(lints_dir: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    if !lints_dir.is_dir() {
+        return files;
+    }
+
+    if let Ok(entries) = fs::read_dir(lints_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "rs").unwrap_or(false) {
+                if let Some(stem) = path.file_stem() {
+                    files.push(stem.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// Scan a `.rs` file to determine which custom lint functions it defines.
+///
+/// Looks for `pub fn lint()` and `pub fn cross_lint()` signatures.
+fn scan_lint_functions(lints_dir: &Path, stem: &str) -> (bool, bool) {
+    let path = lints_dir.join(format!("{stem}.rs"));
+    let content = fs::read_to_string(&path).unwrap_or_default();
+
+    let has_lint = content.contains("pub fn lint(");
+    let has_cross_lint = content.contains("pub fn cross_lint(");
+
+    (has_lint, has_cross_lint)
+}
+
+/// Generate the proxy's main.rs with custom lint module includes.
+///
+/// Each custom lint `.rs` file is included via `#[path]` attribute pointing
+/// at the absolute path of the lint file. The file must define:
+/// - `pub fn lint() -> Box<dyn mockspace_lint_rules::Lint>` for per-crate lints
+/// - `pub fn cross_lint() -> Box<dyn mockspace_lint_rules::CrossCrateLint>` for cross-crate lints
+fn generate_custom_lint_main(lint_files: &[String], lints_dir: &Path) -> String {
+    let mut out = String::new();
+
+    // Module declarations with absolute paths
+    for name in lint_files {
+        let abs_path = lints_dir.join(format!("{name}.rs"));
+        out.push_str(&format!(
+            "#[path = \"{}\"]\nmod {name};\n",
+            abs_path.display()
+        ));
+    }
+    out.push('\n');
+
+    // Scan each file to determine which functions it provides
+    let mut lint_mods = Vec::new();
+    let mut cross_lint_mods = Vec::new();
+
+    for name in lint_files {
+        let (has_lint, has_cross_lint) = scan_lint_functions(lints_dir, name);
+        if has_lint {
+            lint_mods.push(name.as_str());
+        }
+        if has_cross_lint {
+            cross_lint_mods.push(name.as_str());
+        }
+    }
+
+    // custom_lints() function
+    out.push_str("fn custom_lints() -> Vec<Box<dyn mockspace::Lint>> {\n");
+    out.push_str("    vec![\n");
+    for name in &lint_mods {
+        out.push_str(&format!("        {name}::lint(),\n"));
+    }
+    out.push_str("    ]\n");
+    out.push_str("}\n\n");
+
+    // custom_cross_lints() function
+    out.push_str("fn custom_cross_lints() -> Vec<Box<dyn mockspace::CrossCrateLint>> {\n");
+    out.push_str("    vec![\n");
+    for name in &cross_lint_mods {
+        out.push_str(&format!("        {name}::cross_lint(),\n"));
+    }
+    out.push_str("    ]\n");
+    out.push_str("}\n\n");
+
+    out.push_str("fn main() -> std::process::ExitCode {\n");
+    out.push_str("    mockspace::run_with_custom_lints(custom_lints(), custom_cross_lints())\n");
+    out.push_str("}\n");
+
+    out
 }
 
 // ──────────────────────────────────────────────────────────────────────

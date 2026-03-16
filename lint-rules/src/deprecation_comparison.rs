@@ -18,6 +18,7 @@ const LINT_NAME: &str = "deprecation-comparison";
 pub struct DeprecationComparison;
 
 impl CrossCrateLint for DeprecationComparison {
+    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
     fn name(&self) -> &'static str {
         LINT_NAME
     }

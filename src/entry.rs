@@ -2,6 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use mockspace_lint_rules::{Lint, CrossCrateLint};
+
 use crate::bootstrap;
 use crate::config::Config;
 use crate::design_round;
@@ -15,6 +17,20 @@ use crate::render_md;
 use crate::LintMode;
 
 pub fn run() -> ExitCode {
+    run_inner(&[], &[])
+}
+
+pub fn run_with_custom_lints(
+    custom_lints: Vec<Box<dyn Lint>>,
+    custom_cross_lints: Vec<Box<dyn CrossCrateLint>>,
+) -> ExitCode {
+    run_inner(&custom_lints, &custom_cross_lints)
+}
+
+fn run_inner(
+    custom_lints: &[Box<dyn Lint>],
+    custom_cross_lints: &[Box<dyn CrossCrateLint>],
+) -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
 
     // Determine mock directory:
@@ -202,7 +218,11 @@ pub fn run() -> ExitCode {
             } else {
                 eprintln!("  scoped to: {}", names.join(", "));
             }
-            let violations = lint::run_lints(&crates, &cfg.crates_dir, mode, Some(&names), doc_only, &cfg.proc_macro_crates, &cfg.crate_prefix);
+            let violations = lint::run_lints(
+                &crates, &cfg.crates_dir, mode, Some(&names), doc_only,
+                &cfg.proc_macro_crates, &cfg.crate_prefix,
+                &cfg.lint_overrides, custom_lints, custom_cross_lints,
+            );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;
@@ -210,7 +230,11 @@ pub fn run() -> ExitCode {
             eprintln!("  all lints passed");
         }
         None => {
-            let violations = lint::run_lints(&crates, &cfg.crates_dir, mode, None, doc_only, &cfg.proc_macro_crates, &cfg.crate_prefix);
+            let violations = lint::run_lints(
+                &crates, &cfg.crates_dir, mode, None, doc_only,
+                &cfg.proc_macro_crates, &cfg.crate_prefix,
+                &cfg.lint_overrides, custom_lints, custom_cross_lints,
+            );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;

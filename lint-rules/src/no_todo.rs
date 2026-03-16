@@ -14,6 +14,7 @@ const LINT_NAME: &str = "no-todo";
 pub struct NoTodo;
 
 impl Lint for NoTodo {
+    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
     fn name(&self) -> &'static str {
         LINT_NAME
     }

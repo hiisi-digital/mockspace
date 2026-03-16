@@ -7,10 +7,10 @@
 //! 1. Per-crate lints — each lint sees one crate at a time.
 //! 2. Cross-crate lints — each lint sees all crates simultaneously.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use mockspace_lint_rules::{self, LintContext, LintError, LintMode, Level};
+use mockspace_lint_rules::{self, LintContext, LintError, LintMode, Level, Severity, Lint, CrossCrateLint};
 
 use crate::model::CrateMap;
 
@@ -41,8 +41,25 @@ struct ParsedCrate {
 /// doc-only commits during DOC-EXEC phase without being blocked by
 /// pre-existing source issues that will be fixed in SRC-EXEC.
 ///
+/// When `lint_overrides` is non-empty, lint severities are overridden per
+/// the `[lints]` section of mockspace.toml.
+///
+/// Optional `custom_lints` and `custom_cross_lints` are appended to the
+/// built-in lint lists (for consumer-side custom lints).
+///
 /// Returns the count of blocking violations (effective level = Error).
-pub fn run_lints(crates: &CrateMap, crates_dir: &Path, mode: LintMode, scope: Option<&[String]>, doc_only: bool, proc_macro_crates: &[String], crate_prefix: &str) -> usize {
+pub fn run_lints(
+    crates: &CrateMap,
+    crates_dir: &Path,
+    mode: LintMode,
+    scope: Option<&[String]>,
+    doc_only: bool,
+    proc_macro_crates: &[String],
+    crate_prefix: &str,
+    lint_overrides: &HashMap<String, Severity>,
+    custom_lints: &[Box<dyn Lint>],
+    custom_cross_lints: &[Box<dyn CrossCrateLint>],
+) -> usize {
     let all_crate_names: BTreeSet<String> = crates.keys().cloned().collect();
     let workspace_root = crates_dir
         .parent()
@@ -52,6 +69,12 @@ pub fn run_lints(crates: &CrateMap, crates_dir: &Path, mode: LintMode, scope: Op
     let mut all_errors: Vec<LintError> = Vec::new();
 
     let mut parsed: Vec<ParsedCrate> = Vec::new();
+
+    let overrides = if lint_overrides.is_empty() {
+        None
+    } else {
+        Some(lint_overrides)
+    };
 
     for (crate_name, info) in crates {
         // Skip crates not in scope (when scoped)
@@ -98,7 +121,7 @@ pub fn run_lints(crates: &CrateMap, crates_dir: &Path, mode: LintMode, scope: Op
             crate_prefix,
         };
 
-        all_errors.extend(mockspace_lint_rules::check_crate(&ctx, doc_only));
+        all_errors.extend(mockspace_lint_rules::check_crate_with_extra(&ctx, doc_only, overrides, custom_lints));
 
         parsed.push(ParsedCrate {
             crate_name: crate_name.clone(),
@@ -141,7 +164,7 @@ pub fn run_lints(crates: &CrateMap, crates_dir: &Path, mode: LintMode, scope: Op
         .map(|(name, ctx)| (*name, ctx))
         .collect();
 
-    all_errors.extend(mockspace_lint_rules::check_cross_crate(&cross_refs, doc_only));
+    all_errors.extend(mockspace_lint_rules::check_cross_crate_with_extra(&cross_refs, doc_only, overrides, custom_cross_lints));
 
     // Partition by effective severity
     let mut info = Vec::new();

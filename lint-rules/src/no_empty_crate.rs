@@ -32,6 +32,7 @@ const SUBSTANTIVE_KINDS: &[&str] = &[
 pub struct NoEmptyCrate;
 
 impl Lint for NoEmptyCrate {
+    fn default_severity(&self) -> crate::Severity { crate::Severity::ADVISORY }
     fn name(&self) -> &'static str {
         LINT_NAME
     }
