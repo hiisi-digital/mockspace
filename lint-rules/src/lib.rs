@@ -40,7 +40,7 @@ mod repr_c_abi_safety;
 mod single_source;
 mod undocumented_type;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use tree_sitter::Tree;
@@ -125,6 +125,17 @@ impl Level {
             Level::Error => "error",
         }
     }
+
+    /// Parse a level from a string name.
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "pass" | "off" => Some(Level::Pass),
+            "info" => Some(Level::Info),
+            "warn" | "warning" => Some(Level::Warn),
+            "error" => Some(Level::Error),
+            _ => None,
+        }
+    }
 }
 
 /// Which validation gate is active.
@@ -154,6 +165,9 @@ impl Severity {
         Self { on_commit, on_build, on_push }
     }
 
+    /// Completely disabled — not reported at any gate.
+    pub const OFF: Self = Self::new(Level::Pass, Level::Pass, Level::Pass);
+
     /// Blocks commit, build, and push. For critical invariants.
     pub const HARD_ERROR: Self = Self::new(Level::Error, Level::Error, Level::Error);
 
@@ -171,6 +185,11 @@ impl Severity {
     /// Informational only.
     pub const INFO_ONLY: Self = Self::new(Level::Info, Level::Info, Level::Info);
 
+    /// Whether all gates are `Level::Pass` (i.e. the lint is effectively off).
+    pub fn is_off(&self) -> bool {
+        self.on_commit == Level::Pass && self.on_build == Level::Pass && self.on_push == Level::Pass
+    }
+
     /// Get the effective level for a given mode.
     pub fn effective(&self, mode: LintMode) -> Level {
         match mode {
@@ -187,7 +206,8 @@ impl Severity {
 
     /// Human-readable label based on the gate profile.
     pub fn label(&self) -> &'static str {
-        if *self == Self::HARD_ERROR { "error" }
+        if *self == Self::OFF { "off" }
+        else if *self == Self::HARD_ERROR { "error" }
         else if *self == Self::BUILD_GATE { "build-gate" }
         else if *self == Self::PUSH_GATE { "push-gate" }
         else if *self == Self::ADVISORY { "warn" }
@@ -199,6 +219,22 @@ impl Severity {
             else if self.on_commit == Level::Error { "error" }
             else { "warn" }
         }
+    }
+}
+
+/// Parse a severity preset from a string name.
+///
+/// Supports: "off", "error"/"hard-error", "build-gate", "push-gate",
+/// "advisory"/"warn", "info".
+pub fn parse_severity(s: &str) -> Option<Severity> {
+    match s.trim().to_lowercase().as_str() {
+        "off" => Some(Severity::OFF),
+        "error" | "hard-error" | "hard_error" => Some(Severity::HARD_ERROR),
+        "build-gate" | "build_gate" => Some(Severity::BUILD_GATE),
+        "push-gate" | "push_gate" => Some(Severity::PUSH_GATE),
+        "advisory" | "warn" | "warning" => Some(Severity::ADVISORY),
+        "info" | "info-only" | "info_only" => Some(Severity::INFO_ONLY),
+        _ => None,
     }
 }
 
@@ -270,6 +306,12 @@ pub trait Lint {
     /// Source-only lints are skipped in `--doc-only` mode (when only
     /// doc templates are staged, no `.rs` files). Default: `true`.
     fn source_only(&self) -> bool { true }
+
+    /// The default severity for this lint's violations.
+    ///
+    /// Used when no config override is present. Lints should override
+    /// this to match what they currently hardcode.
+    fn default_severity(&self) -> Severity { Severity::HARD_ERROR }
 }
 
 /// Trait for cross-crate lints that compare data across all crates at once.
@@ -282,6 +324,12 @@ pub trait CrossCrateLint {
 
     /// Whether this lint only inspects source code (not docs).
     fn source_only(&self) -> bool { true }
+
+    /// The default severity for this lint's violations.
+    ///
+    /// Used when no config override is present. Lints should override
+    /// this to match what they currently hardcode.
+    fn default_severity(&self) -> Severity { Severity::HARD_ERROR }
 }
 
 // ---------------------------------------------------------------------------
@@ -315,14 +363,6 @@ pub fn all_lints() -> Vec<Box<dyn Lint>> {
         Box::new(no_self_define::NoSelfDefine),
         Box::new(registrable_completeness::RegistrableCompleteness),
         Box::new(repr_c_abi_safety::ReprCAbiSafety),
-        // NOTE: no_bare_pub is available but not enabled by default.
-        // Enable after annotating all crates with #[public_api] / #[internal_api].
-    ]
-}
-
-/// Returns future lint rules not yet enforced (need crate-wide annotation first).
-pub fn pending_lints() -> Vec<Box<dyn Lint>> {
-    vec![
         Box::new(no_bare_pub::NoBarePublic),
     ]
 }
@@ -355,30 +395,120 @@ pub fn all_cross_crate_lints() -> Vec<Box<dyn CrossCrateLint>> {
 /// When `doc_only` is true, skip lints that only inspect source code.
 /// This allows doc-only commits during DOC-EXEC phase without being
 /// blocked by pre-existing source issues.
-pub fn check_crate(ctx: &LintContext, doc_only: bool) -> Vec<LintError> {
-    let mut lints = all_lints();
-    lints.extend(pending_lints());
+///
+/// When `overrides` is provided, lint severities can be overridden:
+/// - If a lint name maps to a severity where all gates are `Pass`, the lint is skipped entirely.
+/// - If a lint name maps to another severity, all errors from that lint use the configured severity.
+/// - If a lint is not in the map, it uses its `default_severity()`.
+pub fn check_crate(ctx: &LintContext, doc_only: bool, overrides: Option<&HashMap<String, Severity>>) -> Vec<LintError> {
+    check_crate_with_extra(ctx, doc_only, overrides, &[])
+}
+
+/// Run all per-crate lints plus any custom lints on a single crate, returning violations.
+pub fn check_crate_with_extra(
+    ctx: &LintContext,
+    doc_only: bool,
+    overrides: Option<&HashMap<String, Severity>>,
+    extra_lints: &[Box<dyn Lint>],
+) -> Vec<LintError> {
+    let lints = all_lints();
+    // extra_lints is a slice of Box<dyn Lint> — we need to iterate by reference
     let mut errors = Vec::new();
-    for lint in &lints {
+
+    // Helper closure to process a single lint
+    let process_lint = |lint: &dyn Lint, errors: &mut Vec<LintError>| {
         if doc_only && lint.source_only() {
-            continue;
+            return;
         }
-        errors.extend(lint.check(ctx));
+
+        let effective_severity = if let Some(map) = overrides {
+            if let Some(sev) = map.get(lint.name()) {
+                if sev.is_off() {
+                    return; // skip entirely
+                }
+                Some(*sev)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let mut lint_errors = lint.check(ctx);
+
+        // Apply severity override: config value if present, otherwise the lint's default
+        let target_severity = effective_severity.unwrap_or_else(|| lint.default_severity());
+        for err in &mut lint_errors {
+            err.severity = target_severity;
+        }
+
+        errors.extend(lint_errors);
+    };
+
+    for lint in &lints {
+        process_lint(lint.as_ref(), &mut errors);
     }
+    for lint in extra_lints {
+        process_lint(lint.as_ref(), &mut errors);
+    }
+
     errors
 }
 
 /// Run all cross-crate lints, returning violations.
 ///
 /// When `doc_only` is true, skip lints that only inspect source code.
-pub fn check_cross_crate(crates: &[(&str, &LintContext)], doc_only: bool) -> Vec<LintError> {
+///
+/// When `overrides` is provided, lint severities can be overridden
+/// (same semantics as `check_crate`).
+pub fn check_cross_crate(crates: &[(&str, &LintContext)], doc_only: bool, overrides: Option<&HashMap<String, Severity>>) -> Vec<LintError> {
+    check_cross_crate_with_extra(crates, doc_only, overrides, &[])
+}
+
+/// Run all cross-crate lints plus any custom lints, returning violations.
+pub fn check_cross_crate_with_extra(
+    crates: &[(&str, &LintContext)],
+    doc_only: bool,
+    overrides: Option<&HashMap<String, Severity>>,
+    extra_lints: &[Box<dyn CrossCrateLint>],
+) -> Vec<LintError> {
     let lints = all_cross_crate_lints();
     let mut errors = Vec::new();
-    for lint in &lints {
+
+    let process_lint = |lint: &dyn CrossCrateLint, errors: &mut Vec<LintError>| {
         if doc_only && lint.source_only() {
-            continue;
+            return;
         }
-        errors.extend(lint.check_all(crates));
+
+        let effective_severity = if let Some(map) = overrides {
+            if let Some(sev) = map.get(lint.name()) {
+                if sev.is_off() {
+                    return; // skip entirely
+                }
+                Some(*sev)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let mut lint_errors = lint.check_all(crates);
+
+        let target_severity = effective_severity.unwrap_or_else(|| lint.default_severity());
+        for err in &mut lint_errors {
+            err.severity = target_severity;
+        }
+
+        errors.extend(lint_errors);
+    };
+
+    for lint in &lints {
+        process_lint(lint.as_ref(), &mut errors);
     }
+    for lint in extra_lints {
+        process_lint(lint.as_ref(), &mut errors);
+    }
+
     errors
 }

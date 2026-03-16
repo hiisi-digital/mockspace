@@ -32,6 +32,7 @@ const NAMED_ITEM_KINDS: &[&str] = &[
 pub struct DesignDocSourceMismatch;
 
 impl Lint for DesignDocSourceMismatch {
+    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
     fn name(&self) -> &'static str {
         LINT_NAME
     }

@@ -1,2 +1,2 @@
 [alias]
-mock = "run --manifest-path /Users/orgrinrt/Dev/loimu/tools/mockspace/Cargo.toml -- --dir mock"
+mock = "run --manifest-path target/mockspace-proxy/Cargo.toml -- --dir mock"

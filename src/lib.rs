@@ -33,10 +33,15 @@ mod entry;
 pub const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 // Re-export lint rules for convenience
-pub use mockspace_lint_rules::{LintMode, Level, Severity, LintError, LintContext};
+pub use mockspace_lint_rules::{LintMode, Level, Severity, LintError, LintContext, Lint, CrossCrateLint};
 
 /// Entry point — parses CLI args and runs the mockspace pipeline.
 ///
 /// Called by both mockspace's own `main.rs` and by the generated
 /// `target/mockspace-proxy/` runner crate.
 pub use entry::run;
+
+/// Entry point with consumer-provided custom lints.
+///
+/// Called by proxy crates that define custom lints in `mock/lints/`.
+pub use entry::run_with_custom_lints;

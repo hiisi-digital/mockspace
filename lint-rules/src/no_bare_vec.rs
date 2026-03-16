@@ -73,6 +73,7 @@ const MACRO_FORBIDDEN: &[(&str, &str)] = &[
 pub struct NoBareVec;
 
 impl Lint for NoBareVec {
+    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
     fn name(&self) -> &'static str {
         LINT_NAME
     }

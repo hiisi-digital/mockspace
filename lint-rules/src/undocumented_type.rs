@@ -29,6 +29,7 @@ const LINT_NAME: &str = "undocumented-type";
 pub struct UndocumentedType;
 
 impl CrossCrateLint for UndocumentedType {
+    fn default_severity(&self) -> crate::Severity { crate::Severity::BUILD_GATE }
     fn name(&self) -> &'static str {
         LINT_NAME
     }
