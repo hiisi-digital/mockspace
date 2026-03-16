@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
 #[cfg(unix)]
@@ -58,6 +59,537 @@ fn set_executable(path: &Path) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Hook metadata for settings generation (Phase 7)
+// ---------------------------------------------------------------------------
+
+/// Metadata collected from each hook for settings generation.
+struct HookMeta {
+    /// Output file name (e.g. "check-byline.sh").
+    name: String,
+    /// Tool matchers this hook should fire on (e.g. ["Bash", "Write", "Edit"]).
+    matchers: Vec<String>,
+}
+
+/// Derive tool matchers from a hook file name using naming conventions.
+fn matchers_from_name(name: &str) -> Vec<String> {
+    if name.ends_with("-guard.sh") {
+        vec!["Bash".into(), "Write".into(), "Edit".into()]
+    } else if name.ends_with("-reminder.sh") {
+        vec!["Bash".into()]
+    } else if name.starts_with("check-") {
+        vec!["Bash".into()]
+    } else {
+        vec!["Bash".into()]
+    }
+}
+
+/// Parse `# @matchers:` frontmatter from the first 5 lines of a hook template.
+fn parse_hook_matchers(template: &str) -> Option<Vec<String>> {
+    for line in template.lines().take(5) {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("# @matchers:") {
+            let matchers: Vec<String> = rest
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !matchers.is_empty() {
+                return Some(matchers);
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6: Builtin agent hooks
+// ---------------------------------------------------------------------------
+
+/// Derive the agent mode env var name from a project name.
+///
+/// e.g. "saalis" -> "SAALIS_AGENT_MODE", "polka-dots" -> "POLKA_DOTS_AGENT_MODE"
+fn agent_mode_var(project_name: &str) -> String {
+    let upper = project_name.to_uppercase().replace('-', "_");
+    format!("{upper}_AGENT_MODE")
+}
+
+/// Generate the check-byline.sh hook content (without HOOK_HELPERS substitution).
+fn builtin_check_byline(cfg: &Config) -> String {
+    let mode_var = agent_mode_var(&cfg.project_name);
+    format!(
+        r##"#!/usr/bin/env bash
+# Built-in mockspace hook: enforce commit authorship policy
+set -uo pipefail
+__INPUT=$(cat)
+{{{{HOOK_HELPERS}}}}
+COMMAND=$(_extract "command")
+# Only check git commit commands
+if ! echo "$COMMAND" | grep -q "git commit"; then exit 0; fi
+# Check for Co-Authored-By
+HAS_BYLINE=false
+if echo "$COMMAND" | grep -qi "co-authored-by"; then HAS_BYLINE=true; fi
+# Check agent mode env var
+AGENT_MODE="${{{mode_var}:-assistant}}"
+if [[ "$AGENT_MODE" == "autonomous" ]]; then
+    if [[ "$HAS_BYLINE" == "false" ]]; then
+        deny "Autonomous mode requires Co-Authored-By byline"
+    fi
+else
+    if [[ "$HAS_BYLINE" == "true" ]]; then
+        deny "Blocked: Co-Authored-By byline detected in assistant mode. The human is the author. Remove the byline. Set {mode_var}=autonomous if this is genuinely autonomous work."
+    fi
+fi
+exit 0
+"##
+    )
+}
+
+/// Generate the mockspace-write-guard.sh hook content.
+fn builtin_write_guard(cfg: &Config) -> String {
+    let mock_rel = cfg
+        .mock_dir
+        .strip_prefix(&cfg.repo_root)
+        .unwrap_or(&cfg.mock_dir)
+        .to_string_lossy()
+        .to_string();
+    format!(
+        r##"#!/usr/bin/env bash
+# Built-in mockspace hook: phase gate enforcement
+# Mirrors the lint rules: changelist_doc_gate, changelist_required,
+# changelist_lock, changelist_immutability.
+set -uo pipefail
+__INPUT=$(cat)
+MOCK_ROOT="{mock_rel}"
+{{{{HOOK_HELPERS}}}}
+FILE_PATH=$(_extract file_path)
+COMMAND=$(_extract command)
+# --- Determine target path ---
+TARGET=""
+if [[ -n "$FILE_PATH" ]]; then
+    TARGET="$FILE_PATH"
+elif [[ -n "$COMMAND" ]]; then
+    WRITE_MARKERS='(>>?|tee|mv|cp|rm|sed -i|perl -i|dd|install)'
+    if ! echo "$COMMAND" | grep -qE "$WRITE_MARKERS"; then
+        exit 0
+    fi
+    if echo "$COMMAND" | grep -q "$MOCK_ROOT"; then
+        TARGET=$(echo "$COMMAND" | grep -oE "[^ ]*${{MOCK_ROOT}}[^ ]*" | head -1) || true
+    fi
+fi
+# Not targeting mockspace? Allow.
+if [[ -z "$TARGET" ]] || ! echo "$TARGET" | grep -q "$MOCK_ROOT"; then
+    exit 0
+fi
+REL_PATH=$(echo "$TARGET" | sed "s|.*${{MOCK_ROOT}}/||")
+# --- Always allowed: agent templates ---
+if echo "$REL_PATH" | grep -qE '^agent/'; then
+    exit 0
+fi
+# --- Always allowed: root-level mockspace templates ---
+if echo "$REL_PATH" | grep -qE '^[^/]+\.md\.tmpl$'; then
+    exit 0
+fi
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ -z "$REPO_ROOT" ]]; then
+    exit 0
+fi
+# --- Detect phase ---
+DOC_CL_ACTIVE=$(git ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
+    | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.doc\.md$" \
+    | head -1) || true
+DOC_CL_LOCKED=$(git ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
+    | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.doc\.lock\.md$" \
+    | head -1) || true
+SRC_CL_ACTIVE=$(git ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
+    | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.src\.md$" \
+    | head -1) || true
+SRC_CL_LOCKED=$(git ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
+    | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.src\.lock\.md$" \
+    | head -1) || true
+if [[ -n "$SRC_CL_LOCKED" ]]; then
+    PHASE="DONE"
+elif [[ -n "$SRC_CL_ACTIVE" ]]; then
+    PHASE="SRC"
+elif [[ -n "$DOC_CL_LOCKED" ]]; then
+    PHASE="SRC-PLAN"
+elif [[ -n "$DOC_CL_ACTIVE" ]]; then
+    PHASE="DOC"
+else
+    PHASE="TOPIC"
+fi
+DIRTY_DOCS=$(git diff --name-only 2>/dev/null \
+    | grep -E "^${{MOCK_ROOT}}/crates/.*\.(md\.tmpl|md)$" | head -1) || true
+# --- Design round files ---
+if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
+    FULL_GIT_PATH="${{MOCK_ROOT}}/${{REL_PATH}}"
+    BASENAME=$(basename "$REL_PATH")
+    if [[ "$BASENAME" == "README.md" ]]; then
+        exit 0
+    fi
+    if echo "$REL_PATH" | grep -qE '^design_rounds/[^/]+/'; then
+        deny "BLOCKED: '${{REL_PATH}}' is inside a closed round subdirectory.\\n\\nClosed rounds are archived history. Every file in them is frozen forever.\\nNothing in a closed round subdirectory can be edited.\\n\\nCurrent phase: ${{PHASE}}"
+    fi
+    IS_CHANGELIST=false
+    IS_DOC_CHANGELIST=false
+    IS_SRC_CHANGELIST=false
+    IS_LOCKED=false
+    IS_DEPRECATED=false
+    if echo "$BASENAME" | grep -qE '_changelist\.(doc|src)\.(lock|deprecated)\.md$'; then
+        IS_CHANGELIST=true
+        echo "$BASENAME" | grep -q '\.doc\.' && IS_DOC_CHANGELIST=true
+        echo "$BASENAME" | grep -q '\.src\.' && IS_SRC_CHANGELIST=true
+        echo "$BASENAME" | grep -q '\.lock\.' && IS_LOCKED=true
+        echo "$BASENAME" | grep -q '\.deprecated\.' && IS_DEPRECATED=true
+    elif echo "$BASENAME" | grep -qE '_changelist\.(doc|src)\.md$'; then
+        IS_CHANGELIST=true
+        echo "$BASENAME" | grep -q '\.doc\.' && IS_DOC_CHANGELIST=true
+        echo "$BASENAME" | grep -q '\.src\.' && IS_SRC_CHANGELIST=true
+    fi
+    if git ls-files --error-unmatch "$FULL_GIT_PATH" >/dev/null 2>&1; then
+        if $IS_CHANGELIST && $IS_LOCKED; then
+            deny "BLOCKED: locked changelist '${{BASENAME}}' is FROZEN.\\n\\nCurrent phase: ${{PHASE}}\\nLint: changelist-immutability (HARD_ERROR)"
+        fi
+        if $IS_CHANGELIST && $IS_DEPRECATED; then
+            deny "BLOCKED: deprecated changelist '${{BASENAME}}' is FROZEN.\\n\\nCurrent phase: ${{PHASE}}\\nLint: changelist-immutability (HARD_ERROR)"
+        fi
+        if $IS_DOC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
+            if [[ "$PHASE" == "DOC" ]]; then exit 0; fi
+            deny "BLOCKED: cannot edit doc changelist '${{BASENAME}}' -- not in DOC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
+        fi
+        if $IS_SRC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
+            if [[ "$PHASE" == "SRC" ]]; then exit 0; fi
+            deny "BLOCKED: cannot edit source changelist '${{BASENAME}}' -- not in SRC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
+        fi
+        if ! $IS_CHANGELIST; then
+            deny "BLOCKED: topic '${{BASENAME}}' is committed and FROZEN.\\n\\nCurrent phase: ${{PHASE}}"
+        fi
+    fi
+    if ! $IS_CHANGELIST; then
+        if [[ "$PHASE" != "TOPIC" ]]; then
+            deny "BLOCKED: cannot create topic '${{BASENAME}}' -- not in TOPIC phase.\\n\\nPhase: ${{PHASE}}."
+        fi
+        exit 0
+    fi
+    if $IS_DOC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
+        if [[ "$PHASE" != "TOPIC" ]]; then
+            deny "BLOCKED: cannot create doc changelist '${{BASENAME}}' -- one already exists or phase is wrong.\\n\\nPhase: ${{PHASE}}."
+        fi
+        exit 0
+    fi
+    if $IS_SRC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
+        if [[ "$PHASE" != "SRC-PLAN" ]]; then
+            deny "BLOCKED: cannot create source changelist '${{BASENAME}}' -- not in SRC-PLAN phase.\\n\\nPhase: ${{PHASE}}."
+        fi
+        exit 0
+    fi
+    if $IS_LOCKED || $IS_DEPRECATED; then exit 0; fi
+    exit 0
+fi
+# --- Crate files are phase-gated ---
+if echo "$REL_PATH" | grep -qE '^crates/'; then
+    if echo "$REL_PATH" | grep -qE 'SHAME\.md\.tmpl$'; then exit 0; fi
+    if echo "$REL_PATH" | grep -qE '\.(md\.tmpl|md)$'; then
+        if [[ "$PHASE" != "DOC" ]]; then
+            deny "BLOCKED: cannot edit '${{REL_PATH}}' -- not in DOC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-doc-gate (HARD_ERROR)"
+        fi
+        exit 0
+    fi
+    if echo "$REL_PATH" | grep -qE '\.rs$'; then
+        if [[ "$PHASE" != "SRC" ]]; then
+            deny "BLOCKED: cannot edit '${{REL_PATH}}' -- not in SRC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-required (HARD_ERROR)"
+        fi
+        exit 0
+    fi
+    if [[ "$PHASE" == "TOPIC" ]] || [[ "$PHASE" == "DONE" ]]; then
+        deny "BLOCKED: cannot edit '${{REL_PATH}}' -- no changelist exists or round is complete.\\n\\nPhase: ${{PHASE}}."
+    fi
+    exit 0
+fi
+# --- Root Cargo.toml ---
+if echo "$REL_PATH" | grep -qE '^Cargo\.toml$'; then
+    if [[ "$PHASE" == "TOPIC" ]] || [[ "$PHASE" == "DONE" ]]; then
+        deny "BLOCKED: cannot edit '${{REL_PATH}}' -- no changelist exists or round is complete.\\n\\nPhase: ${{PHASE}}."
+    fi
+    exit 0
+fi
+exit 0
+"##
+    )
+}
+
+/// Generate the mockspace-reminder.sh hook content.
+fn builtin_reminder(cfg: &Config) -> String {
+    let mock_rel = cfg
+        .mock_dir
+        .strip_prefix(&cfg.repo_root)
+        .unwrap_or(&cfg.mock_dir)
+        .to_string_lossy()
+        .to_string();
+    format!(
+        r##"#!/usr/bin/env bash
+# Built-in mockspace hook: print mockspace rules reminder before tool use
+# Non-blocking. Only fires when the tool targets mockspace paths.
+set -uo pipefail
+__INPUT=$(cat)
+{{{{HOOK_HELPERS}}}}
+FILE_PATH=$(_extract file_path)
+COMMAND=$(_extract command)
+IS_MOCKSPACE=false
+if [[ -n "$FILE_PATH" ]] && echo "$FILE_PATH" | grep -q "{mock_rel}"; then
+    IS_MOCKSPACE=true
+fi
+if [[ -n "$COMMAND" ]] && echo "$COMMAND" | grep -q "{mock_rel}"; then
+    IS_MOCKSPACE=true
+fi
+if [[ "$IS_MOCKSPACE" != "true" ]]; then
+    exit 0
+fi
+context "MOCKSPACE REMINDER: You are operating on mockspace files. Follow the design round workflow: TOPIC -> DOC -> SRC-PLAN -> SRC -> DONE. Check phase before editing. Use 'cargo mock' commands for phase transitions."
+exit 0
+"##
+    )
+}
+
+/// Generate the no-yagni-guard.sh hook content.
+fn builtin_no_yagni() -> String {
+    r##"#!/usr/bin/env bash
+# Built-in mockspace hook: flag YAGNI reasoning in commit messages
+set -uo pipefail
+__INPUT=$(cat)
+{{HOOK_HELPERS}}
+COMMAND=$(_extract "command")
+# Only check git commit commands
+if ! echo "$COMMAND" | grep -q "git commit"; then exit 0; fi
+# Check for YAGNI-like keywords in the commit message
+YAGNI_PATTERNS="yagni|premature|over-engineer|overkill|good enough for now|not needed yet|too early|unnecessary complexity|keep it simple"
+if echo "$COMMAND" | grep -qiE "$YAGNI_PATTERNS"; then
+    context "WARNING: YAGNI-flavored reasoning detected in commit message. This project embraces the ideal when designing -- extensible, trait-based, registered. Shortcuts justified by 'you ain't gonna need it' are not welcome. Reconsider the commit message."
+fi
+exit 0
+"##
+    .to_string()
+}
+
+/// Write a single builtin hook to both Claude and Copilot directories.
+///
+/// Returns the hook metadata and increments count by 2 (one per platform).
+fn write_builtin_hook(
+    name: &str,
+    content: &str,
+    claude_hooks_dir: &Path,
+    copilot_hooks_dir: &Path,
+    count: &mut usize,
+) -> HookMeta {
+    // The content uses {{HOOK_HELPERS}} (literal double braces) for substitution
+    let claude_content = content.replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS);
+    let claude_path = claude_hooks_dir.join(name);
+    fs::write(&claude_path, &claude_content).expect("failed to write builtin claude hook");
+    #[cfg(unix)]
+    set_executable(&claude_path);
+    eprintln!("  {} (builtin)", claude_path.display());
+    *count += 1;
+
+    let copilot_content = content.replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS);
+    let copilot_path = copilot_hooks_dir.join(name);
+    fs::write(&copilot_path, &copilot_content).expect("failed to write builtin copilot hook");
+    #[cfg(unix)]
+    set_executable(&copilot_path);
+    eprintln!("  {} (builtin)", copilot_path.display());
+    *count += 1;
+
+    HookMeta {
+        name: name.to_string(),
+        matchers: matchers_from_name(name),
+    }
+}
+
+/// Generate all builtin agent hooks.
+///
+/// Writes 4 hooks to both `.claude/hooks/` and `.github/hooks/`:
+/// - check-byline.sh
+/// - mockspace-write-guard.sh
+/// - mockspace-reminder.sh
+/// - no-yagni-guard.sh
+fn generate_builtin_hooks(
+    cfg: &Config,
+    claude_hooks_dir: &Path,
+    copilot_hooks_dir: &Path,
+    count: &mut usize,
+) -> Vec<HookMeta> {
+    let mut hooks = Vec::new();
+
+    hooks.push(write_builtin_hook(
+        "check-byline.sh",
+        &builtin_check_byline(cfg),
+        claude_hooks_dir,
+        copilot_hooks_dir,
+        count,
+    ));
+
+    hooks.push(write_builtin_hook(
+        "mockspace-write-guard.sh",
+        &builtin_write_guard(cfg),
+        claude_hooks_dir,
+        copilot_hooks_dir,
+        count,
+    ));
+
+    hooks.push(write_builtin_hook(
+        "mockspace-reminder.sh",
+        &builtin_reminder(cfg),
+        claude_hooks_dir,
+        copilot_hooks_dir,
+        count,
+    ));
+
+    hooks.push(write_builtin_hook(
+        "no-yagni-guard.sh",
+        &builtin_no_yagni(),
+        claude_hooks_dir,
+        copilot_hooks_dir,
+        count,
+    ));
+
+    hooks
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7: Auto-generated settings
+// ---------------------------------------------------------------------------
+
+/// Generate `settings.json` (Claude) and `hooks.json` (Copilot) from hook metadata.
+fn generate_settings(
+    repo_root: &Path,
+    cfg: &Config,
+    all_hooks: &[HookMeta],
+) -> usize {
+    let mut count = 0;
+
+    // Group hooks by matcher
+    let mut matcher_to_hooks: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for hook in all_hooks {
+        for matcher in &hook.matchers {
+            matcher_to_hooks
+                .entry(matcher.clone())
+                .or_default()
+                .push(hook.name.clone());
+        }
+    }
+
+    // --- Claude settings.json ---
+    let claude_dir = repo_root.join(".claude");
+    let _ = fs::create_dir_all(&claude_dir);
+
+    let mut claude_hooks_entries = Vec::new();
+    for (matcher, hook_names) in &matcher_to_hooks {
+        for hook_name in hook_names {
+            claude_hooks_entries.push(format!(
+                r#"      {{
+        "matcher": "PreToolUse",
+        "hooks": [
+          {{
+            "type": "command",
+            "command": ".claude/hooks/{hook_name}",
+            "event": "PreToolUse",
+            "toolName": "{matcher}"
+          }}
+        ]
+      }}"#
+            ));
+        }
+    }
+
+    // Start with auto-generated hooks
+    let hooks_json_inner = claude_hooks_entries.join(",\n");
+
+    // Check for consumer settings override (non-hook fields only)
+    let agent_settings_path = cfg.mock_dir.join("agent").join("settings").join("claude.json");
+    let attribution = if agent_settings_path.is_file() {
+        // Read the consumer template, look for non-hooks fields to merge
+        let consumer = fs::read_to_string(&agent_settings_path).unwrap_or_default();
+        // Very simple: extract "attribution" field if present
+        extract_json_string_field(&consumer, "attribution")
+    } else {
+        None
+    };
+
+    let attribution_line = if let Some(attr) = attribution {
+        format!(",\n    \"attribution\": \"{attr}\"")
+    } else {
+        String::new()
+    };
+
+    let claude_settings = format!(
+        r#"{{
+    "hooks": {{
+      "PreToolUse": [
+{hooks_json_inner}
+      ]
+    }}{attribution_line}
+}}"#
+    );
+
+    let claude_settings_path = claude_dir.join("settings.json");
+    fs::write(&claude_settings_path, &claude_settings)
+        .expect("failed to write claude settings.json");
+    eprintln!("  {} (auto-generated)", claude_settings_path.display());
+    count += 1;
+
+    // --- Copilot hooks.json ---
+    let copilot_hooks_dir = repo_root.join(".github").join("hooks");
+    let _ = fs::create_dir_all(&copilot_hooks_dir);
+
+    let mut copilot_entries = Vec::new();
+    for (matcher, hook_names) in &matcher_to_hooks {
+        for hook_name in hook_names {
+            copilot_entries.push(format!(
+                r#"    {{
+      "name": "{hook_name}",
+      "command": ".github/hooks/{hook_name}",
+      "event": "pre_tool_use",
+      "tool": "{matcher}"
+    }}"#
+            ));
+        }
+    }
+
+    let copilot_hooks_inner = copilot_entries.join(",\n");
+    let copilot_hooks_json = format!(
+        r#"{{
+  "hooks": [
+{copilot_hooks_inner}
+  ]
+}}"#
+    );
+
+    let copilot_hooks_path = copilot_hooks_dir.join("hooks.json");
+    fs::write(&copilot_hooks_path, &copilot_hooks_json)
+        .expect("failed to write copilot hooks.json");
+    eprintln!("  {} (auto-generated)", copilot_hooks_path.display());
+    count += 1;
+
+    count
+}
+
+/// Very simple JSON string field extractor (no serde dependency).
+fn extract_json_string_field(json: &str, field: &str) -> Option<String> {
+    let pattern = format!("\"{field}\"");
+    let pos = json.find(&pattern)?;
+    let after = &json[pos + pattern.len()..];
+    // Skip whitespace and colon
+    let after = after.trim_start();
+    let after = after.strip_prefix(':')?;
+    let after = after.trim_start();
+    let after = after.strip_prefix('"')?;
+    let end = after.find('"')?;
+    Some(after[..end].to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
+
 /// Generate agent rules, skills, hooks, and settings from templates in agent/ directory.
 ///
 /// Reads templates from `mock_dir/agent/`, substitutes template variables,
@@ -83,7 +615,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
     vars.push(("POSTAMBLE".to_string(), postamble.clone()));
     let mut count = 0;
 
-    // --- MAIN.md.tmpl → .claude/CLAUDE.md + .github/copilot-instructions.md ---
+    // --- MAIN.md.tmpl -> .claude/CLAUDE.md + .github/copilot-instructions.md ---
     let main_tmpl = agent_dir.join("MAIN.md.tmpl");
     if main_tmpl.is_file() {
         let body = read_and_substitute(&main_tmpl, &vars);
@@ -114,7 +646,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         count += 1;
     }
 
-    // --- rules/*.md.tmpl → .claude/rules/*.md + .github/instructions/*.instructions.md ---
+    // --- rules/*.md.tmpl -> .claude/rules/*.md + .github/instructions/*.instructions.md ---
     let rules_dir = agent_dir.join("rules");
     if rules_dir.is_dir() {
         let claude_rules_dir = repo_root.join(".claude").join("rules");
@@ -173,7 +705,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         }
     }
 
-    // --- skills/*/SKILL.md.tmpl → .claude/skills/*/SKILL.md + .github/skills/*/SKILL.md ---
+    // --- skills/*/SKILL.md.tmpl -> .claude/skills/*/SKILL.md + .github/skills/*/SKILL.md ---
     let skills_dir = agent_dir.join("skills");
     if skills_dir.is_dir() {
         let claude_skills_dir = repo_root.join(".claude").join("skills");
@@ -232,16 +764,18 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         }
     }
 
-    // --- hooks/*.sh.tmpl → .claude/hooks/*.sh + .github/hooks/*.sh ---
-    // Hook templates use {{HOOK_HELPERS}} placeholder, which xtask replaces
-    // with platform-specific functions: _extract(), deny(), context().
+    // --- Phase 6: Builtin hooks (generated BEFORE consumer hooks) ---
+    let claude_hooks_dir = repo_root.join(".claude").join("hooks");
+    let copilot_hooks_dir = repo_root.join(".github").join("hooks");
+    let _ = fs::create_dir_all(&claude_hooks_dir);
+    let _ = fs::create_dir_all(&copilot_hooks_dir);
+
+    let mut all_hooks: Vec<HookMeta> =
+        generate_builtin_hooks(cfg, &claude_hooks_dir, &copilot_hooks_dir, &mut count);
+
+    // --- Consumer hooks: hooks/*.sh.tmpl -> .claude/hooks/*.sh + .github/hooks/*.sh ---
     let hooks_dir = agent_dir.join("hooks");
     if hooks_dir.is_dir() {
-        let claude_hooks_dir = repo_root.join(".claude").join("hooks");
-        let copilot_hooks_dir = repo_root.join(".github").join("hooks");
-        let _ = fs::create_dir_all(&claude_hooks_dir);
-        let _ = fs::create_dir_all(&copilot_hooks_dir);
-
         let mut entries: Vec<_> = fs::read_dir(&hooks_dir)
             .unwrap()
             .filter_map(|e| e.ok())
@@ -255,10 +789,14 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         for entry in entries {
             let path = entry.path();
             let tmpl_name = entry.file_name().to_string_lossy().to_string();
-            // Strip .tmpl suffix: "check-byline.sh.tmpl" → "check-byline.sh"
+            // Strip .tmpl suffix: "check-byline.sh.tmpl" -> "check-byline.sh"
             let out_name = tmpl_name.trim_end_matches(".tmpl");
 
             let template = fs::read_to_string(&path).expect("failed to read hook template");
+
+            // Parse matchers from frontmatter or fall back to naming convention
+            let matchers = parse_hook_matchers(&template)
+                .unwrap_or_else(|| matchers_from_name(out_name));
 
             // substitute general template variables first
             let template = substitute_vars(&template, &vars);
@@ -280,43 +818,16 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             set_executable(&copilot_path);
             eprintln!("  {}", copilot_path.display());
             count += 1;
+
+            all_hooks.push(HookMeta {
+                name: out_name.to_string(),
+                matchers,
+            });
         }
     }
 
-    // --- settings/ → .claude/settings.json + .github/hooks/*.json ---
-    let settings_dir = agent_dir.join("settings");
-    if settings_dir.is_dir() {
-        let repo_root_str = repo_root.to_string_lossy();
-
-        // Claude settings (template: substitute {{REPO_ROOT}} with actual path)
-        let claude_settings_src = settings_dir.join("claude.json");
-        if claude_settings_src.is_file() {
-            let claude_settings_dst = repo_root.join(".claude").join("settings.json");
-            let _ = fs::create_dir_all(claude_settings_dst.parent().unwrap());
-            let content = fs::read_to_string(&claude_settings_src)
-                .expect("failed to read claude settings template");
-            let content = content.replace("{{REPO_ROOT}}", &repo_root_str);
-            fs::write(&claude_settings_dst, content)
-                .expect("failed to write claude settings");
-            eprintln!("  {}", claude_settings_dst.display());
-            count += 1;
-        }
-
-        // Copilot hooks config (template: substitute {{REPO_ROOT}} with actual path)
-        let copilot_hooks_src = settings_dir.join("copilot-hooks.json");
-        if copilot_hooks_src.is_file() {
-            let copilot_hooks_dir = repo_root.join(".github").join("hooks");
-            let _ = fs::create_dir_all(&copilot_hooks_dir);
-            let copilot_hooks_dst = copilot_hooks_dir.join("hooks.json");
-            let content = fs::read_to_string(&copilot_hooks_src)
-                .expect("failed to read copilot hooks template");
-            let content = content.replace("{{REPO_ROOT}}", &repo_root_str);
-            fs::write(&copilot_hooks_dst, content)
-                .expect("failed to write copilot hooks config");
-            eprintln!("  {}", copilot_hooks_dst.display());
-            count += 1;
-        }
-    }
+    // --- Phase 7: Auto-generate settings from discovered hooks ---
+    count += generate_settings(repo_root, cfg, &all_hooks);
 
     count
 }

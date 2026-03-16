@@ -57,7 +57,7 @@ pub struct Config {
     // --- Domain-specific config ---
 
     /// Macro icon+label for STRUCTURE.md domain items.
-    /// e.g. "define_signal" → "📡 signal"
+    /// e.g. "define_signal" -> "signal"
     pub domain_kinds: BTreeMap<String, String>,
 
     /// Known macros for DESIGN.md table. (name, description, usage)
@@ -67,10 +67,10 @@ pub struct Config {
     /// If empty, falls back to known_macros.
     pub agent_macros: Vec<(String, String, String)>,
 
-    /// Macro graph styling: name → (label, icon, bg_color, fg_color)
+    /// Macro graph styling: name -> (label, icon, bg_color, fg_color)
     pub macro_styles: BTreeMap<String, MacroStyle>,
 
-    /// Crate header colors for graph: short_name → (bg, fg)
+    /// Crate header colors for graph: short_name -> (bg, fg)
     pub crate_colors: BTreeMap<String, (String, String)>,
 
     /// Layer labels by depth index.
@@ -82,7 +82,7 @@ pub struct Config {
     /// Label for the primary domain macro column (e.g. "Signals").
     pub primary_domain_label: String,
 
-    /// Crate companion grouping for graph rank: source → target.
+    /// Crate companion grouping for graph rank: source -> target.
     pub crate_grouping: BTreeMap<String, String>,
 }
 
@@ -98,7 +98,7 @@ impl MacroStyle {
     pub fn default_for(macro_name: &str) -> Self {
         Self {
             label: macro_name.strip_prefix("define_").unwrap_or("generated").to_string(),
-            icon: "⚙".to_string(),
+            icon: "\u{2699}".to_string(),
             bg: "#F5F5F5".to_string(),
             fg: "#616161".to_string(),
         }
@@ -154,7 +154,7 @@ impl Config {
             .unwrap_or(InstallMode::Replace);
 
         // --- Lint overrides ---
-        let lint_overrides = parse_lints_section(&toml_content);
+        let lint_overrides = parse_lints_section(&toml_content, &crate_prefix);
 
         // --- Domain-specific config ---
 
@@ -188,14 +188,14 @@ impl Config {
         }
     }
 
-    /// Get domain kind label for a macro name (e.g. "define_signal" → "📡 signal").
+    /// Get domain kind label for a macro name (e.g. "define_signal" -> "signal").
     pub fn domain_kind(&self, macro_name: &str) -> String {
         if let Some(label) = self.domain_kinds.get(macro_name) {
             return label.clone();
         }
         match macro_name.strip_prefix("define_") {
-            Some(kind) => format!("⚙ {kind}"),
-            None => "⚙ generated".to_string(),
+            Some(kind) => format!("\u{2699} {kind}"),
+            None => "\u{2699} generated".to_string(),
         }
     }
 
@@ -386,20 +386,20 @@ fn parse_color_section(content: &str, section_name: &str) -> BTreeMap<String, (S
 ///
 /// Supports multiple formats:
 ///
-/// **String value** — applies a preset to all gates:
+/// **String value** -- applies a preset to all gates:
 /// ```toml
 /// [lints]
 /// no-float = "off"
 /// no-todo = "advisory"
 /// ```
 ///
-/// **Inline table value** — per-gate levels (must be single-line):
+/// **Inline table value** -- per-gate levels (must be single-line):
 /// ```toml
 /// [lints]
 /// no-float = { commit = "warn", build = "error", push = "error" }
 /// ```
 ///
-/// **Sub-table** — severity + parameters:
+/// **Sub-table** -- severity + parameters:
 /// ```toml
 /// [lints.no-manual-id]
 /// severity = "error"
@@ -413,13 +413,21 @@ fn parse_color_section(content: &str, section_name: &str) -> BTreeMap<String, (S
 /// type-alias = "warn"
 /// ```
 ///
+/// **Named rule sub-tables** (for forbidden-imports):
+/// ```toml
+/// [lints.forbidden-imports.rule.no-std-in-sdk]
+/// scope = "{prefix}-sdk"
+/// forbidden = "std::*"
+/// reason = "SDK is #![no_std] + alloc"
+/// ```
+///
 /// Missing keys in an inline table default to `Level::Pass`.
 ///
 /// If `[lints]` section is absent, returns an empty config (all lints use defaults).
 ///
 /// NOTE: Multi-line inline tables are NOT supported. All inline table values
 /// must be on a single line.
-fn parse_lints_section(content: &str) -> LintConfig {
+fn parse_lints_section(content: &str, crate_prefix: &str) -> LintConfig {
     let mut base = HashMap::new();
     let mut findings: HashMap<String, HashMap<String, Severity>> = HashMap::new();
     let mut params: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -427,10 +435,11 @@ fn parse_lints_section(content: &str) -> LintConfig {
     // State machine for section tracking
     enum Section {
         None,
-        Lints,                          // [lints]
-        LintSub(String),                // [lints.lint-name]
-        LintFindings(String),           // [lints.lint-name.findings]
-        Other,                          // any other [section]
+        Lints,                              // [lints]
+        LintSub(String),                    // [lints.lint-name]
+        LintFindings(String),               // [lints.lint-name.findings]
+        LintRule(String, String),           // [lints.lint-name.rule.rule-name]
+        Other,                              // any other [section]
     }
 
     let mut section = Section::None;
@@ -444,14 +453,34 @@ fn parse_lints_section(content: &str) -> LintConfig {
             if header == "lints" {
                 section = Section::Lints;
             } else if let Some(rest) = header.strip_prefix("lints.") {
-                if let Some((lint_name, sub)) = rest.rsplit_once('.') {
-                    if sub == "findings" {
-                        section = Section::LintFindings(lint_name.to_string());
-                    } else {
-                        section = Section::Other; // unknown sub-sub-section
+                // Parse multi-level sub-sections:
+                // lints.lint-name
+                // lints.lint-name.findings
+                // lints.lint-name.rule.rule-name
+                let parts: Vec<&str> = rest.splitn(3, '.').collect();
+                match parts.len() {
+                    1 => {
+                        // [lints.lint-name]
+                        section = Section::LintSub(parts[0].to_string());
                     }
-                } else {
-                    section = Section::LintSub(rest.to_string());
+                    2 => {
+                        if parts[1] == "findings" {
+                            section = Section::LintFindings(parts[0].to_string());
+                        } else {
+                            section = Section::Other;
+                        }
+                    }
+                    3 => {
+                        if parts[1] == "rule" {
+                            // [lints.lint-name.rule.rule-name]
+                            section = Section::LintRule(parts[0].to_string(), parts[2].to_string());
+                        } else {
+                            section = Section::Other;
+                        }
+                    }
+                    _ => {
+                        section = Section::Other;
+                    }
                 }
             } else {
                 section = Section::Other;
@@ -517,6 +546,17 @@ fn parse_lints_section(content: &str) -> LintConfig {
                         if let Some(severity) = parse_severity(val) {
                             base.insert(lint_name.clone(), severity);
                         }
+                    } else if key == "commit" || key == "build" || key == "push" {
+                        // Per-gate severity in sub-table form
+                        if let Some(level) = Level::from_str_name(val) {
+                            let entry = base.entry(lint_name.clone()).or_insert(Severity::OFF);
+                            match key {
+                                "commit" => entry.on_commit = level,
+                                "build" => entry.on_build = level,
+                                "push" => entry.on_push = level,
+                                _ => {}
+                            }
+                        }
                     } else {
                         // Other keys are lint parameters
                         params
@@ -538,6 +578,24 @@ fn parse_lints_section(content: &str) -> LintConfig {
                             .or_default()
                             .insert(kind, severity);
                     }
+                }
+            }
+
+            Section::LintRule(lint_name, rule_name) => {
+                // [lints.lint-name.rule.rule-name] section
+                // Flatten into params as: "rule.rule-name.key" = "value"
+                if let Some((key, val)) = trimmed.split_once('=') {
+                    let key = key.trim();
+                    let val = val.trim().trim_matches('"');
+
+                    // Expand {prefix} placeholder in values
+                    let val = val.replace("{prefix}", crate_prefix);
+
+                    let param_key = format!("rule.{rule_name}.{key}");
+                    params
+                        .entry(lint_name.clone())
+                        .or_default()
+                        .insert(param_key, val);
                 }
             }
         }
