@@ -60,7 +60,8 @@ const MACRO_OWNERS: &[(&str, &[&str])] = &[
 pub struct NoSelfDefine;
 
 impl Lint for NoSelfDefine {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         LINT_NAME
     }
 

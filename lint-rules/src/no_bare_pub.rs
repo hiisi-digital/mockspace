@@ -16,7 +16,8 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoBarePublic;
 
 impl Lint for NoBarePublic {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-bare-pub"
     }
 
@@ -67,6 +68,7 @@ impl Lint for NoBarePublic {
                         message: format!(
                             "bare `pub` without `#[public_api]` or `#[internal_api]`: {item_preview}..."
                         ),
+                        finding_kind: None,
                     });
                 }
             }

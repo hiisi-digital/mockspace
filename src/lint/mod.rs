@@ -7,10 +7,10 @@
 //! 1. Per-crate lints — each lint sees one crate at a time.
 //! 2. Cross-crate lints — each lint sees all crates simultaneously.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::Path;
 
-use mockspace_lint_rules::{self, LintContext, LintError, LintMode, Level, Severity, Lint, CrossCrateLint};
+use mockspace_lint_rules::{self, LintContext, LintError, LintMode, Level, Lint, CrossCrateLint, LintConfig};
 
 use crate::model::CrateMap;
 
@@ -56,7 +56,7 @@ pub fn run_lints(
     doc_only: bool,
     proc_macro_crates: &[String],
     crate_prefix: &str,
-    lint_overrides: &HashMap<String, Severity>,
+    lint_overrides: &LintConfig,
     custom_lints: &[Box<dyn Lint>],
     custom_cross_lints: &[Box<dyn CrossCrateLint>],
 ) -> usize {

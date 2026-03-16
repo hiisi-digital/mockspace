@@ -1,143 +1,201 @@
-# Lint System Redesign
+# Lint & Agent System Redesign
 
-**Status:** proposed
+**Status:** in progress (Phase 2 partially implemented, Phases 6-8 proposed)
 **Context:** discovered while integrating mockspace into the saalis project
 
 ## Problem
 
-The lint system has several issues that block adoption by projects
-other than loimu:
+The lint and agent systems have issues that block adoption by
+projects other than loimu:
 
-1. Many lints hardcode loimu-specific macros (`define_id!`, `define_error!`,
-   `define_signal!`, etc.) as the "correct" pattern
-2. Lint severity is not configurable per-project
-3. No support for consumer-side custom lints
-4. Several code quality issues in the lint implementation
+1. Many lints hardcode loimu-specific macros as the "correct" pattern
+2. Lint severity was not configurable per-project (now fixed)
+3. Agent hooks are copied per-project instead of shipping as builtins
+4. Settings JSON is hand-written instead of auto-generated
+5. Multiple lints solve the same problem (forbidden type/import) but
+   each is a separate hardcoded lint instead of one configurable one
+6. No scoped lint configuration (different rules per crate)
 
-## Proposed: Hierarchical Configurable Lints
+## Already Implemented (this session)
 
-### Per-lint configuration in mockspace.toml
+### Lint configurability
+- `[lints]` section in mockspace.toml with per-gate severity
+- `[lints.lint-name]` sub-tables with severity + parameters
+- `[lints.lint-name.findings]` per-finding-kind severity
+- `LintConfig` struct, `default_severity()` on Lint trait
+- `finding_kind` on LintError for granular reporting
+- `configure()` method for lint parameterization
+- 14 loimu-specific lints default to OFF
+- Consumer custom lints via mock/lints/ directory (JIT compiled)
+
+### Bug fixes
+- render_agent.rs Unix-only import guarded with #[cfg(unix)]
+- bootstrap.rs Windows path + module name validation
+- entry.rs process::exit replaced with return ExitCode
+- config.rs parse_string_array prefix match fixed
+- Severity override preserves per-violation nuance
+
+## Proposed: Phase 6 — Builtin Agent Hooks
+
+These hooks are universal workflow guards. Every mockspace consumer
+needs them. They should ship with the mockspace crate, not be
+copied into each project's `agent/hooks/`:
+
+### `check-byline.sh`
+Enforce commit authorship policy. Block Co-Authored-By in assistant
+mode, require it in autonomous mode. Controlled by
+`{PROJECT}_AGENT_MODE` env var (auto-derived from `project_name`).
+
+### `mockspace-write-guard.sh`
+Phase gate enforcement. Block doc/source edits outside the correct
+design round phase. This is the agent-side mirror of the changelist
+lints.
+
+### `mockspace-reminder.sh`
+Print mockspace rules reminder before tool use on mockspace paths.
+Non-blocking context injection.
+
+### `no-yagni-guard.sh`
+Flag YAGNI-flavored reasoning in commit messages. Cultural guard.
+Configurable: `mockspace.toml` could have `enforce_no_yagni = true`
+(default true).
+
+### Implementation
+mockspace generates these hooks automatically alongside consumer
+hooks. They use `{{PROJECT_NAME}}` and `{{AGENT_MODE_VAR}}`
+template variables derived from `mockspace.toml`. No consumer
+template needed — mockspace writes them directly to
+`.claude/hooks/` and `.github/hooks/`.
+
+Consumer `agent/hooks/*.sh.tmpl` files are ADDITIONAL hooks that
+get merged after the builtins.
+
+## Proposed: Phase 7 — Auto-generated Settings
+
+### Problem
+`agent/settings/claude.json` and `copilot-hooks.json` are hand-written.
+When hooks are added/removed, settings must be manually updated. The
+hook-to-tool-matcher wiring is error-prone.
+
+### Solution
+mockspace auto-generates settings from discovered hooks. Each hook
+template declares its matchers via frontmatter:
+
+```bash
+#!/usr/bin/env bash
+# @matchers: Write, Edit
+# @timeout: 5
+```
+
+Or via naming convention:
+- `*-guard.sh.tmpl` → matchers: Bash, Write, Edit (blocking)
+- `*-reminder.sh.tmpl` → matchers: Bash (context only)
+- `check-*.sh.tmpl` → matchers: Bash (commit checks)
+
+mockspace reads these, generates `claude.json` and
+`copilot-hooks.json` automatically. No hand-written settings files.
+
+The `agent/settings/` directory becomes optional overrides only.
+If `claude.json` exists in `agent/settings/`, it's MERGED with the
+auto-generated config (user additions take precedence).
+
+## Proposed: Phase 8 — Unified `forbidden-imports` Lint
+
+### Problem
+Multiple lints solve the same problem:
+- `no-float` — forbids f32/f64
+- `no-bare-vec` — forbids Vec
+- `no-box` — forbids Box
+- `no-bare-string` — forbids string literals
+- `no-bare-pub` — forbids bare pub
+- `no-bare-result` — forbids bare Result
+- Custom `no-string-in-sdk` — forbids String type
+- Custom `no-dyn-trait` — forbids dyn keyword
+- Custom `sdk-boundary` — forbids cross-layer deps
+
+These are all "forbidden X in scope Y" with different X and Y.
+
+### Solution
+One builtin lint: `forbidden-imports`. Fully data-driven from
+`mockspace.toml`. Each rule specifies a scope (crate glob), a
+forbidden pattern (type/module/keyword), and a reason.
 
 ```toml
-[lints]
-# Base severity for the whole lint
-no-float = "build-gate"
+[lints.forbidden-imports]
+commit = "warn"
+build = "error"
+push = "error"
 
-# Sub-finding severity (overrides base for specific report types)
-[lints.no-float]
-type-annotation = "error"
-struct-field = "error"
-function-return = "warn"
+[[lints.forbidden-imports.rules]]
+scope = "{prefix}-primitives"
+forbidden = ["std::*", "alloc::*"]
+reason = "primitives is #![no_std] with zero deps"
 
-# Lint parameters (project-specific patterns)
-[lints.no-manual-id]
-severity = "error"
-allowed_patterns = ["EntityId", ".*Id$"]  # regex
-suggested_fix = "use a newtype from saalis-sdk"
+[[lints.forbidden-imports.rules]]
+scope = "{prefix}-sdk"
+forbidden = ["std::*"]
+reason = "SDK is #![no_std] + alloc"
 
-[lints.no-adhoc-error-enum]
-severity = "error"
-allowed_patterns = ["ApiError", "ApiResult"]  # web-internal exceptions
+[[lints.forbidden-imports.rules]]
+scope = "{prefix}-sdk"
+forbidden = ["String"]
+reason = "use Str (Cow<'static, str>) instead"
+
+[[lints.forbidden-imports.rules]]
+scope = "*"
+forbidden = ["dyn *"]
+reason = "use repr(C) descriptors or monomorphization"
+
+[[lints.forbidden-imports.rules]]
+scope = "{prefix}-connector-*"
+forbidden = ["{prefix}_core::*", "{prefix}_scheduler::*"]
+reason = "extensions depend on {prefix}-sdk only"
+
+[[lints.forbidden-imports.rules]]
+scope = "*"
+forbidden = ["f32", "f64"]
+reason = "use arvo fixed-point types"
+enabled = false  # off until arvo is integrated
 ```
 
-### Lint trait changes
+`{prefix}` expands to `crate_prefix` from mockspace.toml.
 
-```rust
-pub trait Lint {
-    fn name(&self) -> &'static str;
-    fn check(&self, ctx: &LintContext) -> Vec<LintError>;
-    fn source_only(&self) -> bool { true }
-    fn default_severity(&self) -> Severity { Severity::HARD_ERROR }
+Scope uses glob matching against crate directory names.
+Forbidden patterns match against:
+- Type annotations (tree-sitter type nodes)
+- Use statements (tree-sitter use_declaration nodes)
+- Module paths in qualified types
 
-    /// Sub-finding names this lint can produce (for granular config).
-    fn finding_kinds(&self) -> &[&str] { &[] }
+This replaces: `no-float`, `no-bare-vec`, `no-box`, `no-bare-result`,
+`no-bare-pub` (partially), and all the custom per-project forbidden-type
+lints. Each becomes a config entry instead of a separate lint implementation.
 
-    /// Configuration keys this lint accepts (for project-specific params).
-    fn config_keys(&self) -> &[&str] { &[] }
+The existing individual lints remain for backwards compat but are
+deprecated in favor of `forbidden-imports` rules.
 
-    /// Called before check() with project-specific config values.
-    fn configure(&mut self, params: &HashMap<String, String>) {}
-}
-```
+### no-std as a special case
 
-Each `LintError` carries a `finding_kind: Option<&'static str>` so
-the config system can override severity per sub-finding.
-
-### Severity override logic
-
-1. If `lints.{name}.{finding_kind}` exists → use that severity
-2. Else if `lints.{name}` (base) exists → use that severity
-3. Else → use `lint.default_severity()`
-4. Per-violation severity from the lint is preserved ONLY when no
-   override applies (fixes issue #7 from review)
-
-### Consumer custom lints
-
-If `{mock_dir}/lints/` exists:
-- Each `.rs` file exports `pub fn lint() -> Box<dyn Lint>`
-- Compiled into the proxy crate via `#[path = "..."]`
-- Same Lint trait, same config system
-- Custom lints can have their own `[lints.my-custom-lint]` config
-
-## Code Review Findings to Fix
-
-### Critical
-1. `render_agent.rs` — `use std::os::unix::fs::PermissionsExt` without
-   `#[cfg(unix)]` guard. Fails to compile on Windows.
-
-### Important
-2. `bootstrap.rs` — Windows path backslashes break `#[path = "..."]`.
-   Module names from filenames not validated as Rust identifiers.
-3. `entry.rs` — `process::exit(1)` in library function skips destructors.
-   Should return `ExitCode::FAILURE`.
-4. `config.rs` — `parse_string` stops finding top-level keys after any
-   `[section]` header. `in_section` flag never resets.
-5. `config.rs` — `parse_string_array` matches `key` as prefix of longer
-   keys (e.g., `layers` matches `layers_extra`).
-6. `lint/mod.rs` — severity override kills per-violation nuance. Only
-   override when config is explicitly present.
-7. `config.rs` — `parse_lints_section` silently drops multi-line inline
-   tables.
-
-### Minor
-8. `render_design.rs` — `now_rfc3339` uses `date` command, non-functional
-   on Windows.
-9. `bootstrap.rs` — `is_active` uses fragile string contains for
-   `core.hooksPath` detection.
-10. `no_bare_pub.rs` — brace-depth tracking miscounts braces in string
-    literals and doc comments.
-11. `design_doc_source_mismatch.rs` — `source_contains_name` is substring
-    match, generates false negatives.
-12. `render_design.rs` — multiple `unwrap()` on `fs::read_dir` in
-    generation path.
-
-## Which Lints Should Default to OFF
-
-These lints assume project-specific macros that don't exist in all
-consumers. They should default to OFF and require explicit opt-in
-via `[lints]`:
-
-- `no-manual-id` — assumes `define_id!()`
-- `no-adhoc-error-enum` — assumes `define_error!()`
-- `no-adhoc-framework` — assumes `define_*!()` macros
-- `no-bare-macro-types` — assumes framework-generated types
-- `no-pool-access` — assumes pool abstraction
-- `no-primitive-key` — assumes `define_id!()` types
-- `no-raw-error-outside-primitives` — assumes `define_raw_error!()`
-- `no-self-define` — assumes `define_*!()` pattern
-- `no-float` — assumes arvo fixed-point types
-- `no-bare-pub` — assumes `#[public_api]`/`#[internal_api]` attrs
-- `no-bare-result` — assumes `LoimuError`/`Outcome` types
-- `no-entry-suffix` — assumes `define_registry!()` convention
-- `no-bare-vec` — assumes `Collection<T>`/`DenseColumn<T>` types
-- `no-box` — assumes framework type erasure patterns
+`#![no_std]` enforcement is common enough to warrant first-class
+support. The `forbidden-imports` rule with `scope` + `forbidden = ["std::*"]`
+handles it, but mockspace could also auto-detect `#![no_std]` in
+a crate's lib.rs and automatically forbid `std::` imports without
+explicit config.
 
 ## Implementation Order
 
-1. Fix critical/important code bugs (items 1-7)
-2. Add `default_severity()` to Lint trait, set OFF for project-specific lints
-3. Add `[lints]` config parsing with string and table forms
-4. Add `finding_kind` to LintError, hierarchical severity override
-5. Add `config_keys()` and `configure()` to Lint trait
-6. Add consumer custom lint loading
-7. Update each parametric lint to declare its config keys
+1. ✅ Lint configurability (done)
+2. ✅ Bug fixes (done)
+3. ✅ Consumer custom lints (done)
+4. Builtin agent hooks (Phase 6)
+5. Auto-generated settings (Phase 7)
+6. Unified forbidden-imports lint (Phase 8)
+7. Deprecate individual forbidden-type lints
+
+## Code Review Findings (remaining)
+
+### Minor (from review, not yet fixed)
+- `render_design.rs` — `now_rfc3339` uses `date` command, Windows
+- `bootstrap.rs` — `is_active` fragile string contains
+- `no_bare_pub.rs` — brace-depth miscounts in strings/comments
+- `design_doc_source_mismatch.rs` — substring match false negatives
+- `render_design.rs` — unwrap() on fs::read_dir in generation

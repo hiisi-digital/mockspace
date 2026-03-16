@@ -61,6 +61,7 @@ impl CrossCrateLint for NoDuplicateFn {
                             "function `{name}` also defined in {} — consider reusing",
                             first.crate_name,
                         ),
+                        finding_kind: None,
                     });
                 }
             }
@@ -99,6 +100,7 @@ impl CrossCrateLint for NoDuplicateFn {
                             "function `{}` has same signature as `{}` in {} — consider reusing",
                             dup.name, first.name, first.crate_name,
                         ),
+                        finding_kind: None,
                     });
                 }
             }

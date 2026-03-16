@@ -33,7 +33,7 @@ mod entry;
 pub const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 // Re-export lint rules for convenience
-pub use mockspace_lint_rules::{LintMode, Level, Severity, LintError, LintContext, Lint, CrossCrateLint};
+pub use mockspace_lint_rules::{LintMode, Level, Severity, LintError, LintContext, Lint, CrossCrateLint, LintConfig};
 
 /// Entry point — parses CLI args and runs the mockspace pipeline.
 ///

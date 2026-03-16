@@ -119,6 +119,7 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 "`{macro_name}!` does not generate `impl Registrable` — \
                  every define_*! macro must produce a Registrable impl + inventory::submit!",
             ),
+            finding_kind: None,
         });
     }
 }

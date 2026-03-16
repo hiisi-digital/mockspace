@@ -21,7 +21,8 @@ const LINT_NAME: &str = "no-box";
 pub struct NoBox;
 
 impl Lint for NoBox {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         LINT_NAME
     }
 

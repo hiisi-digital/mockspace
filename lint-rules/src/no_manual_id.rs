@@ -10,7 +10,8 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoManualId;
 
 impl Lint for NoManualId {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-manual-id"
     }
 
@@ -68,6 +69,7 @@ fn check_struct(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 message: format!(
                     "manual ID struct `{name}` — use define_id!({name}) or define_handle!({name}) from the ID crate",
                 ),
+                finding_kind: None,
             });
         }
     }

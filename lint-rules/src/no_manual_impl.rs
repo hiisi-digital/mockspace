@@ -120,6 +120,7 @@ fn check_impl(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     message: format!(
                         "manual `impl {forbidden_trait} for {type_part}` — use the appropriate define_*! macro",
                     ),
+                    finding_kind: None,
                 });
             }
         }

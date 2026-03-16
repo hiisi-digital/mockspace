@@ -88,6 +88,7 @@ impl CrossCrateLint for SingleSource {
                             "{} `{name}` also defined in {} — one definition per concept",
                             dup.kind, first.crate_name,
                         ),
+                        finding_kind: None,
                     });
                 }
             }

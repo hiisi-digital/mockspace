@@ -20,7 +20,8 @@ const BLESSED_TYPES: &[&str] = &[
 pub struct NoBareResult;
 
 impl Lint for NoBareResult {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-bare-result"
     }
 
@@ -118,6 +119,7 @@ fn check_fn_return(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 message: format!(
                     "fn `{fn_name}` returns `{ret_text}` — use Result<T, LoimuError> or #[optimize_for(hot|cold)]",
                 ),
+                finding_kind: None,
             });
         }
     }

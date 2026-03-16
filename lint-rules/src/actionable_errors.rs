@@ -103,6 +103,7 @@ impl Lint for ActionableErrors {
                                     "{macro_name} missing hint field — errors must be actionable \
                                      (include what to do next)",
                                 ),
+                                finding_kind: None,
                             });
                         }
                     }

@@ -154,6 +154,7 @@ fn check_single_field(field: Node, struct_name: &str, ctx: &LintContext, errors:
                 message: format!(
                     "`{unsafe_type}` in `#[repr(C)]` struct `{struct_name}` is not ABI-safe — {fix}",
                 ),
+                finding_kind: None,
             });
             // one error per field (the first unsafe type found)
             return;

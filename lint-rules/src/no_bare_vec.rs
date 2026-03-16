@@ -73,7 +73,7 @@ const MACRO_FORBIDDEN: &[(&str, &str)] = &[
 pub struct NoBareVec;
 
 impl Lint for NoBareVec {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
+    fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
     fn name(&self) -> &'static str {
         LINT_NAME
     }
@@ -132,6 +132,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 lint_name: LINT_NAME,
                 severity,
                 message,
+                finding_kind: None,
             });
             return;
         }
@@ -159,6 +160,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                         lint_name: LINT_NAME,
                         severity,
                         message,
+                        finding_kind: None,
                     });
                     break;
                 }
@@ -177,6 +179,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                         lint_name: LINT_NAME,
                         severity,
                         message,
+                        finding_kind: None,
                     });
                     break;
                 }
@@ -195,6 +198,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                         lint_name: LINT_NAME,
                         severity,
                         message,
+                        finding_kind: None,
                     });
                     break;
                 }
@@ -207,6 +211,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     message: format!(
                         "`{forbidden}` collection type — use `{replacement}` from the storage crate instead",
                     ),
+                    finding_kind: None,
                 });
                 break;
             }
@@ -512,6 +517,7 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                                 lint_name: LINT_NAME,
                                 severity,
                                 message: message.clone(),
+                                finding_kind: None,
                             });
                             break;
                         }
@@ -528,6 +534,7 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                                 message: format!(
                                     "`{col_name}` in macro body — use `{replacement}` from the storage crate instead",
                                 ),
+                                finding_kind: None,
                             });
                             // one error per line
                             break;

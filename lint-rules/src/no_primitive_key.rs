@@ -19,7 +19,8 @@ const PRIMITIVE_KEY_TYPES: &[&str] = &[
 pub struct NoPrimitiveKey;
 
 impl Lint for NoPrimitiveKey {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-primitive-key"
     }
 
@@ -67,6 +68,7 @@ impl Lint for NoPrimitiveKey {
                                     message: format!(
                                         "`{map_type}<{prim}, ...>` — use a define_id! type as key",
                                     ),
+                                    finding_kind: None,
                                 });
                             }
                             break;

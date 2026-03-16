@@ -390,13 +390,34 @@ fn discover_custom_lint_files(lints_dir: &Path) -> Vec<String> {
             let path = entry.path();
             if path.extension().map(|e| e == "rs").unwrap_or(false) {
                 if let Some(stem) = path.file_stem() {
-                    files.push(stem.to_string_lossy().to_string());
+                    let stem_str = stem.to_string_lossy().to_string();
+                    if is_valid_rust_ident(&stem_str) {
+                        files.push(stem_str);
+                    } else {
+                        eprintln!(
+                            "warning: skipping custom lint file `{}` — stem `{}` is not a valid Rust identifier (only [a-z0-9_] allowed)",
+                            path.display(),
+                            stem_str,
+                        );
+                    }
                 }
             }
         }
     }
     files.sort();
     files
+}
+
+/// Check if a string is a valid Rust identifier (only `[a-z0-9_]`, must not start with a digit).
+fn is_valid_rust_ident(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let first = s.as_bytes()[0];
+    if first.is_ascii_digit() {
+        return false;
+    }
+    s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
 /// Scan a `.rs` file to determine which custom lint functions it defines.
@@ -421,12 +442,12 @@ fn scan_lint_functions(lints_dir: &Path, stem: &str) -> (bool, bool) {
 fn generate_custom_lint_main(lint_files: &[String], lints_dir: &Path) -> String {
     let mut out = String::new();
 
-    // Module declarations with absolute paths
+    // Module declarations with absolute paths (forward slashes for cross-platform compat)
     for name in lint_files {
         let abs_path = lints_dir.join(format!("{name}.rs"));
+        let path_str = abs_path.display().to_string().replace('\\', "/");
         out.push_str(&format!(
-            "#[path = \"{}\"]\nmod {name};\n",
-            abs_path.display()
+            "#[path = \"{path_str}\"]\nmod {name};\n",
         ));
     }
     out.push('\n');

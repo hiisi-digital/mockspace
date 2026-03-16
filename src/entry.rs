@@ -38,22 +38,26 @@ fn run_inner(
     // 2. Search upward from cwd for mockspace.toml
     // 3. Fall back to cwd
     let mock_dir = if let Some(pos) = args.iter().position(|a| a == "--dir") {
-        args.get(pos + 1)
-            .map(|p| resolve_mock_dir(p))
-            .unwrap_or_else(|| {
+        match args.get(pos + 1) {
+            Some(p) => resolve_mock_dir(p),
+            None => {
                 eprintln!("error: --dir requires a path argument");
-                std::process::exit(1);
-            })
-    } else {
-        find_mockspace_root().unwrap_or_else(|| {
-            let cwd = std::env::current_dir().unwrap();
-            if cwd.join("crates").is_dir() {
-                cwd
-            } else {
-                eprintln!("error: no mockspace.toml found. Run from a mockspace directory or use --dir <path>");
-                std::process::exit(1);
+                return ExitCode::FAILURE;
             }
-        })
+        }
+    } else {
+        match find_mockspace_root() {
+            Some(dir) => dir,
+            None => {
+                let cwd = std::env::current_dir().unwrap();
+                if cwd.join("crates").is_dir() {
+                    cwd
+                } else {
+                    eprintln!("error: no mockspace.toml found. Run from a mockspace directory or use --dir <path>");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
     };
 
     let cfg = Config::from_dir(&mock_dir);
