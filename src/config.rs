@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use mockspace_lint_rules::{Level, Severity, parse_severity};
+use mockspace_lint_rules::{Level, Severity, parse_severity, LintConfig};
 
 /// How mockspace-managed content is installed into existing files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +52,7 @@ pub struct Config {
     /// Per-lint severity overrides from `[lints]` section.
     /// Key: lint name (e.g. "no-float"), Value: configured severity.
     /// Empty if no `[lints]` section is present (all lints use defaults).
-    pub lint_overrides: HashMap<String, Severity>,
+    pub lint_overrides: LintConfig,
 
     // --- Domain-specific config ---
 
@@ -232,6 +232,9 @@ impl Config {
 }
 
 // ---------------------------------------------------------------------------
+// NOTE: This hand-rolled parser does not handle multi-line inline tables.
+// All `[lints]` table values must be single-line (e.g. `key = { ... }` on one line).
+
 // TOML parsing helpers (minimal, no external dependency)
 // ---------------------------------------------------------------------------
 
@@ -270,7 +273,7 @@ fn parse_string_array(content: &str, key: &str) -> Vec<String> {
     let mut in_array = false;
     for line in content.lines() {
         let trimmed = line.trim();
-        if !in_array && trimmed.starts_with(key) && trimmed.contains('[') {
+        if !in_array && (trimmed.starts_with(&format!("{key} ")) || trimmed.starts_with(&format!("{key}="))) && trimmed.contains('[') {
             in_array = true;
             // Inline array?
             if let (Some(s), Some(e)) = (trimmed.find('['), trimmed.find(']')) {
@@ -381,7 +384,7 @@ fn parse_color_section(content: &str, section_name: &str) -> BTreeMap<String, (S
 
 /// Parse the `[lints]` section from mockspace.toml.
 ///
-/// Supports two value formats:
+/// Supports multiple formats:
 ///
 /// **String value** — applies a preset to all gates:
 /// ```toml
@@ -390,74 +393,155 @@ fn parse_color_section(content: &str, section_name: &str) -> BTreeMap<String, (S
 /// no-todo = "advisory"
 /// ```
 ///
-/// **Table value** — per-gate levels:
+/// **Inline table value** — per-gate levels (must be single-line):
 /// ```toml
 /// [lints]
 /// no-float = { commit = "warn", build = "error", push = "error" }
 /// ```
 ///
-/// Missing keys in a table default to `Level::Pass`.
+/// **Sub-table** — severity + parameters:
+/// ```toml
+/// [lints.no-manual-id]
+/// severity = "error"
+/// allowed_patterns = "EntityId"
+/// ```
 ///
-/// If `[lints]` section is absent, returns an empty map (all lints use defaults).
-fn parse_lints_section(content: &str) -> HashMap<String, Severity> {
-    let mut result = HashMap::new();
-    let mut in_section = false;
-    let header = "[lints]";
+/// **Per-finding overrides**:
+/// ```toml
+/// [lints.no-manual-id.findings]
+/// struct-field = "error"
+/// type-alias = "warn"
+/// ```
+///
+/// Missing keys in an inline table default to `Level::Pass`.
+///
+/// If `[lints]` section is absent, returns an empty config (all lints use defaults).
+///
+/// NOTE: Multi-line inline tables are NOT supported. All inline table values
+/// must be on a single line.
+fn parse_lints_section(content: &str) -> LintConfig {
+    let mut base = HashMap::new();
+    let mut findings: HashMap<String, HashMap<String, Severity>> = HashMap::new();
+    let mut params: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+    // State machine for section tracking
+    enum Section {
+        None,
+        Lints,                          // [lints]
+        LintSub(String),                // [lints.lint-name]
+        LintFindings(String),           // [lints.lint-name.findings]
+        Other,                          // any other [section]
+    }
+
+    let mut section = Section::None;
 
     for line in content.lines() {
         let trimmed = line.trim();
 
-        if trimmed == header {
-            in_section = true;
+        // Section headers
+        if trimmed.starts_with('[') && !trimmed.starts_with("[[") {
+            let header = trimmed.trim_start_matches('[').trim_end_matches(']').trim();
+            if header == "lints" {
+                section = Section::Lints;
+            } else if let Some(rest) = header.strip_prefix("lints.") {
+                if let Some((lint_name, sub)) = rest.rsplit_once('.') {
+                    if sub == "findings" {
+                        section = Section::LintFindings(lint_name.to_string());
+                    } else {
+                        section = Section::Other; // unknown sub-sub-section
+                    }
+                } else {
+                    section = Section::LintSub(rest.to_string());
+                }
+            } else {
+                section = Section::Other;
+            }
             continue;
         }
 
-        if in_section && trimmed.starts_with('[') {
-            break;
-        }
-
-        if !in_section || trimmed.is_empty() || trimmed.starts_with('#') {
+        if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
 
-        if let Some((key, val)) = trimmed.split_once('=') {
-            let lint_name = key.trim().to_string();
-            let val = val.trim();
+        match &section {
+            Section::None | Section::Other => continue,
 
-            if val.starts_with('{') {
-                // Table value: { commit = "level", build = "level", push = "level" }
-                let inner = val.trim_start_matches('{').trim_end_matches('}');
-                let mut on_commit = Level::Pass;
-                let mut on_build = Level::Pass;
-                let mut on_push = Level::Pass;
+            Section::Lints => {
+                // [lints] section: key = "value" or key = { ... }
+                if let Some((key, val)) = trimmed.split_once('=') {
+                    let lint_name = key.trim().to_string();
+                    let val = val.trim();
 
-                for pair in inner.split(',') {
-                    let pair = pair.trim();
-                    if pair.is_empty() { continue; }
-                    if let Some((k, v)) = pair.split_once('=') {
-                        let k = k.trim();
-                        let v = v.trim().trim_matches('"');
-                        if let Some(level) = Level::from_str_name(v) {
-                            match k {
-                                "commit" => on_commit = level,
-                                "build" => on_build = level,
-                                "push" => on_push = level,
-                                _ => {}
+                    if val.starts_with('{') {
+                        // Inline table: { commit = "level", build = "level", push = "level" }
+                        let inner = val.trim_start_matches('{').trim_end_matches('}');
+                        let mut on_commit = Level::Pass;
+                        let mut on_build = Level::Pass;
+                        let mut on_push = Level::Pass;
+
+                        for pair in inner.split(',') {
+                            let pair = pair.trim();
+                            if pair.is_empty() { continue; }
+                            if let Some((k, v)) = pair.split_once('=') {
+                                let k = k.trim();
+                                let v = v.trim().trim_matches('"');
+                                if let Some(level) = Level::from_str_name(v) {
+                                    match k {
+                                        "commit" => on_commit = level,
+                                        "build" => on_build = level,
+                                        "push" => on_push = level,
+                                        _ => {}
+                                    }
+                                }
                             }
+                        }
+
+                        base.insert(lint_name, Severity::new(on_commit, on_build, on_push));
+                    } else {
+                        // String value: preset name
+                        let val = val.trim_matches('"');
+                        if let Some(severity) = parse_severity(val) {
+                            base.insert(lint_name, severity);
                         }
                     }
                 }
+            }
 
-                result.insert(lint_name, Severity::new(on_commit, on_build, on_push));
-            } else {
-                // String value: preset name
-                let val = val.trim_matches('"');
-                if let Some(severity) = parse_severity(val) {
-                    result.insert(lint_name, severity);
+            Section::LintSub(lint_name) => {
+                // [lints.lint-name] section
+                if let Some((key, val)) = trimmed.split_once('=') {
+                    let key = key.trim();
+                    let val = val.trim().trim_matches('"');
+
+                    if key == "severity" {
+                        if let Some(severity) = parse_severity(val) {
+                            base.insert(lint_name.clone(), severity);
+                        }
+                    } else {
+                        // Other keys are lint parameters
+                        params
+                            .entry(lint_name.clone())
+                            .or_default()
+                            .insert(key.to_string(), val.to_string());
+                    }
+                }
+            }
+
+            Section::LintFindings(lint_name) => {
+                // [lints.lint-name.findings] section
+                if let Some((kind, val)) = trimmed.split_once('=') {
+                    let kind = kind.trim().to_string();
+                    let val = val.trim().trim_matches('"');
+                    if let Some(severity) = parse_severity(val) {
+                        findings
+                            .entry(lint_name.clone())
+                            .or_default()
+                            .insert(kind, severity);
+                    }
                 }
             }
         }
     }
 
-    result
+    LintConfig { base, findings, params }
 }

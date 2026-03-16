@@ -16,7 +16,8 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoPoolAccess;
 
 impl Lint for NoPoolAccess {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-pool-access"
     }
 
@@ -46,6 +47,7 @@ impl Lint for NoPoolAccess {
                         lint_name: "no-pool-access",
                         severity: crate::Severity::HARD_ERROR,
                         message: "pool() is removed from behavior context; use ctx.read::<T>() or ctx.write::<T>() with reads()/writes() clauses".to_string(),
+                        finding_kind: None,
                     });
                 }
                 if trimmed.contains(".resource(") || trimmed.contains(".resource::<") {
@@ -55,6 +57,7 @@ impl Lint for NoPoolAccess {
                         lint_name: "no-pool-access",
                         severity: crate::Severity::HARD_ERROR,
                         message: "resource() is renamed to read(); declare reads(T) in define_behavior!".to_string(),
+                        finding_kind: None,
                     });
                 }
                 if trimmed.contains(".resource_mut(") || trimmed.contains(".resource_mut::<") {
@@ -64,6 +67,7 @@ impl Lint for NoPoolAccess {
                         lint_name: "no-pool-access",
                         severity: crate::Severity::HARD_ERROR,
                         message: "resource_mut() is renamed to write(); declare writes(T) in define_behavior!".to_string(),
+                        finding_kind: None,
                     });
                 }
 

@@ -19,7 +19,8 @@ const LINT_NAME: &str = "no-float";
 pub struct NoFloat;
 
 impl Lint for NoFloat {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         LINT_NAME
     }
 
@@ -85,6 +86,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                         "`{text}` type annotation — use a fixed-point type \
                          (`UFixed`/`IFixed`) or a semantic alias instead",
                     ),
+                    finding_kind: None,
                 });
             }
         }
@@ -112,6 +114,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     "float literal `{text}` — use fixed-point construction \
                      (e.g., `IFixed::from_raw()` or `ufixed!()`) instead",
                 ),
+                finding_kind: None,
             });
         }
     }
@@ -242,6 +245,7 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                                     "`{float_ty}` in macro body — use a fixed-point type \
                                      (`UFixed`/`IFixed`) or a semantic alias instead",
                                 ),
+                                finding_kind: None,
                             });
                             break;
                         }

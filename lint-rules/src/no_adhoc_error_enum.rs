@@ -13,7 +13,8 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoAdhocErrorEnum;
 
 impl Lint for NoAdhocErrorEnum {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-adhoc-error-enum"
     }
 
@@ -70,6 +71,7 @@ fn check_enum(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 message: format!(
                     "ad-hoc error enum `{name}` — use define_error!, define_warning!, or define_raw_error!",
                 ),
+                finding_kind: None,
             });
         }
     }

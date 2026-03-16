@@ -1,5 +1,6 @@
 use std::fmt::Write;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
@@ -48,6 +49,7 @@ context() {
 # --- End platform helpers ---"##;
 
 /// Set the executable bit on a file.
+#[cfg(unix)]
 fn set_executable(path: &Path) {
     if let Ok(meta) = fs::metadata(path) {
         let mut perms = meta.permissions();
@@ -265,6 +267,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             let claude_content = template.replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS);
             let claude_path = claude_hooks_dir.join(out_name);
             fs::write(&claude_path, &claude_content).expect("failed to write claude hook");
+            #[cfg(unix)]
             set_executable(&claude_path);
             eprintln!("  {}", claude_path.display());
             count += 1;
@@ -273,6 +276,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             let copilot_content = template.replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS);
             let copilot_path = copilot_hooks_dir.join(out_name);
             fs::write(&copilot_path, &copilot_content).expect("failed to write copilot hook");
+            #[cfg(unix)]
             set_executable(&copilot_path);
             eprintln!("  {}", copilot_path.display());
             count += 1;

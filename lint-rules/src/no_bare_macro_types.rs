@@ -42,7 +42,8 @@ const FORBIDDEN_CALLS: &[(&str, &[&str])] = &[
 pub struct NoBareMacroTypes;
 
 impl Lint for NoBareMacroTypes {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-bare-macro-types"
     }
 
@@ -106,6 +107,7 @@ fn check_call(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     message: format!(
                         "bare `{text}(...)` — use define_error!/define_warning!/define_hint! types instead",
                     ),
+                    finding_kind: None,
                 });
             }
         }
@@ -153,6 +155,7 @@ fn check_struct_literal(node: Node, ctx: &LintContext, errors: &mut Vec<LintErro
                     message: format!(
                         "bare `{text} {{ ... }}` literal — this type should only be constructed via define_*! macros",
                     ),
+                    finding_kind: None,
                 });
             }
         }

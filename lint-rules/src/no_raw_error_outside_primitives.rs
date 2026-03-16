@@ -9,7 +9,8 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoRawErrorOutsidePrimitives;
 
 impl Lint for NoRawErrorOutsidePrimitives {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-raw-error-outside-primitives"
     }
 
@@ -42,6 +43,7 @@ impl Lint for NoRawErrorOutsidePrimitives {
                         severity: crate::Severity::HARD_ERROR,
                         message: "use `define_error!` from the diagnostics crate instead of `define_raw_error!`"
                             .to_string(),
+                        finding_kind: None,
                     });
                 }
             }

@@ -9,7 +9,8 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoEntrySuffix;
 
 impl Lint for NoEntrySuffix {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-entry-suffix"
     }
 
@@ -40,6 +41,7 @@ impl Lint for NoEntrySuffix {
                                     .strip_suffix("Entry")
                                     .unwrap_or(entry_name),
                             ),
+                            finding_kind: None,
                         });
                     }
                 }

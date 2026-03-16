@@ -74,6 +74,7 @@ impl Lint for FileSize {
                 message: format!(
                     "file has {count} non-blank, non-comment lines (limit: 500)"
                 ),
+                finding_kind: None,
             }]
         } else {
             Vec::new()

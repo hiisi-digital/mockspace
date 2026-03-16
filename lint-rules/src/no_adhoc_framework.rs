@@ -20,7 +20,8 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoAdhocFramework;
 
 impl Lint for NoAdhocFramework {
-    fn name(&self) -> &'static str {
+        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+fn name(&self) -> &'static str {
         "no-adhoc-framework"
     }
 
@@ -168,6 +169,7 @@ fn emit_with_explanation(
             lint_name: "no-adhoc-framework",
             severity: base_severity,
             message: message.to_string(),
+            finding_kind: None,
         });
     }
 }

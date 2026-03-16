@@ -112,6 +112,7 @@ impl Lint for NoVecInResource {
                             message: format!(
                                 "`{pattern}..>` in {macro_name} — use `{replacement}` instead",
                             ),
+                            finding_kind: None,
                         });
                     }
                 }

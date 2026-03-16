@@ -46,6 +46,7 @@ impl Lint for ExportCount {
                 message: format!(
                     "file has {count} public exports (guideline: ~{MAX_EXPORTS})",
                 ),
+                finding_kind: None,
             }]
         } else {
             Vec::new()

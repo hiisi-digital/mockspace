@@ -238,6 +238,47 @@ pub fn parse_severity(s: &str) -> Option<Severity> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Lint configuration
+// ---------------------------------------------------------------------------
+
+/// Configuration for lint severity overrides and parameters.
+///
+/// Parsed from the `[lints]` section of `mockspace.toml`.
+pub struct LintConfig {
+    /// Base severity overrides per lint name.
+    pub base: HashMap<String, Severity>,
+    /// Per-finding-kind severity overrides: lint_name -> { finding_kind -> severity }.
+    pub findings: HashMap<String, HashMap<String, Severity>>,
+    /// Per-lint parameters: lint_name -> { key -> value }.
+    pub params: HashMap<String, HashMap<String, String>>,
+}
+
+impl LintConfig {
+    /// Create an empty config (all defaults).
+    pub fn empty() -> Self {
+        Self {
+            base: HashMap::new(),
+            findings: HashMap::new(),
+            params: HashMap::new(),
+        }
+    }
+
+    /// Whether this config has any overrides at all.
+    pub fn is_empty(&self) -> bool {
+        self.base.is_empty() && self.findings.is_empty() && self.params.is_empty()
+    }
+
+    /// Build a LintConfig from a simple base-only HashMap (backwards compat).
+    pub fn from_base(base: HashMap<String, Severity>) -> Self {
+        Self {
+            base,
+            findings: HashMap::new(),
+            params: HashMap::new(),
+        }
+    }
+}
+
 /// A single lint violation.
 pub struct LintError {
     pub crate_name: String,
@@ -245,51 +286,71 @@ pub struct LintError {
     pub lint_name: &'static str,
     pub message: String,
     pub severity: Severity,
+    /// Optional sub-category for per-finding severity overrides.
+    pub finding_kind: Option<&'static str>,
 }
 
 impl LintError {
     /// Create a violation that blocks all gates (commit, build, push).
     pub fn error(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::HARD_ERROR }
+        Self { crate_name, line, lint_name, message, severity: Severity::HARD_ERROR, finding_kind: None }
     }
 
     /// Create a violation that warns on commit, blocks build and push.
     pub fn build_error(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::BUILD_GATE }
+        Self { crate_name, line, lint_name, message, severity: Severity::BUILD_GATE, finding_kind: None }
     }
 
     /// Create a violation that warns on commit and build, blocks push.
     pub fn push_error(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::PUSH_GATE }
+        Self { crate_name, line, lint_name, message, severity: Severity::PUSH_GATE, finding_kind: None }
     }
 
     /// Create a warning-level violation (reported but never blocks).
     pub fn warning(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::ADVISORY }
+        Self { crate_name, line, lint_name, message, severity: Severity::ADVISORY, finding_kind: None }
     }
 
     /// Create an info-level violation (informational, never blocks).
     pub fn info(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::INFO_ONLY }
+        Self { crate_name, line, lint_name, message, severity: Severity::INFO_ONLY, finding_kind: None }
     }
 
     /// Create a violation with custom per-gate severity.
     pub fn with_severity(crate_name: String, line: usize, lint_name: &'static str, message: String, severity: Severity) -> Self {
-        Self { crate_name, line, lint_name, message, severity }
+        Self { crate_name, line, lint_name, message, severity, finding_kind: None }
+    }
+
+    /// Create a violation with a specific finding kind for per-finding severity overrides.
+    pub fn with_finding_kind(crate_name: String, line: usize, lint_name: &'static str, message: String, severity: Severity, finding_kind: &'static str) -> Self {
+        Self { crate_name, line, lint_name, message, severity, finding_kind: Some(finding_kind) }
     }
 }
 
 impl std::fmt::Display for LintError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "  [{lint}] {crate_name}:{line}: [{level}] {msg}",
-            lint = self.lint_name,
-            crate_name = self.crate_name,
-            line = self.line,
-            level = self.severity.label(),
-            msg = self.message,
-        )
+        if let Some(kind) = self.finding_kind {
+            write!(
+                f,
+                "  [{lint}/{kind}] {crate_name}:{line}: [{level}] {msg}",
+                lint = self.lint_name,
+                kind = kind,
+                crate_name = self.crate_name,
+                line = self.line,
+                level = self.severity.label(),
+                msg = self.message,
+            )
+        } else {
+            write!(
+                f,
+                "  [{lint}] {crate_name}:{line}: [{level}] {msg}",
+                lint = self.lint_name,
+                crate_name = self.crate_name,
+                line = self.line,
+                level = self.severity.label(),
+                msg = self.message,
+            )
+        }
     }
 }
 
@@ -312,6 +373,17 @@ pub trait Lint {
     /// Used when no config override is present. Lints should override
     /// this to match what they currently hardcode.
     fn default_severity(&self) -> Severity { Severity::HARD_ERROR }
+
+    /// Sub-categories of findings this lint can produce.
+    ///
+    /// Used for per-finding-kind severity overrides in config.
+    fn finding_kinds(&self) -> &[&str] { &[] }
+
+    /// Configuration keys this lint accepts.
+    fn config_keys(&self) -> &[&str] { &[] }
+
+    /// Apply configuration parameters to this lint.
+    fn configure(&mut self, _params: &HashMap<String, String>) {}
 }
 
 /// Trait for cross-crate lints that compare data across all crates at once.
@@ -400,7 +472,7 @@ pub fn all_cross_crate_lints() -> Vec<Box<dyn CrossCrateLint>> {
 /// - If a lint name maps to a severity where all gates are `Pass`, the lint is skipped entirely.
 /// - If a lint name maps to another severity, all errors from that lint use the configured severity.
 /// - If a lint is not in the map, it uses its `default_severity()`.
-pub fn check_crate(ctx: &LintContext, doc_only: bool, overrides: Option<&HashMap<String, Severity>>) -> Vec<LintError> {
+pub fn check_crate(ctx: &LintContext, doc_only: bool, overrides: Option<&LintConfig>) -> Vec<LintError> {
     check_crate_with_extra(ctx, doc_only, overrides, &[])
 }
 
@@ -408,11 +480,20 @@ pub fn check_crate(ctx: &LintContext, doc_only: bool, overrides: Option<&HashMap
 pub fn check_crate_with_extra(
     ctx: &LintContext,
     doc_only: bool,
-    overrides: Option<&HashMap<String, Severity>>,
+    overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn Lint>],
 ) -> Vec<LintError> {
-    let lints = all_lints();
-    // extra_lints is a slice of Box<dyn Lint> — we need to iterate by reference
+    let mut lints = all_lints();
+
+    // Configure lints with parameters from config
+    if let Some(cfg) = overrides {
+        for lint in &mut lints {
+            if let Some(params) = cfg.params.get(lint.name()) {
+                lint.configure(params);
+            }
+        }
+    }
+
     let mut errors = Vec::new();
 
     // Helper closure to process a single lint
@@ -421,8 +502,9 @@ pub fn check_crate_with_extra(
             return;
         }
 
-        let effective_severity = if let Some(map) = overrides {
-            if let Some(sev) = map.get(lint.name()) {
+        // Check if there's a base severity override
+        let base_override = if let Some(cfg) = overrides {
+            if let Some(sev) = cfg.base.get(lint.name()) {
                 if sev.is_off() {
                     return; // skip entirely
                 }
@@ -436,10 +518,25 @@ pub fn check_crate_with_extra(
 
         let mut lint_errors = lint.check(ctx);
 
-        // Apply severity override: config value if present, otherwise the lint's default
-        let target_severity = effective_severity.unwrap_or_else(|| lint.default_severity());
-        for err in &mut lint_errors {
-            err.severity = target_severity;
+        // Apply per-finding or base severity overrides
+        if let Some(cfg) = overrides {
+            for err in &mut lint_errors {
+                // Check finding-specific override first
+                let effective = if let (Some(kind), Some(finding_map)) = (err.finding_kind, cfg.findings.get(lint.name())) {
+                    if let Some(sev) = finding_map.get(kind) {
+                        Some(*sev)
+                    } else {
+                        base_override
+                    }
+                } else {
+                    base_override
+                };
+
+                if let Some(sev) = effective {
+                    err.severity = sev;
+                }
+                // If no override, preserve the error's own severity
+            }
         }
 
         errors.extend(lint_errors);
@@ -461,7 +558,7 @@ pub fn check_crate_with_extra(
 ///
 /// When `overrides` is provided, lint severities can be overridden
 /// (same semantics as `check_crate`).
-pub fn check_cross_crate(crates: &[(&str, &LintContext)], doc_only: bool, overrides: Option<&HashMap<String, Severity>>) -> Vec<LintError> {
+pub fn check_cross_crate(crates: &[(&str, &LintContext)], doc_only: bool, overrides: Option<&LintConfig>) -> Vec<LintError> {
     check_cross_crate_with_extra(crates, doc_only, overrides, &[])
 }
 
@@ -469,7 +566,7 @@ pub fn check_cross_crate(crates: &[(&str, &LintContext)], doc_only: bool, overri
 pub fn check_cross_crate_with_extra(
     crates: &[(&str, &LintContext)],
     doc_only: bool,
-    overrides: Option<&HashMap<String, Severity>>,
+    overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn CrossCrateLint>],
 ) -> Vec<LintError> {
     let lints = all_cross_crate_lints();
@@ -480,8 +577,9 @@ pub fn check_cross_crate_with_extra(
             return;
         }
 
-        let effective_severity = if let Some(map) = overrides {
-            if let Some(sev) = map.get(lint.name()) {
+        // Check if there's a base severity override
+        let base_override = if let Some(cfg) = overrides {
+            if let Some(sev) = cfg.base.get(lint.name()) {
                 if sev.is_off() {
                     return; // skip entirely
                 }
@@ -495,9 +593,23 @@ pub fn check_cross_crate_with_extra(
 
         let mut lint_errors = lint.check_all(crates);
 
-        let target_severity = effective_severity.unwrap_or_else(|| lint.default_severity());
-        for err in &mut lint_errors {
-            err.severity = target_severity;
+        // Apply per-finding or base severity overrides
+        if let Some(cfg) = overrides {
+            for err in &mut lint_errors {
+                let effective = if let (Some(kind), Some(finding_map)) = (err.finding_kind, cfg.findings.get(lint.name())) {
+                    if let Some(sev) = finding_map.get(kind) {
+                        Some(*sev)
+                    } else {
+                        base_override
+                    }
+                } else {
+                    base_override
+                };
+
+                if let Some(sev) = effective {
+                    err.severity = sev;
+                }
+            }
         }
 
         errors.extend(lint_errors);
