@@ -17,6 +17,7 @@ mod design_doc_source_mismatch;
 pub mod type_scanner;
 mod export_count;
 mod file_size;
+mod forbidden_imports;
 mod no_adhoc_error_enum;
 mod no_bare_macro_types;
 mod no_bare_pub;
@@ -436,6 +437,7 @@ pub fn all_lints() -> Vec<Box<dyn Lint>> {
         Box::new(registrable_completeness::RegistrableCompleteness),
         Box::new(repr_c_abi_safety::ReprCAbiSafety),
         Box::new(no_bare_pub::NoBarePublic),
+        Box::new(forbidden_imports::ForbiddenImports::new()),
     ]
 }
 
