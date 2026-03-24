@@ -486,13 +486,11 @@ fn generate_settings(
         for hook_name in hook_names {
             claude_hooks_entries.push(format!(
                 r#"      {{
-        "matcher": "PreToolUse",
+        "matcher": "{matcher}",
         "hooks": [
           {{
             "type": "command",
-            "command": ".claude/hooks/{hook_name}",
-            "event": "PreToolUse",
-            "toolName": "{matcher}"
+            "command": ".claude/hooks/{hook_name}"
           }}
         ]
       }}"#
@@ -1797,17 +1795,23 @@ fn compute_crate_table(crates: &CrateMap, cfg: &Config) -> String {
     writeln!(table, "| Crate | Purpose |").unwrap();
     writeln!(table, "|-------|---------|").unwrap();
 
-    let mut sorted: Vec<_> = crates.values().collect();
-    sorted.sort_by_key(|c| &c.short_name);
+    let mut sorted: Vec<_> = crates.iter().collect();
+    sorted.sort_by_key(|(_, c)| &c.short_name);
 
     let prefix = &cfg.crate_prefix;
-    for info in sorted {
+    let prefix_dash = format!("{prefix}-");
+    for (dir_name, info) in sorted {
         if info.short_name == cfg.project_name {
             continue;
         }
-        let name = &info.short_name;
+        let display_name = if dir_name.starts_with(&prefix_dash) {
+            format!("{prefix}-{}", info.short_name)
+        } else {
+            // crate name doesn't have the workspace prefix — use as-is
+            dir_name.clone()
+        };
         let purpose = infer_crate_purpose(info);
-        writeln!(table, "| {prefix}-{name} | {purpose} |").unwrap();
+        writeln!(table, "| {display_name} | {purpose} |").unwrap();
     }
 
     table.trim_end().to_string()
