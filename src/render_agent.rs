@@ -19,6 +19,11 @@ _extract() {
     echo "$__INPUT" | jq -r ".tool_input.$1 // \"\"" 2>/dev/null || echo ""
 }
 
+allow() {
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse"}}\n'
+    exit 0
+}
+
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
     exit 0
@@ -125,7 +130,7 @@ __INPUT=$(cat)
 {{{{HOOK_HELPERS}}}}
 COMMAND=$(_extract "command")
 # Only check git commit commands
-if ! echo "$COMMAND" | grep -q "git commit"; then exit 0; fi
+if ! echo "$COMMAND" | grep -q "git commit"; then allow; fi
 # Check for Co-Authored-By
 HAS_BYLINE=false
 if echo "$COMMAND" | grep -qi "co-authored-by"; then HAS_BYLINE=true; fi
@@ -140,7 +145,7 @@ else
         deny "Blocked: Co-Authored-By byline detected in assistant mode. The human is the author. Remove the byline. Set {mode_var}=autonomous if this is genuinely autonomous work."
     fi
 fi
-exit 0
+allow
 "##
     )
 }
@@ -171,7 +176,7 @@ if [[ -n "$FILE_PATH" ]]; then
 elif [[ -n "$COMMAND" ]]; then
     WRITE_MARKERS='(>>?|tee|mv|cp|rm|sed -i|perl -i|dd|install)'
     if ! echo "$COMMAND" | grep -qE "$WRITE_MARKERS"; then
-        exit 0
+        allow
     fi
     if echo "$COMMAND" | grep -q "$MOCK_ROOT"; then
         TARGET=$(echo "$COMMAND" | grep -oE "[^ ]*${{MOCK_ROOT}}[^ ]*" | head -1) || true
@@ -179,20 +184,20 @@ elif [[ -n "$COMMAND" ]]; then
 fi
 # Not targeting mockspace? Allow.
 if [[ -z "$TARGET" ]] || ! echo "$TARGET" | grep -q "$MOCK_ROOT"; then
-    exit 0
+    allow
 fi
 REL_PATH=$(echo "$TARGET" | sed "s|.*${{MOCK_ROOT}}/||")
 # --- Always allowed: agent templates ---
 if echo "$REL_PATH" | grep -qE '^agent/'; then
-    exit 0
+    allow
 fi
 # --- Always allowed: root-level mockspace templates ---
 if echo "$REL_PATH" | grep -qE '^[^/]+\.md\.tmpl$'; then
-    exit 0
+    allow
 fi
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 if [[ -z "$REPO_ROOT" ]]; then
-    exit 0
+    allow
 fi
 # --- Detect phase ---
 DOC_CL_ACTIVE=$(git ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
@@ -225,7 +230,7 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
     FULL_GIT_PATH="${{MOCK_ROOT}}/${{REL_PATH}}"
     BASENAME=$(basename "$REL_PATH")
     if [[ "$BASENAME" == "README.md" ]]; then
-        exit 0
+        allow
     fi
     if echo "$REL_PATH" | grep -qE '^design_rounds/[^/]+/'; then
         deny "BLOCKED: '${{REL_PATH}}' is inside a closed round subdirectory.\\n\\nClosed rounds are archived history. Every file in them is frozen forever.\\nNothing in a closed round subdirectory can be edited.\\n\\nCurrent phase: ${{PHASE}}"
@@ -254,11 +259,11 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
             deny "BLOCKED: deprecated changelist '${{BASENAME}}' is FROZEN.\\n\\nCurrent phase: ${{PHASE}}\\nLint: changelist-immutability (HARD_ERROR)"
         fi
         if $IS_DOC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
-            if [[ "$PHASE" == "DOC" ]]; then exit 0; fi
+            if [[ "$PHASE" == "DOC" ]]; then allow; fi
             deny "BLOCKED: cannot edit doc changelist '${{BASENAME}}' -- not in DOC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
         fi
         if $IS_SRC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
-            if [[ "$PHASE" == "SRC" ]]; then exit 0; fi
+            if [[ "$PHASE" == "SRC" ]]; then allow; fi
             deny "BLOCKED: cannot edit source changelist '${{BASENAME}}' -- not in SRC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
         fi
         if ! $IS_CHANGELIST; then
@@ -269,51 +274,51 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
         if [[ "$PHASE" != "TOPIC" ]]; then
             deny "BLOCKED: cannot create topic '${{BASENAME}}' -- not in TOPIC phase.\\n\\nPhase: ${{PHASE}}."
         fi
-        exit 0
+        allow
     fi
     if $IS_DOC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
         if [[ "$PHASE" != "TOPIC" ]]; then
             deny "BLOCKED: cannot create doc changelist '${{BASENAME}}' -- one already exists or phase is wrong.\\n\\nPhase: ${{PHASE}}."
         fi
-        exit 0
+        allow
     fi
     if $IS_SRC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
         if [[ "$PHASE" != "SRC-PLAN" ]]; then
             deny "BLOCKED: cannot create source changelist '${{BASENAME}}' -- not in SRC-PLAN phase.\\n\\nPhase: ${{PHASE}}."
         fi
-        exit 0
+        allow
     fi
-    if $IS_LOCKED || $IS_DEPRECATED; then exit 0; fi
-    exit 0
+    if $IS_LOCKED || $IS_DEPRECATED; then allow; fi
+    allow
 fi
 # --- Crate files are phase-gated ---
 if echo "$REL_PATH" | grep -qE '^crates/'; then
-    if echo "$REL_PATH" | grep -qE 'SHAME\.md\.tmpl$'; then exit 0; fi
+    if echo "$REL_PATH" | grep -qE 'SHAME\.md\.tmpl$'; then allow; fi
     if echo "$REL_PATH" | grep -qE '\.(md\.tmpl|md)$'; then
         if [[ "$PHASE" != "DOC" ]]; then
             deny "BLOCKED: cannot edit '${{REL_PATH}}' -- not in DOC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-doc-gate (HARD_ERROR)"
         fi
-        exit 0
+        allow
     fi
     if echo "$REL_PATH" | grep -qE '\.rs$'; then
         if [[ "$PHASE" != "SRC" ]]; then
             deny "BLOCKED: cannot edit '${{REL_PATH}}' -- not in SRC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-required (HARD_ERROR)"
         fi
-        exit 0
+        allow
     fi
     if [[ "$PHASE" == "TOPIC" ]] || [[ "$PHASE" == "DONE" ]]; then
         deny "BLOCKED: cannot edit '${{REL_PATH}}' -- no changelist exists or round is complete.\\n\\nPhase: ${{PHASE}}."
     fi
-    exit 0
+    allow
 fi
 # --- Root Cargo.toml ---
 if echo "$REL_PATH" | grep -qE '^Cargo\.toml$'; then
     if [[ "$PHASE" == "TOPIC" ]] || [[ "$PHASE" == "DONE" ]]; then
         deny "BLOCKED: cannot edit '${{REL_PATH}}' -- no changelist exists or round is complete.\\n\\nPhase: ${{PHASE}}."
     fi
-    exit 0
+    allow
 fi
-exit 0
+allow
 "##
     )
 }
@@ -343,10 +348,10 @@ if [[ -n "$COMMAND" ]] && echo "$COMMAND" | grep -q "{mock_rel}"; then
     IS_MOCKSPACE=true
 fi
 if [[ "$IS_MOCKSPACE" != "true" ]]; then
-    exit 0
+    allow
 fi
 context "MOCKSPACE REMINDER: You are operating on mockspace files. Follow the design round workflow: TOPIC -> DOC -> SRC-PLAN -> SRC -> DONE. Check phase before editing. Use 'cargo mock' commands for phase transitions."
-exit 0
+allow
 "##
     )
 }
@@ -360,13 +365,13 @@ __INPUT=$(cat)
 {{HOOK_HELPERS}}
 COMMAND=$(_extract "command")
 # Only check git commit commands
-if ! echo "$COMMAND" | grep -q "git commit"; then exit 0; fi
+if ! echo "$COMMAND" | grep -q "git commit"; then allow; fi
 # Check for YAGNI-like keywords in the commit message
 YAGNI_PATTERNS="yagni|premature|over-engineer|overkill|good enough for now|not needed yet|too early|unnecessary complexity|keep it simple"
 if echo "$COMMAND" | grep -qiE "$YAGNI_PATTERNS"; then
     context "WARNING: YAGNI-flavored reasoning detected in commit message. This project embraces the ideal when designing -- extensible, trait-based, registered. Shortcuts justified by 'you ain't gonna need it' are not welcome. Reconsider the commit message."
 fi
-exit 0
+allow
 "##
     .to_string()
 }
@@ -772,7 +777,7 @@ fn generate_lint_derived_content(
              CONTENT=$(_extract \"new_string\")\n\
              if [[ -z \"$CONTENT\" ]]; then CONTENT=$(_extract \"content\"); fi\n\
              # Only check crates matching scope\n\
-             if ! echo \"$TARGET\" | grep -qE \"{mock_rel}/crates/({scope_grep})/\"; then exit 0; fi\n\
+             if ! echo \"$TARGET\" | grep -qE \"{mock_rel}/crates/({scope_grep})/\"; then allow; fi\n\
              # Check for forbidden patterns\n\
              for PAT in {patterns_grep}; do\n\
                  if echo \"$CONTENT\" | grep -qF \"$PAT\"; then\n\
