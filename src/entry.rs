@@ -7,6 +7,7 @@ use mockspace_lint_rules::{Lint, CrossCrateLint};
 use crate::bootstrap;
 use crate::config::Config;
 use crate::design_round;
+use crate::pdf;
 use crate::dylib_check;
 use crate::lint;
 use crate::parse;
@@ -120,6 +121,20 @@ fn run_inner(
                     eprintln!("  activate with: cargo mock activate");
                 }
                 return ExitCode::SUCCESS;
+            }
+            "pdf" => {
+                // Forward all args that follow "pdf", dropping --dir <val>
+                // (already consumed above to determine cfg).
+                let mut extra: Vec<&str> = Vec::new();
+                let mut found_pdf = false;
+                let mut skip_next = false;
+                for a in args.iter().skip(1) {
+                    if skip_next { skip_next = false; continue; }
+                    if a == "--dir" { skip_next = true; continue; }
+                    if !found_pdf { if a == "pdf" { found_pdf = true; } continue; }
+                    extra.push(a.as_str());
+                }
+                return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
             }
             "lock" | "deprecate" | "unlock" | "close" | "migrate" => {
                 let subcmd_opts = design_round::SubcmdOpts {

@@ -14,6 +14,7 @@
 pub mod bootstrap;
 pub mod config;
 pub mod design_round;
+pub mod pdf;
 pub mod model;
 pub mod parse;
 pub mod graph;
