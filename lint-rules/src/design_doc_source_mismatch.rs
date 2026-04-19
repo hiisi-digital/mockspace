@@ -74,21 +74,66 @@ impl Lint for DesignDocSourceMismatch {
             let found = source_names.iter().any(|s| s == name)
                 || source_contains_name(ctx.source, name);
 
-            if !found {
-                errors.push(LintError::push_error(
-                    ctx.crate_name.to_string(),
-                    *line,
-                    LINT_NAME,
-                    format!(
-                        "`{name}` documented in DESIGN.md.tmpl but not found in source — \
-                         add it to source, remove from DESIGN, or document the gap in SHAME.md.tmpl",
-                    ),
-                ));
+            if found {
+                continue;
             }
+
+            // Escape hatch: SHAME.md.tmpl entry with a 50+ word explanation.
+            // Mirrors the `undocumented-type` lint's SHAME handling so
+            // consumers have one consistent way to document known gaps.
+            if let Some(shame) = ctx.shame_doc {
+                if let Some(explanation) = find_shame_entry(shame, name) {
+                    let word_count = explanation.split_whitespace().count();
+                    if word_count >= 50 {
+                        continue; // sufficient SHAME entry — silenced
+                    }
+                    errors.push(LintError::push_error(
+                        ctx.crate_name.to_string(),
+                        *line,
+                        LINT_NAME,
+                        format!(
+                            "`{name}` documented in DESIGN.md.tmpl but not found in source; \
+                             SHAME.md.tmpl entry only {word_count}/50 words — expand it or \
+                             remove `{name}` from DESIGN.md.tmpl."
+                        ),
+                    ));
+                    continue;
+                }
+            }
+
+            errors.push(LintError::push_error(
+                ctx.crate_name.to_string(),
+                *line,
+                LINT_NAME,
+                format!(
+                    "`{name}` documented in DESIGN.md.tmpl but not found in source — \
+                     add it to source, remove from DESIGN, or add a SHAME.md.tmpl entry \
+                     (`## {name}` header + 50+ word explanation).",
+                ),
+            ));
         }
 
         errors
     }
+}
+
+/// Find a SHAME.md.tmpl entry for a type and return its explanation text.
+///
+/// Expected format:
+/// ```markdown
+/// ## TypeName
+///
+/// Explanation paragraph (50+ words)...
+/// ```
+///
+/// Matches the layout documented in `undocumented_type`.
+fn find_shame_entry<'a>(shame_content: &'a str, type_name: &str) -> Option<&'a str> {
+    let header = format!("## {type_name}");
+    let start = shame_content.find(&header)?;
+    let after_header = &shame_content[start + header.len()..];
+    let end = after_header.find("\n## ").unwrap_or(after_header.len());
+    let entry = after_header[..end].trim();
+    if entry.is_empty() { None } else { Some(entry) }
 }
 
 /// Collect all named items from the AST.
