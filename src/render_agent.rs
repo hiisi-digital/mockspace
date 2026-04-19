@@ -285,7 +285,15 @@ TARGET=""
 if [[ -n "$FILE_PATH" ]]; then
     TARGET="$FILE_PATH"
 elif [[ -n "$COMMAND" ]]; then
-    WRITE_MARKERS='(>>?|tee|mv|cp|rm|sed -i|perl -i|dd|install)'
+    # Mutation-only detection: match commands that write to files. The
+    # patterns require either a leading space/start-of-string to avoid
+    # matching substrings in unrelated words, or a trailing space to
+    # avoid matching word-ending tokens. Shell FD redirects (`2>&1`,
+    # `&> file`) are intentionally NOT classified as file writes — they
+    # redirect descriptors, not mutate files. Actual file redirection
+    # (`> path`, `>> path`) goes through Write/Edit tools in the agent
+    # flow, not Bash; we accept the tradeoff.
+    WRITE_MARKERS='(^|[[:space:]])(tee|mv|cp|rm|dd|install|sed[[:space:]]+-i|perl[[:space:]]+-i)([[:space:]]|$)'
     if ! echo "$COMMAND" | grep -qE "$WRITE_MARKERS"; then
         allow
     fi
