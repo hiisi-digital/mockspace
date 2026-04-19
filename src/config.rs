@@ -51,6 +51,10 @@ pub struct Config {
     pub install_cargo_config: InstallMode,
     pub install_agent_files: InstallMode,
 
+    /// Agent integration config from `mock/agent/config.toml` if present.
+    /// Empty defaults when the file is absent.
+    pub attribution: AttributionConfig,
+
     // --- Lint overrides ---
 
     /// Per-lint severity overrides from `[lints]` section.
@@ -88,6 +92,25 @@ pub struct Config {
 
     /// Crate companion grouping for graph rank: source -> target.
     pub crate_grouping: BTreeMap<String, String>,
+}
+
+/// Commit byline policy per agent mode, from `mock/agent/config.toml` `[attribution]`.
+///
+/// Each field is either an empty string (no byline permitted) or a glob pattern
+/// (matching bylines are accepted). Glob patterns support `*`, `?`, `[...]` as
+/// in bash `[[ == ]]` pattern matching. Patterns without glob metacharacters
+/// degenerate to literal equality.
+#[derive(Default, Clone)]
+pub struct AttributionConfig {
+    /// Byline policy when the agent mode env var is unset or "assistant".
+    /// Empty string (default): no Co-Authored-By line permitted.
+    /// Non-empty pattern: bylines matching this pattern are accepted.
+    pub non_autonomous: String,
+
+    /// Byline policy when the agent mode env var is "autonomous".
+    /// Must be non-empty at commit time; otherwise the hook fails with a config error.
+    /// Commits must carry at least one byline matching this pattern.
+    pub autonomous: String,
 }
 
 #[derive(Clone)]
@@ -129,6 +152,20 @@ impl Default for CommitStyle {
 // ---------------------------------------------------------------------------
 // Serde deserialization structs
 // ---------------------------------------------------------------------------
+
+/// Raw deserialization struct for `mock/agent/config.toml`.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawAgentConfig {
+    attribution: Option<RawAttribution>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawAttribution {
+    non_autonomous: Option<String>,
+    autonomous: Option<String>,
+}
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -264,6 +301,18 @@ impl Config {
         let primary_domain_label = raw.primary_domain_label
             .unwrap_or_else(|| "Items".to_string());
 
+        // Load mock/agent/config.toml if present. Empty defaults when absent.
+        let agent_config_path = mock_dir.join("agent").join("config.toml");
+        let agent_config_content = fs::read_to_string(&agent_config_path).unwrap_or_default();
+        let raw_agent: RawAgentConfig = toml_edit::de::from_str(&agent_config_content)
+            .unwrap_or_default();
+        let attribution = raw_agent.attribution
+            .map(|a| AttributionConfig {
+                non_autonomous: a.non_autonomous.unwrap_or_default(),
+                autonomous: a.autonomous.unwrap_or_default(),
+            })
+            .unwrap_or_default();
+
         Config {
             mock_dir, crates_dir, repo_root, docs_dir,
             project_name, crate_prefix,
@@ -274,6 +323,7 @@ impl Config {
             nuke_marker: "Nuked by `cargo mock --nuke`".to_string(),
             commit_style: CommitStyle::default(),
             install_git_hooks, install_cargo_config, install_agent_files,
+            attribution,
             lint_overrides,
             domain_kinds,
             known_macros, agent_macros,

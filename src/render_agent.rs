@@ -119,30 +119,81 @@ fn agent_mode_var(project_name: &str) -> String {
     format!("{upper}_AGENT_MODE")
 }
 
+/// Quote a string as a bash single-quoted literal, escaping internal quotes.
+fn bash_literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Generate the check-byline.sh hook content (without HOOK_HELPERS substitution).
+///
+/// Enforces the byline policy configured in `mock/agent/config.toml` under
+/// `[attribution]`. Both `non_autonomous` and `autonomous` are glob patterns
+/// (empty = no byline permitted / autonomous-mode config error).
 fn builtin_check_byline(cfg: &Config) -> String {
     let mode_var = agent_mode_var(&cfg.project_name);
+    let non_auto = bash_literal(&cfg.attribution.non_autonomous);
+    let auto = bash_literal(&cfg.attribution.autonomous);
     format!(
         r##"#!/usr/bin/env bash
-# Built-in mockspace hook: enforce commit authorship policy
+# Built-in mockspace hook: enforce commit authorship policy.
+# Patterns come from mock/agent/config.toml [attribution]; baked at generation.
 set -uo pipefail
 __INPUT=$(cat)
 {{{{HOOK_HELPERS}}}}
 COMMAND=$(_extract "command")
-# Only check git commit commands
+
+# Only check git commit commands.
 if ! echo "$COMMAND" | grep -q "git commit"; then allow; fi
-# Check for Co-Authored-By
-HAS_BYLINE=false
-if echo "$COMMAND" | grep -qi "co-authored-by"; then HAS_BYLINE=true; fi
-# Check agent mode env var
+
+# Configured byline patterns (baked at generation time).
+NON_AUTO_PATTERN={non_auto}
+AUTO_PATTERN={auto}
+
 AGENT_MODE="${{{mode_var}:-assistant}}"
+
+# Extract all Co-Authored-By bylines from the command.
+# Matches the trailer case-insensitively up to the closing double-quote of the
+# git commit -m "..." argument (the typical shape). Trims prefix + whitespace.
+# Limitation: if -m uses single quotes or HEREDOC the extraction may over-match;
+# the git commit-msg hook catches those at real commit time.
+BYLINES=$(printf '%s' "$COMMAND" \
+    | grep -oiE 'co-authored-by:[^"]*' \
+    | sed -E 's/^[Cc]o-[Aa]uthored-[Bb]y:[[:space:]]*//' \
+    | sed -E 's/[[:space:]]+$//')
+
 if [[ "$AGENT_MODE" == "autonomous" ]]; then
-    if [[ "$HAS_BYLINE" == "false" ]]; then
-        deny "Autonomous mode requires Co-Authored-By byline"
+    if [[ -z "$AUTO_PATTERN" ]]; then
+        deny "Autonomous mode is enabled but mock/agent/config.toml [attribution] autonomous is empty. Configure the expected byline pattern."
+    fi
+    if [[ -z "$BYLINES" ]]; then
+        deny "Autonomous mode requires a Co-Authored-By byline matching: $AUTO_PATTERN"
+    fi
+    MATCHED=false
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        if [[ "$line" == $AUTO_PATTERN ]]; then
+            MATCHED=true
+            break
+        fi
+    done <<< "$BYLINES"
+    if [[ "$MATCHED" != "true" ]]; then
+        deny "No Co-Authored-By byline matched autonomous pattern: $AUTO_PATTERN"
     fi
 else
-    if [[ "$HAS_BYLINE" == "true" ]]; then
-        deny "Blocked: Co-Authored-By byline detected in assistant mode. The human is the author. Remove the byline. Set {mode_var}=autonomous if this is genuinely autonomous work."
+    # Non-autonomous (assistant) mode.
+    if [[ -z "$NON_AUTO_PATTERN" ]]; then
+        # Empty pattern: no byline permitted.
+        if [[ -n "$BYLINES" ]]; then
+            deny "Non-autonomous mode forbids Co-Authored-By bylines. Remove the byline, or set {mode_var}=autonomous if this is genuinely autonomous work."
+        fi
+    else
+        # Non-empty pattern: bylines must match it.
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if [[ "$line" != $NON_AUTO_PATTERN ]]; then
+                deny "Co-Authored-By byline does not match non-autonomous pattern ($NON_AUTO_PATTERN): $line"
+            fi
+        done <<< "$BYLINES"
     fi
 fi
 allow
@@ -466,7 +517,6 @@ fn generate_builtin_hooks(
 /// Generate `settings.json` (Claude) and `hooks.json` (Copilot) from hook metadata.
 fn generate_settings(
     repo_root: &Path,
-    cfg: &Config,
     all_hooks: &[HookMeta],
 ) -> usize {
     let mut count = 0;
@@ -503,25 +553,7 @@ fn generate_settings(
         }
     }
 
-    // Start with auto-generated hooks
     let hooks_json_inner = claude_hooks_entries.join(",\n");
-
-    // Check for consumer settings override (non-hook fields only)
-    let agent_settings_path = cfg.mock_dir.join("agent").join("settings").join("claude.json");
-    let attribution = if agent_settings_path.is_file() {
-        // Read the consumer template, look for non-hooks fields to merge
-        let consumer = fs::read_to_string(&agent_settings_path).unwrap_or_default();
-        // Very simple: extract "attribution" field if present
-        extract_json_string_field(&consumer, "attribution")
-    } else {
-        None
-    };
-
-    let attribution_line = if let Some(attr) = attribution {
-        format!(",\n    \"attribution\": \"{attr}\"")
-    } else {
-        String::new()
-    };
 
     let claude_settings = format!(
         r#"{{
@@ -529,7 +561,7 @@ fn generate_settings(
       "PreToolUse": [
 {hooks_json_inner}
       ]
-    }}{attribution_line}
+    }}
 }}"#
     );
 
@@ -573,20 +605,6 @@ fn generate_settings(
     count += 1;
 
     count
-}
-
-/// Very simple JSON string field extractor (no serde dependency).
-fn extract_json_string_field(json: &str, field: &str) -> Option<String> {
-    let pattern = format!("\"{field}\"");
-    let pos = json.find(&pattern)?;
-    let after = &json[pos + pattern.len()..];
-    // Skip whitespace and colon
-    let after = after.trim_start();
-    let after = after.strip_prefix(':')?;
-    let after = after.trim_start();
-    let after = after.strip_prefix('"')?;
-    let end = after.find('"')?;
-    Some(after[..end].to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1717,7 +1735,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
     }
 
     // --- Phase 7: Auto-generate settings from discovered hooks ---
-    count += generate_settings(repo_root, cfg, &all_hooks);
+    count += generate_settings(repo_root, &all_hooks);
 
     count
 }
