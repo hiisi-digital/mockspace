@@ -1341,49 +1341,15 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
     ];
 
     // --- Builtin Preamble ---
+    //
+    // Hard-rooted reminders re-stamped on every rule load. Budget enforced by
+    // `validate_bookend_size` + the unit test at the bottom of this module.
 
-    let preamble = concat!(
-        "> **MOCKSPACE RULES -- READ BEFORE EVERY ACTION**\n",
-        ">\n",
-        "> 1. **DOCS ARE THE DESIGN.** Source code is never trusted. Never use source\n",
-        ">    as reference, never compare to source, never treat source as authority.\n",
-        ">    Source exists only to be corrected to match the design docs. If source\n",
-        ">    and docs disagree, the docs are right and the source is wrong. Always.\n",
-        ">\n",
-        "> 2. **DESIGN ROUND FLOW.** Topics -> doc CL -> doc execution -> lock ->\n",
-        ">    src CL -> source execution -> lock -> done. Five phases: TOPIC, DOC,\n",
-        ">    SRC-PLAN, SRC, DONE. Committed topic files are FROZEN forever. No new\n",
-        ">    topics after changelist exists. Doc CL is living during DOC phase only.\n",
-        ">    Lock with `cargo mock lock`. Locked changelists are FROZEN forever.\n",
-        ">    Deprecate (not addendum) to revise: `cargo mock deprecate`.\n",
-        ">\n",
-        "> 3. **NEVER EXEMPT LINTS.** If a lint blocks you, STOP immediately. Do not\n",
-        ">    add exceptions, do not bypass, do not work around. Get human help. The\n",
-        ">    lint is correct; your approach is wrong.\n",
-        ">\n",
-        "> 4. **MOCKSPACE ONLY.** Real crates (`crates/` at repo root) do not exist.\n",
-        ">    The mock workspace is the only codebase. No real code until mockspace\n",
-        ">    is locked and immutable.\n",
-        ">\n",
-        "> 5. **RULES LIVE IN TEMPLATES.** Not in memory files, not in session notes,\n",
-        ">    not in plan files. If it is not in a mockspace template, it does not\n",
-        ">    exist for any agent or session.\n",
-        ">\n",
-        "> 6. **NO SHORTCUTS.** If your instinct is to mention or do a \"practical\n",
-        ">    solution\" that shortcuts or avoids larger work, your instinct is WRONG.\n",
-        ">    STOP and re-read all relevant design documents to see what you ACTUALLY\n",
-        ">    have to do.",
-    ).to_string();
+    let preamble = BUILTIN_PREAMBLE.to_string();
 
     // --- Builtin Postamble ---
 
-    let postamble = concat!(
-        "---\n",
-        "> DOCS=DESIGN. SOURCE=UNTRUSTED. ROUND: topic->doc CL->docs->lock->src CL->source->lock->done.\n",
-        "> PHASES: TOPIC, DOC, SRC-PLAN, SRC, DONE. Deprecate, never addendum.\n",
-        "> LINTS: NEVER EXEMPT. FROZEN: committed topics, locked changelists.\n",
-        "> STOP if blocked. NO SHORTCUTS.",
-    ).to_string();
+    let postamble = BUILTIN_POSTAMBLE.to_string();
 
     BuiltinTemplates {
         rules,
@@ -1421,6 +1387,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
 
     // Phase 9: Merge preamble — builtin + consumer (concatenated)
     let consumer_preamble = read_optional_template(&agent_dir.join("PREAMBLE.md.tmpl"));
+    validate_bookend_size(&consumer_preamble, "PREAMBLE.md.tmpl");
     let preamble = if consumer_preamble.is_empty() {
         builtins.preamble.clone()
     } else {
@@ -1429,6 +1396,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
 
     // Phase 9: Merge postamble — builtin + consumer (concatenated)
     let consumer_postamble = read_optional_template(&agent_dir.join("POSTAMBLE.md.tmpl"));
+    validate_bookend_size(&consumer_postamble, "POSTAMBLE.md.tmpl");
     let postamble = if consumer_postamble.is_empty() {
         builtins.postamble.clone()
     } else {
@@ -2015,6 +1983,82 @@ fn read_optional_template(path: &Path) -> String {
 }
 
 /// Assemble content with preamble before body and postamble after.
+/// Maximum word count for each of the built-in and consumer-authored
+/// preamble/postamble bookends. Bookends are re-stamped on every rule
+/// file and every skill body, so keeping them under this budget prevents
+/// context bloat when multiple rules load simultaneously.
+pub const BOOKEND_MAX_WORDS: usize = 25;
+
+/// Built-in preamble stamped before every rule body and MAIN instructions.
+/// Must stay within `BOOKEND_MAX_WORDS` — enforced by unit test below.
+pub const BUILTIN_PREAMBLE: &str = concat!(
+    "> **MOCKSPACE:** docs=design. source=untrusted. ",
+    "Lints never exempt — stop if blocked. ",
+    "Flow: topic → doc CL → lock → src CL → lock → close. ",
+    "No shortcuts.",
+);
+
+/// Built-in postamble stamped after every rule body and MAIN instructions.
+/// Must stay within `BOOKEND_MAX_WORDS` — enforced by unit test below.
+pub const BUILTIN_POSTAMBLE: &str = concat!(
+    "---\n",
+    "> **VERIFY:** lint-only --commit green? src CL covers it? ",
+    "Never edit `.claude/`/`.github/` directly. ",
+    "Deprecate, never addendum.",
+);
+
+/// Count words in a markdown fragment, ignoring markdown syntax, HTML
+/// comments, and frontmatter. A "word" is any run of non-whitespace
+/// separated by whitespace, minus tokens that are purely punctuation.
+fn count_bookend_words(text: &str) -> usize {
+    let mut clean = String::with_capacity(text.len());
+    let mut in_html_comment = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if !in_html_comment && c == '<' {
+            let rest: String = chars.clone().take(3).collect();
+            if rest.starts_with("!--") {
+                in_html_comment = true;
+                continue;
+            }
+        }
+        if in_html_comment {
+            if c == '-' {
+                let rest: String = chars.clone().take(2).collect();
+                if rest.starts_with("->") {
+                    chars.next();
+                    chars.next();
+                    in_html_comment = false;
+                }
+            }
+            continue;
+        }
+        clean.push(c);
+    }
+    clean
+        .split_whitespace()
+        .filter(|w| w.chars().any(|c| c.is_alphanumeric()))
+        .count()
+}
+
+/// Validate a consumer-authored preamble/postamble template against the
+/// word budget. Prints a cargo::warning on overflow — non-fatal so
+/// existing consumers aren't broken, but visible every `cargo mock` run.
+fn validate_bookend_size(content: &str, filename: &str) {
+    if content.is_empty() {
+        return;
+    }
+    let words = count_bookend_words(content);
+    if words > BOOKEND_MAX_WORDS {
+        eprintln!(
+            "cargo::warning=mockspace: {filename} is {words} words ({} over budget). \
+             Bookends are re-stamped on every rule/skill load; tight constant \
+             reminders only. Move longer invariants into MAIN.md.tmpl.",
+            words - BOOKEND_MAX_WORDS
+        );
+    }
+}
+
 fn format_with_bookends(header: &str, preamble: &str, body: &str, postamble: &str) -> String {
     let mut out = String::new();
     out.push_str(header);
@@ -2032,4 +2076,40 @@ fn format_with_bookends(header: &str, preamble: &str, body: &str, postamble: &st
         out.push('\n');
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_preamble_within_budget() {
+        let words = count_bookend_words(BUILTIN_PREAMBLE);
+        assert!(
+            words <= BOOKEND_MAX_WORDS,
+            "BUILTIN_PREAMBLE is {words} words; budget is {BOOKEND_MAX_WORDS}. \
+             Tight constant reminders only — longer content belongs in MAIN.md.tmpl."
+        );
+    }
+
+    #[test]
+    fn builtin_postamble_within_budget() {
+        let words = count_bookend_words(BUILTIN_POSTAMBLE);
+        assert!(
+            words <= BOOKEND_MAX_WORDS,
+            "BUILTIN_POSTAMBLE is {words} words; budget is {BOOKEND_MAX_WORDS}."
+        );
+    }
+
+    #[test]
+    fn word_count_strips_html_comments() {
+        let text = "real words <!-- this block of ignored words --> more real";
+        assert_eq!(count_bookend_words(text), 4);
+    }
+
+    #[test]
+    fn word_count_ignores_pure_punctuation() {
+        let text = "one two -- three --- four";
+        assert_eq!(count_bookend_words(text), 4);
+    }
 }
