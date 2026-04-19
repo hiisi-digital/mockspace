@@ -32,6 +32,35 @@ deny() {
 context() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$1"
 }
+
+# Absolute path of the repo this hook belongs to; baked at generation time.
+readonly __HOOK_REPO_ROOT="{{REPO_ROOT}}"
+
+# Exit with `allow` if the current tool invocation doesn't target this repo.
+# Reads FILE_PATH and COMMAND from the environment (callers must set them
+# first via _extract). A tool call targets this repo if:
+#   * FILE_PATH is under __HOOK_REPO_ROOT (absolute path match), OR
+#   * COMMAND mentions __HOOK_REPO_ROOT by absolute path, OR
+#   * The process cwd is __HOOK_REPO_ROOT or a descendant (relative-path
+#     shell commands like `git mv mock/foo bar` count via cwd).
+_scope_or_allow() {
+    if [[ -n "$FILE_PATH" ]]; then
+        case "$FILE_PATH" in
+            "$__HOOK_REPO_ROOT"/*) return 0 ;;
+            *) allow ;;
+        esac
+    fi
+    if [[ -n "$COMMAND" ]]; then
+        if echo "$COMMAND" | grep -qF "$__HOOK_REPO_ROOT"; then
+            return 0
+        fi
+        case "$(pwd)" in
+            "$__HOOK_REPO_ROOT"|"$__HOOK_REPO_ROOT"/*) return 0 ;;
+        esac
+        allow
+    fi
+    allow
+}
 # --- End platform helpers ---"##;
 
 /// Platform-specific hook helpers injected into {{HOOK_HELPERS}} for Copilot.
@@ -44,6 +73,10 @@ _extract() {
     echo "$__INPUT" | jq -r "if .toolArgs then (.toolArgs | fromjson? | .$1 // \"\") else \"\" end" 2>/dev/null || echo ""
 }
 
+allow() {
+    exit 0
+}
+
 deny() {
     printf '{"permissionDecision":"deny","permissionDecisionReason":"%s"}\n' "$1"
     exit 0
@@ -51,6 +84,30 @@ deny() {
 
 context() {
     printf '%s\n' "$1"
+}
+
+# Absolute path of the repo this hook belongs to; baked at generation time.
+readonly __HOOK_REPO_ROOT="{{REPO_ROOT}}"
+
+# Exit with `allow` if the current tool invocation doesn't target this repo.
+# Mirrors the Claude variant; see that one for detailed semantics.
+_scope_or_allow() {
+    if [[ -n "$FILE_PATH" ]]; then
+        case "$FILE_PATH" in
+            "$__HOOK_REPO_ROOT"/*) return 0 ;;
+            *) allow ;;
+        esac
+    fi
+    if [[ -n "$COMMAND" ]]; then
+        if echo "$COMMAND" | grep -qF "$__HOOK_REPO_ROOT"; then
+            return 0
+        fi
+        case "$(pwd)" in
+            "$__HOOK_REPO_ROOT"|"$__HOOK_REPO_ROOT"/*) return 0 ;;
+        esac
+        allow
+    fi
+    allow
 }
 # --- End platform helpers ---"##;
 
@@ -140,7 +197,9 @@ fn builtin_check_byline(cfg: &Config) -> String {
 set -uo pipefail
 __INPUT=$(cat)
 {{{{HOOK_HELPERS}}}}
+FILE_PATH=""
 COMMAND=$(_extract "command")
+_scope_or_allow
 
 # Only check git commit commands.
 if ! echo "$COMMAND" | grep -q "git commit"; then allow; fi
@@ -220,6 +279,7 @@ MOCK_ROOT="{mock_rel}"
 {{{{HOOK_HELPERS}}}}
 FILE_PATH=$(_extract file_path)
 COMMAND=$(_extract command)
+_scope_or_allow
 # --- Determine target path ---
 TARGET=""
 if [[ -n "$FILE_PATH" ]]; then
@@ -233,7 +293,7 @@ elif [[ -n "$COMMAND" ]]; then
         TARGET=$(echo "$COMMAND" | grep -oE "[^ ]*${{MOCK_ROOT}}[^ ]*" | head -1) || true
     fi
 fi
-# Not targeting mockspace? Allow.
+# Not targeting the mock subdir? Allow (scope-to-repo already passed).
 if [[ -z "$TARGET" ]] || ! echo "$TARGET" | grep -q "$MOCK_ROOT"; then
     allow
 fi
@@ -391,6 +451,7 @@ __INPUT=$(cat)
 {{{{HOOK_HELPERS}}}}
 FILE_PATH=$(_extract file_path)
 COMMAND=$(_extract command)
+_scope_or_allow
 IS_MOCKSPACE=false
 if [[ -n "$FILE_PATH" ]] && echo "$FILE_PATH" | grep -q "{mock_rel}"; then
     IS_MOCKSPACE=true
@@ -414,7 +475,9 @@ fn builtin_no_yagni() -> String {
 set -uo pipefail
 __INPUT=$(cat)
 {{HOOK_HELPERS}}
+FILE_PATH=""
 COMMAND=$(_extract "command")
+_scope_or_allow
 # Only check git commit commands
 if ! echo "$COMMAND" | grep -q "git commit"; then allow; fi
 # Check for YAGNI-like keywords in the commit message
@@ -433,12 +496,14 @@ allow
 fn write_builtin_hook(
     name: &str,
     content: &str,
+    repo_root: &str,
     claude_hooks_dir: &Path,
     copilot_hooks_dir: &Path,
     count: &mut usize,
 ) -> HookMeta {
-    // The content uses {{HOOK_HELPERS}} (literal double braces) for substitution
-    let claude_content = content.replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS);
+    let claude_content = content
+        .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
+        .replace("{{REPO_ROOT}}", repo_root);
     let claude_path = claude_hooks_dir.join(name);
     fs::write(&claude_path, &claude_content).expect("failed to write builtin claude hook");
     #[cfg(unix)]
@@ -446,7 +511,9 @@ fn write_builtin_hook(
     eprintln!("  {} (builtin)", claude_path.display());
     *count += 1;
 
-    let copilot_content = content.replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS);
+    let copilot_content = content
+        .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
+        .replace("{{REPO_ROOT}}", repo_root);
     let copilot_path = copilot_hooks_dir.join(name);
     fs::write(&copilot_path, &copilot_content).expect("failed to write builtin copilot hook");
     #[cfg(unix)]
@@ -475,9 +542,12 @@ fn generate_builtin_hooks(
 ) -> Vec<HookMeta> {
     let mut hooks = Vec::new();
 
+    let repo_root = cfg.repo_root.to_string_lossy().to_string();
+
     hooks.push(write_builtin_hook(
         "check-byline.sh",
         &builtin_check_byline(cfg),
+        &repo_root,
         claude_hooks_dir,
         copilot_hooks_dir,
         count,
@@ -486,6 +556,7 @@ fn generate_builtin_hooks(
     hooks.push(write_builtin_hook(
         "mockspace-write-guard.sh",
         &builtin_write_guard(cfg),
+        &repo_root,
         claude_hooks_dir,
         copilot_hooks_dir,
         count,
@@ -494,6 +565,7 @@ fn generate_builtin_hooks(
     hooks.push(write_builtin_hook(
         "mockspace-reminder.sh",
         &builtin_reminder(cfg),
+        &repo_root,
         claude_hooks_dir,
         copilot_hooks_dir,
         count,
@@ -502,6 +574,7 @@ fn generate_builtin_hooks(
     hooks.push(write_builtin_hook(
         "no-yagni-guard.sh",
         &builtin_no_yagni(),
+        &repo_root,
         claude_hooks_dir,
         copilot_hooks_dir,
         count,
@@ -791,7 +864,10 @@ fn generate_lint_derived_content(
              set -uo pipefail\n\
              __INPUT=$(cat)\n\
              {{{{HOOK_HELPERS}}}}\n\
-             TARGET=$(_extract \"file_path\")\n\
+             FILE_PATH=$(_extract \"file_path\")\n\
+             COMMAND=\"\"\n\
+             _scope_or_allow\n\
+             TARGET=\"$FILE_PATH\"\n\
              CONTENT=$(_extract \"new_string\")\n\
              if [[ -z \"$CONTENT\" ]]; then CONTENT=$(_extract \"content\"); fi\n\
              # Only check crates matching scope\n\
@@ -806,8 +882,13 @@ fn generate_lint_derived_content(
 
         let hook_name = format!("lint-forbidden-{slug}.sh");
 
-        let claude_hook = hook_body.replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS);
-        let copilot_hook = hook_body.replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS);
+        let repo_root_str = cfg.repo_root.to_string_lossy();
+        let claude_hook = hook_body
+            .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
+            .replace("{{REPO_ROOT}}", &repo_root_str);
+        let copilot_hook = hook_body
+            .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
+            .replace("{{REPO_ROOT}}", &repo_root_str);
 
         let claude_hook_path = claude_hooks_dir.join(&hook_name);
         fs::write(&claude_hook_path, &claude_hook).ok();
@@ -1677,8 +1758,12 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             // substitute general template variables first
             let template = substitute_vars(&template, &vars);
 
+            let repo_root_str = cfg.repo_root.to_string_lossy();
+
             // Claude: tool_input.field, hookSpecificOutput wrapper
-            let claude_content = template.replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS);
+            let claude_content = template
+                .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
+                .replace("{{REPO_ROOT}}", &repo_root_str);
             let claude_path = claude_hooks_dir.join(out_name);
             fs::write(&claude_path, &claude_content).expect("failed to write claude hook");
             #[cfg(unix)]
@@ -1687,7 +1772,9 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             count += 1;
 
             // Copilot: toolArgs (stringified JSON), flat output
-            let copilot_content = template.replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS);
+            let copilot_content = template
+                .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
+                .replace("{{REPO_ROOT}}", &repo_root_str);
             let copilot_path = copilot_hooks_dir.join(out_name);
             fs::write(&copilot_path, &copilot_content).expect("failed to write copilot hook");
             #[cfg(unix)]
