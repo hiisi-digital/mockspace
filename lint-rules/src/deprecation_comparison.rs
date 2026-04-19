@@ -45,6 +45,16 @@ impl CrossCrateLint for DeprecationComparison {
             return Vec::new();
         }
 
+        // Collect SHAME.md.tmpl contents from every crate so the escape
+        // hatch is uniform: a sufficient SHAME entry keyed by either the
+        // active CL filename (`## 202604191900_changelist.doc.lock.md`)
+        // or the generic header `## deprecation-comparison` waives the
+        // error for the CL in question.
+        let shame_blobs: Vec<&str> = crates
+            .iter()
+            .filter_map(|(_, ctx)| ctx.shame_doc)
+            .collect();
+
         let mut errors = Vec::new();
 
         for dep_cl in &deprecated {
@@ -59,6 +69,11 @@ impl CrossCrateLint for DeprecationComparison {
                 Some(cl) => cl,
                 None => continue, // no active CL of same kind — not a violation
             };
+
+            // SHAME check — keyed by active CL filename.
+            if shame_entry_with_min_words(&shame_blobs, &active_cl.filename, 50) {
+                continue;
+            }
 
             // Read both files
             let dep_path = design_rounds.join(&dep_cl.filename);
@@ -84,6 +99,25 @@ impl CrossCrateLint for DeprecationComparison {
 
         errors
     }
+}
+
+/// True if any of the SHAME blobs contains a `## <key>` entry with at
+/// least `min_words` of body text after the header and before the next
+/// `## ` header. Matches the SHAME format used by `undocumented_type` and
+/// `design_doc_source_mismatch`.
+fn shame_entry_with_min_words(shame_blobs: &[&str], key: &str, min_words: usize) -> bool {
+    let header = format!("## {key}");
+    for blob in shame_blobs {
+        if let Some(start) = blob.find(&header) {
+            let after = &blob[start + header.len()..];
+            let end = after.find("\n## ").unwrap_or(after.len());
+            let body = after[..end].trim();
+            if body.split_whitespace().count() >= min_words {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Check that the active CL has a proper comparison section for the deprecated CL.
