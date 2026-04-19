@@ -566,6 +566,10 @@ fn ensure_generated_hooks(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<S
 }
 
 fn check_activation(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>) {
+    // Opt-out for CI and sandboxed environments where git config edits are
+    // unwanted. Set `MOCKSPACE_NO_AUTO_ACTIVATE=1` to skip auto-activation.
+    let opt_out = std::env::var("MOCKSPACE_NO_AUTO_ACTIVATE").is_ok();
+
     if is_active(repo_root) {
         // Verify it points to the right directory.
         let expected = generated_hooks_dir(mock_dir);
@@ -583,10 +587,56 @@ fn check_activation(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>
                 ));
             }
         }
-    } else {
+        return;
+    }
+
+    if opt_out {
         actions.push(
-            "mockspace hooks not active (run `cargo mock activate` to enable)".into()
+            "mockspace hooks not active (auto-activate opted out via \
+             MOCKSPACE_NO_AUTO_ACTIVATE; run `cargo mock activate` manually)".into(),
         );
+        return;
+    }
+
+    // Auto-activate. Only if `.git` is present (it was checked earlier in
+    // bootstrap_from_buildscript, but re-check defensively) and the user
+    // hasn't set `core.hooksPath` to a non-mockspace directory.
+    if !repo_root.join(".git").exists() {
+        actions.push("mockspace hooks not active (no .git directory)".into());
+        return;
+    }
+
+    let existing = std::process::Command::new("git")
+        .args(["config", "--local", "--get", "core.hooksPath"])
+        .current_dir(repo_root)
+        .output();
+    if let Ok(o) = existing {
+        if o.status.success() {
+            let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !path.is_empty()
+                && !path.contains("mockspace")
+                && !path.contains("target/hooks")
+            {
+                actions.push(format!(
+                    "mockspace hooks not active: core.hooksPath already points at \
+                     {path} (non-mockspace); not overwriting. Run \
+                     `cargo mock activate` to take over (or unset core.hooksPath)."
+                ));
+                return;
+            }
+        }
+    }
+
+    match activate(repo_root, mock_dir) {
+        Ok(()) => {
+            actions.push("activated mockspace hooks (core.hooksPath set)".into());
+        }
+        Err(e) => {
+            actions.push(format!(
+                "mockspace hooks not active (auto-activate failed: {e}; \
+                 run `cargo mock activate` manually)"
+            ));
+        }
     }
 }
 
