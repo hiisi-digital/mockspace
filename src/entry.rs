@@ -213,9 +213,20 @@ fn run_inner(
             if workspace_nuked { "nuked" } else { "infra-only" });
     } else {
         eprintln!("--- cargo check ---");
+        // Strip inherited rustup env vars so the mock/ dir's own
+        // rust-toolchain.toml wins. When cargo mock is launched from the
+        // repo root, the outer cargo already resolved a toolchain (the
+        // repo-root default, typically stable) and propagates
+        // RUSTUP_TOOLCHAIN to children. That env var beats the file-based
+        // override in mock/rust-toolchain.toml, so the inner check would
+        // run with the outer toolchain. Removing these vars lets rustup
+        // re-detect based on cwd (= mock/).
         let status = Command::new("cargo")
             .arg("check")
             .current_dir(&cfg.mock_dir)
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .env_remove("RUSTC")
+            .env_remove("RUSTDOC")
             .status()
             .expect("failed to run cargo check");
 
