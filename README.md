@@ -70,6 +70,21 @@ Transitions are subcommands, not manual renames:
 
 All transition subcommands accept `--auto-commit` to create a surgical git commit of only the renamed files, using a temporary `GIT_INDEX_FILE` so any staged changes remain untouched.
 
+### Doc layers per crate
+
+A crate under `mock/crates/<name>/` has three documentation layers. Each is optional except `DESIGN.md.tmpl`, which mockspace treats as the shipping contract for that crate.
+
+| File                 | Purpose                                                                                              |
+|----------------------|------------------------------------------------------------------------------------------------------|
+| `DESIGN.md.tmpl`     | Shipping claim. Every type, trait, macro, or signal named here is expected to exist in source.       |
+| `BACKLOG.md.tmpl`    | Designed-but-deferred promissory notes. Items decided but deliberately out of the current shipping scope. Names here are **not** checked against source. Move entries into `DESIGN.md.tmpl` when they ship. |
+| `SHAME.md.tmpl`      | Known gaps. Escape hatch for lints (`design-doc-source-mismatch`, `deprecation-comparison`, `undocumented-type`) — a `## <key>` header with a 50+ word explanation silences the specific violation keyed by `<key>`. |
+| `DEEPDIVE_*.md.tmpl` | Optional topic-specific deep dives. Rendered alongside DESIGN.md.                                    |
+
+The separation matters. `DESIGN.md.tmpl` is walked for type names by the `design-doc-source-mismatch` lint and every backticked name is expected to correspond to a source item. Putting "designed, not yet shipped" material into DESIGN would force either a fake source stub or a SHAME entry per name — both clutter. `BACKLOG.md.tmpl` is the clean home for those notes. When a BACKLOG item is promoted to shipping scope, move its paragraph into DESIGN.md and remove from BACKLOG in the same doc changelist.
+
+Convention: the `## Comparison to deprecated changelist` section of the active doc/src CL and the `BACKLOG.md.tmpl` file together are the repository's memory of decisions not yet implemented.
+
 ## Directory layout
 
 A mockspace lives in `mock/` at the repo root. Everything outside `mock/` is yours.
@@ -87,7 +102,8 @@ A mockspace lives in `mock/` at the repo root. Everything outside `mock/` is you
     ├── DESIGN.md.tmpl                        [authored — top-level design template]
     ├── PRINCIPLES.md.tmpl                    [optional authored invariants]
     ├── WORKFLOW.md.tmpl                      [optional authored workflow note]
-    ├── crates/<name>/                        [authored — real code, plus per-crate DESIGN.md.tmpl]
+    ├── crates/<name>/                        [authored — real code, plus per-crate DESIGN.md.tmpl,
+    │                                          optional BACKLOG.md.tmpl, optional SHAME.md.tmpl]
     ├── design_rounds/                        [authored — round state machine]
     │   ├── <timestamp>_topic.<name>.md
     │   ├── <timestamp>_research.<name>.md
