@@ -468,7 +468,7 @@ fn nuke_mock_sources(cfg: &Config) -> ExitCode {
             format!(
                 "//! {crate_name} — proc macro crate.\n\
                  //!\n\
-                 //! {}. Regenerate from design docs.\n\
+                 //! {}. Rewrite from design docs (mechanical, no reinterpretation).\n\
                  \n\
                  extern crate proc_macro;\n",
                 cfg.nuke_marker
@@ -477,7 +477,7 @@ fn nuke_mock_sources(cfg: &Config) -> ExitCode {
             format!(
                 "//! {crate_name} — nuked.\n\
                  //!\n\
-                 //! {}. Regenerate from design docs.\n",
+                 //! {}. Rewrite from design docs (mechanical, no reinterpretation).\n",
                 cfg.nuke_marker
             )
         };
@@ -492,7 +492,7 @@ fn nuke_mock_sources(cfg: &Config) -> ExitCode {
 
     eprintln!();
     eprintln!("--- NUKE complete: {nuked_files} files across {nuked_crates} crates ---");
-    eprintln!("    cargo check will fail until source is regenerated from docs");
+    eprintln!("    cargo check will fail until source is rewritten from docs");
     ExitCode::SUCCESS
 }
 
