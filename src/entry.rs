@@ -122,6 +122,9 @@ fn run_inner(
                 }
                 return ExitCode::SUCCESS;
             }
+            "check" => {
+                return cmd_check(&cfg);
+            }
             "pdf" => {
                 // Forward all args that follow "pdf", dropping --dir <val>
                 // (already consumed above to determine cfg).
@@ -653,5 +656,197 @@ fn find_mockspace_root() -> Option<PathBuf> {
         if !dir.pop() {
             return None;
         }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// `cargo mock check` — readiness report.
+//
+// Non-mutating. Answers one question: "can I advance this round right
+// now, or is something blocking?" Reports git cleanliness, remote
+// sync, cargo-check status, lint status, and the phase-specific
+// lock/close permission.
+// ──────────────────────────────────────────────────────────────────────
+
+/// Outcome of one readiness probe. Pass / warn / fail.
+#[derive(Debug, Copy, Clone, PartialEq)]
+enum CheckResult {
+    Pass,
+    Warn,
+    Fail,
+}
+
+impl CheckResult {
+    fn icon(self) -> &'static str {
+        match self {
+            CheckResult::Pass => "✓",
+            CheckResult::Warn => "!",
+            CheckResult::Fail => "✗",
+        }
+    }
+}
+
+fn print_row(section: &str, result: CheckResult, msg: &str) {
+    eprintln!("  {} {:<10} {}", result.icon(), section, msg);
+}
+
+fn cmd_check(cfg: &Config) -> ExitCode {
+    use mockspace_lint_rules::changelist_helpers;
+
+    eprintln!("--- mockspace readiness check ---");
+
+    let mut any_fail = false;
+
+    // --- git: working tree cleanliness ---
+    let dirty = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(&cfg.repo_root)
+        .output();
+    match dirty {
+        Ok(out) if out.status.success() => {
+            let s = String::from_utf8_lossy(&out.stdout);
+            let n = s.lines().filter(|l| !l.is_empty()).count();
+            if n == 0 {
+                print_row("git", CheckResult::Pass, "working tree clean");
+            } else {
+                print_row(
+                    "git",
+                    CheckResult::Warn,
+                    &format!("{n} uncommitted change(s)"),
+                );
+            }
+        }
+        _ => {
+            print_row("git", CheckResult::Warn, "not a git repo (or git failed)");
+        }
+    }
+
+    // --- git: current branch + remote sync ---
+    let branch = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&cfg.repo_root)
+        .output()
+        .ok()
+        .and_then(|o| if o.status.success() { Some(o) } else { None })
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "(unknown)".into());
+
+    // Try fetch-free: compare HEAD against @{upstream}. If no upstream,
+    // that's a warn (can't push without setting one).
+    let upstream = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "@{upstream}"])
+        .current_dir(&cfg.repo_root)
+        .output();
+    match upstream {
+        Ok(out) if out.status.success() => {
+            let up = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let counts = Command::new("git")
+                .args(["rev-list", "--left-right", "--count", &format!("HEAD...{up}")])
+                .current_dir(&cfg.repo_root)
+                .output();
+            match counts {
+                Ok(o) if o.status.success() => {
+                    let s = String::from_utf8_lossy(&o.stdout);
+                    let mut parts = s.split_whitespace();
+                    let ahead: u32 = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+                    let behind: u32 = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+                    let (result, msg) = match (ahead, behind) {
+                        (0, 0) => (CheckResult::Pass, format!("{branch} in sync with {up}")),
+                        (a, 0) => (CheckResult::Warn, format!("{branch} {a} ahead of {up} — push needed")),
+                        (0, b) => (CheckResult::Warn, format!("{branch} {b} behind {up} — pull needed")),
+                        (a, b) => (CheckResult::Warn, format!("{branch} diverged from {up} ({a} ahead, {b} behind)")),
+                    };
+                    print_row("remote", result, &msg);
+                }
+                _ => {
+                    print_row("remote", CheckResult::Warn, &format!("{branch}: could not compare against upstream"));
+                }
+            }
+        }
+        _ => {
+            print_row("remote", CheckResult::Warn, &format!("{branch} has no upstream — `git push -u` first"));
+        }
+    }
+
+    // --- phase detection ---
+    let design_rounds = cfg.mock_dir.join("design_rounds");
+    let phase = changelist_helpers::current_phase(&design_rounds);
+    print_row("phase", CheckResult::Pass, phase.label());
+
+    // --- cargo check ---
+    let check_status = Command::new("cargo")
+        .arg("check")
+        .current_dir(&cfg.mock_dir)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTC")
+        .env_remove("RUSTDOC")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match check_status {
+        Ok(s) if s.success() => print_row("build", CheckResult::Pass, "cargo check green"),
+        Ok(_) => {
+            print_row("build", CheckResult::Fail, "cargo check failed — run `cargo check` in mock/ for details");
+            any_fail = true;
+        }
+        Err(e) => {
+            print_row("build", CheckResult::Fail, &format!("could not run cargo check: {e}"));
+            any_fail = true;
+        }
+    }
+
+    // --- phase-specific lock readiness ---
+    use mockspace_lint_rules::changelist_helpers::Phase;
+    match phase {
+        Phase::Topic => {
+            print_row(
+                "advance",
+                CheckResult::Pass,
+                "author a topic + doc changelist to start DOC phase",
+            );
+        }
+        Phase::Doc => {
+            print_row(
+                "advance",
+                CheckResult::Pass,
+                "`cargo mock lock` when doc edits done (DOC → SRC-PLAN)",
+            );
+        }
+        Phase::SrcPlan => {
+            print_row(
+                "advance",
+                CheckResult::Pass,
+                "author a src changelist to enter SRC phase",
+            );
+        }
+        Phase::Src => {
+            let msg = if any_fail {
+                "SRC impl in progress — build failing; fix before `cargo mock lock`"
+            } else {
+                "SRC impl ready for `cargo mock lock` (SRC → DONE) once CL is fulfilled"
+            };
+            print_row(
+                "advance",
+                if any_fail { CheckResult::Fail } else { CheckResult::Pass },
+                msg,
+            );
+        }
+        Phase::Done => {
+            print_row(
+                "advance",
+                CheckResult::Pass,
+                "round complete — `cargo mock close` to archive",
+            );
+        }
+    }
+
+    eprintln!();
+    if any_fail {
+        eprintln!("  verdict: NOT READY");
+        eprintln!("  resolve the ✗ rows above before locking or closing.");
+        ExitCode::FAILURE
+    } else {
+        eprintln!("  verdict: ready to proceed (see `advance` row for next step)");
+        ExitCode::SUCCESS
     }
 }
