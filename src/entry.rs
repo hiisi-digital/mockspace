@@ -795,6 +795,57 @@ fn cmd_check(cfg: &Config) -> ExitCode {
         }
     }
 
+    // --- cargo test ---
+    // Tests in this repo exercise the designed API surface. If the CL
+    // promises functionality and tests assert it, missing impl fails here.
+    let test_status = Command::new("cargo")
+        .arg("test")
+        .current_dir(&cfg.mock_dir)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTC")
+        .env_remove("RUSTDOC")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match test_status {
+        Ok(s) if s.success() => print_row("tests", CheckResult::Pass, "cargo test green"),
+        Ok(_) => {
+            print_row("tests", CheckResult::Fail, "cargo test failed — run `cargo test` in mock/ for details");
+            any_fail = true;
+        }
+        Err(e) => {
+            print_row("tests", CheckResult::Fail, &format!("could not run cargo test: {e}"));
+            any_fail = true;
+        }
+    }
+
+    // --- mockspace lint pipeline (strict) ---
+    // Delegates to `cargo mock --lint-only --strict` so the exact same
+    // lint set that will run on push fires here. Strict mode is the
+    // pre-push tier: any HARD_ERROR lint fails the check.
+    let lint_status = Command::new("cargo")
+        .args(["mock", "--lint-only", "--strict"])
+        .current_dir(&cfg.repo_root)
+        .env("MOCKSPACE_REEXEC", "1") // suppress proxy re-exec inside the child
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match lint_status {
+        Ok(s) if s.success() => print_row("lints", CheckResult::Pass, "mockspace lint pipeline green (strict)"),
+        Ok(_) => {
+            print_row(
+                "lints",
+                CheckResult::Fail,
+                "mockspace lints failed — run `cargo mock --lint-only --strict` for details",
+            );
+            any_fail = true;
+        }
+        Err(e) => {
+            print_row("lints", CheckResult::Fail, &format!("could not run cargo mock lints: {e}"));
+            any_fail = true;
+        }
+    }
+
     // --- phase-specific lock readiness ---
     use mockspace_lint_rules::changelist_helpers::Phase;
     match phase {
