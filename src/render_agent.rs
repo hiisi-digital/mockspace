@@ -352,7 +352,9 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
         allow
     fi
     if echo "$REL_PATH" | grep -qE '^design_rounds/[^/]+/'; then
-        deny "BLOCKED: '${{REL_PATH}}' is inside a closed round subdirectory.\\n\\nClosed rounds are archived history. Every file in them is frozen forever.\\nNothing in a closed round subdirectory can be edited.\\n\\nCurrent phase: ${{PHASE}}"
+        SUBDIR_NAME=$(echo "$REL_PATH" | sed -n 's|^design_rounds/\([^/]*\)/.*|\1|p')
+        FLAT_PATH=$(echo "$REL_PATH" | sed 's|^design_rounds/[^/]*/|design_rounds/|')
+        deny "BLOCKED: '${{REL_PATH}}' targets a round-archive subdirectory.\\n\\nSubdirectories under design_rounds/ are ARCHIVED closed rounds; they are frozen forever.\\nActive rounds always live FLAT at design_rounds/ root (see design-round skill, File layout section).\\n\\nIf you meant to edit an active round file, the correct path is probably:\\n  ${{FLAT_PATH}}\\n\\nIf that active file does not yet exist, create it at the flat path above.\\nNever mkdir under design_rounds/ for active work; cargo mock close is the only process that creates subdirectories.\\n\\nCurrent phase: ${{PHASE}}"
     fi
     IS_CHANGELIST=false
     IS_DOC_CHANGELIST=false
@@ -1117,9 +1119,43 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "1. **Lock the source changelist**: `cargo mock lock`. Round complete.\n",
             "2. **Close the round**: `cargo mock close`. Archives all files.\n",
             "\n",
+            "## File layout — flat while active, subdir after close\n",
+            "\n",
+            "**Every active-round file lives FLAT at the `design_rounds/` root.**\n",
+            "Never create `design_rounds/<timestamp>/<filename>`-style paths during\n",
+            "an open round; that's the ARCHIVE location for closed rounds only.\n",
+            "\n",
+            "Active-round paths (flat):\n",
+            "\n",
+            "```\n",
+            "design_rounds/{YYYYMMDDHHMM}_topic.{name}.md\n",
+            "design_rounds/{YYYYMMDDHHMM}_changelist.doc.md          (DOC phase)\n",
+            "design_rounds/{YYYYMMDDHHMM}_changelist.doc.lock.md     (after lock)\n",
+            "design_rounds/{YYYYMMDDHHMM}_changelist.src.md          (SRC phase)\n",
+            "design_rounds/{YYYYMMDDHHMM}_changelist.src.lock.md     (after lock)\n",
+            "```\n",
+            "\n",
+            "`cargo mock close` is the ONLY step that creates a subdirectory. It\n",
+            "moves the flat files into `design_rounds/{YYYYMMDDHHMM}/` as part of\n",
+            "archiving the round. Once a round is closed, every file inside its\n",
+            "subdirectory is frozen.\n",
+            "\n",
+            "The `mockspace-write-guard` hook treats any path matching\n",
+            "`design_rounds/[^/]+/` as a closed-round archive and denies writes\n",
+            "to it at HARD_ERROR. If you hit that deny, check the target path:\n",
+            "you almost certainly meant `design_rounds/{timestamp}_topic.{name}.md`\n",
+            "(flat), not `design_rounds/{timestamp}/{timestamp}_topic.{name}.md`\n",
+            "(subdir = archived).\n",
+            "\n",
+            "This rule is absolute. Do not mkdir under `design_rounds/` during an\n",
+            "open round for any reason; the state machine owns that layout.\n",
+            "\n",
             "## Rules\n",
             "\n",
             "- All conversation first. No mockspace edits during topic discussions.\n",
+            "- **Active rounds live FLAT in `design_rounds/`.** See File layout above.\n",
+            "  Subdirectories under `design_rounds/` are ALWAYS archived-round storage,\n",
+            "  never active work. The write-guard hook enforces this at HARD_ERROR.\n",
             "- One question at a time. Never batch multiple questions.\n",
             "- Always offer free-text input as an option. The user's thoughts may not fit\n",
             "  premade choices.\n",
