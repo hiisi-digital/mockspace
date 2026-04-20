@@ -92,6 +92,22 @@ pub struct Config {
 
     /// Crate companion grouping for graph rank: source -> target.
     pub crate_grouping: BTreeMap<String, String>,
+
+    /// Per-crate primitive-introductions map. Key: crate directory
+    /// name (e.g. "arvo", "arvo-bits"). Value: the list of primitive
+    /// token names that crate legitimately introduces in its own
+    /// source because it is the producer of the wrapped equivalent.
+    ///
+    /// Bare-primitive lints (`no-bare-numeric`, `arvo-types-only`,
+    /// `no-bare-option`, etc.) skip these tokens on these specific
+    /// crates. Everything not listed remains subject to the lint.
+    ///
+    /// Example: `arvo = ["u8", "u16", "u32", "u64", "u128", "i8", ...,
+    /// "f32", "f64", "usize", "isize", "bool"]` — arvo defines the
+    /// numeric substrate, so it legitimately wraps every std numeric
+    /// primitive; meanwhile `Option` / `Result` / `String` still fire
+    /// on arvo because arvo does not introduce them.
+    pub primitive_introductions: BTreeMap<String, Vec<String>>,
 }
 
 /// Commit byline policy per agent mode, from `mock/agent/config.toml` `[attribution]`.
@@ -191,6 +207,12 @@ struct RawConfig {
     macro_styles: Option<BTreeMap<String, String>>,
     crate_colors: Option<BTreeMap<String, String>>,
     crate_grouping: Option<BTreeMap<String, String>>,
+
+    // Primitive-introductions map: crate_name -> list of primitive
+    // tokens that the named crate legitimately introduces. Consumed
+    // by bare-primitive lints to skip per-primitive per-crate.
+    #[serde(rename = "primitive-introductions", alias = "primitive_introductions")]
+    primitive_introductions: Option<BTreeMap<String, Vec<String>>>,
 
     // Lints section is handled separately via toml_edit document API
     // because it contains heterogeneous values (strings and tables).
@@ -332,6 +354,7 @@ impl Config {
             primary_domain_macro: raw.primary_domain_macro,
             primary_domain_label,
             crate_grouping: raw.crate_grouping.unwrap_or_default(),
+            primitive_introductions: raw.primitive_introductions.unwrap_or_default(),
         }
     }
 

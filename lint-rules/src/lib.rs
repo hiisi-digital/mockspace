@@ -65,7 +65,7 @@ mod repr_c_abi_safety;
 mod single_source;
 mod undocumented_type;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use tree_sitter::Tree;
@@ -127,6 +127,13 @@ pub struct LintContext<'a> {
     /// Crate name prefix (e.g. "loimu"). Used to build expected crate
     /// names dynamically instead of hardcoding project-specific names.
     pub crate_prefix: &'a str,
+    /// Per-crate primitive-introductions map from mockspace.toml's
+    /// `[primitive-introductions]` section. Key: crate directory
+    /// name; value: list of primitive tokens the crate legitimately
+    /// introduces. Lints that enforce "no bare primitives" should
+    /// call [`LintContext::introduces`] to check whether the current
+    /// crate legitimately uses a given primitive token.
+    pub primitive_introductions: &'a BTreeMap<String, Vec<String>>,
 }
 
 impl<'a> LintContext<'a> {
@@ -137,6 +144,20 @@ impl<'a> LintContext<'a> {
         } else {
             self.proc_macro_crates.iter().any(|c| c == self.crate_name)
         }
+    }
+
+    /// Whether the current crate legitimately introduces the given
+    /// primitive token per the `[primitive-introductions]` config.
+    /// Lints that enforce "no bare primitives" should skip a specific
+    /// token on a specific crate when this returns `true`.
+    ///
+    /// Example: `ctx.introduces("u8")` returns `true` when the crate
+    /// is `arvo` and `arvo = ["u8", ...]` is configured in mockspace.toml.
+    pub fn introduces(&self, primitive: &str) -> bool {
+        self.primitive_introductions
+            .get(self.crate_name)
+            .map(|list| list.iter().any(|p| p == primitive))
+            .unwrap_or(false)
     }
 }
 
