@@ -82,16 +82,32 @@ pub const PROC_MACRO_CRATES: &[&str] = &[];
 // Lint trait and context
 // ---------------------------------------------------------------------------
 
+/// A single source file surfaced to lints: its repo-relative path
+/// and its full text.
+#[derive(Clone)]
+pub struct CrateSourceFile {
+    /// Crate-relative path (e.g. `src/lib.rs`, `src/bits.rs`).
+    pub rel_path: std::path::PathBuf,
+    /// Full file contents.
+    pub text: String,
+}
+
 /// Context provided to each lint for a single crate.
 pub struct LintContext<'a> {
     /// Directory name of the crate (e.g. "<prefix>-signal").
     pub crate_name: &'a str,
     /// Short name (e.g. "signal").
     pub short_name: &'a str,
-    /// The raw source text of lib.rs.
+    /// The raw source text of `src/lib.rs` (back-compat; lints that
+    /// want to scan every module file should use `all_sources`).
     pub source: &'a str,
-    /// The tree-sitter AST.
+    /// The tree-sitter AST of `src/lib.rs`.
     pub tree: &'a Tree,
+    /// Every `.rs` file under the crate's `src/**`, in path order.
+    /// The first entry is always `src/lib.rs`. Lints that used to
+    /// inspect only `source` should iterate over this to catch drift
+    /// in module files (`bits.rs`, `prim.rs`, etc.).
+    pub all_sources: &'a [CrateSourceFile],
     /// Names of all crates this crate depends on (directory names).
     pub deps: &'a [String],
     /// Set of all crate directory names in the workspace.

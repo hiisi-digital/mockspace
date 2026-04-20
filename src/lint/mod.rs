@@ -8,9 +8,9 @@
 //! 2. Cross-crate lints — each lint sees all crates simultaneously.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use mockspace_lint_rules::{self, LintContext, LintError, LintMode, Level, Lint, CrossCrateLint, LintConfig};
+use mockspace_lint_rules::{self, CrateSourceFile, LintContext, LintError, LintMode, Level, Lint, CrossCrateLint, LintConfig};
 
 use crate::model::CrateMap;
 
@@ -20,9 +20,56 @@ struct ParsedCrate {
     short_name: String,
     source: String,
     tree: tree_sitter::Tree,
+    all_sources: Vec<CrateSourceFile>,
     design_doc: Option<String>,
     all_doc_content: String,
     shame_doc: Option<String>,
+}
+
+/// Walk `crate_dir/src/**/*.rs` and return every file's (rel_path, text),
+/// with `src/lib.rs` first when it exists. Silently skips unreadable
+/// files; errors surface via the lint pass seeing missing content.
+fn collect_crate_sources(crate_dir: &Path) -> Vec<CrateSourceFile> {
+    let src_dir = crate_dir.join("src");
+    if !src_dir.is_dir() {
+        return Vec::new();
+    }
+    let mut out: Vec<CrateSourceFile> = Vec::new();
+    walk_rs(&src_dir, crate_dir, &mut out);
+    // Sort so `src/lib.rs` lands first, then everything else in path order.
+    out.sort_by(|a, b| {
+        let a_is_lib = a.rel_path == PathBuf::from("src/lib.rs");
+        let b_is_lib = b.rel_path == PathBuf::from("src/lib.rs");
+        match (a_is_lib, b_is_lib) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.rel_path.cmp(&b.rel_path),
+        }
+    });
+    out
+}
+
+fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_rs(&path, crate_dir, out);
+            continue;
+        }
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            continue;
+        }
+        let text = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let rel_path = path.strip_prefix(crate_dir).unwrap_or(&path).to_path_buf();
+        out.push(CrateSourceFile { rel_path, text });
+    }
 }
 
 /// Run all lints (per-crate + cross-crate) against crates.
@@ -96,6 +143,10 @@ pub fn run_lints(
             None => continue,
         };
 
+        // Read every .rs file under src/ so lints can scan module files
+        // (bits.rs, prim.rs, impl.rs, ...) in addition to lib.rs.
+        let all_sources = collect_crate_sources(&crate_dir);
+
         // Read DESIGN.md.tmpl if it exists
         let design_doc = std::fs::read_to_string(crate_dir.join("DESIGN.md.tmpl")).ok();
 
@@ -111,6 +162,7 @@ pub fn run_lints(
             short_name: &info.short_name,
             source: &source,
             tree: &tree,
+            all_sources: &all_sources,
             deps: &info.deps,
             all_crates: &all_crate_names,
             design_doc: design_doc.as_deref(),
@@ -128,6 +180,7 @@ pub fn run_lints(
             short_name: info.short_name.clone(),
             source,
             tree,
+            all_sources,
             design_doc,
             all_doc_content,
             shame_doc,
@@ -146,6 +199,7 @@ pub fn run_lints(
                     short_name: &p.short_name,
                     source: &p.source,
                     tree: &p.tree,
+                    all_sources: &p.all_sources,
                     deps: &info.deps,
                     all_crates: &all_crate_names,
                     design_doc: p.design_doc.as_deref(),
