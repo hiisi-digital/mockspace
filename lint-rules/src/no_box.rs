@@ -174,6 +174,7 @@ mod tests {
             workspace_root: Box::leak(Box::new(std::path::PathBuf::from("/tmp"))),
             proc_macro_crates: Box::leak(Box::new(Vec::new())),
             crate_prefix: "test",
+            primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
         };
         // return tree separately to keep borrow checker happy
         (unsafe { std::ptr::read(tree as *const _) }, ctx)
@@ -237,6 +238,7 @@ mod tests {
             workspace_root: Box::leak(Box::new(std::path::PathBuf::from("/tmp"))),
             proc_macro_crates,
             crate_prefix: "test",
+            primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
         };
         assert!(NoBox.check(&ctx).is_empty());
     }
@@ -261,6 +263,7 @@ mod tests {
             workspace_root: Box::leak(Box::new(std::path::PathBuf::from("/tmp"))),
             proc_macro_crates: Box::leak(Box::new(Vec::new())),
             crate_prefix: "test",
+            primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
         };
         let errors = NoBox.check(&ctx);
         assert!(!errors.is_empty());

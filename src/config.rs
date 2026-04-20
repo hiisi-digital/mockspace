@@ -92,6 +92,41 @@ pub struct Config {
 
     /// Crate companion grouping for graph rank: source -> target.
     pub crate_grouping: BTreeMap<String, String>,
+
+    /// Per-crate primitive-introductions map. Key: crate directory
+    /// name (e.g. "arvo", "arvo-bits"). Value: the list of primitive
+    /// token names that crate legitimately introduces in its own
+    /// source because it is the producer of the wrapped equivalent.
+    ///
+    /// Bare-primitive lints (`no-bare-numeric`, `arvo-types-only`,
+    /// `no-bare-option`, etc.) skip these tokens on these specific
+    /// crates. Everything not listed remains subject to the lint.
+    ///
+    /// Example: `arvo = ["u8", "u16", "u32", "u64", "u128", "i8", ...,
+    /// "f32", "f64", "usize", "isize", "bool"]` — arvo defines the
+    /// numeric substrate, so it legitimately wraps every std numeric
+    /// primitive; meanwhile `Option` / `Result` / `String` still fire
+    /// on arvo because arvo does not introduce them.
+    ///
+    /// # Future direction
+    ///
+    /// This manual mapping is the belt-and-suspenders path. The
+    /// default long-term mechanism should be *detection*, not
+    /// *declaration*: mockspace can derive the introductions set for
+    /// a crate by either (a) processing the crate's DESIGN.md.tmpl /
+    /// README.md.tmpl to extract the documented primitive
+    /// definitions, or (b) pre-parsing every `src/**/*.rs` to find
+    /// `pub struct USize(pub usize)` / `pub type Byte = ...` and
+    /// inferring "this crate introduces `usize` via `USize`". Both
+    /// paths stay consistent with the doc = design principle: the
+    /// configuration derives from the crate's own contract rather
+    /// than living in a parallel TOML table that can drift.
+    ///
+    /// Until that detection lands, the explicit map wins. When it
+    /// lands, the map becomes additive — anything declared here
+    /// supplements the detected set rather than replacing it —
+    /// letting both paths coexist during the migration.
+    pub primitive_introductions: BTreeMap<String, Vec<String>>,
 }
 
 /// Commit byline policy per agent mode, from `mock/agent/config.toml` `[attribution]`.
@@ -191,6 +226,12 @@ struct RawConfig {
     macro_styles: Option<BTreeMap<String, String>>,
     crate_colors: Option<BTreeMap<String, String>>,
     crate_grouping: Option<BTreeMap<String, String>>,
+
+    // Primitive-introductions map: crate_name -> list of primitive
+    // tokens that the named crate legitimately introduces. Consumed
+    // by bare-primitive lints to skip per-primitive per-crate.
+    #[serde(rename = "primitive-introductions", alias = "primitive_introductions")]
+    primitive_introductions: Option<BTreeMap<String, Vec<String>>>,
 
     // Lints section is handled separately via toml_edit document API
     // because it contains heterogeneous values (strings and tables).
@@ -332,6 +373,7 @@ impl Config {
             primary_domain_macro: raw.primary_domain_macro,
             primary_domain_label,
             crate_grouping: raw.crate_grouping.unwrap_or_default(),
+            primitive_introductions: raw.primitive_introductions.unwrap_or_default(),
         }
     }
 
