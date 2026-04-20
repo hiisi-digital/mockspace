@@ -292,7 +292,8 @@ fn run_inner(
             let violations = lint::run_lints(
                 &crates, &cfg.crates_dir, mode, Some(&names), doc_only,
                 &cfg.proc_macro_crates, &cfg.crate_prefix,
-                &cfg.lint_overrides, custom_lints, custom_cross_lints,
+                &cfg.lint_overrides, &cfg.primitive_introductions,
+                custom_lints, custom_cross_lints,
             );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
@@ -304,7 +305,8 @@ fn run_inner(
             let violations = lint::run_lints(
                 &crates, &cfg.crates_dir, mode, None, doc_only,
                 &cfg.proc_macro_crates, &cfg.crate_prefix,
-                &cfg.lint_overrides, custom_lints, custom_cross_lints,
+                &cfg.lint_overrides, &cfg.primitive_introductions,
+                custom_lints, custom_cross_lints,
             );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
