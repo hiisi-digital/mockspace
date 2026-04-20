@@ -133,6 +133,14 @@ pub struct LintContext<'a> {
     /// introduces. Lints that enforce "no bare primitives" should
     /// call [`LintContext::introduces`] to check whether the current
     /// crate legitimately uses a given primitive token.
+    ///
+    /// This explicit map is the belt-and-suspenders path. Long-term
+    /// the introductions set should be *detected* from each crate's
+    /// DESIGN.md.tmpl / source parse, not declared in a parallel
+    /// TOML table. See the `Config.primitive_introductions` docs on
+    /// the mockspace crate for the future direction — once that
+    /// lands, the TOML map becomes additive rather than the sole
+    /// source of truth.
     pub primitive_introductions: &'a BTreeMap<String, Vec<String>>,
 }
 

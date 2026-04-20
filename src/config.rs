@@ -107,6 +107,25 @@ pub struct Config {
     /// numeric substrate, so it legitimately wraps every std numeric
     /// primitive; meanwhile `Option` / `Result` / `String` still fire
     /// on arvo because arvo does not introduce them.
+    ///
+    /// # Future direction
+    ///
+    /// This manual mapping is the belt-and-suspenders path. The
+    /// default long-term mechanism should be *detection*, not
+    /// *declaration*: mockspace can derive the introductions set for
+    /// a crate by either (a) processing the crate's DESIGN.md.tmpl /
+    /// README.md.tmpl to extract the documented primitive
+    /// definitions, or (b) pre-parsing every `src/**/*.rs` to find
+    /// `pub struct USize(pub usize)` / `pub type Byte = ...` and
+    /// inferring "this crate introduces `usize` via `USize`". Both
+    /// paths stay consistent with the doc = design principle: the
+    /// configuration derives from the crate's own contract rather
+    /// than living in a parallel TOML table that can drift.
+    ///
+    /// Until that detection lands, the explicit map wins. When it
+    /// lands, the map becomes additive — anything declared here
+    /// supplements the detected set rather than replacing it —
+    /// letting both paths coexist during the migration.
     pub primitive_introductions: BTreeMap<String, Vec<String>>,
 }
 
