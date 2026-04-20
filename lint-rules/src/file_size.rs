@@ -158,6 +158,7 @@ mod tests {
             workspace_root: std::path::Path::new("/tmp"),
             proc_macro_crates: &[],
             crate_prefix: "test",
+            primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
         }
     }
 

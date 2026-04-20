@@ -104,6 +104,7 @@ pub fn run_lints(
     proc_macro_crates: &[String],
     crate_prefix: &str,
     lint_overrides: &LintConfig,
+    primitive_introductions: &std::collections::BTreeMap<String, Vec<String>>,
     custom_lints: &[Box<dyn Lint>],
     custom_cross_lints: &[Box<dyn CrossCrateLint>],
 ) -> usize {
@@ -171,6 +172,7 @@ pub fn run_lints(
             workspace_root,
             proc_macro_crates,
             crate_prefix,
+            primitive_introductions,
         };
 
         all_errors.extend(mockspace_lint_rules::check_crate_with_extra(&ctx, doc_only, overrides, custom_lints));
@@ -208,6 +210,7 @@ pub fn run_lints(
                     workspace_root,
                     proc_macro_crates,
                     crate_prefix,
+                    primitive_introductions,
                 },
             )
         })
