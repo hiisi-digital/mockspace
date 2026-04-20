@@ -34,16 +34,23 @@
 //!
 //! # Custom lints
 //!
-//! If `{mock_dir}/lints/` exists and contains `.rs` files, the proxy crate
-//! is generated with custom lint support. Each `.rs` file must define:
-//! - `pub fn lint() -> Box<dyn mockspace_lint_rules::Lint>` for per-crate lints
-//! - `pub fn cross_lint() -> Box<dyn mockspace_lint_rules::CrossCrateLint>` for cross-crate lints
+//! Two mechanisms, both wired through the generated proxy crate in
+//! `target/mockspace-proxy/`:
 //!
-//! A file can define one or both. To signal which functions are available,
-//! the file names follow a convention: files ending in `_cross` are treated
-//! as cross-crate lints; all others are per-crate lints. If a file needs to
-//! provide both, it should define both functions and be named without the
-//! `_cross` suffix — both will be called.
+//! 1. **In-tree lint files** — `.rs` files under `{mock_dir}/lints/`. Each
+//!    file defines `pub fn lint()` and/or `pub fn cross_lint()` (singular,
+//!    one lint per file). Good for quick project-specific rules.
+//!
+//! 2. **External lint-pack crates** — cargo dependencies declared under
+//!    `[lint-crates]` in `mockspace.toml`. Each pack must expose:
+//!    - `pub fn lints() -> Vec<Box<dyn mockspace_lint_rules::Lint>>`
+//!    - `pub fn cross_lints() -> Vec<Box<dyn mockspace_lint_rules::CrossCrateLint>>`
+//!
+//!    Good for lint rules shared across multiple mockspaces. Cargo-dep
+//!    syntax: `pack-name = { path = "..." }` / `{ git = "..." }` /
+//!    `{ version = "..." }`. The generated proxy pulls them in as normal
+//!    cargo dependencies; types match so long as the pack and the proxy
+//!    resolve the same `mockspace-lint-rules` source.
 
 use std::env;
 use std::fs;
@@ -312,15 +319,20 @@ fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, a
     let proxy_src = proxy_dir.join("src");
     let proxy_main = proxy_src.join("main.rs");
 
-    // Check for custom lints directory
+    // In-tree lint files from {mock_dir}/lints/
     let lints_dir = mock_dir.join("lints");
     let custom_lint_files = discover_custom_lint_files(&lints_dir);
-    let has_custom_lints = !custom_lint_files.is_empty();
+
+    // External lint-pack crates from [lint-crates] in mockspace.toml
+    let lint_packs = parse_lint_crates(&mock_dir.join("mockspace.toml"));
+
+    let has_custom_lints = !custom_lint_files.is_empty() || !lint_packs.is_empty();
 
     let lint_rules_path = mockspace_dir.join("lint-rules");
 
     let cargo_content = if has_custom_lints {
-        format!(
+        let mut out = String::new();
+        out.push_str(&format!(
             "[package]\n\
              name = \"mockspace-proxy\"\n\
              version = \"0.1.0\"\n\
@@ -334,7 +346,11 @@ fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, a
              mockspace-lint-rules = {{ path = \"{}\" }}\n",
             mockspace_dir.display(),
             lint_rules_path.display(),
-        )
+        ));
+        for (name, spec) in &lint_packs {
+            out.push_str(&format!("{name} = {spec}\n"));
+        }
+        out
     } else {
         format!(
             "[package]\n\
@@ -352,7 +368,7 @@ fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, a
     };
 
     let main_content = if has_custom_lints {
-        generate_custom_lint_main(&custom_lint_files, &lints_dir)
+        generate_custom_lint_main(&custom_lint_files, &lints_dir, &lint_packs)
     } else {
         "fn main() -> std::process::ExitCode {\n\
         \x20   mockspace::run()\n\
@@ -375,6 +391,53 @@ fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, a
     let _ = fs::write(&proxy_cargo, &cargo_content);
     let _ = fs::write(&proxy_main, &main_content);
     actions.push("generated target/mockspace-proxy/".into());
+}
+
+/// Parse the `[lint-crates]` section from mockspace.toml.
+///
+/// Returns a list of (crate_name, cargo_dep_spec_as_toml_string) pairs in
+/// declaration order. Each value is re-emitted verbatim into the proxy's
+/// Cargo.toml so any cargo-accepted dep form works: `"0.1"`, `{ path = ... }`,
+/// `{ git = ..., branch = ... }`, etc.
+///
+/// Returns empty vec if mockspace.toml is missing, unparseable, or has no
+/// `[lint-crates]` section.
+fn parse_lint_crates(mockspace_toml: &Path) -> Vec<(String, String)> {
+    let content = match fs::read_to_string(mockspace_toml) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    let doc = match content.parse::<toml_edit::DocumentMut>() {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+
+    let section = match doc.get("lint-crates").and_then(|i| i.as_table()) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+
+    let mut result = Vec::new();
+    for (name, item) in section.iter() {
+        // Value form (string like "0.1" or inline table `{ path = ... }`).
+        if let Some(v) = item.as_value() {
+            result.push((name.to_string(), v.to_string().trim().to_string()));
+            continue;
+        }
+        // Sub-table form: [lint-crates.foo]\n path = "..."
+        if let Some(tbl) = item.as_table() {
+            // Re-emit as an inline table so it fits on the [dependencies] line.
+            let mut inline = toml_edit::InlineTable::new();
+            for (k, v) in tbl.iter() {
+                if let Some(val) = v.as_value() {
+                    inline.insert(k, val.clone());
+                }
+            }
+            result.push((name.to_string(), inline.to_string().trim().to_string()));
+        }
+    }
+    result
 }
 
 /// Discover `.rs` files in the custom lints directory.
@@ -435,11 +498,20 @@ fn scan_lint_functions(lints_dir: &Path, stem: &str) -> (bool, bool) {
 
 /// Generate the proxy's main.rs with custom lint module includes.
 ///
-/// Each custom lint `.rs` file is included via `#[path]` attribute pointing
-/// at the absolute path of the lint file. The file must define:
+/// In-tree lint files: each `.rs` file under `{mock_dir}/lints/` is included
+/// via `#[path]` attribute. Each file must define:
 /// - `pub fn lint() -> Box<dyn mockspace_lint_rules::Lint>` for per-crate lints
 /// - `pub fn cross_lint() -> Box<dyn mockspace_lint_rules::CrossCrateLint>` for cross-crate lints
-fn generate_custom_lint_main(lint_files: &[String], lints_dir: &Path) -> String {
+///
+/// External lint packs: each crate named in `[lint-crates]` is pulled in as
+/// a normal cargo dependency. Each pack must expose:
+/// - `pub fn lints() -> Vec<Box<dyn mockspace_lint_rules::Lint>>`
+/// - `pub fn cross_lints() -> Vec<Box<dyn mockspace_lint_rules::CrossCrateLint>>`
+fn generate_custom_lint_main(
+    lint_files: &[String],
+    lints_dir: &Path,
+    lint_packs: &[(String, String)],
+) -> String {
     let mut out = String::new();
 
     // Module declarations with absolute paths (forward slashes for cross-platform compat)
@@ -466,22 +538,34 @@ fn generate_custom_lint_main(lint_files: &[String], lints_dir: &Path) -> String 
         }
     }
 
+    // Cargo names with `-` become `_` for Rust paths.
+    let pack_idents: Vec<String> = lint_packs
+        .iter()
+        .map(|(name, _)| name.replace('-', "_"))
+        .collect();
+
     // custom_lints() function
     out.push_str("fn custom_lints() -> Vec<Box<dyn mockspace::Lint>> {\n");
-    out.push_str("    vec![\n");
+    out.push_str("    let mut v: Vec<Box<dyn mockspace::Lint>> = Vec::new();\n");
     for name in &lint_mods {
-        out.push_str(&format!("        {name}::lint(),\n"));
+        out.push_str(&format!("    v.push({name}::lint());\n"));
     }
-    out.push_str("    ]\n");
+    for ident in &pack_idents {
+        out.push_str(&format!("    v.extend({ident}::lints());\n"));
+    }
+    out.push_str("    v\n");
     out.push_str("}\n\n");
 
     // custom_cross_lints() function
     out.push_str("fn custom_cross_lints() -> Vec<Box<dyn mockspace::CrossCrateLint>> {\n");
-    out.push_str("    vec![\n");
+    out.push_str("    let mut v: Vec<Box<dyn mockspace::CrossCrateLint>> = Vec::new();\n");
     for name in &cross_lint_mods {
-        out.push_str(&format!("        {name}::cross_lint(),\n"));
+        out.push_str(&format!("    v.push({name}::cross_lint());\n"));
     }
-    out.push_str("    ]\n");
+    for ident in &pack_idents {
+        out.push_str(&format!("    v.extend({ident}::cross_lints());\n"));
+    }
+    out.push_str("    v\n");
     out.push_str("}\n\n");
 
     out.push_str("fn main() -> std::process::ExitCode {\n");
@@ -780,5 +864,77 @@ fn find_ancestor_with(start: &Path, target_name: &str) -> Option<PathBuf> {
         if !dir.pop() {
             return None;
         }
+    }
+}
+
+#[cfg(test)]
+mod lint_crates_tests {
+    use super::*;
+
+    fn write_toml(contents: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mockspace.toml");
+        fs::write(&path, contents).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn missing_file_returns_empty() {
+        let result = parse_lint_crates(Path::new("/definitely/does/not/exist"));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn absent_section_returns_empty() {
+        let (_dir, path) = write_toml("project_name = \"foo\"\n");
+        assert!(parse_lint_crates(&path).is_empty());
+    }
+
+    #[test]
+    fn inline_table_form() {
+        let toml = r#"
+[lint-crates]
+foo-pack = { path = "../foo-pack" }
+bar-pack = { git = "https://example.com/bar.git", branch = "main" }
+"#;
+        let (_dir, path) = write_toml(toml);
+        let result = parse_lint_crates(&path);
+        assert_eq!(result.len(), 2);
+        let names: Vec<&str> = result.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"foo-pack"));
+        assert!(names.contains(&"bar-pack"));
+        for (_, spec) in &result {
+            assert!(spec.starts_with('{') && spec.ends_with('}'), "got: {spec}");
+        }
+    }
+
+    #[test]
+    fn version_string_form() {
+        let toml = r#"
+[lint-crates]
+foo-pack = "0.1.2"
+"#;
+        let (_dir, path) = write_toml(toml);
+        let result = parse_lint_crates(&path);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "foo-pack");
+        assert_eq!(result[0].1, "\"0.1.2\"");
+    }
+
+    #[test]
+    fn sub_table_form_rendered_as_inline() {
+        let toml = r#"
+[lint-crates.foo-pack]
+path = "../foo-pack"
+version = "0.1"
+"#;
+        let (_dir, path) = write_toml(toml);
+        let result = parse_lint_crates(&path);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "foo-pack");
+        let spec = &result[0].1;
+        assert!(spec.starts_with('{'), "got: {spec}");
+        assert!(spec.contains("path"), "got: {spec}");
+        assert!(spec.contains("version"), "got: {spec}");
     }
 }
