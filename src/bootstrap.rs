@@ -350,6 +350,25 @@ fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, a
         for (name, spec) in &lint_packs {
             out.push_str(&format!("{name} = {spec}\n"));
         }
+        if !lint_packs.is_empty() {
+            // Third-party lint packs depend on mockspace-lint-rules via git
+            // (that's the canonical source spec); the proxy has it as a path
+            // dep (from cargo's git cache). Without a patch cargo treats them
+            // as two different source identities and fails trait-compat unify.
+            // Patch both ssh+https variants of the hiisi-digital canonical URL
+            // back to the proxy's local path.
+            out.push_str(&format!(
+                "\n[patch.\"ssh://git@github.com/hiisi-digital/mockspace.git\"]\n\
+                 mockspace = {{ path = \"{ms}\" }}\n\
+                 mockspace-lint-rules = {{ path = \"{lr}\" }}\n\
+                 \n\
+                 [patch.\"https://github.com/hiisi-digital/mockspace.git\"]\n\
+                 mockspace = {{ path = \"{ms}\" }}\n\
+                 mockspace-lint-rules = {{ path = \"{lr}\" }}\n",
+                ms = mockspace_dir.display(),
+                lr = lint_rules_path.display(),
+            ));
+        }
         out
     } else {
         format!(
