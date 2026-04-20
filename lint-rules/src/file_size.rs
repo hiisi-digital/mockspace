@@ -149,6 +149,7 @@ mod tests {
             short_name: "test-crate",
             source,
             tree,
+            all_sources: &[],
             deps: &[],
             all_crates: Box::leak(Box::new(BTreeSet::new())),
             design_doc: None,
