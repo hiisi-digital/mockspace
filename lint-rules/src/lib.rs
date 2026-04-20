@@ -3,6 +3,30 @@
 //! Each lint implements the `Lint` trait (per-crate) or `CrossCrateLint` trait
 //! (cross-crate). Consumers build `LintContext` for each crate and call
 //! `check_crate()` / `check_cross_crate()` to run the rule sets.
+//!
+//! # External lint packs
+//!
+//! A third-party crate can ship its own lint set and be consumed by any
+//! mockspace project via the `[lint-crates]` section in `mockspace.toml`.
+//! The pack must expose two public functions:
+//!
+//! ```rust,ignore
+//! pub fn lints() -> Vec<Box<dyn mockspace_lint_rules::Lint>>;
+//! pub fn cross_lints() -> Vec<Box<dyn mockspace_lint_rules::CrossCrateLint>>;
+//! ```
+//!
+//! Either may return empty. The [`lint_pack!`] macro generates both from a
+//! list of lint structs. Example:
+//!
+//! ```rust,ignore
+//! mockspace_lint_rules::lint_pack! {
+//!     lints: [MyRuleA, MyRuleB],
+//!     cross_lints: [MyCrossRule],
+//! }
+//! ```
+//!
+//! The generated proxy crate (`target/mockspace-proxy/`) concatenates every
+//! pack's lints with any in-tree `mock/lints/*.rs` files and runs the union.
 
 mod actionable_errors;
 mod no_adhoc_framework;
@@ -406,6 +430,52 @@ pub trait CrossCrateLint {
 }
 
 // ---------------------------------------------------------------------------
+// External lint-pack convention
+// ---------------------------------------------------------------------------
+
+/// Declare the two `lints()` and `cross_lints()` entry points that every
+/// external lint pack must expose.
+///
+/// Each entry is an expression producing a value that implements `Lint`
+/// (in the `lints:` list) or `CrossCrateLint` (in the `cross_lints:` list).
+/// Unit-struct lints are spelled `MyLint`; lints with constructors are
+/// spelled `MyLint::new(args)`.
+///
+/// Either list may be omitted; an omitted list produces an empty `Vec`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// pub struct NoBareFoo;
+/// impl mockspace_lint_rules::Lint for NoBareFoo { /* ... */ }
+///
+/// mockspace_lint_rules::lint_pack! {
+///     lints: [NoBareFoo, FileSize::new()],
+/// }
+/// ```
+#[macro_export]
+macro_rules! lint_pack {
+    (
+        $(lints: [ $( $lint:expr ),* $(,)? ] $(,)?)?
+        $(cross_lints: [ $( $cross:expr ),* $(,)? ] $(,)?)?
+    ) => {
+        pub fn lints() -> ::std::vec::Vec<::std::boxed::Box<dyn $crate::Lint>> {
+            #[allow(unused_mut)]
+            let mut v: ::std::vec::Vec<::std::boxed::Box<dyn $crate::Lint>> = ::std::vec::Vec::new();
+            $( $( v.push(::std::boxed::Box::new($lint)); )* )?
+            v
+        }
+
+        pub fn cross_lints() -> ::std::vec::Vec<::std::boxed::Box<dyn $crate::CrossCrateLint>> {
+            #[allow(unused_mut)]
+            let mut v: ::std::vec::Vec<::std::boxed::Box<dyn $crate::CrossCrateLint>> = ::std::vec::Vec::new();
+            $( $( v.push(::std::boxed::Box::new($cross)); )* )?
+            v
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -625,4 +695,60 @@ pub fn check_cross_crate_with_extra(
     }
 
     errors
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::*;
+
+    struct SmokeLint;
+    impl Lint for SmokeLint {
+        fn name(&self) -> &'static str { "smoke-lint" }
+        fn check(&self, _ctx: &LintContext) -> Vec<LintError> { Vec::new() }
+    }
+
+    struct SmokeCross;
+    impl CrossCrateLint for SmokeCross {
+        fn name(&self) -> &'static str { "smoke-cross" }
+        fn check_all(&self, _crates: &[(&str, &LintContext)]) -> Vec<LintError> { Vec::new() }
+    }
+
+    mod full_pack {
+        use super::{SmokeLint, SmokeCross};
+        crate::lint_pack! {
+            lints: [SmokeLint],
+            cross_lints: [SmokeCross],
+        }
+    }
+
+    mod lints_only {
+        use super::SmokeLint;
+        crate::lint_pack! {
+            lints: [SmokeLint],
+        }
+    }
+
+    mod empty_pack {
+        crate::lint_pack! {}
+    }
+
+    #[test]
+    fn full_pack_produces_both_vecs() {
+        assert_eq!(full_pack::lints().len(), 1);
+        assert_eq!(full_pack::cross_lints().len(), 1);
+        assert_eq!(full_pack::lints()[0].name(), "smoke-lint");
+        assert_eq!(full_pack::cross_lints()[0].name(), "smoke-cross");
+    }
+
+    #[test]
+    fn lints_only_pack_empty_cross() {
+        assert_eq!(lints_only::lints().len(), 1);
+        assert_eq!(lints_only::cross_lints().len(), 0);
+    }
+
+    #[test]
+    fn empty_pack_empty_both() {
+        assert_eq!(empty_pack::lints().len(), 0);
+        assert_eq!(empty_pack::cross_lints().len(), 0);
+    }
 }

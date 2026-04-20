@@ -178,6 +178,7 @@ dependencies = [
  "libloading",
  "mockspace-lint-rules",
  "serde",
+ "tempfile",
  "toml_edit",
  "tree-sitter",
  "tree-sitter-rust",
