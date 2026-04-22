@@ -6,105 +6,101 @@
 
 ## Purpose
 
-This document proposes a new workflow layer for mockspace that introduces and connects five cooperating concepts:
+This document proposes a tightened workflow model for mockspace centered on four first-class concepts:
 
-- **tasks** — structured, versioned work items owned by a namespace
-- **branches** — active branch-scoped integration bundles
-- **phases** — the repeated planning/application cycle inside a branch
-- **epochs** — larger culmination points that compact working history into archival packages
-- **manifests** — active phase contracts that govern what a phase is allowed to do
+- **tasks** — canonical, namespace-owned work records
+- **phases** — the active planning/application cycle
+- **manifests** — sealed phase contracts
+- **epochs** — historical compaction boundaries
 
-The goal is to replace the current gap between:
+In this model, **git branch remains important but is no longer a first-class stored workflow object**. It is the ambient integration context in which the active phase workspace exists.
 
-1. unstructured or prose-heavy backlog notes inside `BACKLOG.md.tmpl`
-2. active changelists that act as execution contracts
-3. external, non-versioned task systems (for example assistant-local session task stores)
+The goal is to preserve the strongest parts of the existing mockspace design-first workflow while removing machinery that duplicates git or turns mockspace into a workflow database.
 
-with a repo-native, structured, versioned workflow that integrates directly with mockspace's existing design-first, phase-driven model.
-
-This design is for the **framework**, not for any one consumer repo's exact concern tree. The framework must support arbitrary namespace depth and arbitrary namespace naming without imposing a domain taxonomy.
+This design is for the **framework**, not for any one consumer repo's concern taxonomy. The framework must support arbitrary namespace depth and arbitrary namespace naming without imposing domain structure.
 
 ---
 
 ## Problem statement
 
-The current mockspace model is strong on **design governance** but weak on **structured work tracking**.
+The current mockspace model is strong on design governance, but the old branch-heavy expansion drifted too far toward duplicating git and introducing additional durable workflow identity where it was not actually needed.
 
-### Strengths of the current model
+Mockspace already has real strengths:
 
-Mockspace already provides:
+- design-first planning
+- explicit phase transitions
+- lintable workflow artifacts
+- strong supersession/deprecation semantics
+- archival of completed work
+- repo-native, versioned workflow history
 
-- a clear design-first phase machine
-- explicit transition commands
-- file-based, lintable design artifacts
-- archival of closed work
-- documentation generation
-- git hooks and agent integration
+Those strengths should remain.
 
-These are valuable and must be preserved.
+However, the old expanded model was trying to make too many things first-class at once:
 
-### Gaps in the current model
+- tasks
+- branches
+- phases
+- epochs
+- manifests
+- branch-local workspaces
+- branch durability metadata
+- mixed archive formats
 
-However, the current model does not provide a canonical, structured, versioned home for work items.
+That was more machinery than the workflow actually needs.
 
-Current options are all insufficient:
+The corrected design should:
 
-- `BACKLOG.md.tmpl` is human-readable but not structured enough for robust tooling.
-- changelists are excellent active-work contracts, but they are not the right place to be the long-lived canonical store of every work item.
-- assistant-local task systems are structured, but are outside version control, repo-local workflow, and mockspace enforcement.
-
-The result is fragmentation:
-
-- future work lives in prose
-- active work lives in changelists
-- asynchronous task tracking lives outside the repo
-- no unified repo-native reference system ties these together cleanly
-
-This design addresses that gap without discarding the strongest parts of the current workflow.
+- keep the philosophical core strong
+- remove artifacts that duplicate what git already does well
+- keep active workflow centered on phase and manifest
+- keep task storage simple and grep-friendly
+- preserve strong shame/accounting semantics when going backwards
+- preserve historical readability without overbuilding
 
 ---
 
 ## Design goals
 
-### G1 — repo-native canonical work graph
+### G1 — repo-native canonical task graph
 
-Tasks must live in the repo, under `mock/`, versioned with the rest of the design and workflow artifacts.
+Tasks must live in the repo under `mock/tasks/`, versioned with the rest of the design and workflow artifacts.
 
 ### G2 — no framework-imposed concern tree
 
-Mockspace must not dictate how consumer repos categorize their work. It should operate on arbitrarily nested **namespaces**.
+Mockspace must not dictate how consumer repos categorize their work. It should operate on arbitrarily nested namespaces.
 
-### G3 — preserve the design-first contract model
+### G3 — phase-first workflow
 
-The existing distinction between exploratory design work, sealed plans, and implementation/application work must remain intact.
+The active workflow should be modeled primarily in terms of **phase transitions**, not as a heavyweight branch object model.
 
-### G4 — avoid duplicate active-work artifacts
+### G4 — manifest-centered execution contracts
 
-The framework must not introduce a branch-local tasklist that duplicates manifest scope.
+Active work should be governed by manifests, not by a second redundant branch-owned tasklist or workspace identity layer.
 
-### G5 — clean active workspace, strong historical preservation
+### G5 — use git for branch identity instead of re-modeling it
 
-The active task surface should remain manageable. Closed work must remain referenceable later.
+Git branch remains the real integration context. Mockspace should not create a parallel durable branch identity system unless later implementation experience proves that absolutely necessary.
 
-### G6 — machine-readable and human-readable without parallel canonical representations
+### G6 — Markdown all the way through for tasks
 
-There must be one canonical representation per concept. Derived views are acceptable; parallel editable sources of truth are not.
+Open tasks and archived tasks should both be Markdown, not split across editable Markdown and JSONL archival formats.
 
-### G7 — support cross-cutting work
+### G7 — strong historical preservation without workflow-database complexity
 
-A branch may touch many namespaces and concerns. Tasks must remain namespace-owned, not branch-owned.
+History should remain clear, reviewable, grep-friendly, and versioned in git, without requiring complex hidden identity layers.
 
-### G8 — support meaningful larger archival boundaries
+### G8 — preserve deprecating replan semantics
 
-Mockspace needs a notion of an **epoch** as a larger culmination boundary beyond individual branch closure.
+Once a phase has entered `APPLY(...)`, going backwards through mockspace should always preserve the historical fact that the earlier manifest proved insufficient.
 
-### G9 — improve discoverability and guidance
+### G9 — epochs remain real but lightweight
 
-The framework should guide the user toward the right command from the current situation, with explicit and actionable block messages.
+Epoch should remain a real framework concept, but not start life as a huge release-governance system.
 
-### G10 — preserve strong shame / supersession semantics
+### G10 — strict guards with better guidance
 
-Going backwards after real work has begun should remain intentionally expensive and explicit. The framework should preserve the current discipline that a bad plan must be deprecated and replaced, not silently rewritten.
+Simplifying artifact/storage complexity is not an argument for weaker enforcement. If anything, simpler storage should permit stronger, clearer guardrails.
 
 ---
 
@@ -114,13 +110,40 @@ This design does **not** define:
 
 - a required namespace taxonomy for any consumer repo
 - a required number of namespace levels
-- exact consumer-facing concern names such as `compiler/ir` vs `frontend/ir`
-- detailed implementation of rendering/generation internals
-- exact migration steps for each current consumer repo
-- exact commit message wording for all transitions
-- exact release automation or CI/CD integration behavior
+- exact consumer-facing concern names
+- exact final command spelling for every CLI operation
+- exact migration sequencing for every existing repo
+- release automation or CI/CD policy
+- exact implementation of archive rendering/generation internals
+- branch durability metadata beyond what is necessary for historical readability
+- a workflow database or durable branch identity subsystem
 
-Those are consumer concerns or follow-up implementation concerns.
+---
+
+## Executive summary
+
+The tightened model is:
+
+- **task** = canonical work record
+- **phase** = active workflow lifecycle
+- **manifest** = sealed phase contract
+- **epoch** = historical compaction boundary
+- **git branch** = ambient integration context
+
+This means:
+
+- tasks remain namespace-owned
+- manifests reference task refs
+- active workflow artifacts live in one active phase workspace
+- git branch determines which version of that active workspace you are looking at
+- completed workflow artifacts are archived into epoch history with branch name recorded as context
+- open tasks are Markdown files
+- closed tasks are archived as Markdown files
+- there is no JSONL task archive model
+- there is no cheap workflow-level reopen path after `APPLY(...)`
+- lints remain strict and should become more instructional
+
+That is not a temporary simplification. It is the corrected intended model.
 
 ---
 
@@ -137,110 +160,62 @@ Examples:
 - `cross-cutting/lints`
 - `engine/plan/analysis`
 
-Mockspace treats namespaces as opaque nested names. It does not interpret their semantics.
+Mockspace treats namespaces mechanically, not semantically.
 
 ### Task
 
 A task is a structured work item owned by a namespace.
 
-Tasks are canonical work records. They may be:
-
-- open
-- deferred
-- blocked
-- in-progress
-- or otherwise active in the current epoch
-
-Closed tasks are archived.
-
-### Branch
-
-A branch is the branch-scoped active integration bundle.
-
-Here, "branch" means the mockspace workflow object resolved from the current git branch context. It is intentionally aligned 1:1 with git branch identity for day-to-day use, but the workflow record should also carry immutable metadata so that history remains durable even if git refs are renamed, reused, or rewritten.
-
-A branch is the unit of:
-
-- branch identity
-- active topic/design work
-- active manifests
-- phase transitions
-- closure into branch history
-
-A branch may address tasks from many namespaces.
-
-At minimum, a branch record should persist metadata such as:
-
-- originating git branch name
-- immutable branch/workflow instance identifier
-- base/fork-point commit
-- creation timestamp
-- target integration branch
-
-This lets git branch identity remain the primary user-facing lookup while making the workflow record robust enough for archival, replay, merge accounting, and ref rewrites.
+Tasks are the canonical work graph. They are not branch-owned.
 
 ### Phase
 
-A phase is one step in the repeated planning/application cycle inside a branch.
+A phase is the active step in the planning/application cycle.
 
-The branch moves through these active phases:
-
-- `TOPIC`
-- `PLAN(DOC)`
-- `APPLY(DOC)`
-- `PLAN(SRC)`
-- `APPLY(SRC)`
-- `DONE`
-
-Then, separately, the branch may be closed and archived.
-
-### Epoch
-
-An epoch is a larger culmination boundary.
-
-An epoch is **not** every release. It is a landmark-level closure event that compacts:
-
-- rolling closed task archives
-- closed branch/design artifacts
-- retrospective and carry-forward design material
-
-into an epoch package, leaving a cleaner active workspace.
+The active workflow is fundamentally phase-driven.
 
 ### Manifest
 
-This document uses **manifest** as the clearer long-term name for the active phase contracts currently represented by `changelist.doc` and `changelist.src`.
+A manifest is the active contract for a phase.
 
-The current naming may remain during migration, but conceptually these are manifests.
+This is the clearer long-term name for what older terminology called a changelist. The old filenames or migration language may persist temporarily, but conceptually these are manifests.
 
-- `doc manifest` — active documentation/design-side phase contract
-- `src manifest` — active source/application phase contract
+### Epoch
+
+An epoch is a larger archival boundary that compacts closed workflow history into a historical package while keeping the active workspace clean.
+
+### Branch context
+
+Branch remains important, but as **context**, not as a heavyweight mockspace-managed workflow object.
+
+Branch context means:
+
+- the current git branch
+- the integration surface on which the active phase workspace exists
+- the branch name recorded in status, guidance, closure metadata, and epoch archives
 
 ### Topic document
 
-A topic document remains an exploratory design document.
+A topic document is exploratory design/rationale material.
 
 It is not the canonical task store.
-It is not the canonical active implementation contract.
-
-It is design exploration and rationale.
+It is not the canonical phase contract.
 
 ### Deprecated manifest
 
-A deprecated manifest is a previously sealed or meaningful plan that has been superseded because the earlier plan was not good enough and real work had already begun against it.
+A deprecated manifest is a sealed or meaningful prior manifest that has been superseded after application had already begun.
 
-Deprecation is not the same thing as a cheap accidental undo.
-
-Deprecated manifests are historical records and remain immutable.
+Deprecated manifests remain immutable historical artifacts.
 
 ---
 
 ## Core conceptual split
 
-Mockspace should model the workflow with three orthogonal axes.
+Mockspace should model workflow with four cooperating layers.
 
 ### 1. Standing project surfaces
 
-These are long-lived concern/domain surfaces:
+These are long-lived concern/domain surfaces such as:
 
 - crate `DESIGN.md.tmpl`
 - `README.md.tmpl`
@@ -248,84 +223,151 @@ These are long-lived concern/domain surfaces:
 - `research/`
 - `benches/`
 
-They answer: what is this part of the project, what should it become, what principles govern it?
+They answer: what is this part of the project, what is it trying to become, what principles govern it?
 
 ### 2. Structured work graph
 
-This is the new `mock/tasks/` surface.
+This is the `mock/tasks/` surface.
 
 It answers:
 
 - what work items exist?
 - which namespace owns them?
 - what depends on what?
-- what is open or deferred?
-- what has closed during the current epoch?
+- what is open, blocked, deferred, or in progress?
+- what has closed historically?
 
-### 3. Active integration workflow
+### 3. Active phase workflow
 
-This is the branch + phase + manifest + topic system.
+This is the phase + manifest + topic system.
 
 It answers:
 
-- what branch-scoped bundle is active?
+- what phase is currently active?
 - what design is being discussed?
-- what tasks is this phase allowed to act on?
-- what was bundled together and closed together?
+- what tasks are in scope?
+- what surfaces are legal to change right now?
+- what sealed contract governs the current step?
 
-This split is the key to avoiding redundancy.
+### 4. Historical compaction
+
+This is the epoch system.
+
+It answers:
+
+- what has completed since the previous epoch?
+- which task archives and workflow artifacts belong together historically?
+- what carry-forward design material exists for the next era of work?
 
 ---
 
-## High-level workflow model
+## High-level model
 
 ### Canonical task ownership
 
 Tasks are namespace-owned.
 
-They do **not** belong to a branch as their primary identity.
+They do **not** belong to the current git branch as their primary identity.
 
-A branch may reference and act on tasks, but it does not own them.
+A branch may work on tasks.
+A manifest may reference tasks.
+But the task remains owned by its namespace.
 
 ### Canonical active-work contract
 
-Active work inside a branch is governed by manifests.
+Active work is governed by manifests.
 
-A manifest references task refs from the namespace task tree.
+A manifest references task refs from the task tree.
+A manifest does not duplicate the full task body as the canonical source of meaning.
 
-A manifest does **not** duplicate the full task description body.
+### Canonical active execution unit
+
+The primary active unit is the **phase**, not the branch.
+
+The branch determines ambient repo context.
+The phase determines workflow meaning.
+
+### Canonical branch role
+
+Git branch is still important:
+
+- it carries the repository state
+- it determines which active phase workspace revision you are seeing
+- it is the integration context shown in status and guidance
+- it is recorded in historical archive metadata
+
+But branch does **not** need to be modeled as a heavyweight stored mockspace object with its own durable identity layer in v1.
 
 ### Canonical history of a task
 
-A task's long-lived history stays with its namespace.
+A task's long-lived history stays with its namespace:
 
-A branch archive preserves the grouping and execution history of the branch, but not the canonical task record body.
+- open task file while active
+- archived Markdown task record when closed
+- epoch package later preserves historical slices
 
-### Canonical history of a branch
+### Canonical history of a workflow run
 
-A branch archive preserves:
+Historical workflow artifacts preserve:
 
-- topics
+- topic material
 - manifests
-- closure metadata
-- immutable branch/workflow instance metadata
-- which task refs were addressed
-- which were completed, partial, deferred, or spawned as follow-ups
-
-The branch archive should preserve enough information to answer both:
-
-- "what was this branch trying to do?"
-- "how does this historical branch relate to current or renamed git refs?"
-
-This is why the branch archive must not rely solely on the raw branch name as its durable identity.
+- closure/accounting metadata
+- branch name as context
+- timestamps and relevant integration notes
+- which task refs were in scope
+- which completed, deferred, split, or produced follow-ups
 
 ### Canonical historical compaction boundary
 
 An epoch package preserves:
 
-- all closed branches since the previous epoch
-- all rolling namespace task archives since the previous epoch
-- epoch retrospective / carry-forward design docs
+- closed workflow artifacts since the previous epoch
+- closed task archives since the previous epoch
+- retrospective / carry-forward design material
+
+---
+
+## Branch: demote it, do not delete it
+
+This design does **not** say that branch stops mattering.
+
+It says branch matters in a **different way**.
+
+### What branch still is
+
+Branch is still:
+
+- the current git branch
+- the integration context
+- the thing shown in status and guidance
+- the thing recorded in closure metadata
+- the thing used to group archived workflow artifacts inside epoch history
+
+### What branch no longer needs to be
+
+Branch does **not** need to be:
+
+- a full mockspace-managed workflow object with a separate durable identity model
+- a separate active workspace namespace inside `mock/`
+- a top-level planning artifact
+- a second abstraction layer parallel to git branch identity
+
+### Why this simplification is correct
+
+Git already multiplexes repository state by branch.
+
+If active workflow artifacts are tracked files in the repo, then different git branches naturally already carry different versions of those active artifacts.
+
+A branch-nested mockspace workspace would merely restate information git already provides.
+
+So the correct model is:
+
+- active workflow artifacts live in one active workflow area
+- the current git branch determines which version you are seeing
+- when work completes, those artifacts are archived into historical storage with branch name recorded there
+
+That is simpler and more coherent.
 
 ---
 
@@ -341,50 +383,46 @@ The framework enforces mechanics, not taxonomy.
 
 ### Open tasks
 
-Open tasks are one file per task.
+Open tasks are one Markdown file per task.
 
-This is deliberately optimized for active work:
+This is optimized for active work:
 
 - visible in the tree
 - easy to open directly
-- easy to edit
-- naturally grep-friendly
+- easy to review in git
+- grep-friendly
+- straightforward for humans and tooling alike
 
-Open tasks should not be treated as casually movable by raw filesystem edits.
+### Archived tasks
 
-Since task identity is namespace path plus slug, a namespace move is potentially identity-affecting and reference-affecting. Therefore, namespace changes must go through explicit workflow tooling rather than ad-hoc drag-and-drop or rename behavior.
+Closed tasks move into a simple archive directory in the same namespace, still as Markdown files.
 
-If the framework supports task moves, they should happen through a dedicated task-move operation that can:
+Example conceptual shape:
 
-- validate the move
-- rewrite refs in the active working set where appropriate
-- preserve or record the prior location for history
-- fail safely if the move would create ambiguity or unresolved refs
+- `mock/tasks/compiler/ir/structural-robust-ir.md`
+- `mock/tasks/compiler/ir/archive/2026-04-22--structural-robust-ir.md`
 
-### Closed tasks
+The exact final filename convention can be refined later, but the governing principle is:
 
-Closed tasks do not remain as files.
+> open tasks are Markdown, archived tasks are Markdown, and namespace-local history remains readable without schema-juggling.
 
-Each namespace directory contains one rolling archive file:
+### No JSONL task archive model
 
-- `archive.jsonl`
+This design intentionally drops the JSONL archive idea.
 
-This archive contains full self-contained task snapshots for tasks closed during the current epoch.
+Reasons:
 
-This is deliberately asymmetric with open tasks:
+- Markdown is already the human-facing editing medium
+- git is the real long-term history engine
+- grep and direct inspection matter more than append-optimized machine packing
+- schema management for task archives is not worth the complexity here
+- mockspace is stronger when canonical workflow artifacts stay easy to inspect
 
-- open work is optimized for editing and visibility
-- closed work is optimized for compact, append-friendly preservation
+### No global task graveyard
 
-This asymmetry is intentional and desirable.
+There should not be one giant repo-wide closed-task dump.
 
-### No global archive
-
-There is no repo-wide task archive.
-
-That would recreate a giant undifferentiated task graveyard.
-
-All task closure remains namespace-local until epoch compaction.
+Closed task archives should remain namespace-local until epoch compaction, preserving concern ownership and readability.
 
 ---
 
@@ -397,7 +435,7 @@ Task identity is:
 - namespace path
 - plus stable task slug
 
-Example conceptual refs:
+Conceptual examples:
 
 - `compiler/ir#structural-robust-ir`
 - `runtime/abi#stabilize-zig-c-boundary`
@@ -411,41 +449,37 @@ The slug is identity, not presentation.
 
 Therefore:
 
-- the filename slug must be stable once created
-- the human-facing title may change independently in the task metadata/body
-- if a change is so large that the slug would want to change materially, that should usually be a new task or a superseding task, not a rename
+- the filename slug should stay stable once created
+- the human-facing title may evolve
+- if the conceptual work changes so much that the slug wants to change materially, that usually means a new or superseding task, not a rename
 
 ### Uniqueness rule
 
 Within the same namespace directory, open task slugs must be unique.
 
-Mockspace should lint this and block invalid duplicates.
+Across different namespaces, duplicate slugs are acceptable because namespace path disambiguates them.
 
-Across different namespaces, duplicate slugs are allowed by framework rules because the namespace path disambiguates them, though consumers may adopt stronger conventions if desired.
+### Namespace moves are identity-sensitive
 
-### Namespace moves and identity stability
+Because canonical task identity is `namespace#slug`, moving a task across namespaces is not a trivial cosmetic file move.
 
-Because canonical task identity is `namespace#slug`, a move between namespaces is not a trivial presentation edit.
+Therefore the framework should require one of the following strategies:
 
-The framework must therefore choose one of these implementation-safe strategies:
+- dedicated task-move tooling that rewrites references safely
+- explicit supersession instead of movement
+- or a later hidden immutable-id strategy if implementation experience demands it
 
-- forbid namespace moves except through dedicated tooling that rewrites references
-- treat namespace move as a new task plus explicit supersession/redirect
-- or introduce an additional hidden immutable task identity while keeping `namespace#slug` as the human-facing locator
-
-This document does not force one implementation yet, but it does require that raw filesystem moves not be treated as harmless.
+What this document does **not** allow is treating raw filesystem moves as harmless.
 
 ### Reference resolution
 
-Mockspace must support task refs across:
+Mockspace must resolve task refs across:
 
-- open task files in `mock/tasks/`
-- rolling `archive.jsonl` files in active namespaces
-- archived epoch task archives
+- open task files
+- namespace-local archived Markdown task files
+- epoch task archives
 
-The ref syntax must remain stable even when storage location changes due to archival.
-
-This is why refs must be logical (`namespace#slug`) rather than path-based.
+This is why refs must remain logical (`namespace#slug`) rather than path-bound.
 
 ---
 
@@ -453,189 +487,173 @@ This is why refs must be logical (`namespace#slug`) rather than path-based.
 
 ### Open task representation
 
-Open tasks are Markdown files.
+Open tasks are Markdown files that are both human-readable and machine-parseable.
 
-They should be both human-readable and machine-readable.
-
-The exact file format may evolve in implementation design, but the framework-level requirements are:
+Framework-level requirements:
 
 - stable slug identity derived from filename
-- structured metadata parseable by mockspace tooling
+- parseable structured metadata
 - human-readable body content
-- support for tags/labels
-- support for dependency refs
-- support for branch association when active
-- support for epoch provenance metadata when helpful
-- support for explicit ownership/activation metadata when a branch is currently driving the task
+- dependency refs
+- tags/labels if the consumer repo wants them
+- activation/ownership metadata if needed by the workflow
+- enough structure to support linting and manifest references
 
-Open task metadata should be strong enough to support the rule that tasks are namespace-owned but may still be active in branch-scoped workflow.
+### Archived task representation
 
-### Closed task representation
+Archived tasks remain Markdown and must be self-contained historical records.
 
-Closed tasks are appended as full self-contained records into `archive.jsonl` in the same namespace directory.
-
-Each archived record must include:
+Each archived task should preserve at least:
 
 - canonical task ref
 - namespace
 - slug
 - title
-- all frontmatter-equivalent structured metadata
+- structured metadata
 - full body content
-- closure metadata:
+- closure metadata such as:
   - resolution kind
   - closed at
-  - closed by branch
-  - closed by manifest/phase if relevant
-  - epoch at time of closure if available
+  - closed in branch context
+  - closed by phase/manifest if relevant
+  - epoch at closure time if known
 
-Archived records must not merely point to vanished open files. They must be self-contained.
+Archived task records should not merely be stubs pointing to vanished open files.
+
+### Archived tasks are immutable historical records
+
+Once archived, task records should be treated as immutable workflow history except through dedicated repair tooling if absolutely necessary.
+
+That keeps the archive trustworthy.
 
 ---
 
 ## Task state model
 
-At the framework level, task states should be minimal and meaningful.
-
 ### Open-side states
 
-The exact set can be refined later, but framework semantics should support distinctions such as:
+The exact state vocabulary can evolve, but framework semantics should support distinctions such as:
 
 - open
-- deferred
 - blocked
+- deferred
 - in-progress
 
 All of these remain open-side task files.
 
 ### Closed-side resolutions
 
-Closed tasks should archive with a resolution kind such as:
+Archived tasks should close with a meaningful resolution such as:
 
 - completed
 - cancelled
 - superseded
 - wontfix
 
-These are archived records, not open files.
+### Reopen policy
 
-### Reopening policy
+Historical archive entries should remain historical.
 
-Archived tasks should remain append-only historical records.
+If previously closed work returns, the default should be:
 
-If previously closed work needs to re-enter active work, that should generally be a new open task that references the archived one, not mutation of the archive entry.
+- create a new open task
+- reference the archived predecessor
+- preserve the old closure record
 
-This keeps archives reliable and append-only.
-
----
-
-## Branches
-
-### Role of branches
-
-A branch is the active branch-scoped integration bundle.
-
-The branch is the unit of:
-
-- git branch identity
-- active topic/design documents
-- active manifests
-- phase transitions
-- eventual closure into branch history
-
-A branch may touch many namespaces and many tasks.
-
-### Branches do not own tasks
-
-This is a critical rule.
-
-If branch-local tasklists were introduced as canonical active work stores, they would duplicate manifest scope and overlap with the current design-first contract model.
-
-This design avoids that.
-
-Instead:
-
-- branches own the active workflow bundle
-- manifests name the task refs in scope
-- tasks remain canonical under namespaces
-
-However, branch interaction with tasks still needs an explicit ownership/activation rule.
-
-The framework should not leave task concurrency across branches ambiguous. At minimum it should define whether:
-
-- a task may be referenced by many branches but actively owned by only one
-- a task may be simultaneously active in multiple branches but only one may close it
-- or some stronger exclusivity rule applies
-
-This document favors a conservative model: multiple branches may reference a task, but only one branch at a time should have active execution ownership and closure authority for it unless a later implementation pass deliberately chooses a more concurrent model.
-
-That rule should be made explicit in tooling, task metadata, and close-time validation.
-
-### Branch identity must derive from git branch identity
-
-This is a key robustness rule.
-
-Mockspace must not depend on a separately mutable hidden "current active branch" pointer inside `mock/`.
-
-Instead:
-
-- current git branch determines current mockspace branch context
-- branch state and status must resolve from that context
-- manual raw git checkout must be survivable, even if it is not the preferred workflow
-- branch mismatches must produce clear diagnostics and recovery guidance
-
-This rule exists because raw checkout/switch cannot be as reliably pre-blocked as commit/push.
-
-At the same time, git branch context is not sufficient as the sole durable identity for history. The framework should therefore pair branch-name-derived lookup with immutable branch/workflow metadata recorded at branch creation time and preserved into archives.
-
-This gives the system both:
-
-- ergonomic day-to-day behavior from current branch resolution
-- durable historical identity that survives ref mutation, reuse, and archival
-
-### Branch closure
-
-When a branch closes:
-
-- branch history is archived in the current epoch working set
-- tasks referenced by that branch may resolve in one of several ways:
-  - completed -> move into namespace `archive.jsonl`
-  - cancelled/superseded -> move into namespace `archive.jsonl`
-  - partially addressed -> remain open and updated
-  - deferred -> remain open
-  - split into follow-ups -> old task may close, new tasks may open
-
-This means not every task touched by a branch necessarily closes with it.
-
-### Branch close and merge semantics
-
-Branch close must be tied explicitly to real git integration semantics rather than left implicit.
-
-The framework should define one supported model clearly. The preferred model is:
-
-- branch close happens on the working branch before integration
-- closure artifacts are committed as normal tracked content
-- those closure artifacts then travel through merge/squash/rebase as repository content
-- branch archive meaning is therefore preserved even if the exact pre-close commit topology is later rewritten by integration strategy
-
-This design should be made explicit because squash merges, rebases, cherry-picks, and branch deletion otherwise make branch history semantics ambiguous.
+That is better than mutating old archive history.
 
 ---
 
-## Phases
+## Manifests
 
-### Why phases are first-class
+### Rationale
 
-Once branch lifetime and phase lifetime are separated, command semantics become much clearer.
+The active contract artifact should be called a **manifest**.
 
-`branch close` should mean branch closure.
-It should not also mean "finish the current doc or src work."
+This is clearer than `changelist` for what the artifact actually does:
 
-Therefore phases deserve their own first-class command family.
+- defines scope
+- names task refs
+- names allowed surfaces
+- records acceptance criteria
+- serves as the sealed contract for the current phase
 
-### Active branch phases
+### Why manifests remain separate from tasks
 
-The active branch lifetime is:
+Tasks and manifests answer different questions.
+
+Tasks answer:
+
+- what work item is this?
+- what does it mean?
+- what depends on it?
+- which namespace owns it?
+
+Manifests answer:
+
+- which subset of tasks is in scope for this phase?
+- what managed surfaces are allowed to change?
+- what is explicitly out of scope?
+- what acceptance constraints govern this phase?
+
+Combining them would either weaken manifests or over-rigidify tasks.
+
+So they remain separate.
+
+### Manifest references
+
+Manifests should reference task refs instead of duplicating task bodies.
+
+However, at seal/apply time the manifest should preserve enough task snapshot information that the sealed contract does not drift retroactively if the underlying tasks later evolve.
+
+At minimum, a sealed manifest should snapshot for each referenced task:
+
+- task ref
+- task title
+- task state
+- dependency snapshot if relevant
+
+A stronger implementation may later add a content digest or similar stable content identity.
+
+### Doc/src separation remains
+
+Tasks are not structurally split by phase.
+
+Instead:
+
+- tasks remain namespace-owned
+- manifests remain phase-specific
+
+So the active contracts are still:
+
+- doc manifest
+- src manifest
+
+This keeps one of the strongest properties of the existing mockspace model.
+
+### Deprecated manifests remain immutable
+
+Once deprecated, a manifest is historical record, not live editable planning material.
+
+---
+
+## Phase-first workflow
+
+### Why phase is the real first-class active concept
+
+Once branch is demoted to contextual primitive, the real active workflow concept becomes very clear:
+
+- tasks = canonical work graph
+- phases = active execution cycle
+- manifests = phase contracts
+- epochs = historical compaction boundaries
+- git branch = ambient integration context
+
+That is more coherent than forcing branch into the same level as task and epoch.
+
+### Active phases
+
+The active workflow phases are:
 
 - `TOPIC`
 - `PLAN(DOC)`
@@ -644,65 +662,49 @@ The active branch lifetime is:
 - `APPLY(SRC)`
 - `DONE`
 
-Then, separately:
-
-- branch closure/archive
-
-### Why `APPLY(...)` is preferred over `IMPL(...)`
-
-`IMPL(SRC)` sounds natural, but `IMPL(DOC)` is awkward and too code-biased.
-
-What happens in the active post-plan phase is better described as:
-
-- applying a sealed plan to the phase-owned managed surfaces
-
-This is true for both doc-side and src-side work.
-
-So `APPLY(DOC)` and `APPLY(SRC)` are the preferred conceptual names.
-
 ### Phase semantics
 
 #### `TOPIC`
+
 Exploration only.
 No active manifest yet.
 
 #### `PLAN(DOC)`
+
 Draft the doc manifest:
+
 - task refs
 - scope
 - acceptance criteria
-- what documentation/design/task surfaces are expected to change
+- expected design/doc/task-surface changes
 
 #### `APPLY(DOC)`
-The doc manifest is sealed.
-The plan is now being applied to doc-side managed surfaces.
+
+The doc manifest is sealed and is now being applied to doc-side managed surfaces.
 
 #### `PLAN(SRC)`
-Draft the src manifest based on the now-settled doc state.
+
+Draft the src manifest based on settled doc-side state.
 
 #### `APPLY(SRC)`
-The src manifest is sealed.
-The plan is now being applied to src-side managed surfaces.
+
+The src manifest is sealed and is now being applied to src-side managed surfaces.
 
 #### `DONE`
-The active branch lifecycle is complete.
-The branch is ready to close/archive.
 
-### Phase transitions
+The current phase workflow is complete and ready for archival/closure in historical storage.
 
-The forward phase transition commands are:
+### Forward transition commands
+
+The phase workflow should center around explicit commands such as:
 
 - `mock phase plan`
 - `mock phase apply`
 - `mock phase finish`
 
-These should be the primary transition verbs, not `advance`.
-
-`advance` may exist later as convenience, but should not be the main documented command because it hides too much intent.
+These are clearer than a generic `advance`.
 
 ### Authoritative forward transition table
-
-The transition table below is the authoritative forward path.
 
 | Current state | Command | Next state | Notes |
 |---|---|---|---|
@@ -711,253 +713,192 @@ The transition table below is the authoritative forward path.
 | `APPLY(DOC)` | `mock phase finish` | `PLAN(SRC)` | complete doc application and scaffold src planning surface |
 | `PLAN(SRC)` | `mock phase apply` | `APPLY(SRC)` | validate and seal src manifest |
 | `APPLY(SRC)` | `mock phase finish` | `DONE` | complete src application |
-| `DONE` | `mock branch close` | branch archived | branch-level close, not phase-level finish |
 
-This table exists specifically to avoid ambiguity between `plan` and `finish`.
+This table exists to make planning/apply/finish semantics explicit.
 
-### `mock phase plan`
+### Transition commits
 
-This opens/scaffolds the next planning manifest.
+Semantic workflow transitions should be tool-owned and auto-committed.
 
-Valid transition:
-- `TOPIC -> PLAN(DOC)`
+This gives each transition:
 
-This is a semantic workflow transition and should auto-commit by default.
-
-### `mock phase apply`
-
-This validates and seals the current manifest, then begins the matching apply phase.
-
-Valid transitions:
-- `PLAN(DOC) -> APPLY(DOC)`
-- `PLAN(SRC) -> APPLY(SRC)`
-
-This replaces the confusing old "freeze/lock" framing.
-
-This is a semantic workflow transition and should auto-commit by default.
-
-### `mock phase finish`
-
-This completes the current apply phase and moves forward.
-
-Valid transitions:
-- `APPLY(DOC) -> PLAN(SRC)`
-- `APPLY(SRC) -> DONE`
-
-From `APPLY(DOC)`, the transition should also scaffold the next src planning surface so that `PLAN(SRC)` begins concretely.
-
-This is a semantic workflow transition and should auto-commit by default.
+- a canonical entrypoint
+- a canonical recovery boundary
+- a stable restore anchor
+- obvious history markers
 
 ---
 
 ## Going backwards in phases
 
-### The principle
+### Principle
 
-Going backwards after real work has begun should remain intentionally expensive.
+Once you have entered `APPLY(...)`, going backwards through mockspace should remain intentionally expensive and explicit.
 
-This is not accidental bureaucracy. It encodes an important discipline:
+This is not accidental bureaucracy.
 
-- if a plan was too poor to survive application, that fact should be recorded
-- revisiting the plan should require explicit accounting
-- the cost of going back should encourage better planning before entering `APPLY(...)`
+It preserves a meaningful rule:
 
-This existing mockspace value must be preserved.
+- if the earlier plan could not survive application, that fact should remain visible
+- going back should require explicit accounting
+- the workflow should encourage better planning before entering apply
 
-### Two backward paths
+### No cheap workflow-level reopen path
 
-There should be two backward behaviors, selected automatically based on what happened after `APPLY(...)` began.
+The corrected model removes cheap workflow-level reopen semantics.
 
-#### A. Cheap reopen
-If nothing meaningful has been done since entering `APPLY(...)`, then going back should be cheap.
+If someone truly made a zero-work accidental phase transition and wants to erase it cleanly, they can do so manually with raw git, knowingly, outside the workflow abstraction.
 
-This is the "legitimate accident" path.
+Inside mockspace, the meaning should stay consistent:
 
-If mockspace can prove that no real work occurred, it may simply reopen the manifest and return to planning without deprecating it.
+> once `APPLY(...)` has been entered, going back is always deprecating.
 
-#### B. Deprecating replan
-If anything meaningful has been changed or written during `APPLY(...)`, then going back should require deprecation.
-
-This is the "you did not plan well enough" path.
-
-The old manifest is deprecated, a new one is created, and the new one must explicitly account for all prior manifest sections and explain how the new one differs and why.
-
-### Why deprecation remains essential
-
-Deprecation is the only meaningful way to preserve the history of a bad plan that was already being applied.
-
-This is not vague shame. It is useful reviewable process history.
-
-The current lints that require each deprecated section to be accounted for in the replacement manifest are valuable and should remain.
+That boundary is cleaner.
 
 ### Backward command semantics
 
-The user-facing backward command should not be framed primarily as `deprecate`.
-
-It should be framed as re-entering planning.
-
-A strong conceptual command is:
+The user-facing backward command should be framed as re-entering planning:
 
 - `mock phase replan`
 
-Its semantics are:
+But its semantics are always the meaningful path:
 
-- if no meaningful work happened after `APPLY(...)` began, reopen the existing manifest cheaply
-- if meaningful work did happen, automatically deprecate the old manifest and scaffold a new one
-
-So `deprecate` survives as artifact semantics, even if the user-facing command becomes `replan`.
-
-### Cheap reopen conditions must be conservative
-
-Cheap reopen should only be allowed if mockspace can prove that no real apply work happened.
-
-That should be conservative. If in doubt, the heavier deprecating path should be required.
-
-This requires deterministic ownership of the phase restore scope.
-
-At `mock phase apply` time, the framework should record a sealed pathset/pathspec for the phase-owned managed surfaces. Then:
-
-- cheap reopen = no diff from the apply-start snapshot on that owned pathset
-- deprecating replan = any diff on that owned pathset, or any uncertainty in determining it
-
-This avoids relying on vague heuristics like "meaningful work happened" without a machine-checkable path boundary.
-
-### What happens on deprecating replan
-
-When real work has happened and the phase must go back to planning, the framework should:
-
-1. restore the phase-owned managed surfaces to the exact snapshot from when `APPLY(...)` began
+1. restore phase-owned managed surfaces to the apply-start snapshot
 2. mark the old manifest deprecated
-3. create a fresh new manifest scaffold
-4. require explicit coverage/comparison of all old manifest sections in the new one
-5. auto-commit this semantic transition
+3. scaffold a fresh manifest
+4. require explicit coverage/accounting of the old manifest in the new one
+5. auto-commit the semantic transition
+
+### Why deprecation remains essential
+
+Deprecation is not ceremony for its own sake.
+
+It preserves reviewable history:
+
+- what the earlier plan said
+- where it proved insufficient
+- how the replacement plan differs
+- whether the replacement truly accounts for what the previous one attempted
+
+This is useful process history, not mere shame language.
 
 ### Restore phase-owned surfaces, not the whole branch
 
-The old behavior of nuking or broadly resetting is too blunt.
+Replan should restore only the **phase-owned managed surfaces** to the apply-start snapshot.
 
-The framework should **not** hard-reset the whole branch, because:
+Mockspace should **not** hard-reset the whole branch because:
 
-- raw git commits remain allowed for ordinary work
-- there may be unrelated changes outside the phase-owned surfaces
-- full-branch reset is too destructive
+- ordinary raw git commits remain allowed
+- unrelated changes may exist outside the phase-owned surfaces
+- whole-branch reset is too destructive
 
-Instead, deprecating replan should restore only the **phase-owned managed surfaces** to the `APPLY(...)`-start snapshot.
-
-This is the right behavior for both doc and src phases.
+So the restore scope should be precise.
 
 #### For DOC
-Restore:
-- doc-side manifests
-- topic/task/doc managed surfaces relevant to the phase
-- not "wipe docs entirely"
+
+Restore relevant doc-side managed surfaces such as:
+
+- doc manifest
+- topic document
+- phase-owned design/doc/task surfaces covered by the phase contract
 
 #### For SRC
-Restore:
-- src-side manifests
-- source-side managed surfaces relevant to the phase
-- not more than necessary
 
-### The `APPLY(...)` auto-commit is the restore anchor
+Restore relevant src-side managed surfaces such as:
 
-This is another reason semantic transitions must auto-commit.
+- src manifest
+- phase-owned source/application surfaces covered by the phase contract
 
-The auto-commit created by `mock phase apply` becomes the reliable restore anchor for:
+### The `APPLY(...)` transition commit is the restore anchor
 
-- cheap reopen checks
-- deprecating replan restore behavior
-- predictable user recovery
+This is one reason semantic transitions should auto-commit.
 
-### Messaging requirements for replan blocks
+The transition into `APPLY(...)` creates the stable restore anchor for replan behavior.
 
-When mockspace refuses a cheap reopen and requires deprecating replan, it must explain this very clearly.
+### Messaging requirements
 
-The message should convey:
+When mockspace blocks or performs replan, the messaging must be explicit.
+
+It should explain:
 
 - you entered `APPLY(...)`
-- meaningful changes were made
-- therefore this was not an accidental advance
-- going back now deprecates the earlier manifest
-- a new manifest will be scaffolded
-- all prior manifest sections must be explicitly accounted for in the new one
-- this exists because the earlier plan was insufficient
+- mockspace does not support cheap workflow-level reopen after apply
+- the prior manifest is being deprecated
+- phase-owned managed surfaces will be restored to the apply-start snapshot
+- a new manifest is being scaffolded
+- all prior manifest sections must be explicitly accounted for
 
 This should be instructional, not terse.
 
 ---
 
-## Manifests (current changelists)
+## Active workflow storage model
 
-### Rationale
+### One active workflow area, not branch-nested storage
 
-The current changelist system should evolve conceptually into a manifest system.
+Because git branch already multiplexes repo state, active workflow artifacts do **not** need to live under branch-specific directories.
 
-This is largely a naming and framing clarification:
+Instead:
 
-- topic docs = exploration
-- manifests = active contract
+- there is one active workflow area
+- the current git branch determines which revision of that area you are seeing
+- branch checkout naturally switches active workflow state by switching tracked repo content
 
-### Why manifests should remain separate from tasks
+This is the key architectural consequence of demoting branch.
 
-Tasks and manifests are related but not the same.
+### What belongs in the active workflow area
 
-Tasks answer:
-- what work item is this?
-- what does it mean?
-- what depends on it?
-- which namespace owns it?
+The active workflow area should hold the current live phase artifacts, such as:
 
-Manifests answer:
-- what subset of tasks is in scope for this phase?
-- what files/surfaces are allowed to change?
-- what is explicitly out of scope?
-- what are the phase-bound acceptance constraints?
+- current topic document
+- current doc manifest
+- current src manifest
+- any phase-local metadata needed for tooling
+- current status/guidance surfaces
 
-Combining them would either:
-- make tasks too rigid
-- or make manifests too weak
+The exact physical layout can be refined later.
 
-Therefore they remain separate.
+### What should not exist
 
-### Manifest references
+The framework should avoid:
 
-Manifests should reference task refs instead of duplicating full task bodies.
+- branch-specific nested active workflow trees
+- a durable branch identity directory hierarchy
+- additional active workspace structures whose only purpose is to repeat git branch context
 
-A manifest becomes a phase-authorized view over the task graph.
+---
 
-This is the key non-redundant integration between tasks and the existing mockspace phase system.
+## Historical workflow archives
 
-However, a sealed manifest should also preserve enough task snapshot information that the meaning of the sealed contract does not drift retroactively when the underlying task files later change.
+### Archived workflow artifacts
 
-At seal/apply time, the manifest should record at least a task snapshot set that includes, for each referenced task:
+When a completed workflow is archived, the historical bundle should preserve:
 
-- task ref
-- task title
-- task state
-- dependency snapshot
-- and, ideally, a stable content identity such as a blob or commit-level digest
+- topic material
+- manifests
+- closure notes/accounting
+- branch name as context
+- timestamp and ordering information
+- task refs addressed by the workflow
+- outcomes such as completed, deferred, partial, or follow-up work
 
-This preserves what the sealed manifest meant at the time it entered `APPLY(...)`.
+### Group archived workflow artifacts by epoch
 
-### Doc/src separation
+Archived workflow artifacts should move into the current epoch package.
 
-The existing separation between doc and src work remains intact.
+Inside that package, branch name may still be used as an organizational/readability key, but as historical context rather than as evidence of a first-class branch identity system.
 
-Tasks are not split structurally by phase.
+### Historical readability matters more than theoretical normalization
 
-Instead, tasks are namespace-owned and may be addressed in one or both phases.
+The archive layout should be optimized for later humans asking questions like:
 
-Manifests remain phase-specific:
-- doc manifest
-- src manifest
+- what was this workflow trying to do?
+- what branch context did it happen on?
+- which tasks did it address?
+- what replaced this deprecated manifest?
+- what carried forward into the next epoch?
 
-This preserves one of the best properties of the current mockspace model.
-
-### Deprecated manifests remain immutable
-
-Once a manifest is deprecated, it remains an immutable historical artifact.
-
-It must not be silently edited or rewritten.
+That is more important than building a perfectly normalized workflow store.
 
 ---
 
@@ -965,112 +906,82 @@ It must not be silently edited or rewritten.
 
 ### Role of epochs
 
-An epoch is the larger culmination boundary above branches.
+Epoch is a real concept and should remain one.
 
-Epochs are not routine releases. They are landmarks.
+An epoch is a larger archival/compaction boundary above individual completed workflows.
 
-### Why epochs are needed
+### Why epochs are still useful
 
-Without epochs, rolling archives and archived branch/design artifacts would grow indefinitely in the active workspace.
+Without epochs, active-space historical material grows indefinitely.
 
-Epochs give mockspace a clean compaction boundary.
+Epoch gives mockspace:
+
+- a periodic historical package
+- a cleaner active workspace
+- a place for retrospective/carry-forward material
+- a meaningful boundary for grouped workflow history
+
+### Epochs should stay lightweight at first
+
+Epoch should not begin life as a large ceremonial release-management subsystem.
+
+The framework should keep epoch real but lightweight:
+
+- enough structure to compact and preserve history
+- enough guardrails to keep boundaries meaningful
+- not so much machinery that normal work becomes hostage to epoch process
 
 ### Active epoch working set
 
 During an active epoch, the workspace contains:
 
-- open namespace task files
-- rolling namespace `archive.jsonl` files
-- active branches
-- closed branch/design artifacts accumulated since the previous epoch
-- current design/topic work
+- open task files
+- namespace-local archived task Markdown since the previous epoch
+- active workflow artifacts
+- completed workflow archives accumulated since the previous epoch
+- current design/topic material
 
 ### Epoch close
 
-When an epoch closes:
+When an epoch closes, the framework should:
 
-1. all rolling namespace `archive.jsonl` files are moved into the epoch package
-2. all closed branch/design artifacts accumulated since the previous epoch are moved into the epoch package
-3. epoch retrospective / carry-forward design documentation is written and validated
-4. rolling archives in the active workspace are reset
-5. the next epoch begins with a cleaner active workspace
-
-### Epoch package contents
-
-An epoch package should preserve:
-
-- archived branch artifacts
-- archived namespace task archives, preserving namespace structure
-- epoch summary / retrospective / carry-forward design docs
-- any `.meta` / `.history` sidecars or equivalent branch closure metadata
-
-The epoch package must remain referenceable later as a meaningful historical slice.
+1. collect namespace-local archived task Markdown into the epoch package
+2. collect completed workflow artifacts into the epoch package
+3. require retrospective / carry-forward documentation coverage
+4. reset the active rolling historical surfaces appropriately
+5. begin the next epoch with a cleaner active workspace
 
 ### Preserve namespace structure inside epoch packages
 
-Epoch packages must not flatten task archives into one giant file.
+Epoch packages should preserve namespace ownership structure for task archives rather than flattening everything into one undifferentiated dump.
 
-They should preserve namespace ownership structure so that one can still inspect the task history of a concern within an epoch package.
-
----
-
-## Epoch close preconditions
-
-Epoch close should be a guarded, lint-enforced workflow action.
-
-An epoch should not close unless:
-
-- all branches intended for that epoch are closed or explicitly handled by policy
-- epoch retrospective / carry-forward design docs exist
-- every archived branch/round since the previous epoch is accounted for in the epoch-close documentation set
-- rolling task archives are ready for compaction
-- any configured sanity checks pass
-
-### Coverage, not necessarily monolith
-
-The framework should require **coverage** of archived branch/design history in epoch-close docs.
-
-It should not require one enormous monolithic summary file if the documentation set can be structured more cleanly.
-
-This lets consumer repos choose whether they want:
-- one epoch retrospective
-- one overview plus per-domain carry-forward docs
-- or another equivalent covered structure
-
-Framework concern is coverage and linkage, not editorial layout.
+That keeps historical inspection tractable.
 
 ---
 
-## Relationship between epochs and branches
+## Relationship between epochs and branch context
 
-### Branch close is routine
-A branch close should remain a relatively routine operation.
+### Completed workflows are routine
 
-### Epoch close is ceremonial
-An epoch close is rarer, broader, and more constrained.
+Archiving a completed workflow should remain relatively routine.
 
-This distinction is important. Epochs should not be so common or heavy that they impede ordinary work.
+### Epoch close is broader
+
+Epoch close is rarer and broader than routine workflow closure.
+
+### Branch context remains visible in epoch history
+
+Even though branch is demoted from first-class active artifact, epoch history should still preserve branch context clearly.
+
+This preserves historical readability without requiring a branch durability subsystem.
 
 ### Work spanning epochs
 
-An epoch should not close with ambiguous active branch ownership.
+Epoch boundaries should not leave historical ownership ambiguous.
 
-The framework should define a policy such as:
+If work must continue beyond an epoch boundary, the framework should ensure that carry-forward state is explicit and that the next epoch begins with clean active semantics.
 
-- an epoch cannot close with unresolved branches belonging to it
-- if work must continue across epochs, a successor branch is opened in the next epoch and the old branch is closed appropriately
-
-The exact consumer-facing ergonomics can be refined later, but the framework must preserve clean epoch boundaries.
-
-### Optional tags and release automation
-
-Epoch close is a natural future integration point for:
-
-- auto-tags
-- release automation
-- CI/CD workflows
-
-These are worthwhile possibilities, but they are follow-up implementation concerns, not core framework semantics in this document.
+The exact ergonomics can be refined later.
 
 ---
 
@@ -1078,61 +989,39 @@ These are worthwhile possibilities, but they are follow-up implementation concer
 
 ### Ordinary git usage remains allowed
 
-Raw git usage should remain allowed for ordinary developer work, including:
+Raw git usage should remain allowed for ordinary work, including:
 
 - normal local commits
 - normal pushes
-- read-only git inspection commands
+- read-only inspection commands
+- manual recovery by expert users when they knowingly step outside the workflow abstraction
 
-Mockspace should not try to replace normal git entirely.
+Mockspace should not try to replace git.
 
 ### Semantic workflow transitions are tool-owned
 
-What mockspace **should** own are semantic workflow transitions that change the meaning of the workflow state.
-
-Examples:
+What mockspace should own are semantic transitions such as:
 
 - `mock phase plan`
 - `mock phase apply`
 - `mock phase finish`
 - `mock phase replan`
-- `mock task close`
-- `mock branch close`
-- `mock epoch close`
+- task close/archive operations
+- workflow archive/close operations
+- epoch close operations
 
 These should be:
 
-- explicit commands
+- explicit
 - validated
 - linted
 - auto-committed
 
-This gives each semantic transition:
-- one canonical entrypoint
-- one canonical recovery boundary
-- one obvious history marker
-
 ### Not every commit maps to a task
 
-This is important.
-
-The framework must not require that every ordinary git commit corresponds to a task.
+The framework must not require every ordinary commit to correspond to a task.
 
 Placeholder tasks created only to justify commits are undesirable.
-
-This is one of the reasons raw git commits remain allowed.
-
-### Transition commits vs ordinary developer commits
-
-Mockspace should distinguish conceptually between:
-
-#### Ordinary developer commits
-Regular git commits during day-to-day work.
-
-#### Workflow transition commits
-Auto-generated by mockspace for semantic transitions.
-
-This distinction should be visible in documentation, messaging, and perhaps later in implementation metadata.
 
 ### No broad git policing
 
@@ -1140,65 +1029,47 @@ Mockspace should not try to block all raw git behavior.
 
 The right balance is:
 
-- keep raw git available for ordinary work
-- keep strict hooks and lints around managed-path semantics
-- make semantic transitions explicit and tool-owned
-- provide much better diagnostics and guidance when blocked
-
-The framework should nevertheless be explicit about transition-command preconditions, including:
-
-- whether a clean index is required
-- whether dirty unmanaged paths are allowed
-- whether transition commands auto-stage managed paths
-- what happens if history is later rebased, amended, or squashed
-- what guarantees remain valid if transition commits are rewritten
-
-These details are essential because the restore-anchor and archive semantics depend on them.
+- raw git remains available
+- semantic workflow transitions are explicit and tool-owned
+- strict guards exist around managed workflow semantics
+- diagnostics clearly explain intended next commands and safe recovery paths
 
 ---
 
 ## CLI model
 
-This design implies a refined mockspace CLI model built around four first-class nouns:
+The tightened model suggests a CLI centered primarily on:
 
-- `mock branch`
+- `mock status`
 - `mock phase`
 - `mock task`
 - `mock epoch`
 
-### `mock branch`
+### `mock status`
 
-This command family owns branch lifecycle and branch-level status.
+This should likely be the primary status entrypoint.
 
-Without a subcommand, `mock branch` should show:
+Without extra arguments, it should show things like:
 
-- current git branch
-- whether a corresponding mockspace branch workspace exists
+- current git branch context
 - current phase
-- active manifests/topics
+- active manifest/topic state
 - current epoch
-- most relevant next command
-- recovery guidance if branch/workspace state is inconsistent
-
-Likely subcommands:
-
-- `start`
-- `switch`
-- `close`
-
-The exact command set can be refined later, but branch should be the branch-level noun.
+- relevant task/workflow summary
+- most likely next command
+- recovery guidance if state is inconsistent
 
 ### `mock phase`
 
-This command family owns repeated phase-cycle transitions and phase-level status.
+This command family owns phase lifecycle and phase-level status.
 
-Without a subcommand, `mock phase` should show:
+Without a subcommand, it should show:
 
 - current phase
-- what surfaces are legal to edit right now
-- which manifest/topic is active
-- the next valid phase action
-- recovery guidance if the state is invalid or inconsistent
+- active manifest/topic
+- what surfaces are legal to edit
+- next valid phase action
+- replan guidance if relevant
 
 Primary subcommands:
 
@@ -1207,124 +1078,108 @@ Primary subcommands:
 - `finish`
 - `replan`
 
-The exact command set can be refined later, but phase should be the phase-level noun.
-
 ### `mock task`
 
 This command family owns task lifecycle and task-level status.
 
-Without a subcommand, `mock task` should show:
+Without a subcommand, it should show:
 
+- open task summary
 - current task context if derivable
-- summary of open task state
-- useful task commands
-- guidance on refs, archives, and namespace ownership
+- useful task refs and guidance
+- archive/state information
 
 Likely subcommands:
 
 - `create`
 - `close`
 - `move`
-- later query or inspect commands as needed
-
-The exact command set can be refined later.
+- later query/inspect helpers as needed
 
 ### `mock epoch`
 
 This command family owns epoch lifecycle and epoch-level status.
 
-Without a subcommand, `mock epoch` should show:
+Without a subcommand, it should show:
 
 - current epoch
-- closed branches accumulated since epoch start
-- rolling task archive status
-- epoch-close preconditions
-- most relevant next commands
+- accumulated completed workflow history since epoch start
+- archived-task rolling status
+- epoch-close readiness/gaps
+- likely next commands
 
 Likely subcommands:
 
 - `start`
 - `close`
 
-The exact command set can be refined later.
+### `mock branch`
 
-### Important CLI design rule
+A `mock branch` command family may still exist as a thin helper/status alias around current git branch context.
 
-The CLI should operate on framework primitives:
+But it no longer needs to be a primary heavyweight command family in the conceptual model.
 
-- namespaces
-- tasks
-- branches
-- phases
-- manifests
-- epochs
-
-It must not assume a consumer repo's concern taxonomy.
+That is an important shift.
 
 ---
 
-## Lints and guards required at framework level
+## Lints and guards
 
-This feature requires first-class lints and guards.
+This tightened model should keep lints strong.
 
-The old lint ideas are still valuable, but they should be retargeted to the new vocabulary and artifact model.
+Simpler storage is not a reason for weaker enforcement.
 
-### Namespace/task lints
+If the framework uses fewer heavy artifacts to encode convention, it should use **stronger guards and clearer diagnostics** to preserve workflow meaning.
 
-- duplicate open task slug in same namespace is forbidden
+### Task lints
+
+- duplicate open task slug in the same namespace is forbidden
 - invalid task ref syntax is forbidden
 - unresolved task refs are forbidden where resolution is required
-- archived/open task shape validity
-- malformed archive records are forbidden
-- illegal task rename rules if slug-as-identity is used
+- malformed archived task records are forbidden
+- illegal raw rename/move behavior should be blocked or diagnosed when identity-sensitive
 
 ### Manifest/phase lints
 
 - manifests referencing unknown tasks are forbidden
 - illegal edits to sealed manifests are forbidden
 - illegal edits to deprecated manifests are forbidden
-- branch/phase surface gating must remain strict
-- deprecating replan must preserve supersession accounting
-- replacement manifests must cover all required deprecated-manifest sections
+- illegal edits outside the current phase's managed surfaces are forbidden
+- replacement manifests on replan must explicitly account for deprecated-manifest sections
 
-### Branch lints
+### Workflow archive lints
 
-- current git branch must resolve cleanly to a mockspace branch workspace
-- branch close with inconsistent task outcomes is forbidden
-- branch close with invalid manifest/task relationship is forbidden
+- completed workflow archival with inconsistent task outcomes is forbidden
+- archival with invalid manifest/task relationships is forbidden
+- historical bundle layout should remain valid and inspectable
 
 ### Epoch lints
 
-- epoch close without retrospective/carry-forward docs is forbidden
-- epoch close without full branch coverage is forbidden
-- epoch close while rolling archives remain unhandled is forbidden
-- epoch close with active branches violating policy is forbidden
+- epoch close without required retrospective/carry-forward coverage is forbidden
+- epoch close with unhandled historical material is forbidden
+- epoch close with inconsistent active state is forbidden
 
 ### Guidance-oriented diagnostics
-
-This redesign is a chance to improve messages substantially.
 
 Every block should aim to explain:
 
 - what invariant failed
-- what mockspace believes the current situation is
-- why this is blocked
-- which command the user probably meant to run instead
+- what mockspace thinks the current situation is
+- why that is blocked
+- which command the user probably meant instead
 - what the safest recovery path is
 
-This is a framework requirement, not a cosmetic nice-to-have.
+This is not cosmetic. It is part of the framework contract.
 
-### Hook/agent workflow implications
+### Hook/agent implications
 
-Built-in agent rules and hooks should be updated so that:
+Hooks and agent-facing workflow guidance should be updated so that:
 
-- task refs are recognized as first-class workflow entities
-- illegal edits to archived epoch material can be blocked or warned
-- epoch-close preconditions are surfaced before destructive transitions
-- branch/phase/task relationships are visible in generated guidance
-- diagnostic output always points toward the intended command and workflow path when derivable
-
-This belongs at the mockspace framework level.
+- task refs are first-class
+- archived historical material is protected appropriately
+- phase/task/epoch relationships are visible in guidance
+- diagnostic output points toward intended commands and recovery paths
+- strictness increases without increasing ambiguity
 
 ---
 
@@ -1336,15 +1191,16 @@ This split must remain explicit.
 
 Mockspace defines:
 
-- what a namespace is, mechanically
-- what a task is, mechanically
-- open vs closed storage model
-- reference syntax
-- branch/task/manifest/epoch relationships
+- namespace mechanics
+- task mechanics
+- open vs archived task storage model
+- task ref syntax
+- manifest/phase/task/epoch relationships
 - phase model and transitions
 - deprecating replan semantics
-- archival and compaction semantics
-- CLI operations
+- workflow archival semantics
+- epoch compaction semantics
+- CLI capabilities
 - lints and hooks
 - transition and close preconditions
 
@@ -1352,137 +1208,161 @@ Mockspace defines:
 
 Consumer repos define:
 
-- what namespaces exist
-- how they are named
+- which namespaces exist
+- how namespaces are named
 - how deep they are nested
-- which namespaces correspond to crates, domains, concerns, sub-concerns
 - what epochs mean semantically in that project
 - exact task metadata conventions beyond framework minimums
 - editorial style of retrospective/carry-forward docs
-- which managed surfaces belong to doc-side vs src-side application in that consumer
+- which managed surfaces belong to doc-side vs src-side application for that consumer
 
-Mockspace must be strict about framework invariants and deliberately hands-off about namespace taxonomy.
+Mockspace should be strict about framework invariants and deliberately hands-off about namespace taxonomy.
 
 ---
 
 ## Migration direction
 
-A likely migration sequence for consumers is:
+A likely migration direction is:
 
-1. add `mock/tasks/` with namespace task registers
-2. introduce task ref syntax and linting
-3. teach active manifests to reference task refs
-4. retain existing `BACKLOG.md.tmpl` during migration
-5. gradually move structured work items out of prose backlog into namespace task files
-6. keep `BACKLOG.md.tmpl` as a summary or derived/documentary surface rather than canonical structured source
-7. rename design-round concepts into branch/phase concepts in the updated mockspace workflow
-8. introduce epochs in the updated workflow
-9. compact current archived round history into the first epoch package when appropriate
+1. establish `mock/tasks/` as the namespace task tree
+2. represent open tasks as Markdown files
+3. represent closed tasks as namespace-local archived Markdown files
+4. teach manifests to reference task refs
+5. retain older backlog summary surfaces during migration if needed
+6. rename `changelist` semantics conceptually to `manifest`
+7. simplify active workflow storage to one active phase workspace rather than branch-nested active trees
+8. retain epoch as a lightweight but real archival concept
+9. update lints and hooks to reflect stricter guidance around the simpler model
 
-This document does not prescribe the exact migration order for each consumer repo.
+This document does not prescribe exact migration order for every consumer repo.
 
 ---
 
 ## Decisions captured here
 
-### D1 — tasks are namespace-owned, not branch-owned
-This prevents duplication with manifests and makes task history stable across branches.
+### D1 — the conceptual core is task, phase, manifest, epoch
 
-### D2 — open tasks are files, closed tasks are namespace-local rolling archive records
-This optimizes each state for its actual use.
+These are the actual first-class workflow concepts.
 
-### D3 — task identity is namespace path + stable slug
-No global numeric id is required at framework level, but task moves and reference rewrites must be treated as identity-sensitive operations rather than casual filesystem edits.
+### D2 — branch is demoted to contextual primitive
 
-### D4 — manifests reference tasks instead of duplicating them
-This integrates tasks into the current design-first workflow without creating parallel active-work artifacts.
+Git branch remains important as integration context, but is not modeled as a heavyweight first-class stored workflow object.
 
-### D5 — branches are the branch-scoped integration units
-This aligns the workflow object with the real git primitive rather than a more abstract lane/workstream term, while still requiring immutable branch/workflow metadata behind the user-facing branch-name lookup.
+### D3 — active workflow artifacts live in one active phase workspace
 
-### D6 — phases are first-class and use `plan -> apply -> finish` semantics
-This clarifies the repeated branch-internal cycle and removes the awkward `freeze/lock` framing.
+The current git branch determines which revision of that workspace you are seeing.
 
-### D7 — going backwards after real work triggers deprecating replan
-This preserves the workflow's intentional shame/accounting semantics.
+### D4 — tasks are namespace-owned, not branch-owned
 
-### D8 — deprecating replan restores phase-owned managed surfaces to the apply-start snapshot
-This replaces broad nuking or whole-branch hard reset with a more precise and safer restore model.
+This prevents duplication and keeps long-lived work records stable.
 
-### D9 — epochs are archival compaction boundaries
-They collect rolling closed-task archives and closed branch/design artifacts into meaningful historical packages.
+### D5 — tasks are Markdown all the way through
 
-### D10 — framework only knows namespaces mechanically
-Namespace taxonomy is a consumer concern.
+Open tasks are Markdown files.
+Archived tasks are Markdown files.
+There is no JSONL archive model.
 
-### D11 — semantic workflow transitions are tool-owned and auto-committed
-Ordinary git commits remain normal git commits; semantic state transitions get explicit CLI commands and recovery boundaries.
+### D6 — manifests are the active phase contracts
 
-### D12 — guidance quality is a framework requirement
-Strictness is only useful if the tool clearly explains the expected workflow and the likely intended next step.
+They reference task refs and remain distinct from task records.
 
-### D13 — branch close semantics must be explicit relative to git integration
-Branch closure and archive meaning must remain valid under real merge strategies, especially squash and rebase workflows.
+### D7 — phase transitions use `plan -> apply -> finish`
 
-### D14 — task activity and closure authority across branches must not be ambiguous
-The framework must define how many branches may actively own, apply, or close the same task at once.
+This is the primary active workflow lifecycle.
 
-### D15 — sealed manifests must snapshot the meaning of referenced tasks
-A manifest should not silently change meaning later just because a task body or dependency set evolved after sealing.
+### D8 — once `APPLY(...)` is entered, going backwards through mockspace is always deprecating
+
+There is no cheap workflow-level reopen path.
+
+### D9 — replan restores phase-owned managed surfaces to the apply-start snapshot
+
+Mockspace should restore the precise phase-owned surface set rather than hard-resetting the whole branch.
+
+### D10 — deprecated manifests remain immutable
+
+They are historical artifacts, not editable live plans.
+
+### D11 — epochs are real but lightweight archival boundaries
+
+They compact historical material without becoming an overbuilt governance subsystem.
+
+### D12 — strict lints remain essential
+
+If the framework uses lighter artifact/storage machinery, it must rely on stronger, clearer guards and diagnostics.
+
+### D13 — the CLI center of gravity shifts toward status, phase, task, and epoch
+
+Branch helpers may remain, but branch is no longer the primary conceptual command family.
+
+### D14 — git remains the underlying history engine
+
+Mockspace should use git, not duplicate it.
 
 ---
 
-## Open questions for follow-up implementation design
+## Open questions for later implementation design
 
-This document intentionally leaves some questions open for later implementation design passes.
+This document intentionally leaves some implementation details open.
 
 ### Q1 — exact open task file format
-Markdown heading/body plus frontmatter? Another parseable shape? The framework requirements are defined here, but exact syntax is deferred.
 
-### Q2 — exact archive record schema
-JSONL is selected as direction, but the exact field schema can be defined in implementation design.
+Frontmatter plus body? Another parseable Markdown shape? The framework requirements are defined here; exact syntax is deferred.
 
-### Q3 — exact branch directory/artifact shape
-This document fixes semantics, not final physical branch layout.
+### Q2 — exact archived task filename convention
 
-### Q4 — exact epoch package layout
-This document requires preservation of namespace structure and branch/design history, but not the final path schema.
+Timestamp plus slug? Another namespace-local scheme? The governing principle is Markdown archival readability, not a particular spelling.
 
-### Q5 — exact CLI names and subcommand tree
-This document defines required capabilities, not final command spelling.
+### Q3 — exact active workflow directory layout
 
-### Q6 — exact lints and severities by default
-This is an implementation/policy pass.
+This document fixes the one-active-workspace model, not the final path schema.
 
-### Q7 — exact cheap-reopen detection heuristics
-The design requires conservative cheap-reopen behavior, but exact implementation criteria are deferred.
+### Q4 — exact historical workflow archive layout inside epochs
 
-### Q8 — exact phase-owned managed-surface restoration mechanics
-The design requires path-scoped restore-to-anchor semantics, but exact implementation details are deferred.
+This document requires branch-context readability and manifest/topic preservation, not one exact directory tree.
 
-### Q9 — exact task move policy
-The design requires task movement to be identity-aware and tool-mediated, but exact alias/tombstone/hidden-id strategy is deferred.
+### Q5 — exact command spelling for workflow archival/closure
 
-### Q10 — exact branch/task concurrency policy
-The design requires a clear policy for multi-branch task reference vs execution ownership, but the exact model is deferred.
+The design requires the capability, but the final command naming can be refined later.
 
-### Q11 — exact branch close / merge workflow contract
-The design requires branch archive semantics to survive real git integration, but the exact supported merge model is deferred.
+### Q6 — exact phase-owned managed-surface restoration mechanics
+
+The design requires precise restore-to-anchor semantics; implementation details are deferred.
+
+### Q7 — exact task move policy
+
+The design requires identity-aware treatment; exact rewrite/supersession/tombstone mechanics are deferred.
+
+### Q8 — exact task concurrency policy across parallel branch contexts
+
+The framework should eventually define ownership/closure behavior more explicitly if needed.
+
+### Q9 — exact epoch-close preconditions by default
+
+The design requires meaningful guards and documentation coverage; specific defaults can evolve.
+
+### Q10 — exact guidance and hook severity policy
+
+The design requires strong enforcement and better messaging; exact severities remain an implementation concern.
 
 ---
 
 ## Summary
 
-The proposed mockspace workflow model is:
+The corrected mockspace workflow model is:
 
-- **tasks** are canonical, structured work items owned by arbitrary nested namespaces
-- **branches** are active branch-scoped integration bundles that reference tasks through manifests
-- **phases** are first-class and follow a repeated `plan -> apply -> finish` cycle inside each branch
-- **epochs** are larger culmination boundaries that compact rolling task and branch archives into meaningful historical packages
-- **manifests** remain the active phase contracts and do not collapse into tasklists
-- **deprecated manifests** remain the correct historical consequence of going backwards after real work has begun
-- **namespaces** are arbitrary and consumer-defined; mockspace enforces mechanics, not taxonomy
-- **semantic workflow transitions** are explicit CLI actions with auto-commits and strong recovery boundaries
-- **ordinary git usage** remains normal, while hooks/lints/messages become more instructive and workflow-aware
+- **tasks** are canonical, namespace-owned Markdown work records
+- **phases** are the first-class active workflow lifecycle
+- **manifests** are the sealed contracts that govern each phase
+- **epochs** are lightweight but real historical compaction boundaries
+- **git branch** is the ambient integration context, not a heavyweight stored workflow object
 
-This preserves the strongest parts of the existing mockspace design-first workflow while adding the missing structured, versioned, repo-native task graph and larger epoch compaction model needed for long-lived project management, while also making branch identity, task ownership, manifest sealing, and replan semantics more deterministic and reviewable.
+This means:
+
+- active workflow should be phase-first rather than branch-first
+- branch identity should come from git rather than a parallel workflow identity layer
+- active workflow artifacts should live in one active workspace rather than branch-nested storage
+- tasks should remain Markdown in both open and archived form
+- going backwards after `APPLY(...)` should always be deprecating and history-preserving
+- strict lints should remain and become more explicit, contextual, and instructive
+
+That preserves the strongest ideas in mockspace while removing the parts that were drifting into workflow-database territory.
