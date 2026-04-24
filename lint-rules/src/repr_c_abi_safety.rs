@@ -50,7 +50,7 @@ impl Lint for ReprCAbiSafety {
     }
 
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
-        if ctx.is_proc_macro_crate() {
+        if ctx.should_skip_proc_macro_source_lint() {
             return Vec::new();
         }
 

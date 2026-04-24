@@ -42,6 +42,16 @@ pub struct Config {
     pub project_name: String,
     pub crate_prefix: String,
     pub proc_macro_crates: Vec<String>,
+    /// Whether source-scanning lints should run against proc-macro crate source.
+    /// Default false: proc-macro crates run in the compiler host context and
+    /// their heap-using parsers do not ship with consumer binaries. Projects
+    /// that want to lint proc-macro source anyway (for example to enforce a
+    /// consistent style across the workspace) set this to true.
+    ///
+    /// Independent of expansion-based linting (tracked as a future feature);
+    /// the macro's emitted output is always subject to consumer-crate rules
+    /// because it compiles into consumer binaries.
+    pub lint_proc_macro_source: bool,
     pub module_crates: Vec<String>,
     pub unprefixed_crates: Vec<String>,
     pub abi_version: u32,
@@ -209,6 +219,8 @@ struct RawConfig {
     crate_prefix: Option<String>,
     abi_version: Option<u32>,
     proc_macro_crates: Vec<String>,
+    #[serde(default)]
+    lint_proc_macro_source: Option<bool>,
     module_crates: Vec<String>,
     #[serde(default)]
     unprefixed_crates: Vec<String>,
@@ -358,6 +370,7 @@ impl Config {
             mock_dir, crates_dir, repo_root, docs_dir,
             project_name, crate_prefix,
             proc_macro_crates: raw.proc_macro_crates,
+            lint_proc_macro_source: raw.lint_proc_macro_source.unwrap_or(false),
             module_crates: raw.module_crates,
             unprefixed_crates: raw.unprefixed_crates,
             abi_version: raw.abi_version.unwrap_or(1),
