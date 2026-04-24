@@ -102,6 +102,7 @@ pub fn run_lints(
     scope: Option<&[String]>,
     doc_only: bool,
     proc_macro_crates: &[String],
+    lint_proc_macro_source: bool,
     crate_prefix: &str,
     lint_overrides: &LintConfig,
     primitive_introductions: &std::collections::BTreeMap<String, Vec<String>>,
@@ -171,6 +172,7 @@ pub fn run_lints(
             shame_doc: shame_doc.as_deref(),
             workspace_root,
             proc_macro_crates,
+            lint_proc_macro_source,
             crate_prefix,
             primitive_introductions,
         };
@@ -209,6 +211,7 @@ pub fn run_lints(
                     shame_doc: p.shame_doc.as_deref(),
                     workspace_root,
                     proc_macro_crates,
+                    lint_proc_macro_source,
                     crate_prefix,
                     primitive_introductions,
                 },
