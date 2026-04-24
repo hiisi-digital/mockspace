@@ -38,7 +38,7 @@ impl Lint for RegistrableCompleteness {
     }
 
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
-        if crate::PROC_MACRO_CRATES.contains(&ctx.crate_name) {
+        if ctx.is_proc_macro_crate() {
             return Vec::new();
         }
 
