@@ -52,9 +52,10 @@ impl CrossCrateLint for UndocumentedType {
         // Pass 2: check each crate's source types against the documented set.
         let mut errors = Vec::new();
         for &(crate_name, ctx) in crates {
-            // Runtime `proc_macro_crates` config from mockspace.toml takes
-            // precedence over the compile-time `PROC_MACRO_CRATES` fallback.
-            if ctx.is_proc_macro_crate() {
+            // Skip proc-macro crate source unless the project opted into
+            // linting proc-macro source (mockspace.toml
+            // `lint_proc_macro_source = true`).
+            if ctx.should_skip_proc_macro_source_lint() {
                 continue;
             }
 

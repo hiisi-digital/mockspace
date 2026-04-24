@@ -124,6 +124,16 @@ pub struct LintContext<'a> {
     /// Crates exempt from collection/box/float lints (proc-macro crates).
     /// Falls back to PROC_MACRO_CRATES if empty.
     pub proc_macro_crates: &'a [String],
+    /// Whether source-scanning lints should run against proc-macro crate
+    /// source. Default false: skip source lints for proc-macro crates
+    /// because their heap-using parsers do not ship with consumer binaries.
+    /// Set true (via mockspace.toml `lint_proc_macro_source = true`) to
+    /// force source lints to apply to proc-macro crates as well.
+    ///
+    /// Independent of expansion-based linting (future feature): what a
+    /// macro emits must always satisfy consumer-crate rules because the
+    /// emitted code compiles into consumer binaries.
+    pub lint_proc_macro_source: bool,
     /// Crate name prefix (e.g. "loimu"). Used to build expected crate
     /// names dynamically instead of hardcoding project-specific names.
     pub crate_prefix: &'a str,
@@ -145,7 +155,21 @@ pub struct LintContext<'a> {
 }
 
 impl<'a> LintContext<'a> {
-    /// Whether this crate is a proc-macro crate (exempt from some lints).
+    /// Whether source-scanning lints should skip this crate because it is
+    /// a proc-macro crate AND the project has not opted into linting
+    /// proc-macro source. This is the helper source-scanning lints should
+    /// call to decide whether to short-circuit. Use this instead of
+    /// [`Self::is_proc_macro_crate`] for the skip decision; that method
+    /// answers the narrower question "is this a proc-macro crate?"
+    /// without consulting the project's lint-behavior preference.
+    pub fn should_skip_proc_macro_source_lint(&self) -> bool {
+        !self.lint_proc_macro_source && self.is_proc_macro_crate()
+    }
+
+    /// Whether this crate is a proc-macro crate. Does NOT consider the
+    /// `lint_proc_macro_source` preference; callers that want the
+    /// "should I skip this source lint" decision should use
+    /// [`Self::should_skip_proc_macro_source_lint`].
     pub fn is_proc_macro_crate(&self) -> bool {
         if self.proc_macro_crates.is_empty() {
             PROC_MACRO_CRATES.iter().any(|c| *c == self.crate_name)
