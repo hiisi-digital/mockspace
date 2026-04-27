@@ -124,9 +124,19 @@ impl CrossCrateLint for ChangelistDocGate {
     }
 }
 
-/// A doc template is a `.md.tmpl` or `.md` file inside `crates/`.
+/// A doc template is a `.md.tmpl` or `.md` file inside `crates/`,
+/// excluding `SHAME.md.tmpl` which is the documented escape hatch for
+/// gaps discovered during execution. Other lints (notably
+/// `undocumented-type`) explicitly suggest creating a SHAME entry to
+/// unblock SRC-phase work, so `SHAME.md.tmpl` must be writable in
+/// every phase, not only `DOC`. This mirrors the SHAME carve-out in
+/// the generated `mockspace-write-guard` hook (see `render_agent.rs`,
+/// which exempts `SHAME.md.tmpl` before the doc-template gate fires).
 fn is_doc_template(file: &str) -> bool {
     if file.is_empty() || !file.starts_with("crates/") {
+        return false;
+    }
+    if file.ends_with("/SHAME.md.tmpl") || file == "crates/SHAME.md.tmpl" {
         return false;
     }
     file.ends_with(".md.tmpl") || file.ends_with(".md")
@@ -152,4 +162,30 @@ fn extract_crate_name(path: &str) -> Option<String> {
     let after_crates = path.strip_prefix("crates/")?;
     let end = after_crates.find('/')?;
     Some(after_crates[..end].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_doc_template;
+
+    #[test]
+    fn design_template_is_doc_template() {
+        assert!(is_doc_template("crates/foo/DESIGN.md.tmpl"));
+        assert!(is_doc_template("crates/foo/BACKLOG.md.tmpl"));
+        assert!(is_doc_template("crates/foo/README.md.tmpl"));
+        assert!(is_doc_template("crates/foo/DEEPDIVE_topic.md.tmpl"));
+    }
+
+    #[test]
+    fn shame_template_is_exempt() {
+        assert!(!is_doc_template("crates/foo/SHAME.md.tmpl"));
+        assert!(!is_doc_template("crates/arvo-bits-contracts/SHAME.md.tmpl"));
+    }
+
+    #[test]
+    fn non_crate_files_pass() {
+        assert!(!is_doc_template(""));
+        assert!(!is_doc_template("design_rounds/foo.md"));
+        assert!(!is_doc_template("crates/foo/src/lib.rs"));
+    }
 }
