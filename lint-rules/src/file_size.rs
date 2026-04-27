@@ -159,6 +159,7 @@ mod tests {
             proc_macro_crates: &[],
             crate_prefix: "test",
             primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
+            lint_proc_macro_source: false,
         }
     }
 
