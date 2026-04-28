@@ -190,18 +190,24 @@ fn extract_typed_form_types(func: &ItemFn) -> syn::Result<(Type, Type)> {
         }
     };
 
-    // Sanity-check the input parameter is a reference (the FFI pointer
-    // needs a reference type to dereference into).
+    // Input parameter must be a `&T` reference. The dispatch arm
+    // emits `let input = &*(input_ptr as *const #input_ty);` and
+    // passes `input` (a reference) into the user's function. By-value
+    // params would require `*input` at the call site (not emitted),
+    // and would fail with an opaque trait-bound error in the consumer
+    // crate. Reject early with a targeted diagnostic instead.
     if let FnArg::Typed(pt) = input_arg {
         if !matches!(&*pt.ty, Type::Reference(_)) {
-            // Not a hard error — by-value Copy inputs work too. But
-            // the convention is `input: &Input` for parity with the
-            // routine form. Allow either; just don't strip.
-            let _ = pt;
+            return Err(syn::Error::new_spanned(
+                &pt.ty,
+                "#[bench_variant] typed form: first parameter must \
+                 be `&Input` (a shared reference). By-value inputs \
+                 are not supported.",
+            ));
         }
-        // Sanity: parameter pattern should be a plain ident, not a
-        // tuple/struct destructure (we want the codegen below to work
-        // verbatim with named args).
+        // Parameter pattern must be a plain ident, not a tuple /
+        // struct destructure (the dispatch arm passes the binding
+        // through unchanged).
         if !matches!(&*pt.pat, Pat::Ident(_)) {
             return Err(syn::Error::new_spanned(
                 &pt.pat,
@@ -284,6 +290,10 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
                             // Shadow the function's const generic at
                             // dispatch time so type expressions like
                             // `[u8; N]` resolve to `[u8; #n_lit]`.
+                            // The allow handles const-generic idents
+                            // that aren't SCREAMING_CASE (any name
+                            // the user picked for their const param).
+                            #[allow(non_upper_case_globals)]
                             const #n_ident: usize = #n_lit;
                             let input = &*(input_ptr as *const #input_ty);
                             let output = &mut *(output_ptr as *mut #output_ty);
