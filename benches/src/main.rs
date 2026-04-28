@@ -50,7 +50,8 @@ fn main() -> ExitCode {
         }
     };
 
-    let mock_benches_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mock_benches_dir = std::env::current_dir()
+        .expect("self-bench requires a readable current_dir for variant path resolution");
 
     let mut workload = Workload::new();
     workload.program("default", |b| {
@@ -59,13 +60,18 @@ fn main() -> ExitCode {
 
     for (bench_name, section) in &manifest.bench {
         for (size_idx, _size) in section.sizes.iter().enumerate() {
-            let config = match manifest.for_size(bench_name, size_idx, &mock_benches_dir) {
+            let mut config = match manifest.for_size(bench_name, size_idx, &mock_benches_dir) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("error: {e}");
                     return ExitCode::FAILURE;
                 }
             };
+            config.variant_paths = config
+                .variant_paths
+                .into_iter()
+                .map(shape_variant_path)
+                .collect();
             let routine = RoutineSpec {
                 name: section.workload.clone(),
                 bridge: routine_bridge!(HashMix),
@@ -131,6 +137,20 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// Take a manifest variant path with bare cargo target stem and
+/// produce the platform-shaped dylib path
+/// (DLL_PREFIX + stem + DLL_SUFFIX in the same parent directory).
+fn shape_variant_path(p: PathBuf) -> PathBuf {
+    let parent = p.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    parent.join(format!(
+        "{}{}{}",
+        std::env::consts::DLL_PREFIX,
+        stem,
+        std::env::consts::DLL_SUFFIX
+    ))
 }
 
 fn run_worker(args: &[String]) -> ExitCode {
