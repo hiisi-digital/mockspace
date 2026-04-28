@@ -22,3 +22,7 @@ libloading = "0.8"
 
 [features]
 default = []
+# Enable hardware performance counter support (macOS kpc_*, Linux
+# perf_event_open). Off by default; opt in via
+# `cargo build --features mockspace-bench-harness/perf-counters`.
+perf-counters = []

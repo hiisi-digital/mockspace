@@ -28,10 +28,14 @@ pub use mockspace_bench_core as core;
 pub mod analysis;
 pub mod cache;
 pub mod config;
+pub mod disasm;
 pub mod env;
 pub mod error;
 pub mod harness;
+pub mod history;
+pub mod inline_bench;
 pub mod meta_report;
+pub mod perf;
 pub mod quality;
 pub mod report;
 pub mod sample;
@@ -50,7 +54,14 @@ pub use analysis::{
     bh_fdr_adjust, bootstrap_ci_diff, bootstrap_ci_median, compare, lag1_autocorrelation,
     pct_delta, sign_test, Comparison, DataSet, DataSetMeta, Stats, VariantAnalysis,
 };
+pub use disasm::check_duplicates as check_disasm_duplicates;
+pub use history::{
+    append as append_history, detect_regressions, detect_regressions_window,
+    git_commit, load as load_history, timestamp, HistoryEntry,
+};
+pub use inline_bench::{run_inline, InlineVariant};
 pub use meta_report::{classify_family, generate as generate_meta_report, VariantResult};
+pub use perf::{available as perf_available, read as perf_read, setup as perf_setup, PerfSnapshot};
 pub use quality::{measure as measure_quality, VariantQuality};
 pub use report::generate as generate_report;
 pub use validation::validate;
