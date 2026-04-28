@@ -32,6 +32,7 @@ pub mod error;
 pub mod harness;
 pub mod sample;
 pub mod spec;
+pub mod validation;
 pub mod workload;
 
 pub use cache::{Cache, CachedBatch, apply_drift, config_hash, consensus_drift, dylib_hash, global_mean, global_mean_for_mode};
@@ -41,6 +42,7 @@ pub use error::BenchError;
 pub use harness::{run_orchestrator, run_worker, write_csv};
 pub use sample::{BenchResult, Sample};
 pub use spec::{RoutineSpec, VariantSpec};
+pub use validation::validate;
 pub use workload::{
     AllocHandle, Chain, OneOf, Program, ProgramBuilder, Shuffle, Stage, StageStrategy, Workload,
     WorkloadCtx, WorkloadItemKind, algo_call, branch_work, domain_work, graph_work, heavy_memory,

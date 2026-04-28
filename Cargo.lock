@@ -199,6 +199,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mockspace-bench-macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "mockspace-lint-rules"
 version = "0.1.0"
 dependencies = [
