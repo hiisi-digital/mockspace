@@ -1,0 +1,28 @@
+[package]
+name = "mockspace-bench-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Canonical bench harness for mockspace consumers. Variant isolation, hardware counter timing, CSV cache, validation, analysis, findings.md generator."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+readme = "README.md"
+keywords = ["benchmarking", "performance", "mockspace"]
+categories = ["development-tools", "development-tools::profiling"]
+
+[lib]
+name = "mockspace_bench_harness"
+path = "src/lib.rs"
+
+[dependencies]
+mockspace-bench-core = { path = "../bench-core", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+libloading = "0.8"
+
+[features]
+default = []
+# Enable hardware performance counter support (macOS kpc_*, Linux
+# perf_event_open). Off by default; opt in via
+# `cargo build --features mockspace-bench-harness/perf-counters`.
+perf-counters = []
