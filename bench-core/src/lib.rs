@@ -24,7 +24,10 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod byte_routine;
 pub mod counter;
+
+pub use byte_routine::ByteRoutine;
 
 /// Defines WHAT is computed. All variants implement this contract;
 /// the harness compares them on identical inputs.
