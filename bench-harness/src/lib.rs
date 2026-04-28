@@ -25,11 +25,13 @@
 
 pub use mockspace_bench_core as core;
 
+pub mod analysis;
 pub mod cache;
 pub mod config;
 pub mod env;
 pub mod error;
 pub mod harness;
+pub mod quality;
 pub mod sample;
 pub mod spec;
 pub mod validation;
@@ -42,6 +44,11 @@ pub use error::BenchError;
 pub use harness::{run_orchestrator, run_worker, write_csv};
 pub use sample::{BenchResult, Sample};
 pub use spec::{RoutineSpec, VariantSpec};
+pub use analysis::{
+    bh_fdr_adjust, bootstrap_ci_diff, bootstrap_ci_median, compare, lag1_autocorrelation,
+    pct_delta, sign_test, Comparison, DataSet, DataSetMeta, Stats, VariantAnalysis,
+};
+pub use quality::{measure as measure_quality, VariantQuality};
 pub use validation::validate;
 pub use workload::{
     AllocHandle, Chain, OneOf, Program, ProgramBuilder, Shuffle, Stage, StageStrategy, Workload,
