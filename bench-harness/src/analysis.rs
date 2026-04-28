@@ -8,7 +8,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::sample::Sample;
+use crate::sample::{BenchResult, Sample};
+use crate::spec::RoutineSpec;
 
 /// Quintile statistics for a set of values.
 ///
@@ -520,5 +521,30 @@ pub fn compare(variant: &[f64], baseline: &[f64], seed: u64) -> Comparison {
         significant,
         sign_test_p: sign_p,
         ties,
+    }
+}
+
+// ── BenchResult ergonomics ──
+
+impl BenchResult {
+    /// Build a [`DataSet`] from `self.samples` filtered by `mode`
+    /// (`"warm"` / `"cold"`). Equivalent to
+    /// [`DataSet::from_samples(&result.samples, mode)`].
+    pub fn dataset(&self, mode: &str) -> DataSet {
+        DataSet::from_samples(&self.samples, mode)
+    }
+
+    /// Build a [`DataSet`] for `mode` and auto-fill
+    /// `meta.ops_per_call` from the routine bridge by invoking
+    /// `Routine::ops_per_call` on a synthetic `seed=0` input.
+    ///
+    /// The throughput / Gops/s tables in [`crate::generate_report`]
+    /// only render when `meta.ops_per_call > 0`; routines that
+    /// declare `ops_per_call` will get throughput tables for free.
+    pub fn dataset_for_routine(&self, routine: &RoutineSpec, mode: &str) -> DataSet {
+        let mut ds = DataSet::from_samples(&self.samples, mode);
+        let probe_input = (routine.bridge.input_builder)(0);
+        ds.meta.ops_per_call = (routine.bridge.ops_per_call)(&probe_input);
+        ds
     }
 }

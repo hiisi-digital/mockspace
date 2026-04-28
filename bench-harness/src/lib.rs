@@ -94,12 +94,32 @@ pub fn run(
 /// Mockspace consumers typically call this twice (once per mode) and
 /// emit `findings_warm.md` + `findings_cold.md`, or pick the mode
 /// most representative of their workload.
+///
+/// **Throughput tables**: this variant does not auto-fill
+/// `DataSet.meta.ops_per_call`, so the report skips the throughput /
+/// Gops/s rows. Use [`write_report_for_routine`] to get throughput
+/// tables filled from the Routine's `ops_per_call` declaration.
 pub fn write_report(
     result: &BenchResult,
     mode: &str,
     path: &str,
 ) -> Result<(), BenchError> {
-    let ds = DataSet::from_samples(&result.samples, mode);
+    let ds = result.dataset(mode);
+    let md = generate_report(&ds, &result.title);
+    std::fs::write(path, md).map_err(|e| BenchError::io("writing findings.md", e))?;
+    Ok(())
+}
+
+/// Routine-aware [`write_report`]: auto-fills `meta.ops_per_call`
+/// from the [`RoutineSpec`] bridge so `findings.md` includes
+/// throughput / Gops/s tables when the routine declares ops.
+pub fn write_report_for_routine(
+    result: &BenchResult,
+    routine: &RoutineSpec,
+    mode: &str,
+    path: &str,
+) -> Result<(), BenchError> {
+    let ds = result.dataset_for_routine(routine, mode);
     let md = generate_report(&ds, &result.title);
     std::fs::write(path, md).map_err(|e| BenchError::io("writing findings.md", e))?;
     Ok(())

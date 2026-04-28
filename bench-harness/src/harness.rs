@@ -579,15 +579,16 @@ pub fn run_orchestrator(
 /// `<path>.meta.json` carrying [`EnvMeta`].
 pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
     let mut csv = String::from(
-        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score\n",
+        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag\n",
     );
     for s in &result.samples {
         let score_str = s.score.map(|v| format!("{:.2}", v)).unwrap_or_default();
+        let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{}\n",
+            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{}\n",
             s.run, s.pass, s.cooldown_ms, s.mode, s.variant,
             s.batch_idx, s.e2e_ns, s.algo_ns, s.bridge_ns,
-            s.batch_count, score_str
+            s.batch_count, score_str, tag_str
         ));
     }
     std::fs::write(path, &csv).map_err(|e| BenchError::io("writing csv", e))?;

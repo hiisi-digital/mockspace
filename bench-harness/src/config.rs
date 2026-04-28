@@ -67,6 +67,12 @@ pub struct BenchSection {
     pub workload: String,
     /// Master seed for input generation. `0` means "use a fresh
     /// random seed every run"; any other value reproduces.
+    ///
+    /// **TOML limit**: TOML 1.0 caps integer literals at `i64::MAX`
+    /// (`0x7FFF_FFFF_FFFF_FFFF`). The field is `u64` for the
+    /// in-process runtime, but values declared in `bench.toml` must
+    /// fit in signed range. Use `0` (random) for higher-entropy
+    /// seeds or compose them at run time in your bench binary.
     #[serde(default)]
     pub master_seed: u64,
     /// One [`SizeSection`] per N value the bench should run at.

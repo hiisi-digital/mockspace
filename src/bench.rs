@@ -378,7 +378,9 @@ fn main() -> ExitCode {
                     eprintln!("error: writing csv: {e}");
                     return ExitCode::FAILURE;
                 }
-                if let Err(e) = harness::write_report(&result, "warm", &report_path) {
+                if let Err(e) = harness::write_report_for_routine(
+                    &result, &routine, "warm", &report_path,
+                ) {
                     eprintln!("error: writing report: {e}");
                     return ExitCode::FAILURE;
                 }
@@ -440,10 +442,12 @@ const STARTER_BENCH_TOML: &str = r#"# Bench harness configuration.
 # globally (passes per harness run, runs per pass, batch size,
 # cooldown cohorts).
 
+# Note on master_seed: TOML 1.0 caps integers at i64 (0x7FFF_FFFF_FFFF_FFFF).
+# Pick any value that fits, or set 0 to use a fresh random seed every run.
 [bench.sample]
 title = "Sample bench"
 workload = "default"
-master_seed = 0xCAFE_BABE_DEAD_BEEF
+master_seed = 0x1234_5678_9ABC_DEF0
 
 [[bench.sample.sizes]]
 n = 64
