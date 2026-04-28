@@ -1,4 +1,4 @@
-//! Routine + variant specification — what the consumer hands to the
+//! Routine + variant specification: what the consumer hands to the
 //! harness so it can find and dispatch the variant cdylibs.
 //!
 //! A [`RoutineSpec`] names one Routine and supplies a

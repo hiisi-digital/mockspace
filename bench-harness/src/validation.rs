@@ -210,7 +210,7 @@ pub fn validate(
         let exe = std::env::current_exe().unwrap_or_default();
         let probe_seeds: Vec<u64> = seeds
             .iter()
-            .step_by(validation_seeds / 20)
+            .step_by((validation_seeds / 20).max(1))
             .cloned()
             .collect();
         for (vi, (name, _entry)) in variants.iter().enumerate() {

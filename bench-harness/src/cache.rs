@@ -351,8 +351,8 @@ pub fn apply_drift(
 
     // Target = midpoint: scale cached up by half the drift, fresh
     // down by half. If consensus_ratio = new/old = 1.04 (4% faster
-    // now): cached_scale = sqrt(1.04) ≈ 1.02, fresh_scale = 1/sqrt(1.04)
-    // ≈ 0.98. Both meet in the middle.
+    // now): cached_scale = sqrt(1.04) ~ 1.02, fresh_scale = 1/sqrt(1.04)
+    // ~ 0.98. Both meet in the middle.
     let midpoint_scale = consensus_ratio.sqrt();
     let cached_scale = midpoint_scale;
     let fresh_scale = 1.0 / midpoint_scale;

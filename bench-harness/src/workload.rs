@@ -102,11 +102,21 @@ impl WorkloadCtx {
     }
 
     /// Get a reference to the slot's data.
+    ///
+    /// **Contract**: the caller is responsible for handing in a
+    /// handle that came from this same [`WorkloadCtx`]. A handle
+    /// from a different ctx, or a handle whose slot was never
+    /// allocated, returns an empty slice rather than panicking. This
+    /// matches the polka-dots shape (workload items are written by
+    /// the consumer's bench binary; misuse is a programmer bug, not
+    /// a runtime concern). If you need typed handle ownership,
+    /// shadow the handle with a newtype tied to the ctx's lifetime.
     pub fn get(&self, handle: AllocHandle) -> &[u8] {
         self.slots.get(&handle).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
-    /// Get a mutable reference to the slot's data.
+    /// Get a mutable reference to the slot's data. Same contract as
+    /// [`Self::get`].
     pub fn get_mut(&mut self, handle: AllocHandle) -> &mut [u8] {
         self.slots.get_mut(&handle).map(|v| v.as_mut_slice()).unwrap_or(&mut [])
     }

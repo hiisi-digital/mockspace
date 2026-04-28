@@ -51,7 +51,7 @@ pub use config::{BenchConfig, BenchManifest, BenchSection, HarnessTuning, SizeSe
 pub use env::{EnvMeta, collect_env_meta};
 pub use error::BenchError;
 pub use harness::{run_orchestrator, run_worker, write_csv};
-pub use sample::{BenchResult, Sample};
+pub use sample::{load_samples_csv, BenchResult, Sample};
 pub use spec::{RoutineSpec, VariantSpec};
 pub use analysis::{
     bh_fdr_adjust, bootstrap_ci_diff, bootstrap_ci_median, compare, lag1_autocorrelation,

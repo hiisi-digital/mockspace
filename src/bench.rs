@@ -362,10 +362,43 @@ fn main() -> ExitCode {
             let report_path = format!("{}_n{}_findings.md", bench_name, config.n);
 
             if report_only {
-                eprintln!(
-                    "  report-only: skipping run for {} n={}",
-                    bench_name, config.n
-                );
+                // Reload prior samples from the CSV the previous run
+                // wrote, build a synthetic BenchResult around them, and
+                // regenerate findings.md without re-running the harness.
+                let samples = match harness::load_samples_csv(
+                    std::path::Path::new(&csv_path),
+                ) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!(
+                            "error: report-only could not load `{csv_path}` for bench `{bench_name}` n={}: {e}",
+                            config.n
+                        );
+                        eprintln!("hint: run `mock bench run` first to produce the csv");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                if samples.is_empty() {
+                    eprintln!(
+                        "error: report-only: no samples in `{csv_path}` for bench `{bench_name}` n={}",
+                        config.n
+                    );
+                    return ExitCode::FAILURE;
+                }
+                let result = mockspace_bench_harness::BenchResult {
+                    title: section.title.clone(),
+                    env: mockspace_bench_harness::EnvMeta::default(),
+                    samples,
+                    cache_path: csv_path.clone(),
+                    report_path: report_path.clone(),
+                };
+                if let Err(e) = harness::write_report_for_routine(
+                    &result, &routine, "warm", &report_path,
+                ) {
+                    eprintln!("error: writing report: {e}");
+                    return ExitCode::FAILURE;
+                }
+                eprintln!("  regenerated {report_path}");
             } else {
                 let result = match harness::run(&config, &routine, &workload) {
                     Ok(r) => r,

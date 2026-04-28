@@ -232,10 +232,17 @@ pub struct BenchConfig {
     pub tuning: HarnessTuning,
 }
 
-/// Tunable iteration counts + on-disk roots. Defaults match the
-/// polka-dots constants. Override on a [`BenchConfig`] to tighten
-/// dev iteration speed (lower seed counts) or move the cache /
-/// history dirs out of cwd-relative defaults.
+/// Tunable iteration counts. Defaults match the polka-dots
+/// constants. Override on a [`BenchConfig`] to tighten dev
+/// iteration speed (lower seed counts) or to plug in different
+/// statistical budgets.
+///
+/// Cache and history roots are NOT configured here. Use
+/// [`crate::cache::Cache::load_in`], [`crate::history::append_in`],
+/// and [`crate::history::load_in`] directly when the harness needs
+/// to live outside the consumer's cwd; the cwd-relative defaults
+/// ([`crate::DEFAULT_CACHE_ROOT`] / [`crate::DEFAULT_HISTORY_DIR`])
+/// remain the implicit fallback.
 #[derive(Clone, Debug)]
 pub struct HarnessTuning {
     /// Number of seeds used in [`crate::validate`]. Default 100.
@@ -254,13 +261,6 @@ pub struct HarnessTuning {
     /// const for the v2 launch. Wiring the override end-to-end is
     /// part of the v3 polish (#281, item 1).
     pub bootstrap_iterations: usize,
-    /// Cache root directory. `None` uses the cwd-relative default
-    /// `.bench_cache/`. Set to a [`PathBuf`] when the harness needs
-    /// to live outside the consumer's cwd.
-    pub cache_dir: Option<PathBuf>,
-    /// History log root directory. `None` uses the cwd-relative
-    /// default `.bench_history/`.
-    pub history_dir: Option<PathBuf>,
 }
 
 impl Default for HarnessTuning {
@@ -270,8 +270,6 @@ impl Default for HarnessTuning {
             determinism_check_seeds: 10,
             quality_seeds: 1000,
             bootstrap_iterations: 10_000,
-            cache_dir: None,
-            history_dir: None,
         }
     }
 }

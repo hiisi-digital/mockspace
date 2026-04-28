@@ -5,9 +5,13 @@
 //! polka-dots. Round 3 emits these from the orchestrator; Round 5
 //! aggregates them into `analysis::DataSet`.
 
+use std::io::BufRead;
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use crate::env::EnvMeta;
+use crate::error::BenchError;
 
 /// One per-batch timing record.
 ///
@@ -61,10 +65,47 @@ pub struct BenchResult {
     pub env: EnvMeta,
     /// Per-batch samples emitted by the orchestrator.
     pub samples: Vec<Sample>,
-    /// Path to the CSV cache file written by Round 2's cache module.
-    /// Empty in Round 1 (cache stub returns no path).
+    /// Path to the CSV the orchestrator wrote, if any. Empty when
+    /// the result has not yet been persisted.
     pub cache_path: String,
-    /// Path to the `findings.md` written by Round 6's report module.
-    /// Empty until Round 6 lands.
+    /// Path to the `findings.md` produced by report generation.
+    /// Empty until [`crate::write_report`] runs.
     pub report_path: String,
+}
+
+/// Load `Sample` rows from a CSV produced by [`crate::write_csv`].
+///
+/// Used by `mock bench report --report-only` and by tooling that
+/// wants to reuse a previous run's data without re-invoking the
+/// orchestrator. Header row is skipped; trailing or empty lines are
+/// tolerated. Missing optional columns (`score`, `input_tag`)
+/// default to `None`.
+pub fn load_samples_csv(path: &Path) -> Result<Vec<Sample>, BenchError> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| BenchError::io("opening csv", e))?;
+    let mut samples = Vec::new();
+    for line in std::io::BufReader::new(file).lines().flatten() {
+        if line.starts_with("run,") || line.is_empty() {
+            continue;
+        }
+        let p: Vec<&str> = line.split(',').collect();
+        if p.len() < 10 {
+            continue;
+        }
+        samples.push(Sample {
+            run: p[0].parse().unwrap_or(0),
+            pass: p[1].parse().unwrap_or(0),
+            cooldown_ms: p[2].parse().unwrap_or(0),
+            mode: p[3].to_string(),
+            variant: p[4].to_string(),
+            batch_idx: p[5].parse().unwrap_or(0),
+            e2e_ns: p[6].parse().unwrap_or(0.0),
+            algo_ns: p[7].parse().unwrap_or(0.0),
+            bridge_ns: p[8].parse().unwrap_or(0.0),
+            batch_count: p[9].parse().unwrap_or(0),
+            score: p.get(10).and_then(|s| s.parse().ok()),
+            input_tag: p.get(11).and_then(|s| s.parse().ok()),
+        });
+    }
+    Ok(samples)
 }
