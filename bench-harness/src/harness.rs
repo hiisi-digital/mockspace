@@ -81,6 +81,49 @@ fn meta_json_path(csv_path: &str) -> String {
 
 // ── Worker mode ──
 
+/// Helper: load a variant cdylib and resolve the symbols the worker
+/// needs. Returns `(name, entry)` on success or a human-readable
+/// reason string on failure. Failures are not panics; the worker
+/// reports them via stderr + a TIMEOUT line on stdout so the
+/// orchestrator categorises them alongside other early-exit cases.
+///
+/// # Safety
+///
+/// The caller asserts that the cdylib at `dylib_path` was built
+/// against a compatible `mockspace-bench-core` ABI; the function
+/// double-checks via the `bench_abi_hash` symbol but the dlopen
+/// itself runs initialisers and is unsafe by definition.
+unsafe fn load_variant(dylib_path: &str) -> Result<(String, BenchEntryFn), String> {
+    let lib = unsafe { libloading::Library::new(dylib_path) }
+        .map_err(|e| format!("dlopen failed: {e}"))?;
+
+    let hash_fn: libloading::Symbol<AbiHashFn> = unsafe { lib.get(b"bench_abi_hash") }
+        .map_err(|e| format!("missing bench_abi_hash symbol: {e}"))?;
+    let found = hash_fn();
+    let expected = abi_hash();
+    if found != expected {
+        return Err(format!(
+            "ABI hash mismatch: variant has {found:#x}, harness expects {expected:#x}. \
+             Rebuild the variant against the current mockspace-bench-core."
+        ));
+    }
+
+    let entry: libloading::Symbol<BenchEntryFn> = unsafe { lib.get(b"bench_entry") }
+        .map_err(|e| format!("missing bench_entry symbol: {e}"))?;
+    let entry_fn: BenchEntryFn = *entry;
+
+    let name_fn: libloading::Symbol<BenchNameFn> = unsafe { lib.get(b"bench_name") }
+        .map_err(|e| format!("missing bench_name symbol: {e}"))?;
+    let name = unsafe { std::ffi::CStr::from_ptr(name_fn() as *const i8) }
+        .to_string_lossy()
+        .into_owned();
+
+    // Leak the library so the function pointers stay valid for the
+    // remainder of the worker's lifetime.
+    std::mem::forget(lib);
+    Ok((name, entry_fn))
+}
+
 /// Run as a worker subprocess. Loads one dylib, runs ONE mode, prints
 /// timing. Emits one line per batch to preserve distributional
 /// information.
@@ -108,23 +151,19 @@ pub fn run_worker(
 ) {
     counter::pin_to_perf_cores();
 
+    // Worker mode emits structured failure on stderr + a TIMEOUT-shaped
+    // line on stdout so the orchestrator can categorise the failure
+    // alongside other early-exit cases. Returning `None` from the
+    // closure short-circuits the rest of the worker body.
     let (name, entry) = unsafe {
-        let lib = libloading::Library::new(dylib_path)
-            .unwrap_or_else(|e| panic!("dlopen {}: {}", dylib_path, e));
-
-        let hash_fn: libloading::Symbol<AbiHashFn> = lib.get(b"bench_abi_hash").unwrap();
-        assert_eq!(hash_fn(), abi_hash(), "ABI hash mismatch for {}", dylib_path);
-
-        let entry: libloading::Symbol<BenchEntryFn> = lib.get(b"bench_entry").unwrap();
-        let entry_fn: BenchEntryFn = *entry;
-
-        let name_fn: libloading::Symbol<BenchNameFn> = lib.get(b"bench_name").unwrap();
-        let name = std::ffi::CStr::from_ptr(name_fn() as *const i8)
-            .to_string_lossy()
-            .into_owned();
-
-        std::mem::forget(lib);
-        (name, entry_fn)
+        match load_variant(dylib_path) {
+            Ok(pair) => pair,
+            Err(reason) => {
+                eprintln!("  WORKER LOAD FAIL: {} :: {}", dylib_path, reason);
+                println!("TIMEOUT\t<load-fail>\t{}\t0", mode);
+                return;
+            }
+        }
     };
 
     let input_builder = routine.bridge.input_builder;

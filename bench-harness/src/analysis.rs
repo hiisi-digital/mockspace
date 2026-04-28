@@ -47,7 +47,7 @@ impl Stats {
                 max: 0.0,
             };
         }
-        vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        vals.sort_by(|a, b| a.total_cmp(b));
         let n = vals.len();
         let q = n / 5;
         let mean = vals.iter().sum::<f64>() / n as f64;
@@ -310,7 +310,7 @@ pub fn bh_fdr_adjust(p_values: &mut Vec<(usize, f64)>) {
         return;
     }
 
-    p_values.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    p_values.sort_by(|a, b| a.1.total_cmp(&b.1));
 
     for i in 0..m {
         let rank = (i + 1) as f64;
@@ -360,7 +360,7 @@ pub fn bootstrap_ci_median(vals: &[f64], seed: u64) -> (f64, f64, f64) {
 
     let n = vals.len();
     let mut sorted = vals.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.total_cmp(b));
     let true_median = if n % 2 == 0 {
         (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     } else {
@@ -377,7 +377,7 @@ pub fn bootstrap_ci_median(vals: &[f64], seed: u64) -> (f64, f64, f64) {
             let idx = (rng as usize) % n;
             resample.push(sorted[idx]);
         }
-        resample.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        resample.sort_by(|a, b| a.total_cmp(b));
         let boot_med = if n % 2 == 0 {
             (resample[n / 2 - 1] + resample[n / 2]) / 2.0
         } else {
@@ -386,7 +386,7 @@ pub fn bootstrap_ci_median(vals: &[f64], seed: u64) -> (f64, f64, f64) {
         boot_medians.push(boot_med);
     }
 
-    boot_medians.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    boot_medians.sort_by(|a, b| a.total_cmp(b));
     let lo_idx = (BOOTSTRAP_ITERATIONS as f64 * CI_LOWER) as usize;
     let hi_idx = (BOOTSTRAP_ITERATIONS as f64 * CI_UPPER) as usize;
 
@@ -497,7 +497,7 @@ pub fn compare(variant: &[f64], baseline: &[f64], seed: u64) -> Comparison {
     let (sign_p, ties) = sign_test(variant, baseline);
 
     let mut sorted_b = baseline.to_vec();
-    sorted_b.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted_b.sort_by(|a, b| a.total_cmp(b));
     let nb = sorted_b.len();
     let base_median = if nb % 2 == 0 {
         (sorted_b[nb / 2 - 1] + sorted_b[nb / 2]) / 2.0

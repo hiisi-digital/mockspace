@@ -43,8 +43,11 @@ pub mod spec;
 pub mod validation;
 pub mod workload;
 
-pub use cache::{Cache, CachedBatch, apply_drift, config_hash, consensus_drift, dylib_hash, global_mean, global_mean_for_mode};
-pub use config::{BenchConfig, BenchManifest, BenchSection, SizeSection, TimingSection};
+pub use cache::{
+    Cache, CachedBatch, apply_drift, config_hash, consensus_drift, dylib_hash,
+    global_mean, global_mean_for_mode, DEFAULT_CACHE_ROOT,
+};
+pub use config::{BenchConfig, BenchManifest, BenchSection, HarnessTuning, SizeSection, TimingSection};
 pub use env::{EnvMeta, collect_env_meta};
 pub use error::BenchError;
 pub use harness::{run_orchestrator, run_worker, write_csv};
@@ -56,10 +59,11 @@ pub use analysis::{
 };
 pub use disasm::check_duplicates as check_disasm_duplicates;
 pub use history::{
-    append as append_history, detect_regressions, detect_regressions_window,
-    git_commit, load as load_history, timestamp, HistoryEntry,
+    append as append_history, append_in as append_history_in, detect_regressions,
+    detect_regressions_window, git_commit, load as load_history, load_in as load_history_in,
+    timestamp, HistoryEntry, DEFAULT_HISTORY_DIR,
 };
-pub use inline_bench::{run_inline, InlineVariant};
+pub use inline_bench::{run_inline, InlineResult, InlineVariant};
 pub use meta_report::{classify_family, generate as generate_meta_report, VariantResult};
 pub use perf::{available as perf_available, read as perf_read, setup as perf_setup, PerfSnapshot};
 pub use quality::{measure as measure_quality, VariantQuality};

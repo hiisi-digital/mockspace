@@ -23,8 +23,23 @@ pub struct InlineVariant {
     pub entry: fn(*const u8, *mut u8, usize) -> FfiBenchCall,
 }
 
+/// One row of [`run_inline`]'s result table.
+#[derive(Clone, Debug)]
+pub struct InlineResult {
+    pub name: &'static str,
+    pub iterations: usize,
+    pub per_call_ns: f64,
+    pub total_ns: f64,
+}
+
 /// Run a set of inlined variants for comparison. `black_box` is
 /// applied to inputs to prevent constant folding.
+///
+/// Returns one [`InlineResult`] per variant in declaration order so
+/// callers can integrate with the rest of the harness flow (write
+/// CSV, build a synthetic [`crate::DataSet`], etc.). The function
+/// also emits a per-variant eprintln summary as a side effect (kept
+/// from the polka-dots shape for direct-CLI consumers).
 pub fn run_inline(
     variants: &[InlineVariant],
     input_builder: fn(u64) -> Vec<u8>,
@@ -32,7 +47,7 @@ pub fn run_inline(
     n: usize,
     iterations: usize,
     seed: u64,
-) {
+) -> Vec<InlineResult> {
     let input = input_builder(seed);
     let mut output = vec![0u8; output_size];
 
@@ -41,6 +56,8 @@ pub fn run_inline(
         variants.len(),
         iterations
     );
+
+    let mut results: Vec<InlineResult> = Vec::with_capacity(variants.len());
 
     for v in variants {
         for _ in 0..iterations / 10 {
@@ -65,5 +82,14 @@ pub fn run_inline(
             per_call_ns,
             total_ns / 1000.0
         );
+
+        results.push(InlineResult {
+            name: v.name,
+            iterations,
+            per_call_ns,
+            total_ns,
+        });
     }
+
+    results
 }

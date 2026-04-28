@@ -20,16 +20,19 @@ use std::collections::HashSet;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use crate::config::HarnessTuning;
 use crate::core::counter::Rng;
 use crate::core::{abi_hash, AbiHashFn, BenchEntryFn, BenchNameFn};
 use crate::error::BenchError;
 use crate::spec::RoutineSpec;
 
-const VALIDATION_SEEDS: usize = 100;
+/// Default seed count for [`validate`] when callers do not supply a
+/// [`HarnessTuning`].
+pub const DEFAULT_VALIDATION_SEEDS: usize = 100;
 const VALIDATION_ROOT_SEED: u64 = 0xCAFE_BABE_DEAD_BEEF;
-/// Number of seeds used for the determinism check (subset of
-/// [`VALIDATION_SEEDS`]).
-const DETERMINISM_CHECK_SEEDS: usize = 10;
+/// Default seed count for the determinism check, a subset of
+/// [`DEFAULT_VALIDATION_SEEDS`].
+pub const DEFAULT_DETERMINISM_CHECK_SEEDS: usize = 10;
 
 /// Validate all variant cdylibs against the given [`RoutineSpec`].
 ///
@@ -56,6 +59,7 @@ pub fn validate(
     n: usize,
     bench_name: &str,
     max_call_us: Option<u64>,
+    tuning: Option<&HarnessTuning>,
 ) -> Result<Vec<String>, BenchError> {
     if variant_paths.len() < 2 {
         return Err(BenchError::InvalidConfig {
@@ -65,6 +69,13 @@ pub fn validate(
             ),
         });
     }
+
+    let validation_seeds = tuning
+        .map(|t| t.validation_seeds)
+        .unwrap_or(DEFAULT_VALIDATION_SEEDS);
+    let determinism_check_seeds = tuning
+        .map(|t| t.determinism_check_seeds)
+        .unwrap_or(DEFAULT_DETERMINISM_CHECK_SEEDS);
 
     let input_builder = routine.bridge.input_builder;
     let output_size = routine.bridge.output_size;
@@ -81,7 +92,7 @@ pub fn validate(
         };
 
     let mut rng = Rng::new(VALIDATION_ROOT_SEED);
-    let seeds: Vec<u64> = (0..VALIDATION_SEEDS).map(|_| rng.next()).collect();
+    let seeds: Vec<u64> = (0..validation_seeds).map(|_| rng.next()).collect();
 
     let mut variants: Vec<(String, BenchEntryFn)> = Vec::new();
     let mut _libs: Vec<libloading::Library> = Vec::new();
@@ -199,7 +210,7 @@ pub fn validate(
         let exe = std::env::current_exe().unwrap_or_default();
         let probe_seeds: Vec<u64> = seeds
             .iter()
-            .step_by(VALIDATION_SEEDS / 20)
+            .step_by(validation_seeds / 20)
             .cloned()
             .collect();
         for (vi, (name, _entry)) in variants.iter().enumerate() {
@@ -234,7 +245,7 @@ pub fn validate(
     let active_count = variants.len() - slow_variants.len();
     eprintln!(
         "  Validating {} variants × {} seeds...",
-        active_count, VALIDATION_SEEDS
+        active_count, validation_seeds
     );
 
     let mut mismatches = 0usize;
@@ -320,7 +331,7 @@ pub fn validate(
         return Err(BenchError::ValidationFailed {
             variant,
             reason: format!(
-                "{mismatches} mismatches across {VALIDATION_SEEDS} seeds; first: {reason}"
+                "{mismatches} mismatches across {validation_seeds} seeds; first: {reason}"
             ),
         });
     }
@@ -342,11 +353,11 @@ pub fn validate(
     eprintln!(
         "  Determinism check: {} variants × {} seeds...",
         variants.len(),
-        DETERMINISM_CHECK_SEEDS
+        determinism_check_seeds
     );
     let mut det_mismatches = 0u32;
     let mut first_det_failure: Option<(String, String)> = None;
-    for &seed in seeds.iter().take(DETERMINISM_CHECK_SEEDS) {
+    for &seed in seeds.iter().take(determinism_check_seeds) {
         let input = input_builder(seed);
         for (vi, (name, entry)) in variants.iter().enumerate() {
             if slow_variants.contains(&vi) {

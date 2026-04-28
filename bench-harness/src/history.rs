@@ -6,10 +6,13 @@
 //! current CI does not overlap the historical baseline.
 
 use std::io::{BufRead, Write};
+use std::path::Path;
 
 use crate::error::BenchError;
 
-const HISTORY_DIR: &str = ".bench_history";
+/// Default history-log root, relative to cwd. Override via
+/// [`append_in`] / [`load_in`] for non-cwd workflows.
+pub const DEFAULT_HISTORY_DIR: &str = ".bench_history";
 
 /// One historical data point.
 #[derive(Clone, Debug)]
@@ -28,12 +31,23 @@ pub struct HistoryEntry {
 const SCHEMA_HEADER: &str =
     "# schema_v1\ttimestamp\tgit_commit\tbenchmark\tvariant\tn\tmode\tmedian_ns\tci_lo_ns\tci_hi_ns";
 
-/// Append entries to the history log. Writes the schema header if
-/// the file is new or empty.
+/// Append entries to the history log under
+/// [`DEFAULT_HISTORY_DIR`]`/<benchmark>.tsv` relative to cwd. Writes
+/// the schema header if the file is new or empty. Use
+/// [`append_in`] to override the root.
 pub fn append(benchmark: &str, entries: &[HistoryEntry]) -> Result<(), BenchError> {
-    std::fs::create_dir_all(HISTORY_DIR)
+    append_in(Path::new(DEFAULT_HISTORY_DIR), benchmark, entries)
+}
+
+/// Append entries to a history log rooted at `root`.
+pub fn append_in(
+    root: &Path,
+    benchmark: &str,
+    entries: &[HistoryEntry],
+) -> Result<(), BenchError> {
+    std::fs::create_dir_all(root)
         .map_err(|e| BenchError::io("creating history dir", e))?;
-    let path = format!("{}/{}.tsv", HISTORY_DIR, benchmark);
+    let path = root.join(format!("{}.tsv", benchmark));
 
     let is_new = std::fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
 
@@ -60,10 +74,17 @@ pub fn append(benchmark: &str, entries: &[HistoryEntry]) -> Result<(), BenchErro
     Ok(())
 }
 
-/// Load all history for a benchmark. Missing log file yields an
-/// empty vector (not an error). Comment / header lines are skipped.
+/// Load all history for a benchmark from
+/// [`DEFAULT_HISTORY_DIR`]`/<benchmark>.tsv` relative to cwd. Missing
+/// log file yields an empty vector (not an error). Comment / header
+/// lines are skipped. Use [`load_in`] to override the root.
 pub fn load(benchmark: &str) -> Vec<HistoryEntry> {
-    let path = format!("{}/{}.tsv", HISTORY_DIR, benchmark);
+    load_in(Path::new(DEFAULT_HISTORY_DIR), benchmark)
+}
+
+/// Load history for a benchmark from a log rooted at `root`.
+pub fn load_in(root: &Path, benchmark: &str) -> Vec<HistoryEntry> {
+    let path = root.join(format!("{}.tsv", benchmark));
     let file = match std::fs::File::open(&path) {
         Ok(f) => f,
         Err(_) => return Vec::new(),
@@ -137,7 +158,7 @@ pub fn detect_regressions_window(
         let window = &prev_entries[prev_entries.len() - k..];
 
         let mut hist_medians: Vec<f64> = window.iter().map(|h| h.median_ns).collect();
-        hist_medians.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        hist_medians.sort_by(|a, b| a.total_cmp(b));
         let n = hist_medians.len();
         let hist_median = if n % 2 == 0 {
             (hist_medians[n / 2 - 1] + hist_medians[n / 2]) / 2.0
@@ -146,7 +167,7 @@ pub fn detect_regressions_window(
         };
 
         let mut hist_ci_hi: Vec<f64> = window.iter().map(|h| h.ci_hi_ns).collect();
-        hist_ci_hi.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        hist_ci_hi.sort_by(|a, b| a.total_cmp(b));
         let hist_ci_hi_median = if n % 2 == 0 {
             (hist_ci_hi[n / 2 - 1] + hist_ci_hi[n / 2]) / 2.0
         } else {

@@ -39,7 +39,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             .enumerate()
             .map(|(i, v)| (i, v.algo_all.median))
             .collect();
-        by_median.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        by_median.sort_by(|a, b| a.1.total_cmp(&b.1));
         let (fastest_idx, fastest_med) = by_median[0];
         let fastest = &ds.variants[fastest_idx];
         let base_med = base.algo_all.median;
@@ -523,7 +523,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
                 continue;
             }
             let mut s = v.scores.clone();
-            s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            s.sort_by(|a, b| a.total_cmp(b));
             let n = s.len();
             let min = s[0];
             let max = s[n - 1];

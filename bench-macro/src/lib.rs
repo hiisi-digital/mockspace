@@ -133,6 +133,12 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
         .collect();
 
     let name_with_nul = format!("{}\0", name_str);
+    let supported_sizes_str = args
+        .sizes
+        .iter()
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
 
     let expanded = quote! {
         #func
@@ -145,7 +151,12 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
         ) -> ::mockspace_bench_core::FfiBenchCall {
             match n {
                 #(#dispatch_arms)*
-                _ => ::mockspace_bench_core::FfiBenchCall { run_ticks: 0 },
+                other => panic!(
+                    "bench_entry({}): unsupported n={}, declared sizes: [{}]. \
+                     Add the size to the #[bench_variant(... sizes = [...])] attribute, \
+                     or pick an existing one in your bench.toml.",
+                    #name_str, other, #supported_sizes_str
+                ),
             }
         }
 

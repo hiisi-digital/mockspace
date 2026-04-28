@@ -181,6 +181,7 @@ impl BenchManifest {
             cooldowns_ms: self.timing.cooldowns_ms.clone(),
             batch_k: 1,
             max_call_us: None,
+            tuning: HarnessTuning::default(),
         })
     }
 }
@@ -224,9 +225,55 @@ pub struct BenchConfig {
     pub batch_k: usize,
     /// Per-call timeout in microseconds. If a worker's batch mean
     /// exceeds this, the worker aborts and reports
-    /// [`BenchError::WorkerFailed`]. `None` = no timeout. Round 1
-    /// stores it; Round 3 enforces it.
+    /// [`BenchError::WorkerFailed`]. `None` = no timeout.
     pub max_call_us: Option<u64>,
+    /// Tunable iteration counts and on-disk roots; see
+    /// [`HarnessTuning`] for individual knobs and defaults.
+    pub tuning: HarnessTuning,
+}
+
+/// Tunable iteration counts + on-disk roots. Defaults match the
+/// polka-dots constants. Override on a [`BenchConfig`] to tighten
+/// dev iteration speed (lower seed counts) or move the cache /
+/// history dirs out of cwd-relative defaults.
+#[derive(Clone, Debug)]
+pub struct HarnessTuning {
+    /// Number of seeds used in [`crate::validate`]. Default 100.
+    pub validation_seeds: usize,
+    /// Subset of `validation_seeds` used for the determinism check.
+    /// Default 10.
+    pub determinism_check_seeds: usize,
+    /// Number of seeds used in [`crate::measure_quality`]. Default
+    /// 1000.
+    pub quality_seeds: usize,
+    /// Bootstrap iterations for CI estimates in
+    /// [`crate::analysis::bootstrap_ci_median`] /
+    /// [`crate::analysis::bootstrap_ci_diff`]. Default 10000.
+    ///
+    /// Currently informational: the analysis module reads from a
+    /// const for the v2 launch. Wiring the override end-to-end is
+    /// part of the v3 polish (#281, item 1).
+    pub bootstrap_iterations: usize,
+    /// Cache root directory. `None` uses the cwd-relative default
+    /// `.bench_cache/`. Set to a [`PathBuf`] when the harness needs
+    /// to live outside the consumer's cwd.
+    pub cache_dir: Option<PathBuf>,
+    /// History log root directory. `None` uses the cwd-relative
+    /// default `.bench_history/`.
+    pub history_dir: Option<PathBuf>,
+}
+
+impl Default for HarnessTuning {
+    fn default() -> Self {
+        HarnessTuning {
+            validation_seeds: 100,
+            determinism_check_seeds: 10,
+            quality_seeds: 1000,
+            bootstrap_iterations: 10_000,
+            cache_dir: None,
+            history_dir: None,
+        }
+    }
 }
 
 impl Default for BenchConfig {
@@ -245,6 +292,7 @@ impl Default for BenchConfig {
             cooldowns_ms: default_cooldowns(),
             batch_k: 1,
             max_call_us: None,
+            tuning: HarnessTuning::default(),
         }
     }
 }

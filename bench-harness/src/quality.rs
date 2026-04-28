@@ -5,12 +5,15 @@
 //! score metric. For routines without a quality metric the
 //! [`measure`] helper returns an empty vector.
 
+use crate::config::HarnessTuning;
 use crate::core::counter::Rng;
 use crate::core::{abi_hash, AbiHashFn, BenchEntryFn, BenchNameFn};
 use crate::error::BenchError;
 use crate::spec::RoutineSpec;
 
-const QUALITY_SEEDS: usize = 1000;
+/// Default seed count for [`measure`] when callers do not supply a
+/// [`HarnessTuning`].
+pub const DEFAULT_QUALITY_SEEDS: usize = 1000;
 const QUALITY_ROOT_SEED: u64 = 0xC0DE_0A11_1700_BEEF;
 
 /// One row of the quality table per variant.
@@ -34,13 +37,18 @@ pub fn measure(
     variant_paths: &[String],
     n: usize,
     label: &str,
+    tuning: Option<&HarnessTuning>,
 ) -> Result<Vec<VariantQuality>, BenchError> {
     let input_builder = routine.bridge.input_builder;
     let output_size = routine.bridge.output_size;
     let scorer = routine.bridge.scorer;
 
+    let quality_seeds = tuning
+        .map(|t| t.quality_seeds)
+        .unwrap_or(DEFAULT_QUALITY_SEEDS);
+
     let mut rng = Rng::new(QUALITY_ROOT_SEED);
-    let seeds: Vec<u64> = (0..QUALITY_SEEDS).map(|_| rng.next()).collect();
+    let seeds: Vec<u64> = (0..quality_seeds).map(|_| rng.next()).collect();
 
     let mut results: Vec<VariantQuality> = Vec::new();
     let mut _libs: Vec<libloading::Library> = Vec::new();
@@ -109,7 +117,7 @@ pub fn measure(
             continue;
         }
 
-        scores.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        scores.sort_by(|a, b| a.total_cmp(b));
         let count = scores.len();
         let mean = scores.iter().sum::<f64>() / count as f64;
 
@@ -123,7 +131,7 @@ pub fn measure(
     }
 
     if !results.is_empty() {
-        eprintln!("  Quality. {} ({} seeds):", label, QUALITY_SEEDS);
+        eprintln!("  Quality. {} ({} seeds):", label, quality_seeds);
         eprintln!(
             "  {:20} {:>8} {:>6} {:>6} {:>8}",
             "Variant", "mean", "min", "max", "median"

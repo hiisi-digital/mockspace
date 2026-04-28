@@ -14,8 +14,13 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
+use std::path::Path;
 
 use crate::sample::Sample;
+
+/// Default cache root, relative to cwd. Override via
+/// [`Cache::load_in`] for non-cwd workflows.
+pub const DEFAULT_CACHE_ROOT: &str = ".bench_cache";
 
 /// Extract the last path component without extension for use in
 /// filenames. E.g.
@@ -122,10 +127,19 @@ pub struct CachedBatch {
 
 impl Cache {
     /// Load (or initialise) the cache for one bench + config-hash
-    /// combination. The on-disk root is `.bench_cache/<bench>/<cfg>`
-    /// relative to cwd.
+    /// combination. The on-disk root is
+    /// [`DEFAULT_CACHE_ROOT`]`/<bench>/<cfg>` relative to cwd.
+    /// Use [`Cache::load_in`] to override the root.
     pub fn load(bench_name: &str, cfg_hash: u64) -> Self {
-        let dir = format!(".bench_cache/{}/{:016x}", bench_name, cfg_hash);
+        Self::load_in(Path::new(DEFAULT_CACHE_ROOT), bench_name, cfg_hash)
+    }
+
+    /// Load (or initialise) the cache rooted at `root` instead of the
+    /// cwd-relative default. Useful when the harness runs from a
+    /// directory other than the consumer's project root, or when a
+    /// CI pipeline wants to mount the cache somewhere absolute.
+    pub fn load_in(root: &Path, bench_name: &str, cfg_hash: u64) -> Self {
+        let dir = format!("{}/{}/{:016x}", root.display(), bench_name, cfg_hash);
         let manifest_path = format!("{}/manifest.tsv", dir);
         let mut manifest = HashMap::new();
 
@@ -360,7 +374,7 @@ fn variant_median(samples: &[Sample], name: &str, mode: &str) -> f64 {
     if vals.is_empty() {
         return 0.0;
     }
-    vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    vals.sort_by(|a, b| a.total_cmp(b));
     let n = vals.len();
     if n % 2 == 0 {
         (vals[n / 2 - 1] + vals[n / 2]) / 2.0
