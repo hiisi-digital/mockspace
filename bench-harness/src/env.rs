@@ -35,9 +35,81 @@ pub struct EnvMeta {
 
 /// Collect environment metadata for the current process.
 ///
-/// Round 1 stub: returns an empty [`EnvMeta`]. Round 3 fills in real
-/// collection using subprocesses (`sysctl`, `uname`, `rustc`, `git`)
-/// and `mockspace_bench_core::counter::counter_frequency()`.
+/// Calls `sysctl` (macOS) or reads `/proc/cpuinfo` (Linux) for the CPU
+/// brand, `uname -sr` for the OS string, `rustc --version` for the
+/// toolchain pin, `git rev-parse --short HEAD` for the commit, the
+/// system clock for `timestamp`, and
+/// [`mockspace_bench_core::counter::counter_frequency`] for the
+/// counter frequency. Any individual collection step that fails leaves
+/// the corresponding field empty (no panic).
 pub fn collect_env_meta() -> EnvMeta {
-    EnvMeta::default()
+    EnvMeta {
+        cpu: collect_cpu(),
+        os: collect_os(),
+        rustc: collect_rustc(),
+        git_commit: collect_git_commit(),
+        timestamp: collect_timestamp(),
+        counter_freq: mockspace_bench_core::counter::counter_frequency(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn collect_cpu() -> String {
+    let out = std::process::Command::new("sysctl")
+        .args(["-n", "machdep.cpu.brand_string"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    out.trim().to_string()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn collect_cpu() -> String {
+    std::fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("model name"))
+                .and_then(|l| l.split(':').nth(1))
+                .map(|v| v.trim().to_string())
+        })
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn collect_os() -> String {
+    let out = std::process::Command::new("uname")
+        .args(["-sr"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    out.trim().to_string()
+}
+
+fn collect_rustc() -> String {
+    let out = std::process::Command::new("rustc")
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    out.trim().to_string()
+}
+
+fn collect_git_commit() -> String {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .unwrap_or_default();
+    out.trim().to_string()
+}
+
+fn collect_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }

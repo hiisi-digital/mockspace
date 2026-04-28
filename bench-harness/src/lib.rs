@@ -29,14 +29,16 @@ pub mod cache;
 pub mod config;
 pub mod env;
 pub mod error;
+pub mod harness;
 pub mod sample;
 pub mod spec;
 pub mod workload;
 
 pub use cache::{Cache, CachedBatch, apply_drift, config_hash, consensus_drift, dylib_hash, global_mean, global_mean_for_mode};
 pub use config::{BenchConfig, BenchManifest, BenchSection, SizeSection, TimingSection};
-pub use env::EnvMeta;
+pub use env::{EnvMeta, collect_env_meta};
 pub use error::BenchError;
+pub use harness::{run_orchestrator, run_worker, write_csv};
 pub use sample::{BenchResult, Sample};
 pub use spec::{RoutineSpec, VariantSpec};
 pub use workload::{
@@ -46,15 +48,16 @@ pub use workload::{
 };
 
 /// Run the harness against one [`BenchConfig`] using the given
-/// [`RoutineSpec`].
+/// [`RoutineSpec`] and [`Workload`].
 ///
-/// In Round 1 this is a stub that returns
-/// [`BenchError::NotImplemented`]; subsequent rounds wire up workload
-/// generation, subprocess orchestration, validation, analysis, and
-/// reporting in turn.
-pub fn run(config: &BenchConfig, routine: &RoutineSpec) -> Result<BenchResult, BenchError> {
-    let _ = (config, routine);
-    Err(BenchError::NotImplemented {
-        what: "bench-harness::run (orchestrator lands in Round 3)",
-    })
+/// Delegates to [`harness::run_orchestrator`]. The orchestrator
+/// re-execs `std::env::current_exe()` with `--worker` flags to
+/// dispatch each `(variant × cooldown × pass × mode)` combination
+/// into an isolated subprocess.
+pub fn run(
+    config: &BenchConfig,
+    routine: &RoutineSpec,
+    workload: &Workload,
+) -> Result<BenchResult, BenchError> {
+    harness::run_orchestrator(config, routine, workload)
 }
