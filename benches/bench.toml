@@ -1,0 +1,23 @@
+# Self-bench: u64 hash mixing function comparison.
+# Validates the full mockspace bench harness pipeline (orchestrator,
+# worker subprocess, dlopen, CSV cache, findings.md) against a real
+# consumer codebase: mockspace itself.
+
+[bench.hash-mix]
+title = "u64 hash-mix function comparison"
+workload = "default"
+master_seed = 0x1234_5678_9ABC_DEF0
+
+[[bench.hash-mix.sizes]]
+n = 1
+variants = [
+    "../target/release/libmultiply_xor.dylib",
+    "../target/release/libbitwise_rotate.dylib",
+]
+
+[timing]
+passes = 4
+runs_per_pass = 1000
+batch_size = 100
+harness_runs = 1
+cooldowns_ms = [0]
