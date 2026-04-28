@@ -10,9 +10,14 @@
 //! `no_std` by default; opt into `std` for `RoutineBridge`,
 //! `routine_bridge!`, time-conversion helpers, and macOS P-core pinning.
 //!
-//! Origin: framework was extracted from `polka-dots/mock/benches/bench-core/`
-//! (the substrate that drove arvo's strategy-marker design). Lifted into
-//! mockspace so every consumer gets the canonical surface.
+//! ## Origin
+//!
+//! Framework was originally written by orgrinrt under MIT in
+//! `polka-dots/mock/benches/bench-core/` (the substrate that drove
+//! arvo's strategy-marker design). Relicensed by the original author
+//! under MPL-2.0 for the mockspace stack. Lifted here so every
+//! mockspace consumer gets the canonical surface instead of re-rolling
+//! it.
 
 #![no_std]
 
@@ -261,7 +266,7 @@ pub struct RoutineBridge {
     pub scorer: fn(&[u8], &[u8]) -> Option<f64>,
     pub score_label: Option<&'static str>,
     pub ops_per_call: fn(&[u8]) -> u64,
-    pub max_call_us: Option<u64>,
+    pub max_call_us: fn(usize) -> Option<u64>,
     pub input_tagger: Option<fn(u64) -> (std::string::String, u8)>,
 }
 
@@ -290,7 +295,7 @@ macro_rules! routine_bridge {
             scorer: <$R as $crate::Routine>::score_output_bytes,
             score_label: <$R as $crate::Routine>::score_label(),
             ops_per_call: <$R as $crate::Routine>::ops_per_call_bytes,
-            max_call_us: None,
+            max_call_us: <$R as $crate::Routine>::max_call_us,
             input_tagger: {
                 fn __tagger(seed: u64) -> Option<(std::string::String, u8)> {
                     <$R as $crate::Routine>::input_tag(seed)

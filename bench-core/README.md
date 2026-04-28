@@ -48,7 +48,7 @@ Until mockspace ships a stable release, consume via git:
 
 ```toml
 [dependencies]
-mockspace-bench-core = { git = "https://github.com/hiisi-digital/mockspace", features = ["std"] }
+mockspace-bench-core = { git = "https://github.com/hiisi-digital/mockspace", branch = "dev", features = ["std"] }
 ```
 
 ## Usage

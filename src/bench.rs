@@ -121,7 +121,7 @@ name = "benches"
 path = "src/lib.rs"
 
 [dependencies]
-mockspace-bench-core = { git = "https://github.com/hiisi-digital/mockspace", features = ["std"] }
+mockspace-bench-core = { git = "https://github.com/hiisi-digital/mockspace", branch = "dev", features = ["std"] }
 
 [profile.release]
 opt-level = 3
