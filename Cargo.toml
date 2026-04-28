@@ -1,5 +1,14 @@
 [workspace]
-members = [".", "lint-rules", "bench-core", "bench-harness", "bench-macro"]
+members = [
+    ".",
+    "lint-rules",
+    "bench-core",
+    "bench-harness",
+    "bench-macro",
+    "benches",
+    "benches/variants/multiply-xor",
+    "benches/variants/bitwise-rotate",
+]
 
 [package]
 name = "mockspace"
@@ -27,3 +36,9 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+# Release profile applies workspace-wide.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
