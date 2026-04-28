@@ -31,7 +31,9 @@ pub mod config;
 pub mod env;
 pub mod error;
 pub mod harness;
+pub mod meta_report;
 pub mod quality;
+pub mod report;
 pub mod sample;
 pub mod spec;
 pub mod validation;
@@ -48,7 +50,9 @@ pub use analysis::{
     bh_fdr_adjust, bootstrap_ci_diff, bootstrap_ci_median, compare, lag1_autocorrelation,
     pct_delta, sign_test, Comparison, DataSet, DataSetMeta, Stats, VariantAnalysis,
 };
+pub use meta_report::{classify_family, generate as generate_meta_report, VariantResult};
 pub use quality::{measure as measure_quality, VariantQuality};
+pub use report::generate as generate_report;
 pub use validation::validate;
 pub use workload::{
     AllocHandle, Chain, OneOf, Program, ProgramBuilder, Shuffle, Stage, StageStrategy, Workload,
@@ -69,4 +73,23 @@ pub fn run(
     workload: &Workload,
 ) -> Result<BenchResult, BenchError> {
     harness::run_orchestrator(config, routine, workload)
+}
+
+/// Build a [`DataSet`] from a [`BenchResult`] for the given mode
+/// (`"warm"` / `"cold"`), generate the markdown report via
+/// [`generate_report`], and write it to `path`.
+///
+/// `mode` selects which subset of samples feeds the analysis.
+/// Mockspace consumers typically call this twice (once per mode) and
+/// emit `findings_warm.md` + `findings_cold.md`, or pick the mode
+/// most representative of their workload.
+pub fn write_report(
+    result: &BenchResult,
+    mode: &str,
+    path: &str,
+) -> Result<(), BenchError> {
+    let ds = DataSet::from_samples(&result.samples, mode);
+    let md = generate_report(&ds, &result.title);
+    std::fs::write(path, md).map_err(|e| BenchError::io("writing findings.md", e))?;
+    Ok(())
 }
