@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "lint-rules", "bench-core"]
+members = [".", "lint-rules", "bench-core", "bench-harness"]
 
 [package]
 name = "mockspace"

@@ -49,22 +49,24 @@ fn print_help() {
 }
 
 fn cmd_run_stub() -> ExitCode {
-    eprintln!("`mock bench run` is not yet implemented (v2).");
+    eprintln!("`mock bench run` is not yet wired to the harness (v2 in flight).");
     eprintln!();
-    eprintln!("v1 ships the framework crate `mockspace-bench-core`. Consumers");
-    eprintln!("write `Routine` impls and run them via `cargo bench` (or hand-");
-    eprintln!("roll a harness) until the canonical mockspace harness lands.");
+    eprintln!("The framework crate `mockspace-bench-core` and the harness crate");
+    eprintln!("`mockspace-bench-harness` both ship in this workspace. Consumers");
+    eprintln!("write `Routine` impls (against bench-core), build a `RoutineSpec`");
+    eprintln!("via `routine_bridge!`, and call `mockspace_bench_harness::run()`.");
     eprintln!();
-    eprintln!("track: mockspace bench framework v2 (issue tracking forthcoming).");
+    eprintln!("`mock bench run` will invoke the consumer's bench binary in a");
+    eprintln!("subprocess once the orchestration plumbing lands in v2 Round 8.");
     ExitCode::SUCCESS
 }
 
 fn cmd_report_stub() -> ExitCode {
-    eprintln!("`mock bench report` is not yet implemented (v2).");
+    eprintln!("`mock bench report` is not yet wired (v2 in flight).");
     eprintln!();
-    eprintln!("Result aggregation + findings.md generation lands with the");
-    eprintln!("v2 harness. Until then, consumers manage their own report");
-    eprintln!("output.");
+    eprintln!("Result aggregation + findings.md generation arrive in v2 Round 6");
+    eprintln!("(`bench_harness::write_report`); the CLI wiring lands in Round 8.");
+    eprintln!("Until then, consumers manage their own report output.");
     ExitCode::SUCCESS
 }
 

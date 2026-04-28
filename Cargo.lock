@@ -189,6 +189,16 @@ name = "mockspace-bench-core"
 version = "0.1.0"
 
 [[package]]
+name = "mockspace-bench-harness"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "mockspace-bench-core",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "mockspace-lint-rules"
 version = "0.1.0"
 dependencies = [
@@ -371,6 +381,18 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
 ]
 
 [[package]]
