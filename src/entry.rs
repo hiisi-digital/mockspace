@@ -4,6 +4,7 @@ use std::process::{Command, ExitCode};
 
 use mockspace_lint_rules::{Lint, CrossCrateLint};
 
+use crate::bench;
 use crate::bootstrap;
 use crate::config::Config;
 use crate::design_round;
@@ -151,6 +152,10 @@ fn run_inner(
                     "migrate" => design_round::cmd_migrate(&cfg, &subcmd_opts),
                     _ => unreachable!(),
                 };
+            }
+            "bench" => {
+                let bench_args: Vec<&str> = positional_args.iter().skip(1).copied().collect();
+                return bench::cmd(&cfg, &bench_args);
             }
             _ => {} // Not a subcommand, continue to flags.
         }
