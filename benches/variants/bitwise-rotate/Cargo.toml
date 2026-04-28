@@ -1,0 +1,13 @@
+[package]
+name = "bitwise-rotate"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "bitwise_rotate"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+mockspace-bench-core = { path = "../../../bench-core", features = ["std"] }
