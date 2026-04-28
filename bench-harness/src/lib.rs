@@ -25,17 +25,25 @@
 
 pub use mockspace_bench_core as core;
 
+pub mod cache;
 pub mod config;
 pub mod env;
 pub mod error;
 pub mod sample;
 pub mod spec;
+pub mod workload;
 
+pub use cache::{Cache, CachedBatch, apply_drift, config_hash, consensus_drift, dylib_hash, global_mean, global_mean_for_mode};
 pub use config::{BenchConfig, BenchManifest, BenchSection, SizeSection, TimingSection};
 pub use env::EnvMeta;
 pub use error::BenchError;
 pub use sample::{BenchResult, Sample};
 pub use spec::{RoutineSpec, VariantSpec};
+pub use workload::{
+    AllocHandle, Chain, OneOf, Program, ProgramBuilder, Shuffle, Stage, StageStrategy, Workload,
+    WorkloadCtx, WorkloadItemKind, algo_call, branch_work, domain_work, graph_work, heavy_memory,
+    light_scalar, mix, scalar_work,
+};
 
 /// Run the harness against one [`BenchConfig`] using the given
 /// [`RoutineSpec`].
