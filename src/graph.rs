@@ -4,9 +4,13 @@ use crate::model::*;
 
 /// Compute the transitive set of dependencies reachable from `name`.
 ///
-/// Iterative work-stack walk with a visited set so dep cycles cannot
-/// blow the call stack (#267). The result excludes `name` itself; it
-/// contains every dep reachable through one or more edges.
+/// Iterative post-order DFS so dep cycles cannot blow the call stack
+/// (#267). Each visited node's own transitive set is memoized via the
+/// same Enter/Exit shape `compute_depth` uses, so callers that resolve
+/// transitives for many roots in succession (e.g. `transitive_reduction`)
+/// keep the recursive form's amortized O(E) over the whole traversal.
+/// Cycle back-edges resolve to `{dep}` for the unresolved member,
+/// terminating the computation.
 pub fn all_transitive(
     name: &str,
     crates: &CrateMap,
@@ -15,27 +19,44 @@ pub fn all_transitive(
     if let Some(cached) = cache.get(name) {
         return cached.clone();
     }
-    let mut result = BTreeSet::new();
-    let mut stack: Vec<String> = Vec::new();
-    if let Some(info) = crates.get(name) {
-        for dep in &info.deps {
-            stack.push(dep.clone());
-        }
+    enum Step {
+        Enter(String),
+        Exit(String),
     }
-    while let Some(curr) = stack.pop() {
-        if !result.insert(curr.clone()) {
-            continue;
-        }
-        if let Some(info) = crates.get(curr.as_str()) {
-            for dep in &info.deps {
-                if !result.contains(dep) {
-                    stack.push(dep.clone());
+    let mut work: Vec<Step> = vec![Step::Enter(name.to_string())];
+    let mut on_stack: BTreeSet<String> = BTreeSet::new();
+    while let Some(step) = work.pop() {
+        match step {
+            Step::Enter(curr) => {
+                if cache.contains_key(&curr) || on_stack.contains(&curr) {
+                    continue;
                 }
+                on_stack.insert(curr.clone());
+                work.push(Step::Exit(curr.clone()));
+                if let Some(info) = crates.get(curr.as_str()) {
+                    for dep in &info.deps {
+                        if !cache.contains_key(dep) && !on_stack.contains(dep) {
+                            work.push(Step::Enter(dep.clone()));
+                        }
+                    }
+                }
+            }
+            Step::Exit(curr) => {
+                on_stack.remove(&curr);
+                let mut result = BTreeSet::new();
+                if let Some(info) = crates.get(curr.as_str()) {
+                    for dep in &info.deps {
+                        result.insert(dep.clone());
+                        if let Some(sub) = cache.get(dep) {
+                            result.extend(sub.iter().cloned());
+                        }
+                    }
+                }
+                cache.insert(curr, result);
             }
         }
     }
-    cache.insert(name.to_string(), result.clone());
-    result
+    cache.get(name).cloned().unwrap_or_default()
 }
 
 pub fn transitive_reduction(crates: &CrateMap) -> BTreeMap<String, Vec<String>> {
@@ -59,8 +80,12 @@ pub fn transitive_reduction(crates: &CrateMap) -> BTreeMap<String, Vec<String>> 
 /// Compute the longest-path depth of `root` over its dep DAG.
 ///
 /// Iterative post-order DFS with explicit Enter/Exit work items so dep
-/// cycles cannot blow the call stack (#267). Cycle back-edges resolve
-/// to depth 0 for the unresolved member, terminating the computation.
+/// cycles cannot blow the call stack (#267). Cycle back-edges contribute
+/// 0 to the parent (the unresolved cycle member is treated as
+/// depth-zero), so the result on a cyclic component is a lower bound on
+/// the longest acyclic path through resolved members rather than the
+/// true longest path (which is undefined on a cycle). On an acyclic
+/// graph the result matches `1 + max(depth(dep))`.
 pub fn compute_depth(
     root: &str,
     crates: &CrateMap,
@@ -158,6 +183,13 @@ mod tests {
         let t = all_transitive("a", &crates, &mut cache);
         assert!(t.contains("b") && t.contains("c"));
         assert_eq!(t.len(), 2);
+        // Intermediates must be memoized so transitive_reduction doesn't
+        // recompute sub-DAGs on every root.
+        assert!(cache.contains_key("a"));
+        assert!(cache.contains_key("b"));
+        assert!(cache.contains_key("c"));
+        assert_eq!(cache["b"].len(), 1);
+        assert!(cache["b"].contains("c"));
     }
 
     #[test]
