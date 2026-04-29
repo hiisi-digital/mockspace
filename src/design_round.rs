@@ -357,10 +357,12 @@ impl ArchiveKind {
             ArchiveKind::Abandoned => "abandoned",
         }
     }
-    fn commit_verb(self) -> &'static str {
+    fn commit_subject(self, archive_dir_name: &str) -> String {
         match self {
-            ArchiveKind::Closed => "close",
-            ArchiveKind::Abandoned => "archive abandoned",
+            ArchiveKind::Closed =>
+                format!("chore: close design round {archive_dir_name}"),
+            ArchiveKind::Abandoned =>
+                format!("chore: archive design round {archive_dir_name} (abandoned)"),
         }
     }
     fn announce_verb(self) -> &'static str {
@@ -435,7 +437,7 @@ fn perform_archive(
     }
 
     eprintln!("{}: {archive_dir_name}", kind.announce_verb());
-    let msg = format!("chore: {} design round {archive_dir_name}", kind.commit_verb());
+    let msg = kind.commit_subject(archive_dir_name);
     commit_or_suggest(cfg, opts, &touched, &msg);
 
     let tag_name = format!("round/{archive_dir_name}/{}", kind.tag_suffix());
@@ -471,8 +473,10 @@ fn determine_round_name_from_dir(dr: &Path) -> Option<String> {
         if name == "README.md" {
             continue;
         }
-        if name.len() >= 12 && name[..12].chars().all(|c| c.is_ascii_digit()) {
-            prefixes.push(name[..12].to_string());
+        if let Some(prefix) = name.get(..12) {
+            if prefix.chars().all(|c| c.is_ascii_digit()) {
+                prefixes.push(prefix.to_string());
+            }
         }
     }
     prefixes.sort();
@@ -1044,7 +1048,13 @@ mod tests {
         assert_eq!(ArchiveKind::Abandoned.meta_status_line(), "abandoned: true");
         assert_eq!(ArchiveKind::Closed.tag_suffix(), "end");
         assert_eq!(ArchiveKind::Abandoned.tag_suffix(), "abandoned");
-        assert_eq!(ArchiveKind::Closed.commit_verb(), "close");
-        assert_eq!(ArchiveKind::Abandoned.commit_verb(), "archive abandoned");
+        assert_eq!(
+            ArchiveKind::Closed.commit_subject("202604191100"),
+            "chore: close design round 202604191100",
+        );
+        assert_eq!(
+            ArchiveKind::Abandoned.commit_subject("202604191100-abandoned"),
+            "chore: archive design round 202604191100-abandoned (abandoned)",
+        );
     }
 }
