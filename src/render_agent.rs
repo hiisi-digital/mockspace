@@ -319,16 +319,20 @@ if [[ -z "$REPO_ROOT" ]]; then
     allow
 fi
 # --- Detect phase ---
-DOC_CL_ACTIVE=$(git ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
+# All git ls-files queries run with `-C "$REPO_ROOT"` so phase detection is
+# cwd-independent. Without it, invocations from a subdir (e.g. `mock/`) would
+# resolve `mock/design_rounds/` relative to cwd, return nothing, and fall back
+# to TOPIC, blocking legitimate SRC-phase edits.
+DOC_CL_ACTIVE=$(git -C "$REPO_ROOT" ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
     | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.doc\.md$" \
     | head -1) || true
-DOC_CL_LOCKED=$(git ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
+DOC_CL_LOCKED=$(git -C "$REPO_ROOT" ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
     | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.doc\.lock\.md$" \
     | head -1) || true
-SRC_CL_ACTIVE=$(git ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
+SRC_CL_ACTIVE=$(git -C "$REPO_ROOT" ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
     | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.src\.md$" \
     | head -1) || true
-SRC_CL_LOCKED=$(git ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
+SRC_CL_LOCKED=$(git -C "$REPO_ROOT" ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
     | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.src\.lock\.md$" \
     | head -1) || true
 if [[ -n "$SRC_CL_LOCKED" ]]; then
@@ -342,7 +346,7 @@ elif [[ -n "$DOC_CL_ACTIVE" ]]; then
 else
     PHASE="TOPIC"
 fi
-DIRTY_DOCS=$(git diff --name-only 2>/dev/null \
+DIRTY_DOCS=$(git -C "$REPO_ROOT" diff --name-only 2>/dev/null \
     | grep -E "^${{MOCK_ROOT}}/crates/.*\.(md\.tmpl|md)$" | head -1) || true
 # --- Design round files ---
 if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
@@ -372,7 +376,7 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
         echo "$BASENAME" | grep -q '\.doc\.' && IS_DOC_CHANGELIST=true
         echo "$BASENAME" | grep -q '\.src\.' && IS_SRC_CHANGELIST=true
     fi
-    if git ls-files --error-unmatch "$FULL_GIT_PATH" >/dev/null 2>&1; then
+    if git -C "$REPO_ROOT" ls-files --error-unmatch "$FULL_GIT_PATH" >/dev/null 2>&1; then
         if $IS_CHANGELIST && $IS_LOCKED; then
             deny "BLOCKED: locked changelist '${{BASENAME}}' is FROZEN.\\n\\nCurrent phase: ${{PHASE}}\\nLint: changelist-immutability (HARD_ERROR)"
         fi
@@ -2244,5 +2248,45 @@ mod tests {
     fn word_count_ignores_pure_punctuation() {
         let text = "one two -- three --- four";
         assert_eq!(count_bookend_words(text), 4);
+    }
+
+    #[test]
+    fn write_guard_phase_detection_is_cwd_independent() {
+        // Regression test for #257: phase-detection git invocations must
+        // run with `git -C "$REPO_ROOT"` so they resolve repo-relative
+        // pathspecs regardless of the caller's cwd.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mock_dir = tmp.path().join("mock");
+        std::fs::create_dir(&mock_dir).expect("create mock dir");
+        let cfg = Config::from_dir(&mock_dir);
+        let hook = builtin_write_guard(&cfg);
+
+        // Phase-detection ls-files calls (4) and the dirty-docs diff and
+        // the per-file --error-unmatch lookup all need the -C form.
+        let phase_marker = "git -C \"$REPO_ROOT\" ls-files \"${MOCK_ROOT}/design_rounds/\"";
+        let phase_calls = hook.matches(phase_marker).count();
+        assert_eq!(
+            phase_calls, 4,
+            "expected 4 phase-detection ls-files calls with `-C \"$REPO_ROOT\"`, got {phase_calls}"
+        );
+
+        assert!(
+            hook.contains("git -C \"$REPO_ROOT\" diff --name-only"),
+            "DIRTY_DOCS query must use -C \"$REPO_ROOT\" so cwd-relative paths in the diff don't bypass the regex"
+        );
+        assert!(
+            hook.contains("git -C \"$REPO_ROOT\" ls-files --error-unmatch \"$FULL_GIT_PATH\""),
+            "FULL_GIT_PATH lookup must use -C \"$REPO_ROOT\" since the path is repo-rooted"
+        );
+
+        // Negative: no remaining bare ls-files / diff invocations slipped through.
+        assert!(
+            !hook.contains("\ngit ls-files "),
+            "found bare `git ls-files` (cwd-sensitive); switch to `git -C \"$REPO_ROOT\" ls-files`"
+        );
+        assert!(
+            !hook.contains("\ngit diff "),
+            "found bare `git diff` (cwd-sensitive); switch to `git -C \"$REPO_ROOT\" diff`"
+        );
     }
 }
