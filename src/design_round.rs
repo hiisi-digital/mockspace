@@ -4,6 +4,7 @@
 //! `cargo mock deprecate` — deprecate the current unlocked changelist.
 //! `cargo mock unlock` — destructive: nuke source, deprecate src CL, unlock doc CL.
 //! `cargo mock close` — archive a completed round (DONE phase).
+//! `cargo mock archive` — archive an abandoned round from any phase.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -297,14 +298,93 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     if phase != Phase::Done {
         eprintln!("error: can only close a round in DONE phase (current: {})", phase.label());
         eprintln!("  both doc and src changelists must be locked");
+        eprintln!("  for an abandoned round, use `cargo mock archive` instead");
         return ExitCode::FAILURE;
     }
 
-    // Determine the round name from the doc changelist.
     let all_cls = changelist_helpers::find_changelists(&dr);
     let round_name = determine_round_name(&all_cls);
 
-    let archive_dir = dr.join(&round_name);
+    perform_archive(
+        cfg,
+        opts,
+        &dr,
+        &round_name,
+        ArchiveKind::Closed,
+    )
+}
+
+pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
+    let dr = design_rounds_dir(cfg);
+    if !dr.is_dir() {
+        eprintln!("error: design_rounds/ directory not found");
+        return ExitCode::FAILURE;
+    }
+
+    let round_name = match determine_round_name_from_dir(&dr) {
+        Some(name) => name,
+        None => {
+            eprintln!("error: no round files to archive (design_rounds/ has no timestamp-prefixed files)");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    perform_archive(
+        cfg,
+        opts,
+        &dr,
+        &format!("{round_name}-abandoned"),
+        ArchiveKind::Abandoned,
+    )
+}
+
+#[derive(Copy, Clone)]
+enum ArchiveKind {
+    Closed,
+    Abandoned,
+}
+
+impl ArchiveKind {
+    fn meta_status_line(self) -> &'static str {
+        match self {
+            ArchiveKind::Closed => "abandoned: false",
+            ArchiveKind::Abandoned => "abandoned: true",
+        }
+    }
+    fn tag_suffix(self) -> &'static str {
+        match self {
+            ArchiveKind::Closed => "end",
+            ArchiveKind::Abandoned => "abandoned",
+        }
+    }
+    fn commit_subject(self, archive_dir_name: &str) -> String {
+        match self {
+            ArchiveKind::Closed =>
+                format!("chore: close design round {archive_dir_name}"),
+            ArchiveKind::Abandoned =>
+                format!("chore: archive design round {archive_dir_name} (abandoned)"),
+        }
+    }
+    fn announce_verb(self) -> &'static str {
+        match self {
+            ArchiveKind::Closed => "round closed",
+            ArchiveKind::Abandoned => "round archived (abandoned)",
+        }
+    }
+}
+
+/// Move every non-README file under `dr` into a `<archive_dir_name>/`
+/// subdirectory and emit `.meta` + `.history` metadata. Stages the moves
+/// for commit (or prints the manual command if `auto_commit` is unset)
+/// and tags `round/<archive_dir_name>/<suffix>` on success.
+fn perform_archive(
+    cfg: &Config,
+    opts: &SubcmdOpts,
+    dr: &Path,
+    archive_dir_name: &str,
+    kind: ArchiveKind,
+) -> ExitCode {
+    let archive_dir = dr.join(archive_dir_name);
     if archive_dir.exists() {
         eprintln!("error: archive directory already exists: {}", archive_dir.display());
         return ExitCode::FAILURE;
@@ -313,8 +393,7 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     fs::create_dir_all(&archive_dir)
         .expect("failed to create archive directory");
 
-    // Collect old paths before moving (for git staging).
-    let entries: Vec<_> = fs::read_dir(&dr)
+    let entries: Vec<_> = fs::read_dir(dr)
         .expect("can't read design_rounds")
         .flatten()
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
@@ -336,20 +415,19 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
         moved += 1;
     }
 
-    eprintln!("moved {moved} files to {round_name}/");
+    eprintln!("moved {moved} files to {archive_dir_name}/");
 
-    // Write .meta file.
     let head_sha = git_head_sha(cfg);
     let today = chrono_date();
     let meta = format!(
-        "round: {round_name}\nclosed: {head_sha}\nclose_date: {today}\n"
+        "round: {archive_dir_name}\nclosed: {head_sha}\nclose_date: {today}\n{}\n",
+        kind.meta_status_line(),
     );
     let meta_path = archive_dir.join(".meta");
     fs::write(&meta_path, &meta).expect("failed to write .meta");
     touched.push(meta_path);
     eprintln!("wrote .meta");
 
-    // Write .history (git log for the round).
     let history = git_round_log(cfg);
     if !history.is_empty() {
         let history_path = archive_dir.join(".history");
@@ -358,13 +436,12 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
         eprintln!("wrote .history");
     }
 
-    eprintln!("round closed: {round_name}");
-    let msg = format!("chore: close design round {round_name}");
+    eprintln!("{}: {archive_dir_name}", kind.announce_verb());
+    let msg = kind.commit_subject(archive_dir_name);
     commit_or_suggest(cfg, opts, &touched, &msg);
 
+    let tag_name = format!("round/{archive_dir_name}/{}", kind.tag_suffix());
     if opts.auto_commit {
-        // Tag after successful commit.
-        let tag_name = format!("round/{round_name}/end");
         let tag_result = Command::new("git")
             .args(["tag", &tag_name])
             .current_dir(&cfg.repo_root)
@@ -374,10 +451,36 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             _ => eprintln!("warning: failed to create tag {tag_name}"),
         }
     } else {
-        eprintln!("    git tag round/{round_name}/end");
+        eprintln!("    git tag {tag_name}");
     }
 
     ExitCode::SUCCESS
+}
+
+/// Earliest 12-digit timestamp prefix among files in `dr`.
+///
+/// Used by `cmd_archive` when no changelists may exist (TOPIC-only
+/// abandonments). Skips README, subdirectories, and any file lacking
+/// the canonical `YYYYMMDDHHMM_*` prefix.
+fn determine_round_name_from_dir(dr: &Path) -> Option<String> {
+    let entries = fs::read_dir(dr).ok()?;
+    let mut prefixes: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "README.md" {
+            continue;
+        }
+        if let Some(prefix) = name.get(..12) {
+            if prefix.chars().all(|c| c.is_ascii_digit()) {
+                prefixes.push(prefix.to_string());
+            }
+        }
+    }
+    prefixes.sort();
+    prefixes.into_iter().next()
 }
 
 /// Determine a round name from the changelist filenames.
@@ -888,5 +991,70 @@ mod tests {
     fn migrate_not_legacy_returns_none() {
         assert!(legacy_to_new_filename("202603070000_topic.corrections.md").is_none());
         assert!(legacy_to_new_filename("README.md").is_none());
+    }
+
+    // --- archive tests ---
+
+    #[test]
+    fn archive_round_name_picks_earliest_timestamp() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dr = tmp.path();
+        // Mix CLs and topic files. The earliest 12-digit prefix wins.
+        std::fs::write(dr.join("202604201200_topic.alpha.md"), "x").unwrap();
+        std::fs::write(dr.join("202604191100_topic.beta.md"), "x").unwrap();
+        std::fs::write(dr.join("202604221400_changelist.doc.deprecated.md"), "x").unwrap();
+        std::fs::write(dr.join("README.md"), "x").unwrap();
+        let name = determine_round_name_from_dir(dr).expect("found a name");
+        assert_eq!(name, "202604191100");
+    }
+
+    #[test]
+    fn archive_round_name_topic_only() {
+        // TOPIC-phase abandonment with no changelist files at all.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dr = tmp.path();
+        std::fs::write(dr.join("202604211500_topic.gamma.md"), "x").unwrap();
+        let name = determine_round_name_from_dir(dr).expect("found a name");
+        assert_eq!(name, "202604211500");
+    }
+
+    #[test]
+    fn archive_round_name_skips_non_timestamp_files() {
+        // Anything without a 12-digit prefix is ignored. README, leftover
+        // notes, dotfiles produced elsewhere — none should affect naming.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dr = tmp.path();
+        std::fs::write(dr.join("README.md"), "x").unwrap();
+        std::fs::write(dr.join("notes.md"), "x").unwrap();
+        std::fs::write(dr.join(".gitignore"), "x").unwrap();
+        std::fs::write(dr.join("202604221600_topic.delta.md"), "x").unwrap();
+        let name = determine_round_name_from_dir(dr).expect("found a name");
+        assert_eq!(name, "202604221600");
+    }
+
+    #[test]
+    fn archive_round_name_empty_dir_returns_none() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("README.md"), "x").unwrap();
+        assert!(determine_round_name_from_dir(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn archive_kind_meta_and_tag_strings() {
+        // Lock down the strings emitted into .meta and tag names so a
+        // consumer reading archive metadata can't be tripped by silent
+        // changes.
+        assert_eq!(ArchiveKind::Closed.meta_status_line(), "abandoned: false");
+        assert_eq!(ArchiveKind::Abandoned.meta_status_line(), "abandoned: true");
+        assert_eq!(ArchiveKind::Closed.tag_suffix(), "end");
+        assert_eq!(ArchiveKind::Abandoned.tag_suffix(), "abandoned");
+        assert_eq!(
+            ArchiveKind::Closed.commit_subject("202604191100"),
+            "chore: close design round 202604191100",
+        );
+        assert_eq!(
+            ArchiveKind::Abandoned.commit_subject("202604191100-abandoned"),
+            "chore: archive design round 202604191100-abandoned (abandoned)",
+        );
     }
 }
