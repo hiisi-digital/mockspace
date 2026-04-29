@@ -32,17 +32,29 @@ pub struct ParsedChangelist {
     pub status: ClStatus,
 }
 
+/// Lifecycle phase of a design round.
+///
+/// User-visible labels (returned by `label()`) deliberately differ from
+/// the variant names. The labels were renamed from `SRC-PLAN` / `SRC` /
+/// `DONE` to `DRAFT` / `IMPL` / `CLOSED` because the verb `lock` reads
+/// confusingly against the older names: users expect `cargo mock lock`
+/// to mean "freeze the plan before I implement", but it transitions
+/// from `IMPL` to `CLOSED`. Under the new labels the verb is consistent
+/// with the file-suffix state (the changelist becomes `.lock.md` and
+/// the round closes), and the name `IMPL` makes clear that source
+/// edits happen *before* the lock, not after. The variant identifiers
+/// stay close to the underlying file-suffix machinery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     /// No changelists at all — only topic files allowed.
     Topic,
     /// Unlocked doc CL exists — doc templates editable.
     Doc,
-    /// Doc CL locked, no src CL — src CL creation only.
+    /// Doc CL locked, no src CL — src CL creation only. Label: `DRAFT`.
     SrcPlan,
-    /// Doc CL locked, unlocked src CL exists — source editable.
+    /// Doc CL locked, unlocked src CL exists — source editable. Label: `IMPL`.
     Src,
-    /// Both CLs locked — round complete, nothing editable.
+    /// Both CLs locked — round complete, nothing editable. Label: `CLOSED`.
     Done,
 }
 
@@ -51,9 +63,9 @@ impl Phase {
         match self {
             Phase::Topic => "TOPIC",
             Phase::Doc => "DOC",
-            Phase::SrcPlan => "SRC-PLAN",
-            Phase::Src => "SRC",
-            Phase::Done => "DONE",
+            Phase::SrcPlan => "DRAFT",
+            Phase::Src => "IMPL",
+            Phase::Done => "CLOSED",
         }
     }
 }

@@ -42,9 +42,9 @@ The unit of design work in mockspace is a *round*. A round walks five phases:
 |---|---|
 | `TOPIC` | Exploration. Topic and research material is committed; no changelist exists yet. |
 | `DOC` | A doc changelist is active. Templates are the only thing changing. |
-| `SRC-PLAN` | The doc changelist is locked. The src changelist has not been authored. |
-| `SRC` | The src changelist is active. Source under the consumer crates is being written to match what the docs already promised. |
-| `DONE` | Both changelists locked. Round is ready to archive. |
+| `DRAFT` | The doc changelist is locked. The src changelist has not been authored. |
+| `IMPL` | The src changelist is active. Source under the consumer crates is being written to match what the docs already promised. |
+| `CLOSED` | Both changelists locked. Round is ready to archive. |
 
 Phases are detected from filename suffixes inside `mock/design_rounds/`. Transitions happen through `cargo mock lock` / `unlock` / `deprecate` / `close`, never through manual renames. Each transition validates invariants, can commit surgically when asked, and is recorded as a stable history anchor.
 
@@ -97,8 +97,8 @@ cargo mock activate
 cargo mock                       # default: check + parse + lint + generate
 cargo mock --lint-only --commit  # lint at commit-gate severity, skip generation
 cargo mock --lint-only --strict  # lint at push-gate severity (used by pre-push hook)
-cargo mock lock                  # transition: DOC -> SRC-PLAN, or SRC -> DONE
-cargo mock close                 # archive a DONE round
+cargo mock lock                  # transition: DOC -> DRAFT, or IMPL -> CLOSED
+cargo mock close                 # archive a CLOSED round
 ```
 
 For the full subcommand surface, configuration reference, lint authoring, and template structure, see `docs/USAGE_GUIDE.md`.
