@@ -140,7 +140,7 @@ fn run_inner(
                 }
                 return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
             }
-            "lock" | "deprecate" | "unlock" | "close" | "migrate" => {
+            "lock" | "deprecate" | "unlock" | "close" | "archive" | "migrate" => {
                 let subcmd_opts = design_round::SubcmdOpts {
                     auto_commit: args.iter().any(|a| a == "--auto-commit"),
                 };
@@ -149,6 +149,7 @@ fn run_inner(
                     "deprecate" => design_round::cmd_deprecate(&cfg, &subcmd_opts),
                     "unlock" => design_round::cmd_unlock(&cfg, &subcmd_opts),
                     "close" => design_round::cmd_close(&cfg, &subcmd_opts),
+                    "archive" => design_round::cmd_archive(&cfg, &subcmd_opts),
                     "migrate" => design_round::cmd_migrate(&cfg, &subcmd_opts),
                     _ => unreachable!(),
                 };
