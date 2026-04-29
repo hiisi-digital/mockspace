@@ -322,7 +322,7 @@ fi
 # All git ls-files queries run with `-C "$REPO_ROOT"` so phase detection is
 # cwd-independent. Without it, invocations from a subdir (e.g. `mock/`) would
 # resolve `mock/design_rounds/` relative to cwd, return nothing, and fall back
-# to TOPIC, blocking legitimate SRC-phase edits.
+# to TOPIC, blocking legitimate IMPL-phase edits.
 DOC_CL_ACTIVE=$(git -C "$REPO_ROOT" ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/dev/null \
     | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.doc\.md$" \
     | head -1) || true
@@ -336,11 +336,11 @@ SRC_CL_LOCKED=$(git -C "$REPO_ROOT" ls-files "${{MOCK_ROOT}}/design_rounds/" 2>/
     | grep -E "^${{MOCK_ROOT}}/design_rounds/[^/]+_changelist\.src\.lock\.md$" \
     | head -1) || true
 if [[ -n "$SRC_CL_LOCKED" ]]; then
-    PHASE="DONE"
+    PHASE="CLOSED"
 elif [[ -n "$SRC_CL_ACTIVE" ]]; then
-    PHASE="SRC"
+    PHASE="IMPL"
 elif [[ -n "$DOC_CL_LOCKED" ]]; then
-    PHASE="SRC-PLAN"
+    PHASE="DRAFT"
 elif [[ -n "$DOC_CL_ACTIVE" ]]; then
     PHASE="DOC"
 else
@@ -388,8 +388,8 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
             deny "BLOCKED: cannot edit doc changelist '${{BASENAME}}' -- not in DOC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
         fi
         if $IS_SRC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
-            if [[ "$PHASE" == "SRC" ]]; then allow; fi
-            deny "BLOCKED: cannot edit source changelist '${{BASENAME}}' -- not in SRC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
+            if [[ "$PHASE" == "IMPL" ]]; then allow; fi
+            deny "BLOCKED: cannot edit source changelist '${{BASENAME}}' -- not in IMPL phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
         fi
         if ! $IS_CHANGELIST; then
             deny "BLOCKED: topic '${{BASENAME}}' is committed and FROZEN.\\n\\nCurrent phase: ${{PHASE}}"
@@ -408,8 +408,8 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
         allow
     fi
     if $IS_SRC_CHANGELIST && ! $IS_LOCKED && ! $IS_DEPRECATED; then
-        if [[ "$PHASE" != "SRC-PLAN" ]]; then
-            deny "BLOCKED: cannot create source changelist '${{BASENAME}}' -- not in SRC-PLAN phase.\\n\\nPhase: ${{PHASE}}."
+        if [[ "$PHASE" != "DRAFT" ]]; then
+            deny "BLOCKED: cannot create source changelist '${{BASENAME}}' -- not in DRAFT phase.\\n\\nPhase: ${{PHASE}}."
         fi
         allow
     fi
@@ -426,19 +426,19 @@ if echo "$REL_PATH" | grep -qE '^crates/'; then
         allow
     fi
     if echo "$REL_PATH" | grep -qE '\.rs$'; then
-        if [[ "$PHASE" != "SRC" ]]; then
-            deny "BLOCKED: cannot edit '${{REL_PATH}}' -- not in SRC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-required (HARD_ERROR)"
+        if [[ "$PHASE" != "IMPL" ]]; then
+            deny "BLOCKED: cannot edit '${{REL_PATH}}' -- not in IMPL phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-required (HARD_ERROR)"
         fi
         allow
     fi
-    if [[ "$PHASE" == "TOPIC" ]] || [[ "$PHASE" == "DONE" ]]; then
+    if [[ "$PHASE" == "TOPIC" ]] || [[ "$PHASE" == "CLOSED" ]]; then
         deny "BLOCKED: cannot edit '${{REL_PATH}}' -- no changelist exists or round is complete.\\n\\nPhase: ${{PHASE}}."
     fi
     allow
 fi
 # --- Root Cargo.toml ---
 if echo "$REL_PATH" | grep -qE '^Cargo\.toml$'; then
-    if [[ "$PHASE" == "TOPIC" ]] || [[ "$PHASE" == "DONE" ]]; then
+    if [[ "$PHASE" == "TOPIC" ]] || [[ "$PHASE" == "CLOSED" ]]; then
         deny "BLOCKED: cannot edit '${{REL_PATH}}' -- no changelist exists or round is complete.\\n\\nPhase: ${{PHASE}}."
     fi
     allow
@@ -476,7 +476,7 @@ fi
 if [[ "$IS_MOCKSPACE" != "true" ]]; then
     allow
 fi
-context "MOCKSPACE REMINDER: You are operating on mockspace files. Follow the design round workflow: TOPIC -> DOC -> SRC-PLAN -> SRC -> DONE. Check phase before editing. Use 'cargo mock' commands for phase transitions."
+context "MOCKSPACE REMINDER: You are operating on mockspace files. Follow the design round workflow: TOPIC -> DOC -> DRAFT -> IMPL -> CLOSED. Check phase before editing. Use 'cargo mock' commands for phase transitions."
 allow
 "##
     )
@@ -1096,7 +1096,7 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "2. Commit doc changes. This is the only window for doc template edits.\n",
             "3. Update the doc changelist if needed (iterate). Recommit.\n",
             "\n",
-            "### Step 4: Lock docs, plan source (SRC-PLAN phase)\n",
+            "### Step 4: Lock docs, plan source (DRAFT phase)\n",
             "\n",
             "When all doc changes are applied and the doc changelist is finalized:\n",
             "\n",
@@ -1107,16 +1107,16 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "   This is written against the actual locked doc state. Per-crate, per-file,\n",
             "   mechanical. Every source file to create, modify, or update. Commit it.\n",
             "\n",
-            "### Step 5: Source execution (SRC phase)\n",
+            "### Step 5: Source execution (IMPL phase)\n",
             "\n",
-            "The source changelist's existence opens the **SRC phase**:\n",
+            "The source changelist's existence opens the **IMPL phase**:\n",
             "\n",
             "1. Execute source changes (`src/*.rs`) per the source changelist, in subsequent\n",
             "   commits.\n",
             "2. Validate with `cargo check`. Regenerate docs with `cargo mock`.\n",
             "3. Update the source changelist if needed (iterate). Recommit.\n",
             "\n",
-            "### Step 6: Lock source (DONE phase)\n",
+            "### Step 6: Lock source (CLOSED phase)\n",
             "\n",
             "When all source changes are applied:\n",
             "\n",
@@ -1135,7 +1135,7 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "design_rounds/{YYYYMMDDHHMM}_topic.{name}.md\n",
             "design_rounds/{YYYYMMDDHHMM}_changelist.doc.md          (DOC phase)\n",
             "design_rounds/{YYYYMMDDHHMM}_changelist.doc.lock.md     (after lock)\n",
-            "design_rounds/{YYYYMMDDHHMM}_changelist.src.md          (SRC phase)\n",
+            "design_rounds/{YYYYMMDDHHMM}_changelist.src.md          (IMPL phase)\n",
             "design_rounds/{YYYYMMDDHHMM}_changelist.src.lock.md     (after lock)\n",
             "```\n",
             "\n",
@@ -1176,7 +1176,7 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "- **Doc changelist is living during DOC phase only.** It can be iteratively\n",
             "  updated and recommitted during doc execution. After locking (`cargo mock lock`),\n",
             "  it is frozen forever.\n",
-            "- **Src changelist is living during SRC phase only.** Same rules apply.\n",
+            "- **Src changelist is living during IMPL phase only.** Same rules apply.\n",
             "- **Phase gates are global.** Lints check the entire working tree, not just staged\n",
             "  files. Untracked or unstaged changes to blocked paths will block commits. Revert\n",
             "  disallowed changes before committing.\n",
@@ -1254,17 +1254,17 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "\n",
             "| TOPIC | no changelists | no | no | n/a |\n",
             "| DOC | `*_changelist.doc.md` | yes | no | doc CL (iterate) |\n",
-            "| SRC-PLAN | `*_changelist.doc.lock.md` | no (SHAME ok) | no | src CL creation |\n",
-            "| SRC | `*_changelist.src.md` | no (SHAME ok) | yes | src CL (iterate) |\n",
-            "| DONE | `*_changelist.src.lock.md` | no | no | no |\n",
+            "| DRAFT | `*_changelist.doc.lock.md` | no (SHAME ok) | no | src CL creation |\n",
+            "| IMPL | `*_changelist.src.md` | no (SHAME ok) | yes | src CL (iterate) |\n",
+            "| CLOSED | `*_changelist.src.lock.md` | no | no | no |\n",
             "\n",
             "1. Create topic files in `design_rounds/`. Get them approved. (TOPIC)\n",
             "2. Write doc changelist: `design_rounds/{YYYYMMDDHHMM}_changelist.doc.md`. Commit. (DOC)\n",
             "3. Apply doc template changes per the doc changelist. Commit them. (DOC)\n",
-            "4. Lock doc CL: `cargo mock lock`. (SRC-PLAN)\n",
-            "5. Write src changelist: `design_rounds/{YYYYMMDDHHMM}_changelist.src.md`. Commit. (SRC)\n",
-            "6. Apply source changes per the src changelist. (SRC)\n",
-            "7. Lock src CL: `cargo mock lock`. (DONE)\n",
+            "4. Lock doc CL: `cargo mock lock`. (DRAFT)\n",
+            "5. Write src changelist: `design_rounds/{YYYYMMDDHHMM}_changelist.src.md`. Commit. (IMPL)\n",
+            "6. Apply source changes per the src changelist. (IMPL)\n",
+            "7. Lock src CL: `cargo mock lock`. (CLOSED)\n",
             "8. Archive: `cargo mock close`.\n",
             "\n",
             "To revise a changelist, deprecate it with `cargo mock deprecate` (unlocked) or\n",
@@ -1341,7 +1341,7 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "- Never modify doc templates (README.md.tmpl, DESIGN.md.tmpl, DEEPDIVE_*.md.tmpl)\n",
             "  without an unlocked doc changelist in `design_rounds/` (DOC phase).\n",
             "- Never modify source files without a source changelist (`*_changelist.src.md`)\n",
-            "  in `design_rounds/` (SRC phase).\n",
+            "  in `design_rounds/` (IMPL phase).\n",
             "- Never create new topic files after a changelist exists. The changelist\n",
             "  crystallizes the round. Deprecate the changelist to return to TOPIC phase.\n",
             "- Never edit a committed topic file. Topics are frozen once committed, always.\n",
@@ -1434,14 +1434,14 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "3. Get the topic approved, write a doc changelist (`*_changelist.doc.md`)\n",
             "4. Apply doc fixes (DOC phase)\n",
             "5. Lock the doc changelist (`cargo mock lock`)\n",
-            "6. Write a source changelist (`*_changelist.src.md`) in SRC-PLAN phase\n",
-            "7. Apply source fixes (SRC phase)\n",
+            "6. Write a source changelist (`*_changelist.src.md`) in DRAFT phase\n",
+            "7. Apply source fixes (IMPL phase)\n",
             "8. Lock the source changelist (`cargo mock lock`)\n",
             "9. Regenerate docs, then continue implementation\n",
             "\n",
             "Never diverge from the mock \"because it's faster.\" The mock IS the spec.\n",
             "Never modify mock docs without an unlocked doc changelist (DOC phase).\n",
-            "Never modify source without a source changelist (SRC phase).\n",
+            "Never modify source without a source changelist (IMPL phase).\n",
             "\n",
             "## Exceptions\n",
             "\n",
@@ -2248,6 +2248,47 @@ mod tests {
     fn word_count_ignores_pure_punctuation() {
         let text = "one two -- three --- four";
         assert_eq!(count_bookend_words(text), 4);
+    }
+
+    #[test]
+    fn phase_labels_lock_down_user_visible_strings() {
+        use mockspace_lint_rules::changelist_helpers::Phase;
+        // These five strings flow into deny messages, status output,
+        // README and USAGE_GUIDE tables, and the generated agent skill
+        // text. Treat them as a public contract; #227 renamed
+        // SRC-PLAN/SRC/DONE to DRAFT/IMPL/CLOSED so the verb `lock` in
+        // `cargo mock lock` reads consistently with file-suffix state.
+        assert_eq!(Phase::Topic.label(), "TOPIC");
+        assert_eq!(Phase::Doc.label(), "DOC");
+        assert_eq!(Phase::SrcPlan.label(), "DRAFT");
+        assert_eq!(Phase::Src.label(), "IMPL");
+        assert_eq!(Phase::Done.label(), "CLOSED");
+    }
+
+    #[test]
+    fn write_guard_uses_new_phase_labels() {
+        // Regression check for #227: bash hook PHASE values must match
+        // the new user-visible labels. If a stray "SRC-PLAN" / "SRC" /
+        // "DONE" survives the rename, the rendered deny messages will
+        // contradict the docs and Phase::label().
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mock_dir = tmp.path().join("mock");
+        std::fs::create_dir(&mock_dir).expect("create mock dir");
+        let cfg = Config::from_dir(&mock_dir);
+        let hook = builtin_write_guard(&cfg);
+
+        for new_label in ["DRAFT", "IMPL", "CLOSED"] {
+            assert!(
+                hook.contains(new_label),
+                "rendered hook must reference new phase label `{new_label}`"
+            );
+        }
+        for old_label in ["SRC-PLAN", "\"SRC\"", "\"DONE\""] {
+            assert!(
+                !hook.contains(old_label),
+                "rendered hook still contains old phase token `{old_label}`"
+            );
+        }
     }
 
     #[test]
