@@ -5,7 +5,7 @@
 //! - Locked src CLs are frozen forever.
 //! - Deprecated CLs are frozen forever.
 //! - Active doc CL is editable only in DOC phase.
-//! - Active src CL is editable only in SRC phase.
+//! - Active src CL is editable only in IMPL phase.
 //!
 //! Detection: find all changelists in `design_rounds/`, check if any
 //! appear in staged or unstaged changes, and validate against the
@@ -110,7 +110,7 @@ fn check_changelist_edit(cl: &ParsedChangelist, phase: Phase) -> Option<String> 
                     if phase != Phase::Src {
                         Some(format!(
                             "cannot be modified in phase {} — active src changelists \
-                             are only editable in SRC phase.",
+                             are only editable in IMPL phase.",
                             phase.label(),
                         ))
                     } else {

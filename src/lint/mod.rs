@@ -85,8 +85,8 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
 /// all crates are linted (build/push mode).
 ///
 /// When `doc_only` is true, source-only lints are skipped. This allows
-/// doc-only commits during DOC-EXEC phase without being blocked by
-/// pre-existing source issues that will be fixed in SRC-EXEC.
+/// doc-only commits during DOC phase without being blocked by
+/// pre-existing source issues that will be fixed in IMPL.
 ///
 /// When `lint_overrides` is non-empty, lint severities are overridden per
 /// the `[lints]` section of mockspace.toml.
