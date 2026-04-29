@@ -84,9 +84,9 @@ Every round walks five phases. Each phase is detected from the presence and stat
 |-------------|-----------------------------------------------------------------|
 | `TOPIC`     | only `*_topic.*.md` or `*_research.*.md` files                  |
 | `DOC`       | `*_changelist.doc.md` exists                                    |
-| `SRC-PLAN`  | `*_changelist.doc.lock.md` exists, no `*_changelist.src.md`     |
-| `SRC`       | `*_changelist.doc.lock.md` and `*_changelist.src.md` both exist |
-| `DONE`      | `*_changelist.doc.lock.md` and `*_changelist.src.lock.md`       |
+| `DRAFT`     | `*_changelist.doc.lock.md` exists, no `*_changelist.src.md`     |
+| `IMPL`      | `*_changelist.doc.lock.md` and `*_changelist.src.md` both exist |
+| `CLOSED`    | `*_changelist.doc.lock.md` and `*_changelist.src.lock.md`       |
 
 Filenames use a compact timestamp prefix:
 
@@ -98,10 +98,11 @@ Transitions are subcommands, not manual renames:
 
 | Command                   | Effect                                                            | Valid phases            |
 |---------------------------|-------------------------------------------------------------------|-------------------------|
-| `cargo mock lock`         | Lock the active changelist (`DOC -> SRC-PLAN`, `SRC -> DONE`)     | `DOC`, `SRC`            |
-| `cargo mock unlock`       | Deprecate src CL and unlock doc CL (destructive; source unchanged) | `SRC-PLAN`, `SRC`, `DONE` |
-| `cargo mock deprecate`    | Deprecate the active CL; in `SRC` also unlocks doc CL             | `DOC`, `SRC`            |
-| `cargo mock close`        | Archive the round into a timestamped subdir with `.meta` + `.history` | `DONE` only         |
+| `cargo mock lock`         | Lock the active changelist (`DOC -> DRAFT`, `IMPL -> CLOSED`)     | `DOC`, `IMPL`           |
+| `cargo mock unlock`       | Deprecate src CL and unlock doc CL (destructive; source unchanged) | `DRAFT`, `IMPL`, `CLOSED` |
+| `cargo mock deprecate`    | Deprecate the active CL; in `IMPL` also unlocks doc CL            | `DOC`, `IMPL`           |
+| `cargo mock close`        | Archive the round into a timestamped subdir with `.meta` + `.history` | `CLOSED` only       |
+| `cargo mock archive`      | Archive an abandoned round into a `<timestamp>-abandoned/` subdir | any                     |
 | `cargo mock migrate`      | Rename legacy `YYYY-MM-DD_*.md` files to the compact format       | any                     |
 
 All transition subcommands accept `--auto-commit` to create a surgical git commit of only the renamed files, using a temporary `GIT_INDEX_FILE` so any staged changes remain untouched.

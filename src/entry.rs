@@ -868,21 +868,21 @@ fn cmd_check(cfg: &Config) -> ExitCode {
             print_row(
                 "advance",
                 CheckResult::Pass,
-                "`cargo mock lock` when doc edits done (DOC → SRC-PLAN)",
+                "`cargo mock lock` when doc edits done (DOC → DRAFT)",
             );
         }
         Phase::SrcPlan => {
             print_row(
                 "advance",
                 CheckResult::Pass,
-                "author a src changelist to enter SRC phase",
+                "author a src changelist to enter IMPL phase",
             );
         }
         Phase::Src => {
             let msg = if any_fail {
-                "SRC impl in progress — build failing; fix before `cargo mock lock`"
+                "IMPL in progress — build failing; fix before `cargo mock lock`"
             } else {
-                "SRC impl ready for `cargo mock lock` (SRC → DONE) once CL is fulfilled"
+                "IMPL ready for `cargo mock lock` (IMPL → CLOSED) once CL is fulfilled"
             };
             print_row(
                 "advance",
