@@ -141,9 +141,18 @@ fn run_inner(
                 return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
             }
             "lock" | "deprecate" | "unlock" | "close" | "archive" | "migrate" => {
-                let subcmd_opts = design_round::SubcmdOpts {
-                    auto_commit: args.iter().any(|a| a == "--auto-commit"),
-                };
+                // State-machine transitions auto-commit by default. Each
+                // operation is a single atomic rename whose value depends on
+                // the rename being committed; leaving an uncommitted rename
+                // in the working tree is fragile (any subsequent `git reset`
+                // resurrects the source while leaving the target as an
+                // untracked orphan). Opt out with `--no-commit` if the
+                // transition is part of a larger user-driven commit.
+                //
+                // The legacy `--auto-commit` flag is accepted as a no-op for
+                // backwards compatibility with scripts that pass it.
+                let auto_commit = !args.iter().any(|a| a == "--no-commit");
+                let subcmd_opts = design_round::SubcmdOpts { auto_commit };
                 return match subcmd {
                     "lock" => design_round::cmd_lock(&cfg, &subcmd_opts),
                     "deprecate" => design_round::cmd_deprecate(&cfg, &subcmd_opts),
