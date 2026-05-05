@@ -30,9 +30,9 @@ Pre-1.0. The tool is in active use across a stack of consumer crates and evolves
 |---|---|
 | `mockspace` (binary + library) | The runtime: bootstrap, build integration, generation pipeline, lint runner, transition subcommands. |
 | `mockspace-lint-rules` | Sibling crate of universal-quality lints and design-round state-machine lints. Consumers compose against this from `mock/lints/`. |
-| `mockspace-bench-core` | Canonical bench framework: `Routine` trait, hardware-counter timing, FFI bridge for variant-comparison benches. v1 surface; harness orchestration arrives in v2. |
+| `mockspace-bench-core` | Canonical bench framework: `Routine` trait, hardware-counter timing, FFI bridge for variant-comparison benches. v2 ships harness orchestration (workload/cache modules, validation, Pareto analysis, history + perf + disasm sensors, findings + meta-level reporting). |
 | `cargo mock` alias | Cargo subcommand entrypoint installed by bootstrap; the surface most users interact with. |
-| `mock bench init` | Scaffolds `mock/benches/` in the consumer with a starter `Routine` and Cargo entry. |
+| `mock bench init / run / report` | Scaffolds `mock/benches/` in the consumer with a starter `Routine`, runs the configured benches, and emits findings or meta-level reports. |
 
 ## Design rounds
 
