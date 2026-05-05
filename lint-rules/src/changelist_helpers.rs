@@ -12,13 +12,13 @@ use std::path::Path;
 // Types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClKind {
     Doc,
     Src,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClStatus {
     Active,
     Locked,
@@ -44,7 +44,7 @@ pub struct ParsedChangelist {
 /// the round closes), and the name `IMPL` makes clear that source
 /// edits happen *before* the lock, not after. The variant identifiers
 /// stay close to the underlying file-suffix machinery.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Phase {
     /// No changelists at all — only topic files allowed.
     Topic,
