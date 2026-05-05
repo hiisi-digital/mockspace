@@ -4,11 +4,13 @@
 //! Deterministic latency, no cache interaction.
 
 /// Deterministic PRNG. Same seed -> same sequence on every platform.
+#[derive(Debug, Clone)]
 pub struct Rng {
     state: u64,
 }
 
 impl Rng {
+    #[must_use]
     pub fn new(seed: u64) -> Self {
         Rng { state: seed }
     }
@@ -23,6 +25,7 @@ impl Rng {
     }
 
     #[cfg(feature = "std")]
+    #[must_use = "seeds advances RNG state; the returned Vec contains the only record of the produced values"]
     pub fn seeds(&mut self, n: usize) -> std::vec::Vec<u64> {
         (0..n).map(|_| self.next()).collect()
     }
@@ -110,6 +113,7 @@ pub fn counter_frequency() -> u64 {
 /// Convert counter ticks to nanoseconds.
 #[cfg(feature = "std")]
 #[inline(always)]
+#[must_use]
 pub fn ticks_to_ns(ticks: u64) -> f64 {
     let freq = counter_frequency() as f64;
     (ticks as f64 * 1_000_000_000.0) / freq
@@ -118,6 +122,7 @@ pub fn ticks_to_ns(ticks: u64) -> f64 {
 /// Convert counter ticks to microseconds.
 #[cfg(feature = "std")]
 #[inline(always)]
+#[must_use]
 pub fn ticks_to_us(ticks: u64) -> f64 {
     let freq = counter_frequency() as f64;
     (ticks as f64 * 1_000_000.0) / freq

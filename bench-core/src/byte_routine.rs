@@ -50,6 +50,7 @@ use crate::Routine;
 /// must be internally deterministic per seed; outputs across variants
 /// are not compared. Used when comparing distinct algorithms (FNV1a
 /// vs xxHash3, two graph colouring heuristics, etc.).
+#[derive(Debug, Clone, Copy)]
 pub struct ByteRoutine<const IN: usize, const OUT: usize, const MAY_DIFFER: bool = false>;
 
 impl<const IN: usize, const OUT: usize, const MAY_DIFFER: bool> Routine
