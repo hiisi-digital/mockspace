@@ -17,6 +17,7 @@ pub const DEFAULT_QUALITY_SEEDS: usize = 1000;
 const QUALITY_ROOT_SEED: u64 = 0xC0DE_0A11_1700_BEEF;
 
 /// One row of the quality table per variant.
+#[derive(Debug, Clone)]
 pub struct VariantQuality {
     pub name: String,
     pub mean: f64,

@@ -20,6 +20,7 @@ use crate::spec::RoutineSpec;
 /// than best when `n mod 5 != 0`. For uniformly distributed data the
 /// effect on means is negligible. For highly skewed distributions the
 /// `worst_20pct` mean may be pulled down slightly.
+#[derive(Debug, Clone, Copy)]
 pub struct Stats {
     pub count: usize,
     pub mean: f64,
@@ -142,6 +143,7 @@ pub struct DataSetMeta {
 impl DataSet {
     /// Build a dataset from samples, filtering by `mode`
     /// (`"warm"` / `"cold"`).
+    #[must_use]
     pub fn from_samples(samples: &[Sample], mode: &str) -> Self {
         let filtered: Vec<&Sample> = samples.iter().filter(|s| s.mode == mode).collect();
 
@@ -231,6 +233,7 @@ impl DataSet {
         }
     }
 
+    #[must_use]
     pub fn with_tag_names(mut self, names: &[(&str, u8)]) -> Self {
         for &(name, idx) in names {
             self.tag_names.insert(idx, name.into());
@@ -238,6 +241,7 @@ impl DataSet {
         self
     }
 
+    #[must_use]
     pub fn with_baseline(mut self, name: &str) -> Self {
         if let Some(idx) = self.variants.iter().position(|v| v.name == name) {
             self.baseline_idx = idx;
@@ -274,6 +278,7 @@ impl Default for DataSetMeta {
 /// Returns `0.0` for series shorter than 2 elements. Values near `+1`
 /// indicate positive serial correlation (drift / warm-up); values near
 /// `-1` indicate alternating pattern (e.g. thermal bounce).
+#[must_use]
 pub fn lag1_autocorrelation(vals: &[f64]) -> f64 {
     let n = vals.len();
     if n < 2 {
@@ -325,6 +330,7 @@ pub fn bh_fdr_adjust(p_values: &mut Vec<(usize, f64)>) {
 }
 
 /// Compute percentage delta of `value` against `baseline`.
+#[must_use]
 pub fn pct_delta(value: f64, baseline: f64) -> f64 {
     if baseline == 0.0 {
         return 0.0;
@@ -413,6 +419,7 @@ pub fn bootstrap_ci_diff(a: &[f64], b: &[f64], seed: u64) -> (f64, f64, f64) {
 }
 
 /// Pairwise comparison result.
+#[derive(Debug, Clone, Copy)]
 pub struct Comparison {
     /// Median of `(variant - baseline)` in ns.
     pub median_diff_ns: f64,
@@ -530,6 +537,7 @@ impl BenchResult {
     /// Build a [`DataSet`] from `self.samples` filtered by `mode`
     /// (`"warm"` / `"cold"`). Equivalent to
     /// [`DataSet::from_samples(&result.samples, mode)`].
+    #[must_use]
     pub fn dataset(&self, mode: &str) -> DataSet {
         DataSet::from_samples(&self.samples, mode)
     }
@@ -541,6 +549,7 @@ impl BenchResult {
     /// The throughput / Gops/s tables in [`crate::generate_report`]
     /// only render when `meta.ops_per_call > 0`; routines that
     /// declare `ops_per_call` will get throughput tables for free.
+    #[must_use]
     pub fn dataset_for_routine(&self, routine: &RoutineSpec, mode: &str) -> DataSet {
         let mut ds = DataSet::from_samples(&self.samples, mode);
         let probe_input = (routine.bridge.input_builder)(0);
