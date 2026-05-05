@@ -134,6 +134,7 @@ mod tests {
             workspace_root: Box::leak(Box::new(PathBuf::from("/tmp"))),
             proc_macro_crates: Box::leak(Box::new(Vec::new())),
             crate_prefix: "test",
+            lint_proc_macro_source: false,
             primitive_introductions: Box::leak(Box::new(std::collections::BTreeMap::new())),
         };
         (unsafe { std::ptr::read(tree as *const _) }, ctx)
