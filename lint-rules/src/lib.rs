@@ -198,7 +198,7 @@ impl<'a> LintContext<'a> {
 // ---------------------------------------------------------------------------
 
 /// What happens at a single validation gate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Level {
     /// Not reported.
     Pass,
@@ -233,7 +233,7 @@ impl Level {
 }
 
 /// Which validation gate is active.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LintMode {
     /// Pre-commit hook. Most permissive.
     Commit,
@@ -280,6 +280,7 @@ impl Severity {
     pub const INFO_ONLY: Self = Self::new(Level::Info, Level::Info, Level::Info);
 
     /// Whether all gates are `Level::Pass` (i.e. the lint is effectively off).
+    #[must_use]
     pub fn is_off(&self) -> bool {
         self.on_commit == Level::Pass && self.on_build == Level::Pass && self.on_push == Level::Pass
     }
@@ -294,6 +295,7 @@ impl Severity {
     }
 
     /// Whether this severity blocks at the given mode.
+    #[must_use]
     pub fn is_blocking(&self, mode: LintMode) -> bool {
         self.effective(mode) == Level::Error
     }
@@ -359,6 +361,7 @@ impl LintConfig {
     }
 
     /// Whether this config has any overrides at all.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.base.is_empty() && self.findings.is_empty() && self.params.is_empty()
     }
