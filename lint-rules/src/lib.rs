@@ -162,6 +162,7 @@ impl<'a> LintContext<'a> {
     /// [`Self::is_proc_macro_crate`] for the skip decision; that method
     /// answers the narrower question "is this a proc-macro crate?"
     /// without consulting the project's lint-behavior preference.
+    #[must_use]
     pub fn should_skip_proc_macro_source_lint(&self) -> bool {
         !self.lint_proc_macro_source && self.is_proc_macro_crate()
     }
@@ -170,6 +171,7 @@ impl<'a> LintContext<'a> {
     /// `lint_proc_macro_source` preference; callers that want the
     /// "should I skip this source lint" decision should use
     /// [`Self::should_skip_proc_macro_source_lint`].
+    #[must_use]
     pub fn is_proc_macro_crate(&self) -> bool {
         if self.proc_macro_crates.is_empty() {
             PROC_MACRO_CRATES.iter().any(|c| *c == self.crate_name)
@@ -185,6 +187,7 @@ impl<'a> LintContext<'a> {
     ///
     /// Example: `ctx.introduces("u8")` returns `true` when the crate
     /// is `arvo` and `arvo = ["u8", ...]` is configured in mockspace.toml.
+    #[must_use]
     pub fn introduces(&self, primitive: &str) -> bool {
         self.primitive_introductions
             .get(self.crate_name)
@@ -255,6 +258,7 @@ pub struct Severity {
 }
 
 impl Severity {
+    #[must_use]
     pub const fn new(on_commit: Level, on_build: Level, on_push: Level) -> Self {
         Self { on_commit, on_build, on_push }
     }
@@ -286,6 +290,7 @@ impl Severity {
     }
 
     /// Get the effective level for a given mode.
+    #[must_use]
     pub fn effective(&self, mode: LintMode) -> Level {
         match mode {
             LintMode::Commit => self.on_commit,
@@ -301,6 +306,7 @@ impl Severity {
     }
 
     /// Human-readable label based on the gate profile.
+    #[must_use]
     pub fn label(&self) -> &'static str {
         if *self == Self::OFF { "off" }
         else if *self == Self::HARD_ERROR { "error" }
@@ -322,6 +328,7 @@ impl Severity {
 ///
 /// Supports: "off", "error"/"hard-error", "build-gate", "push-gate",
 /// "advisory"/"warn", "info".
+#[must_use]
 pub fn parse_severity(s: &str) -> Option<Severity> {
     match s.trim().to_lowercase().as_str() {
         "off" => Some(Severity::OFF),
@@ -353,6 +360,7 @@ pub struct LintConfig {
 
 impl LintConfig {
     /// Create an empty config (all defaults).
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             base: HashMap::new(),
@@ -378,6 +386,7 @@ impl LintConfig {
 }
 
 /// A single lint violation.
+#[derive(Debug, Clone)]
 pub struct LintError {
     pub crate_name: String,
     pub line: usize,
@@ -390,36 +399,43 @@ pub struct LintError {
 
 impl LintError {
     /// Create a violation that blocks all gates (commit, build, push).
+    #[must_use]
     pub fn error(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
         Self { crate_name, line, lint_name, message, severity: Severity::HARD_ERROR, finding_kind: None }
     }
 
     /// Create a violation that warns on commit, blocks build and push.
+    #[must_use]
     pub fn build_error(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
         Self { crate_name, line, lint_name, message, severity: Severity::BUILD_GATE, finding_kind: None }
     }
 
     /// Create a violation that warns on commit and build, blocks push.
+    #[must_use]
     pub fn push_error(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
         Self { crate_name, line, lint_name, message, severity: Severity::PUSH_GATE, finding_kind: None }
     }
 
     /// Create a warning-level violation (reported but never blocks).
+    #[must_use]
     pub fn warning(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
         Self { crate_name, line, lint_name, message, severity: Severity::ADVISORY, finding_kind: None }
     }
 
     /// Create an info-level violation (informational, never blocks).
+    #[must_use]
     pub fn info(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
         Self { crate_name, line, lint_name, message, severity: Severity::INFO_ONLY, finding_kind: None }
     }
 
     /// Create a violation with custom per-gate severity.
+    #[must_use]
     pub fn with_severity(crate_name: String, line: usize, lint_name: &'static str, message: String, severity: Severity) -> Self {
         Self { crate_name, line, lint_name, message, severity, finding_kind: None }
     }
 
     /// Create a violation with a specific finding kind for per-finding severity overrides.
+    #[must_use]
     pub fn with_finding_kind(crate_name: String, line: usize, lint_name: &'static str, message: String, severity: Severity, finding_kind: &'static str) -> Self {
         Self { crate_name, line, lint_name, message, severity, finding_kind: Some(finding_kind) }
     }
