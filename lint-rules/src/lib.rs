@@ -84,7 +84,7 @@ pub const PROC_MACRO_CRATES: &[&str] = &[];
 
 /// A single source file surfaced to lints: its repo-relative path
 /// and its full text.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct CrateSourceFile {
     /// Crate-relative path (e.g. `src/lib.rs`, `src/bits.rs`).
     pub rel_path: std::path::PathBuf,
@@ -341,6 +341,7 @@ pub fn parse_severity(s: &str) -> Option<Severity> {
 /// Configuration for lint severity overrides and parameters.
 ///
 /// Parsed from the `[lints]` section of `mockspace.toml`.
+#[derive(Debug, Clone)]
 pub struct LintConfig {
     /// Base severity overrides per lint name.
     pub base: HashMap<String, Severity>,
