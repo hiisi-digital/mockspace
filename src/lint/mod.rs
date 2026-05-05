@@ -95,6 +95,7 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
 /// built-in lint lists (for consumer-side custom lints).
 ///
 /// Returns the count of blocking violations (effective level = Error).
+#[must_use]
 pub fn run_lints(
     crates: &CrateMap,
     crates_dir: &Path,

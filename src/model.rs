@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ApiVisibility {
     Public,
     Internal,
     Unspecified,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrateInfo {
     pub short_name: String,
     pub items: Vec<Item>,
@@ -16,6 +17,7 @@ pub struct CrateInfo {
     pub macro_generated: Vec<MacroGenerated>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroGenerated {
     /// The macro being invoked, e.g. "define_signal"
     pub macro_name: String,
@@ -25,6 +27,7 @@ pub struct MacroGenerated {
     pub source_crate: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
     Trait(TraitItem),
     Struct(StructItem),
@@ -33,6 +36,7 @@ pub enum Item {
     Macro(MacroItem),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitItem {
     pub name: String,
     pub generics: String,
@@ -41,6 +45,7 @@ pub struct TraitItem {
     pub visibility: ApiVisibility,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructItem {
     pub name: String,
     pub generics: String,
@@ -49,6 +54,7 @@ pub struct StructItem {
     pub visibility: ApiVisibility,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumItem {
     pub name: String,
     #[allow(dead_code)]
@@ -56,16 +62,19 @@ pub struct EnumItem {
     pub visibility: ApiVisibility,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnItem {
     pub sig: FnSig,
     pub visibility: ApiVisibility,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroItem {
     pub name: String,
     pub is_proc: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnSig {
     pub name: String,
     pub generics: String,
@@ -74,6 +83,7 @@ pub struct FnSig {
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub name: String,
     pub ty: String,
