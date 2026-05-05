@@ -113,6 +113,7 @@ pub trait Routine {
     // ── Byte-level bridge for the dylib harness (std only) ──
 
     /// Size of the output type in bytes.
+    #[must_use]
     fn output_size() -> usize {
         core::mem::size_of::<Self::Output>()
     }
@@ -320,7 +321,7 @@ macro_rules! routine_bridge {
 /// ticks. The harness subtracts this from its own measurement to
 /// compute bridge overhead.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct FfiBenchCall {
     pub run_ticks: u64,
 }
@@ -343,6 +344,7 @@ pub type AbiHashFn = extern "C" fn() -> u64;
 /// Compute the ABI hash at compile time. FNV-1a over the FfiBenchCall
 /// layout. Variants compile-in this hash at build time; on load, the
 /// harness checks the hash to detect ABI drift.
+#[must_use]
 pub const fn abi_hash() -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     let size = core::mem::size_of::<FfiBenchCall>() as u64;
