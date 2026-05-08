@@ -674,7 +674,12 @@ fn check_activation(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>
     let opt_out = std::env::var("MOCKSPACE_NO_AUTO_ACTIVATE").is_ok();
 
     if is_active(repo_root) {
-        // Verify it points to the right directory.
+        // Verify it points to the right directory. The is_active check
+        // accepts any path containing "mockspace" or "target/hooks", so the
+        // value can be stale after a repo rename or path move. Update in
+        // place when it differs from the canonical generated_hooks_dir.
+        // Respects MOCKSPACE_NO_AUTO_ACTIVATE the same way as initial
+        // activation: if the user opted out, just warn.
         let expected = generated_hooks_dir(mock_dir);
         let output = std::process::Command::new("git")
             .args(["config", "--local", "core.hooksPath"])
@@ -685,9 +690,22 @@ fn check_activation(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>
             let current_path = String::from_utf8_lossy(&o.stdout).trim().to_string();
             let expected_str = expected.display().to_string();
             if current_path != expected_str {
-                actions.push(format!(
-                    "core.hooksPath points to {current_path}, expected {expected_str}"
-                ));
+                if opt_out {
+                    actions.push(format!(
+                        "core.hooksPath stale ({current_path} vs {expected_str}); \
+                         auto-update opted out via MOCKSPACE_NO_AUTO_ACTIVATE; \
+                         run `cargo mock activate` manually"
+                    ));
+                } else {
+                    match activate(repo_root, mock_dir) {
+                        Ok(()) => actions.push(format!(
+                            "core.hooksPath updated from {current_path} to {expected_str}"
+                        )),
+                        Err(e) => actions.push(format!(
+                            "core.hooksPath stale ({current_path} vs {expected_str}); auto-update failed: {e}"
+                        )),
+                    }
+                }
             }
         }
         return;
