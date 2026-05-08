@@ -1,7 +1,8 @@
-//! Cross-crate lint: source code changes require the SRC phase.
+//! Cross-crate lint: source code changes require the IMPL phase.
 //!
 //! Source changes (`*.rs` in `crates/`) are only allowed during
-//! `Phase::Src` — when a doc CL is locked AND an unlocked src CL exists.
+//! `Phase::Src` (label IMPL) — when a doc CL is locked AND an unlocked
+//! src CL exists.
 //!
 //! Enforcement is global: not just staged files, but ANY untracked or
 //! unstaged source changes will block the commit. Revert disallowed
@@ -70,11 +71,11 @@ impl CrossCrateLint for ChangelistRequired {
                          to open the source window"
                     }
                     Phase::SrcPlan => {
-                        "phase SRC-PLAN: doc CL locked, but no src changelist yet. \
+                        "phase DRAFT: doc CL locked, but no src changelist yet. \
                          Create an unlocked src changelist to open the source window"
                     }
                     Phase::Done => {
-                        "phase DONE: round complete, both changelists locked. \
+                        "phase CLOSED: round complete, both changelists locked. \
                          Start a new design round to make further changes"
                     }
                     Phase::Src => unreachable!(),

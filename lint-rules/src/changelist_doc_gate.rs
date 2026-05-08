@@ -3,8 +3,8 @@
 //! Doc template changes in `crates/` are only allowed during
 //! `Phase::Doc` — when an unlocked doc CL exists.
 //!
-//! Blocked in: TOPIC (no CL), SRC-PLAN (doc CL locked), SRC (source
-//! window), DONE (round complete).
+//! Blocked in: TOPIC (no CL), DRAFT (doc CL locked), IMPL (source
+//! window), CLOSED (round complete).
 //!
 //! Enforcement is global: not just staged files, but ANY untracked or
 //! unstaged doc template changes will block the commit. Revert disallowed
@@ -94,17 +94,19 @@ impl CrossCrateLint for ChangelistDocGate {
                          Create an unlocked doc changelist to open the docs window"
                     }
                     Phase::SrcPlan => {
-                        "phase SRC-PLAN: doc CL is locked. \
+                        // The phase below is the user-visible label; the variant
+                        // name (SrcPlan) preserves the file-suffix machinery.
+                        "phase DRAFT: doc CL is locked. \
                          Doc edits are frozen after locking. \
                          Use SHAME.md.tmpl for gaps discovered during execution"
                     }
                     Phase::Src => {
-                        "phase SRC: source window open, doc edits blocked. \
+                        "phase IMPL: source window open, doc edits blocked. \
                          Doc edits are frozen after locking. \
                          Use SHAME.md.tmpl for gaps discovered during execution"
                     }
                     Phase::Done => {
-                        "phase DONE: round complete. \
+                        "phase CLOSED: round complete. \
                          Start a new design round to make further doc changes"
                     }
                     Phase::Doc => unreachable!(),

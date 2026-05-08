@@ -12,7 +12,7 @@ use serde::de::IntoDeserializer;
 use mockspace_lint_rules::{Level, Severity, parse_severity, LintConfig};
 
 /// How mockspace-managed content is installed into existing files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InstallMode {
     Replace,
     MergeAppend,
@@ -33,6 +33,7 @@ impl InstallMode {
 }
 
 /// Mockspace workspace configuration.
+#[derive(Debug)]
 pub struct Config {
     // --- Core fields ---
     pub mock_dir: PathBuf,
@@ -145,7 +146,7 @@ pub struct Config {
 /// (matching bylines are accepted). Glob patterns support `*`, `?`, `[...]` as
 /// in bash `[[ == ]]` pattern matching. Patterns without glob metacharacters
 /// degenerate to literal equality.
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct AttributionConfig {
     /// Byline policy when the agent mode env var is unset or "assistant".
     /// Empty string (default): no Co-Authored-By line permitted.
@@ -158,7 +159,7 @@ pub struct AttributionConfig {
     pub autonomous: String,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroStyle {
     pub label: String,
     pub icon: String,
@@ -167,6 +168,7 @@ pub struct MacroStyle {
 }
 
 impl MacroStyle {
+    #[must_use]
     pub fn default_for(macro_name: &str) -> Self {
         Self {
             label: macro_name.strip_prefix("define_").unwrap_or("generated").to_string(),
@@ -177,6 +179,7 @@ impl MacroStyle {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitStyle {
     pub types: Vec<String>,
     pub format: String,
@@ -312,6 +315,7 @@ impl StringOrOther {
 // ---------------------------------------------------------------------------
 
 impl Config {
+    #[must_use]
     pub fn from_dir(mock_dir: &Path) -> Self {
         let mock_dir = mock_dir.to_path_buf();
         let crates_dir = mock_dir.join("crates");
@@ -391,6 +395,7 @@ impl Config {
     }
 
     /// Get domain kind label for a macro name (e.g. "define_signal" -> "signal").
+    #[must_use]
     pub fn domain_kind(&self, macro_name: &str) -> String {
         if let Some(label) = self.domain_kinds.get(macro_name) {
             return label.clone();
@@ -402,6 +407,7 @@ impl Config {
     }
 
     /// Get graph style for a macro name.
+    #[must_use]
     pub fn macro_style(&self, macro_name: &str) -> MacroStyle {
         self.macro_styles.get(macro_name)
             .cloned()
@@ -409,6 +415,7 @@ impl Config {
     }
 
     /// Get crate header colors for graph. Returns (bg, fg).
+    #[must_use]
     pub fn crate_color(&self, short_name: &str) -> (String, String) {
         self.crate_colors.get(short_name)
             .cloned()
@@ -416,6 +423,7 @@ impl Config {
     }
 
     /// Get layer label for a depth index.
+    #[must_use]
     pub fn layer_label(&self, depth: usize) -> String {
         self.layer_labels.get(depth)
             .cloned()
@@ -424,6 +432,7 @@ impl Config {
 
     /// Get the effective known_macros for agent templates.
     /// Returns agent_macros if non-empty, otherwise known_macros.
+    #[must_use]
     pub fn effective_agent_macros(&self) -> &[(String, String, String)] {
         if self.agent_macros.is_empty() {
             &self.known_macros

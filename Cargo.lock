@@ -24,6 +24,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 
 [[package]]
+name = "bitwise-rotate"
+version = "0.0.0"
+dependencies = [
+ "mockspace-bench-core",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -185,12 +192,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "mockspace-bench-core"
+version = "0.1.0"
+
+[[package]]
+name = "mockspace-bench-harness"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "mockspace-bench-core",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "mockspace-bench-macro"
+version = "0.1.0"
+dependencies = [
+ "mockspace-bench-core",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "mockspace-lint-rules"
 version = "0.1.0"
 dependencies = [
  "tempfile",
  "tree-sitter",
  "tree-sitter-rust",
+]
+
+[[package]]
+name = "multiply-xor"
+version = "0.0.0"
+dependencies = [
+ "mockspace-bench-core",
 ]
 
 [[package]]
@@ -273,6 +311,14 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "windows-sys",
+]
+
+[[package]]
+name = "self-bench"
+version = "0.0.0"
+dependencies = [
+ "mockspace-bench-core",
+ "mockspace-bench-harness",
 ]
 
 [[package]]
@@ -367,6 +413,18 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
 ]
 
 [[package]]
