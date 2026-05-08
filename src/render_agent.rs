@@ -754,9 +754,14 @@ fn generate_lint_derived_content(
     preamble: &str,
     postamble: &str,
 ) -> usize {
-    use std::collections::BTreeMap as Map;
+    use std::collections::{BTreeMap as Map, BTreeSet as Set};
 
     let mut count = 0;
+
+    // Track slugs we wrote this render so we can sweep orphans afterwards.
+    // Without this, files written for a previous mockspace.toml configuration
+    // (e.g. before a scope was renamed or removed) persist on disk forever.
+    let mut active_slugs: Set<String> = Set::new();
 
     // Collect forbidden-imports rules grouped by scope
     let mut scope_rules: Map<String, Vec<(String, String)>> = Map::new();
@@ -822,6 +827,7 @@ fn generate_lint_derived_content(
 
         // Generate a slug for the filename
         let slug = scope.replace('*', "star").replace(',', "-").replace(' ', "");
+        active_slugs.insert(slug.clone());
 
         // --- Agent Rule ---
         let mut body = String::new();
@@ -916,7 +922,42 @@ fn generate_lint_derived_content(
         count += 2;
     }
 
+    // Sweep orphan rendered files. When a scope is removed from
+    // mockspace.toml (e.g. after a crate rename), the previously-rendered
+    // lint-forbidden-<oldslug>.* files persist on disk because the render
+    // pipeline is additive. Walk the four target directories, detect
+    // files whose slug is no longer in active_slugs, delete them.
+    sweep_orphan_lint_files(claude_rules_dir, ".md", &active_slugs);
+    sweep_orphan_lint_files(copilot_instructions_dir, ".instructions.md", &active_slugs);
+    sweep_orphan_lint_files(claude_hooks_dir, ".sh", &active_slugs);
+    sweep_orphan_lint_files(copilot_hooks_dir, ".sh", &active_slugs);
+
     count
+}
+
+/// Delete any file in `dir` whose name matches `lint-forbidden-<slug><suffix>`
+/// where the slug is not in `active`. Conservative: only touches files with
+/// the exact `lint-forbidden-` prefix and the given suffix.
+fn sweep_orphan_lint_files(
+    dir: &Path,
+    suffix: &str,
+    active: &std::collections::BTreeSet<String>,
+) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        let Some(rest) = name.strip_prefix("lint-forbidden-") else { continue };
+        let Some(slug) = rest.strip_suffix(suffix) else { continue };
+        if active.contains(slug) { continue; }
+        let _ = fs::remove_file(entry.path());
+        eprintln!("  removed orphan: {}", entry.path().display());
+    }
 }
 
 /// Generate all builtin agent templates (rules, skills, preamble, postamble).
