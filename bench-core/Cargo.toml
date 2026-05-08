@@ -1,0 +1,19 @@
+[package]
+name = "mockspace-bench-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Canonical bench framework primitives for mockspace consumers"
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+readme = "README.md"
+keywords = ["benchmarking", "performance", "mockspace"]
+categories = ["development-tools", "development-tools::profiling"]
+
+[features]
+default = []
+std = []
+
+[lib]
+name = "mockspace_bench_core"
+path = "src/lib.rs"

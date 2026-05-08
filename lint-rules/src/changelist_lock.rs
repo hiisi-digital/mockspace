@@ -2,8 +2,8 @@
 //! and block source edits after src CL is locked.
 //!
 //! Phase enforcement:
-//! - Doc templates blocked if doc CL is locked (SRC-PLAN, SRC, DONE).
-//! - Source files blocked if src CL is locked (DONE).
+//! - Doc templates blocked if doc CL is locked (DRAFT, IMPL, CLOSED).
+//! - Source files blocked if src CL is locked (CLOSED).
 //!
 //! SHAME.md.tmpl is always exempt — it is the escape valve for
 //! documenting types discovered during changelist execution.
@@ -96,7 +96,7 @@ impl CrossCrateLint for ChangelistLock {
                     LINT_NAME,
                     format!(
                         "source file `{file}` ({source}) changed while src changelist \
-                         `{cl_name}` is locked (phase DONE). \
+                         `{cl_name}` is locked (phase CLOSED). \
                          Round is complete. Start a new design round to make \
                          further changes.",
                     ),

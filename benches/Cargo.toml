@@ -1,0 +1,13 @@
+[package]
+name = "self-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "self-bench"
+path = "src/main.rs"
+
+[dependencies]
+mockspace-bench-core = { path = "../bench-core", features = ["std"] }
+mockspace-bench-harness = { path = "../bench-harness" }

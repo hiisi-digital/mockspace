@@ -1,0 +1,22 @@
+[package]
+name = "mockspace-bench-macro"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Proc macro for mockspace bench-harness variant FFI dispatch"
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+readme = "README.md"
+
+[lib]
+name = "mockspace_bench_macro"
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
+
+[dev-dependencies]
+mockspace-bench-core = { path = "../bench-core", features = ["std"] }

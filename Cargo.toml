@@ -1,5 +1,14 @@
 [workspace]
-members = [".", "lint-rules"]
+members = [
+    ".",
+    "lint-rules",
+    "bench-core",
+    "bench-harness",
+    "bench-macro",
+    "benches",
+    "benches/variants/multiply-xor",
+    "benches/variants/bitwise-rotate",
+]
 
 [package]
 name = "mockspace"
@@ -7,6 +16,11 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 description = "Design-round workflow engine for mock workspaces"
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+readme = "README.md"
+categories = ["development-tools", "development-tools::build-utils"]
+keywords = ["design-rounds", "lints", "workflow", "mockspace"]
 
 [[bin]]
 name = "mockspace"
@@ -22,3 +36,9 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+# Release profile applies workspace-wide.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

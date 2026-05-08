@@ -4,6 +4,7 @@ use std::process::{Command, ExitCode};
 
 use mockspace_lint_rules::{Lint, CrossCrateLint};
 
+use crate::bench;
 use crate::bootstrap;
 use crate::config::Config;
 use crate::design_round;
@@ -139,7 +140,7 @@ fn run_inner(
                 }
                 return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
             }
-            "lock" | "deprecate" | "unlock" | "close" | "migrate" => {
+            "lock" | "deprecate" | "unlock" | "close" | "archive" | "migrate" => {
                 let subcmd_opts = design_round::SubcmdOpts {
                     auto_commit: args.iter().any(|a| a == "--auto-commit"),
                 };
@@ -148,9 +149,14 @@ fn run_inner(
                     "deprecate" => design_round::cmd_deprecate(&cfg, &subcmd_opts),
                     "unlock" => design_round::cmd_unlock(&cfg, &subcmd_opts),
                     "close" => design_round::cmd_close(&cfg, &subcmd_opts),
+                    "archive" => design_round::cmd_archive(&cfg, &subcmd_opts),
                     "migrate" => design_round::cmd_migrate(&cfg, &subcmd_opts),
                     _ => unreachable!(),
                 };
+            }
+            "bench" => {
+                let bench_args: Vec<&str> = positional_args.iter().skip(1).copied().collect();
+                return bench::cmd(&cfg, &bench_args);
             }
             _ => {} // Not a subcommand, continue to flags.
         }
@@ -862,21 +868,21 @@ fn cmd_check(cfg: &Config) -> ExitCode {
             print_row(
                 "advance",
                 CheckResult::Pass,
-                "`cargo mock lock` when doc edits done (DOC → SRC-PLAN)",
+                "`cargo mock lock` when doc edits done (DOC → DRAFT)",
             );
         }
         Phase::SrcPlan => {
             print_row(
                 "advance",
                 CheckResult::Pass,
-                "author a src changelist to enter SRC phase",
+                "author a src changelist to enter IMPL phase",
             );
         }
         Phase::Src => {
             let msg = if any_fail {
-                "SRC impl in progress — build failing; fix before `cargo mock lock`"
+                "IMPL in progress — build failing; fix before `cargo mock lock`"
             } else {
-                "SRC impl ready for `cargo mock lock` (SRC → DONE) once CL is fulfilled"
+                "IMPL ready for `cargo mock lock` (IMPL → CLOSED) once CL is fulfilled"
             };
             print_row(
                 "advance",
