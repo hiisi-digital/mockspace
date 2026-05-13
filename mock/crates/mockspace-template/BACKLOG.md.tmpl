@@ -1,0 +1,87 @@
+# BACKLOG — mockspace-template
+
+Future work tracked for mockspace-template. Each entry has a trigger condition and a sketch of the change. Items here are NOT in-flight; they wait for the trigger.
+
+## Custom filters and functions
+
+The minijinja-wrapped `TemplateEnv` exposes no custom filters in v1. As concrete needs emerge, register the following:
+
+### `mockspace_field(name)` — typed lookup with informative error
+
+Trigger: when a template references a field that consumers commonly typo (project_name vs project-name etc.).
+
+Sketch: a function-style template helper that fetches a field by name and emits a render-time error with the available field list if the name is wrong. Stricter than minijinja's default error which just says "undefined".
+
+### `repo_root` — platform-aware path resolution
+
+Trigger: when templates need to emit absolute paths that must work across both per-repo (when mockspace bootstraps inside a consumer repo) and workspace-level (when homma runs across multiple repos) contexts.
+
+Sketch: a function returning the appropriate `repo_root` for the current render call; the consumer registers the resolver at TemplateEnv construction.
+
+### `format_byline()` — well-formed Co-Authored-By trailers
+
+Trigger: when the workspace's byline policy (see `~/Dev/clause-dev/.claude/rules/ai-agent-framing.md`) needs templated emission. Deferred until commit-message templating becomes a thing.
+
+Sketch: takes an agent identifier and emits `Co-Authored-By: <name> <email>` with correct formatting.
+
+## Additional Platform impls
+
+Built-in platforms in v1 are `ClaudePlatform` and `CopilotPlatform`. New platforms ship as new impls when their format stabilizes.
+
+### CursorPlatform
+
+Trigger: Cursor's rule-file format reaches stable conventions (paths under `.cursor/rules/`, frontmatter shape, hook surface).
+
+Sketch: matches the Claude/Copilot pattern; lives in this crate behind a `cursor` cargo feature flag.
+
+### CodeiumPlatform / AiderPlatform / other agent tools
+
+Same shape as above; each lands when the target tool's format is stable enough to support.
+
+## minijinja extension points
+
+### Template include resolution
+
+minijinja's `{% include %}` resolves through the `Environment`'s loader. Today consumers register templates by name explicitly. A filesystem-loader extension would let templates `{% include "shared/header.md.tmpl" %}` against a search path.
+
+Trigger: when multiple templates need to share boilerplate (the workspace shared-fragment pattern would benefit).
+
+Sketch: wrap minijinja's `Source` API; expose a `TemplateEnv::add_source_dir(path)` that registers a search path.
+
+### Render-time data fetching (HTTP / file system)
+
+Trigger: when workspace docs need to embed live data (current commit SHA, repo list from forge API, etc.).
+
+Sketch: register custom functions that perform IO; gated behind a `live-data` cargo feature flag so the default render path stays pure.
+
+## Live-port readiness criteria
+
+Conditions for porting mock-crate code into mockspace root `src/`:
+
+1. At least one external consumer (homma) has exercised the full API surface end-to-end.
+2. Platform trait signature has not changed across two consumer cycles (i.e. one revision of the trait and one period of stable usage post-revision).
+3. minijinja choice not displaced by a better template engine in the Rust ecosystem.
+4. `IntoMockspaceConfig` trait usage validated by at least one non-mockspace-toml config schema (homma.toml is the canonical first one).
+
+When these hold, a follow-up round ports the mock-crate `src/` into mockspace root, deletes the internal `src/render_*.rs` modules, and publishes mockspace-template to crates.io as a real consumer-facing crate.
+
+## Substrate adoption (future)
+
+When this crate ports into mockspace root and eventually consumes the workspace substrate:
+
+- `String` → `hilavitkutin_str::Str` for non-static strings
+- `PathBuf` → reconsider; might stay std `PathBuf` (filesystem ops boundary) or move to a workspace path primitive if one emerges
+- `Option<T>` → `notko::Maybe<T>`
+- `Result<T, E>` → `notko::Outcome<T, E>` (or `notko::Just<T>` for infallible hot paths)
+- `Vec<T>` in public APIs → `impl IntoIterator<Item = T>` or `&[T]`
+- Raw numeric primitives (none in current public surface, but watch for `usize` counts) → `arvo::USize` / `arvo::Cap<N>` / `arvo::UFixed<I, F, S>`
+
+This adoption is deliberately deferred. The meta-tool layer doesn't need substrate types for v1; introducing them now would entangle mockspace's bootstrap with the substrate's evolution, which is exactly the entanglement the workspace structure avoids.
+
+## Test coverage
+
+v1 ships with smoke tests covering basic render + Platform impls. Future:
+
+- Property tests: random valid contexts render successfully across both ClaudePlatform and CopilotPlatform without panic.
+- Snapshot tests: golden-file rendering of known input templates produces stable output bytes.
+- Round-trip tests: rendered output parses correctly as the expected format (TOML/JSON/YAML/Markdown).

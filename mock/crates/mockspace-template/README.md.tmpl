@@ -1,0 +1,39 @@
+# mockspace-template
+
+Reusable template engine and agent-file generator. Wraps `minijinja` for full Jinja2 syntax; provides a `Platform` trait abstracting Claude / Copilot differences in output path, frontmatter format, and hook-helper injection. Renders templates against any `serde::Serialize` context.
+
+Consumed by the mockspace binary, by homma, and by any workspace tool that needs templated agent-file emission or generic Jinja2 rendering.
+
+## Usage shape
+
+Construct a `TemplateEnv`, register templates by name, then either render a single template or walk a directory tree:
+
+```rust
+use mockspace_template::{TemplateEnv, AgentRenderer, ClaudePlatform};
+use std::path::PathBuf;
+
+// 1. Build the environment.
+let mut env = TemplateEnv::new();
+env.add_template("rules/example", include_str!("templates/rules/example.md.tmpl"))?;
+
+// 2. Pick a platform.
+let claude = ClaudePlatform;
+
+// 3. Walk a source tree and emit per-platform output.
+let renderer = AgentRenderer::new(
+    &env,
+    claude,
+    PathBuf::from("templates"),
+    PathBuf::from("."),
+);
+let report = renderer.render_all(&context)?;
+```
+
+For non-agent template rendering (workspace docs, free-standing files), use `walk_template_tree` instead of `AgentRenderer`. The tree's structure is preserved verbatim with `.tmpl` stripped from filenames.
+
+## See also
+
+- `mock/design_rounds/202605131900_topic.extracted-lib-crates.md` — design round capturing the extraction rationale
+- `DESIGN.md.tmpl` in this directory — full design document
+- `BACKLOG.md.tmpl` in this directory — deferred work tracked
+- `mockspace-config` — sibling crate exposing the canonical Config schema and the `IntoMockspaceConfig` trait consumers implement
