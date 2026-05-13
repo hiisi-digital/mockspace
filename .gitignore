@@ -1,2 +1,6 @@
 /target
-/mock
+/mock/target
+.DS_Store
+*.swp
+*.swo
+*.rs.bk
