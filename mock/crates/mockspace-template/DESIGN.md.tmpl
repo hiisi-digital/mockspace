@@ -1,0 +1,276 @@
+# mockspace-template
+
+Reusable template engine and agent-file generator extracted from mockspace's `src/render_*.rs` modules. Provides Jinja2-syntax template rendering (via `minijinja`) over `serde::Serialize` contexts, plus a `Platform` trait that abstracts the differences between agent surfaces (Claude Code, GitHub Copilot, future tools) so the same template tree renders to multiple platform-specific output destinations.
+
+Consumed by the mockspace binary, by homma, and by any tool that needs to render templates against typed contexts or emit agent integration files.
+
+## What this crate provides
+
+The public surface lives in three layers:
+
+| Layer | Item | Role |
+|---|---|---|
+| Template | `Template` | A single compiled template; rendered against a `serde::Serialize` context. Wraps `minijinja::Template<'_, '_>`. |
+| Template | `TemplateEnv` | Registry of named templates with shared filters and globals. Wraps `minijinja::Environment<'_>`. |
+| Template | `RenderError` | Error type for template parse / render / IO failures. |
+| Platform | `Platform` (trait) | Abstracts agent platform specifics: output path mapping, frontmatter format, hook-helper injection, settings-file emission. |
+| Platform | `ClaudePlatform` | Built-in impl for the Anthropic Claude Code surface (`.claude/rules/`, `paths:` frontmatter, `hookSpecificOutput` JSON). |
+| Platform | `CopilotPlatform` | Built-in impl for the GitHub Copilot CLI surface (`.github/instructions/`, `applyTo:` frontmatter, flat JSON decisions). |
+| Platform | `HookDecl` | Declarative hook description passed to `Platform::settings_file()` so the platform can emit its own settings file shape. |
+| Renderer | `AgentRenderer<'env, P: Platform>` | Walks a source template directory, renders each `.md.tmpl` against a context, emits per-platform output trees. |
+| Renderer | `walk_template_tree(env, src, dst, ctx)` | Generic recursive renderer for non-agent template trees (workspace docs etc.). Preserves source structure with `.tmpl` stripped. |
+| Renderer | `RenderReport` | Per-call summary listing every file written, with sizes and timing for diagnostic output. |
+
+## Template engine — minijinja wrapper
+
+The template engine wraps `minijinja` so consumers get full Jinja2 syntax: `{{ var }}` substitutions, `{% for %}` loops, `{% if %}` conditionals, `{% include %}` partials, and filters (`{{ name | upper }}`).
+
+### Why minijinja over alternatives
+
+- Lighter compiled footprint than `tera` (~100KB vs ~300KB), faster build times.
+- Jinja2-syntax clone by Armin Ronacher (Jinja's original author); battle-tested semantics consumers know from Python.
+- Cleaner internals; `no_std`-friendlier than tera for future substrate adoption.
+- Uses `serde::Serialize` for template context, which decouples the engine from any specific config type.
+
+### Building a Template
+
+A consumer assembles a `TemplateEnv`, registers templates by name, then renders each by name against a context:
+
+```rust
+use mockspace_template::{TemplateEnv, RenderError};
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct Ctx { project_name: String, version: String }
+
+let mut env = TemplateEnv::new();
+env.add_template("readme", "# {{ project_name }} v{{ version }}\n")?;
+
+let ctx = Ctx { project_name: "homma".into(), version: "0.1.0".into() };
+let rendered = env.get_template("readme")?.render(&ctx)?;
+```
+
+### Context model
+
+Any `T: serde::Serialize`. The crate does NOT define a typed context schema; consumers serialize whatever shape they want, and templates reference field paths.
+
+Mockspace passes its `Config` value (typed). Homma passes a value constructed via `IntoMockspaceConfig` from its own typed config. Both produce the same template-visible vocabulary; templates work uniformly across consumer schemas.
+
+### Autoescape policy
+
+**Off by default.** The templates emit Markdown, Rust source, shell scripts, and other plain-text formats. HTML escaping would corrupt these outputs.
+
+Consumers that render HTML templates may enable autoescape per-template via `TemplateEnv::set_auto_escape(...)`; the default keeps text passthrough clean.
+
+### Strict-mode setting
+
+**On.** Undefined variables in templates produce render-time errors, not silent empty strings. Catches typos and missing context fields immediately rather than hiding bugs in rendered output.
+
+### Custom filter / function registrations
+
+Empty in v1. Future additions tracked in `BACKLOG.md.tmpl`.
+
+## Platform trait
+
+The `Platform` trait abstracts agent-platform specifics so the same template tree renders to multiple targets without changing the source `.md.tmpl` files.
+
+```rust
+use std::path::{Path, PathBuf};
+
+pub trait Platform {
+    /// Identifier used in templates and CLI output ("claude", "copilot").
+    fn name(&self) -> &'static str;
+
+    /// Translate a logical name from the source template tree to the
+    /// platform's destination path under repo_root.
+    ///
+    /// Logical names are derived from source paths by stripping `.md.tmpl`.
+    /// Examples:
+    ///   ClaudePlatform: "rules/foo" -> "<repo>/.claude/rules/foo.md"
+    ///   CopilotPlatform: "rules/foo" -> "<repo>/.github/instructions/foo.instructions.md"
+    fn output_path(&self, repo_root: &Path, logical_name: &str) -> PathBuf;
+
+    /// Generate the platform-specific frontmatter for a rule's
+    /// applicability globs. Claude uses `paths:`, Copilot uses `applyTo:`.
+    fn frontmatter(&self, applies_to: &[&str]) -> String;
+
+    /// Generate the platform-specific hook helper snippet to inject at
+    /// `{{ hook_helpers }}` template variable. Different shells per platform
+    /// (Claude: hookSpecificOutput JSON; Copilot: flat JSON / plain text).
+    fn hook_helpers(&self, repo_root: &Path) -> String;
+
+    /// Platform-specific settings file (e.g. settings.json) emission.
+    /// Returns Some((path, contents)) if the platform writes one; None otherwise.
+    fn settings_file(&self, repo_root: &Path, hooks: &[HookDecl]) -> Option<(PathBuf, String)>;
+}
+```
+
+### Why std `Option` / `Result` / `PathBuf` / `String` here
+
+mockspace-template is the meta-tool layer; it does not consume the substrate stack (notko/arvo/hilavitkutin). The workspace's substrate-discipline rules (no bare `Option`/`Result`, no raw numerics, etc.) apply to consumers of the substrate, not to design tools that bootstrap the substrate.
+
+When mockspace-template eventually lands in mockspace's live root (after homma validates the shape), substrate adoption is revisited (see `BACKLOG.md.tmpl`). v1 stays on std types to minimize cross-dependency surface and keep the crate small.
+
+### Adding a new platform
+
+External consumers can implement `Platform` on their own type to add support for Cursor, Codeium, or any future agent tool. Built-in impls (`ClaudePlatform`, `CopilotPlatform`) live in this crate; third-party impls live in the consumer.
+
+## Built-in Platform impls
+
+### ClaudePlatform
+
+Output paths under `<repo_root>/`:
+
+| Logical name | Output path |
+|---|---|
+| `rules/<name>` | `.claude/rules/<name>.md` |
+| `skills/<name>` | `.claude/skills/<name>/SKILL.md` |
+| `hooks/<name>` | `.claude/hooks/<name>.sh` |
+| `agents/<name>` | `.claude/agents/<name>.md` |
+| `instructions` (root) | `.claude/CLAUDE.md` |
+| `settings` | `.claude/settings.json` |
+
+Frontmatter shape:
+
+```yaml
+---
+paths:
+  - "**/*.rs"
+  - "**/*.md"
+---
+```
+
+Hook helpers body: ports the `CLAUDE_HOOK_HELPERS` const from mockspace's `src/render_agent.rs`. Wraps `hookSpecificOutput` JSON with `permissionDecision` / `additionalContext` keys; provides `_extract`, `allow`, `deny`, `context`, `_scope_or_allow` shell helpers.
+
+### CopilotPlatform
+
+Output paths under `<repo_root>/`:
+
+| Logical name | Output path |
+|---|---|
+| `rules/<name>` | `.github/instructions/<name>.instructions.md` |
+| `skills/<name>` | `.github/skills/<name>/SKILL.md` |
+| `hooks/<name>` | `.github/hooks/<name>.sh` |
+| `instructions` (root) | `.github/copilot-instructions.md` |
+| `settings` | `.github/copilot/hooks.json` |
+
+Frontmatter shape:
+
+```yaml
+---
+applyTo: "**/*.rs,**/*.md"
+---
+```
+
+Hook helpers body: ports the `COPILOT_HOOK_HELPERS` const from `src/render_agent.rs`. Flat JSON decisions (`{"permissionDecision":"deny","permissionDecisionReason":"..."}`); plain-text context output; different `_extract` shape for Copilot's stringified `toolArgs` field.
+
+## AgentRenderer — orchestration
+
+The `AgentRenderer` walks a source directory of `.md.tmpl` files and emits the rendered output per the platform's path conventions.
+
+```rust
+use mockspace_template::{TemplateEnv, AgentRenderer, ClaudePlatform, RenderReport};
+
+pub struct AgentRenderer<'env, P: Platform> {
+    env: &'env TemplateEnv,
+    platform: P,
+    src_root: PathBuf,
+    dst_root: PathBuf,
+}
+
+impl<'env, P: Platform> AgentRenderer<'env, P> {
+    pub fn new(
+        env: &'env TemplateEnv,
+        platform: P,
+        src_root: PathBuf,
+        dst_root: PathBuf,
+    ) -> Self;
+
+    /// Walk src_root, render each .md.tmpl, write to platform-derived
+    /// output paths under dst_root. Returns a report of every file written.
+    pub fn render_all<C: serde::Serialize>(
+        &self,
+        ctx: &C,
+    ) -> Result<RenderReport, RenderError>;
+}
+```
+
+The render loop:
+
+1. Walk `src_root` recursively for `*.md.tmpl` files.
+2. For each, derive the logical name: path relative to `src_root`, with `.md.tmpl` stripped, separator normalized to forward-slash.
+3. Look up output path via `self.platform.output_path(&self.dst_root, &logical_name)`.
+4. Compile the template (if not already in `env`) and render against `ctx`.
+5. Ensure destination directory exists; write rendered contents.
+6. Append entry to the `RenderReport`.
+
+The renderer makes no assumption about how many platform passes a consumer wants. To render both Claude and Copilot outputs from one source tree, a consumer constructs two `AgentRenderer` instances with different platforms and runs both.
+
+## Non-agent template rendering — walk_template_tree
+
+For template trees that are not agent-specific (workspace-level docs, project README templates, etc.):
+
+```rust
+use mockspace_template::{TemplateEnv, RenderReport, RenderError, walk_template_tree};
+
+pub fn walk_template_tree<C: serde::Serialize>(
+    env: &TemplateEnv,
+    src_root: &Path,
+    dst_root: &Path,
+    ctx: &C,
+) -> Result<RenderReport, RenderError>;
+```
+
+Same shape as `AgentRenderer::render_all`, but the output path mapping preserves source structure verbatim with `.tmpl` stripped from filenames. No platform-specific path rewriting.
+
+## RenderReport
+
+Returned by both `AgentRenderer::render_all` and `walk_template_tree`. Lists every file written with its source template path, output path, byte count, and render duration. Consumers use it for progress reporting or post-render validation.
+
+```rust
+pub struct RenderReport {
+    pub entries: Vec<RenderedFile>,
+    pub total_bytes: u64,
+    pub total_duration: std::time::Duration,
+}
+
+pub struct RenderedFile {
+    pub source: PathBuf,
+    pub destination: PathBuf,
+    pub bytes_written: u64,
+    pub duration: std::time::Duration,
+}
+```
+
+## What this crate does NOT do
+
+| Concern | Where it lives |
+|---|---|
+| Template authoring tools (interactive scaffolds, etc.) | mockspace binary CLI |
+| TOML config parsing | `mockspace-config` |
+| Git operations | homma (gix-based) |
+| Lint runner | mockspace internals (viola will replace) |
+| Design-round state machine | mockspace internals |
+| Bench harness | `mockspace-bench-core` / `mockspace-bench-harness` / `mockspace-bench-macro` |
+
+## Crate dependencies
+
+- `minijinja` — full Jinja2 template language
+- `serde` + `serde_derive` — context model
+- `std` — `PathBuf`, `fs`, `io::Result`, `time::Duration`
+
+No `notko`, `arvo`, `hilavitkutin`, or other substrate-stack deps. mockspace-template is meta-tool code; substrate adoption is deferred to the live-port round (see BACKLOG).
+
+## Audit trail
+
+Source modules in mockspace's live root that informed this design:
+
+- `src/render_md.rs` — top-level Mustache-like substitution; this crate generalises to full Jinja2 via minijinja.
+- `src/render_agent.rs` — agent-file rendering for Claude+Copilot; this crate extracts the platform-specific bits behind the `Platform` trait.
+- `src/render.rs` — DOT/graph generation; NOT extracted (mockspace-specific).
+- `src/render_design.rs` — DESIGN.md generation; NOT extracted (mockspace-specific).
+
+Design round artifacts:
+
+- Topic: `mock/design_rounds/202605131900_topic.extracted-lib-crates.md` (locked `58fc38a`)
+- Doc CL: `mock/design_rounds/202605131900_changelist.doc.md`
