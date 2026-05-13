@@ -1,0 +1,17 @@
+[package]
+name = "mockspace-template"
+version = "0.1.0"
+edition = "2021"
+description = "Template engine and agent-file generator for mockspace consumers."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+readme = "README.md.tmpl"
+publish = false
+
+[dependencies]
+minijinja = "2"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"

@@ -1,5 +1,6 @@
 /target
 /mock/target
+/mock/Cargo.lock
 .DS_Store
 *.swp
 *.swo
