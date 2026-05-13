@@ -1,0 +1,164 @@
+# mockspace-config
+
+The canonical typed schema for mockspace.toml, extracted from `mockspace/src/config.rs` so external tools can parse and produce mockspace configurations without depending on the mockspace binary or its internal modules (design-round state machine, bench harness, dylib check, etc.).
+
+Also defines `IntoMockspaceConfig`, the trait consumer tools implement on their own typed configs to map their schemas onto mockspace's template-context vocabulary. This is the bridge that lets a single template tree render against multiple consumer config schemas as long as each schema declares its mapping to the canonical Config.
+
+## What this crate provides
+
+| Item | Role |
+|---|---|
+| `Config` | Canonical typed struct; the template-context contract every mockspace template renders against. |
+| `parse_mockspace_toml(path: &Path) -> Result<Config, ConfigError>` | Default entry point for tools that consume mockspace.toml directly. |
+| `IntoMockspaceConfig` (trait) | Consumer schemas implement this to map their typed config onto Config. The trait is the abstraction that makes Config a true contract rather than a private mockspace internal. |
+| `ConfigError` | Error type covering TOML parse failures, missing required fields, mapping errors. |
+| `MappingError` | Sub-error type for `IntoMockspaceConfig::into_mockspace_config()` failures. |
+| `InstallMode` | Enum: `Replace` / `MergeAppend` / `MergePrepend` / `Skip`. |
+| `AttributionConfig` | Agent attribution policy sub-struct. |
+| `MacroStyle` | Domain-specific macro labeling sub-struct. |
+| `CommitStyle` | Commit message conventions sub-struct. |
+| `LintConfig` | Re-export from `mockspace-lint-rules`; per-lint severity overrides. |
+
+## The canonical Config schema
+
+The `Config` struct is the template-context contract. Templates reference field names directly (`{{ project_name }}`, `{{ mock_dir }}`, `{{ crate_prefix }}`). Any consumer producing a Config must populate the template-visible fields; behavioral fields (install modes, ABI version) may be left at defaults when they don't apply.
+
+| Field | Type | Visible to templates | Purpose |
+|---|---|---|---|
+| `mock_dir` | `PathBuf` | yes | Path to the mockspace workspace root (typically `<repo>/mock`). |
+| `crates_dir` | `PathBuf` | yes | Path to the mock workspace's crates directory. |
+| `repo_root` | `PathBuf` | yes | Path to the consumer repo root. |
+| `docs_dir` | `PathBuf` | yes | Path where rendered docs go. |
+| `project_name` | `String` | yes | Display name for the project. |
+| `crate_prefix` | `String` | yes | Common prefix for crates in the project (e.g. `arvo-`). |
+| `proc_macro_crates` | `Vec<String>` | yes | Names of proc-macro crates (lint exemption candidates). |
+| `lint_proc_macro_source` | `bool` | no | Whether source-scanning lints scan proc-macro source. |
+| `module_crates` | `Vec<String>` | yes | Crates that publish as separate modules. |
+| `unprefixed_crates` | `Vec<String>` | yes | Crates that don't carry the common prefix. |
+| `abi_version` | `u32` | no | Dylib lint ABI version. |
+| `nuke_marker` | `String` | no | Sentinel string for nuke-mode operations. |
+| `commit_style` | `CommitStyle` | yes | Commit message conventions. |
+| `install_git_hooks` | `InstallMode` | no | How mockspace-managed git hooks are installed. |
+| `install_cargo_config` | `InstallMode` | no | How `.cargo/config.toml` is installed. |
+| `install_agent_files` | `InstallMode` | no | How `.claude/` and `.github/` agent files are installed. |
+| `attribution` | `AttributionConfig` | yes | Agent attribution policy. |
+| `lint_overrides` | `LintConfig` | no | Per-lint severity overrides. |
+| `domain_kinds` | `BTreeMap<String, String>` | yes | Domain-specific macro labeling. |
+
+The "visible to templates" column distinguishes:
+- **yes**: the field affects template-rendered output. Mapped configs MUST populate this field for templates to work.
+- **no**: behavioral / lint-config / install-mode only. Mapped configs MAY use defaults if the consumer tool doesn't need the behavior.
+
+## parse_mockspace_toml
+
+The default entry point for tools that already speak mockspace.toml:
+
+```rust
+use mockspace_config::{parse_mockspace_toml, Config, ConfigError};
+use std::path::Path;
+
+let cfg: Config = parse_mockspace_toml(Path::new("mockspace.toml"))?;
+```
+
+The function reads the file, deserializes via `serde + toml`, validates required fields are present, and returns a typed `Config`.
+
+`ConfigError` variants cover:
+- File not found
+- TOML parse error (with line/column from the toml crate)
+- Required field missing or wrong type
+- Cross-field validation failure (e.g. `crates_dir` not a subpath of `mock_dir`)
+
+## IntoMockspaceConfig trait
+
+The trait that makes Config a portable contract. Any consumer typed config implements this to produce a Config from their schema.
+
+```rust
+pub trait IntoMockspaceConfig {
+    /// Convert this typed config into a canonical mockspace Config.
+    ///
+    /// Returns MappingError if the source schema lacks information needed
+    /// to populate a required Config field (e.g. mock_dir not derivable
+    /// from the source).
+    fn into_mockspace_config(self) -> Result<Config, MappingError>;
+}
+
+/// Identity impl: a Config is already a Config.
+impl IntoMockspaceConfig for Config {
+    fn into_mockspace_config(self) -> Result<Config, MappingError> {
+        Ok(self)
+    }
+}
+```
+
+### Why a trait, not a serde-driven path-rewrite mechanism
+
+Trait-based mapping is compile-time-checked: a consumer's typed config evolves in lockstep with their Rust types, and the IDE catches missing fields at the trait-impl site. Serde-driven path-rewrite would be data-shaped (a `.toml` mapping file) which is more flexible but accepts no compile-time guarantee that the mapping is complete. For the workspace's "one tool, one schema" usage pattern, compile-time correctness wins; data-driven mapping has no concrete consumer driving it.
+
+### Example: a consumer impl
+
+This is the forward-reference shape homma will implement once `mockspace-config` ships:
+
+```rust
+use mockspace_config::{Config, IntoMockspaceConfig, MappingError, CommitStyle};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct HommaConfig {
+    pub workspace: WorkspaceSection,
+    // ... other homma-specific sections
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct WorkspaceSection {
+    pub root: PathBuf,
+    pub name: String,
+}
+
+impl IntoMockspaceConfig for HommaConfig {
+    fn into_mockspace_config(self) -> Result<Config, MappingError> {
+        Ok(Config {
+            mock_dir: self.workspace.root.join("mock"),
+            crates_dir: self.workspace.root.join("mock/crates"),
+            repo_root: self.workspace.root.clone(),
+            docs_dir: self.workspace.root.join("docs"),
+            project_name: self.workspace.name,
+            crate_prefix: String::new(),
+            commit_style: CommitStyle::default(),
+            // ... defaults for behavioral fields homma doesn't use
+            ..Config::default()
+        })
+    }
+}
+```
+
+### When a mapping is impossible
+
+If a consumer's schema genuinely lacks the information to produce a valid Config (e.g. no project_name field), the impl returns `MappingError::MissingField { name }`. The consumer then knows their schema needs extending, or the template they want to render is incompatible with their config shape.
+
+## What this crate does NOT do
+
+| Concern | Where it lives |
+|---|---|
+| Non-mockspace TOML schema (homma.toml etc.) | The consumer crate (homma in this case) |
+| Template engine | `mockspace-template` |
+| Mockspace-binary-specific state (design rounds, bench harness, dylib check) | mockspace internals |
+| Configuration validation beyond basic schema check | future work tracked in `BACKLOG.md.tmpl` |
+
+## Crate dependencies
+
+- `serde` + `serde_derive` — struct deserialization
+- `toml` — TOML parsing
+- `mockspace-lint-rules` — `LintConfig` re-export (already a workspace crate)
+- `std` — `PathBuf`, `BTreeMap`, `io::Result`
+
+No `notko` / `arvo` / `hilavitkutin`. (Same rationale as mockspace-template; substrate adoption deferred to live-port.)
+
+## Audit trail
+
+- `mockspace/src/config.rs` — current canonical Config implementation (~674 lines); this crate ports a stripped, decoupled version preserving the field shape.
+- `mockspace/src/parse.rs` — TOML parsing helpers; relevant bits port into this crate's `parse_mockspace_toml`.
+
+Design round artifacts:
+
+- Topic: `mock/design_rounds/202605131900_topic.extracted-lib-crates.md` (locked `58fc38a`)
+- Doc CL: `mock/design_rounds/202605131900_changelist.doc.md`

@@ -1,0 +1,87 @@
+# BACKLOG — mockspace-config
+
+Future work tracked for mockspace-config. Each entry has a trigger condition and a sketch of the change.
+
+## Schema evolution
+
+Once mockspace-config publishes to crates.io, schema changes follow semver discipline. Until then (pre-1.0 / pre-publish), the schema can move freely.
+
+### Versioned schema namespace
+
+Trigger: when the mockspace.toml schema needs incompatible changes after first publish.
+
+Sketch: introduce a `[schema] version = "2"` field; older mockspace.toml files (without the field, or with `version = "1"`) parse via a `Config::from_v1_toml()` path that maps the old shape to the new Config.
+
+## Validation extensions
+
+`Config::validate()` returning a structured report of warning/error conditions. The current `parse_mockspace_toml` is parse-and-go; deeper validation deferred.
+
+Validation checks to add:
+
+- `crates_dir` is a subpath of `mock_dir`
+- `repo_root` is an ancestor of `mock_dir`
+- `docs_dir` exists or is creatable
+- `proc_macro_crates` and `module_crates` overlap is empty (a crate can't be both)
+- `unprefixed_crates` matches actual crate names in `crates_dir`
+- `lint_overrides` references only known lint names (cross-check with `mockspace-lint-rules`)
+- `attribution` policy makes sense given `commit_style` (e.g. byline policy compatible with auto-detection)
+
+Trigger: when a consumer reports a confusing mockspace.toml configuration that produces a runtime error rather than a parse-time validation error.
+
+## Live-port readiness criteria
+
+Same shape as mockspace-template's:
+
+1. At least one external consumer (homma) has exercised `IntoMockspaceConfig` end-to-end.
+2. Field-by-field Config schema validated against current mockspace internal Config drift.
+3. No new fields needed in Config that the mock-crate doesn't already model.
+
+When these hold, a follow-up round ports the mock-crate `src/` into mockspace root, deletes the internal `src/config.rs` definitions of these types, and publishes mockspace-config to crates.io.
+
+## Substrate adoption (future)
+
+When this crate ports into mockspace root and eventually consumes the workspace substrate:
+
+- `String` → `hilavitkutin_str::Str`
+- `PathBuf` → reconsider; filesystem-boundary type
+- `Option<T>` → `notko::Maybe<T>` (the current `Config` struct has no `Option` fields but error types may use them)
+- `Result<T, E>` → `notko::Outcome<T, E>`
+- `Vec<String>` in public APIs (e.g. `proc_macro_crates`) → consider `Box<[Str]>` or workspace collection primitives
+- `u32` for `abi_version` → `arvo::UFixed<32, 0, Strategy>`
+- `bool` for `lint_proc_macro_source` → `arvo::Bool`
+
+Deferred for the same reason mockspace-template defers: meta-tool layer; substrate adoption entangles bootstrap with substrate evolution.
+
+## Mapping-failure ergonomics
+
+`MappingError::MissingField { name }` is the v1 shape. Future error variants:
+
+### `MappingError::TypeMismatch { field, expected, found }`
+
+When a consumer's typed config has a field with the right name but wrong type to fit Config (e.g. `String` where `Vec<String>` expected).
+
+### `MappingError::ConstraintViolation { rule, details }`
+
+When the consumer's mapping produces a Config that fails one of the validation checks listed above. Lets the consumer's mapping impl surface meaningful "your config can't produce a valid mockspace Config because X" messages.
+
+Trigger: when a real consumer's impl hits an error that the current shape can't represent helpfully.
+
+## TOML schema documentation
+
+A generated `MOCKSPACE_TOML.md` reference doc, listing every field, default value, accepted shape, and example. Generated from the typed `Config` struct via a derive macro (`#[derive(SchemaDoc)]`) or a runtime serializer.
+
+Trigger: when contributors keep needing the field list and the source code is the only place that has it.
+
+## Test coverage
+
+v1 ships with smoke tests:
+
+- Parse a representative mockspace.toml from one of the workspace repos
+- Identity round-trip: `Config::default()` → serialize → parse → equal
+- IntoMockspaceConfig identity: `cfg.into_mockspace_config()? == cfg`
+
+Future:
+
+- Fuzz-test parse_mockspace_toml against random TOML inputs (should never panic; should fail gracefully).
+- Property test: mapping a synthesized consumer config through IntoMockspaceConfig produces a Config that round-trips to identical TOML.
+- Snapshot tests: parsing each workspace repo's actual mockspace.toml produces a deterministic Config dump.
