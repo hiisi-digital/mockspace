@@ -1,2 +1,7 @@
 /target
-/mock
+/mock/target
+/mock/Cargo.lock
+.DS_Store
+*.swp
+*.swo
+*.rs.bk
