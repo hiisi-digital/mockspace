@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mockspace-template",
+    "crates/mockspace-config",
+]
+
+# Release profile mirrors the parent workspace.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
