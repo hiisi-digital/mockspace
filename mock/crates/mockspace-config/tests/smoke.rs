@@ -1,95 +1,346 @@
-//! Smoke tests for mockspace.toml parsing + IntoMockspaceConfig.
+//! v2 mockspace.toml parsing smoke tests (spec §46).
 
 use mockspace_config::{
-    parse_mockspace_toml_str, Config, ConfigError, InstallMode, IntoMockspaceConfig,
-    MappingError,
+    parse_mockspace_toml_str, BuiltInLiteral, ConfigError, ForgeKind, LanguageEntry,
+    MergeStyle, OnDirtyState, Severity,
 };
 
 #[test]
-fn parse_minimal_toml() {
+fn parse_minimal_v2() {
     let toml = r#"
-        project_name = "demo"
-        crate_prefix = "demo-"
+        [mockspace]
+        version = "1.0"
     "#;
     let cfg = parse_mockspace_toml_str(toml).unwrap();
-    assert_eq!(cfg.project_name, "demo");
-    assert_eq!(cfg.crate_prefix, "demo-");
-    assert_eq!(cfg.abi_version, 1);
+    assert_eq!(cfg.mockspace.version, "1.0");
+    assert_eq!(cfg.mockspace.default_profile, "dev");
+    assert!(cfg.mockspace.default_one_active_round);
+    assert_eq!(cfg.mockspace.verifier_timeout_seconds, 30);
+    assert!(cfg.mockspace.mock_bin_path.is_none());
+    assert!(cfg.refs.mirror_ext_refs);
+    assert!(!cfg.refs.push_mirrors);
+    assert!(cfg.refs.fetch_on_reference);
+    assert!(cfg.refs.security.require_https);
 }
 
 #[test]
-fn parse_with_install_modes() {
-    let toml = r#"
-        project_name = "demo"
-        install_git_hooks = "merge-append"
-        install_cargo_config = "skip"
-    "#;
+fn parse_full_spec_example() {
+    // Reduced from the §46 schema example. Covers every section.
+    // Top-level root keys (layers, primary_*) must precede any [section]
+    // headers per TOML spec.
+    let toml = r##"
+layers = ["L0", "L1", "L2", "L3"]
+primary_domain_macro = "strategy_marker_required"
+primary_domain_label = "Strategy axis"
+primary_host = "self"
+
+[mockspace]
+version = "1.0"
+default_profile = "dev"
+default_one_active_round = true
+verifier_timeout_seconds = 30
+mock_bin_path = "target/release/mock"
+
+[refs]
+mirror_ext_refs = true
+push_mirrors = false
+fetch_on_reference = true
+task_archive_threshold_days = 90
+round_archive_threshold_days = 365
+
+[refs.security]
+domain_allowlist = ["github.com", "codeberg.org"]
+require_https = true
+
+[hosts.self]
+url = "https://codeberg.org/orgrinrt/mockspace.git"
+type = "github"
+token_env = "MOCK_FORGE_TOKEN"
+auto_open_pr = true
+auto_push_body = true
+auto_merge_on_done = false
+merge_style = "squash"
+default_base_branch = "dev"
+pr_body_managed_section_delimiter_start = "<!-- mockspace-managed -->"
+pr_body_managed_section_delimiter_end = "<!-- /mockspace-managed -->"
+api_retry_attempts = 3
+api_retry_backoff_seconds = [1, 4, 16]
+
+[hosts.mockspace-rs]
+url = "https://codeberg.org/mockspace/mockspace-rs.git"
+
+[hosts.arvo]
+url = "https://github.com/orgrinrt/arvo.git"
+forge_url_template = "https://github.com/orgrinrt/arvo/tree/{ref}"
+
+[imports]
+import = [
+  "mock://hook/on_custom_doctor.sh",
+  "mock://@/export/profile-dev",
+]
+
+[imports.ext.mockspace-rs]
+include = ["hooks/**/*.rs", "lints/**/*.rs"]
+runner = "mock://ext/mockspace-rs/export/runner-rs"
+
+[lint-crates.mockspace-hilavitkutin-stack-lints]
+git = "https://codeberg.org/orgrinrt/mockspace-hilavitkutin-stack-lints.git"
+rev = "abc123"
+
+[lints.no-bare-numeric]
+commit = "error"
+build = "warn"
+push = "error"
+
+[lints.file-size]
+commit = "warn"
+build = "off"
+push = "error"
+max_lines = 500
+
+[lints.forbidden-imports.scope.arvo-strategy]
+commit = "error"
+forbidden = ["arvo-storage", "arvo-graph"]
+reason = "L0 cannot depend on L1+"
+
+[primitive-introductions]
+arvo-bits = ["bit-storage"]
+arvo = ["numeric-fixed-point", "boolean", "platform-pointer"]
+
+[languages]
+rust = "built-in"
+typescript = { git = "https://codeberg.org/mockspace/mockspace-ts.git", rev = "abc123" }
+
+[profile.dev]
+on_dirty_state = "prompt"
+
+[profile.ci]
+on_dirty_state = "refuse"
+
+[profile.auto]
+on_dirty_state = "auto"
+
+[crate_colors.arvo-bits]
+fg = "#ffffff"
+bg = "#3f51b5"
+
+[domain_kinds.numeric]
+glyph = "n"
+label = "Numeric"
+
+[known_macros.strategy_marker_required]
+description = "Every public numeric type carries a Strategy marker."
+usage = "S: Strategy = Hot"
+
+layers = ["L0", "L1", "L2", "L3"]
+primary_domain_macro = "strategy_marker_required"
+primary_domain_label = "Strategy axis"
+
+[transparency]
+staleness_threshold_days = 90
+
+[undo]
+keep_entries = 50
+keep_days = 30
+"##;
+
     let cfg = parse_mockspace_toml_str(toml).unwrap();
-    assert_eq!(cfg.install_git_hooks, InstallMode::MergeAppend);
-    assert_eq!(cfg.install_cargo_config, InstallMode::Skip);
+
+    // [mockspace]
+    assert_eq!(cfg.mockspace.version, "1.0");
+    assert_eq!(
+        cfg.mockspace.mock_bin_path.as_deref(),
+        Some(std::path::Path::new("target/release/mock"))
+    );
+
+    // [refs]
+    assert_eq!(cfg.refs.task_archive_threshold_days, 90);
+    assert_eq!(
+        cfg.refs.security.domain_allowlist,
+        vec!["github.com", "codeberg.org"]
+    );
+
+    // [hosts.*] + primary host
+    assert_eq!(cfg.primary_host.as_deref(), Some("self"));
+    assert_eq!(cfg.hosts.len(), 3);
+    let primary = &cfg.hosts[cfg.primary_host.as_ref().unwrap()];
+    assert_eq!(primary.kind, Some(ForgeKind::Github));
+    assert_eq!(primary.merge_style, Some(MergeStyle::Squash));
+    assert_eq!(primary.api_retry_backoff_seconds, Some(vec![1, 4, 16]));
+    assert_eq!(primary.token_env.as_deref(), Some("MOCK_FORGE_TOKEN"));
+
+    // Secondary hosts have just the import-shape fields.
+    assert_eq!(
+        cfg.hosts["arvo"].forge_url_template.as_deref(),
+        Some("https://github.com/orgrinrt/arvo/tree/{ref}")
+    );
+    assert!(cfg.hosts["arvo"].kind.is_none());
+    assert!(cfg.hosts["mockspace-rs"].token_env.is_none());
+
+    // [imports]
+    assert_eq!(cfg.imports.import.len(), 2);
+    assert_eq!(cfg.imports.ext["mockspace-rs"].include.len(), 2);
+
+    // [lint-crates]
+    assert_eq!(cfg.lint_crates["mockspace-hilavitkutin-stack-lints"].rev, "abc123");
+
+    // [lints.*]
+    let bare = &cfg.lints["no-bare-numeric"];
+    assert_eq!(bare.commit, Some(Severity::Error));
+    assert_eq!(bare.build, Some(Severity::Warn));
+    assert_eq!(bare.push, Some(Severity::Error));
+    let file_size = &cfg.lints["file-size"];
+    assert_eq!(file_size.build, Some(Severity::Off));
+    assert!(file_size.extras.contains_key("max_lines"));
+    let scoped = &cfg.lints["forbidden-imports"].scope["arvo-strategy"];
+    assert_eq!(scoped.commit, Some(Severity::Error));
+    assert!(scoped.extras.contains_key("forbidden"));
+
+    // [primitive-introductions]
+    assert_eq!(cfg.primitive_introductions["arvo-bits"], vec!["bit-storage"]);
+
+    // [languages]
+    assert!(matches!(
+        cfg.languages["rust"],
+        LanguageEntry::BuiltIn(BuiltInLiteral::BuiltIn)
+    ));
+    assert!(matches!(cfg.languages["typescript"], LanguageEntry::Host(_)));
+
+    // [profile.*]
+    assert_eq!(cfg.profile["dev"].on_dirty_state, Some(OnDirtyState::Prompt));
+    assert_eq!(cfg.profile["ci"].on_dirty_state, Some(OnDirtyState::Refuse));
+    assert_eq!(cfg.profile["auto"].on_dirty_state, Some(OnDirtyState::Auto));
+
+    // Doc-gen metadata
+    assert_eq!(cfg.crate_colors["arvo-bits"].fg.as_deref(), Some("#ffffff"));
+    assert_eq!(cfg.domain_kinds["numeric"].glyph.as_deref(), Some("n"));
+    assert_eq!(cfg.layers, vec!["L0", "L1", "L2", "L3"]);
+    assert_eq!(cfg.primary_domain_label.as_deref(), Some("Strategy axis"));
+
+    // [transparency]
+    assert_eq!(cfg.transparency.staleness_threshold_days, Some(90));
+    assert!(cfg.transparency.log_uri.is_none());
+
+    // [undo]
+    assert_eq!(cfg.undo.keep_entries, 50);
 }
 
 #[test]
-fn parse_with_lint_overrides() {
+fn roundtrip_preserves_values() {
     let toml = r#"
-        project_name = "demo"
-        [lint_overrides]
-        no-bare-numeric = "error"
-        no-alloc = "warn"
-    "#;
-    let cfg = parse_mockspace_toml_str(toml).unwrap();
-    assert_eq!(cfg.lint_overrides.get("no-bare-numeric"), Some(&"error".to_string()));
-    assert_eq!(cfg.lint_overrides.get("no-alloc"), Some(&"warn".to_string()));
+primary_host = "origin"
+
+[mockspace]
+version = "1.0"
+mock_bin_path = "target/release/mock"
+
+[hosts.origin]
+url = "https://codeberg.org/example/repo.git"
+type = "forgejo"
+token_env = "CB_TOKEN"
+merge_style = "merge"
+
+[lints.no-bare-numeric]
+commit = "error"
+"#;
+    let parsed = parse_mockspace_toml_str(toml).unwrap();
+    let serialised = toml::to_string(&parsed).unwrap();
+    let reparsed = parse_mockspace_toml_str(&serialised).unwrap();
+    assert_eq!(parsed, reparsed);
 }
 
 #[test]
-fn parse_rejects_invalid_install_mode() {
+fn rejects_empty_version_string() {
     let toml = r#"
-        project_name = "demo"
-        install_git_hooks = "frobnicate"
+        [mockspace]
+        version = ""
+    "#;
+    let err = parse_mockspace_toml_str(toml).unwrap_err();
+    match err {
+        ConfigError::Validation { rule, .. } => assert_eq!(rule, "mockspace.version"),
+        other => panic!("expected validation error, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_unsupported_major_version() {
+    let toml = r#"
+        [mockspace]
+        version = "99.0"
+    "#;
+    let err = parse_mockspace_toml_str(toml).unwrap_err();
+    match err {
+        ConfigError::Validation { rule, details } => {
+            assert_eq!(rule, "mockspace.version");
+            assert!(details.contains("99"), "details should mention major: {details}");
+        },
+        other => panic!("expected validation error, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_invalid_severity() {
+    let toml = r#"
+        [mockspace]
+        version = "1.0"
+        [lints.foo]
+        commit = "frobnicate"
     "#;
     let err = parse_mockspace_toml_str(toml).unwrap_err();
     assert!(matches!(err, ConfigError::Parse(_)));
 }
 
 #[test]
-fn config_identity_into_mockspace_config() {
-    let cfg = Config {
-        project_name: "demo".into(),
-        ..Config::default()
-    };
-    let out = cfg.clone().into_mockspace_config().unwrap();
-    assert_eq!(out.project_name, "demo");
-    assert_eq!(out.abi_version, cfg.abi_version);
+fn rejects_invalid_forge_kind() {
+    let toml = r#"
+        [mockspace]
+        version = "1.0"
+        [hosts.origin]
+        url = "https://example.com/x.git"
+        type = "bitbucket"
+    "#;
+    let err = parse_mockspace_toml_str(toml).unwrap_err();
+    assert!(matches!(err, ConfigError::Parse(_)));
 }
 
 #[test]
-fn consumer_impl_can_map_to_config() {
-    struct FakeConsumer {
-        name: String,
-    }
+fn rejects_invalid_merge_style() {
+    let toml = r#"
+        [mockspace]
+        version = "1.0"
+        [hosts.origin]
+        url = "https://example.com/x.git"
+        merge_style = "fast-forward-only"
+    "#;
+    let err = parse_mockspace_toml_str(toml).unwrap_err();
+    assert!(matches!(err, ConfigError::Parse(_)));
+}
 
-    impl IntoMockspaceConfig for FakeConsumer {
-        fn into_mockspace_config(self) -> Result<Config, MappingError> {
-            if self.name.is_empty() {
-                return Err(MappingError::MissingField { name: "name" });
-            }
-            Ok(Config {
-                project_name: self.name,
-                ..Config::default()
-            })
-        }
-    }
+#[test]
+fn rejects_invalid_dirty_state() {
+    let toml = r#"
+        [mockspace]
+        version = "1.0"
+        [profile.dev]
+        on_dirty_state = "explode"
+    "#;
+    let err = parse_mockspace_toml_str(toml).unwrap_err();
+    assert!(matches!(err, ConfigError::Parse(_)));
+}
 
-    let out = FakeConsumer {
-        name: "homma".into(),
-    }
-    .into_mockspace_config()
-    .unwrap();
-    assert_eq!(out.project_name, "homma");
+#[test]
+fn extras_capture_unknown_lint_keys() {
+    let toml = r#"
+[mockspace]
+version = "1.0"
 
-    let err = FakeConsumer { name: String::new() }
-        .into_mockspace_config()
-        .unwrap_err();
-    assert!(matches!(err, MappingError::MissingField { name: "name" }));
+[lints.file-size]
+commit = "warn"
+max_lines = 500
+allow_test_files = true
+"#;
+    let cfg = parse_mockspace_toml_str(toml).unwrap();
+    let lint = &cfg.lints["file-size"];
+    assert!(lint.extras.contains_key("max_lines"));
+    assert!(lint.extras.contains_key("allow_test_files"));
 }
