@@ -42,6 +42,7 @@ pub mod finding_sink;
 pub mod lint;
 pub mod preprocessor;
 pub mod project;
+pub mod scope;
 pub mod staging;
 pub mod strip;
 
