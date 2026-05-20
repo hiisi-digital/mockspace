@@ -217,9 +217,29 @@ fn run_inner(
         .map(|s| simple_hash(&s))
         .unwrap_or(0);
 
-    if is_infra_only || workspace_nuked {
-        eprintln!("--- cargo check skipped ({}) ---",
-            if workspace_nuked { "nuked" } else { "infra-only" });
+    if is_infra_only || workspace_nuked || lint_only {
+        eprintln!(
+            "--- cargo check skipped ({}) ---",
+            if workspace_nuked {
+                "nuked"
+            } else if lint_only {
+                "lint-only mode"
+            } else {
+                "infra-only"
+            }
+        );
+        // Side effect of the --lint-only skip: the build script that
+        // refreshes target/mockspace-proxy/Cargo.toml runs only when
+        // cargo check actually executes. Skipping check here means
+        // proxy refresh does NOT happen on --lint-only invocations.
+        // For the pre-commit hook (the main consumer of --lint-only),
+        // this is acceptable: developers run `cargo mock` without
+        // --lint-only at least once per dev cycle (cargo build, cargo
+        // run, full mock CI), and that invocation picks up any drift.
+        // If a contributor's only mockspace invocation is the pre-
+        // commit hook, they may run stale proxy logic until they
+        // trigger a non-lint-only mockspace path. Acceptable today;
+        // revisit if pre-commit-only-flow becomes a real complaint.
     } else {
         eprintln!("--- cargo check ---");
         // Strip inherited rustup env vars so the mock/ dir's own
