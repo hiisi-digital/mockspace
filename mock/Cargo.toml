@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "crates/mockspace-template",
     "crates/mockspace-config",
+    "crates/mockspace-core",
+    "crates/mockspace-rs",
+    "crates/mockspace-rs-attrs",
 ]
 
 # Release profile mirrors the parent workspace.
