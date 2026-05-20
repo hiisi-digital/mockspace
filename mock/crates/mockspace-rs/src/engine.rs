@@ -136,23 +136,32 @@ impl LintEngine for MockspaceEngine {
 
             match entry.mode {
                 LintMode::PerDocument => {
+                    // Per-document scope filter: each lint's ScopeConfig
+                    // is pre-compiled into `entry.scope_filter`. Documents
+                    // that fail the filter are silently skipped — the
+                    // lint never sees them.
+                    //
+                    // Branches duplicate the loop body rather than boxing
+                    // the iterator: `Box<dyn Iterator<...>>` would heap-
+                    // allocate per-(lint, gate) on every dispatch.
+                    let dispatch = |doc: &crate::document::MockspaceDocument| {
+                        if !entry.scope_filter.accepts(doc, project) {
+                            return Ok(());
+                        }
+                        entry.lint.check_document(&ctx, doc, &sink).map_err(|source| {
+                            DispatchError::LintErrored {
+                                lint_name: entry.lint.name().to_owned(),
+                                source,
+                            }
+                        })
+                    };
                     if only_staged_here {
                         for doc in project.staged_documents() {
-                            entry.lint.check_document(&ctx, doc, &sink).map_err(|source| {
-                                DispatchError::LintErrored {
-                                    lint_name: entry.lint.name().to_owned(),
-                                    source,
-                                }
-                            })?;
+                            dispatch(doc)?;
                         }
                     } else {
                         for doc in project.documents() {
-                            entry.lint.check_document(&ctx, doc, &sink).map_err(|source| {
-                                DispatchError::LintErrored {
-                                    lint_name: entry.lint.name().to_owned(),
-                                    source,
-                                }
-                            })?;
+                            dispatch(doc)?;
                         }
                     }
                 }
@@ -223,6 +232,7 @@ mod tests {
             staging_aware: true,
             editor_skip: false,
             only_staged: crate::config_loader::OnlyStaged::default(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config("test", &crate::config_types::ScopeConfig::default()).unwrap(),
         }];
         let engine = MockspaceEngine::with_entries(entries);
 
@@ -263,6 +273,7 @@ mod tests {
             staging_aware: false,
             editor_skip: false,
             only_staged: crate::config_loader::OnlyStaged::default(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config("test", &crate::config_types::ScopeConfig::default()).unwrap(),
         }];
         let engine = MockspaceEngine::with_entries(entries);
         let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
@@ -295,6 +306,7 @@ mod tests {
             staging_aware: false,
             editor_skip: true,
             only_staged: crate::config_loader::OnlyStaged::default(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config("test", &crate::config_types::ScopeConfig::default()).unwrap(),
         }];
         let engine = MockspaceEngine::with_entries(entries);
         let mut builder = ProjectBuilder::new("/tmp", RunSurface::Editor, Gate::Commit);

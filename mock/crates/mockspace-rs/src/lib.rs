@@ -45,6 +45,7 @@ pub mod lint;
 pub mod preprocessor;
 pub mod project;
 pub mod scope;
+pub mod scope_filter;
 pub mod staging;
 pub mod strip;
 
