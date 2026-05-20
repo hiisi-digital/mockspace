@@ -85,6 +85,10 @@ pub struct InstantiatedLint {
     pub staging_aware: bool,
     pub editor_skip: bool,
     pub only_staged: OnlyStaged,
+    /// Pre-compiled scope filter (path globs, crate patterns, language
+    /// whitelist, proc-macro exempt, category exempt). Consulted per
+    /// document at dispatch.
+    pub scope_filter: crate::scope_filter::ScopeFilter,
 }
 
 /// Parsed configuration plus instantiated lints, ready for engine
@@ -329,6 +333,23 @@ fn instantiate_with_cascade(
         merged_scope.insert("crates".to_string(), toml::Value::Array(intersected));
     }
 
+    // Parse merged_scope as ScopeConfig and compile the per-document
+    // filter. The ScopeConfig::deserialize path validates field shapes;
+    // ScopeFilter::from_config compiles glob sets and surfaces glob-parse
+    // errors as ConfigError.
+    let scope_config: crate::config_types::ScopeConfig =
+        toml::Value::Table(merged_scope.clone())
+            .try_into()
+            .map_err(|e: toml::de::Error| ConfigError {
+                lint_name: entry.name.to_string(),
+                field_path: "scope".to_string(),
+                kind: ConfigErrorKind::InvalidValue,
+                message: format!("scope config parse failed: {e}"),
+                source_location: None,
+            })?;
+    let scope_filter =
+        crate::scope_filter::ScopeFilter::from_config(entry.name, &scope_config)?;
+
     // Construct the lint.
     let lint = (entry.instantiate)(&merged_config, &merged_scope)?;
     Ok(InstantiatedLint {
@@ -337,6 +358,7 @@ fn instantiate_with_cascade(
         staging_aware: entry.staging_aware,
         editor_skip: entry.editor_skip,
         only_staged,
+        scope_filter,
     })
 }
 
