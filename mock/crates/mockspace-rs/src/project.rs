@@ -275,6 +275,15 @@ impl ProjectBuilder {
         self
     }
 
+    /// Focused setter that only updates `workspace.proc_macro_crates`,
+    /// preserving any other workspace state the builder has accumulated.
+    /// Prefer this over [`with_workspace`] when only the proc-macro set
+    /// is changing.
+    pub fn with_proc_macro_crates(mut self, set: HashSet<String>) -> Self {
+        self.workspace.proc_macro_crates = set;
+        self
+    }
+
     pub fn with_suppressions(mut self, sup: SuppressionMap) -> Self {
         self.suppressions = sup;
         self
