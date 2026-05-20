@@ -21,6 +21,7 @@ use crate::finding_sink::VecFindingSink;
 use crate::lint::LintMode;
 use crate::preprocessor::{LanguagePreprocessor, RustPreprocessor};
 use crate::project::MockspaceProject;
+use crate::scope::scope_walk;
 
 /// The Rust lint engine.
 pub struct MockspaceEngine {
@@ -89,14 +90,10 @@ impl LintEngine for MockspaceEngine {
 
     fn scope_project(
         &self,
-        _root: &Path,
-        _surface: RunSurface,
+        root: &Path,
+        surface: RunSurface,
     ) -> Result<Self::Project, Self::ParseError> {
-        // Phase 2B walker pending: walks the root, classifies extensions,
-        // reads source, computes BLAKE3 hashes, populates the project.
-        Err(ParseError::NotYetImplemented(
-            "scope_project: disk walker + BLAKE3 hashing pending (Phase 2B)",
-        ))
+        scope_walk(root, surface)
     }
 
     fn run(
