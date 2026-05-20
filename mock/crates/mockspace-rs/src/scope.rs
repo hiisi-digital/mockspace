@@ -36,7 +36,7 @@ pub fn scope_walk(root: &Path, surface: RunSurface) -> Result<MockspaceProject, 
     for entry in WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|e| !is_skipped(e.path(), root))
+        .filter_entry(|e| !is_skipped(e, root))
     {
         let entry = entry.map_err(|e| ParseError::Io {
             path: e.path().map(|p| p.to_path_buf()).unwrap_or_default(),
@@ -49,10 +49,22 @@ pub fn scope_walk(root: &Path, surface: RunSurface) -> Result<MockspaceProject, 
         let Some(language) = classify(path) else {
             continue;
         };
-        let source = std::fs::read_to_string(path).map_err(|e| ParseError::Io {
+        // Read bytes; decode utf8 strictly for Rust (the AST primitives
+        // need it to be valid utf8); decode utf8-lossy for Markdown / Toml
+        // where a stray non-utf8 byte should not abort the whole project
+        // scan. The lossy path replaces invalid sequences with U+FFFD, which
+        // is fine for content-regex / token-scan / strip-based primitives.
+        let bytes = std::fs::read(path).map_err(|e| ParseError::Io {
             path: path.to_path_buf(),
             source: e,
         })?;
+        let source = match language {
+            Language::Rust => String::from_utf8(bytes).map_err(|e| ParseError::Io {
+                path: path.to_path_buf(),
+                source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+            })?,
+            _ => String::from_utf8_lossy(&bytes).into_owned(),
+        };
         let content_hash = blake3_hash(&source);
         let crate_name = derive_crate_name(path, root);
         let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
@@ -70,16 +82,19 @@ pub fn scope_walk(root: &Path, surface: RunSurface) -> Result<MockspaceProject, 
     Ok(builder.build())
 }
 
-/// Filename / directory filter for the walker's `filter_entry`.
-fn is_skipped(path: &Path, root: &Path) -> bool {
+/// Filename / directory filter for the walker's `filter_entry`. Takes a
+/// `&walkdir::DirEntry` so the cached `file_type()` from the readdir
+/// result is used in preference to a fresh `Path::is_dir()` syscall.
+fn is_skipped(entry: &walkdir::DirEntry, root: &Path) -> bool {
+    let path = entry.path();
     if path == root {
         return false;
     }
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return true;
     };
-    // Skip well-known build / vendor / vcs directories.
-    if path.is_dir() {
+    let file_type = entry.file_type();
+    if file_type.is_dir() {
         matches!(
             name,
             "target"
@@ -139,12 +154,21 @@ fn derive_crate_name(path: &Path, root: &Path) -> String {
             after_crates = true;
         }
     }
-    // Fall back to the first path component, or "workspace" if none.
-    relative
-        .components()
-        .next()
-        .map(|c| c.as_os_str().to_string_lossy().to_string())
-        .unwrap_or_else(|| "workspace".to_string())
+    // Fall back to the first path component when it's a directory
+    // (e.g. `crates/foo/...` workspaces without an enclosing `crates`
+    // segment). When the relative path has only a single component
+    // (the file itself, e.g. a top-level Cargo.toml or README.md),
+    // return the documented sentinel "workspace" rather than the
+    // file basename.
+    let mut comps = relative.components();
+    let Some(first) = comps.next() else {
+        return "workspace".to_string();
+    };
+    if comps.next().is_some() {
+        first.as_os_str().to_string_lossy().to_string()
+    } else {
+        "workspace".to_string()
+    }
 }
 
 fn io_from_walkdir(e: walkdir::Error) -> std::io::Error {
@@ -206,6 +230,19 @@ mod tests {
         let project = scope_walk(tmp.path(), RunSurface::Local).unwrap();
         let doc = project.documents().next().unwrap();
         assert_eq!(doc.crate_name(), "arvo");
+    }
+
+    #[test]
+    fn crate_name_for_top_level_file_is_workspace_sentinel() {
+        // Single-component relative path (file directly at workspace root)
+        // returns "workspace" rather than the file basename. Regression
+        // guard against the prior behaviour where top-level Cargo.toml
+        // was attributed to crate name "Cargo.toml".
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("Cargo.toml"), "[workspace]");
+        let project = scope_walk(tmp.path(), RunSurface::Local).unwrap();
+        let doc = project.documents().next().unwrap();
+        assert_eq!(doc.crate_name(), "workspace");
     }
 
     #[test]
