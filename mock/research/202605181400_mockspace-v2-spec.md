@@ -4322,9 +4322,13 @@ For 5000+ archived tasks, single archive ref's enumeration cost may require shar
 
 When does the `mock/` removal land on `main`? Per-project decision aligned with release cadence. The spec does not impose a timeline; each project chooses.
 
-### Step-key TOML quoting
+### Step-key TOML quoting (resolved 2026-05-21)
 
-Step keys follow the slug charset `[a-z][a-z0-9-]{0,62}`, which includes hyphens. TOML bare keys do not allow hyphens, so `[steps.define-grammar]` requires quoting at the table-header level (`[steps."define-grammar"]` or equivalent). The §16 example uses bare-looking syntax for readability; the canonical TOML serialisation may quote keys when needed. Future round: confirm whether mockspace's TOML emitter always quotes step keys for consistency, or only when the charset requires it.
+Step keys follow the slug charset `[a-z][a-z0-9-]{0,62}`. The earlier draft of this note claimed TOML bare keys forbid hyphens; that is wrong. Per the TOML 1.0.0 specification, bare keys may contain `A-Za-z0-9_-`, so hyphens are valid in bare-key form.
+
+The slug charset is a proper subset of the TOML bare-key charset (slug excludes uppercase letters and underscores; bare keys include them). Every valid step key is therefore expressible as a bare TOML key without quoting.
+
+Canonical mockspace TOML serialisation: emit step keys bare (`[steps.define-grammar]`), never quoted. Consumers that parse manifests must accept both bare and quoted forms, since hand-authored TOML may use either, but the engine's own emitter is bare-only for consistency with the §16 examples.
 
 ### `mockspace-rs` extraction trigger
 
