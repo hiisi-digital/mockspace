@@ -141,9 +141,17 @@ impl LintEngine for MockspaceEngine {
                     // that fail the filter are silently skipped — the
                     // lint never sees them.
                     //
-                    // Branches duplicate the loop body rather than boxing
-                    // the iterator: `Box<dyn Iterator<...>>` would heap-
-                    // allocate per-(lint, gate) on every dispatch.
+                    // Sequential today. The schema design memo §15 calls
+                    // for rayon parallelism here, but MockspaceDocument's
+                    // lazy syn / tree-sitter AST caches don't propagate
+                    // Sync (the inner crates' types aren't Sync). Wiring
+                    // rayon requires either Mutex-wrapping the caches or
+                    // an `unsafe impl Sync` with a documented post-init
+                    // read-only invariant. Tracked as a follow-up.
+                    //
+                    // Branches duplicate the inner closure rather than
+                    // boxing the iterator: `Box<dyn Iterator<...>>` heap-
+                    // allocates per-(lint, gate) on every dispatch.
                     let dispatch = |doc: &crate::document::MockspaceDocument| {
                         if !entry.scope_filter.accepts(doc, project) {
                             return Ok(());
