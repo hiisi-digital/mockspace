@@ -862,11 +862,80 @@ MOCK_DIR="{mock_rel}"
 
 echo "pre-push: running mockspace validation..."
 
+# Compute changed crates between remote and local across every ref being
+# pushed. Git pre-push hooks receive `<local-ref> <local-sha> <remote-ref>
+# <remote-sha>` lines on stdin (per `git help githooks`).
+#
+# - Existing branches: diff `<remote-sha>..<local-sha>` for crate-path
+#   changes; union across all pushed refs.
+# - New branches (remote-sha = all zeros): no upstream reference; fall
+#   back to full project scope so we don't miss anything.
+# `set -e` is in effect from the prelude. `&&-continue` short-circuit
+# in the loop body would exit the script if the left side is false, so
+# use explicit `if` blocks for every short-circuit.
+#
+# Empty stdin (no refs piped, rare with `push --tags` variants on some
+# git versions) → the loop simply does not run; the post-loop fall-
+# through handles full-scope correctly.
+NEW_BRANCH=0
+CHANGED_CRATES=""
+while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
+    if [ -z "$local_sha" ]; then
+        continue
+    fi
+    # Delete-only push (local_sha all zeros): nothing to lint.
+    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        continue
+    fi
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        NEW_BRANCH=1
+        break
+    fi
+    # Unknown remote_sha (we never fetched the remote, or it's a stale
+    # sha that no longer exists locally): cat-file -e returns non-zero.
+    # Treat as new-branch-equivalent and force full scope; otherwise
+    # `git diff` would fail closed and silently drop this ref's changes.
+    if ! git cat-file -e "$remote_sha" 2>/dev/null; then
+        NEW_BRANCH=1
+        break
+    fi
+    PUSH_CHANGED=$(git diff --name-only "$remote_sha".."$local_sha" -- "$MOCK_DIR/crates/" 2>/dev/null \
+        | sed "s|^$MOCK_DIR/crates/||" \
+        | cut -d/ -f1 \
+        | sort -u \
+        | tr '\n' ',' \
+        | sed 's/,$//' \
+        || true)
+    if [ -z "$PUSH_CHANGED" ]; then
+        continue
+    fi
+    if [ -z "$CHANGED_CRATES" ]; then
+        CHANGED_CRATES="$PUSH_CHANGED"
+    else
+        CHANGED_CRATES="$CHANGED_CRATES,$PUSH_CHANGED"
+    fi
+done
+
+# De-duplicate the comma-joined crate list (multiple refs may touch the
+# same crate). tr-sort-uniq round trip.
+if [ -n "$CHANGED_CRATES" ]; then
+    CHANGED_CRATES=$(echo "$CHANGED_CRATES" \
+        | tr ',' '\n' \
+        | sort -u \
+        | grep -v '^$' \
+        | tr '\n' ',' \
+        | sed 's/,$//')
+fi
+
 if grep -rq "Nuked by" "$MOCK_DIR/crates/"*/src/lib.rs 2>/dev/null; then
     echo "  nuked workspace — skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
-else
+elif [ "$NEW_BRANCH" = "1" ] || [ -z "$CHANGED_CRATES" ]; then
+    echo "  scope: full project ($([ "$NEW_BRANCH" = "1" ] && echo "new branch" || echo "no crate changes"))"
     ARGS=(--lint-only --strict)
+else
+    echo "  scope: $CHANGED_CRATES"
+    ARGS=(--lint-only --strict --scope "$CHANGED_CRATES")
 fi
 
 if ! cargo mock "${{ARGS[@]}}" 2>&1; then
@@ -919,6 +988,51 @@ mod lint_crates_tests {
     fn missing_file_returns_empty() {
         let result = parse_lint_crates(Path::new("/definitely/does/not/exist"));
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn gen_pre_push_passes_bash_syntax_check() {
+        // Run `bash -n` on the generated script to catch syntax errors
+        // (unbalanced quotes, missing fi/done, format-string slips). Does
+        // not execute the script, just parses it.
+        let script = gen_pre_push("mock", Path::new("/dev/null"));
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "mockspace_pre_push_test_{}.sh",
+            std::process::id()
+        ));
+        std::fs::write(&path, &script).unwrap();
+        let output = std::process::Command::new("bash")
+            .arg("-n")
+            .arg(&path)
+            .output()
+            .expect("bash -n");
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            output.status.success(),
+            "bash -n rejected the generated pre-push hook:\n{}\n--- script ---\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            script
+        );
+    }
+
+    #[test]
+    fn gen_pre_push_includes_scope_branch() {
+        // Sanity check: the generated script names the new-branch /
+        // changed-crates scopes the way the hook expects.
+        let script = gen_pre_push("mock", Path::new("/dev/null"));
+        assert!(
+            script.contains("CHANGED_CRATES"),
+            "expected CHANGED_CRATES var in generated pre-push hook"
+        );
+        assert!(
+            script.contains("NEW_BRANCH"),
+            "expected NEW_BRANCH var in generated pre-push hook"
+        );
+        assert!(
+            script.contains("--scope"),
+            "expected --scope flag in generated pre-push hook"
+        );
     }
 
     #[test]
