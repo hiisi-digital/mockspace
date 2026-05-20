@@ -16,6 +16,8 @@ use std::path::Path;
 use mockspace_core::lint::{ContentHash, Gate, Language, RunSurface};
 use walkdir::WalkDir;
 
+use crate::crate_graph::build_crate_graph;
+use crate::design_rounds::discover_design_rounds;
 use crate::document::MockspaceDocument;
 use crate::errors::ParseError;
 use crate::project::{MockspaceProject, ProjectBuilder};
@@ -79,6 +81,27 @@ pub fn scope_walk(root: &Path, surface: RunSurface) -> Result<MockspaceProject, 
     if surface == RunSurface::Editor {
         builder.mark_all_staged();
     }
+
+    // Crate graph: walk Cargo.toml files independently. Populating the
+    // proc_macro_crates set on WorkspaceMetadata so stack-lints can skip
+    // proc-macro source as required.
+    let crate_graph = build_crate_graph(root);
+    let proc_macro_crates: std::collections::HashSet<String> = crate_graph
+        .crates
+        .iter()
+        .filter(|c| c.is_proc_macro)
+        .map(|c| c.name.clone())
+        .collect();
+    let design_rounds = discover_design_rounds(root);
+
+    // Mutate only the focused fields rather than replacing the whole
+    // WorkspaceMetadata so any state the builder accumulates between
+    // calls (`task_state` etc.) survives.
+    let builder = builder
+        .with_crate_graph(crate_graph)
+        .with_proc_macro_crates(proc_macro_crates)
+        .with_design_rounds(design_rounds);
+
     Ok(builder.build())
 }
 
@@ -261,5 +284,35 @@ mod tests {
         let project = scope_walk(tmp.path(), RunSurface::Local).unwrap();
         let doc = project.documents().next().unwrap();
         assert_eq!(doc.language(), Language::Markdown);
+    }
+
+    #[test]
+    fn populates_crate_graph_and_proc_macro_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(
+            &tmp.path().join("crates/foo/Cargo.toml"),
+            "[package]\nname = \"foo\"\nversion = \"0.1.0\"",
+        );
+        write(
+            &tmp.path().join("crates/mac/Cargo.toml"),
+            "[package]\nname = \"mac\"\nversion = \"0.1.0\"\n\n[lib]\nproc-macro = true",
+        );
+        let project = scope_walk(tmp.path(), RunSurface::Local).unwrap();
+        assert!(project.crate_graph().get("foo").is_some());
+        assert!(project.crate_graph().is_proc_macro("mac"));
+        assert!(project.workspace().proc_macro_crates.contains("mac"));
+        assert!(!project.workspace().proc_macro_crates.contains("foo"));
+    }
+
+    #[test]
+    fn populates_design_rounds_view() {
+        let tmp = tempfile::tempdir().unwrap();
+        let round_dir = tmp.path().join("mock/design_rounds/202605211200");
+        fs::create_dir_all(&round_dir).unwrap();
+        write(&round_dir.join("topic.md"), "# topic");
+        let project = scope_walk(tmp.path(), RunSurface::Local).unwrap();
+        let rounds = project.design_rounds();
+        assert_eq!(rounds.rounds.len(), 1);
+        assert_eq!(rounds.rounds[0].timestamp, "202605211200");
     }
 }

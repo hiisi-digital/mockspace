@@ -35,6 +35,8 @@ pub mod builtins;
 pub mod catalog;
 pub mod config_loader;
 pub mod config_types;
+pub mod crate_graph;
+pub mod design_rounds;
 pub mod document;
 pub mod engine;
 pub mod errors;
