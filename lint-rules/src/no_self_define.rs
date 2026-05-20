@@ -107,7 +107,6 @@ fn find_self_invocations(
             let clean = extract_macro_name(raw_name);
             if owned_macros.contains(&clean) {
                 let line_idx = node.start_position().row;
-                let line = ctx.source.lines().nth(line_idx).unwrap_or("");
 
                 // Check for lint:allow suppression with 50+ word explanation.
                 // Large look-back because 50+ word explanations span many comment lines.

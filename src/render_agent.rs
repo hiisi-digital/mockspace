@@ -774,7 +774,6 @@ fn generate_lint_derived_content(
         let parts: Vec<&str> = key.splitn(3, '.').collect();
         if parts.len() < 3 { continue; }
 
-        let rule_name = parts[1];
         let field = parts[2];
 
         if field == "scope" {

@@ -59,7 +59,6 @@ mod no_raw_error_outside_primitives;
 mod no_self_define;
 mod no_todo;
 mod no_duplicate_fn;
-mod no_vec_in_resource;
 mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
@@ -580,7 +579,6 @@ pub fn all_lints() -> Vec<Box<dyn Lint>> {
         Box::new(no_primitive_key::NoPrimitiveKey),
         Box::new(no_raw_error_outside_primitives::NoRawErrorOutsidePrimitives),
         Box::new(no_pool_access::NoPoolAccess),
-        // no-vec-in-macros (NoVecInResource) is superseded by no-bare-vec
         Box::new(no_bare_vec::NoBareVec),
         Box::new(no_box::NoBox),
         Box::new(no_empty_crate::NoEmptyCrate),
