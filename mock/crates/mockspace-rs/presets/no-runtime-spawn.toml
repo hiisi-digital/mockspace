@@ -1,0 +1,19 @@
+schema_version = "1.0"
+name = "no-runtime-spawn"
+primitive = "token-scan"
+description = "no runtime thread/task spawn outside the scheduler"
+
+[config]
+tokens = ["thread::spawn", "tokio::spawn", "rayon::spawn", "async_std::spawn", "std::thread::spawn"]
+word_boundary = false
+strip_strings = true
+strip_comments = true
+strip_doc_comments = true
+
+[severity]
+commit = "error"
+build = "error"
+push = "error"
+
+[scope]
+paths = ["**/*.rs"]

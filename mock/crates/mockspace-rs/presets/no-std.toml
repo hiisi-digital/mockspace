@@ -1,0 +1,20 @@
+schema_version = "1.0"
+name = "no-std"
+primitive = "token-scan"
+description = "no std imports in stack code"
+
+[config]
+tokens = ["use std::", "use ::std::", "pub use std::", "pub use ::std::", "extern crate std"]
+word_boundary = false
+strip_strings = true
+strip_comments = true
+strip_doc_comments = true
+
+[severity]
+commit = "error"
+build = "error"
+push = "error"
+
+[scope]
+paths = ["**/*.rs"]
+exempt_paths = ["**/build.rs", "**/benches/**", "**/tests/**"]

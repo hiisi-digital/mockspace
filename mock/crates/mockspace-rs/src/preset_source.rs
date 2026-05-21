@@ -311,4 +311,97 @@ name = "broken
             other => panic!("expected MalformedShorthand, got {other:?}"),
         }
     }
+
+    // ---- shipped-tree integrity (#541) -------------------------------------
+
+    /// Catalog primitive names every first-party preset must point at.
+    /// Defined inline rather than imported from the catalog so this test
+    /// stays a discipline assertion: when a new primitive ships, a preset
+    /// author adds it here before the lookup will accept it.
+    const KNOWN_PRIMITIVES: &[&str] = &[
+        "token-scan",
+        "ast-type-position",
+        "ast-node-position-match",
+        "identifier-pattern",
+        "content-regex",
+        "term-replacement-table",
+        "file-metric",
+        "undocumented-item",
+        "cross-doc-symbol",
+        "workflow-state",
+        "suppression-meta",
+        "directive-style-consistency",
+        "no-bare-vec",
+        "no-manual-id",
+        "no-manual-impl",
+        "no-adhoc-framework",
+        "registrable-completeness",
+        "deprecation-comparison",
+    ];
+
+    /// Every preset shipped in `presets/` must resolve, parse cleanly,
+    /// match its filename, name a known primitive, and carry at least
+    /// one of (config, scope) populated. This is the per-file gate that
+    /// catches typos in the embedded preset tree.
+    #[test]
+    fn every_shipped_first_party_preset_loads_clean() {
+        let src = FirstPartyPresetSource::new();
+        assert!(
+            !src.is_empty(),
+            "presets/*.toml should ship at least one entry; build.rs found none"
+        );
+        for name in src.names() {
+            let pref = parse_preset_shorthand(&format!("mockspace::{name}"))
+                .unwrap_or_else(|e| panic!("shorthand for `mockspace::{name}` failed: {e}"));
+            let preset = src
+                .resolve(&pref)
+                .unwrap_or_else(|e| panic!("preset `mockspace::{name}` resolve failed: {e}"));
+            assert_eq!(
+                preset.name, name,
+                "filename / preset.name mismatch for `{name}`"
+            );
+            assert!(
+                KNOWN_PRIMITIVES.contains(&preset.primitive.as_str()),
+                "preset `{name}` names unknown primitive `{}`; \
+                 add to KNOWN_PRIMITIVES or fix the preset",
+                preset.primitive
+            );
+            assert!(
+                !preset.config.is_empty() || !preset.scope.is_empty(),
+                "preset `{name}` carries neither config nor scope; \
+                 a preset with no overlays is dead weight"
+            );
+        }
+    }
+
+    /// Spot-check the canonical stack-lint preset names ship in the
+    /// embedded table. Catches the case where a preset file is renamed
+    /// or accidentally deleted without an updating reference here.
+    #[test]
+    fn canonical_stack_lint_presets_are_shipped() {
+        let src = FirstPartyPresetSource::new();
+        let names: std::collections::HashSet<&str> = src.names().collect();
+        for expected in &[
+            "no-alloc",
+            "no-std",
+            "no-dyn-dispatch",
+            "no-runtime-spawn",
+            "no-runtime-registration",
+            "no-bare-numeric",
+            "no-bare-string",
+            "no-bare-option",
+            "no-bare-result",
+            "no-public-raw-field",
+            "no-vec-in-trait-sig",
+            "strategy-marker-required",
+            "trait-first-signatures",
+            "writing-style",
+            "lint-allow-requires-task-id",
+        ] {
+            assert!(
+                names.contains(expected),
+                "canonical first-party preset `{expected}` missing from embedded table"
+            );
+        }
+    }
 }

@@ -1,0 +1,19 @@
+schema_version = "1.0"
+name = "no-bare-result"
+primitive = "ast-type-position"
+description = "no bare Result<T, E> in public API; use notko::Outcome / notko::Just"
+
+[config]
+forbidden_types = ["Result"]
+positions = ["fn-param", "fn-return"]
+visibility = "public"
+replacements = [["Result", "Outcome"]]
+
+[severity]
+commit = "warn"
+build = "warn"
+push = "warn"
+
+[scope]
+paths = ["**/*.rs"]
+exempt_crates = ["notko"]

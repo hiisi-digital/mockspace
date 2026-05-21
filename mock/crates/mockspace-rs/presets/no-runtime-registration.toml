@@ -1,0 +1,20 @@
+schema_version = "1.0"
+name = "no-runtime-registration"
+primitive = "token-scan"
+description = "no dynamic registration patterns"
+
+[config]
+tokens = ["inventory::submit", "linkme::distributed_slice", "#[ctor]", "#[dtor]"]
+word_boundary = false
+strip_strings = true
+strip_comments = true
+strip_doc_comments = true
+
+[severity]
+commit = "error"
+build = "error"
+push = "error"
+
+[scope]
+paths = ["**/*.rs"]
+exempt_crates = ["mockspace-rs", "mockspace-hilavitkutin-stack-lints"]
