@@ -344,3 +344,204 @@ allow_test_files = true
     assert!(lint.extras.contains_key("max_lines"));
     assert!(lint.extras.contains_key("allow_test_files"));
 }
+
+// ---- preset infrastructure schema (#537) ---------------------------------
+
+#[test]
+fn import_accepts_bare_uri_string() {
+    // Legacy form: a bare URI string. Loader treats this as the
+    // default executable trust tier.
+    let toml = r#"
+[mockspace]
+version = "1.0"
+
+[imports]
+import = ["mock://ext/stack-lints/export/lint-preset/no-heap"]
+"#;
+    let cfg = parse_mockspace_toml_str(toml).unwrap();
+    assert_eq!(cfg.imports.import.len(), 1);
+    match &cfg.imports.import[0] {
+        mockspace_config::ImportEntry::Uri(s) => {
+            assert_eq!(s, "mock://ext/stack-lints/export/lint-preset/no-heap");
+        }
+        other => panic!("expected Uri, got {other:?}"),
+    }
+}
+
+#[test]
+fn import_accepts_typed_entry_with_kind() {
+    let toml = r#"
+[mockspace]
+version = "1.0"
+
+[[imports.import]]
+uri = "mock://ext/stack-lints/export/lint-preset/no-heap"
+kind = "config"
+"#;
+    let cfg = parse_mockspace_toml_str(toml).unwrap();
+    assert_eq!(cfg.imports.import.len(), 1);
+    match &cfg.imports.import[0] {
+        mockspace_config::ImportEntry::Typed(t) => {
+            assert_eq!(t.uri, "mock://ext/stack-lints/export/lint-preset/no-heap");
+            assert_eq!(t.kind, mockspace_config::ImportKind::Config);
+        }
+        other => panic!("expected Typed, got {other:?}"),
+    }
+}
+
+#[test]
+fn import_typed_entry_defaults_to_executable_kind() {
+    let toml = r#"
+[mockspace]
+version = "1.0"
+
+[[imports.import]]
+uri = "mock://ext/some-pack/export/hook/pre-commit"
+"#;
+    let cfg = parse_mockspace_toml_str(toml).unwrap();
+    match &cfg.imports.import[0] {
+        mockspace_config::ImportEntry::Typed(t) => {
+            assert_eq!(t.kind, mockspace_config::ImportKind::Executable);
+        }
+        other => panic!("expected Typed, got {other:?}"),
+    }
+}
+
+#[test]
+fn import_mixes_bare_and_typed_entries() {
+    let toml = r#"
+[mockspace]
+version = "1.0"
+
+[imports]
+import = [
+  "mock://ext/old/export/hook/pre-commit",
+  { uri = "mock://ext/stack-lints/export/lint-preset/no-heap", kind = "config" },
+]
+"#;
+    let cfg = parse_mockspace_toml_str(toml).unwrap();
+    assert_eq!(cfg.imports.import.len(), 2);
+    assert!(matches!(
+        cfg.imports.import[0],
+        mockspace_config::ImportEntry::Uri(_)
+    ));
+    assert!(matches!(
+        cfg.imports.import[1],
+        mockspace_config::ImportEntry::Typed(_)
+    ));
+}
+
+#[test]
+fn lint_config_accepts_extends_shorthand() {
+    let toml = r#"
+[mockspace]
+version = "1.0"
+
+[lints.my-no-heap]
+extends = "stack-lints::no-heap"
+commit = "error"
+"#;
+    let cfg = parse_mockspace_toml_str(toml).unwrap();
+    let lint = &cfg.lints["my-no-heap"];
+    assert_eq!(lint.extends.as_deref(), Some("stack-lints::no-heap"));
+    assert_eq!(lint.commit, Some(mockspace_config::Severity::Error));
+}
+
+#[test]
+fn lint_config_extends_is_optional() {
+    let toml = r#"
+[mockspace]
+version = "1.0"
+
+[lints.file-size]
+commit = "warn"
+max_lines = 500
+"#;
+    let cfg = parse_mockspace_toml_str(toml).unwrap();
+    assert!(cfg.lints["file-size"].extends.is_none());
+}
+
+#[test]
+fn preset_file_round_trips() {
+    use mockspace_config::{PresetFile, Severity};
+
+    let toml = r#"
+schema_version = "1.0"
+name = "no-heap"
+primitive = "forbidden_imports"
+description = "Forbid alloc::* and std::vec usage in no-heap codebases."
+extends = "mockspace::no-alloc"
+
+[config]
+forbidden = ["alloc::*", "std::vec::*"]
+reason = "no-heap discipline"
+
+[severity]
+commit = "warn"
+build = "error"
+push = "error"
+
+[scope]
+exempt_categories = ["string-foundation"]
+"#;
+    let preset: PresetFile = toml::from_str(toml).unwrap();
+    assert_eq!(preset.schema_version, "1.0");
+    assert_eq!(preset.name, "no-heap");
+    assert_eq!(preset.primitive, "forbidden_imports");
+    assert_eq!(
+        preset.description.as_deref(),
+        Some("Forbid alloc::* and std::vec usage in no-heap codebases.")
+    );
+    assert_eq!(preset.extends.as_deref(), Some("mockspace::no-alloc"));
+    assert!(preset.config.contains_key("forbidden"));
+    assert!(preset.config.contains_key("reason"));
+    assert_eq!(preset.severity.commit, Some(Severity::Warn));
+    assert_eq!(preset.severity.build, Some(Severity::Error));
+    assert_eq!(preset.severity.push, Some(Severity::Error));
+    assert!(preset.scope.contains_key("exempt_categories"));
+}
+
+#[test]
+fn preset_file_omits_optional_fields() {
+    use mockspace_config::PresetFile;
+
+    let toml = r#"
+schema_version = "1.0"
+name = "no-bare-numeric"
+primitive = "ast_type_position"
+"#;
+    let preset: PresetFile = toml::from_str(toml).unwrap();
+    assert_eq!(preset.name, "no-bare-numeric");
+    assert!(preset.description.is_none());
+    assert!(preset.extends.is_none());
+    assert!(preset.config.is_empty());
+    assert!(preset.severity.commit.is_none());
+    assert!(preset.scope.is_empty());
+}
+
+#[test]
+fn typed_import_rejects_unknown_field() {
+    use mockspace_config::TypedImport;
+    // Typo: `knd` instead of `kind`. deny_unknown_fields catches the
+    // typo at load time rather than silently dropping it.
+    let toml = r#"
+uri = "mock://ext/foo/export/lint-preset/bar"
+knd = "config"
+"#;
+    let result: Result<TypedImport, _> = toml::from_str(toml);
+    assert!(result.is_err(), "expected typo to be rejected");
+}
+
+#[test]
+fn preset_file_rejects_unknown_field() {
+    use mockspace_config::PresetFile;
+    // Typo: `extens` instead of `extends`. Catches at load.
+    let toml = r#"
+schema_version = "1.0"
+name = "no-heap"
+primitive = "forbidden_imports"
+extens = "mockspace::no-alloc"
+"#;
+    let result: Result<PresetFile, _> = toml::from_str(toml);
+    assert!(result.is_err(), "expected typo to be rejected");
+}
