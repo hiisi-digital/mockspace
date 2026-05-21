@@ -38,7 +38,7 @@
 //! compatible with viola's eventual `viola.toml`.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -232,7 +232,15 @@ impl Default for GateSeverity {
 
 /// A source-position range. Half-open `[start, end)` over 1-indexed
 /// `(line, column)` pairs. Matches viola's `SourceRange`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `Span` derives `Ord`, but the `Ord` is on the field tuple
+/// `(file, start_line, start_column, end_line, end_column)`. The
+/// `PathBuf` component sorts by byte-wise `OsStr` ordering, which is
+/// platform-dependent and NOT lexicographic in any UTF-8 sense.
+/// Consumers must not treat sorted span iteration as "alphabetical by
+/// path"; the order is deterministic within a run and that is all the
+/// `Ord` impl promises. Internal indices (e.g. `PropMap`) only need
+/// the total order to be a deterministic `BTreeMap` key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Span {
     pub file: PathBuf,
     pub start_line: u32,
@@ -771,6 +779,147 @@ impl SuppressionMap {
 }
 
 // =========================================================================
+// PropMap (lint:prop directive resolver).
+// =========================================================================
+
+/// Project-level resolver for `lint:prop(...)` directives.
+///
+/// Per the design memo at
+/// `mock/research/202605220600_lint-provided-marker-directive.md`.
+/// The framework does not interpret prop names or values; lints declare
+/// the names they read via [`crate::lint::Lint::declared_props`] (in
+/// mockspace-rs) and query `PropMap` for matches.
+///
+/// # Indexing
+///
+/// `PropMap` keeps a dual index so both common queries are log-time:
+///
+/// - `by_name`: "which sites carry a prop with this name?"
+/// - `by_span`: "what props are declared at exactly this span?"
+///
+/// `push` keeps both indices in sync. Callers cannot insert into one
+/// without the other.
+///
+/// # Scope accessors
+///
+/// Three scope resolutions are exposed as distinct methods so consuming
+/// lints declare which one they want. The default attachment rule is
+/// "item + direct impl blocks", matching `introduces`.
+///
+/// - [`at_site`](Self::at_site): props with span equal to the query.
+/// - [`including_impl_blocks`](Self::including_impl_blocks): item plus
+///   its direct impl blocks (same file, same module, same type).
+/// - [`walk_ancestors`](Self::walk_ancestors): props anywhere in the
+///   enclosing item chain (module, file, crate root).
+///
+/// # AST-aware resolution is a slice 4 concern
+///
+/// At this slice, `including_impl_blocks` and `walk_ancestors` operate
+/// only on the spans stored in the map; they do not consult an AST.
+/// Concretely:
+///
+/// - `including_impl_blocks(query)` returns at-site matches today; the
+///   "direct impl blocks" walk requires an AST and lands when
+///   `RustPreprocessor::extract` wires up structural context in slice 4
+///   of the lint:prop work.
+/// - `walk_ancestors(query)` returns every prop in the same file whose
+///   start_line is at or before the query's start_line. This is a
+///   defensible best-effort that gives lints something to query today;
+///   slice 4 sharpens it to respect actual scope nesting.
+///
+/// `at_site` and `all_named` are exact today and stay exact.
+#[derive(Debug, Clone, Default)]
+pub struct PropMap {
+    by_name: BTreeMap<String, Vec<(Span, PropValue, Option<String>)>>,
+    by_span: BTreeMap<Span, Vec<(String, PropValue, Option<String>)>>,
+}
+
+impl PropMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a prop declaration at `span`. Both indices update.
+    ///
+    /// **No dedup**: pushing the same `(span, name)` pair twice records
+    /// two entries. Both indices store equal multiplicity for each
+    /// `(span, name)` pair; the two indices stay in sync because
+    /// `push` is the only mutator and updates both atomically.
+    /// Consumers that need uniqueness must enforce it before pushing.
+    pub fn push(&mut self, span: Span, name: String, value: PropValue, reason: Option<String>) {
+        self.by_name
+            .entry(name.clone())
+            .or_default()
+            .push((span.clone(), value.clone(), reason.clone()));
+        self.by_span
+            .entry(span)
+            .or_default()
+            .push((name, value, reason));
+    }
+
+    /// All sites carrying a prop with this name.
+    pub fn all_named(&self, name: &str) -> &[(Span, PropValue, Option<String>)] {
+        self.by_name
+            .get(name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Props declared at exactly this span.
+    pub fn at_site(&self, span: &Span) -> &[(String, PropValue, Option<String>)] {
+        self.by_span
+            .get(span)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Props attached to this span plus its direct impl blocks. At
+    /// this slice this delegates to [`at_site`]; AST-aware resolution
+    /// lands in slice 4 of the lint:prop work.
+    pub fn including_impl_blocks(
+        &self,
+        span: &Span,
+    ) -> &[(String, PropValue, Option<String>)] {
+        self.at_site(span)
+    }
+
+    /// Props in the enclosing item chain (strict ancestor scope).
+    ///
+    /// At this slice this is approximated by "props in the same file
+    /// strictly above the query's start_line". A prop on the query's
+    /// own line is NOT an ancestor of itself; consumers querying for
+    /// at-site matches should use [`at_site`] instead. Slice 4
+    /// sharpens to respect actual AST scope nesting (a prop on the
+    /// enclosing impl block / module / file) and the strict-above
+    /// approximation goes away.
+    pub fn walk_ancestors<'a>(
+        &'a self,
+        query: &'a Span,
+    ) -> impl Iterator<Item = (&'a Span, &'a str, &'a PropValue, Option<&'a str>)> + 'a {
+        self.by_span
+            .iter()
+            .filter(move |(span, _)| {
+                span.file == query.file && span.start_line < query.start_line
+            })
+            .flat_map(|(span, entries)| {
+                entries
+                    .iter()
+                    .map(move |(name, value, reason)| (span, name.as_str(), value, reason.as_deref()))
+            })
+    }
+
+    /// Number of stored prop declarations across all names.
+    pub fn len(&self) -> usize {
+        self.by_span.values().map(|v| v.len()).sum()
+    }
+
+    /// `true` if no props have been pushed.
+    pub fn is_empty(&self) -> bool {
+        self.by_span.is_empty()
+    }
+}
+
+// =========================================================================
 // Pattern matcher.
 // =========================================================================
 
@@ -1224,6 +1373,162 @@ mod tests {
         // untagged integer (no inner kind tag).
         assert!(s.contains("kind = \"prop\""), "got: {s}");
         assert!(s.contains("value = 7"), "got: {s}");
+    }
+
+    #[test]
+    fn propmap_push_keeps_both_indices_in_sync() {
+        let mut map = PropMap::new();
+        let span = Span::single_line("a.rs", 10, 1, 5);
+        map.push(
+            span.clone(),
+            "audited".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+        assert_eq!(map.len(), 1);
+        // by_name index: lookup by "audited" returns the span
+        let by_name = map.all_named("audited");
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name[0].0, span);
+        // by_span index: lookup by the same span returns "audited"
+        let at = map.at_site(&span);
+        assert_eq!(at.len(), 1);
+        assert_eq!(at[0].0, "audited");
+    }
+
+    #[test]
+    fn propmap_at_site_distinguishes_spans() {
+        let mut map = PropMap::new();
+        let span_a = Span::single_line("a.rs", 1, 1, 1);
+        let span_b = Span::single_line("a.rs", 2, 1, 1);
+        map.push(
+            span_a.clone(),
+            "tag-a".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+        map.push(
+            span_b.clone(),
+            "tag-b".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+        assert_eq!(map.at_site(&span_a)[0].0, "tag-a");
+        assert_eq!(map.at_site(&span_b)[0].0, "tag-b");
+    }
+
+    #[test]
+    fn propmap_all_named_returns_every_site() {
+        let mut map = PropMap::new();
+        map.push(
+            Span::single_line("a.rs", 1, 1, 1),
+            "audited".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+        map.push(
+            Span::single_line("a.rs", 5, 1, 1),
+            "audited".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+        assert_eq!(map.all_named("audited").len(), 2);
+        assert_eq!(map.all_named("does-not-exist").len(), 0);
+    }
+
+    #[test]
+    fn propmap_pushing_same_span_name_twice_preserves_both() {
+        // Reviewer #49 finding 3 / push contract: no dedup. Pushing the
+        // same (span, name) pair twice records two entries in both
+        // indices. Locks the contract before a future agent "helpfully"
+        // dedupes it.
+        let mut map = PropMap::new();
+        let span = Span::single_line("a.rs", 1, 1, 1);
+        map.push(
+            span.clone(),
+            "audited".to_string(),
+            PropValue::Bool(true),
+            Some("first".to_string()),
+        );
+        map.push(
+            span.clone(),
+            "audited".to_string(),
+            PropValue::Bool(true),
+            Some("second".to_string()),
+        );
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.all_named("audited").len(), 2);
+        assert_eq!(map.at_site(&span).len(), 2);
+    }
+
+    #[test]
+    fn propmap_walk_ancestors_excludes_query_own_line() {
+        // Reviewer #49 finding 2: ancestor semantics are strict. A
+        // prop on the query's own line is at_site, not an ancestor.
+        let mut map = PropMap::new();
+        let query_line = Span::single_line("a.rs", 10, 1, 1);
+        map.push(
+            query_line.clone(),
+            "at-query".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+        let found: Vec<&str> = map.walk_ancestors(&query_line).map(|(_, n, _, _)| n).collect();
+        assert!(!found.contains(&"at-query"), "found at-query in walk: {found:?}");
+    }
+
+    #[test]
+    fn propmap_walk_ancestors_filters_by_file_and_line() {
+        let mut map = PropMap::new();
+        // Prop on line 2 (an ancestor of line 10)
+        map.push(
+            Span::single_line("a.rs", 2, 1, 1),
+            "ancestor".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+        // Prop on line 15 (below the query line)
+        map.push(
+            Span::single_line("a.rs", 15, 1, 1),
+            "below".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+        // Prop in a different file
+        map.push(
+            Span::single_line("b.rs", 1, 1, 1),
+            "other-file".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+
+        let query = Span::single_line("a.rs", 10, 1, 1);
+        let found: Vec<&str> = map.walk_ancestors(&query).map(|(_, n, _, _)| n).collect();
+        assert!(found.contains(&"ancestor"));
+        assert!(!found.contains(&"below"));
+        assert!(!found.contains(&"other-file"));
+    }
+
+    #[test]
+    fn propmap_carries_optional_reason() {
+        let mut map = PropMap::new();
+        let span = Span::single_line("a.rs", 1, 1, 1);
+        map.push(
+            span.clone(),
+            "audited".to_string(),
+            PropValue::Bool(true),
+            Some("audit pass 2026-04".to_string()),
+        );
+        let at = map.at_site(&span);
+        assert_eq!(at[0].2.as_deref(), Some("audit pass 2026-04"));
+    }
+
+    #[test]
+    fn propmap_empty_by_default() {
+        let map = PropMap::new();
+        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.all_named("anything").len(), 0);
     }
 
     #[test]

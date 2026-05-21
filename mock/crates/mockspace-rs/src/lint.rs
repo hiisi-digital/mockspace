@@ -115,6 +115,24 @@ pub trait Lint: Send + Sync {
         let _ = (ctx, doc, finding);
         None
     }
+
+    /// Names of `lint:prop` directives this lint reads.
+    ///
+    /// Per the design memo at
+    /// `mock/research/202605220600_lint-provided-marker-directive.md`.
+    /// Default empty. Lints that consume prop directives override this
+    /// with a static slice listing the names they query against the
+    /// resolved [`mockspace_core::lint::PropMap`].
+    ///
+    /// The future `directive-style-consistency` lint (#548) will use
+    /// this method to check that every `lint:prop(name = ...)` in the
+    /// project has at least one registered lint that declares it.
+    /// Ship the trait method now; the consistency lint that consumes
+    /// it ships later as a follow-up. Existing impls do not need to
+    /// override this method.
+    fn declared_props(&self) -> &'static [&'static str] {
+        &[]
+    }
 }
 
 /// Dispatch mode for a lint, encoded on its [`crate::CatalogEntry::mode`].
@@ -214,6 +232,37 @@ mod tests {
         fn get(&self, _lint_name: &str) -> Option<&toml::Table> {
             None
         }
+    }
+
+    #[test]
+    fn default_declared_props_is_empty() {
+        let lint = MinimalLint;
+        assert!(lint.declared_props().is_empty());
+    }
+
+    #[test]
+    fn overridden_declared_props_returns_static_slice() {
+        struct WithProps;
+        impl Lint for WithProps {
+            fn name(&self) -> &'static str {
+                "test-props"
+            }
+            fn description(&self) -> &'static str {
+                "lint that declares props it reads"
+            }
+            fn default_severity(&self) -> GateSeverity {
+                GateSeverity::uniform(Severity::Warn)
+            }
+            fn declared_props(&self) -> &'static [&'static str] {
+                &["audited", "arena_size", "thread_safe"]
+            }
+        }
+        let lint = WithProps;
+        let props = lint.declared_props();
+        assert_eq!(props.len(), 3);
+        assert!(props.contains(&"audited"));
+        assert!(props.contains(&"arena_size"));
+        assert!(props.contains(&"thread_safe"));
     }
 
     #[test]
