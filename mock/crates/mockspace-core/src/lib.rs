@@ -42,9 +42,9 @@ pub use bookkeeping::{BookkeepingFile, RootEntry, classify_root_entry};
 pub use lint::{
     Category, ContentHash, Directive, DirectiveRecord, Document, FileOp, Finding, Fix, Gate,
     GateSeverity, HashAlgorithm, Impact, LINT_CONTRACT_VERSION, Language, LintCfgStore,
-    LintContext, LintEngine, LintError, MetadataBlob, Project, PropValue, RelatedSpan,
-    RunSurface, ScopeAxis, Severity, Span, Suggestion, SuppressionMap, SuppressionScope,
-    matches_pattern,
+    LintContext, LintEngine, LintError, MetadataBlob, Project, PropMap, PropValue,
+    RelatedSpan, RunSurface, ScopeAxis, Severity, Span, Suggestion, SuppressionMap,
+    SuppressionScope, matches_pattern,
 };
 pub use manifest::{
     AcceptanceBlock, ChangeBlock, DeprecatedAccounting, Manifest, SCHEMA_MAJOR,
