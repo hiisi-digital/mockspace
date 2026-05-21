@@ -218,9 +218,12 @@ fn print_explain_report(report: &explain::ExplainReport) {
         println!();
         println!("Final values:");
         for entry in &report.final_values {
+            // `winning_label` already starts with "Layer N:" so we
+            // don't prefix `layer N:` ahead of it; that would print
+            // as the doubled "layer 4: Layer 4: per-lint TOML" shape.
             println!(
-                "  {} = {} (layer {}: {})",
-                entry.field_path, entry.value, entry.winning_layer, entry.winning_label
+                "  {} = {} ({})",
+                entry.field_path, entry.value, entry.winning_label
             );
         }
     }
