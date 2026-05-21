@@ -11,13 +11,25 @@
 //! findings and configuration faults separate per §9.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Deserialize;
 
 use crate::catalog::CatalogEntry;
-use crate::errors::{ConfigError, ConfigErrorKind, LoadError};
+use crate::errors::{ConfigError, ConfigErrorKind, LoadError, StartupWarning};
 use crate::lint::{Lint, LintMode};
+
+/// Prop names with this prefix are reserved as the first-party namespace.
+/// Collisions among multiple lints declaring the same `mockspace::`-prefixed
+/// prop name are silent (assumed coordinated within one pack); unqualified
+/// collisions raise [`StartupWarning::PropNameConflict`].
+///
+/// Note: a literal `"mockspace::"` (the prefix on its own, with an empty
+/// local segment) starts_with itself and is therefore silenced. That input
+/// is a declaring lint's bug rather than the detector's concern; the
+/// surrounding directive-style-consistency lint (#548) is the right place
+/// to surface empty local segments.
+const FIRST_PARTY_PROP_NS: &str = "mockspace::";
 
 // =========================================================================
 // Cascade input.
@@ -92,11 +104,16 @@ pub struct InstantiatedLint {
 }
 
 /// Parsed configuration plus instantiated lints, ready for engine
-/// dispatch. The split between `entries` and `config_errors` is the
-/// two-channel return shape.
+/// dispatch. The split between `entries`, `config_errors`, and
+/// `startup_warnings` is the three-channel return shape: errors block
+/// load, warnings surface non-fatal observations, entries are the
+/// dispatch set.
 pub struct LintsConfig {
     pub entries: Vec<InstantiatedLint>,
     pub config_errors: Vec<ConfigError>,
+    /// Non-fatal observations made at engine assembly. Populated after
+    /// `entries` is built; see [`detect_prop_name_conflicts`].
+    pub startup_warnings: Vec<StartupWarning>,
 }
 
 impl std::fmt::Debug for LintsConfig {
@@ -104,6 +121,7 @@ impl std::fmt::Debug for LintsConfig {
         f.debug_struct("LintsConfig")
             .field("entries", &self.entries.len())
             .field("config_errors", &self.config_errors.len())
+            .field("startup_warnings", &self.startup_warnings.len())
             .finish()
     }
 }
@@ -113,6 +131,7 @@ impl LintsConfig {
         Self {
             entries: Vec::new(),
             config_errors: Vec::new(),
+            startup_warnings: Vec::new(),
         }
     }
 
@@ -170,11 +189,60 @@ impl LintsConfig {
                 Err(e) => config_errors.push(e),
             }
         }
+        let startup_warnings = detect_prop_name_conflicts(&entries);
         Self {
             entries,
             config_errors,
+            startup_warnings,
         }
     }
+}
+
+// =========================================================================
+// Startup namespace-conflict detection.
+// =========================================================================
+
+/// Walk the assembled lint set and emit a [`StartupWarning::PropNameConflict`]
+/// for each prop name declared by two or more distinct lints unless the
+/// name is prefixed [`FIRST_PARTY_PROP_NS`] (first-party namespace; treated
+/// as one pack and silenced).
+///
+/// Per the `lint:prop` design memo at
+/// `mock/research/202605220600_lint-provided-marker-directive.md`
+/// § "Namespace handling: detect, do not require". The warning is
+/// advisory; the engine continues to load. The future
+/// `directive-style-consistency` lint (#548) catches the orthogonal
+/// failure mode (a source uses a prop name no lint declares).
+///
+/// Lints listed in the warning are sorted and deduplicated so a single
+/// lint declaring the same name twice does not self-conflict.
+pub fn detect_prop_name_conflicts(entries: &[InstantiatedLint]) -> Vec<StartupWarning> {
+    use std::collections::BTreeMap;
+
+    let mut by_prop: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for entry in entries {
+        let lint_name = entry.lint.name();
+        for prop_name in entry.lint.declared_props() {
+            by_prop.entry(*prop_name).or_default().push(lint_name);
+        }
+    }
+
+    let mut warnings = Vec::new();
+    for (prop_name, mut lints) in by_prop {
+        if prop_name.starts_with(FIRST_PARTY_PROP_NS) {
+            continue;
+        }
+        lints.sort_unstable();
+        lints.dedup();
+        if lints.len() < 2 {
+            continue;
+        }
+        warnings.push(StartupWarning::PropNameConflict {
+            prop_name: prop_name.to_string(),
+            lints: lints.into_iter().map(String::from).collect(),
+        });
+    }
+    warnings
 }
 
 // =========================================================================
@@ -453,6 +521,163 @@ mod tests {
         let cfg = LintsConfig::load(&tmp, OverrideCascade::default()).unwrap();
         assert!(cfg.config_errors.is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ---- namespace-conflict detection (slice 5 of lint:prop) ------------
+
+    use crate::lint::Lint;
+    use mockspace_core::lint::{GateSeverity, Severity};
+
+    /// Build an `InstantiatedLint` carrying a stub `Lint` whose only
+    /// non-default method is `declared_props`. The catalog metadata
+    /// fields (mode, staging_aware, etc.) are not exercised by the
+    /// detector and use harmless defaults.
+    fn stub_entry(name: &'static str, props: &'static [&'static str]) -> InstantiatedLint {
+        struct StubLint {
+            name: &'static str,
+            props: &'static [&'static str],
+        }
+        impl Lint for StubLint {
+            fn name(&self) -> &'static str {
+                self.name
+            }
+            fn description(&self) -> &'static str {
+                "stub"
+            }
+            fn default_severity(&self) -> GateSeverity {
+                GateSeverity::uniform(Severity::Warn)
+            }
+            fn declared_props(&self) -> &'static [&'static str] {
+                self.props
+            }
+        }
+        InstantiatedLint {
+            lint: Box::new(StubLint { name, props }),
+            mode: crate::lint::LintMode::PerDocument,
+            staging_aware: false,
+            editor_skip: false,
+            only_staged: OnlyStaged::default(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+                name,
+                &crate::config_types::ScopeConfig::default(),
+            )
+            .expect("default scope config compiles"),
+        }
+    }
+
+    #[test]
+    fn detector_emits_nothing_when_no_props_declared() {
+        let entries = vec![stub_entry("a", &[]), stub_entry("b", &[])];
+        assert!(detect_prop_name_conflicts(&entries).is_empty());
+    }
+
+    #[test]
+    fn detector_silent_for_single_declaring_lint() {
+        let entries = vec![
+            stub_entry("a", &["audited"]),
+            stub_entry("b", &["other_prop"]),
+        ];
+        assert!(detect_prop_name_conflicts(&entries).is_empty());
+    }
+
+    #[test]
+    fn detector_warns_on_unqualified_collision() {
+        let entries = vec![
+            stub_entry("lint-a", &["audited"]),
+            stub_entry("lint-b", &["audited"]),
+        ];
+        let warnings = detect_prop_name_conflicts(&entries);
+        assert_eq!(warnings.len(), 1);
+        match &warnings[0] {
+            StartupWarning::PropNameConflict { prop_name, lints } => {
+                assert_eq!(prop_name, "audited");
+                assert_eq!(lints, &vec!["lint-a".to_string(), "lint-b".to_string()]);
+            }
+        }
+    }
+
+    #[test]
+    fn detector_silent_for_first_party_namespaced_collision() {
+        let entries = vec![
+            stub_entry("lint-a", &["mockspace::audited"]),
+            stub_entry("lint-b", &["mockspace::audited"]),
+        ];
+        // mockspace:: is the reserved first-party namespace; collisions
+        // among first-party prop names are silent (same pack).
+        assert!(detect_prop_name_conflicts(&entries).is_empty());
+    }
+
+    #[test]
+    fn detector_handles_three_way_conflict_as_one_warning() {
+        let entries = vec![
+            stub_entry("lint-a", &["arena_size"]),
+            stub_entry("lint-b", &["arena_size"]),
+            stub_entry("lint-c", &["arena_size"]),
+        ];
+        let warnings = detect_prop_name_conflicts(&entries);
+        assert_eq!(warnings.len(), 1);
+        match &warnings[0] {
+            StartupWarning::PropNameConflict { prop_name, lints } => {
+                assert_eq!(prop_name, "arena_size");
+                assert_eq!(
+                    lints,
+                    &vec!["lint-a".to_string(), "lint-b".to_string(), "lint-c".to_string()]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn detector_deduplicates_repeated_self_declarations() {
+        // A single lint listing the same prop name twice does not
+        // self-conflict; the detector dedupes before checking the
+        // multi-lint threshold.
+        let entries = vec![stub_entry("only-lint", &["audited", "audited"])];
+        assert!(detect_prop_name_conflicts(&entries).is_empty());
+    }
+
+    #[test]
+    fn detector_emits_warning_per_distinct_conflicting_prop() {
+        let entries = vec![
+            stub_entry("lint-a", &["audited", "arena_size"]),
+            stub_entry("lint-b", &["audited", "arena_size"]),
+        ];
+        let warnings = detect_prop_name_conflicts(&entries);
+        assert_eq!(warnings.len(), 2);
+        let mut names: Vec<&str> = warnings
+            .iter()
+            .map(|w| match w {
+                StartupWarning::PropNameConflict { prop_name, .. } => prop_name.as_str(),
+            })
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["arena_size", "audited"]);
+    }
+
+    #[test]
+    fn detector_mixed_collision_warns_only_on_unqualified_axis() {
+        // One unqualified prop name collides; one first-party-namespaced
+        // prop name collides. Only the unqualified one warns.
+        let entries = vec![
+            stub_entry("lint-a", &["audited", "mockspace::reviewed"]),
+            stub_entry("lint-b", &["audited", "mockspace::reviewed"]),
+        ];
+        let warnings = detect_prop_name_conflicts(&entries);
+        assert_eq!(warnings.len(), 1);
+        match &warnings[0] {
+            StartupWarning::PropNameConflict { prop_name, .. } => {
+                assert_eq!(prop_name, "audited");
+            }
+        }
+    }
+
+    #[test]
+    fn lints_config_populates_startup_warnings_from_catalog_defaults() {
+        // The registered catalog presently has no prop-declaring lints,
+        // so the warnings field is empty. The shape of the call must
+        // still expose the field.
+        let cfg = LintsConfig::from_catalog_defaults();
+        assert!(cfg.startup_warnings.is_empty());
     }
 
     #[test]

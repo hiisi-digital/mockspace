@@ -10,6 +10,10 @@
 //!   internal panic, workflow I/O failure). Engine catches per-lint and
 //!   converts to a synthetic finding tagged with the lint name; the run
 //!   continues with remaining lints.
+//! - [`StartupWarning`]: non-fatal engine-config observations surfaced at
+//!   construction time. Distinct from `ConfigError` because the engine
+//!   continues to load; consumers query `MockspaceEngine::startup_warnings()`
+//!   to surface them.
 //!
 //! Findings (about source code) and ConfigErrors (about configuration) are
 //! distinct diagnostic types. Mixing them pollutes both.
@@ -295,6 +299,50 @@ impl std::error::Error for DispatchError {
         match self {
             Self::LintErrored { source, .. } => Some(source),
             _ => None,
+        }
+    }
+}
+
+// =========================================================================
+// StartupWarning: non-fatal engine-config observations.
+// =========================================================================
+
+/// Non-fatal warning surfaced at engine startup.
+///
+/// Distinct from [`ConfigError`] (which blocks load) and runtime
+/// `Finding`s (which target source code). Startup warnings target the
+/// engine's catalog-and-config state: the engine continues to load
+/// after producing them. Consumers retrieve them via
+/// `MockspaceEngine::startup_warnings()`.
+///
+/// Per the `lint:prop` design memo at
+/// `mock/research/202605220600_lint-provided-marker-directive.md` §
+/// "Namespace handling: detect, do not require".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartupWarning {
+    /// Two or more registered lints declare the same `lint:prop` name.
+    ///
+    /// Detection is namespace-aware: prop names prefixed `mockspace::`
+    /// are reserved as the first-party namespace and collisions among
+    /// them are silent (assumed coordinated within one pack). An
+    /// unqualified prop name declared by two or more lints warns here,
+    /// naming every lint that declared it.
+    PropNameConflict {
+        prop_name: String,
+        lints: Vec<String>,
+    },
+}
+
+impl fmt::Display for StartupWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PropNameConflict { prop_name, lints } => {
+                write!(
+                    f,
+                    "prop `{prop_name}` declared by multiple lints: {}",
+                    lints.join(", ")
+                )
+            }
         }
     }
 }

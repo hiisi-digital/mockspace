@@ -15,8 +15,8 @@ use mockspace_core::lint::{
     RunSurface, SuppressionMap,
 };
 
-use crate::config_loader::{InstantiatedLint, LintsConfig};
-use crate::errors::{DispatchError, LoadError, ParseError};
+use crate::config_loader::{InstantiatedLint, LintsConfig, detect_prop_name_conflicts};
+use crate::errors::{DispatchError, LoadError, ParseError, StartupWarning};
 use crate::finding_sink::VecFindingSink;
 use crate::lint::LintMode;
 use crate::preprocessor::{LanguagePreprocessor, RustPreprocessor};
@@ -27,12 +27,14 @@ use crate::scope::scope_walk;
 pub struct MockspaceEngine {
     lints: Vec<InstantiatedLint>,
     rust_preprocessor: RustPreprocessor,
+    startup_warnings: Vec<StartupWarning>,
 }
 
 impl std::fmt::Debug for MockspaceEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MockspaceEngine")
             .field("lints", &self.lints.len())
+            .field("startup_warnings", &self.startup_warnings.len())
             .finish()
     }
 }
@@ -40,10 +42,18 @@ impl std::fmt::Debug for MockspaceEngine {
 impl MockspaceEngine {
     /// Build with an explicit lint set. Useful for tests; the production
     /// path constructs via [`Self::new`] which uses the registered catalog.
+    ///
+    /// Runs [`detect_prop_name_conflicts`] over the supplied entries so
+    /// the namespace-conflict check fires regardless of which constructor
+    /// path the engine is built through. Test entries that exercise the
+    /// detection logic land warnings here too; tests that want a clean
+    /// engine pass entries whose `declared_props()` do not collide.
     pub fn with_entries(entries: Vec<InstantiatedLint>) -> Self {
+        let startup_warnings = detect_prop_name_conflicts(&entries);
         Self {
             lints: entries,
             rust_preprocessor: RustPreprocessor,
+            startup_warnings,
         }
     }
 
@@ -53,7 +63,19 @@ impl MockspaceEngine {
         if !config.config_errors.is_empty() {
             return Err(LoadError::Config(config.config_errors));
         }
-        Ok(Self::with_entries(config.entries))
+        Ok(Self {
+            lints: config.entries,
+            rust_preprocessor: RustPreprocessor,
+            startup_warnings: config.startup_warnings,
+        })
+    }
+
+    /// Non-fatal observations made at engine construction. Empty when
+    /// no conflicts were detected. CLI surfaces these alongside findings
+    /// so consumers see when their lint set has overlapping prop
+    /// declarations without blocking the run.
+    pub fn startup_warnings(&self) -> &[StartupWarning] {
+        &self.startup_warnings
     }
 
     /// Walk every document through the matching preprocessor and collect
@@ -147,8 +169,8 @@ impl LintEngine for MockspaceEngine {
                 LintMode::PerDocument => {
                     // Per-document scope filter: each lint's ScopeConfig
                     // is pre-compiled into `entry.scope_filter`. Documents
-                    // that fail the filter are silently skipped — the
-                    // lint never sees them.
+                    // that fail the filter are silently skipped; the lint
+                    // never sees them.
                     //
                     // Sequential today. The schema design memo §15 calls
                     // for rayon parallelism here, but MockspaceDocument's
@@ -304,6 +326,57 @@ mod tests {
         let cfg = EmptyCfg;
         let findings = engine.run(&project, Gate::Commit, &cfg).unwrap();
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn engine_surfaces_prop_name_conflict_via_startup_warnings() {
+        use crate::errors::StartupWarning;
+        use crate::lint::Lint;
+
+        struct PropLint {
+            name: &'static str,
+        }
+        impl Lint for PropLint {
+            fn name(&self) -> &'static str {
+                self.name
+            }
+            fn description(&self) -> &'static str {
+                "props stub"
+            }
+            fn default_severity(&self) -> GateSeverity {
+                GateSeverity::uniform(Severity::Warn)
+            }
+            fn declared_props(&self) -> &'static [&'static str] {
+                &["audited"]
+            }
+        }
+        let make = |name: &'static str| InstantiatedLint {
+            lint: Box::new(PropLint { name }),
+            mode: LintMode::PerDocument,
+            staging_aware: false,
+            editor_skip: false,
+            only_staged: crate::config_loader::OnlyStaged::default(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+                name,
+                &crate::config_types::ScopeConfig::default(),
+            )
+            .unwrap(),
+        };
+        let engine = MockspaceEngine::with_entries(vec![make("lint-a"), make("lint-b")]);
+        let warnings = engine.startup_warnings();
+        assert_eq!(warnings.len(), 1);
+        match &warnings[0] {
+            StartupWarning::PropNameConflict { prop_name, lints } => {
+                assert_eq!(prop_name, "audited");
+                assert_eq!(lints, &vec!["lint-a".to_string(), "lint-b".to_string()]);
+            }
+        }
+    }
+
+    #[test]
+    fn engine_with_no_prop_conflicts_has_empty_startup_warnings() {
+        let engine = MockspaceEngine::with_entries(Vec::new());
+        assert!(engine.startup_warnings().is_empty());
     }
 
     #[test]
