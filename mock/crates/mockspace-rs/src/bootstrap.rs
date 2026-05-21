@@ -433,6 +433,63 @@ pub fn uninstall_hooks(repo_root: &Path) -> Result<UninstallOutcome, InstallErro
     Ok(outcome)
 }
 
+/// Full v2 bootstrap install: runs [`install_cargo_alias`] then
+/// [`install_hooks`] and combines their outcomes. This is the
+/// canonical entry point the CLI's `cargo mock install` subcommand
+/// (#560) wires through.
+///
+/// Returns [`InstallOutcome::Installed`] if either half made a
+/// change, [`InstallOutcome::AlreadyInstalled`] only when both
+/// halves were no-ops. Propagates the first error encountered;
+/// the install is not transactional, so a partial state can result
+/// when the alias half succeeds but the hooks half fails. The user
+/// reruns to converge.
+///
+/// Calling [`install`] on a fully-installed repo is idempotent.
+/// [`refresh`] is an alias for this behaviour with no semantic
+/// difference; both functions exist so the CLI surface can name
+/// the operation by intent (`mock install` vs `mock refresh`).
+pub fn install(repo_root: &Path) -> Result<InstallOutcome, InstallError> {
+    let alias_outcome = install_cargo_alias(repo_root)?;
+    let hooks_outcome = install_hooks(repo_root)?;
+    let installed = matches!(alias_outcome, InstallOutcome::Installed)
+        || matches!(hooks_outcome, InstallOutcome::Installed);
+    Ok(if installed {
+        InstallOutcome::Installed
+    } else {
+        InstallOutcome::AlreadyInstalled
+    })
+}
+
+/// Full v2 bootstrap uninstall: runs [`uninstall_hooks`] then
+/// [`uninstall_cargo_alias`] (reverse install order) and combines
+/// their outcomes. The CLI's `cargo mock uninstall` subcommand
+/// (#560) wires through here.
+///
+/// Returns [`UninstallOutcome::Removed`] if either half removed
+/// something, [`UninstallOutcome::AlreadyUninstalled`] only when
+/// both halves were no-ops.
+pub fn uninstall(repo_root: &Path) -> Result<UninstallOutcome, InstallError> {
+    let hooks_outcome = uninstall_hooks(repo_root)?;
+    let alias_outcome = uninstall_cargo_alias(repo_root)?;
+    let removed = matches!(hooks_outcome, UninstallOutcome::Removed)
+        || matches!(alias_outcome, UninstallOutcome::Removed);
+    Ok(if removed {
+        UninstallOutcome::Removed
+    } else {
+        UninstallOutcome::AlreadyUninstalled
+    })
+}
+
+/// Re-derive the v2 bootstrap state. Functionally identical to
+/// [`install`]; named separately so the CLI's `cargo mock refresh`
+/// subcommand has a load-bearing surface. Useful after the
+/// canonical hook script bodies or cargo alias value change in a
+/// new mockspace release; reruns to converge any drift.
+pub fn refresh(repo_root: &Path) -> Result<InstallOutcome, InstallError> {
+    install(repo_root)
+}
+
 /// Set (or clear) `core.hooksPath` in `<repo_root>/.git/config`.
 /// `Some(value)` writes the value into the `[core]` section,
 /// creating the file and section if needed. `None` removes the
@@ -1318,6 +1375,108 @@ mod tests {
         uninstall_hooks(&root).expect("uninstall");
         assert!(!status(&root).has_hooks_path);
         cleanup(&root);
+    }
+
+    // ---- install / uninstall / refresh top-level wrappers --------------
+
+    #[test]
+    fn install_flips_status_to_fully_adopted_when_mock_dir_exists() {
+        let root = fixture_dir("install-full");
+        // Status's has_mock_dir signal needs the mock/ directory; the
+        // bootstrap doesn't create it (the consumer's `mock/` is part
+        // of their repo skeleton). Pre-create here so is_fully_adopted
+        // can fire.
+        std::fs::create_dir_all(root.join("mock")).expect("mkdir mock");
+        let outcome = install(&root).expect("install");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        let s = status(&root);
+        assert!(s.is_fully_adopted(), "expected fully adopted, got {s:?}");
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_is_idempotent_after_first_call() {
+        let root = fixture_dir("install-top-idem");
+        let first = install(&root).expect("first install");
+        let second = install(&root).expect("second install");
+        cleanup(&root);
+        assert_eq!(first, InstallOutcome::Installed);
+        assert_eq!(second, InstallOutcome::AlreadyInstalled);
+    }
+
+    #[test]
+    fn install_uninstall_round_trip_returns_to_zero_state() {
+        let root = fixture_dir("install-uninstall-round-trip");
+        install(&root).expect("install");
+        let s_after_install = status(&root);
+        assert!(s_after_install.has_cargo_alias);
+        assert!(s_after_install.has_hooks_path);
+        let outcome = uninstall(&root).expect("uninstall");
+        assert_eq!(outcome, UninstallOutcome::Removed);
+        let s_after_uninstall = status(&root);
+        assert!(!s_after_uninstall.has_cargo_alias);
+        assert!(!s_after_uninstall.has_hooks_path);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_is_idempotent_when_nothing_installed() {
+        let root = fixture_dir("uninstall-noop");
+        let outcome = uninstall(&root).expect("uninstall");
+        cleanup(&root);
+        assert_eq!(outcome, UninstallOutcome::AlreadyUninstalled);
+    }
+
+    #[test]
+    fn refresh_runs_install_and_is_idempotent() {
+        let root = fixture_dir("refresh-runs");
+        let first = refresh(&root).expect("first refresh");
+        let second = refresh(&root).expect("second refresh");
+        cleanup(&root);
+        assert_eq!(first, InstallOutcome::Installed);
+        assert_eq!(second, InstallOutcome::AlreadyInstalled);
+    }
+
+    #[test]
+    fn refresh_repairs_drifted_state() {
+        let root = fixture_dir("refresh-repair-drift");
+        install(&root).expect("install");
+        // Hand-edit the pre-commit script to a stale body.
+        let pre_commit = root
+            .join("mock")
+            .join("target")
+            .join("hooks")
+            .join("pre-commit");
+        std::fs::write(&pre_commit, "#!/bin/sh\necho stale\n").expect("write stale");
+        let outcome = refresh(&root).expect("refresh");
+        assert_eq!(
+            outcome,
+            InstallOutcome::Installed,
+            "refresh should report Installed after repairing drift"
+        );
+        let body = std::fs::read_to_string(&pre_commit).expect("read");
+        assert!(body.contains("cargo mock check --gate commit"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_reports_installed_when_only_one_half_changes() {
+        let root = fixture_dir("install-partial");
+        // Pre-install the cargo alias half; install() should still
+        // report Installed because the hooks half is fresh.
+        install_cargo_alias(&root).expect("alias install");
+        let outcome = install(&root).expect("top-level install");
+        cleanup(&root);
+        assert_eq!(outcome, InstallOutcome::Installed);
+    }
+
+    #[test]
+    fn uninstall_reports_removed_when_only_one_half_was_present() {
+        let root = fixture_dir("uninstall-partial");
+        install_cargo_alias(&root).expect("alias install");
+        let outcome = uninstall(&root).expect("top-level uninstall");
+        cleanup(&root);
+        assert_eq!(outcome, UninstallOutcome::Removed);
     }
 
     #[test]
