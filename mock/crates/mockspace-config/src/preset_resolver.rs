@@ -305,7 +305,15 @@ mod tests {
         let r = parse_preset_shorthand("stack-lints::no-heap").unwrap();
         assert_eq!(r.host, "stack-lints");
         assert_eq!(r.name, "no-heap");
+    }
+
+    #[test]
+    fn shorthand_display_renders_host_name_pair() {
+        // The `shorthand()` / `Display` round-trip is part of the public
+        // surface and used in `Display` for several error variants.
+        let r = parse_preset_shorthand("stack-lints::no-heap").unwrap();
         assert_eq!(r.shorthand(), "stack-lints::no-heap");
+        assert_eq!(format!("{r}"), "stack-lints::no-heap");
     }
 
     #[test]
@@ -319,8 +327,11 @@ mod tests {
     fn shorthand_trims_surrounding_whitespace() {
         // Internal whitespace is rejected (split_once will leave it in);
         // surrounding trim mirrors how a TOML reader hands us the value.
+        // Asserting both `host` and `name` confirms the trim does not
+        // bleed across the `::` separator.
         let r = parse_preset_shorthand("  stack-lints::no-heap  ").unwrap();
         assert_eq!(r.host, "stack-lints");
+        assert_eq!(r.name, "no-heap");
     }
 
     #[test]
@@ -506,6 +517,17 @@ mod tests {
         assert!(msg.contains("stack-lints::no-heap"));
         assert!(msg.contains("while resolving extends"));
         assert!(msg.contains("garbage"));
+        // Diagnostic readability: the parent context phrase must
+        // appear before the inner-error mention so a user reading the
+        // message understands the cause-chain direction.
+        let parent_pos = msg
+            .find("while resolving")
+            .expect("`while resolving` clause present");
+        let inner_pos = msg.find("garbage").expect("inner error mention present");
+        assert!(
+            parent_pos < inner_pos,
+            "parent context should precede inner error in display, got: {msg}"
+        );
     }
 
     // ---- Display formatting ----
