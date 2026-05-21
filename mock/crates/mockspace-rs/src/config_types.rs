@@ -82,12 +82,6 @@ pub struct ScopeConfig {
     #[serde(default)]
     pub languages: Vec<Language>,
 
-    /// Categories declared in `[primitive-introductions]` whose owning
-    /// crates are exempted from this lint. Free-form string tags
-    /// (e.g. `"string-foundation"`, `"bare-collection-foundation"`).
-    #[serde(default)]
-    pub exempt_categories: Vec<String>,
-
     /// Exempt all crates listed in workspace `proc_macro_crates`.
     #[serde(default)]
     pub proc_macro_exempt: bool,

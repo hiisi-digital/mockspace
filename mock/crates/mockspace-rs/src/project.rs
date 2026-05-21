@@ -35,7 +35,6 @@ pub struct MockspaceProject {
     pub(crate) directive_records: Vec<DirectiveRecord>,
     pub(crate) surface: RunSurface,
     pub(crate) gate: Gate,
-    pub(crate) introduced_categories: HashMap<String, HashSet<String>>,
 }
 
 impl std::fmt::Debug for MockspaceProject {
@@ -138,12 +137,6 @@ impl MockspaceProject {
 
     pub fn gate(&self) -> Gate {
         self.gate
-    }
-
-    /// Categories declared in `[primitive-introductions]` for the named
-    /// crate. Returns an empty set if the crate did not declare any.
-    pub fn introduced_categories(&self, crate_name: &str) -> Option<&HashSet<String>> {
-        self.introduced_categories.get(crate_name)
     }
 }
 
@@ -269,7 +262,6 @@ pub struct ProjectBuilder {
     suppressions: SuppressionMap,
     surface: RunSurface,
     gate: Gate,
-    introduced_categories: HashMap<String, HashSet<String>>,
 }
 
 impl ProjectBuilder {
@@ -288,7 +280,6 @@ impl ProjectBuilder {
             suppressions: SuppressionMap::new(),
             surface,
             gate,
-            introduced_categories: HashMap::new(),
         }
     }
 
@@ -340,17 +331,6 @@ impl ProjectBuilder {
         self
     }
 
-    pub fn declare_introduced_category(
-        &mut self,
-        crate_name: impl Into<String>,
-        category: impl Into<String>,
-    ) {
-        self.introduced_categories
-            .entry(crate_name.into())
-            .or_default()
-            .insert(category.into());
-    }
-
     pub fn build(self) -> MockspaceProject {
         MockspaceProject {
             root: self.root,
@@ -365,7 +345,6 @@ impl ProjectBuilder {
             directive_records: Vec::new(),
             surface: self.surface,
             gate: self.gate,
-            introduced_categories: self.introduced_categories,
         }
     }
 }

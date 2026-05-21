@@ -15,7 +15,7 @@
 //!
 //! ```rust
 //! #[mockspace::allow("no-bare-numeric", reason = "...", tracked = "#427")]
-//! #[mockspace::scope_add("no-bare-numeric", axis = "exempt_categories", value = "ffi")]
+//! #[mockspace::scope_add("no-bare-numeric", axis = "exempt_paths", value = "tests/**")]
 //! #[mockspace::defer("no-bare-string", until = "#185", reason = "...")]
 //! #[mockspace::file_disable("writing-style", reason = "...", tracked = "#207")]
 //! ```
@@ -246,7 +246,6 @@ fn parse_axis(s: &str) -> Option<ScopeAxis> {
         "crates" => ScopeAxis::Crates,
         "exempt_crates" => ScopeAxis::ExemptCrates,
         "languages" => ScopeAxis::Languages,
-        "exempt_categories" => ScopeAxis::ExemptCategories,
         "proc_macro_exempt" => ScopeAxis::ProcMacroExempt,
         _ => return None,
     })
@@ -364,7 +363,7 @@ const X: u64 = 1;
     #[test]
     fn parses_mockspace_scope_add_attribute() {
         let src = r##"
-#[mockspace::scope_add("no-bare-numeric", axis = "exempt_categories", value = "ffi-boundary")]
+#[mockspace::scope_add("no-bare-numeric", axis = "exempt_paths", value = "tests/**")]
 mod ffi {}
 "##;
         let recs = parse(src);
@@ -376,8 +375,8 @@ mod ffi {}
                 value,
             } => {
                 assert_eq!(lint_name, "no-bare-numeric");
-                assert_eq!(*axis, ScopeAxis::ExemptCategories);
-                assert_eq!(value, "ffi-boundary");
+                assert_eq!(*axis, ScopeAxis::ExemptPaths);
+                assert_eq!(value, "tests/**");
             }
             other => panic!("expected ScopeAdd, got {other:?}"),
         }
@@ -599,7 +598,6 @@ fn f() {}
             "crates",
             "exempt_crates",
             "languages",
-            "exempt_categories",
             "proc_macro_exempt",
         ] {
             let src = format!(

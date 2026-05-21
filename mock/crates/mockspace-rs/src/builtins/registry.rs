@@ -329,7 +329,6 @@ inventory::submit! {
 forbidden_types = ["String"]
 positions = ["fn-param", "fn-return", "struct-field"]
 visibility = "public"
-exempt_categories = ["string-foundation"]
 "#,
         default_scope: r#"
 paths = ["**/*.rs"]

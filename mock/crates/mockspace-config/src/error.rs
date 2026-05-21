@@ -15,7 +15,7 @@ impl fmt::Display for ConfigError {
             Self::Parse(e) => write!(f, "config parse error: {e}"),
             Self::Validation { rule, details } => {
                 write!(f, "config validation failed [{rule}]: {details}")
-            },
+            }
         }
     }
 }

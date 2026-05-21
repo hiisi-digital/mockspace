@@ -659,7 +659,7 @@ mod tests {
             "c",
             Language::Rust,
             "// lint:defer(unknown-a, until: #1)\n\
-             // lint:scope-add(unknown-b, exempt_categories=ffi)\n\
+             // lint:scope-add(unknown-b, exempt_paths=\"tests/**\")\n\
              // lint:file-disable(unknown-c) reason: \"x\" tracked: #2\n\
              fn x() {}\n",
         ));

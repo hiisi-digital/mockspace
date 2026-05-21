@@ -80,12 +80,13 @@ impl fmt::Display for PresetRef {
 /// (the embedded preset tree) downstream of this parse.
 pub fn parse_preset_shorthand(input: &str) -> Result<PresetRef, PresetResolveError> {
     let trimmed = input.trim();
-    let (host, name) = trimmed.split_once("::").ok_or_else(|| {
-        PresetResolveError::MalformedShorthand {
-            input: input.to_string(),
-            reason: "missing `::` separator".to_string(),
-        }
-    })?;
+    let (host, name) =
+        trimmed
+            .split_once("::")
+            .ok_or_else(|| PresetResolveError::MalformedShorthand {
+                input: input.to_string(),
+                reason: "missing `::` separator".to_string(),
+            })?;
     if host.is_empty() {
         return Err(PresetResolveError::MalformedShorthand {
             input: input.to_string(),
@@ -196,10 +197,7 @@ fn walk(
 pub enum PresetResolveError {
     /// The `<host>::<name>` shorthand was malformed (missing separator,
     /// empty parts, extra `::`).
-    MalformedShorthand {
-        input: String,
-        reason: String,
-    },
+    MalformedShorthand { input: String, reason: String },
     /// An `extends` field on a preset carried a malformed shorthand.
     /// `parent` names the preset that owns the bad `extends`; `source`
     /// carries the underlying [`MalformedShorthand`].
@@ -210,16 +208,11 @@ pub enum PresetResolveError {
     /// A preset named in an `extends` chain was not findable through
     /// the source. The host has likely not been imported, or the
     /// import resolution failed.
-    NotFound {
-        host: String,
-        name: String,
-    },
+    NotFound { host: String, name: String },
     /// The `extends` chain cycles back on itself. `path` records every
     /// shorthand visited from the start of the chain to (and including)
     /// the re-entered preset.
-    Cycle {
-        path: Vec<String>,
-    },
+    Cycle { path: Vec<String> },
 }
 
 impl fmt::Display for PresetResolveError {
@@ -287,22 +280,21 @@ mod tests {
         }
 
         fn insert(mut self, host: &str, preset: PresetFile) -> Self {
-            self.files.insert(format!("{host}::{}", preset.name), preset);
+            self.files
+                .insert(format!("{host}::{}", preset.name), preset);
             self
         }
     }
 
     impl PresetSource for MockSource {
-        fn resolve(
-            &self,
-            preset_ref: &PresetRef,
-        ) -> Result<PresetFile, PresetResolveError> {
-            self.files.get(&preset_ref.shorthand()).cloned().ok_or_else(|| {
-                PresetResolveError::NotFound {
+        fn resolve(&self, preset_ref: &PresetRef) -> Result<PresetFile, PresetResolveError> {
+            self.files
+                .get(&preset_ref.shorthand())
+                .cloned()
+                .ok_or_else(|| PresetResolveError::NotFound {
                     host: preset_ref.host.clone(),
                     name: preset_ref.name.clone(),
-                }
-            })
+                })
         }
     }
 
@@ -377,8 +369,7 @@ mod tests {
 
     #[test]
     fn resolves_single_preset_with_no_extends() {
-        let source = MockSource::new()
-            .insert("stack-lints", preset("no-heap", None));
+        let source = MockSource::new().insert("stack-lints", preset("no-heap", None));
         let start = parse_preset_shorthand("stack-lints::no-heap").unwrap();
         let chain = resolve_preset_chain(&start, &source).unwrap();
         assert_eq!(chain.len(), 1);
@@ -428,8 +419,8 @@ mod tests {
 
     #[test]
     fn missing_extends_target_returns_not_found() {
-        let source = MockSource::new()
-            .insert("stack-lints", preset("no-heap", Some("absent::base")));
+        let source =
+            MockSource::new().insert("stack-lints", preset("no-heap", Some("absent::base")));
         let start = parse_preset_shorthand("stack-lints::no-heap").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         assert!(matches!(
@@ -440,8 +431,7 @@ mod tests {
 
     #[test]
     fn self_referential_cycle_is_detected() {
-        let source = MockSource::new()
-            .insert("a", preset("loop", Some("a::loop")));
+        let source = MockSource::new().insert("a", preset("loop", Some("a::loop")));
         let start = parse_preset_shorthand("a::loop").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         match err {
@@ -485,14 +475,16 @@ mod tests {
 
     #[test]
     fn malformed_extends_target_returns_malformed_extends_with_parent() {
-        let source = MockSource::new()
-            .insert("stack-lints", preset("no-heap", Some("garbage")));
+        let source = MockSource::new().insert("stack-lints", preset("no-heap", Some("garbage")));
         let start = parse_preset_shorthand("stack-lints::no-heap").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         match err {
             PresetResolveError::MalformedExtends { parent, source } => {
                 assert_eq!(parent.shorthand(), "stack-lints::no-heap");
-                assert!(matches!(*source, PresetResolveError::MalformedShorthand { .. }));
+                assert!(matches!(
+                    *source,
+                    PresetResolveError::MalformedShorthand { .. }
+                ));
             }
             other => panic!("expected MalformedExtends, got {other:?}"),
         }
