@@ -506,14 +506,12 @@ fn generated_thing() {}
     }
 
     #[test]
-    fn extract_prop_attribute_is_dropped_today() {
-        // Documents the current gap noted by the rust_attr.rs FOLLOWUP
-        // comment: `prop` is not yet recognised by the attribute parser
-        // (the AttrArg parser only handles string literals, but prop
-        // values can be Bool / Integer / String). Consumers must use
-        // the comment form `// lint:prop(audited)` until the gap is
-        // closed. This test locks the silent-drop so a future patch
-        // that fixes the gap also updates this regression record.
+    fn extract_prop_attribute_routes_through_rust_attr_parser() {
+        // The rust_attr.rs parser now recognises `prop` attributes
+        // (closed by the followup that mirrors comment.rs's three
+        // value shapes). This test locks the routing: an attribute-form
+        // prop on a source item lands in the PropMap identically to
+        // its comment-form counterpart.
         let doc = StubDocument {
             path: "lib.rs".into(),
             source: r##"
@@ -525,8 +523,8 @@ fn x() {}
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         assert!(
-            extracts.props.is_empty(),
-            "attribute-form prop is not yet routed"
+            !extracts.props.is_empty(),
+            "attribute-form prop should now route into PropMap"
         );
     }
 

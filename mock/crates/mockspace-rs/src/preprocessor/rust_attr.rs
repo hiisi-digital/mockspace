@@ -1,7 +1,7 @@
 //! Rust attribute parser for the 5-directive vocabulary.
 //!
-//! Per the design memo at
-//! `mock/research/202605220000_canonical-directive-vocabulary.md`,
+//! Per the reconciled design memo at
+//! `mock/research/202605221700_directive-vocabulary-reconciled.md`,
 //! the comment form is canonical, with idiomatic Rust attributes
 //! shipping as additive aliases that map to identical internal
 //! [`DirectiveRecord`] values.
@@ -18,6 +18,10 @@
 //! #[mockspace::scope_add("no-bare-numeric", axis = "exempt_paths", value = "tests/**")]
 //! #[mockspace::defer("no-bare-string", until = "#185", reason = "...")]
 //! #[mockspace::file_disable("writing-style", reason = "...", tracked = "#207")]
+//! #[mockspace::prop("audited")]
+//! #[mockspace::prop("arena_size", value = 4096)]
+//! #[mockspace::prop("audit_id", value = "A-2026-04")]
+//! #[mockspace::prop("thread_safe", value = true, reason = "verified by audit")]
 //! ```
 //!
 //! Note the snake_case attribute path for `scope_add` and
@@ -30,8 +34,14 @@
 //! to be a quoted string too. The mockspace-core `ScopeAxis` enum
 //! lists the seven valid values; unknown axes parse to a skipped
 //! attribute, not an error.
+//!
+//! `prop` accepts string, integer, and boolean literal values
+//! (parsed into `PropValue::String` / `Integer` / `Bool`),
+//! mirroring the comment form's three value shapes. The presence
+//! form `#[mockspace::prop("name")]` parses to `PropValue::Bool(true)`
+//! identically to the comment form `// lint:prop(name)`.
 
-use mockspace_core::lint::{Directive, DirectiveRecord, ScopeAxis, Span};
+use mockspace_core::lint::{Directive, DirectiveRecord, PropValue, ScopeAxis, Span};
 use syn::spanned::Spanned;
 
 /// Walk every item in `ast` looking for `#[mockspace::*]` attribute
@@ -168,15 +178,7 @@ fn parse_attr(attr: &syn::Attribute, path: &str) -> Option<DirectiveRecord> {
         "scope_add" => parse_scope_add(attr)?,
         "defer" => parse_defer(attr)?,
         "file_disable" => parse_file_disable(attr)?,
-        // FOLLOWUP: `prop` is part of the canonical 5-directive vocabulary
-        // (mockspace-core::lint::Directive::Prop) and is routed for
-        // comment-form parses, but the attribute-form parser does not
-        // yet handle it. Adding it requires extending the `AttrArg`
-        // parser to accept integer + bool literals (not just strings),
-        // and a `parse_prop` helper that mirrors comment.rs's three
-        // value shapes. Until that lands, `#[mockspace::prop(...)]`
-        // attributes are silently dropped; consumers must use the
-        // comment form (`// lint:prop(...)`) for prop directives.
+        "prop" => parse_prop(attr)?,
         _ => return None,
     };
     Some(DirectiveRecord::from_attribute(directive, span))
@@ -237,6 +239,113 @@ fn parse_file_disable(attr: &syn::Attribute) -> Option<Directive> {
         reason: args.keyed("reason"),
         tracked: args.keyed("tracked"),
     })
+}
+
+/// Parse `#[mockspace::prop("<name>")]` (presence form) or
+/// `#[mockspace::prop("<name>", value = <lit>)]` (key-value form),
+/// optionally with `reason = "..."`. Mirrors the comment form's three
+/// value shapes (Bool / Integer / String) via [`parse_prop_args`].
+fn parse_prop(attr: &syn::Attribute) -> Option<Directive> {
+    let parsed = parse_prop_args(attr)?;
+    Some(Directive::Prop {
+        name: parsed.name,
+        value: parsed.value,
+        reason: parsed.reason,
+    })
+}
+
+struct PropAttrArgs {
+    name: String,
+    value: PropValue,
+    reason: Option<String>,
+}
+
+/// Parse the body of `#[mockspace::prop(...)]`. Distinct from
+/// [`collect_args`] because the `value =` arm accepts non-string
+/// literals (bool / integer); the four other directives only ever
+/// take string literals.
+///
+/// Forgiving-failure modes (silent rather than parse-rejecting):
+/// - Multiple positionals: only the first becomes `name`.
+/// - Multiple `value =` assignments: last-write-wins.
+/// - Unknown keyed args: silently ignored.
+/// - `reason =` with a non-string literal (e.g. `reason = 42`):
+///   `reason` stays `None`, the rest of the directive parses
+///   successfully. More forgiving than `collect_args`, which
+///   rejects the whole attribute when a keyed value is not a
+///   `LitStr`. Deliberate divergence; the prop directive's value
+///   surface is heterogeneous and a single non-string `reason`
+///   should not cancel an otherwise valid directive.
+fn parse_prop_args(attr: &syn::Attribute) -> Option<PropAttrArgs> {
+    let parsed = attr
+        .parse_args_with(syn::punctuated::Punctuated::<PropAttrArg, syn::Token![,]>::parse_terminated)
+        .ok()?;
+    let mut name: Option<String> = None;
+    let mut value: Option<PropValue> = None;
+    let mut reason: Option<String> = None;
+    for arg in parsed {
+        match arg {
+            PropAttrArg::Positional(s) => {
+                if name.is_none() {
+                    name = Some(s);
+                }
+            }
+            PropAttrArg::Keyed(key, val) => match key.as_str() {
+                "value" => value = Some(val),
+                "reason" => {
+                    if let PropValue::String(s) = val {
+                        reason = Some(s);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    Some(PropAttrArgs {
+        name: name?,
+        value: value.unwrap_or(PropValue::Bool(true)),
+        reason,
+    })
+}
+
+/// One argument inside `#[mockspace::prop(...)]`. Mirrors the
+/// comment form's three value shapes for the `value =` key.
+enum PropAttrArg {
+    Positional(String),
+    Keyed(String, PropValue),
+}
+
+impl syn::parse::Parse for PropAttrArg {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        if input.peek(syn::Ident) && input.peek2(syn::Token![=]) {
+            let key: syn::Ident = input.parse()?;
+            let _eq: syn::Token![=] = input.parse()?;
+            let value = parse_prop_literal(input)?;
+            Ok(PropAttrArg::Keyed(key.to_string(), value))
+        } else {
+            let value: syn::LitStr = input.parse()?;
+            Ok(PropAttrArg::Positional(value.value()))
+        }
+    }
+}
+
+/// Parse a string / integer / boolean literal as a [`PropValue`].
+/// Mirrors [`parse_prop_value`] in `comment.rs`.
+fn parse_prop_literal(input: syn::parse::ParseStream) -> syn::Result<PropValue> {
+    let lookahead = input.lookahead1();
+    if lookahead.peek(syn::LitStr) {
+        let lit: syn::LitStr = input.parse()?;
+        Ok(PropValue::String(lit.value()))
+    } else if lookahead.peek(syn::LitInt) {
+        let lit: syn::LitInt = input.parse()?;
+        let n: i64 = lit.base10_parse()?;
+        Ok(PropValue::Integer(n))
+    } else if lookahead.peek(syn::LitBool) {
+        let lit: syn::LitBool = input.parse()?;
+        Ok(PropValue::Bool(lit.value))
+    } else {
+        Err(lookahead.error())
+    }
 }
 
 fn parse_axis(s: &str) -> Option<ScopeAxis> {
@@ -608,6 +717,125 @@ fn f() {}
             );
             let recs = parse(&src);
             assert_eq!(recs.len(), 1, "axis `{axis_str}` did not parse");
+        }
+    }
+
+    // ---- prop attribute (#545) -------------------------------------------
+
+    #[test]
+    fn parses_mockspace_prop_presence_form() {
+        let src = r##"
+#[mockspace::prop("audited")]
+fn critical_path() {}
+"##;
+        let recs = parse(src);
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { name, value, reason } => {
+                assert_eq!(name, "audited");
+                assert_eq!(*value, PropValue::Bool(true));
+                assert!(reason.is_none());
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mockspace_prop_integer_value() {
+        let src = r##"
+#[mockspace::prop("arena_size", value = 4096)]
+struct StaticBuffer;
+"##;
+        let recs = parse(src);
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { name, value, .. } => {
+                assert_eq!(name, "arena_size");
+                assert_eq!(*value, PropValue::Integer(4096));
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mockspace_prop_string_value() {
+        let src = r##"
+#[mockspace::prop("audit_id", value = "A-2026-04")]
+pub fn export_descriptor() {}
+"##;
+        let recs = parse(src);
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { name, value, .. } => {
+                assert_eq!(name, "audit_id");
+                assert_eq!(*value, PropValue::String("A-2026-04".to_string()));
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mockspace_prop_bool_value_with_reason() {
+        let src = r##"
+#[mockspace::prop("thread_safe", value = true, reason = "verified by audit")]
+struct Pool;
+"##;
+        let recs = parse(src);
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { name, value, reason } => {
+                assert_eq!(name, "thread_safe");
+                assert_eq!(*value, PropValue::Bool(true));
+                assert_eq!(reason.as_deref(), Some("verified by audit"));
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mockspace_prop_negative_integer() {
+        let src = r##"
+#[mockspace::prop("offset", value = -8)]
+struct Frame;
+"##;
+        let recs = parse(src);
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { name, value, .. } => {
+                assert_eq!(name, "offset");
+                assert_eq!(*value, PropValue::Integer(-8));
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn prop_without_positional_name_silently_drops() {
+        // Parser refuses to fabricate a name; the attribute is silently
+        // dropped per the broader "missing required positional" pattern.
+        let src = r##"
+#[mockspace::prop(value = 42)]
+struct X;
+"##;
+        let recs = parse(src);
+        assert!(recs.is_empty());
+    }
+
+    #[test]
+    fn prop_duplicate_value_keys_last_write_wins() {
+        // Pins the forgiving-failure mode documented in parse_prop_args:
+        // a later `value =` assignment overwrites an earlier one.
+        let src = r##"
+#[mockspace::prop("arena_size", value = 1024, value = 4096)]
+struct X;
+"##;
+        let recs = parse(src);
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { value, .. } => {
+                assert_eq!(*value, PropValue::Integer(4096));
+            }
+            other => panic!("expected Prop, got {other:?}"),
         }
     }
 }
