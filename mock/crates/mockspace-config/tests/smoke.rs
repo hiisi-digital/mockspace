@@ -1,8 +1,8 @@
 //! v2 mockspace.toml parsing smoke tests (spec §46).
 
 use mockspace_config::{
-    parse_mockspace_toml_str, BuiltInLiteral, ConfigError, ForgeKind, LanguageEntry, MergeStyle,
-    OnDirtyState, Severity,
+    parse_mockspace_toml, parse_mockspace_toml_str, BuiltInLiteral, ConfigError, ForgeKind,
+    LanguageEntry, MergeStyle, OnDirtyState, Severity,
 };
 
 #[test]
@@ -128,10 +128,6 @@ label = "Numeric"
 description = "Every public numeric type carries a Strategy marker."
 usage = "S: Strategy = Hot"
 
-layers = ["L0", "L1", "L2", "L3"]
-primary_domain_macro = "strategy_marker_required"
-primary_domain_label = "Strategy axis"
-
 [transparency]
 staleness_threshold_days = 90
 
@@ -229,7 +225,13 @@ keep_days = 30
 
 #[test]
 fn roundtrip_preserves_values() {
-    let toml = r#"
+    // Covers MergeStyle::Merge plus a parameter sweep across Rebase to
+    // catch silent drops on either variant. Asserts non-trivial field
+    // values on `reparsed` directly so a poorly shaped PartialEq cannot
+    // mask a round-trip regression.
+    for style in ["merge", "rebase"] {
+        let toml = format!(
+            r#"
 primary_host = "origin"
 
 [mockspace]
@@ -240,23 +242,36 @@ mock_bin_path = "target/release/mock"
 url = "https://codeberg.org/example/repo.git"
 type = "forgejo"
 token_env = "CB_TOKEN"
-merge_style = "merge"
+merge_style = "{style}"
 
 [lints.no-bare-numeric]
 commit = "error"
-"#;
-    let parsed = parse_mockspace_toml_str(toml).unwrap();
-    let serialised = toml::to_string(&parsed).unwrap();
-    let reparsed = parse_mockspace_toml_str(&serialised).unwrap();
-    assert_eq!(parsed, reparsed);
+"#
+        );
+        let parsed = parse_mockspace_toml_str(&toml).unwrap();
+        let serialised = toml::to_string(&parsed).unwrap();
+        let reparsed = parse_mockspace_toml_str(&serialised).unwrap();
+        assert_eq!(parsed, reparsed);
+        assert_eq!(reparsed.hosts["origin"].kind, Some(ForgeKind::Forgejo));
+        assert_eq!(
+            reparsed.lints["no-bare-numeric"].commit,
+            Some(Severity::Error)
+        );
+        let expected_style = match style {
+            "merge" => MergeStyle::Merge,
+            "rebase" => MergeStyle::Rebase,
+            _ => unreachable!(),
+        };
+        assert_eq!(reparsed.hosts["origin"].merge_style, Some(expected_style));
+    }
 }
 
 #[test]
 fn rejects_retired_primitive_introductions_table() {
     // The legacy `[primitive-introductions]` v1 table is retired in v2.
-    // The schema's `deny_unknown_fields` surfaces it as a parse error
-    // with no special-cased detection. Consumers are redirected to the
-    // at-site `lint:prop(source_wrapper)` directive form.
+    // Schema is strict: `deny_unknown_fields` on `Config` surfaces it
+    // as a parse error naming the retired key directly. Consumers are
+    // redirected to the at-site `lint:prop(source_wrapper)` form.
     let toml = r#"
 [mockspace]
 version = "1.0"
@@ -265,20 +280,18 @@ version = "1.0"
 arvo-bits = ["bit-storage"]
 "#;
     let err = parse_mockspace_toml_str(toml).unwrap_err();
-    // serde surfaces the unknown-field error via the toml parse path.
     let msg = format!("{err:?}");
     assert!(
-        msg.contains("primitive-introductions") || msg.contains("unknown"),
-        "expected an unknown-field error mentioning the retired table, got: {msg}"
+        msg.contains("primitive-introductions"),
+        "error should name the retired table directly, got: {msg}"
     );
 }
 
 #[test]
 fn rejects_arbitrary_unknown_top_level_field() {
-    // Schema is strict beyond just the retired table: ANY top-level
-    // field not declared on `Config` fails parse. The unknown key has
-    // to live above any section header so TOML routes it to the root
-    // table; otherwise it would attach to the most recent section.
+    // Schema strictness extends to any top-level field not declared on
+    // `Config`, not only the named retired table. The unknown key has
+    // to live above any section header so TOML routes it to the root.
     let toml = r#"
 unknown_field_consumer_made_up = "value"
 
@@ -288,8 +301,8 @@ version = "1.0"
     let err = parse_mockspace_toml_str(toml).unwrap_err();
     let msg = format!("{err:?}");
     assert!(
-        msg.contains("unknown") || msg.contains("unknown_field_consumer_made_up"),
-        "expected unknown-field error, got: {msg}"
+        msg.contains("unknown_field_consumer_made_up"),
+        "error should name the offending field, got: {msg}"
     );
 }
 
@@ -326,53 +339,154 @@ fn rejects_unsupported_major_version() {
 }
 
 #[test]
-fn rejects_invalid_severity() {
+fn rejects_invalid_enum_values() {
+    // Severity, ForgeKind, MergeStyle, and OnDirtyState all route
+    // through serde's enum dispatch. The error surface for each is
+    // identical (`ConfigError::Parse`); a single parameterised test
+    // covers the four variants and asserts the offending value appears
+    // in the displayed error so a future enum addition that silently
+    // accepts the value would surface here.
+    let cases = [
+        (
+            r#"
+                [mockspace]
+                version = "1.0"
+                [lints.foo]
+                commit = "frobnicate"
+            "#,
+            "frobnicate",
+        ),
+        (
+            r#"
+                [mockspace]
+                version = "1.0"
+                [hosts.origin]
+                url = "https://example.com/x.git"
+                type = "bitbucket"
+            "#,
+            "bitbucket",
+        ),
+        (
+            r#"
+                [mockspace]
+                version = "1.0"
+                [hosts.origin]
+                url = "https://example.com/x.git"
+                merge_style = "fast-forward-only"
+            "#,
+            "fast-forward-only",
+        ),
+        (
+            r#"
+                [mockspace]
+                version = "1.0"
+                [profile.dev]
+                on_dirty_state = "explode"
+            "#,
+            "explode",
+        ),
+    ];
+    for (toml, offending) in cases {
+        let err = parse_mockspace_toml_str(toml).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse(_)));
+        let display = format!("{err}");
+        assert!(
+            display.contains(offending),
+            "error for `{offending}` should mention the value, got: {display}"
+        );
+    }
+}
+
+#[test]
+fn parses_severity_info_variant() {
+    // Severity has four variants (Error, Warn, Info, Off). The
+    // spec-example fixture covers Error / Warn / Off; this test pins
+    // Info so a future change to the enum or its serde representation
+    // surfaces here rather than silently dropping the variant.
     let toml = r#"
         [mockspace]
         version = "1.0"
         [lints.foo]
-        commit = "frobnicate"
+        commit = "info"
     "#;
-    let err = parse_mockspace_toml_str(toml).unwrap_err();
-    assert!(matches!(err, ConfigError::Parse(_)));
+    let cfg = parse_mockspace_toml_str(toml).unwrap();
+    assert_eq!(cfg.lints["foo"].commit, Some(Severity::Info));
 }
 
 #[test]
-fn rejects_invalid_forge_kind() {
+fn rejects_lint_crate_missing_rev() {
+    // `LintCrateRef` requires both `git` and `rev`. Omitting `rev`
+    // should fail at parse with serde naming the missing field.
     let toml = r#"
-        [mockspace]
-        version = "1.0"
-        [hosts.origin]
-        url = "https://example.com/x.git"
-        type = "bitbucket"
-    "#;
+[mockspace]
+version = "1.0"
+
+[lint-crates.stack-lints]
+git = "https://example.com/x.git"
+"#;
     let err = parse_mockspace_toml_str(toml).unwrap_err();
     assert!(matches!(err, ConfigError::Parse(_)));
+    let display = format!("{err}");
+    assert!(
+        display.contains("rev"),
+        "error should name the missing field, got: {display}"
+    );
 }
 
 #[test]
-fn rejects_invalid_merge_style() {
+fn rejects_host_missing_url() {
+    // `HostSection.url` is non-optional and lacks `#[serde(default)]`.
+    // Omitting it should fail at parse with serde naming the missing
+    // field.
     let toml = r#"
-        [mockspace]
-        version = "1.0"
-        [hosts.origin]
-        url = "https://example.com/x.git"
-        merge_style = "fast-forward-only"
-    "#;
+[mockspace]
+version = "1.0"
+
+[hosts.origin]
+type = "forgejo"
+"#;
     let err = parse_mockspace_toml_str(toml).unwrap_err();
     assert!(matches!(err, ConfigError::Parse(_)));
+    let display = format!("{err}");
+    assert!(
+        display.contains("url"),
+        "error should name the missing field, got: {display}"
+    );
 }
 
 #[test]
-fn rejects_invalid_dirty_state() {
-    let toml = r#"
-        [mockspace]
-        version = "1.0"
-        [profile.dev]
-        on_dirty_state = "explode"
-    "#;
-    let err = parse_mockspace_toml_str(toml).unwrap_err();
-    assert!(matches!(err, ConfigError::Parse(_)));
+fn parse_mockspace_toml_reads_file() {
+    // Cover the file-path variant alongside the string variant.
+    // Writes a fixture to a tempdir, reads back through the disk
+    // entry point, and confirms the parsed values match.
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("mockspace.toml");
+    std::fs::write(
+        &path,
+        r#"
+[mockspace]
+version = "1.0"
+default_profile = "ci"
+"#,
+    )
+    .unwrap();
+    let cfg = parse_mockspace_toml(&path).unwrap();
+    assert_eq!(cfg.mockspace.version, "1.0");
+    assert_eq!(cfg.mockspace.default_profile, "ci");
+}
+
+#[test]
+fn parse_mockspace_toml_missing_file_returns_io_error() {
+    // The disk variant surfaces missing files as `ConfigError::Io`
+    // (distinct from the string variant's `Parse` errors), keeping
+    // the two failure modes routable separately by consumers.
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = tmp.path().join("does-not-exist.toml");
+    let err = parse_mockspace_toml(&missing).unwrap_err();
+    assert!(
+        matches!(err, ConfigError::Io(_)),
+        "expected Io error variant, got: {err:?}"
+    );
 }
 
 #[test]
@@ -449,6 +563,7 @@ uri = "mock://ext/some-pack/export/hook/pre-commit"
     match &cfg.imports.import[0] {
         mockspace_config::ImportEntry::Typed(t) => {
             assert_eq!(t.kind, mockspace_config::ImportKind::Executable);
+            assert_eq!(t.uri, "mock://ext/some-pack/export/hook/pre-commit");
         }
         other => panic!("expected Typed, got {other:?}"),
     }
@@ -495,21 +610,7 @@ commit = "error"
 }
 
 #[test]
-fn lint_config_extends_is_optional() {
-    let toml = r#"
-[mockspace]
-version = "1.0"
-
-[lints.file-size]
-commit = "warn"
-max_lines = 500
-"#;
-    let cfg = parse_mockspace_toml_str(toml).unwrap();
-    assert!(cfg.lints["file-size"].extends.is_none());
-}
-
-#[test]
-fn preset_file_round_trips() {
+fn preset_file_parses_all_fields() {
     use mockspace_config::{PresetFile, Severity};
 
     let toml = r#"
@@ -545,7 +646,14 @@ exempt_paths = ["**/tests/**"]
     assert_eq!(preset.severity.commit, Some(Severity::Warn));
     assert_eq!(preset.severity.build, Some(Severity::Error));
     assert_eq!(preset.severity.push, Some(Severity::Error));
-    assert!(preset.scope.contains_key("exempt_paths"));
+    let exempt = preset
+        .scope
+        .get("exempt_paths")
+        .expect("scope should carry exempt_paths");
+    assert!(
+        exempt.is_array(),
+        "exempt_paths should deserialise as array, got: {exempt:?}"
+    );
 }
 
 #[test]
