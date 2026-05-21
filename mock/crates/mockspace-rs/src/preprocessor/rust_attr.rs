@@ -168,6 +168,15 @@ fn parse_attr(attr: &syn::Attribute, path: &str) -> Option<DirectiveRecord> {
         "scope_add" => parse_scope_add(attr)?,
         "defer" => parse_defer(attr)?,
         "file_disable" => parse_file_disable(attr)?,
+        // FOLLOWUP: `prop` is part of the canonical 5-directive vocabulary
+        // (mockspace-core::lint::Directive::Prop) and is routed for
+        // comment-form parses, but the attribute-form parser does not
+        // yet handle it. Adding it requires extending the `AttrArg`
+        // parser to accept integer + bool literals (not just strings),
+        // and a `parse_prop` helper that mirrors comment.rs's three
+        // value shapes. Until that lands, `#[mockspace::prop(...)]`
+        // attributes are silently dropped; consumers must use the
+        // comment form (`// lint:prop(...)`) for prop directives.
         _ => return None,
     };
     Some(DirectiveRecord { directive, span })
