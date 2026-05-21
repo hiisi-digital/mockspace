@@ -81,16 +81,18 @@ pub enum ConfigErrorKind {
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "config error in `{}` at `{}`: ", self.lint_name, self.field_path)?;
+        write!(
+            f,
+            "config error in `{}` at `{}`: ",
+            self.lint_name, self.field_path
+        )?;
         match &self.kind {
             ConfigErrorKind::UnknownField => write!(f, "unknown field")?,
             ConfigErrorKind::TypeMismatch { expected, actual } => {
                 write!(f, "type mismatch (expected {expected}, found {actual})")?
             }
             ConfigErrorKind::InvalidValue => write!(f, "invalid value")?,
-            ConfigErrorKind::ContradictsCatalog => {
-                write!(f, "contradicts catalog metadata")?
-            }
+            ConfigErrorKind::ContradictsCatalog => write!(f, "contradicts catalog metadata")?,
             ConfigErrorKind::UnknownKind => write!(f, "unknown lint kind")?,
             ConfigErrorKind::UnknownFindingKind => write!(f, "unknown finding kind")?,
             ConfigErrorKind::UnparseableRegex { error } => {
@@ -139,7 +141,11 @@ pub enum LintError {
 impl fmt::Display for LintError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ParseFailure { path, parser, source } => {
+            Self::ParseFailure {
+                path,
+                parser,
+                source,
+            } => {
                 write!(f, "{parser} parse failure on {}: {source}", path.display())
             }
             Self::Internal(msg) => write!(f, "internal lint error: {msg}"),
@@ -191,7 +197,11 @@ pub enum DirectiveValidationError {
 impl fmt::Display for DirectiveValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownLintName { directive, name, span } => write!(
+            Self::UnknownLintName {
+                directive,
+                name,
+                span,
+            } => write!(
                 f,
                 "`{directive}({name})` at {}:{} names a lint not in the catalog",
                 span.file.display(),
@@ -285,10 +295,7 @@ pub enum LoadError {
     /// Catalog duplicate-name detection.
     DuplicateCatalogName { name: String },
     /// I/O error reading config files.
-    Io {
-        context: String,
-        source: io::Error,
-    },
+    Io { context: String, source: io::Error },
 }
 
 impl fmt::Display for LoadError {

@@ -90,42 +90,57 @@ impl Lint for WorkflowStateLint {
             WorkflowRule::ChangelistImmutability => {
                 for round in &rounds.rounds {
                     if round.state == RoundState::Locked && !round.locked {
-                        emit(self.name, active, sink, &format!(
-                            "round `{}` claims Locked state but `locked` flag is unset",
-                            round.timestamp
-                        ));
+                        emit(
+                            self.name,
+                            active,
+                            sink,
+                            &format!(
+                                "round `{}` claims Locked state but `locked` flag is unset",
+                                round.timestamp
+                            ),
+                        );
                     }
                 }
             }
             WorkflowRule::ChangelistRequired => {
                 for round in &rounds.rounds {
                     if round.doc_cl.is_none() && round.state != RoundState::Topic {
-                        emit(self.name, active, sink, &format!(
-                            "round `{}` has advanced past Topic without a doc CL",
-                            round.timestamp
-                        ));
+                        emit(
+                            self.name,
+                            active,
+                            sink,
+                            &format!(
+                                "round `{}` has advanced past Topic without a doc CL",
+                                round.timestamp
+                            ),
+                        );
                     }
                 }
             }
             WorkflowRule::ChangelistDocGate => {
                 for round in &rounds.rounds {
-                    if round.src_cl.is_some()
-                        && round.doc_cl.is_none()
-                    {
-                        emit(self.name, active, sink, &format!(
-                            "round `{}` has src CL without doc CL",
-                            round.timestamp
-                        ));
+                    if round.src_cl.is_some() && round.doc_cl.is_none() {
+                        emit(
+                            self.name,
+                            active,
+                            sink,
+                            &format!("round `{}` has src CL without doc CL", round.timestamp),
+                        );
                     }
                 }
             }
             WorkflowRule::DesignRoundFilenameConvention => {
                 for round in &rounds.rounds {
                     if !is_valid_round_timestamp(&round.timestamp) {
-                        emit(self.name, active, sink, &format!(
-                            "round `{}` does not match YYYYMMDDHHMM convention",
-                            round.timestamp
-                        ));
+                        emit(
+                            self.name,
+                            active,
+                            sink,
+                            &format!(
+                                "round `{}` does not match YYYYMMDDHHMM convention",
+                                round.timestamp
+                            ),
+                        );
                     }
                 }
             }
@@ -188,8 +203,8 @@ pub fn instantiate_with(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::{DesignRound, DesignRoundsView, ProjectBuilder};
     use crate::finding_sink::VecFindingSink;
+    use crate::project::{DesignRound, DesignRoundsView, ProjectBuilder};
     use mockspace_core::lint::{Gate, RunSurface, Severity};
     use std::path::PathBuf;
 
@@ -200,11 +215,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,

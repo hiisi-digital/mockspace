@@ -54,10 +54,16 @@ impl BlobSha {
             match ch {
                 '0'..='9' | 'a'..='f' => {}
                 'A'..='F' => {
-                    return Err(BlobShaError::UppercaseHex { position, found: ch });
+                    return Err(BlobShaError::UppercaseHex {
+                        position,
+                        found: ch,
+                    });
                 }
                 _ => {
-                    return Err(BlobShaError::BadHexChar { position, found: ch });
+                    return Err(BlobShaError::BadHexChar {
+                        position,
+                        found: ch,
+                    });
                 }
             }
         }
@@ -170,8 +176,7 @@ mod tests {
     use super::*;
 
     const SHA1_EXAMPLE: &str = "a1b2c3d4e5f67890123456789012345678901234";
-    const SHA256_EXAMPLE: &str =
-        "a1b2c3d4e5f6789012345678901234567890123456789012345678901234beef";
+    const SHA256_EXAMPLE: &str = "a1b2c3d4e5f6789012345678901234567890123456789012345678901234beef";
 
     #[test]
     fn parses_sha1() {
@@ -226,8 +231,7 @@ mod tests {
         let anchor = Anchor {
             mockspace_version: "1.0".to_owned(),
             captured_at: "2026-05-18T11:30:00Z".to_owned(),
-            captured_from_source_branch_tip:
-                "deadbeefcafebabe0000000000000000deadbeef".to_owned(),
+            captured_from_source_branch_tip: "deadbeefcafebabe0000000000000000deadbeef".to_owned(),
             files: vec![
                 FileEntry {
                     path: "crates/foo/src/lib.rs".to_owned(),

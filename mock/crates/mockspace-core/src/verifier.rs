@@ -80,43 +80,21 @@ pub struct VerifierNot {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VerifierKind {
     /// Regex match present in file.
-    GrepPresent {
-        pattern: String,
-        file: PathBuf,
-    },
+    GrepPresent { pattern: String, file: PathBuf },
     /// Regex match absent from file.
-    GrepAbsent {
-        pattern: String,
-        file: PathBuf,
-    },
+    GrepAbsent { pattern: String, file: PathBuf },
     /// Path exists in working tree.
-    PathExists {
-        file: PathBuf,
-    },
+    PathExists { file: PathBuf },
     /// Path does not exist in working tree.
-    PathAbsent {
-        file: PathBuf,
-    },
+    PathAbsent { file: PathBuf },
     /// File byte count is strictly below threshold.
-    FileSizeBelow {
-        file: PathBuf,
-        bytes: u64,
-    },
+    FileSizeBelow { file: PathBuf, bytes: u64 },
     /// File byte count is strictly above threshold.
-    FileSizeAbove {
-        file: PathBuf,
-        bytes: u64,
-    },
+    FileSizeAbove { file: PathBuf, bytes: u64 },
     /// File line count is strictly below threshold.
-    LineCountBelow {
-        file: PathBuf,
-        lines: u64,
-    },
+    LineCountBelow { file: PathBuf, lines: u64 },
     /// File line count is strictly above threshold.
-    LineCountAbove {
-        file: PathBuf,
-        lines: u64,
-    },
+    LineCountAbove { file: PathBuf, lines: u64 },
     /// JSON field at the given dotted path equals the given value.
     JsonFieldEquals {
         file: PathBuf,

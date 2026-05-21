@@ -150,20 +150,14 @@ impl LintsConfig {
     ///
     /// The first that exists wins. Absence is not an error; the cascade
     /// degrades to catalog defaults.
-    pub fn load(
-        workspace_root: &Path,
-        overrides: OverrideCascade,
-    ) -> Result<Self, LoadError> {
+    pub fn load(workspace_root: &Path, overrides: OverrideCascade) -> Result<Self, LoadError> {
         let user_toml = find_and_read_lints_toml(workspace_root)?;
         Ok(Self::from_inputs(user_toml, overrides))
     }
 
     /// Direct cascade entry point: pass parsed user TOML + overrides.
     /// Test-friendly form; production callers use [`Self::load`].
-    pub fn from_inputs(
-        user_toml: LintsTomlFile,
-        overrides: OverrideCascade,
-    ) -> Self {
+    pub fn from_inputs(user_toml: LintsTomlFile, overrides: OverrideCascade) -> Self {
         let mut entries = Vec::new();
         let mut config_errors = Vec::new();
 
@@ -179,12 +173,8 @@ impl LintsConfig {
                 }
             }
 
-            match instantiate_with_cascade(
-                entry,
-                &user_toml.lints,
-                &workspace_defaults,
-                &overrides,
-            ) {
+            match instantiate_with_cascade(entry, &user_toml.lints, &workspace_defaults, &overrides)
+            {
                 Ok(lint) => entries.push(lint),
                 Err(e) => config_errors.push(e),
             }
@@ -385,19 +375,17 @@ fn instantiate_with_cascade(
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .collect();
-        let cli_set: HashSet<String> =
-            overrides.scope_intersection.iter().cloned().collect();
-        let intersected: Vec<toml::Value> = if existing_set.is_empty()
-            || existing.iter().any(|v| v.as_str() == Some("*"))
-        {
-            cli_set.iter().cloned().map(toml::Value::String).collect()
-        } else {
-            existing_set
-                .intersection(&cli_set)
-                .cloned()
-                .map(toml::Value::String)
-                .collect()
-        };
+        let cli_set: HashSet<String> = overrides.scope_intersection.iter().cloned().collect();
+        let intersected: Vec<toml::Value> =
+            if existing_set.is_empty() || existing.iter().any(|v| v.as_str() == Some("*")) {
+                cli_set.iter().cloned().map(toml::Value::String).collect()
+            } else {
+                existing_set
+                    .intersection(&cli_set)
+                    .cloned()
+                    .map(toml::Value::String)
+                    .collect()
+            };
         merged_scope.insert("crates".to_string(), toml::Value::Array(intersected));
     }
 
@@ -405,18 +393,16 @@ fn instantiate_with_cascade(
     // filter. The ScopeConfig::deserialize path validates field shapes;
     // ScopeFilter::from_config compiles glob sets and surfaces glob-parse
     // errors as ConfigError.
-    let scope_config: crate::config_types::ScopeConfig =
-        toml::Value::Table(merged_scope.clone())
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: entry.name.to_string(),
-                field_path: "scope".to_string(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("scope config parse failed: {e}"),
-                source_location: None,
-            })?;
-    let scope_filter =
-        crate::scope_filter::ScopeFilter::from_config(entry.name, &scope_config)?;
+    let scope_config: crate::config_types::ScopeConfig = toml::Value::Table(merged_scope.clone())
+        .try_into()
+        .map_err(|e: toml::de::Error| ConfigError {
+            lint_name: entry.name.to_string(),
+            field_path: "scope".to_string(),
+            kind: ConfigErrorKind::InvalidValue,
+            message: format!("scope config parse failed: {e}"),
+            source_location: None,
+        })?;
+    let scope_filter = crate::scope_filter::ScopeFilter::from_config(entry.name, &scope_config)?;
 
     // Construct the lint.
     let lint = (entry.instantiate)(&merged_config, &merged_scope)?;
@@ -621,7 +607,11 @@ mod tests {
                 assert_eq!(prop_name, "arena_size");
                 assert_eq!(
                     lints,
-                    &vec!["lint-a".to_string(), "lint-b".to_string(), "lint-c".to_string()]
+                    &vec![
+                        "lint-a".to_string(),
+                        "lint-b".to_string(),
+                        "lint-c".to_string()
+                    ]
                 );
             }
         }

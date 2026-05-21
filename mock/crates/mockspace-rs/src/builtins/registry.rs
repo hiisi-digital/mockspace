@@ -19,6 +19,7 @@ use crate::lint::{Lint, LintMode};
 use super::ast_type_position;
 use super::content_regex;
 use super::deprecation_comparison;
+use super::directive_style_consistency;
 use super::no_adhoc_framework;
 use super::no_bare_vec;
 use super::no_manual_id;
@@ -712,6 +713,46 @@ paths = ["**/*.rs"]
 }
 
 // =========================================================================
+// directive-style-consistency: enforces uniform comment-form vs attribute-form.
+// =========================================================================
+
+fn instantiate_directive_style_consistency(
+    config: &toml::Table,
+    scope: &toml::Table,
+) -> Result<Box<dyn Lint>, ConfigError> {
+    directive_style_consistency::instantiate_with(
+        "directive-style-consistency",
+        "enforce project-wide uniformity of directive surface (comment vs attribute)",
+        GateSeverity::uniform(Severity::Warn),
+        config,
+        scope,
+    )
+}
+
+inventory::submit! {
+    CatalogEntry {
+        name: "directive-style-consistency",
+        description: "enforce project-wide uniformity of directive surface (comment vs attribute)",
+        kind: "directive-style-consistency",
+        default_config: r#"
+style = "mixed"
+"#,
+        default_scope: r#"
+paths = ["**/*.rs"]
+"#,
+        default_severity: GateSeverity::uniform(Severity::Warn),
+        default_impact: None,
+        default_category: None,
+        doc_url: None,
+        mode: LintMode::ProjectScoped,
+        staging_aware: false,
+        editor_skip: true,
+        instantiate: instantiate_directive_style_consistency,
+        finding_kinds: &[],
+    }
+}
+
+// =========================================================================
 // Bespoke primitive registrations.
 // =========================================================================
 //
@@ -954,8 +995,7 @@ mod tests {
 
     #[test]
     fn registry_contains_expected_entries() {
-        let names: Vec<&'static str> =
-            catalog_entries().iter().map(|e| e.name).collect();
+        let names: Vec<&'static str> = catalog_entries().iter().map(|e| e.name).collect();
         // 16 mockspace built-ins registered above (subset shown).
         for expected in &[
             "no-alloc",
@@ -1005,10 +1045,16 @@ mod tests {
         // typos that would otherwise only surface at first engine load.
         for entry in catalog_entries() {
             let config: toml::Table = entry.default_config.parse().unwrap_or_else(|e| {
-                panic!("catalog entry `{}` default_config TOML parse failed: {e}", entry.name)
+                panic!(
+                    "catalog entry `{}` default_config TOML parse failed: {e}",
+                    entry.name
+                )
             });
             let scope: toml::Table = entry.default_scope.parse().unwrap_or_else(|e| {
-                panic!("catalog entry `{}` default_scope TOML parse failed: {e}", entry.name)
+                panic!(
+                    "catalog entry `{}` default_scope TOML parse failed: {e}",
+                    entry.name
+                )
             });
             (entry.instantiate)(&config, &scope).unwrap_or_else(|e| {
                 panic!("catalog entry `{}` instantiate failed: {e}", entry.name)
@@ -1018,8 +1064,7 @@ mod tests {
 
     #[test]
     fn no_duplicate_catalog_names() {
-        let mut names: Vec<&'static str> =
-            catalog_entries().iter().map(|e| e.name).collect();
+        let mut names: Vec<&'static str> = catalog_entries().iter().map(|e| e.name).collect();
         names.sort();
         let before = names.len();
         names.dedup();

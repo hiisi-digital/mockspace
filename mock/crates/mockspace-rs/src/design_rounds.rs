@@ -254,7 +254,10 @@ mod tests {
         fs::create_dir_all(&r3).unwrap();
         let view = discover_design_rounds(tmp.path());
         let timestamps: Vec<_> = view.rounds.iter().map(|r| r.timestamp.clone()).collect();
-        assert_eq!(timestamps, vec!["202605211200", "202605211300", "202605211400"]);
+        assert_eq!(
+            timestamps,
+            vec!["202605211200", "202605211300", "202605211400"]
+        );
     }
 
     #[test]

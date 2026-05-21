@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use globset::Glob;
-use mockspace_core::lint::{Finding, GateSeverity, LintContext, Language, Severity, Span};
+use mockspace_core::lint::{Finding, GateSeverity, Language, LintContext, Severity, Span};
 use regex::Regex;
 use serde::Deserialize;
 
@@ -58,10 +58,19 @@ pub enum SymbolKind {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum CrossDocPredicate {
     NoDuplicatesAcrossCrates,
-    SourceMustAppearInDoc { design_doc_glob: String },
-    DocMustReferenceSource { design_doc_glob: String },
-    MustMatchDeprecationEntry { deprecated_cls_dir: PathBuf },
-    MustBeReferencedInDoc { doc_glob: String, ref_pattern: String },
+    SourceMustAppearInDoc {
+        design_doc_glob: String,
+    },
+    DocMustReferenceSource {
+        design_doc_glob: String,
+    },
+    MustMatchDeprecationEntry {
+        deprecated_cls_dir: PathBuf,
+    },
+    MustBeReferencedInDoc {
+        doc_glob: String,
+        ref_pattern: String,
+    },
 }
 
 pub struct CrossDocSymbolCheckLint {
@@ -119,7 +128,10 @@ impl CrossDocSymbolCheckLint {
     }
 }
 
-fn compile_glob(lint_name: &'static str, pattern: &str) -> Result<globset::GlobMatcher, ConfigError> {
+fn compile_glob(
+    lint_name: &'static str,
+    pattern: &str,
+) -> Result<globset::GlobMatcher, ConfigError> {
     Glob::new(pattern)
         .map(|g| g.compile_matcher())
         .map_err(|e| ConfigError {
@@ -155,7 +167,8 @@ impl Lint for CrossDocSymbolCheckLint {
     ) -> Result<(), LintError> {
         let active = ctx.active_severity();
         // Pass 1: collect symbols. Indexed by name with crate + path.
-        let symbols = collect_source_symbols(project, self.config.symbol_kind, &self.config.visibility);
+        let symbols =
+            collect_source_symbols(project, self.config.symbol_kind, &self.config.visibility);
 
         match &self.config.predicate {
             CrossDocPredicate::NoDuplicatesAcrossCrates => {
@@ -486,11 +499,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,

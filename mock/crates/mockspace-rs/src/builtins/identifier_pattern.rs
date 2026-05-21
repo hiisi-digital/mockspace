@@ -79,12 +79,16 @@ impl IdentifierPatternLint {
     fn matches(&self, ident: &str) -> Option<String> {
         for prefix in &self.config.forbidden_prefixes {
             if ident.starts_with(prefix) {
-                return Some(format!("identifier `{ident}` has forbidden prefix `{prefix}`"));
+                return Some(format!(
+                    "identifier `{ident}` has forbidden prefix `{prefix}`"
+                ));
             }
         }
         for suffix in &self.config.forbidden_suffixes {
             if ident.ends_with(suffix) {
-                return Some(format!("identifier `{ident}` has forbidden suffix `{suffix}`"));
+                return Some(format!(
+                    "identifier `{ident}` has forbidden suffix `{suffix}`"
+                ));
             }
         }
         for (i, regex) in self.compiled_regexes.iter().enumerate() {
@@ -227,15 +231,17 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: IdentifierPatternConfig = config.clone().try_into().map_err(
-        |e: toml::de::Error| ConfigError {
-            lint_name: name.to_string(),
-            field_path: String::new(),
-            kind: ConfigErrorKind::InvalidValue,
-            message: format!("identifier-pattern config: {e}"),
-            source_location: None,
-        },
-    )?;
+    let parsed: IdentifierPatternConfig =
+        config
+            .clone()
+            .try_into()
+            .map_err(|e: toml::de::Error| ConfigError {
+                lint_name: name.to_string(),
+                field_path: String::new(),
+                kind: ConfigErrorKind::InvalidValue,
+                message: format!("identifier-pattern config: {e}"),
+                source_location: None,
+            })?;
     Ok(Box::new(IdentifierPatternLint::new(
         name,
         description,
@@ -259,11 +265,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,

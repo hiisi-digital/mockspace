@@ -285,8 +285,7 @@ impl Span {
         }
         let starts_after =
             (inner.start_line, inner.start_column) >= (self.start_line, self.start_column);
-        let ends_before =
-            (inner.end_line, inner.end_column) <= (self.end_line, self.end_column);
+        let ends_before = (inner.end_line, inner.end_column) <= (self.end_line, self.end_column);
         starts_after && ends_before
     }
 }
@@ -689,16 +688,66 @@ pub enum ScopeAxis {
     ProcMacroExempt,
 }
 
-/// A parsed directive with its source location.
+/// Which source surface the directive came from.
+///
+/// Two surfaces produce [`DirectiveRecord`]s today: comment form
+/// (`// lint:allow(...)`) is the canonical, syntax-agnostic surface
+/// available in every language; attribute form
+/// (`#[mockspace::allow(...)]`) is an additive, language-native alias
+/// shipped per-language as an ergonomic alternative. The
+/// `directive-style-consistency` lint reads this field to enforce
+/// project-level uniformity per the design memo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceForm {
+    Comment,
+    Attribute,
+}
+
+/// A parsed directive with its source location and source form.
 ///
 /// Preprocessors emit a `Vec<DirectiveRecord>` per document; the engine
 /// folds those into per-kind maps (suppressions and defers into
 /// `SuppressionMap`, scope extensions into `ScopeAddMap`, file-disables
 /// into `FileDisableSet`, props into `PropMap`) before dispatching lints.
+/// The `source_form` field carries the surface a record came from for
+/// the `directive-style-consistency` lint to read at finding time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectiveRecord {
     pub directive: Directive,
     pub span: Span,
+    /// Which surface (`Comment` or `Attribute`) produced this record.
+    /// Preprocessors set this when constructing the record; consumers
+    /// (the consistency lint, debug-print formatters) read it.
+    ///
+    /// Defaults to [`SourceForm::Comment`] for serde back-compat with
+    /// records that predate this field.
+    #[serde(default = "default_source_form")]
+    pub source_form: SourceForm,
+}
+
+fn default_source_form() -> SourceForm {
+    SourceForm::Comment
+}
+
+impl DirectiveRecord {
+    /// Construct a record from the comment-form parser.
+    pub fn from_comment(directive: Directive, span: Span) -> Self {
+        Self {
+            directive,
+            span,
+            source_form: SourceForm::Comment,
+        }
+    }
+
+    /// Construct a record from a native attribute-form parser.
+    pub fn from_attribute(directive: Directive, span: Span) -> Self {
+        Self {
+            directive,
+            span,
+            source_form: SourceForm::Attribute,
+        }
+    }
 }
 
 // =========================================================================
@@ -884,10 +933,11 @@ impl PropMap {
     /// `push` is the only mutator and updates both atomically.
     /// Consumers that need uniqueness must enforce it before pushing.
     pub fn push(&mut self, span: Span, name: String, value: PropValue, reason: Option<String>) {
-        self.by_name
-            .entry(name.clone())
-            .or_default()
-            .push((span.clone(), value.clone(), reason.clone()));
+        self.by_name.entry(name.clone()).or_default().push((
+            span.clone(),
+            value.clone(),
+            reason.clone(),
+        ));
         self.by_span
             .entry(span)
             .or_default()
@@ -947,9 +997,7 @@ impl PropMap {
     ) -> impl Iterator<Item = PropEntry<'a>> + 'a {
         self.by_span
             .iter()
-            .filter(move |(span, _)| {
-                span.file == query.file && span.start_line < query.start_line
-            })
+            .filter(move |(span, _)| span.file == query.file && span.start_line < query.start_line)
             .flat_map(|(span, entries)| {
                 entries.iter().map(move |(name, value, reason)| PropEntry {
                     span,
@@ -1023,9 +1071,9 @@ impl ScopeAddMap {
         lint_name: &'a str,
         finding_span: &'a Span,
     ) -> impl Iterator<Item = &'a ScopeAddEntry> + 'a {
-        self.entries.iter().filter(move |e| {
-            e.lint_name == lint_name && e.scope.contains(finding_span)
-        })
+        self.entries
+            .iter()
+            .filter(move |e| e.lint_name == lint_name && e.scope.contains(finding_span))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1244,7 +1292,10 @@ mod tests {
         struct Wrap {
             i: Impact,
         }
-        let s = toml::to_string(&Wrap { i: Impact::Critical }).unwrap();
+        let s = toml::to_string(&Wrap {
+            i: Impact::Critical,
+        })
+        .unwrap();
         assert!(s.contains("critical"));
         let r: Wrap = toml::from_str(&s).unwrap();
         assert_eq!(r.i, Impact::Critical);
@@ -1256,7 +1307,10 @@ mod tests {
         struct Wrap {
             c: Category,
         }
-        let s = toml::to_string(&Wrap { c: Category::Correctness }).unwrap();
+        let s = toml::to_string(&Wrap {
+            c: Category::Correctness,
+        })
+        .unwrap();
         assert!(s.contains("correctness"));
         let r: Wrap = toml::from_str(&s).unwrap();
         assert_eq!(r.c, Category::Correctness);
@@ -1270,7 +1324,10 @@ mod tests {
         struct Wrap {
             l: Language,
         }
-        let s = toml::to_string(&Wrap { l: Language::TypeScript }).unwrap();
+        let s = toml::to_string(&Wrap {
+            l: Language::TypeScript,
+        })
+        .unwrap();
         assert!(s.contains("type_script"));
         let r: Wrap = toml::from_str(&s).unwrap();
         assert_eq!(r.l, Language::TypeScript);
@@ -1412,6 +1469,7 @@ mod tests {
     #[test]
     fn directive_allow_round_trips() {
         let r = DirectiveRecord {
+            source_form: crate::lint::SourceForm::Comment,
             directive: Directive::Allow {
                 lint_name: "no-bare-numeric".to_string(),
                 reason: Some("hardcoded constant per spec".to_string()),
@@ -1436,6 +1494,7 @@ mod tests {
             ScopeAxis::ProcMacroExempt,
         ] {
             let r = DirectiveRecord {
+                source_form: crate::lint::SourceForm::Comment,
                 directive: Directive::ScopeAdd {
                     lint_name: "no-bare-numeric".to_string(),
                     axis,
@@ -1452,6 +1511,7 @@ mod tests {
     #[test]
     fn directive_defer_round_trips() {
         let r = DirectiveRecord {
+            source_form: crate::lint::SourceForm::Comment,
             directive: Directive::Defer {
                 lint_name: "no-bare-string".to_string(),
                 until: "#185".to_string(),
@@ -1467,6 +1527,7 @@ mod tests {
     #[test]
     fn directive_file_disable_round_trips() {
         let r = DirectiveRecord {
+            source_form: crate::lint::SourceForm::Comment,
             directive: Directive::FileDisable {
                 lint_name: "writing-style".to_string(),
                 reason: Some("generated FFI binding file".to_string()),
@@ -1482,6 +1543,7 @@ mod tests {
     #[test]
     fn directive_kind_tag_uses_kebab_case() {
         let r = DirectiveRecord {
+            source_form: crate::lint::SourceForm::Comment,
             directive: Directive::FileDisable {
                 lint_name: "x".to_string(),
                 reason: None,
@@ -1496,6 +1558,7 @@ mod tests {
     #[test]
     fn directive_prop_presence_round_trips() {
         let r = DirectiveRecord {
+            source_form: crate::lint::SourceForm::Comment,
             directive: Directive::Prop {
                 name: "audited".to_string(),
                 value: PropValue::Bool(true),
@@ -1511,6 +1574,7 @@ mod tests {
     #[test]
     fn directive_prop_integer_round_trips() {
         let r = DirectiveRecord {
+            source_form: crate::lint::SourceForm::Comment,
             directive: Directive::Prop {
                 name: "arena_size".to_string(),
                 value: PropValue::Integer(4096),
@@ -1526,6 +1590,7 @@ mod tests {
     #[test]
     fn directive_prop_string_round_trips() {
         let r = DirectiveRecord {
+            source_form: crate::lint::SourceForm::Comment,
             directive: Directive::Prop {
                 name: "audit_id".to_string(),
                 value: PropValue::String("A-2026-04".to_string()),
@@ -1544,6 +1609,7 @@ mod tests {
         // value with no discriminator. TOML primitive type carries the
         // PropValue variant.
         let r = DirectiveRecord {
+            source_form: crate::lint::SourceForm::Comment,
             directive: Directive::Prop {
                 name: "x".to_string(),
                 value: PropValue::Integer(7),
@@ -1662,7 +1728,10 @@ mod tests {
             None,
         );
         let found: Vec<&str> = map.walk_ancestors(&query_line).map(|e| e.name).collect();
-        assert!(!found.contains(&"at-query"), "found at-query in walk: {found:?}");
+        assert!(
+            !found.contains(&"at-query"),
+            "found at-query in walk: {found:?}"
+        );
     }
 
     #[test]
@@ -1722,6 +1791,7 @@ mod tests {
     #[test]
     fn scope_axis_serialises_snake_case() {
         let r = DirectiveRecord {
+            source_form: crate::lint::SourceForm::Comment,
             directive: Directive::ScopeAdd {
                 lint_name: "x".to_string(),
                 axis: ScopeAxis::ExemptCategories,
@@ -1775,7 +1845,12 @@ mod tests {
 
     // ---- SuppressionMap ----
 
-    fn scope(file: &str, lines: (u32, u32), names: &[&str], tracked: Option<&str>) -> SuppressionScope {
+    fn scope(
+        file: &str,
+        lines: (u32, u32),
+        names: &[&str],
+        tracked: Option<&str>,
+    ) -> SuppressionScope {
         SuppressionScope {
             scope: Span::range(file, lines.0, 0, lines.1, 0),
             lints: names.iter().map(|s| s.to_string()).collect(),
@@ -1849,8 +1924,7 @@ mod tests {
         });
 
         let in_a = Span::single_line("a.rs", 25, 0, 1);
-        let entries_a: Vec<&ScopeAddEntry> =
-            map.entries_for("no-bare-numeric", &in_a).collect();
+        let entries_a: Vec<&ScopeAddEntry> = map.entries_for("no-bare-numeric", &in_a).collect();
         assert_eq!(entries_a.len(), 1);
         assert_eq!(entries_a[0].value, "ffi");
 
@@ -1995,6 +2069,9 @@ mod tests {
         let cfg = EmptyCfg;
         let findings = engine.run(&project, Gate::Push, &cfg).unwrap();
         assert!(findings.is_empty());
-        assert_eq!(<TinyEngine as LintEngine>::HASH_ALGORITHM, HashAlgorithm::Blake3);
+        assert_eq!(
+            <TinyEngine as LintEngine>::HASH_ALGORITHM,
+            HashAlgorithm::Blake3
+        );
     }
 }

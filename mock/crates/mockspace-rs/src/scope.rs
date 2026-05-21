@@ -220,13 +220,21 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write(&tmp.path().join("crates/foo/src/lib.rs"), "fn x() {}");
         write(&tmp.path().join("README.md"), "# hi");
-        write(&tmp.path().join("crates/foo/Cargo.toml"), "[package]\nname=\"foo\"");
+        write(
+            &tmp.path().join("crates/foo/Cargo.toml"),
+            "[package]\nname=\"foo\"",
+        );
         write(&tmp.path().join("target/debug/something.rs"), "skipped");
 
         let project = scope_walk(tmp.path(), RunSurface::Local).unwrap();
         let docs: Vec<_> = project.documents().collect();
         // Three files counted: lib.rs, README.md, Cargo.toml. target/ skipped.
-        assert_eq!(docs.len(), 3, "got: {:?}", docs.iter().map(|d| d.path()).collect::<Vec<_>>());
+        assert_eq!(
+            docs.len(),
+            3,
+            "got: {:?}",
+            docs.iter().map(|d| d.path()).collect::<Vec<_>>()
+        );
         assert!(docs.iter().any(|d| d.language() == Language::Rust));
         assert!(docs.iter().any(|d| d.language() == Language::Markdown));
         assert!(docs.iter().any(|d| d.language() == Language::Toml));

@@ -257,11 +257,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,
@@ -391,8 +387,8 @@ mod tests {
 
     #[test]
     fn meta_lint_sees_scope_from_real_preprocessor_run() {
-        use crate::MockspaceEngine;
         use crate::document::MockspaceDocument;
+        use crate::MockspaceEngine;
         use mockspace_core::lint::Language;
 
         let lint = SuppressionMetaLint::new(

@@ -163,13 +163,7 @@ fn emit_regex_matches(
         let (line, column) = byte_offset_to_line_col(view, m.start());
         let length = (m.end() - m.start()) as u32;
         sink.emit(make_finding(
-            lint_name,
-            pattern,
-            path,
-            line,
-            column,
-            length,
-            severity,
+            lint_name, pattern, path, line, column, length, severity,
         ));
     }
 }
@@ -212,13 +206,7 @@ fn emit_ratio_gated(
             // Emit one finding pointing at the first match in the window.
             let (line, column, length) = matches[i];
             sink.emit(make_finding(
-                lint_name,
-                pattern,
-                path,
-                line,
-                column,
-                length,
-                severity,
+                lint_name, pattern, path, line, column, length, severity,
             ));
             i = j;
         } else {
@@ -314,11 +302,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,
@@ -342,13 +326,9 @@ mod tests {
                 strip_doc_comments: false,
             }],
         };
-        let lint = ContentRegexLint::new(
-            "no-todo",
-            "",
-            GateSeverity::uniform(Severity::Warn),
-            config,
-        )
-        .unwrap();
+        let lint =
+            ContentRegexLint::new("no-todo", "", GateSeverity::uniform(Severity::Warn), config)
+                .unwrap();
         let doc = MockspaceDocument::new("a.rs", "t", Language::Rust, "// TODO: fix\nfn x() {}");
         let sink = VecFindingSink::new();
         let root = PathBuf::from("/tmp");
@@ -414,12 +394,8 @@ mod tests {
                 strip_doc_comments: false,
             }],
         };
-        let result = ContentRegexLint::new(
-            "broken",
-            "",
-            GateSeverity::uniform(Severity::Warn),
-            config,
-        );
+        let result =
+            ContentRegexLint::new("broken", "", GateSeverity::uniform(Severity::Warn), config);
         match result {
             Ok(_) => panic!("expected ConfigError, got Ok"),
             Err(e) => match e.kind {

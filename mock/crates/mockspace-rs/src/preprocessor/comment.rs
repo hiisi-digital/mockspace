@@ -144,7 +144,7 @@ fn parse_directive_body(
         "prop" => parse_prop(args, tail)?,
         _ => return None,
     };
-    Some(DirectiveRecord { directive, span })
+    Some(DirectiveRecord::from_comment(directive, span))
 }
 
 /// Find the matching close-paren depth-1 from the start of `s`.
@@ -408,7 +408,8 @@ const FNV_PRIME: u64 = 0x100000001b3;
 
     #[test]
     fn parses_lint_scope_add_with_axis_value() {
-        let src = "// lint:scope-add(no-bare-numeric, exempt_categories=ffi-boundary)\nmod ffi {}\n";
+        let src =
+            "// lint:scope-add(no-bare-numeric, exempt_categories=ffi-boundary)\nmod ffi {}\n";
         let recs = parse_directives(src, "m.rs");
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
@@ -528,13 +529,11 @@ fn legacy(name: String) {}
 
     #[test]
     fn markdown_html_comment_form_is_recognised() {
-        let src = "<!-- lint:file-disable(writing-style) reason: \"generated table\" tracked: #x -->\n";
+        let src =
+            "<!-- lint:file-disable(writing-style) reason: \"generated table\" tracked: #x -->\n";
         let recs = parse_directives(src, "README.md");
         assert_eq!(recs.len(), 1);
-        assert!(matches!(
-            &recs[0].directive,
-            Directive::FileDisable { .. }
-        ));
+        assert!(matches!(&recs[0].directive, Directive::FileDisable { .. }));
     }
 
     #[test]
@@ -620,7 +619,11 @@ fn legacy(name: String) {}
         assert_eq!(span.start_line, 1);
         // `lint:` starts at byte 7 zero-indexed (after "    // "), so
         // start_column = 8 one-indexed.
-        assert_eq!(span.start_column, 8, "got start_column {}", span.start_column);
+        assert_eq!(
+            span.start_column, 8,
+            "got start_column {}",
+            span.start_column
+        );
         // The directive payload is `lint:allow(no-bare-numeric)` which
         // is 27 bytes; end_column should be at least start + 27.
         assert!(
@@ -743,7 +746,8 @@ fn legacy(name: String) {}
         // Per the memo: multi-value props write multiple directives;
         // each parses to its own DirectiveRecord. PropMap (slice 3)
         // accumulates them under all_named("...").
-        let src = "// lint:prop(allowed_import = \"alloc\")\n// lint:prop(allowed_import = \"core\")\n";
+        let src =
+            "// lint:prop(allowed_import = \"alloc\")\n// lint:prop(allowed_import = \"core\")\n";
         let recs = parse_directives(src, "x.rs");
         assert_eq!(recs.len(), 2);
         for rec in &recs {

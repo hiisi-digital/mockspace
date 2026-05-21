@@ -27,7 +27,9 @@ impl RefPath {
     /// `refs/mock/round/<slug>-conflict-<host>-<ts>` — side branch
     /// preserving a lost-race commit (spec §19, §24).
     pub fn round_conflict(slug: &Slug, host: &str, timestamp: &str) -> Self {
-        Self(format!("refs/mock/round/{slug}-conflict-{host}-{timestamp}"))
+        Self(format!(
+            "refs/mock/round/{slug}-conflict-{host}-{timestamp}"
+        ))
     }
 
     /// `refs/mock/harness` — the project's configuration ref (spec §22).
@@ -37,11 +39,7 @@ impl RefPath {
 
     /// `refs/mock/task/<ns-path>/<slug>` — per-active-task orphan ref (spec §16).
     pub fn task(ns: &Namespace, slug: &Slug) -> Self {
-        Self(format!(
-            "refs/mock/task/{}/{}",
-            ns.as_ref_path(),
-            slug
-        ))
+        Self(format!("refs/mock/task/{}/{}", ns.as_ref_path(), slug))
     }
 
     /// `refs/mock/task-archive` — unified closed-tasks archive (spec §26).
@@ -123,11 +121,7 @@ mod tests {
     #[test]
     fn task_path_nested_namespace() {
         assert_eq!(
-            RefPath::task(
-                &ns("compiler::ir::lower-pass"),
-                &s("define-grammar")
-            )
-            .as_str(),
+            RefPath::task(&ns("compiler::ir::lower-pass"), &s("define-grammar")).as_str(),
             "refs/mock/task/compiler/ir/lower-pass/define-grammar"
         );
     }

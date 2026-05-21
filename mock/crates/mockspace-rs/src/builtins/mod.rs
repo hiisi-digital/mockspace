@@ -28,6 +28,7 @@ pub mod workflow_state;
 
 // Bespoke primitives (6).
 pub mod deprecation_comparison;
+pub mod directive_style_consistency;
 pub mod no_adhoc_framework;
 pub mod no_bare_vec;
 pub mod no_manual_id;

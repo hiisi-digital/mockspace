@@ -20,9 +20,8 @@ pub mod comment;
 pub mod rust_attr;
 
 use mockspace_core::lint::{
-    Directive, DirectiveRecord, Document, FileDisableEntry, FileDisableSet, Language,
-    PropMap, ScopeAddEntry, ScopeAddMap, SuppressionKind, SuppressionMap,
-    SuppressionScope,
+    Directive, DirectiveRecord, Document, FileDisableEntry, FileDisableSet, Language, PropMap,
+    ScopeAddEntry, ScopeAddMap, SuppressionKind, SuppressionMap, SuppressionScope,
 };
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -37,6 +36,13 @@ use std::path::Path;
 /// than a method on [`LanguagePreprocessor`].
 #[derive(Debug, Default)]
 pub struct DirectiveExtracts {
+    /// Every parsed [`DirectiveRecord`] from this document, preserving
+    /// `source_form` per record. Cross-cutting lints (notably
+    /// `directive-style-consistency` per the design memo) read this
+    /// to compare directives against a project-wide style policy.
+    /// Each record is also routed into the appropriate per-kind field
+    /// below; this field is the raw inventory.
+    pub records: Vec<DirectiveRecord>,
     /// `lint:allow` and `lint:defer` records routed into
     /// [`SuppressionMap`]. Allows carry [`SuppressionKind::Allow`];
     /// defers carry [`SuppressionKind::Defer`] with the `until: <task>`
@@ -62,10 +68,7 @@ pub struct DirectiveExtracts {
 pub trait LanguagePreprocessor {
     fn language(&self) -> Language;
 
-    fn extract(
-        &self,
-        document: &dyn Document,
-    ) -> Result<DirectiveExtracts, PreprocessorError>;
+    fn extract(&self, document: &dyn Document) -> Result<DirectiveExtracts, PreprocessorError>;
 }
 
 /// Error produced by a preprocessor when source is too malformed to walk.
@@ -108,10 +111,7 @@ impl LanguagePreprocessor for RustPreprocessor {
         Language::Rust
     }
 
-    fn extract(
-        &self,
-        document: &dyn Document,
-    ) -> Result<DirectiveExtracts, PreprocessorError> {
+    fn extract(&self, document: &dyn Document) -> Result<DirectiveExtracts, PreprocessorError> {
         let path_str = document.path().to_string_lossy();
         let mut out = DirectiveExtracts::default();
         // The directive path inside the document is the file the
@@ -158,11 +158,13 @@ impl LanguagePreprocessor for RustPreprocessor {
 /// Route a single [`DirectiveRecord`] into the matching field of
 /// [`DirectiveExtracts`]. Shared by the comment-form and attribute-form
 /// passes inside [`RustPreprocessor::extract`].
-fn route_record(
-    record: DirectiveRecord,
-    doc_path: &Path,
-    out: &mut DirectiveExtracts,
-) {
+fn route_record(record: DirectiveRecord, doc_path: &Path, out: &mut DirectiveExtracts) {
+    // Preserve the raw record (with its `source_form`) for
+    // cross-cutting lints. The destructured per-kind copies below
+    // lose `source_form`; this field is the inventory the
+    // directive-style-consistency lint reads.
+    out.records.push(record.clone());
+
     match record.directive {
         Directive::Allow {
             lint_name,
@@ -316,10 +318,9 @@ mod tests {
         assert_eq!(scopes[0].tracked.as_deref(), Some("#185"));
 
         // FileDisable → FileDisableSet.
-        assert!(extracts.file_disables.disabled(
-            std::path::Path::new("lib.rs"),
-            "writing-style"
-        ));
+        assert!(extracts
+            .file_disables
+            .disabled(std::path::Path::new("lib.rs"), "writing-style"));
         let file_entries = extracts.file_disables.entries();
         assert_eq!(file_entries.len(), 1);
         assert_eq!(file_entries[0].reason.as_deref(), Some("generated"));
@@ -389,8 +390,7 @@ struct Cfg;
     fn extract_prop_carries_optional_reason() {
         let doc = StubDocument {
             path: "lib.rs".into(),
-            source: "// lint:prop(audited) reason: \"audit pass 2026-04\"\nfn x() {}\n"
-                .to_string(),
+            source: "// lint:prop(audited) reason: \"audit pass 2026-04\"\nfn x() {}\n".to_string(),
             hash: ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
@@ -495,12 +495,14 @@ fn generated_thing() {}
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         assert_eq!(extracts.scope_adds.entries().len(), 1);
-        assert_eq!(extracts.scope_adds.entries()[0].lint_name, "no-bare-numeric");
+        assert_eq!(
+            extracts.scope_adds.entries()[0].lint_name,
+            "no-bare-numeric"
+        );
         assert_eq!(extracts.file_disables.entries().len(), 1);
-        assert!(extracts.file_disables.disabled(
-            std::path::Path::new("lib.rs"),
-            "writing-style",
-        ));
+        assert!(extracts
+            .file_disables
+            .disabled(std::path::Path::new("lib.rs"), "writing-style",));
     }
 
     #[test]
@@ -522,7 +524,10 @@ fn x() {}
             hash: ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
-        assert!(extracts.props.is_empty(), "attribute-form prop is not yet routed");
+        assert!(
+            extracts.props.is_empty(),
+            "attribute-form prop is not yet routed"
+        );
     }
 
     #[test]

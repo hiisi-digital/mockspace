@@ -46,7 +46,10 @@ impl Slug {
         for (position, ch) in chars {
             let ok = ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-';
             if !ok {
-                return Err(SlugError::BadChar { position, found: ch });
+                return Err(SlugError::BadChar {
+                    position,
+                    found: ch,
+                });
             }
         }
         Ok(Self(s.to_owned()))
@@ -68,14 +71,8 @@ impl fmt::Display for SlugError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => f.write_str("slug is empty"),
-            Self::TooLong { len } => write!(
-                f,
-                "slug length {len} exceeds maximum {MAX_SLUG_LEN}"
-            ),
-            Self::BadLeadingChar { found } => write!(
-                f,
-                "leading character {found:?} is not [a-z]"
-            ),
+            Self::TooLong { len } => write!(f, "slug length {len} exceeds maximum {MAX_SLUG_LEN}"),
+            Self::BadLeadingChar { found } => write!(f, "leading character {found:?} is not [a-z]"),
             Self::BadChar { position, found } => write!(
                 f,
                 "character {found:?} at position {position} is not [a-z0-9-]"
@@ -129,8 +126,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_inner_char() {
-        for (input, want_pos) in [("a_b", 1), ("abc.def", 3), ("abc def", 3), ("abcD", 3)]
-        {
+        for (input, want_pos) in [("a_b", 1), ("abc.def", 3), ("abc def", 3), ("abcD", 3)] {
             match Slug::new(input) {
                 Err(SlugError::BadChar { position, .. }) => {
                     assert_eq!(position, want_pos, "input {input}");
