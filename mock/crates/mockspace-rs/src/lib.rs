@@ -43,6 +43,7 @@ pub mod errors;
 pub mod explain;
 pub mod finding_sink;
 pub mod fix;
+pub mod invoke;
 pub mod lint;
 pub mod preprocessor;
 pub mod preset_source;
