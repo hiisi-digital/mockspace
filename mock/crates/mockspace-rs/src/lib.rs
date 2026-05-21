@@ -54,7 +54,10 @@ pub use config_loader::{InstantiatedLint, LintsConfig, OverrideCascade};
 pub use config_types::{ItemKind, Language, TypePosition, Visibility};
 pub use document::{MockspaceDocument, StripOpts};
 pub use engine::MockspaceEngine;
-pub use errors::{ConfigError, ConfigErrorKind, DispatchError, LintError, LoadError, ParseError};
+pub use errors::{
+    ConfigError, ConfigErrorKind, DispatchError, LintError, LoadError, ParseError,
+    StartupWarning,
+};
 pub use finding_sink::{FindingSink, RunReport, VecFindingSink};
 pub use lint::{Lint, LintMode};
 pub use preprocessor::{LanguagePreprocessor, RustPreprocessor};
