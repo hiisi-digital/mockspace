@@ -1144,10 +1144,18 @@ impl ScopeAddMap {
 /// directive resolved to a structured record. The `reason` and
 /// `tracked` fields parallel [`SuppressionScope`] so the meta-lint
 /// validates both surfaces with one rule.
+///
+/// `directive_span` points at the source location of the comment that
+/// produced the entry (line and column of the `// lint:file-disable`
+/// text). The directive's *effect* is the whole `file`; the *source*
+/// is the comment line. Diagnostics targeting the directive use
+/// `directive_span` so CI users can jump straight to the offending
+/// comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDisableEntry {
     pub file: PathBuf,
     pub lint_name: String,
+    pub directive_span: Span,
     pub tracked: Option<String>,
     pub reason: Option<String>,
 }
@@ -2003,6 +2011,7 @@ mod tests {
         set.push(FileDisableEntry {
             file: "a.rs".into(),
             lint_name: "writing-style".to_string(),
+            directive_span: Span::single_line("a.rs", 1, 1, 35),
             tracked: Some("#207".to_string()),
             reason: Some("generated".to_string()),
         });
@@ -2017,12 +2026,14 @@ mod tests {
         set.push(FileDisableEntry {
             file: "a.rs".into(),
             lint_name: "lint-a".to_string(),
+            directive_span: Span::single_line("a.rs", 1, 1, 25),
             tracked: None,
             reason: None,
         });
         set.push(FileDisableEntry {
             file: "a.rs".into(),
             lint_name: "lint-b".to_string(),
+            directive_span: Span::single_line("a.rs", 2, 1, 25),
             tracked: None,
             reason: None,
         });

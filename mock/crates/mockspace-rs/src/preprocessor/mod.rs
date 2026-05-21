@@ -184,6 +184,7 @@ impl LanguagePreprocessor for RustPreprocessor {
                     out.file_disables.push(FileDisableEntry {
                         file: doc_path.clone(),
                         lint_name,
+                        directive_span: record.span,
                         tracked,
                         reason,
                     });
