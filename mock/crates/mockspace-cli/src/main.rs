@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 
 use mockspace_rs::{
     bootstrap,
-    config_loader::{LintsTomlFile, OverrideCascade},
+    config_loader::{find_and_read_lints_toml, LintsTomlFile, OverrideCascade},
     explain, preset_source,
 };
 
@@ -82,7 +82,7 @@ fn main() -> std::process::ExitCode {
         Command::Install => run_install(&repo_root),
         Command::Uninstall => run_uninstall(&repo_root),
         Command::Refresh => run_refresh(&repo_root),
-        Command::Explain { name } => run_explain(&name),
+        Command::Explain { name } => run_explain(&repo_root, &name),
     }
 }
 
@@ -153,14 +153,30 @@ fn run_refresh(repo_root: &std::path::Path) -> std::process::ExitCode {
     }
 }
 
-/// Run the explain subcommand. Walks the cascade for the named
-/// lint and prints the structured report. Uses an empty user TOML
-/// and default CLI overrides for now; threading the consumer's
-/// mockspace.toml through here is a follow-up (the CLI's
-/// `--repo-root` flag would feed `LintsConfig::load` to populate
-/// the user-TOML side).
-fn run_explain(lint_name: &str) -> std::process::ExitCode {
-    let user_toml = LintsTomlFile::default();
+/// Run the explain subcommand. Walks the cascade for the named lint
+/// and prints the structured report. Reads the consumer's
+/// mockspace.toml (or `lints.toml` / `mock/lints.toml` per the
+/// canonical search order in [`find_and_read_lints_toml`]) from
+/// `repo_root`; an absent or unparseable file falls back to an empty
+/// [`LintsTomlFile::default()`] so the cascade walk still surfaces
+/// the catalog defaults. CLI-side overrides (Layer 5) and the
+/// workspace-defaults intermediate layer (Layer 3) are still empty
+/// for this slice and land separately.
+fn run_explain(repo_root: &std::path::Path, lint_name: &str) -> std::process::ExitCode {
+    let user_toml = match find_and_read_lints_toml(repo_root) {
+        Ok(toml) => toml,
+        Err(e) => {
+            // Parse failures are loud but non-fatal for explain:
+            // print a warning then proceed with the default empty
+            // file. This keeps explain runnable when the consumer's
+            // TOML has unrelated breakage; a `cargo mock check`
+            // would still surface the parse error and block.
+            eprintln!(
+                "warning: could not read user lints TOML ({e}); proceeding with catalog defaults only"
+            );
+            LintsTomlFile::default()
+        }
+    };
     let overrides = OverrideCascade::default();
     let source = preset_source::FirstPartyPresetSource::new();
     match explain::explain_lint(lint_name, &user_toml, &overrides, &source) {

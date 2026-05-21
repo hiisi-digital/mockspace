@@ -771,7 +771,18 @@ fn apply_preset_chain(
 // File discovery.
 // =========================================================================
 
-fn find_and_read_lints_toml(workspace_root: &Path) -> Result<LintsTomlFile, LoadError> {
+/// Discover and parse the consumer's lints / mockspace TOML file for
+/// `workspace_root`. Searches in canonical order: `lints.toml`,
+/// `mock/lints.toml`, `mockspace.toml`; returns the first match parsed
+/// as a [`LintsTomlFile`]. Returns the [`LintsTomlFile::default()`]
+/// (empty maps) when no file is found, so call sites can use the
+/// same shape whether or not the consumer authored one.
+///
+/// Public for the CLI `cargo mock explain` subcommand and any other
+/// caller that needs the parsed-but-uncascaded TOML state without
+/// going through the full [`LintsConfig::load`] pipeline. Internal
+/// callers in [`LintsConfig::load`] continue to use this helper too.
+pub fn find_and_read_lints_toml(workspace_root: &Path) -> Result<LintsTomlFile, LoadError> {
     let candidates = [
         workspace_root.join("lints.toml"),
         workspace_root.join("mock").join("lints.toml"),

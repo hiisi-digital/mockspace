@@ -55,7 +55,9 @@ pub mod staging;
 pub mod strip;
 
 pub use catalog::{catalog_entries, find_entry, CatalogEntry};
-pub use config_loader::{InstantiatedLint, LintsConfig, OverrideCascade};
+pub use config_loader::{
+    find_and_read_lints_toml, InstantiatedLint, LintsConfig, LintsTomlFile, OverrideCascade,
+};
 pub use config_types::{ItemKind, Language, TypePosition, Visibility};
 pub use document::{MockspaceDocument, StripOpts};
 pub use engine::MockspaceEngine;
