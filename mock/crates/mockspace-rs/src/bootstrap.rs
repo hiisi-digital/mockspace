@@ -241,6 +241,82 @@ pub fn install_cargo_alias(repo_root: &Path) -> Result<InstallOutcome, InstallEr
     Ok(InstallOutcome::Installed)
 }
 
+/// Result of [`uninstall_cargo_alias`]: whether the bootstrap actually
+/// removed anything. Mirrors [`InstallOutcome`] but with the inverse
+/// polarity: `Removed` when the mock entry was present and is now
+/// gone; `AlreadyUninstalled` when the entry was already absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UninstallOutcome {
+    /// The mock entry was present; the bootstrap removed it.
+    Removed,
+    /// The mock entry was already absent; the bootstrap made no
+    /// changes.
+    AlreadyUninstalled,
+}
+
+/// Remove the `[alias] mock = ...` entry from
+/// `<repo_root>/.cargo/config.toml`. Symmetric counterpart to
+/// [`install_cargo_alias`]. Preserves every other key in the file.
+///
+/// Behaviour matrix:
+///
+/// - File does not exist: no-op; returns
+///   [`UninstallOutcome::AlreadyUninstalled`].
+/// - File exists, no `[alias]` table: no-op; returns
+///   `AlreadyUninstalled`.
+/// - File exists, `[alias]` table present, no `mock` key: no-op;
+///   returns `AlreadyUninstalled`.
+/// - File exists, `mock` key present: remove the `mock` key.
+///   If the `[alias]` table becomes empty as a result, remove it
+///   too (matches the bootstrap's clean-slate-by-default
+///   discipline). If the file then becomes empty, leave the
+///   file in place as an empty TOML document; deleting the file
+///   would be overreach (the user may have intended `.cargo/config.toml`
+///   to exist for ambient reasons). Returns `Removed`.
+/// - File exists but unparseable: refuse to mutate; returns
+///   [`InstallError::UnparseableCargoConfig`].
+/// - `[alias]` exists as a non-table scalar: refuse to mutate;
+///   returns `InstallError::AliasMismatch` with the existing value.
+pub fn uninstall_cargo_alias(repo_root: &Path) -> Result<UninstallOutcome, InstallError> {
+    let dir = repo_root.join(".cargo");
+    let path = dir.join("config.toml");
+    let mut doc = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents
+            .parse::<toml::Table>()
+            .map_err(InstallError::UnparseableCargoConfig)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(UninstallOutcome::AlreadyUninstalled);
+        }
+        Err(e) => return Err(InstallError::Io(e)),
+    };
+
+    let Some(alias_value) = doc.get_mut("alias") else {
+        return Ok(UninstallOutcome::AlreadyUninstalled);
+    };
+    let alias_table = match alias_value {
+        toml::Value::Table(t) => t,
+        // alias = "scalar": same defensive refusal as install.
+        // Do not clobber broken-but-present user data.
+        other => {
+            return Err(InstallError::AliasMismatch {
+                existing: other.to_string(),
+            });
+        }
+    };
+
+    if alias_table.remove("mock").is_none() {
+        return Ok(UninstallOutcome::AlreadyUninstalled);
+    }
+
+    if alias_table.is_empty() {
+        doc.remove("alias");
+    }
+
+    let serialised = toml::to_string_pretty(&doc).expect("Table serialisation is infallible");
+    std::fs::write(&path, serialised)?;
+    Ok(UninstallOutcome::Removed)
+}
+
 /// Returns true if `<repo_root>/.cargo/config.toml` contains an
 /// `[alias]` table with a `mock = ...` key. The check is structural
 /// (parses the TOML) rather than substring-based so `# mock = ...`
@@ -671,6 +747,172 @@ mod tests {
         let s = mismatch.to_string();
         assert!(s.contains("weird-value"));
         assert!(s.contains("alias"));
+    }
+
+    // ---- uninstall_cargo_alias ------------------------------------------
+
+    #[test]
+    fn uninstall_cargo_alias_no_op_when_file_missing() {
+        let root = fixture_dir("uninstall-no-file");
+        let outcome = uninstall_cargo_alias(&root).expect("uninstall");
+        cleanup(&root);
+        assert_eq!(outcome, UninstallOutcome::AlreadyUninstalled);
+    }
+
+    #[test]
+    fn uninstall_cargo_alias_no_op_when_alias_table_missing() {
+        let root = fixture_dir("uninstall-no-table");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(
+            dir.join("config.toml"),
+            "[build]\ntarget = \"x86_64-unknown-linux-gnu\"\n",
+        )
+        .expect("write existing");
+        let outcome = uninstall_cargo_alias(&root).expect("uninstall");
+        cleanup(&root);
+        assert_eq!(outcome, UninstallOutcome::AlreadyUninstalled);
+    }
+
+    #[test]
+    fn uninstall_cargo_alias_no_op_when_mock_key_missing() {
+        let root = fixture_dir("uninstall-no-mock-key");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(
+            dir.join("config.toml"),
+            "[alias]\nother = \"build --release\"\n",
+        )
+        .expect("write existing");
+        let outcome = uninstall_cargo_alias(&root).expect("uninstall");
+        cleanup(&root);
+        assert_eq!(outcome, UninstallOutcome::AlreadyUninstalled);
+    }
+
+    #[test]
+    fn uninstall_cargo_alias_removes_entry_when_present() {
+        let root = fixture_dir("uninstall-remove");
+        install_cargo_alias(&root).expect("install");
+        assert!(status(&root).has_cargo_alias);
+        let outcome = uninstall_cargo_alias(&root).expect("uninstall");
+        assert_eq!(outcome, UninstallOutcome::Removed);
+        assert!(!status(&root).has_cargo_alias);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_cargo_alias_preserves_sibling_alias_keys() {
+        let root = fixture_dir("uninstall-preserve-siblings");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(
+            dir.join("config.toml"),
+            "[alias]\nmock = \"run --manifest-path mock/Cargo.toml --bin mock --\"\nother = \"build --release\"\n",
+        )
+        .expect("write existing");
+        uninstall_cargo_alias(&root).expect("uninstall");
+        let parsed: toml::Table = std::fs::read_to_string(dir.join("config.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let alias = parsed.get("alias").and_then(|v| v.as_table()).expect("alias table survives");
+        assert!(!alias.contains_key("mock"));
+        assert!(alias.contains_key("other"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_cargo_alias_removes_empty_alias_table() {
+        let root = fixture_dir("uninstall-empty-table");
+        install_cargo_alias(&root).expect("install");
+        uninstall_cargo_alias(&root).expect("uninstall");
+        let parsed: toml::Table = std::fs::read_to_string(root.join(".cargo").join("config.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        // [alias] table should be gone since mock was its only key.
+        assert!(parsed.get("alias").is_none());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_cargo_alias_preserves_unrelated_top_level_keys() {
+        let root = fixture_dir("uninstall-preserve-top");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(
+            dir.join("config.toml"),
+            "[alias]\nmock = \"run --manifest-path mock/Cargo.toml --bin mock --\"\n\n[build]\ntarget = \"x86_64-unknown-linux-gnu\"\n",
+        )
+        .expect("write existing");
+        uninstall_cargo_alias(&root).expect("uninstall");
+        let parsed: toml::Table = std::fs::read_to_string(dir.join("config.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(parsed.get("build").and_then(|v| v.as_table()).is_some());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_cargo_alias_is_idempotent_after_first_call() {
+        let root = fixture_dir("uninstall-idempotent");
+        install_cargo_alias(&root).expect("install");
+        let first = uninstall_cargo_alias(&root).expect("first uninstall");
+        let second = uninstall_cargo_alias(&root).expect("second uninstall");
+        cleanup(&root);
+        assert_eq!(first, UninstallOutcome::Removed);
+        assert_eq!(second, UninstallOutcome::AlreadyUninstalled);
+    }
+
+    #[test]
+    fn uninstall_cargo_alias_surfaces_unparseable_toml() {
+        let root = fixture_dir("uninstall-bad-toml");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(dir.join("config.toml"), "<<< not toml >>>").expect("write bad");
+        let observed = uninstall_cargo_alias(&root);
+        cleanup(&root);
+        match observed {
+            Err(InstallError::UnparseableCargoConfig(_)) => {}
+            other => panic!("expected UnparseableCargoConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn uninstall_cargo_alias_refuses_alias_as_non_table_shape() {
+        let root = fixture_dir("uninstall-alias-scalar");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(dir.join("config.toml"), "alias = \"not a table\"\n").expect("write bad");
+        let observed = uninstall_cargo_alias(&root);
+        cleanup(&root);
+        match observed {
+            Err(InstallError::AliasMismatch { .. }) => {}
+            other => panic!("expected AliasMismatch for non-table alias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn install_then_uninstall_round_trip_leaves_file_minus_alias() {
+        let root = fixture_dir("round-trip");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(
+            dir.join("config.toml"),
+            "[build]\ntarget = \"x86_64-unknown-linux-gnu\"\n",
+        )
+        .expect("write existing");
+        install_cargo_alias(&root).expect("install");
+        uninstall_cargo_alias(&root).expect("uninstall");
+        let parsed: toml::Table = std::fs::read_to_string(dir.join("config.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        // [build] survives both operations; [alias] gone.
+        assert!(parsed.get("build").and_then(|v| v.as_table()).is_some());
+        assert!(parsed.get("alias").is_none());
+        cleanup(&root);
     }
 
     #[test]
