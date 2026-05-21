@@ -40,6 +40,7 @@ pub mod design_rounds;
 pub mod document;
 pub mod engine;
 pub mod errors;
+pub mod explain;
 pub mod finding_sink;
 pub mod fix;
 pub mod lint;
@@ -60,6 +61,7 @@ pub use fix::{
     apply_plan, plan_fixes, render_unified_diff, ConflictReport, FileChange, FixError, FixOpts,
     FixPlan,
 };
+pub use explain::{explain_lint, explain_with_entry, ExplainError, ExplainReport, FinalEntry, LayerContribution};
 pub use preset_source::{FirstPartyPresetSource, FIRST_PARTY_HOST};
 pub use errors::{
     ConfigError, ConfigErrorKind, DirectiveValidationError, DispatchError, LintError, LoadError,
