@@ -38,7 +38,7 @@
 //! and forwards the other four kinds to follow-up maps per #546)
 //! lands in a follow-up slice of #544.
 
-use mockspace_core::lint::{Directive, DirectiveRecord, ScopeAxis, Span};
+use mockspace_core::lint::{Directive, DirectiveRecord, PropValue, ScopeAxis, Span};
 
 /// Identify, scan, and parse all directive-bearing comments inside
 /// `source`. Returns one [`DirectiveRecord`] per recognised directive.
@@ -143,6 +143,7 @@ fn parse_directive_body(
         "scope-add" => parse_scope_add(args)?,
         "defer" => parse_defer(args, tail)?,
         "file-disable" => parse_file_disable(args, tail)?,
+        "prop" => parse_prop(args, tail)?,
         _ => return None,
     };
     Some(DirectiveRecord { directive, span })
@@ -223,6 +224,61 @@ fn parse_file_disable(args: &str, tail: &str) -> Option<Directive> {
         reason,
         tracked,
     })
+}
+
+/// Parse `lint:prop(<name>)` or `lint:prop(<name> = <value>)` per the
+/// design memo at
+/// `mock/research/202605220600_lint-provided-marker-directive.md`.
+///
+/// Forms accepted inside the parens:
+/// - `<name>`                  → `PropValue::Bool(true)` (presence)
+/// - `<name> = true|false`     → `PropValue::Bool(...)`
+/// - `<name> = <integer>`      → `PropValue::Integer(...)`
+/// - `<name> = "<string>"`     → `PropValue::String(...)`
+///
+/// Trailing `reason: "..."` clause attaches as on the other directives.
+fn parse_prop(args: &str, tail: &str) -> Option<Directive> {
+    let (name, value) = match args.split_once('=') {
+        Some((name_raw, value_raw)) => {
+            let name = trim_name(name_raw)?;
+            let value = parse_prop_value(value_raw.trim())?;
+            (name, value)
+        }
+        None => {
+            let name = trim_name(args)?;
+            (name, PropValue::Bool(true))
+        }
+    };
+    let (reason, _) = parse_reason_tracked_tail(tail);
+    Some(Directive::Prop {
+        name,
+        value,
+        reason,
+    })
+}
+
+/// Parse a [`PropValue`] from the right-hand side of a key-value prop
+/// directive. Accepts `true` / `false`, bare integer literals (decimal,
+/// optionally signed), and quoted string literals (`"..."`).
+fn parse_prop_value(s: &str) -> Option<PropValue> {
+    let s = s.trim();
+    if s == "true" {
+        return Some(PropValue::Bool(true));
+    }
+    if s == "false" {
+        return Some(PropValue::Bool(false));
+    }
+    if let Some(rest) = s.strip_prefix('"') {
+        let close = rest.find('"')?;
+        return Some(PropValue::String(rest[..close].to_string()));
+    }
+    // Bare integer: optionally signed, decimal digits only. The bare
+    // numeric form lets authors write `arena_size = 4096` without
+    // quotes; signed for symmetry with the underlying i64 PropValue.
+    if let Ok(n) = s.parse::<i64>() {
+        return Some(PropValue::Integer(n));
+    }
+    None
 }
 
 /// Trim a single bare token (lint-name or category-name) from `s`.
@@ -601,5 +657,118 @@ fn legacy(name: String) {}
         assert!(matches!(&recs[0].directive, Directive::Introduces { .. }));
         assert!(matches!(&recs[1].directive, Directive::Allow { .. }));
         assert!(matches!(&recs[2].directive, Directive::FileDisable { .. }));
+    }
+
+    #[test]
+    fn parses_prop_presence_form() {
+        let src = "// lint:prop(audited)\n";
+        let recs = parse_directives(src, "x.rs");
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop {
+                name,
+                value,
+                reason,
+            } => {
+                assert_eq!(name, "audited");
+                assert_eq!(*value, PropValue::Bool(true));
+                assert!(reason.is_none());
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_prop_integer_keyvalue_form() {
+        let src = "// lint:prop(arena_size = 4096)\n";
+        let recs = parse_directives(src, "x.rs");
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { name, value, .. } => {
+                assert_eq!(name, "arena_size");
+                assert_eq!(*value, PropValue::Integer(4096));
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_prop_string_keyvalue_form() {
+        let src = "// lint:prop(audit_id = \"A-2026-04\")\n";
+        let recs = parse_directives(src, "x.rs");
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { name, value, .. } => {
+                assert_eq!(name, "audit_id");
+                assert_eq!(*value, PropValue::String("A-2026-04".to_string()));
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_prop_bool_keyvalue_form() {
+        let src = "// lint:prop(enabled = false)\n";
+        let recs = parse_directives(src, "x.rs");
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { name, value, .. } => {
+                assert_eq!(name, "enabled");
+                assert_eq!(*value, PropValue::Bool(false));
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_prop_with_reason() {
+        let src = "// lint:prop(audited) reason: \"audit pass 2026-04\"\n";
+        let recs = parse_directives(src, "x.rs");
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { reason, .. } => {
+                assert_eq!(reason.as_deref(), Some("audit pass 2026-04"));
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_signed_integer_prop_value() {
+        let src = "// lint:prop(temperature = -42)\n";
+        let recs = parse_directives(src, "x.rs");
+        assert_eq!(recs.len(), 1);
+        match &recs[0].directive {
+            Directive::Prop { value, .. } => {
+                assert_eq!(*value, PropValue::Integer(-42));
+            }
+            other => panic!("expected Prop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn prop_with_unrecognised_value_kind_is_skipped() {
+        // Bare identifier on the RHS of `=` is not a valid PropValue
+        // (only true/false, integers, or quoted strings). The whole
+        // directive is dropped, not silently coerced to a string.
+        let src = "// lint:prop(foo = bar)\n";
+        let recs = parse_directives(src, "x.rs");
+        assert!(recs.is_empty(), "got {recs:?}");
+    }
+
+    #[test]
+    fn multiple_prop_directives_on_same_item_accumulate() {
+        // Per the memo: multi-value props write multiple directives;
+        // each parses to its own DirectiveRecord. PropMap (slice 3)
+        // accumulates them under all_named("...").
+        let src = "// lint:prop(allowed_import = \"alloc\")\n// lint:prop(allowed_import = \"core\")\n";
+        let recs = parse_directives(src, "x.rs");
+        assert_eq!(recs.len(), 2);
+        for rec in &recs {
+            match &rec.directive {
+                Directive::Prop { name, .. } => assert_eq!(name, "allowed_import"),
+                other => panic!("expected Prop, got {other:?}"),
+            }
+        }
     }
 }
