@@ -244,7 +244,9 @@ mod tests {
     use super::*;
     use crate::finding_sink::VecFindingSink;
     use crate::project::ProjectBuilder;
-    use mockspace_core::lint::{Gate, RunSurface, Severity, Span, SuppressionMap, SuppressionScope};
+    use mockspace_core::lint::{
+        Gate, RunSurface, Severity, Span, SuppressionKind, SuppressionMap, SuppressionScope,
+    };
     use std::collections::BTreeSet;
     use std::path::PathBuf;
 
@@ -302,6 +304,7 @@ mod tests {
         let project = project_with_suppressions(vec![SuppressionScope {
             scope: Span::single_line("a.rs", 1, 1, 5),
             lints: lint_set(),
+            kind: SuppressionKind::Allow,
             tracked: None,
             reason: Some("because reasons".to_string()),
         }]);
@@ -331,6 +334,7 @@ mod tests {
         let project = project_with_suppressions(vec![SuppressionScope {
             scope: Span::single_line("a.rs", 1, 1, 5),
             lints: lint_set(),
+            kind: SuppressionKind::Allow,
             tracked: Some("#123".to_string()),
             reason: Some("short".to_string()),
         }]);
@@ -360,6 +364,7 @@ mod tests {
         let project = project_with_suppressions(vec![SuppressionScope {
             scope: Span::single_line("a.rs", 1, 1, 5),
             lints: lint_set(),
+            kind: SuppressionKind::Allow,
             tracked: Some("#456".to_string()),
             reason: Some("Boundary requires raw bytes".to_string()),
         }]);
@@ -370,5 +375,61 @@ mod tests {
         let ctx = make_ctx(&root, sev, &cfg);
         lint.check_project(&ctx, &project, &sink).unwrap();
         assert!(sink.into_findings().is_empty());
+    }
+
+    // ---- end-to-end integration test ----------------------------------
+    //
+    // The tests above unit-test the meta-lint by injecting suppression
+    // scopes via `with_suppressions`. That tests the lint's logic but
+    // skips the preprocessor → project bridge. The test below covers
+    // the full pipeline: a Rust document carrying a `// lint:allow(...)`
+    // comment goes through `MockspaceEngine::populate_directives` (the
+    // same code path `scope_project` uses), which extracts the scope
+    // into `project.suppressions()`. The meta-lint then reads from
+    // there. A regression that left suppressions empty under the
+    // production scope walk would surface here.
+
+    #[test]
+    fn meta_lint_sees_scope_from_real_preprocessor_run() {
+        use crate::MockspaceEngine;
+        use crate::document::MockspaceDocument;
+        use mockspace_core::lint::Language;
+
+        let lint = SuppressionMetaLint::new(
+            "no-untracked-suppressions",
+            "",
+            GateSeverity::uniform(Severity::Warn),
+            SuppressionMetaConfig {
+                require_tracked: true,
+                require_reason: false,
+                require_reason_min_words: 1,
+                forbid_expired: false,
+                overuse_threshold_per_crate: None,
+            },
+        );
+        let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        // `lint:allow` with reason but NO tracked: the meta-lint should
+        // fire under `require_tracked = true`.
+        builder.push_document(MockspaceDocument::new(
+            "a.rs",
+            "test-crate",
+            Language::Rust,
+            "// lint:allow(no-alloc) reason: \"intentional\"\nfn x() {}\n",
+        ));
+        let mut project = builder.build();
+        let engine = MockspaceEngine::with_entries(Vec::new());
+        engine.populate_directives(&mut project).unwrap();
+        // Project should now carry the parsed suppression scope.
+        assert_eq!(project.suppressions().scopes().len(), 1);
+
+        let sink = VecFindingSink::new();
+        let root = PathBuf::from("/tmp");
+        let sev = GateSeverity::uniform(Severity::Warn);
+        let cfg = EmptyCfg;
+        let ctx = make_ctx(&root, sev, &cfg);
+        lint.check_project(&ctx, &project, &sink).unwrap();
+        let findings = sink.into_findings();
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].message.contains("tracked"));
     }
 }

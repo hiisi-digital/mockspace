@@ -40,11 +40,12 @@ pub use atomicity::{
 };
 pub use bookkeeping::{BookkeepingFile, RootEntry, classify_root_entry};
 pub use lint::{
-    Category, ContentHash, Directive, DirectiveRecord, Document, FileOp, Finding, Fix, Gate,
-    GateSeverity, HashAlgorithm, Impact, LINT_CONTRACT_VERSION, Language, LintCfgStore,
-    LintContext, LintEngine, LintError, MetadataBlob, Project, PropEntry, PropMap,
-    PropValue, RelatedSpan, RunSurface, ScopeAxis, Severity, Span, Suggestion,
-    SuppressionMap, SuppressionScope, matches_pattern,
+    Category, ContentHash, Directive, DirectiveRecord, Document, FileDisableEntry,
+    FileDisableSet, FileOp, Finding, Fix, Gate, GateSeverity, HashAlgorithm, Impact,
+    IntroducerMap, LINT_CONTRACT_VERSION, Language, LintCfgStore, LintContext,
+    LintEngine, LintError, MetadataBlob, Project, PropEntry, PropMap, PropValue,
+    RelatedSpan, RunSurface, ScopeAddEntry, ScopeAddMap, ScopeAxis, Severity, Span,
+    Suggestion, SuppressionKind, SuppressionMap, SuppressionScope, matches_pattern,
 };
 pub use manifest::{
     AcceptanceBlock, ChangeBlock, DeprecatedAccounting, Manifest, SCHEMA_MAJOR,

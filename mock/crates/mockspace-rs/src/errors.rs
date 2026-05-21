@@ -186,6 +186,12 @@ pub enum ParseError {
         path: PathBuf,
         extension: String,
     },
+    /// Preprocessor failed while resolving directives at scope time.
+    /// Covers syntax-failure inside a comment-form directive header
+    /// and other internal preprocessor faults.
+    Preprocessor {
+        message: String,
+    },
     NotYetImplemented(&'static str),
 }
 
@@ -206,6 +212,9 @@ impl fmt::Display for ParseError {
                 "no language adapter for extension `{extension}` ({})",
                 path.display()
             ),
+            Self::Preprocessor { message } => {
+                write!(f, "preprocessor error during scope: {message}")
+            }
             Self::NotYetImplemented(msg) => write!(f, "not yet implemented: {msg}"),
         }
     }

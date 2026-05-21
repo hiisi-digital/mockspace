@@ -11,9 +11,10 @@
 use std::path::Path;
 
 use mockspace_core::lint::{
-    Finding, Gate, HashAlgorithm, Language, LintCfgStore, LintContext, LintEngine,
-    RunSurface, SuppressionMap,
+    FileDisableSet, Finding, Gate, HashAlgorithm, IntroducerMap, Language, LintCfgStore,
+    LintContext, LintEngine, RunSurface, ScopeAddMap, SuppressionMap,
 };
+use crate::preprocessor::PreprocessorError;
 
 use crate::config_loader::{InstantiatedLint, LintsConfig, detect_prop_name_conflicts};
 use crate::errors::{DispatchError, LoadError, ParseError, StartupWarning};
@@ -78,32 +79,62 @@ impl MockspaceEngine {
         &self.startup_warnings
     }
 
-    /// Walk every document through the matching preprocessor and collect
-    /// suppression scopes.
-    ///
-    /// Calls the per-language preprocessor's bundled-output `extract`
-    /// method and merges only the `suppressions` field at this slice;
-    /// `props` are dropped here. Slice 4 routing wires the PropMap
-    /// merge through the engine separately (TODO when `MockspaceEngine`
-    /// grows a project-level PropMap).
-    fn extract_suppressions(
+    /// Walk every Rust document through the preprocessor and stash
+    /// the resolved directive state on the project. Called at
+    /// [`Self::scope_project`] time on the production path. Exposed
+    /// publicly so test fixtures that build projects via
+    /// [`crate::project::ProjectBuilder`] (rather than `scope_walk`)
+    /// can still exercise the real extraction pipeline instead of
+    /// injecting suppressions externally.
+    pub fn populate_directives(
+        &self,
+        project: &mut MockspaceProject,
+    ) -> Result<(), PreprocessorError> {
+        let (suppressions, introducers, scope_adds, file_disables) =
+            self.aggregate_directives(project)?;
+        project.set_resolved_directives(
+            suppressions,
+            introducers,
+            scope_adds,
+            file_disables,
+        );
+        Ok(())
+    }
+
+    fn aggregate_directives(
         &self,
         project: &MockspaceProject,
-    ) -> Result<SuppressionMap, DispatchError> {
-        let mut map = SuppressionMap::new();
+    ) -> Result<
+        (SuppressionMap, IntroducerMap, ScopeAddMap, FileDisableSet),
+        PreprocessorError,
+    > {
+        let mut suppressions = SuppressionMap::new();
+        let mut introducers = IntroducerMap::new();
+        let mut scope_adds = ScopeAddMap::new();
+        let mut file_disables = FileDisableSet::new();
         for doc in project.documents() {
             if doc.language() == Language::Rust {
-                let extracts = self.rust_preprocessor.extract(doc).map_err(|e| {
-                    DispatchError::RuntimeRefused {
-                        reason: format!("preprocessor failed: {e}"),
-                    }
-                })?;
+                let extracts = self.rust_preprocessor.extract(doc)?;
                 for scope in extracts.suppressions.scopes() {
-                    map.push(scope.clone());
+                    suppressions.push(scope.clone());
+                }
+                let intro_pairs: Vec<(_, String)> = extracts
+                    .introducers
+                    .entries()
+                    .map(|(span, cat)| (span.clone(), cat.to_string()))
+                    .collect();
+                for (span, category) in intro_pairs {
+                    introducers.push(span, category);
+                }
+                for entry in extracts.scope_adds.entries() {
+                    scope_adds.push(entry.clone());
+                }
+                for entry in extracts.file_disables.entries() {
+                    file_disables.push(entry.clone());
                 }
             }
         }
-        Ok(map)
+        Ok((suppressions, introducers, scope_adds, file_disables))
     }
 }
 
@@ -124,7 +155,20 @@ impl LintEngine for MockspaceEngine {
         root: &Path,
         surface: RunSurface,
     ) -> Result<Self::Project, Self::ParseError> {
-        scope_walk(root, surface)
+        let mut project = scope_walk(root, surface)?;
+        // Resolve directives inline so consumer lints reading
+        // `project.suppressions()` / `project.file_disables()` etc.
+        // see the actual project state, not empty defaults. The
+        // `SuppressionMetaLint` and the future bare-primitive lint
+        // family both depend on this; without it they see no scopes
+        // and silently produce no findings. Building this state in
+        // `run` (the prior shape) hid the gap because tests injected
+        // via `with_suppressions`. Resolving here is the contract.
+        self.populate_directives(&mut project)
+            .map_err(|e| ParseError::Preprocessor {
+                message: e.to_string(),
+            })?;
+        Ok(project)
     }
 
     fn run(
@@ -133,7 +177,6 @@ impl LintEngine for MockspaceEngine {
         gate: Gate,
         cfg: &dyn LintCfgStore,
     ) -> Result<Vec<Finding>, Self::DispatchError> {
-        let suppressions = self.extract_suppressions(project)?;
         let sink = VecFindingSink::new();
 
         for entry in &self.lints {
@@ -216,8 +259,16 @@ impl LintEngine for MockspaceEngine {
         }
 
         let findings = sink.into_findings();
+        let file_disables = project.file_disables();
+        let suppressions = project.suppressions();
         let filtered: Vec<Finding> = findings
             .into_iter()
+            // File-disable filtering runs before span-bounded
+            // suppression resolution: a file-disable kills every
+            // finding in the file regardless of span; suppression
+            // resolution only fires if the file did not silence the
+            // lint outright. Both apply.
+            .filter(|f| !file_disables.disabled(&f.span.file, &f.lint_name))
             .filter(|f| suppressions.resolves(&f.lint_name, &f.span).is_none())
             .collect();
         Ok(filtered)
@@ -371,6 +422,68 @@ mod tests {
                 assert_eq!(lints, &vec!["lint-a".to_string(), "lint-b".to_string()]);
             }
         }
+    }
+
+    #[test]
+    fn engine_file_disable_directive_drops_findings_in_that_file() {
+        // A `// lint:file-disable(no-banned)` in a Rust source file
+        // suppresses every `no-banned` finding emitted against that
+        // file, regardless of where in the file the finding lands.
+        let config = TokenScanConfig {
+            tokens: vec!["BANNED".to_string()],
+            word_boundary: true,
+            strip_strings: true,
+            strip_comments: true,
+            strip_doc_comments: true,
+            severity_escalation: None,
+        };
+        let lint = TokenScanLint::new(
+            "no-banned",
+            "ban the BANNED token",
+            config,
+            GateSeverity::uniform(Severity::Warn),
+        );
+        let entries = vec![InstantiatedLint {
+            lint: Box::new(lint),
+            mode: LintMode::PerDocument,
+            staging_aware: true,
+            editor_skip: false,
+            only_staged: crate::config_loader::OnlyStaged::default(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+                "test",
+                &crate::config_types::ScopeConfig::default(),
+            )
+            .unwrap(),
+        }];
+        let engine = MockspaceEngine::with_entries(entries);
+
+        let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        // File whose lint:file-disable should suppress the finding.
+        builder.push_document(MockspaceDocument::new(
+            "a.rs",
+            "test-crate",
+            Language::Rust,
+            "// lint:file-disable(no-banned) reason: \"fixture\" tracked: #1\nfn x() { let _ = BANNED; }",
+        ));
+        // Second file without the disable directive: finding survives.
+        builder.push_document(MockspaceDocument::new(
+            "b.rs",
+            "test-crate",
+            Language::Rust,
+            "fn y() { let _ = BANNED; }",
+        ));
+        let mut project = builder.build();
+        // Exercise the real preprocessor pipeline rather than
+        // injecting state via `with_suppressions`. The engine's
+        // production path calls this from `scope_project`; tests
+        // that build via `ProjectBuilder` (instead of `scope_walk`)
+        // call it explicitly so they exercise the same code path.
+        engine.populate_directives(&mut project).unwrap();
+        let cfg = EmptyCfg;
+        let findings = engine.run(&project, Gate::Commit, &cfg).unwrap();
+        // a.rs finding is dropped by the file-disable; b.rs finding survives.
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].span.file.ends_with("b.rs"));
     }
 
     #[test]
