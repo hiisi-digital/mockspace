@@ -44,6 +44,7 @@ pub mod finding_sink;
 pub mod fix;
 pub mod lint;
 pub mod preprocessor;
+pub mod preset_source;
 pub mod project;
 pub mod scope;
 pub mod scope_filter;
@@ -59,6 +60,7 @@ pub use fix::{
     apply_plan, plan_fixes, render_unified_diff, ConflictReport, FileChange, FixError, FixOpts,
     FixPlan,
 };
+pub use preset_source::{FirstPartyPresetSource, FIRST_PARTY_HOST};
 pub use errors::{
     ConfigError, ConfigErrorKind, DirectiveValidationError, DispatchError, LintError, LoadError,
     ParseError, StartupWarning,

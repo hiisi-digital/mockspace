@@ -1,11 +1,16 @@
 //! TOML configuration loader and override cascade.
 //!
-//! Per schema design memo §11. Cascade precedence, lowest-to-highest:
+//! Per schema design memo §11 + preset infrastructure memo at
+//! `mock/research/202605220500_lint-preset-infrastructure.md`. Cascade
+//! precedence, lowest-to-highest:
 //!
 //! 1. `CatalogEntry::default_config` + `default_scope` + `default_severity`.
-//! 2. Workspace-level `[lints]` defaults.
-//! 3. Per-lint `[lints.<name>]` blocks in `lints.toml`.
-//! 4. CLI overrides (`--scope`, `--lint`, `--severity-override`).
+//! 2. Preset chain (resolved through [`mockspace_config::PresetSource`]
+//!    from the per-lint `extends = "<host>::<name>"` shorthand, walked
+//!    innermost-first).
+//! 3. Workspace-level `[lints]` defaults.
+//! 4. Per-lint `[lints.<name>]` blocks in `lints.toml`.
+//! 5. CLI overrides (`--scope`, `--lint`, `--severity-override`).
 //!
 //! The two-channel return shape (`(entries, config_errors)`) keeps source
 //! findings and configuration faults separate per §9.
@@ -18,6 +23,8 @@ use serde::Deserialize;
 use crate::catalog::CatalogEntry;
 use crate::errors::{ConfigError, ConfigErrorKind, LoadError, StartupWarning};
 use crate::lint::{Lint, LintMode};
+use crate::preset_source::{parse_extends, FirstPartyPresetSource};
+use mockspace_config::{resolve_preset_chain, PresetFile, PresetResolveError, PresetSource};
 
 /// Prop names with this prefix are reserved as the first-party namespace.
 /// Collisions among multiple lints declaring the same `mockspace::`-prefixed
@@ -156,8 +163,24 @@ impl LintsConfig {
     }
 
     /// Direct cascade entry point: pass parsed user TOML + overrides.
-    /// Test-friendly form; production callers use [`Self::load`].
+    /// Uses the build.rs-embedded first-party preset table as the only
+    /// resolution source. Test-friendly form; production callers use
+    /// [`Self::load`].
     pub fn from_inputs(user_toml: LintsTomlFile, overrides: OverrideCascade) -> Self {
+        let source = FirstPartyPresetSource::new();
+        Self::from_inputs_with_source(user_toml, overrides, &source)
+    }
+
+    /// Like [`Self::from_inputs`] but with an explicit preset source.
+    /// Tests inject a mock source carrying canned presets; production
+    /// callers go through [`Self::from_inputs`] which binds to the
+    /// embedded first-party table. A future external-preset chain
+    /// loader composes additional sources behind this same surface.
+    pub fn from_inputs_with_source(
+        user_toml: LintsTomlFile,
+        overrides: OverrideCascade,
+        preset_source: &dyn PresetSource,
+    ) -> Self {
         let mut entries = Vec::new();
         let mut config_errors = Vec::new();
 
@@ -173,8 +196,13 @@ impl LintsConfig {
                 }
             }
 
-            match instantiate_with_cascade(entry, &user_toml.lints, &workspace_defaults, &overrides)
-            {
+            match instantiate_with_cascade(
+                entry,
+                &user_toml.lints,
+                &workspace_defaults,
+                &overrides,
+                preset_source,
+            ) {
                 Ok(lint) => entries.push(lint),
                 Err(e) => config_errors.push(e),
             }
@@ -292,6 +320,7 @@ fn instantiate_with_cascade(
     user_lints: &HashMap<String, toml::Table>,
     workspace_defaults: &toml::Table,
     overrides: &OverrideCascade,
+    preset_source: &dyn PresetSource,
 ) -> Result<InstantiatedLint, ConfigError> {
     // Level 1: catalog defaults.
     let mut merged_config: toml::Table =
@@ -317,12 +346,39 @@ fn instantiate_with_cascade(
                 source_location: None,
             })?;
 
-    // Level 2: workspace defaults (overlay where present).
+    let user_block = user_lints.get(entry.name);
+
+    // Level 2: preset chain (between catalog defaults and workspace
+    // defaults, per the cascade ordering documented at
+    // `mock/research/202605220500_lint-preset-infrastructure.md`).
+    //
+    // Reads `extends = "<host>::<name>"` from the per-lint block top
+    // level, resolves the chain through `preset_source`, applies each
+    // preset's `config` and `scope` BTreeMap as a toml::Table overlay
+    // in innermost-first order. Severity overlay is tracked separately;
+    // see #566 (severity flows through LintCfgStore, not through this
+    // instantiation cascade). List-merge `.add`/`.remove` semantics
+    // are tracked at #567; current overlay() uses replace-on-list,
+    // which matches the documented default.
+    if let Some(block) = user_block {
+        if let Some(extends_ref) = parse_extends(block.get("extends")).map_err(|e| {
+            preset_error_to_config_error(entry.name, "extends", e)
+        })? {
+            let chain = resolve_preset_chain(&extends_ref, preset_source).map_err(|e| {
+                preset_error_to_config_error(entry.name, "extends", e)
+            })?;
+            apply_preset_chain(&chain, &mut merged_config, &mut merged_scope);
+        }
+    }
+
+    // Level 3: workspace defaults (overlay where present).
     overlay(&mut merged_config, workspace_defaults);
 
-    // Level 3: per-lint user TOML.
-    let user_block = user_lints.get(entry.name);
+    // Level 4: per-lint user TOML.
     if let Some(block) = user_block {
+        // The `extends` key was consumed at Level 2 above; skip it
+        // here so the unknown-field guards downstream do not flag
+        // it as a typo.
         if let Some(toml::Value::Table(t)) = block.get("config") {
             overlay(&mut merged_config, t);
         }
@@ -363,7 +419,7 @@ fn instantiate_with_cascade(
     // validation lives in extract_only_staged.
     let only_staged = extract_only_staged(entry, user_block)?;
 
-    // Level 4: CLI scope intersection. The catalog entry's `scope.crates`
+    // Level 5: CLI scope intersection. The catalog entry's `scope.crates`
     // (or merged_scope.crates) is intersected with `overrides.scope_intersection`.
     if !overrides.scope_intersection.is_empty() {
         let existing = merged_scope
@@ -429,6 +485,62 @@ fn overlay(dst: &mut toml::Table, src: &toml::Table) {
             _ => {
                 dst.insert(k.clone(), v.clone());
             }
+        }
+    }
+}
+
+// =========================================================================
+// Preset chain application.
+// =========================================================================
+
+/// Convert a [`mockspace_config::PresetResolveError`] into the engine's
+/// [`ConfigError`] channel. Preset resolution failures are config faults
+/// in the lints.toml that named the bad extends chain, so this folds
+/// them into the same per-lint reporting surface that other cascade
+/// faults go through.
+fn preset_error_to_config_error(
+    lint_name: &str,
+    field_path: &str,
+    err: PresetResolveError,
+) -> ConfigError {
+    ConfigError {
+        lint_name: lint_name.to_string(),
+        field_path: field_path.to_string(),
+        kind: ConfigErrorKind::InvalidValue,
+        message: format!("{err}"),
+        source_location: None,
+    }
+}
+
+/// Apply the resolved preset chain over `merged_config` and `merged_scope`,
+/// in innermost-first order. The resolver already returned the chain
+/// with the deepest extends-target at index 0 and the starting preset
+/// at the tail (per `resolve_preset_chain`'s contract). Walking in that
+/// same order means each layer overlays whatever the deeper layer had
+/// already established, so the starting preset (the consumer's direct
+/// reference) wins where it touches a field and the deeper presets show
+/// through only where the starting preset is silent.
+///
+/// Config and scope are independent overlays: the preset's `config`
+/// BTreeMap targets `merged_config`; the preset's `scope` BTreeMap
+/// targets `merged_scope`. Severity overlay is not applied here; see
+/// `instantiate_with_cascade`'s level-2 doc comment for the gap and
+/// task #566 for the planned wiring.
+fn apply_preset_chain(
+    chain: &[PresetFile],
+    merged_config: &mut toml::Table,
+    merged_scope: &mut toml::Table,
+) {
+    for preset in chain {
+        if !preset.config.is_empty() {
+            let overlay_table: toml::Table =
+                preset.config.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            overlay(merged_config, &overlay_table);
+        }
+        if !preset.scope.is_empty() {
+            let overlay_table: toml::Table =
+                preset.scope.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            overlay(merged_scope, &overlay_table);
         }
     }
 }
@@ -685,5 +797,318 @@ mod tests {
         // but no parse errors either.
         assert!(cfg.config_errors.is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ---- preset cascade integration (#539) ---------------------------------
+
+    use mockspace_config::{PresetFile, PresetRef, PresetResolveError, PresetSource};
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+
+    thread_local! {
+        /// Most-recent `(config, scope)` pair the catalog stub's
+        /// `instantiate` saw. Each test invocation populates this from
+        /// its own thread (cargo test runs each `#[test]` on a worker
+        /// thread, and thread-locals isolate per-worker), then drains
+        /// it via `extract_captured` before the test returns. Using a
+        /// `RefCell<Option<...>>` keeps the surface `unsafe`-free; the
+        /// previous trait-object-to-concrete pointer-cast approach was
+        /// not soundly licensed.
+        static CAPTURED: RefCell<Option<(toml::Table, toml::Table)>> =
+            const { RefCell::new(None) };
+    }
+
+    /// Minimal `Lint` stub. The constructor (`captured_instantiate`)
+    /// writes the merged config/scope it sees into `CAPTURED`; the test
+    /// drains the thread-local via `extract_captured` to assert what the
+    /// cascade produced. The lint's own behaviour is intentionally inert.
+    struct NoOpLint;
+
+    impl Lint for NoOpLint {
+        fn name(&self) -> &'static str {
+            "captured"
+        }
+        fn description(&self) -> &'static str {
+            "test stub; merged tables routed to CAPTURED"
+        }
+        fn default_severity(&self) -> GateSeverity {
+            GateSeverity::uniform(Severity::Warn)
+        }
+    }
+
+    fn captured_instantiate(
+        config: &toml::Table,
+        scope: &toml::Table,
+    ) -> Result<Box<dyn Lint>, ConfigError> {
+        CAPTURED.with(|c| {
+            *c.borrow_mut() = Some((config.clone(), scope.clone()));
+        });
+        Ok(Box::new(NoOpLint))
+    }
+
+    fn captured_entry() -> CatalogEntry {
+        CatalogEntry {
+            name: "captured",
+            description: "test stub",
+            kind: "test-captured",
+            // Default config seeds two fields the preset will overwrite + leave
+            // alone so the assertions can distinguish overlay from replace.
+            default_config: "level = \"catalog\"\nuntouched = true\n",
+            default_scope: "category = \"catalog\"\n",
+            default_severity: GateSeverity::uniform(Severity::Warn),
+            default_impact: None,
+            default_category: None,
+            doc_url: None,
+            mode: crate::lint::LintMode::PerDocument,
+            staging_aware: false,
+            editor_skip: false,
+            instantiate: captured_instantiate,
+            finding_kinds: &[],
+        }
+    }
+
+    /// In-memory preset source keyed by `(host, name)`. Mirrors the test
+    /// double in `mockspace_config::preset_resolver::tests::MockSource`
+    /// but lives at the engine layer so the cascade tests can compose
+    /// real-shaped presets without touching the embedded table.
+    struct InMemorySource {
+        presets: BTreeMap<(String, String), PresetFile>,
+    }
+
+    impl InMemorySource {
+        fn new() -> Self {
+            Self {
+                presets: BTreeMap::new(),
+            }
+        }
+        fn insert(mut self, host: &str, preset: PresetFile) -> Self {
+            self.presets
+                .insert((host.to_string(), preset.name.clone()), preset);
+            self
+        }
+    }
+
+    impl PresetSource for InMemorySource {
+        fn resolve(&self, preset_ref: &PresetRef) -> Result<PresetFile, PresetResolveError> {
+            self.presets
+                .get(&(preset_ref.host.clone(), preset_ref.name.clone()))
+                .cloned()
+                .ok_or_else(|| PresetResolveError::NotFound {
+                    host: preset_ref.host.clone(),
+                    name: preset_ref.name.clone(),
+                })
+        }
+    }
+
+    fn preset(name: &str, extends: Option<&str>, config: &str, scope: &str) -> PresetFile {
+        let config: BTreeMap<String, toml::Value> = config
+            .parse::<toml::Table>()
+            .unwrap()
+            .into_iter()
+            .collect();
+        let scope: BTreeMap<String, toml::Value> =
+            scope.parse::<toml::Table>().unwrap().into_iter().collect();
+        PresetFile {
+            schema_version: "1.0".to_string(),
+            name: name.to_string(),
+            primitive: "test-captured".to_string(),
+            description: None,
+            extends: extends.map(String::from),
+            config,
+            severity: Default::default(),
+            scope,
+        }
+    }
+
+    /// Drain the thread-local set by the most-recent
+    /// `captured_instantiate` on this thread. Drops the lint box once
+    /// the cascade has handed it back; the merged tables are already
+    /// recorded in `CAPTURED`.
+    fn extract_captured(_lint: Box<dyn Lint>) -> (toml::Table, toml::Table) {
+        CAPTURED.with(|c| {
+            c.borrow_mut()
+                .take()
+                .expect("captured_instantiate ran on this thread")
+        })
+    }
+
+    #[test]
+    fn preset_chain_overlays_config_between_catalog_and_workspace() {
+        let entry = captured_entry();
+        let source = InMemorySource::new().insert(
+            "mockspace",
+            preset(
+                "base",
+                None,
+                "level = \"preset\"\nadded = 1\n",
+                "category = \"preset\"\n",
+            ),
+        );
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table = "extends = \"mockspace::base\"\n".parse().unwrap();
+        user_lints.insert("captured".to_string(), user_block);
+        let workspace_defaults = toml::Table::new();
+        let overrides = OverrideCascade::default();
+        let result =
+            instantiate_with_cascade(&entry, &user_lints, &workspace_defaults, &overrides, &source)
+                .expect("cascade succeeds");
+        let (config, scope) = extract_captured(result.lint);
+        // Preset overlaid the catalog's `level = "catalog"`; the
+        // catalog's `untouched = true` survived because the preset did
+        // not name it.
+        assert_eq!(config.get("level").unwrap().as_str(), Some("preset"));
+        assert_eq!(config.get("untouched").unwrap().as_bool(), Some(true));
+        assert_eq!(config.get("added").unwrap().as_integer(), Some(1));
+        assert_eq!(scope.get("category").unwrap().as_str(), Some("preset"));
+    }
+
+    #[test]
+    fn per_lint_config_wins_over_preset_overlay() {
+        let entry = captured_entry();
+        let source = InMemorySource::new().insert(
+            "mockspace",
+            preset("base", None, "level = \"preset\"\n", ""),
+        );
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table =
+            "extends = \"mockspace::base\"\n[config]\nlevel = \"user\"\n"
+                .parse()
+                .unwrap();
+        user_lints.insert("captured".to_string(), user_block);
+        let workspace_defaults = toml::Table::new();
+        let overrides = OverrideCascade::default();
+        let result =
+            instantiate_with_cascade(&entry, &user_lints, &workspace_defaults, &overrides, &source)
+                .expect("cascade succeeds");
+        let (config, _scope) = extract_captured(result.lint);
+        assert_eq!(config.get("level").unwrap().as_str(), Some("user"));
+    }
+
+    #[test]
+    fn preset_chain_resolves_innermost_first_outer_wins_on_overlap() {
+        let entry = captured_entry();
+        let source = InMemorySource::new()
+            .insert(
+                "mockspace",
+                preset("base", None, "level = \"base\"\nbase_field = true\n", ""),
+            )
+            .insert(
+                "mockspace",
+                preset(
+                    "outer",
+                    Some("mockspace::base"),
+                    "level = \"outer\"\nouter_field = true\n",
+                    "",
+                ),
+            );
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table = "extends = \"mockspace::outer\"\n".parse().unwrap();
+        user_lints.insert("captured".to_string(), user_block);
+        let workspace_defaults = toml::Table::new();
+        let overrides = OverrideCascade::default();
+        let result =
+            instantiate_with_cascade(&entry, &user_lints, &workspace_defaults, &overrides, &source)
+                .expect("cascade succeeds");
+        let (config, _scope) = extract_captured(result.lint);
+        // Outer preset's `level` field wins over the inner preset's
+        // (which would have been written first).
+        assert_eq!(config.get("level").unwrap().as_str(), Some("outer"));
+        // Both presets' unique fields survive.
+        assert_eq!(config.get("base_field").unwrap().as_bool(), Some(true));
+        assert_eq!(config.get("outer_field").unwrap().as_bool(), Some(true));
+    }
+
+    #[test]
+    fn missing_extends_target_surfaces_as_config_error() {
+        let entry = captured_entry();
+        let source = InMemorySource::new();
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table = "extends = \"mockspace::absent\"\n".parse().unwrap();
+        user_lints.insert("captured".to_string(), user_block);
+        let workspace_defaults = toml::Table::new();
+        let overrides = OverrideCascade::default();
+        match instantiate_with_cascade(
+            &entry,
+            &user_lints,
+            &workspace_defaults,
+            &overrides,
+            &source,
+        ) {
+            Err(ConfigError { kind, field_path, message, .. }) => {
+                assert!(matches!(kind, ConfigErrorKind::InvalidValue));
+                assert_eq!(field_path, "extends");
+                assert!(message.contains("absent"), "diagnostic should name the missing preset; got `{message}`");
+            }
+            Ok(_) => panic!("expected ConfigError for missing extends target"),
+        }
+    }
+
+    #[test]
+    fn cycle_in_preset_chain_surfaces_as_config_error() {
+        let entry = captured_entry();
+        let source = InMemorySource::new().insert(
+            "mockspace",
+            preset("loopy", Some("mockspace::loopy"), "", ""),
+        );
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table = "extends = \"mockspace::loopy\"\n".parse().unwrap();
+        user_lints.insert("captured".to_string(), user_block);
+        let workspace_defaults = toml::Table::new();
+        let overrides = OverrideCascade::default();
+        match instantiate_with_cascade(
+            &entry,
+            &user_lints,
+            &workspace_defaults,
+            &overrides,
+            &source,
+        ) {
+            Err(ConfigError { kind, field_path, message, .. }) => {
+                assert!(matches!(kind, ConfigErrorKind::InvalidValue));
+                assert_eq!(field_path, "extends");
+                assert!(message.contains("cycle"), "diagnostic should name the cycle; got `{message}`");
+            }
+            Ok(_) => panic!("expected ConfigError for cyclic extends chain"),
+        }
+    }
+
+    #[test]
+    fn non_string_extends_value_is_rejected() {
+        let entry = captured_entry();
+        let source = InMemorySource::new();
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table = "extends = 42\n".parse().unwrap();
+        user_lints.insert("captured".to_string(), user_block);
+        let workspace_defaults = toml::Table::new();
+        let overrides = OverrideCascade::default();
+        match instantiate_with_cascade(
+            &entry,
+            &user_lints,
+            &workspace_defaults,
+            &overrides,
+            &source,
+        ) {
+            Err(ConfigError { kind, field_path, .. }) => {
+                assert!(matches!(kind, ConfigErrorKind::InvalidValue));
+                assert_eq!(field_path, "extends");
+            }
+            Ok(_) => panic!("expected ConfigError for non-string extends"),
+        }
+    }
+
+    #[test]
+    fn absent_extends_leaves_cascade_untouched_by_preset_layer() {
+        let entry = captured_entry();
+        let source = InMemorySource::new(); // unused; presence proven by no resolve calls
+        let user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let workspace_defaults = toml::Table::new();
+        let overrides = OverrideCascade::default();
+        let result =
+            instantiate_with_cascade(&entry, &user_lints, &workspace_defaults, &overrides, &source)
+                .expect("cascade succeeds without extends");
+        let (config, scope) = extract_captured(result.lint);
+        // Catalog defaults flow through unchanged.
+        assert_eq!(config.get("level").unwrap().as_str(), Some("catalog"));
+        assert_eq!(config.get("untouched").unwrap().as_bool(), Some(true));
+        assert_eq!(scope.get("category").unwrap().as_str(), Some("catalog"));
     }
 }
