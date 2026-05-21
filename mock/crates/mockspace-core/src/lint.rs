@@ -834,6 +834,22 @@ pub struct PropMap {
     by_span: BTreeMap<Span, Vec<(String, PropValue, Option<String>)>>,
 }
 
+/// A borrowed view of one prop declaration. Returned by every
+/// [`PropMap`] accessor so lint authors do not have to remember which
+/// tuple position holds what across name-keyed / span-keyed / ancestor-
+/// walking queries.
+///
+/// Named struct rather than a positional tuple because the three index
+/// shapes used to disagree about whether name or span came first; the
+/// named shape eliminates the footgun. Lifetime ties to the `PropMap`.
+#[derive(Debug, Clone, Copy)]
+pub struct PropEntry<'a> {
+    pub span: &'a Span,
+    pub name: &'a str,
+    pub value: &'a PropValue,
+    pub reason: Option<&'a str>,
+}
+
 impl PropMap {
     pub fn new() -> Self {
         Self::default()
@@ -858,28 +874,42 @@ impl PropMap {
     }
 
     /// All sites carrying a prop with this name.
-    pub fn all_named(&self, name: &str) -> &[(Span, PropValue, Option<String>)] {
+    pub fn all_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = PropEntry<'a>> + 'a {
         self.by_name
             .get(name)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .into_iter()
+            .flat_map(|v| v.iter())
+            .map(move |(span, value, reason)| PropEntry {
+                span,
+                name,
+                value,
+                reason: reason.as_deref(),
+            })
     }
 
     /// Props declared at exactly this span.
-    pub fn at_site(&self, span: &Span) -> &[(String, PropValue, Option<String>)] {
+    pub fn at_site<'a>(&'a self, span: &Span) -> impl Iterator<Item = PropEntry<'a>> + 'a {
         self.by_span
-            .get(span)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .get_key_value(span)
+            .into_iter()
+            .flat_map(|(span_ref, entries)| {
+                entries.iter().map(move |(name, value, reason)| PropEntry {
+                    span: span_ref,
+                    name: name.as_str(),
+                    value,
+                    reason: reason.as_deref(),
+                })
+            })
     }
 
     /// Props attached to this span plus its direct impl blocks. At
     /// this slice this delegates to [`at_site`]; AST-aware resolution
-    /// lands in slice 4 of the lint:prop work.
-    pub fn including_impl_blocks(
-        &self,
+    /// lands in a follow-up to slice 4 of the lint:prop work, where
+    /// `RustPreprocessor::extract` gains structural context.
+    pub fn including_impl_blocks<'a>(
+        &'a self,
         span: &Span,
-    ) -> &[(String, PropValue, Option<String>)] {
+    ) -> impl Iterator<Item = PropEntry<'a>> + 'a {
         self.at_site(span)
     }
 
@@ -888,23 +918,24 @@ impl PropMap {
     /// At this slice this is approximated by "props in the same file
     /// strictly above the query's start_line". A prop on the query's
     /// own line is NOT an ancestor of itself; consumers querying for
-    /// at-site matches should use [`at_site`] instead. Slice 4
-    /// sharpens to respect actual AST scope nesting (a prop on the
-    /// enclosing impl block / module / file) and the strict-above
-    /// approximation goes away.
+    /// at-site matches should use [`at_site`] instead. A follow-up to
+    /// slice 4 sharpens this to respect AST scope nesting.
     pub fn walk_ancestors<'a>(
         &'a self,
         query: &'a Span,
-    ) -> impl Iterator<Item = (&'a Span, &'a str, &'a PropValue, Option<&'a str>)> + 'a {
+    ) -> impl Iterator<Item = PropEntry<'a>> + 'a {
         self.by_span
             .iter()
             .filter(move |(span, _)| {
                 span.file == query.file && span.start_line < query.start_line
             })
             .flat_map(|(span, entries)| {
-                entries
-                    .iter()
-                    .map(move |(name, value, reason)| (span, name.as_str(), value, reason.as_deref()))
+                entries.iter().map(move |(name, value, reason)| PropEntry {
+                    span,
+                    name: name.as_str(),
+                    value,
+                    reason: reason.as_deref(),
+                })
             })
     }
 
@@ -1387,13 +1418,15 @@ mod tests {
         );
         assert_eq!(map.len(), 1);
         // by_name index: lookup by "audited" returns the span
-        let by_name = map.all_named("audited");
+        let by_name: Vec<PropEntry<'_>> = map.all_named("audited").collect();
         assert_eq!(by_name.len(), 1);
-        assert_eq!(by_name[0].0, span);
+        assert_eq!(by_name[0].span, &span);
+        assert_eq!(by_name[0].name, "audited");
         // by_span index: lookup by the same span returns "audited"
-        let at = map.at_site(&span);
+        let at: Vec<PropEntry<'_>> = map.at_site(&span).collect();
         assert_eq!(at.len(), 1);
-        assert_eq!(at[0].0, "audited");
+        assert_eq!(at[0].name, "audited");
+        assert_eq!(at[0].span, &span);
     }
 
     #[test]
@@ -1413,8 +1446,10 @@ mod tests {
             PropValue::Bool(true),
             None,
         );
-        assert_eq!(map.at_site(&span_a)[0].0, "tag-a");
-        assert_eq!(map.at_site(&span_b)[0].0, "tag-b");
+        let at_a: Vec<PropEntry<'_>> = map.at_site(&span_a).collect();
+        let at_b: Vec<PropEntry<'_>> = map.at_site(&span_b).collect();
+        assert_eq!(at_a[0].name, "tag-a");
+        assert_eq!(at_b[0].name, "tag-b");
     }
 
     #[test]
@@ -1432,8 +1467,8 @@ mod tests {
             PropValue::Bool(true),
             None,
         );
-        assert_eq!(map.all_named("audited").len(), 2);
-        assert_eq!(map.all_named("does-not-exist").len(), 0);
+        assert_eq!(map.all_named("audited").count(), 2);
+        assert_eq!(map.all_named("does-not-exist").count(), 0);
     }
 
     #[test]
@@ -1457,8 +1492,8 @@ mod tests {
             Some("second".to_string()),
         );
         assert_eq!(map.len(), 2);
-        assert_eq!(map.all_named("audited").len(), 2);
-        assert_eq!(map.at_site(&span).len(), 2);
+        assert_eq!(map.all_named("audited").count(), 2);
+        assert_eq!(map.at_site(&span).count(), 2);
     }
 
     #[test]
@@ -1473,7 +1508,7 @@ mod tests {
             PropValue::Bool(true),
             None,
         );
-        let found: Vec<&str> = map.walk_ancestors(&query_line).map(|(_, n, _, _)| n).collect();
+        let found: Vec<&str> = map.walk_ancestors(&query_line).map(|e| e.name).collect();
         assert!(!found.contains(&"at-query"), "found at-query in walk: {found:?}");
     }
 
@@ -1503,7 +1538,7 @@ mod tests {
         );
 
         let query = Span::single_line("a.rs", 10, 1, 1);
-        let found: Vec<&str> = map.walk_ancestors(&query).map(|(_, n, _, _)| n).collect();
+        let found: Vec<&str> = map.walk_ancestors(&query).map(|e| e.name).collect();
         assert!(found.contains(&"ancestor"));
         assert!(!found.contains(&"below"));
         assert!(!found.contains(&"other-file"));
@@ -1519,8 +1554,8 @@ mod tests {
             PropValue::Bool(true),
             Some("audit pass 2026-04".to_string()),
         );
-        let at = map.at_site(&span);
-        assert_eq!(at[0].2.as_deref(), Some("audit pass 2026-04"));
+        let at: Vec<PropEntry<'_>> = map.at_site(&span).collect();
+        assert_eq!(at[0].reason, Some("audit pass 2026-04"));
     }
 
     #[test]
@@ -1528,7 +1563,7 @@ mod tests {
         let map = PropMap::new();
         assert!(map.is_empty());
         assert_eq!(map.len(), 0);
-        assert_eq!(map.all_named("anything").len(), 0);
+        assert_eq!(map.all_named("anything").count(), 0);
     }
 
     #[test]

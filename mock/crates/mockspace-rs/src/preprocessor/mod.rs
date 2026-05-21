@@ -24,44 +24,41 @@ use mockspace_core::lint::{
 };
 use std::collections::BTreeSet;
 
+/// Per-document directive extracts. Returned from
+/// [`LanguagePreprocessor::extract`]; engines merge the per-document
+/// bundles into a project-level bundle before resolving findings.
+///
+/// One bundled output replaces the previous parallel-methods shape
+/// (`extract` + `extract_props`) so future directive-routing additions
+/// (#546: IntroducerMap, ScopeAddMap, FileDisableSet, deferred entries)
+/// extend this struct rather than the trait. Single parse per document
+/// drives every routed map.
+#[derive(Debug, Default)]
+pub struct DirectiveExtracts {
+    /// `lint:allow` records routed into [`SuppressionMap`].
+    pub suppressions: SuppressionMap,
+    /// `lint:prop` records routed into [`PropMap`].
+    pub props: PropMap,
+    // Future fields (#546): introducers, scope_adds, file_disables,
+    // deferred. Each grows a field here; trait stays one method.
+}
+
 /// Per-language preprocessor. Engines invoke one per document; the
-/// resulting maps merge into project-level resolvers.
+/// returned [`DirectiveExtracts`] bundle is merged into project-level
+/// resolvers by the engine.
 ///
-/// At this slice two map kinds are supported via dedicated methods:
-///
-/// - [`extract`](Self::extract): routes `Directive::Allow` into a
-///   [`SuppressionMap`].
-/// - [`extract_props`](Self::extract_props): routes `Directive::Prop`
-///   into a [`PropMap`].
-///
-/// `extract_props` has a default empty impl so existing preprocessors
-/// keep compiling. The two passes currently re-parse the same source;
-/// #546 (per-kind maps for the remaining four directive kinds) will
-/// rationalise both passes into a single parse driving a bundled
-/// output type.
+/// One method, one parse, bundled output. Concrete preprocessors call
+/// the parser once and route each directive variant into the right
+/// field of [`DirectiveExtracts`]. As more directive kinds gain
+/// resolved-state containers (#546), they become new fields on
+/// `DirectiveExtracts`; the trait signature stays stable.
 pub trait LanguagePreprocessor {
     fn language(&self) -> Language;
 
     fn extract(
         &self,
         document: &dyn Document,
-        out: &mut SuppressionMap,
-    ) -> Result<(), PreprocessorError>;
-
-    /// Route `Directive::Prop` records into a [`PropMap`].
-    ///
-    /// Default impl does nothing; preprocessors that support the
-    /// `lint:prop` directive override. The Rust preprocessor's impl
-    /// parses comment-form directives and pushes each `Prop` record
-    /// into the caller's map.
-    fn extract_props(
-        &self,
-        document: &dyn Document,
-        out: &mut PropMap,
-    ) -> Result<(), PreprocessorError> {
-        let _ = (document, out);
-        Ok(())
-    }
+    ) -> Result<DirectiveExtracts, PreprocessorError>;
 }
 
 /// Error produced by a preprocessor when source is too malformed to walk.
@@ -112,53 +109,49 @@ impl LanguagePreprocessor for RustPreprocessor {
     fn extract(
         &self,
         document: &dyn Document,
-        out: &mut SuppressionMap,
-    ) -> Result<(), PreprocessorError> {
+    ) -> Result<DirectiveExtracts, PreprocessorError> {
         let path_str = document.path().to_string_lossy();
         let records = comment::parse_directives(document.source(), &path_str);
+        let mut out = DirectiveExtracts::default();
         for record in records {
-            if let Directive::Allow {
-                lint_name,
-                reason,
-                tracked,
-            } = record.directive
-            {
-                let mut lints = BTreeSet::new();
-                lints.insert(lint_name);
-                out.push(SuppressionScope {
-                    scope: record.span,
-                    lints,
-                    tracked,
+            match record.directive {
+                Directive::Allow {
+                    lint_name,
                     reason,
-                });
+                    tracked,
+                } => {
+                    let mut lints = BTreeSet::new();
+                    lints.insert(lint_name);
+                    out.suppressions.push(SuppressionScope {
+                        scope: record.span,
+                        lints,
+                        tracked,
+                        reason,
+                    });
+                }
+                Directive::Prop {
+                    name,
+                    value,
+                    reason,
+                } => {
+                    out.props.push(record.span, name, value, reason);
+                }
+                // Introduces, ScopeAdd, Defer, FileDisable parsed but
+                // unrouted at this slice; #546 adds their per-kind
+                // fields to DirectiveExtracts and routes them here.
+                //
+                // Explicit arms, not a wildcard: the whole point of
+                // the bundled-output collapse is for a new Directive
+                // variant to fail compile until it has a route. A
+                // wildcard would silently swallow new variants and
+                // defeat the contract.
+                Directive::Introduces { .. }
+                | Directive::ScopeAdd { .. }
+                | Directive::Defer { .. }
+                | Directive::FileDisable { .. } => {}
             }
-            // Other directive kinds (Introduces, ScopeAdd, Defer,
-            // FileDisable, Prop) are not the suppression-map concern;
-            // Prop routes via extract_props (slice 4 of lint:prop),
-            // and the remaining four wire up in #546.
         }
-        Ok(())
-    }
-
-    fn extract_props(
-        &self,
-        document: &dyn Document,
-        out: &mut PropMap,
-    ) -> Result<(), PreprocessorError> {
-        let path_str = document.path().to_string_lossy();
-        let records = comment::parse_directives(document.source(), &path_str);
-        for record in records {
-            if let Directive::Prop {
-                name,
-                value,
-                reason,
-            } = record.directive
-            {
-                out.push(record.span, name, value, reason);
-            }
-            // Other directive kinds parsed; they belong to other maps.
-        }
-        Ok(())
+        Ok(out)
     }
 }
 
@@ -193,6 +186,8 @@ mod tests {
         }
     }
 
+    use mockspace_core::lint::{PropEntry, PropValue};
+
     #[test]
     fn extract_writes_allow_into_suppression_map() {
         let doc = StubDocument {
@@ -200,20 +195,19 @@ mod tests {
             source: "// lint:allow(no-bare-numeric) reason: \"const constant\" tracked: #427\nconst X: u64 = 1;\n".to_string(),
             hash: ContentHash::ZERO,
         };
-        let mut map = SuppressionMap::new();
-        RustPreprocessor.extract(&doc, &mut map).unwrap();
-        assert_eq!(map.scopes().len(), 1);
-        let scope = &map.scopes()[0];
-        assert!(scope.lints.contains("no-bare-numeric"));
-        assert_eq!(scope.reason.as_deref(), Some("const constant"));
-        assert_eq!(scope.tracked.as_deref(), Some("#427"));
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        let scopes = extracts.suppressions.scopes();
+        assert_eq!(scopes.len(), 1);
+        assert!(scopes[0].lints.contains("no-bare-numeric"));
+        assert_eq!(scopes[0].reason.as_deref(), Some("const constant"));
+        assert_eq!(scopes[0].tracked.as_deref(), Some("#427"));
     }
 
     #[test]
-    fn extract_silently_drops_non_allow_directives() {
-        // Until #546 lands, the other four directive kinds parse
-        // without being written into the SuppressionMap. They are not
-        // an error; they just don't generate suppression entries.
+    fn extract_silently_drops_unrouted_directives() {
+        // Introduces, ScopeAdd, Defer, FileDisable are parsed but not
+        // routed at this slice; #546 wires them up. They must not
+        // generate suppression or prop entries.
         let doc = StubDocument {
             path: "lib.rs".into(),
             source: r#"// lint:introduces(string-foundation)
@@ -224,67 +218,47 @@ mod tests {
             .to_string(),
             hash: ContentHash::ZERO,
         };
-        let mut map = SuppressionMap::new();
-        RustPreprocessor.extract(&doc, &mut map).unwrap();
-        assert!(map.scopes().is_empty(), "got {} scopes", map.scopes().len());
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        assert!(extracts.suppressions.scopes().is_empty());
+        assert!(extracts.props.is_empty());
     }
 
     #[test]
-    fn extract_mixes_allow_with_other_kinds() {
+    fn extract_routes_allow_and_prop_in_one_pass() {
+        // Single parse drives both suppressions and props. Verifies
+        // the bundled-output collapse.
         let doc = StubDocument {
             path: "lib.rs".into(),
-            source: r#"// lint:introduces(string-foundation)
-// lint:allow(no-bare-numeric) reason: "constants" tracked: #1
-// lint:file-disable(writing-style) reason: "generated" tracked: #2
+            source: r#"// lint:allow(no-bare-numeric) reason: "constants" tracked: #1
+// lint:prop(audited)
+// lint:prop(arena_size = 4096)
 // lint:allow(no-bare-string) reason: "test fixture" tracked: #3
 "#
             .to_string(),
             hash: ContentHash::ZERO,
         };
-        let mut map = SuppressionMap::new();
-        RustPreprocessor.extract(&doc, &mut map).unwrap();
-        assert_eq!(map.scopes().len(), 2);
-        let names: BTreeSet<&str> = map
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        // Two allow scopes
+        assert_eq!(extracts.suppressions.scopes().len(), 2);
+        let lint_names: BTreeSet<&str> = extracts
+            .suppressions
             .scopes()
             .iter()
             .flat_map(|s| s.lints.iter().map(|l| l.as_str()))
             .collect();
-        assert!(names.contains("no-bare-numeric"));
-        assert!(names.contains("no-bare-string"));
+        assert!(lint_names.contains("no-bare-numeric"));
+        assert!(lint_names.contains("no-bare-string"));
+        // Two prop entries
+        assert_eq!(extracts.props.len(), 2);
+        let audited: Vec<PropEntry<'_>> = extracts.props.all_named("audited").collect();
+        assert_eq!(audited.len(), 1);
+        assert_eq!(audited[0].value, &PropValue::Bool(true));
+        let arena: Vec<PropEntry<'_>> = extracts.props.all_named("arena_size").collect();
+        assert_eq!(arena[0].value, &PropValue::Integer(4096));
     }
 
     #[test]
-    fn extract_on_source_without_directives_yields_empty_map() {
-        let doc = StubDocument {
-            path: "lib.rs".into(),
-            source: "fn main() {}\n".to_string(),
-            hash: ContentHash::ZERO,
-        };
-        let mut map = SuppressionMap::new();
-        RustPreprocessor.extract(&doc, &mut map).unwrap();
-        assert!(map.scopes().is_empty());
-    }
-
-    // -------- extract_props tests --------
-
-    use mockspace_core::lint::{PropMap, PropValue};
-
-    #[test]
-    fn extract_props_writes_presence_form() {
-        let doc = StubDocument {
-            path: "lib.rs".into(),
-            source: "// lint:prop(audited)\nfn unsafe_op() {}\n".to_string(),
-            hash: ContentHash::ZERO,
-        };
-        let mut props = PropMap::new();
-        RustPreprocessor.extract_props(&doc, &mut props).unwrap();
-        let entries = props.all_named("audited");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].1, PropValue::Bool(true));
-    }
-
-    #[test]
-    fn extract_props_writes_keyvalue_forms() {
+    fn extract_writes_prop_keyvalue_forms() {
         let doc = StubDocument {
             path: "lib.rs".into(),
             source: r#"// lint:prop(arena_size = 4096)
@@ -295,60 +269,31 @@ struct Cfg;
             .to_string(),
             hash: ContentHash::ZERO,
         };
-        let mut props = PropMap::new();
-        RustPreprocessor.extract_props(&doc, &mut props).unwrap();
-        assert_eq!(props.len(), 3);
-        assert_eq!(
-            props.all_named("arena_size")[0].1,
-            PropValue::Integer(4096)
-        );
-        assert_eq!(
-            props.all_named("audit_id")[0].1,
-            PropValue::String("A-2026-04".to_string())
-        );
-        assert_eq!(props.all_named("enabled")[0].1, PropValue::Bool(false));
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        assert_eq!(extracts.props.len(), 3);
+        let arena: Vec<PropEntry<'_>> = extracts.props.all_named("arena_size").collect();
+        assert_eq!(arena[0].value, &PropValue::Integer(4096));
+        let id: Vec<PropEntry<'_>> = extracts.props.all_named("audit_id").collect();
+        assert_eq!(id[0].value, &PropValue::String("A-2026-04".to_string()));
+        let enabled: Vec<PropEntry<'_>> = extracts.props.all_named("enabled").collect();
+        assert_eq!(enabled[0].value, &PropValue::Bool(false));
     }
 
     #[test]
-    fn extract_props_silently_drops_non_prop_directives() {
-        // The five non-prop directive kinds parse without being written
-        // into the PropMap. Symmetric with extract dropping non-Allow
-        // kinds.
-        let doc = StubDocument {
-            path: "lib.rs".into(),
-            source: r##"// lint:allow(no-bare-numeric) reason: "spec" tracked: "#1"
-// lint:introduces(string-foundation)
-// lint:scope-add(no-bare-numeric, exempt_categories=ffi)
-// lint:defer(no-bare-string, until: #185)
-// lint:file-disable(writing-style) reason: "gen" tracked: "#2"
-"##
-            .to_string(),
-            hash: ContentHash::ZERO,
-        };
-        let mut props = PropMap::new();
-        RustPreprocessor.extract_props(&doc, &mut props).unwrap();
-        assert!(props.is_empty(), "got {} entries", props.len());
-    }
-
-    #[test]
-    fn extract_props_carries_optional_reason() {
+    fn extract_prop_carries_optional_reason() {
         let doc = StubDocument {
             path: "lib.rs".into(),
             source: "// lint:prop(audited) reason: \"audit pass 2026-04\"\nfn x() {}\n"
                 .to_string(),
             hash: ContentHash::ZERO,
         };
-        let mut props = PropMap::new();
-        RustPreprocessor.extract_props(&doc, &mut props).unwrap();
-        let entries = props.all_named("audited");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].2.as_deref(), Some("audit pass 2026-04"));
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        let audited: Vec<PropEntry<'_>> = extracts.props.all_named("audited").collect();
+        assert_eq!(audited[0].reason, Some("audit pass 2026-04"));
     }
 
     #[test]
-    fn extract_props_accumulates_multiple_directives_on_same_item() {
-        // Per the memo: multi-value props write multiple directives;
-        // PropMap accumulates them under all_named.
+    fn extract_accumulates_multiple_prop_directives() {
         let doc = StubDocument {
             path: "lib.rs".into(),
             source: r#"// lint:prop(allowed_import = "alloc")
@@ -358,24 +303,23 @@ fn imports() {}
             .to_string(),
             hash: ContentHash::ZERO,
         };
-        let mut props = PropMap::new();
-        RustPreprocessor.extract_props(&doc, &mut props).unwrap();
-        let entries = props.all_named("allowed_import");
-        assert_eq!(entries.len(), 2);
-        let values: Vec<&PropValue> = entries.iter().map(|(_, v, _)| v).collect();
-        assert!(values.contains(&&PropValue::String("alloc".to_string())));
-        assert!(values.contains(&&PropValue::String("core".to_string())));
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        let imports: Vec<PropEntry<'_>> = extracts.props.all_named("allowed_import").collect();
+        assert_eq!(imports.len(), 2);
+        let strs: Vec<&PropValue> = imports.iter().map(|e| e.value).collect();
+        assert!(strs.contains(&&PropValue::String("alloc".to_string())));
+        assert!(strs.contains(&&PropValue::String("core".to_string())));
     }
 
     #[test]
-    fn extract_props_on_source_without_directives_yields_empty_map() {
+    fn extract_on_source_without_directives_yields_empty_extracts() {
         let doc = StubDocument {
             path: "lib.rs".into(),
             source: "fn main() {}\n".to_string(),
             hash: ContentHash::ZERO,
         };
-        let mut props = PropMap::new();
-        RustPreprocessor.extract_props(&doc, &mut props).unwrap();
-        assert!(props.is_empty());
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        assert!(extracts.suppressions.scopes().is_empty());
+        assert!(extracts.props.is_empty());
     }
 }

@@ -58,6 +58,12 @@ impl MockspaceEngine {
 
     /// Walk every document through the matching preprocessor and collect
     /// suppression scopes.
+    ///
+    /// Calls the per-language preprocessor's bundled-output `extract`
+    /// method and merges only the `suppressions` field at this slice;
+    /// `props` are dropped here. Slice 4 routing wires the PropMap
+    /// merge through the engine separately (TODO when `MockspaceEngine`
+    /// grows a project-level PropMap).
     fn extract_suppressions(
         &self,
         project: &MockspaceProject,
@@ -65,11 +71,14 @@ impl MockspaceEngine {
         let mut map = SuppressionMap::new();
         for doc in project.documents() {
             if doc.language() == Language::Rust {
-                self.rust_preprocessor.extract(doc, &mut map).map_err(|e| {
+                let extracts = self.rust_preprocessor.extract(doc).map_err(|e| {
                     DispatchError::RuntimeRefused {
                         reason: format!("preprocessor failed: {e}"),
                     }
                 })?;
+                for scope in extracts.suppressions.scopes() {
+                    map.push(scope.clone());
+                }
             }
         }
         Ok(map)
