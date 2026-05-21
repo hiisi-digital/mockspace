@@ -1,0 +1,16 @@
+[package]
+name = "mockspace-cli"
+version = "0.1.0"
+edition = "2021"
+description = "The `mock` binary: command-line entry point for the v2 mockspace tool. Wires the bootstrap and engine modules through clap-shaped subcommands."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+publish = false
+
+[[bin]]
+name = "mock"
+path = "src/main.rs"
+
+[dependencies]
+mockspace-rs = { path = "../mockspace-rs" }
+clap = { version = "4", features = ["derive"] }
