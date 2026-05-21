@@ -195,8 +195,16 @@ mod tests {
     }
 
     #[test]
-    fn on_phase_race_default_is_refuse() {
-        assert_eq!(OnPhaseRaceAction::default(), OnPhaseRaceAction::Refuse);
+    fn on_phase_race_default_refuses_merge_automatically() {
+        // The default action on a phase race is to refuse rather than
+        // auto-keep either local or remote. Asserting against both
+        // alternatives separately catches the silent-flip regression
+        // where the default rotates to `AutoKeepLocal` or
+        // `AutoKeepRemote` during a refactor.
+        let d = OnPhaseRaceAction::default();
+        assert_eq!(d, OnPhaseRaceAction::Refuse);
+        assert_ne!(d, OnPhaseRaceAction::AutoKeepLocal);
+        assert_ne!(d, OnPhaseRaceAction::AutoKeepRemote);
     }
 
     #[test]

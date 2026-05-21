@@ -186,7 +186,12 @@ mod tests {
     }
 
     #[test]
-    fn manifest_side_markers() {
+    fn manifest_side_wire_format_is_doc_src() {
+        // These literals appear in on-disk filenames and parser
+        // dispatch tables across the workspace; changing them is a
+        // migration-breaking change and not a casual edit. The test
+        // exists to make a rename fail loudly so the migration plan
+        // gets written before the strings move.
         assert_eq!(ManifestSide::Doc.marker(), "doc");
         assert_eq!(ManifestSide::Src.marker(), "src");
     }
