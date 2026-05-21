@@ -5,6 +5,7 @@
 pub mod config;
 pub mod error;
 pub mod parse;
+pub mod preset_resolver;
 
 pub use config::{
     BuiltInLiteral, Config, CrateColor, DomainKind, ExtImport, ForgeKind, GateSeverities,
@@ -15,3 +16,7 @@ pub use config::{
 };
 pub use error::ConfigError;
 pub use parse::{parse_mockspace_toml, parse_mockspace_toml_str};
+pub use preset_resolver::{
+    PresetRef, PresetResolveError, PresetSource, parse_preset_shorthand,
+    resolve_preset_chain,
+};
