@@ -41,6 +41,7 @@ pub mod document;
 pub mod engine;
 pub mod errors;
 pub mod finding_sink;
+pub mod fix;
 pub mod lint;
 pub mod preprocessor;
 pub mod project;
@@ -54,6 +55,10 @@ pub use config_loader::{InstantiatedLint, LintsConfig, OverrideCascade};
 pub use config_types::{ItemKind, Language, TypePosition, Visibility};
 pub use document::{MockspaceDocument, StripOpts};
 pub use engine::MockspaceEngine;
+pub use fix::{
+    apply_plan, plan_fixes, render_unified_diff, ConflictReport, FileChange, FixError, FixOpts,
+    FixPlan,
+};
 pub use errors::{
     ConfigError, ConfigErrorKind, DirectiveValidationError, DispatchError, LintError, LoadError,
     ParseError, StartupWarning,
