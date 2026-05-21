@@ -1,8 +1,8 @@
 //! v2 mockspace.toml parsing smoke tests (spec §46).
 
 use mockspace_config::{
-    parse_mockspace_toml_str, BuiltInLiteral, ConfigError, ForgeKind, LanguageEntry,
-    MergeStyle, OnDirtyState, Severity,
+    parse_mockspace_toml_str, BuiltInLiteral, ConfigError, ForgeKind, LanguageEntry, MergeStyle,
+    OnDirtyState, Severity,
 };
 
 #[test]
@@ -103,10 +103,6 @@ commit = "error"
 forbidden = ["arvo-storage", "arvo-graph"]
 reason = "L0 cannot depend on L1+"
 
-[primitive-introductions]
-arvo-bits = ["bit-storage"]
-arvo = ["numeric-fixed-point", "boolean", "platform-pointer"]
-
 [languages]
 rust = "built-in"
 typescript = { git = "https://codeberg.org/mockspace/mockspace-ts.git", rev = "abc123" }
@@ -182,7 +178,10 @@ keep_days = 30
     assert_eq!(cfg.imports.ext["mockspace-rs"].include.len(), 2);
 
     // [lint-crates]
-    assert_eq!(cfg.lint_crates["mockspace-hilavitkutin-stack-lints"].rev, "abc123");
+    assert_eq!(
+        cfg.lint_crates["mockspace-hilavitkutin-stack-lints"].rev,
+        "abc123"
+    );
 
     // [lints.*]
     let bare = &cfg.lints["no-bare-numeric"];
@@ -196,18 +195,21 @@ keep_days = 30
     assert_eq!(scoped.commit, Some(Severity::Error));
     assert!(scoped.extras.contains_key("forbidden"));
 
-    // [primitive-introductions]
-    assert_eq!(cfg.primitive_introductions["arvo-bits"], vec!["bit-storage"]);
-
     // [languages]
     assert!(matches!(
         cfg.languages["rust"],
         LanguageEntry::BuiltIn(BuiltInLiteral::BuiltIn)
     ));
-    assert!(matches!(cfg.languages["typescript"], LanguageEntry::Host(_)));
+    assert!(matches!(
+        cfg.languages["typescript"],
+        LanguageEntry::Host(_)
+    ));
 
     // [profile.*]
-    assert_eq!(cfg.profile["dev"].on_dirty_state, Some(OnDirtyState::Prompt));
+    assert_eq!(
+        cfg.profile["dev"].on_dirty_state,
+        Some(OnDirtyState::Prompt)
+    );
     assert_eq!(cfg.profile["ci"].on_dirty_state, Some(OnDirtyState::Refuse));
     assert_eq!(cfg.profile["auto"].on_dirty_state, Some(OnDirtyState::Auto));
 
@@ -250,6 +252,48 @@ commit = "error"
 }
 
 #[test]
+fn rejects_retired_primitive_introductions_table() {
+    // The legacy `[primitive-introductions]` v1 table is retired in v2.
+    // The schema's `deny_unknown_fields` surfaces it as a parse error
+    // with no special-cased detection. Consumers are redirected to the
+    // at-site `lint:prop(source_wrapper)` directive form.
+    let toml = r#"
+[mockspace]
+version = "1.0"
+
+[primitive-introductions]
+arvo-bits = ["bit-storage"]
+"#;
+    let err = parse_mockspace_toml_str(toml).unwrap_err();
+    // serde surfaces the unknown-field error via the toml parse path.
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("primitive-introductions") || msg.contains("unknown"),
+        "expected an unknown-field error mentioning the retired table, got: {msg}"
+    );
+}
+
+#[test]
+fn rejects_arbitrary_unknown_top_level_field() {
+    // Schema is strict beyond just the retired table: ANY top-level
+    // field not declared on `Config` fails parse. The unknown key has
+    // to live above any section header so TOML routes it to the root
+    // table; otherwise it would attach to the most recent section.
+    let toml = r#"
+unknown_field_consumer_made_up = "value"
+
+[mockspace]
+version = "1.0"
+"#;
+    let err = parse_mockspace_toml_str(toml).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("unknown") || msg.contains("unknown_field_consumer_made_up"),
+        "expected unknown-field error, got: {msg}"
+    );
+}
+
+#[test]
 fn rejects_empty_version_string() {
     let toml = r#"
         [mockspace]
@@ -272,8 +316,11 @@ fn rejects_unsupported_major_version() {
     match err {
         ConfigError::Validation { rule, details } => {
             assert_eq!(rule, "mockspace.version");
-            assert!(details.contains("99"), "details should mention major: {details}");
-        },
+            assert!(
+                details.contains("99"),
+                "details should mention major: {details}"
+            );
+        }
         other => panic!("expected validation error, got {other:?}"),
     }
 }
@@ -482,7 +529,7 @@ build = "error"
 push = "error"
 
 [scope]
-exempt_categories = ["string-foundation"]
+exempt_paths = ["**/tests/**"]
 "#;
     let preset: PresetFile = toml::from_str(toml).unwrap();
     assert_eq!(preset.schema_version, "1.0");
@@ -498,7 +545,7 @@ exempt_categories = ["string-foundation"]
     assert_eq!(preset.severity.commit, Some(Severity::Warn));
     assert_eq!(preset.severity.build, Some(Severity::Error));
     assert_eq!(preset.severity.push, Some(Severity::Error));
-    assert!(preset.scope.contains_key("exempt_categories"));
+    assert!(preset.scope.contains_key("exempt_paths"));
 }
 
 #[test]

@@ -11,7 +11,15 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Parsed `mockspace.toml`. See spec §46 for the full schema reference.
+///
+/// Schema is strict: every top-level field is enumerated below and any
+/// other key in the TOML source surfaces as an unknown-field error at
+/// parse time. Retired sections (e.g. the legacy
+/// `[primitive-introductions]` table) fail here with no special-cased
+/// detection; consumers get a specific serde error pointing at the
+/// offending key.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub mockspace: MockspaceSection,
@@ -30,8 +38,6 @@ pub struct Config {
     pub lint_crates: BTreeMap<String, LintCrateRef>,
     #[serde(default)]
     pub lints: BTreeMap<String, LintConfig>,
-    #[serde(default, rename = "primitive-introductions")]
-    pub primitive_introductions: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub languages: BTreeMap<String, LanguageEntry>,
     #[serde(default)]

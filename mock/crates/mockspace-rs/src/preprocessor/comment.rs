@@ -314,7 +314,6 @@ fn parse_scope_axis(s: &str) -> Option<ScopeAxis> {
         "crates" => ScopeAxis::Crates,
         "exempt_crates" => ScopeAxis::ExemptCrates,
         "languages" => ScopeAxis::Languages,
-        "exempt_categories" => ScopeAxis::ExemptCategories,
         "proc_macro_exempt" => ScopeAxis::ProcMacroExempt,
         _ => return None,
     })
@@ -408,8 +407,7 @@ const FNV_PRIME: u64 = 0x100000001b3;
 
     #[test]
     fn parses_lint_scope_add_with_axis_value() {
-        let src =
-            "// lint:scope-add(no-bare-numeric, exempt_categories=ffi-boundary)\nmod ffi {}\n";
+        let src = "// lint:scope-add(no-bare-numeric, exempt_paths=\"tests/**\")\nmod ffi {}\n";
         let recs = parse_directives(src, "m.rs");
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
@@ -419,22 +417,21 @@ const FNV_PRIME: u64 = 0x100000001b3;
                 value,
             } => {
                 assert_eq!(lint_name, "no-bare-numeric");
-                assert_eq!(*axis, ScopeAxis::ExemptCategories);
-                assert_eq!(value, "ffi-boundary");
+                assert_eq!(*axis, ScopeAxis::ExemptPaths);
+                assert_eq!(value, "tests/**");
             }
             other => panic!("expected ScopeAdd, got {other:?}"),
         }
     }
 
     #[test]
-    fn parses_lint_scope_add_all_seven_axes() {
+    fn parses_lint_scope_add_all_six_axes() {
         let cases = [
             ("paths", ScopeAxis::Paths),
             ("exempt_paths", ScopeAxis::ExemptPaths),
             ("crates", ScopeAxis::Crates),
             ("exempt_crates", ScopeAxis::ExemptCrates),
             ("languages", ScopeAxis::Languages),
-            ("exempt_categories", ScopeAxis::ExemptCategories),
             ("proc_macro_exempt", ScopeAxis::ProcMacroExempt),
         ];
         for (axis_str, expected) in cases {

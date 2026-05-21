@@ -19,6 +19,11 @@ pub fn parse_mockspace_toml(path: &Path) -> Result<Config, ConfigError> {
 }
 
 /// Parse a v2 `mockspace.toml` from a string source.
+///
+/// The schema is strict: any TOML key not declared on [`Config`] errors
+/// at parse time via serde's `deny_unknown_fields`. Retired sections
+/// (e.g. legacy `[primitive-introductions]`) surface as unknown-field
+/// errors with no special-cased detection.
 pub fn parse_mockspace_toml_str(source: &str) -> Result<Config, ConfigError> {
     let cfg: Config = toml::from_str(source)?;
     validate_version(&cfg.mockspace.version)?;
@@ -28,9 +33,7 @@ pub fn parse_mockspace_toml_str(source: &str) -> Result<Config, ConfigError> {
 fn validate_version(version: &str) -> Result<(), ConfigError> {
     let major = parse_major(version).ok_or_else(|| ConfigError::Validation {
         rule: "mockspace.version",
-        details: format!(
-            "expected `<major>.<minor>` form (e.g. \"1.0\"); got {version:?}"
-        ),
+        details: format!("expected `<major>.<minor>` form (e.g. \"1.0\"); got {version:?}"),
     })?;
     if major != SCHEMA_MAJOR {
         return Err(ConfigError::Validation {

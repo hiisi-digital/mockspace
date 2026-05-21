@@ -14,9 +14,6 @@
 //! - Language: `languages` empty OR document language is in the list.
 //! - Proc-macro: if `proc_macro_exempt = true`, exempt documents whose
 //!   crate appears in `WorkspaceMetadata::proc_macro_crates`.
-//! - Category: if any category in `exempt_categories` matches a
-//!   `[primitive-introductions]` category declared for the document's
-//!   crate, the document is exempt.
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
@@ -39,7 +36,6 @@ pub struct ScopeFilter {
     exempt_crates: GlobSet,
     exempt_crates_empty: bool,
     languages: Vec<mockspace_core::lint::Language>,
-    exempt_categories: Vec<String>,
     proc_macro_exempt: bool,
 }
 
@@ -77,7 +73,6 @@ impl ScopeFilter {
             exempt_crates,
             exempt_crates_empty,
             languages: config.languages.clone(),
-            exempt_categories: config.exempt_categories.clone(),
             proc_macro_exempt: config.proc_macro_exempt,
         })
     }
@@ -110,15 +105,6 @@ impl ScopeFilter {
         // Proc-macro filter.
         if self.proc_macro_exempt && project.workspace().proc_macro_crates.contains(crate_name) {
             return false;
-        }
-
-        // Category exempt.
-        if !self.exempt_categories.is_empty() {
-            if let Some(declared) = project.introduced_categories(crate_name) {
-                if self.exempt_categories.iter().any(|c| declared.contains(c)) {
-                    return false;
-                }
-            }
         }
 
         true
@@ -251,24 +237,6 @@ mod tests {
             .build();
         assert!(!filter.accepts(&make_doc("a.rs", "mac", Language::Rust), &project));
         assert!(filter.accepts(&make_doc("a.rs", "regular", Language::Rust), &project));
-    }
-
-    #[test]
-    fn exempt_categories_skips_declaring_crates() {
-        let cfg = ScopeConfig {
-            exempt_categories: vec!["string-foundation".to_string()],
-            ..Default::default()
-        };
-        let filter = ScopeFilter::from_config("test", &cfg).unwrap();
-        let mut builder =
-            ProjectBuilder::new(PathBuf::from("/tmp"), RunSurface::Local, Gate::Commit);
-        builder.declare_introduced_category("hilavitkutin-str", "string-foundation");
-        let project = builder.build();
-        assert!(!filter.accepts(
-            &make_doc("a.rs", "hilavitkutin-str", Language::Rust),
-            &project
-        ));
-        assert!(filter.accepts(&make_doc("a.rs", "other", Language::Rust), &project));
     }
 
     #[test]

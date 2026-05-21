@@ -294,7 +294,7 @@ mod tests {
 
         let doc = StubDocument {
             path: "lib.rs".into(),
-            source: r#"// lint:scope-add(no-bare-numeric, exempt_categories=ffi)
+            source: r#"// lint:scope-add(no-bare-numeric, exempt_paths="tests/**")
 // lint:defer(no-bare-string, until: #185)
 // lint:file-disable(writing-style) reason: "generated" tracked: #207
 "#
@@ -307,8 +307,8 @@ mod tests {
         let adds = extracts.scope_adds.entries();
         assert_eq!(adds.len(), 1);
         assert_eq!(adds[0].lint_name, "no-bare-numeric");
-        assert_eq!(adds[0].axis, ScopeAxis::ExemptCategories);
-        assert_eq!(adds[0].value, "ffi");
+        assert_eq!(adds[0].axis, ScopeAxis::ExemptPaths);
+        assert_eq!(adds[0].value, "tests/**");
 
         // Defer → SuppressionMap with SuppressionKind::Defer.
         let scopes = extracts.suppressions.scopes();
@@ -484,7 +484,7 @@ const X: u64 = 1;
         let doc = StubDocument {
             path: "lib.rs".into(),
             source: r##"
-#[mockspace::scope_add("no-bare-numeric", axis = "exempt_categories", value = "ffi")]
+#[mockspace::scope_add("no-bare-numeric", axis = "exempt_paths", value = "tests/**")]
 mod ffi {}
 
 #[mockspace::file_disable("writing-style", reason = "generated", tracked = "#207")]

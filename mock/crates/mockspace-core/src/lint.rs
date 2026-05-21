@@ -673,9 +673,9 @@ pub enum PropValue {
 }
 
 /// The bounded set of `ScopeConfig` axes a `Directive::ScopeAdd` may
-/// extend. Mirrors the seven fields of the `ScopeConfig` struct
-/// (defined in `mockspace-rs/src/config_types.rs`) exactly so the
-/// resolver can dispatch by axis without string-matching.
+/// extend. Mirrors the fields of the `ScopeConfig` struct (defined in
+/// `mockspace-rs/src/config_types.rs`) exactly so the resolver can
+/// dispatch by axis without string-matching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeAxis {
@@ -684,7 +684,6 @@ pub enum ScopeAxis {
     Crates,
     ExemptCrates,
     Languages,
-    ExemptCategories,
     ProcMacroExempt,
 }
 
@@ -1490,7 +1489,6 @@ mod tests {
             ScopeAxis::Crates,
             ScopeAxis::ExemptCrates,
             ScopeAxis::Languages,
-            ScopeAxis::ExemptCategories,
             ScopeAxis::ProcMacroExempt,
         ] {
             let r = DirectiveRecord {
@@ -1794,13 +1792,13 @@ mod tests {
             source_form: crate::lint::SourceForm::Comment,
             directive: Directive::ScopeAdd {
                 lint_name: "x".to_string(),
-                axis: ScopeAxis::ExemptCategories,
+                axis: ScopeAxis::ExemptPaths,
                 value: "y".to_string(),
             },
             span: Span::single_line("a.rs", 1, 1, 1),
         };
         let s = toml::to_string(&r).unwrap();
-        assert!(s.contains("axis = \"exempt_categories\""), "got: {s}");
+        assert!(s.contains("axis = \"exempt_paths\""), "got: {s}");
     }
 
     // ---- LintCfgStore ----
@@ -1913,13 +1911,13 @@ mod tests {
         map.push(ScopeAddEntry {
             scope: scope_a.clone(),
             lint_name: "no-bare-numeric".to_string(),
-            axis: ScopeAxis::ExemptCategories,
+            axis: ScopeAxis::ExemptPaths,
             value: "ffi".to_string(),
         });
         map.push(ScopeAddEntry {
             scope: scope_b.clone(),
             lint_name: "no-bare-numeric".to_string(),
-            axis: ScopeAxis::ExemptCategories,
+            axis: ScopeAxis::ExemptPaths,
             value: "tests".to_string(),
         });
 

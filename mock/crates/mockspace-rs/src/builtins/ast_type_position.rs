@@ -36,11 +36,6 @@ pub struct AstTypePositionConfig {
     #[serde(default)]
     pub visibility: Visibility,
 
-    /// Categories declared in `[primitive-introductions]` whose owning
-    /// crates are exempted.
-    #[serde(default)]
-    pub exempt_categories: Vec<String>,
-
     /// Optional `(forbidden, replacement)` table for fix suggestions.
     /// When a forbidden type is matched and the table has a replacement,
     /// the Finding carries a FixSuggestion replacing the type name.
@@ -383,7 +378,6 @@ mod tests {
                 forbidden_types: vec!["String".to_string()],
                 positions: vec![TypePosition::FnParam],
                 visibility: Visibility::Public,
-                exempt_categories: Vec::new(),
                 replacements: Vec::new(),
             },
         );
@@ -399,7 +393,6 @@ mod tests {
                 forbidden_types: vec!["String".to_string()],
                 positions: vec![TypePosition::FnParam],
                 visibility: Visibility::Public,
-                exempt_categories: Vec::new(),
                 replacements: Vec::new(),
             },
         );
@@ -414,7 +407,6 @@ mod tests {
                 forbidden_types: vec!["String".to_string()],
                 positions: vec![TypePosition::FnParam],
                 visibility: Visibility::Any,
-                exempt_categories: Vec::new(),
                 replacements: Vec::new(),
             },
         );
@@ -429,7 +421,6 @@ mod tests {
                 forbidden_types: vec!["Vec".to_string()],
                 positions: vec![TypePosition::StructField],
                 visibility: Visibility::Public,
-                exempt_categories: Vec::new(),
                 replacements: Vec::new(),
             },
         );
@@ -444,7 +435,6 @@ mod tests {
                 forbidden_types: vec!["String".to_string()],
                 positions: vec![TypePosition::FnReturn],
                 visibility: Visibility::Public,
-                exempt_categories: Vec::new(),
                 replacements: vec![("String".to_string(), "Str".to_string())],
             },
         );
@@ -470,7 +460,6 @@ mod tests {
                 forbidden_types: vec!["Vec".to_string()],
                 positions: vec![TypePosition::FnParam],
                 visibility: Visibility::Public,
-                exempt_categories: Vec::new(),
                 replacements: Vec::new(),
             },
         );
@@ -485,7 +474,6 @@ mod tests {
                 forbidden_types: vec!["Vec".to_string()],
                 positions: vec![TypePosition::FnParam],
                 visibility: Visibility::Public,
-                exempt_categories: Vec::new(),
                 replacements: Vec::new(),
             },
         );
