@@ -127,10 +127,9 @@ collisions across two or more lints surface as a startup warning
 
 ## Language-domain aliases (Rust attributes)
 
-Four of the five directives (`allow`, `scope-add`, `defer`,
-`file-disable`) have a Rust attribute alias today; `prop` is
-comment-only pending the attribute-parser followup. Where the alias
-exists, both surfaces produce the identical internal record:
+All five directives have a Rust attribute alias. Both surfaces (the
+canonical `// lint:...` comment form and the `#[mockspace::...]`
+attribute form) produce the identical internal record:
 
 ```rust
 #[mockspace::allow(no-bare-numeric, reason = "...", tracked = "#427")]
