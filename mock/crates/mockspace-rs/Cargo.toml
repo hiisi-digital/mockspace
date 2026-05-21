@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 mockspace-core = { path = "../mockspace-core" }
+mockspace-config = { path = "../mockspace-config" }
 mockspace-rs-attrs = { path = "../mockspace-rs-attrs" }
 
 # AST parsing.
