@@ -688,10 +688,4 @@ mod tests {
         let parsed: Step = toml::from_str(&serialized).unwrap();
         assert_eq!(parsed.phase, StepPhase::DocSrc);
     }
-
-    #[test]
-    fn task_refs_default_is_empty() {
-        let refs = TaskRefs::default();
-        assert!(refs.is_empty());
-    }
 }

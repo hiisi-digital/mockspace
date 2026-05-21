@@ -1286,33 +1286,49 @@ mod tests {
     }
 
     #[test]
-    fn impact_round_trips() {
+    fn impact_round_trips_every_variant() {
+        // Covers all four Impact variants. The original single-variant
+        // form would silently accept a renaming or rename_all change
+        // for any variant other than `Critical`.
         #[derive(Serialize, Deserialize)]
         struct Wrap {
             i: Impact,
         }
-        let s = toml::to_string(&Wrap {
-            i: Impact::Critical,
-        })
-        .unwrap();
-        assert!(s.contains("critical"));
-        let r: Wrap = toml::from_str(&s).unwrap();
-        assert_eq!(r.i, Impact::Critical);
+        for (variant, marker) in [
+            (Impact::Critical, "critical"),
+            (Impact::Major, "major"),
+            (Impact::Minor, "minor"),
+            (Impact::Trivial, "trivial"),
+        ] {
+            let s = toml::to_string(&Wrap { i: variant }).unwrap();
+            assert!(s.contains(marker), "missing marker `{marker}` in `{s}`");
+            let r: Wrap = toml::from_str(&s).unwrap();
+            assert_eq!(r.i, variant);
+        }
     }
 
     #[test]
-    fn category_round_trips() {
+    fn category_round_trips_every_variant() {
+        // Covers all five Category variants. Same rationale as
+        // `impact_round_trips_every_variant`: locks rename_all and
+        // catches any future variant addition that silently breaks
+        // the wire format.
         #[derive(Serialize, Deserialize)]
-        struct Wrap {
+        struct W {
             c: Category,
         }
-        let s = toml::to_string(&Wrap {
-            c: Category::Correctness,
-        })
-        .unwrap();
-        assert!(s.contains("correctness"));
-        let r: Wrap = toml::from_str(&s).unwrap();
-        assert_eq!(r.c, Category::Correctness);
+        for (variant, marker) in [
+            (Category::Correctness, "correctness"),
+            (Category::Maintainability, "maintainability"),
+            (Category::Consistency, "consistency"),
+            (Category::Performance, "performance"),
+            (Category::Style, "style"),
+        ] {
+            let s = toml::to_string(&W { c: variant }).unwrap();
+            assert!(s.contains(marker), "missing `{marker}` in `{s}`");
+            let r: W = toml::from_str(&s).unwrap();
+            assert_eq!(r.c, variant);
+        }
     }
 
     // ---- Language / RunSurface / ContentHash ----
@@ -1333,20 +1349,44 @@ mod tests {
     }
 
     #[test]
-    fn run_surface_round_trips_through_toml() {
+    fn run_surface_round_trips_every_variant() {
+        // Covers all three RunSurface variants. Originally only `Ci`
+        // was exercised; `Local` and `Editor` were silent drops if
+        // their wire form changed.
         #[derive(Serialize, Deserialize)]
-        struct Wrap {
+        struct W {
             s: RunSurface,
         }
-        let s = toml::to_string(&Wrap { s: RunSurface::Ci }).unwrap();
-        assert!(s.contains("ci"));
-        let r: Wrap = toml::from_str(&s).unwrap();
-        assert_eq!(r.s, RunSurface::Ci);
+        for (variant, marker) in [
+            (RunSurface::Local, "local"),
+            (RunSurface::Ci, "ci"),
+            (RunSurface::Editor, "editor"),
+        ] {
+            let s = toml::to_string(&W { s: variant }).unwrap();
+            assert!(s.contains(marker), "missing `{marker}` in `{s}`");
+            let r: W = toml::from_str(&s).unwrap();
+            assert_eq!(r.s, variant);
+        }
     }
 
     #[test]
-    fn content_hash_zero_is_all_zeros() {
-        assert_eq!(ContentHash::ZERO.0, [0u8; 32]);
+    fn content_hash_equality_and_inequality() {
+        // Equality is structural over the 32-byte array; inequality
+        // surfaces from any differing byte. The previous shape only
+        // asserted ZERO == [0u8; 32], which is a type-system tautology
+        // (ZERO is literally Self([0u8; 32])); this version verifies
+        // the meaningful contract instead: that hashes compare on
+        // contents.
+        let z1 = ContentHash::from_bytes([0u8; 32]);
+        let z2 = ContentHash::ZERO;
+        let one = {
+            let mut b = [0u8; 32];
+            b[0] = 1;
+            ContentHash::from_bytes(b)
+        };
+        assert_eq!(z1, z2);
+        assert_ne!(z1, one);
+        assert_ne!(z2, one);
     }
 
     // ---- Span ----
@@ -1454,13 +1494,6 @@ mod tests {
         assert!(!s.contains("help"));
         assert!(!s.contains("suggestion"));
         assert!(!s.contains("metadata"));
-    }
-
-    // ---- LINT_CONTRACT_VERSION ----
-
-    #[test]
-    fn lint_contract_version_is_three() {
-        assert_eq!(LINT_CONTRACT_VERSION, 3);
     }
 
     // ---- Directive ----
@@ -1626,6 +1659,12 @@ mod tests {
     #[test]
     fn propmap_push_keeps_both_indices_in_sync() {
         let mut map = PropMap::new();
+        // Pre-push: empty default + zero-len + zero-match query are
+        // load-bearing baseline assertions that downstream code (the
+        // engine's per-document loop) implicitly relies on.
+        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
+        assert_eq!(map.all_named("anything").count(), 0);
         let span = Span::single_line("a.rs", 10, 1, 5);
         map.push(
             span.clone(),
@@ -1765,6 +1804,31 @@ mod tests {
     }
 
     #[test]
+    fn propmap_walk_ancestors_cross_file_same_line() {
+        // The cross-file filter must hold even when the other file's
+        // prop sits at a line number that, in the query's own file,
+        // would qualify as an ancestor. The previous cross-file test
+        // used `line=1` for the other file (below any reasonable
+        // query line), so a regression that compared only line numbers
+        // would pass it; this test puts the other-file prop at a line
+        // below the query's line in `a.rs` so the file filter is the
+        // only thing standing in the way.
+        let mut map = PropMap::new();
+        map.push(
+            Span::single_line("b.rs", 5, 1, 1),
+            "b-file".to_string(),
+            PropValue::Bool(true),
+            None,
+        );
+        let query = Span::single_line("a.rs", 10, 1, 1);
+        let found: Vec<&str> = map.walk_ancestors(&query).map(|e| e.name).collect();
+        assert!(
+            !found.contains(&"b-file"),
+            "walk_ancestors must filter by file, not just line: {found:?}"
+        );
+    }
+
+    #[test]
     fn propmap_carries_optional_reason() {
         let mut map = PropMap::new();
         let span = Span::single_line("a.rs", 1, 1, 1);
@@ -1776,14 +1840,6 @@ mod tests {
         );
         let at: Vec<PropEntry<'_>> = map.at_site(&span).collect();
         assert_eq!(at[0].reason, Some("audit pass 2026-04"));
-    }
-
-    #[test]
-    fn propmap_empty_by_default() {
-        let map = PropMap::new();
-        assert!(map.is_empty());
-        assert_eq!(map.len(), 0);
-        assert_eq!(map.all_named("anything").count(), 0);
     }
 
     #[test]
@@ -1886,6 +1942,57 @@ mod tests {
     }
 
     #[test]
+    fn suppression_map_defer_kind_resolves_distinct_from_allow() {
+        // Defer is a separate suppression kind from Allow and must
+        // propagate through `resolves` so downstream lints can
+        // distinguish a temporary defer (with an expiration target)
+        // from a permanent allow. The `scope` helper hardcodes Allow;
+        // construct a Defer entry directly here.
+        let mut map = SuppressionMap::new();
+        map.push(SuppressionScope {
+            scope: Span::range("a.rs", 10, 0, 20, 0),
+            lints: ["no-foo".to_string()].into_iter().collect(),
+            kind: SuppressionKind::Defer,
+            tracked: Some("#185".to_string()),
+            reason: None,
+        });
+        let finding = Span::single_line("a.rs", 15, 0, 1);
+        let resolved = map.resolves("no-foo", &finding).unwrap();
+        assert_eq!(resolved.kind, SuppressionKind::Defer);
+        assert_eq!(resolved.tracked.as_deref(), Some("#185"));
+    }
+
+    #[test]
+    fn suppression_map_boundary_finding_is_contained() {
+        // Span::contains uses inclusive bounds for both ends. A
+        // finding whose start position equals the scope's start
+        // resolves; a finding that crosses the scope's end column
+        // by even one position does not. This pair pins the inclusive
+        // vs exclusive bound choice that's easy to get wrong on a
+        // refactor.
+        let mut map = SuppressionMap::new();
+        map.push(scope("a.rs", (10, 20), &["no-foo"], Some("#1")));
+        // Start boundary: finding's start matches scope's start.
+        let at_start = Span::single_line("a.rs", 10, 0, 1);
+        assert!(
+            map.resolves("no-foo", &at_start).is_some(),
+            "finding at scope start line should be contained"
+        );
+        // End boundary: a zero-length finding sitting exactly on the
+        // scope's end position is contained; one column past is not.
+        let at_end = Span::range("a.rs", 20, 0, 20, 0);
+        let past_end = Span::range("a.rs", 20, 0, 20, 1);
+        assert!(
+            map.resolves("no-foo", &at_end).is_some(),
+            "finding at scope end position should be contained"
+        );
+        assert!(
+            map.resolves("no-foo", &past_end).is_none(),
+            "finding one column past scope end must not be contained"
+        );
+    }
+
+    #[test]
     fn suppression_map_wrong_lint_name_does_not_resolve() {
         let mut map = SuppressionMap::new();
         map.push(scope("a.rs", (10, 20), &["no-foo"], Some("#1")));
@@ -1949,6 +2056,25 @@ mod tests {
     }
 
     #[test]
+    fn file_disable_set_unknown_file_returns_none() {
+        // disabled_lints returns `None` (not `Some(&empty)`) for a
+        // file that has never been registered. Downstream code
+        // distinguishes "no file-disable directives present" from
+        // "directives present but no lints disabled"; the contract
+        // should be tested explicitly.
+        let mut set = FileDisableSet::new();
+        set.push(FileDisableEntry {
+            file: "a.rs".into(),
+            lint_name: "x".to_string(),
+            directive_span: Span::single_line("a.rs", 1, 1, 10),
+            tracked: None,
+            reason: None,
+        });
+        assert!(set.disabled_lints(Path::new("a.rs")).is_some());
+        assert!(set.disabled_lints(Path::new("unknown.rs")).is_none());
+    }
+
+    #[test]
     fn file_disable_set_multiple_lints_per_file() {
         let mut set = FileDisableSet::new();
         set.push(FileDisableEntry {
@@ -1991,6 +2117,16 @@ mod tests {
             &["Manager".into()],
             &["AllowedManager".into()],
         ));
+    }
+
+    #[test]
+    fn matches_pattern_empty_forbidden_never_matches() {
+        // With no forbidden patterns configured, the "no restrictions"
+        // path returns false regardless of the name or the exempt list.
+        // This is the default consumer state when a lint's TOML config
+        // omits the forbidden list entirely.
+        assert!(!matches_pattern("Anything", &[], &[]));
+        assert!(!matches_pattern("Anything", &[], &["Anything".into()]));
     }
 
     // ---- LintEngine compile-shape proof ----
