@@ -280,7 +280,7 @@ version = "1.0"
 arvo-bits = ["bit-storage"]
 "#;
     let err = parse_mockspace_toml_str(toml).unwrap_err();
-    let msg = format!("{err:?}");
+    let msg = format!("{err}");
     assert!(
         msg.contains("primitive-introductions"),
         "error should name the retired table directly, got: {msg}"
@@ -299,7 +299,7 @@ unknown_field_consumer_made_up = "value"
 version = "1.0"
 "#;
     let err = parse_mockspace_toml_str(toml).unwrap_err();
-    let msg = format!("{err:?}");
+    let msg = format!("{err}");
     assert!(
         msg.contains("unknown_field_consumer_made_up"),
         "error should name the offending field, got: {msg}"

@@ -342,25 +342,40 @@ mod tests {
 
     #[test]
     fn strips_markdown_code_fences_when_flagged() {
-        // `code_fences = true` blanks out the body between triple-
-        // backtick fences in Markdown sources. The flag exists and
-        // the dispatch arm fires (line 108), but previously had zero
-        // test coverage. Verify the fence opener and closer remain
-        // (line offsets and parser state depend on them) and the
-        // body content is gone.
+        // `code_fences = true` triggers the dispatch arm at line 108.
+        // The actual contract: blank_range spans `[fence_start ..
+        // fence_close_end)` which includes the opening triple-tick,
+        // any info string (e.g. `rust`), every body byte, AND the
+        // closing triple-tick. Non-newline bytes become spaces;
+        // `\n` / `\r` are preserved so line count stays invariant.
+        // Surrounding text outside the fences is untouched.
         let opts = StripOpts {
             code_fences: true,
             ..Default::default()
         };
         let src = "before\n```rust\nlet x = 1;\n```\nafter\n";
         let out = strip(src, opts);
+        // Body content is gone.
         assert!(
             !out.contains("let x = 1"),
             "fenced body should be blanked, got: {out:?}"
         );
+        // Fence delimiters AND the info string are also blanked.
+        assert!(
+            !out.contains("```"),
+            "fence delimiters should be blanked too, got: {out:?}"
+        );
+        assert!(
+            !out.contains("rust"),
+            "info string should be blanked too, got: {out:?}"
+        );
+        // Surrounding text is preserved verbatim.
         assert!(out.contains("before"));
         assert!(out.contains("after"));
+        // Line count is invariant: `blank_range` skips `\n` / `\r`.
         assert_eq!(out.matches('\n').count(), src.matches('\n').count());
+        // Total length is invariant: blanking replaces, not removes.
+        assert_eq!(out.len(), src.len());
     }
 
     #[test]

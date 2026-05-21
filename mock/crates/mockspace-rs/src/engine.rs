@@ -566,6 +566,91 @@ mod tests {
     }
 
     #[test]
+    fn engine_run_filters_findings_dropped_by_suppression_span() {
+        // The engine.run() dispatch path filters findings through
+        // `suppressions.resolves(name, span)` for every emitted
+        // finding. The unit tests on `SuppressionMap` cover the
+        // lookup logic in isolation (see lint.rs's
+        // `suppression_map_*` tests); this test pins the engine-
+        // level wiring: a finding whose span SuppressionMap accepts
+        // as resolved is dropped from the run output, while a
+        // finding outside any covering scope survives.
+        //
+        // Fixture: inject a `SuppressionScope` directly via
+        // `with_suppressions`, bypassing the preprocessor's
+        // directive-span derivation (the preprocessor stamps a
+        // directive's scope to its own column-bounded line span,
+        // which only covers narrow inline cases; tooling consumers
+        // may produce broader scopes through other paths). This
+        // isolates the engine's filter wiring from preprocessor
+        // span shape.
+        let config = TokenScanConfig {
+            tokens: vec!["BANNED".to_string()],
+            word_boundary: true,
+            strip_strings: true,
+            strip_comments: true,
+            strip_doc_comments: true,
+            severity_escalation: None,
+        };
+        let lint = TokenScanLint::new(
+            "no-banned",
+            "ban the BANNED token",
+            config,
+            GateSeverity::uniform(Severity::Warn),
+        );
+        let entries = vec![InstantiatedLint {
+            lint: Box::new(lint),
+            mode: LintMode::PerDocument,
+            staging_aware: true,
+            editor_skip: false,
+            only_staged: crate::config_loader::OnlyStaged::default(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+                "test",
+                &crate::config_types::ScopeConfig::default(),
+            )
+            .unwrap(),
+        }];
+        let engine = MockspaceEngine::with_entries(entries);
+
+        // Two BANNED occurrences on different lines of the same file.
+        // A SuppressionScope covers lines 1-1 only; the second
+        // occurrence on line 2 sits outside the scope.
+        let mut suppressions = mockspace_core::lint::SuppressionMap::new();
+        let mut lints_set = std::collections::BTreeSet::new();
+        lints_set.insert("no-banned".to_string());
+        suppressions.push(mockspace_core::lint::SuppressionScope {
+            scope: mockspace_core::lint::Span::range("a.rs", 1, 0, 1, 1000),
+            lints: lints_set,
+            kind: mockspace_core::lint::SuppressionKind::Allow,
+            tracked: Some("#1".to_string()),
+            reason: Some("fixture".to_string()),
+        });
+
+        let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        builder.push_document(MockspaceDocument::new(
+            "a.rs",
+            "test-crate",
+            Language::Rust,
+            "fn x() { let _ = BANNED; }\nfn y() { let _ = BANNED; }\n",
+        ));
+        let project = builder.with_suppressions(suppressions).build();
+        let cfg = EmptyCfg;
+        let findings = engine.run(&project, Gate::Commit, &cfg).unwrap();
+        // The line-1 finding sits inside the scope and is dropped.
+        // The line-2 finding sits outside and survives.
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected one surviving finding from line 2 (line 1 inside scope), got: {findings:?}"
+        );
+        assert_eq!(
+            findings[0].span.start_line, 2,
+            "surviving finding should be on line 2 (outside scope); got: {:?}",
+            findings[0].span
+        );
+    }
+
+    #[test]
     fn engine_with_no_prop_conflicts_has_empty_startup_warnings() {
         let engine = MockspaceEngine::with_entries(Vec::new());
         assert!(engine.startup_warnings().is_empty());
@@ -684,14 +769,20 @@ mod tests {
         // or reordered the validate_directives call surfaces here.
         // Writes a Rust file to a tempdir, scope_walks it, then
         // asserts the ParseError::DirectiveValidation variant fires.
+        //
+        // The fixture uses `tempfile::tempdir()` so the path is
+        // unique per test invocation. The previous shape reused a
+        // fixed `temp_dir().join("mockspace_validation_gate_e2e")`
+        // path with manual remove+create, which raced under
+        // `--test-threads > 1`.
         use std::fs;
 
-        let tmp = std::env::temp_dir().join("mockspace_validation_gate_e2e");
-        let _ = fs::remove_dir_all(&tmp);
-        let crate_dir = tmp.join("test_crate").join("src");
+        let tmp = tempfile::tempdir().expect("tempdir create");
+        let root = tmp.path();
+        let crate_dir = root.join("test_crate").join("src");
         fs::create_dir_all(&crate_dir).unwrap();
         fs::write(
-            tmp.join("test_crate").join("Cargo.toml"),
+            root.join("test_crate").join("Cargo.toml"),
             "[package]\nname = \"test_crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
         .unwrap();
@@ -703,7 +794,7 @@ mod tests {
 
         let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("known")]);
         let err = engine
-            .scope_project(&tmp, RunSurface::Local)
+            .scope_project(root, RunSurface::Local)
             .expect_err("scope_project should reject project with unknown lint");
         match err {
             ParseError::DirectiveValidation { errors } => {
@@ -713,7 +804,7 @@ mod tests {
             }
             other => panic!("expected DirectiveValidation, got {other:?}"),
         }
-        let _ = fs::remove_dir_all(&tmp);
+        // tmp drops here; the directory is removed automatically.
     }
 
     #[test]
