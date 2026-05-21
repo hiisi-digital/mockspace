@@ -591,7 +591,10 @@ fn f() {}
     }
 
     #[test]
-    fn all_seven_scope_axes_parse() {
+    fn all_six_scope_axes_parse() {
+        // Six scope axes after the category retirement in #549. The
+        // loop iterates and asserts each parses cleanly. Name reflects
+        // the actual count; the previous name claimed seven.
         for axis_str in [
             "paths",
             "exempt_paths",

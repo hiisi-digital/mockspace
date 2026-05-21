@@ -512,9 +512,22 @@ fn legacy(name: String) {}
 
     #[test]
     fn doc_comment_forms_are_recognised() {
+        // Both `///` (outer doc) and `//!` (inner doc) feed the parser
+        // through the same comment-position check. Each line emits one
+        // `Directive::Allow` record; the count alone would pass if the
+        // parser miscategorised them as a different directive variant.
         let src = "/// lint:allow(no-bare-numeric)\n//! lint:allow(no-bare-string)\n";
         let recs = parse_directives(src, "x.rs");
         assert_eq!(recs.len(), 2);
+        let lint_names: Vec<&str> = recs
+            .iter()
+            .map(|r| match &r.directive {
+                Directive::Allow { lint_name, .. } => lint_name.as_str(),
+                other => panic!("expected Allow, got {other:?}"),
+            })
+            .collect();
+        assert!(lint_names.contains(&"no-bare-numeric"));
+        assert!(lint_names.contains(&"no-bare-string"));
     }
 
     #[test]

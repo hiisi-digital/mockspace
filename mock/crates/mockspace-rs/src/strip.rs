@@ -339,4 +339,37 @@ mod tests {
         let out = strip(src, opts);
         assert_eq!(out.matches('\n').count(), src.matches('\n').count());
     }
+
+    #[test]
+    fn strips_markdown_code_fences_when_flagged() {
+        // `code_fences = true` blanks out the body between triple-
+        // backtick fences in Markdown sources. The flag exists and
+        // the dispatch arm fires (line 108), but previously had zero
+        // test coverage. Verify the fence opener and closer remain
+        // (line offsets and parser state depend on them) and the
+        // body content is gone.
+        let opts = StripOpts {
+            code_fences: true,
+            ..Default::default()
+        };
+        let src = "before\n```rust\nlet x = 1;\n```\nafter\n";
+        let out = strip(src, opts);
+        assert!(
+            !out.contains("let x = 1"),
+            "fenced body should be blanked, got: {out:?}"
+        );
+        assert!(out.contains("before"));
+        assert!(out.contains("after"));
+        assert_eq!(out.matches('\n').count(), src.matches('\n').count());
+    }
+
+    #[test]
+    fn default_opts_is_a_no_op() {
+        // `StripOpts::default()` has every flag false; the strip
+        // function should return source unchanged via the early-out
+        // branch at line 48.
+        let src = "fn x() { /* c */ let s = \"hi\"; }\n";
+        let out = strip(src, StripOpts::default());
+        assert_eq!(out, src);
+    }
 }

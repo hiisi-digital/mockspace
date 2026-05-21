@@ -414,6 +414,29 @@ mod tests {
     }
 
     #[test]
+    fn does_not_fire_when_position_not_listed() {
+        // When the forbidden type appears in a position that is NOT
+        // included in the `positions` set, the lint should stay
+        // silent. Here `Vec` lives in a struct field, but only
+        // `FnReturn` is listed; the lint must not fire on the field.
+        // This negative case was missing from the suite even though
+        // it is the load-bearing contract for narrowing the visitor.
+        let findings = run(
+            "pub struct S { pub v: Vec<u8> }",
+            AstTypePositionConfig {
+                forbidden_types: vec!["Vec".to_string()],
+                positions: vec![TypePosition::FnReturn],
+                visibility: Visibility::Public,
+                replacements: Vec::new(),
+            },
+        );
+        assert!(
+            findings.is_empty(),
+            "lint should not fire when forbidden type's position is not listed: {findings:?}"
+        );
+    }
+
+    #[test]
     fn fires_on_struct_field() {
         let findings = run(
             "pub struct S { pub v: Vec<u8> }",
