@@ -564,6 +564,111 @@ impl<'ctx> LintContext<'ctx> {
 }
 
 // =========================================================================
+// Canonical directive vocabulary.
+// =========================================================================
+
+/// One of the five canonical source-level directives per the design
+/// memo at `mock/research/202605220000_canonical-directive-vocabulary.md`.
+///
+/// Preprocessors parse these from comments (canonical surface) or
+/// language-native decorator aliases. The internal `DirectiveRecord`
+/// shape is identical regardless of which surface produced it; the
+/// engine downstream operates on this unified form.
+///
+/// Lint packs ship new lint names and new categories, but cannot ship
+/// new directive variants. Adding a sixth directive is a framework
+/// schema change requiring a version bump (see
+/// [`LINT_CONTRACT_VERSION`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Directive {
+    /// Per-site suppression of a specific lint. Equivalent to the
+    /// existing comment-based `lint:allow` mechanism with no semantic
+    /// change; only the parsing surface unifies under
+    /// `DirectiveRecord`. `reason` and `tracked` are validated
+    /// downstream by `SuppressionMetaLint` per the
+    /// `lint-allow-requires-task-id` workspace rule; both `Option`
+    /// fields are present at the parse surface because directives may
+    /// be ill-formed at source-comment time and the meta-lint reports
+    /// the missing fields as findings rather than panicking the
+    /// parser.
+    Allow {
+        lint_name: String,
+        reason: Option<String>,
+        tracked: Option<String>,
+    },
+
+    /// Marks the current item as the canonical introducer of the named
+    /// primitive category. Carves out the marked item and its direct
+    /// impl blocks (same file, same module, same type) from category-
+    /// checked lints. Does not extend to transitive helpers or whole
+    /// modules. Replaces the pre-v2 `[primitive-introductions]` TOML
+    /// table.
+    Introduces { category: String },
+
+    /// At a module or file boundary, extends a lint's scope along one
+    /// axis for the contained items. Axis set is bounded to
+    /// `ScopeConfig` fields ([`ScopeAxis`]); lint packs cannot invent
+    /// new axes through this directive.
+    ScopeAdd {
+        lint_name: String,
+        axis: ScopeAxis,
+        value: String,
+    },
+
+    /// Acknowledges a known violation that will be fixed when the linked
+    /// task closes. Semantically distinct from `Allow`: defers expire
+    /// when the linked task closes, while allows accumulate as a policy
+    /// question. The `SuppressionMetaLint`'s `forbid_expired` config
+    /// distinguishes the two.
+    Defer {
+        lint_name: String,
+        until: String,
+        reason: Option<String>,
+    },
+
+    /// File-level disable for the named lint. Placed at the top of a
+    /// file. Requires the same `reason` + `tracked` as `Allow` (also
+    /// `Option<String>` at the parse surface; meta-lint validates
+    /// downstream). Distinct from `ScopeAdd` in that it is a disable,
+    /// not a scope extension.
+    FileDisable {
+        lint_name: String,
+        reason: Option<String>,
+        tracked: Option<String>,
+    },
+}
+
+/// The bounded set of `ScopeConfig` axes a `Directive::ScopeAdd` may
+/// extend. Mirrors the seven fields of the `ScopeConfig` struct
+/// (defined in `mockspace-rs/src/config_types.rs`) exactly so the
+/// resolver can dispatch by axis without string-matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopeAxis {
+    Paths,
+    ExemptPaths,
+    Crates,
+    ExemptCrates,
+    Languages,
+    ExemptCategories,
+    ProcMacroExempt,
+}
+
+/// A parsed directive with its source location.
+///
+/// Preprocessors emit a `Vec<DirectiveRecord>` per document; the engine
+/// folds those into per-kind maps (suppressions into `SuppressionMap`,
+/// introductions into `IntroducerMap`, scope extensions into
+/// `ScopeAddMap`, defers into expanded `SuppressionMap` entries,
+/// file-disables into `FileDisableSet`) before dispatching lints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectiveRecord {
+    pub directive: Directive,
+    pub span: Span,
+}
+
+// =========================================================================
 // Suppression model.
 // =========================================================================
 
@@ -920,6 +1025,119 @@ mod tests {
     #[test]
     fn lint_contract_version_is_three() {
         assert_eq!(LINT_CONTRACT_VERSION, 3);
+    }
+
+    // ---- Directive ----
+
+    #[test]
+    fn directive_allow_round_trips() {
+        let r = DirectiveRecord {
+            directive: Directive::Allow {
+                lint_name: "no-bare-numeric".to_string(),
+                reason: Some("hardcoded constant per spec".to_string()),
+                tracked: Some("#427".to_string()),
+            },
+            span: Span::single_line("a.rs", 10, 5, 12),
+        };
+        let s = toml::to_string(&r).unwrap();
+        let back: DirectiveRecord = toml::from_str(&s).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn directive_introduces_round_trips() {
+        let r = DirectiveRecord {
+            directive: Directive::Introduces {
+                category: "string-foundation".to_string(),
+            },
+            span: Span::single_line("hilavitkutin-str/src/lib.rs", 42, 1, 10),
+        };
+        let s = toml::to_string(&r).unwrap();
+        let back: DirectiveRecord = toml::from_str(&s).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn directive_scope_add_round_trips_each_axis() {
+        for axis in [
+            ScopeAxis::Paths,
+            ScopeAxis::ExemptPaths,
+            ScopeAxis::Crates,
+            ScopeAxis::ExemptCrates,
+            ScopeAxis::Languages,
+            ScopeAxis::ExemptCategories,
+            ScopeAxis::ProcMacroExempt,
+        ] {
+            let r = DirectiveRecord {
+                directive: Directive::ScopeAdd {
+                    lint_name: "no-bare-numeric".to_string(),
+                    axis,
+                    value: "ffi-boundary".to_string(),
+                },
+                span: Span::single_line("m.rs", 1, 1, 1),
+            };
+            let s = toml::to_string(&r).unwrap();
+            let back: DirectiveRecord = toml::from_str(&s).unwrap();
+            assert_eq!(back, r, "round-trip failed for {axis:?}");
+        }
+    }
+
+    #[test]
+    fn directive_defer_round_trips() {
+        let r = DirectiveRecord {
+            directive: Directive::Defer {
+                lint_name: "no-bare-string".to_string(),
+                until: "#185".to_string(),
+                reason: Some("clause test rehab pending".to_string()),
+            },
+            span: Span::single_line("test.rs", 5, 1, 30),
+        };
+        let s = toml::to_string(&r).unwrap();
+        let back: DirectiveRecord = toml::from_str(&s).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn directive_file_disable_round_trips() {
+        let r = DirectiveRecord {
+            directive: Directive::FileDisable {
+                lint_name: "writing-style".to_string(),
+                reason: Some("generated FFI binding file".to_string()),
+                tracked: Some("#207".to_string()),
+            },
+            span: Span::single_line("generated.rs", 1, 1, 1),
+        };
+        let s = toml::to_string(&r).unwrap();
+        let back: DirectiveRecord = toml::from_str(&s).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn directive_kind_tag_uses_kebab_case() {
+        let r = DirectiveRecord {
+            directive: Directive::FileDisable {
+                lint_name: "x".to_string(),
+                reason: None,
+                tracked: None,
+            },
+            span: Span::single_line("a.rs", 1, 1, 1),
+        };
+        let s = toml::to_string(&r).unwrap();
+        assert!(s.contains("kind = \"file-disable\""), "got: {s}");
+    }
+
+    #[test]
+    fn scope_axis_serialises_snake_case() {
+        let r = DirectiveRecord {
+            directive: Directive::ScopeAdd {
+                lint_name: "x".to_string(),
+                axis: ScopeAxis::ExemptCategories,
+                value: "y".to_string(),
+            },
+            span: Span::single_line("a.rs", 1, 1, 1),
+        };
+        let s = toml::to_string(&r).unwrap();
+        assert!(s.contains("axis = \"exempt_categories\""), "got: {s}");
     }
 
     // ---- LintCfgStore ----
