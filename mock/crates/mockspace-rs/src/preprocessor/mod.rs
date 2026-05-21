@@ -6,9 +6,16 @@
 //!
 //! # Today
 //!
-//! [`RustPreprocessor`] is a stub: returns an empty map. A future round
-//! fills it with a real walk over `#[mock::lints::allow(...)]` attributes
-//! via `syn`.
+//! [`RustPreprocessor`] is a stub: returns an empty map. The
+//! [`comment::parse_directives`] function in the [`comment`] submodule
+//! parses the canonical five-directive vocabulary from source comments
+//! per the design memo at
+//! `mock/research/202605220000_canonical-directive-vocabulary.md`.
+//! Integration with `RustPreprocessor::extract` (Allow records into
+//! `SuppressionMap`, other four kinds forward to maps from #546) is a
+//! follow-up slice of #544.
+
+pub mod comment;
 
 use mockspace_core::lint::{Document, Language, SuppressionMap};
 
