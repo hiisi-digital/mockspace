@@ -104,10 +104,11 @@ impl std::error::Error for ResolutionError {}
 ///    [`ResolvedInvocation::CargoAlias`].
 /// 5. [`ResolutionError::NoUsablePath`].
 ///
-/// Step 4 is not yet implemented and currently falls through to
-/// step 5; it lands as a separate slice of task #559. The dispatch
-/// shape here is the seam the follow-up slice slots into without
-/// touching the public type surface.
+/// All five steps land here. Steps 1-3 return [`ResolvedInvocation::Absolute`]
+/// with a concrete path; step 4 returns [`ResolvedInvocation::CargoAlias`]
+/// signalling the caller should spawn `cargo mock <args...>` rather
+/// than an absolute binary; step 5 returns [`ResolutionError::NoUsablePath`]
+/// when none of the steps yield a usable resolution.
 pub fn resolve_invocation() -> Result<ResolvedInvocation, ResolutionError> {
     if let Some(path) = resolve_env_var()? {
         return Ok(ResolvedInvocation::Absolute(path));
@@ -118,10 +119,10 @@ pub fn resolve_invocation() -> Result<ResolvedInvocation, ResolutionError> {
     if let Some(path) = resolve_path_lookup() {
         return Ok(ResolvedInvocation::Absolute(path));
     }
+    if resolve_cargo_probe() {
+        return Ok(ResolvedInvocation::CargoAlias);
+    }
 
-    // Step 4 (cargo mock --version probe) lands in a subsequent slice
-    // of task #559. Until then, the chain falls through to the
-    // terminal error.
     Err(ResolutionError::NoUsablePath)
 }
 
@@ -146,6 +147,26 @@ fn resolve_env_var() -> Result<Option<PathBuf>, ResolutionError> {
         return Err(ResolutionError::EnvVarPathNotExecutable(path));
     }
     Ok(Some(path))
+}
+
+/// Step 4 of [`resolve_invocation`]: probe whether `cargo mock` is
+/// reachable as a cargo subcommand. The standard mockspace bootstrap
+/// writes a `[alias] mock = "..."` entry into the consumer's
+/// `.cargo/config.toml`; cargo resolves it when invoked from any
+/// directory under the workspace root. This step lets the resolver
+/// succeed via the cargo-alias path even when steps 1-3 have all
+/// fallen through (no env var, no TOML field, no `mock` on PATH).
+///
+/// Returns `true` if `cargo mock --version` exits zero, `false`
+/// otherwise (cargo not installed, alias missing, alias broken).
+/// The function does not surface errors; like step 3, a negative
+/// outcome falls through silently to the terminal error.
+fn resolve_cargo_probe() -> bool {
+    use std::process::Command;
+    match Command::new("cargo").args(["mock", "--version"]).output() {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    }
 }
 
 /// Step 3 of [`resolve_invocation`]: walk `$PATH` looking for an
@@ -770,6 +791,82 @@ mod tests {
         }
         cleanup(&root);
         assert_eq!(observed, Some(bin));
+    }
+
+    // ---- step 4 (cargo mock --version probe) ---------------------------
+
+    /// Write a fake `cargo` binary at `dir/cargo` that exits with the
+    /// given status code. The probe spawns `cargo` via PATH lookup,
+    /// so dropping this shim into a tempdir + scoping PATH to it
+    /// lets the test control the probe outcome without touching the
+    /// real cargo installation.
+    fn write_fake_cargo(dir: &std::path::Path, exit_code: i32) -> PathBuf {
+        std::fs::create_dir_all(dir).expect("mkdir cargo-shim-dir");
+        let path = dir.join("cargo");
+        let script = format!("#!/bin/sh\nexit {exit_code}\n");
+        std::fs::write(&path, script).expect("write fake cargo");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod fake cargo");
+        }
+        path
+    }
+
+    #[test]
+    fn cargo_probe_returns_true_when_cargo_mock_version_exits_zero() {
+        #[cfg(not(unix))]
+        return; // Fake-shim approach is Unix-specific.
+
+        let _lock = ENV_LOCK.lock().unwrap();
+        let root = fixture_dir("cargo-probe-ok");
+        write_fake_cargo(&root, 0);
+        let _g = PathEnvGuard::set(&root);
+        let observed = resolve_cargo_probe();
+        cleanup(&root);
+        assert!(observed, "expected probe to succeed with exit 0 shim");
+    }
+
+    #[test]
+    fn cargo_probe_returns_false_when_cargo_mock_exits_nonzero() {
+        #[cfg(not(unix))]
+        return;
+
+        let _lock = ENV_LOCK.lock().unwrap();
+        let root = fixture_dir("cargo-probe-fail");
+        write_fake_cargo(&root, 1);
+        let _g = PathEnvGuard::set(&root);
+        let observed = resolve_cargo_probe();
+        cleanup(&root);
+        assert!(
+            !observed,
+            "expected probe to return false on nonzero exit"
+        );
+    }
+
+    #[test]
+    fn cargo_probe_returns_false_when_cargo_not_on_path() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        // Point PATH at an empty tempdir so `cargo` is not findable
+        // by the OS spawn. The probe's `Err(_)` arm of `Command::output`
+        // takes the false branch.
+        let root = fixture_dir("cargo-probe-missing");
+        std::fs::create_dir_all(&root).expect("mkdir empty");
+        let _g = PathEnvGuard::set(&root);
+        let observed = resolve_cargo_probe();
+        cleanup(&root);
+        #[cfg(unix)]
+        assert!(
+            !observed,
+            "expected probe to return false when cargo is unreachable"
+        );
+        #[cfg(not(unix))]
+        {
+            // On Windows the spawn may still resolve via OS PATHEXT etc;
+            // skip the assertion shape but exercise the path.
+            let _ = observed;
+        }
     }
 
     #[test]
