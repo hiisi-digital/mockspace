@@ -20,10 +20,12 @@ pub mod comment;
 pub mod rust_attr;
 
 use mockspace_core::lint::{
-    Directive, Document, FileDisableEntry, FileDisableSet, Language, PropMap,
-    ScopeAddEntry, ScopeAddMap, SuppressionKind, SuppressionMap, SuppressionScope,
+    Directive, DirectiveRecord, Document, FileDisableEntry, FileDisableSet, Language,
+    PropMap, ScopeAddEntry, ScopeAddMap, SuppressionKind, SuppressionMap,
+    SuppressionScope,
 };
 use std::collections::BTreeSet;
+use std::path::Path;
 
 /// Per-document directive extracts. Returned from
 /// [`LanguagePreprocessor::extract`]; engines merge the per-document
@@ -111,84 +113,123 @@ impl LanguagePreprocessor for RustPreprocessor {
         document: &dyn Document,
     ) -> Result<DirectiveExtracts, PreprocessorError> {
         let path_str = document.path().to_string_lossy();
-        let records = comment::parse_directives(document.source(), &path_str);
         let mut out = DirectiveExtracts::default();
         // The directive path inside the document is the file the
         // record lives in. File-disable entries key off this for
         // per-file lookup.
         let doc_path = document.path().to_path_buf();
-        for record in records {
-            match record.directive {
-                Directive::Allow {
-                    lint_name,
-                    reason,
-                    tracked,
-                } => {
-                    let mut lints = BTreeSet::new();
-                    lints.insert(lint_name);
-                    out.suppressions.push(SuppressionScope {
-                        scope: record.span,
-                        lints,
-                        kind: SuppressionKind::Allow,
-                        tracked,
-                        reason,
-                    });
-                }
-                Directive::Defer {
-                    lint_name,
-                    until,
-                    reason,
-                } => {
-                    // Defer suppresses the named lint within the same
-                    // scope as the directive. The `until: <task-id>`
-                    // argument fills `tracked`; the meta-lint reads
-                    // `kind == Defer` to apply expiration semantics
-                    // distinct from `Allow`.
-                    let mut lints = BTreeSet::new();
-                    lints.insert(lint_name);
-                    out.suppressions.push(SuppressionScope {
-                        scope: record.span,
-                        lints,
-                        kind: SuppressionKind::Defer,
-                        tracked: Some(until),
-                        reason,
-                    });
-                }
-                Directive::ScopeAdd {
-                    lint_name,
-                    axis,
-                    value,
-                } => {
-                    out.scope_adds.push(ScopeAddEntry {
-                        scope: record.span,
-                        lint_name,
-                        axis,
-                        value,
-                    });
-                }
-                Directive::FileDisable {
-                    lint_name,
-                    reason,
-                    tracked,
-                } => {
-                    out.file_disables.push(FileDisableEntry {
-                        file: doc_path.clone(),
-                        lint_name,
-                        directive_span: record.span,
-                        tracked,
-                        reason,
-                    });
-                }
-                Directive::Prop {
-                    name,
-                    value,
-                    reason,
-                } => {
-                    out.props.push(record.span, name, value, reason);
-                }
+
+        // Pass 1: comment-form directives. The canonical surface; works
+        // even when the source does not parse as valid Rust.
+        for record in comment::parse_directives(document.source(), &path_str) {
+            route_record(record, &doc_path, &mut out);
+        }
+
+        // Pass 2: native attribute-form directives. Requires the source
+        // to be a parseable `syn::File`. Parse failures here are
+        // recoverable: comment-form directives have already been routed,
+        // and lints for `Language::Rust` still see what the comment
+        // parser found. The native parser also handles `#[mockspace::*]`
+        // attributes that no comment-form pre-image would catch.
+        //
+        // NOTE: dedup across the two passes is deliberately not done
+        // here. A consumer who writes both a comment-form and an
+        // attribute-form directive at the same site produces two
+        // SuppressionScopes; the `directive-style-consistency` lint
+        // (#548) is the right home to flag the mixed-style case.
+        // Erasing the signal here would defeat that lint.
+        //
+        // FOLLOWUP: `Document` does not expose the cached `syn::File`,
+        // so this re-parses what `MockspaceDocument` already cached. A
+        // Rust-specific subtrait or typed downcast on the concrete
+        // `MockspaceDocument` is the right shape; extending `Document`
+        // would leak Rust-specific state onto a language-agnostic
+        // trait.
+        if let Ok(ast) = syn::parse_file(document.source()) {
+            for record in rust_attr::parse_directive_attributes(&ast, &path_str) {
+                route_record(record, &doc_path, &mut out);
             }
         }
+
         Ok(out)
+    }
+}
+
+/// Route a single [`DirectiveRecord`] into the matching field of
+/// [`DirectiveExtracts`]. Shared by the comment-form and attribute-form
+/// passes inside [`RustPreprocessor::extract`].
+fn route_record(
+    record: DirectiveRecord,
+    doc_path: &Path,
+    out: &mut DirectiveExtracts,
+) {
+    match record.directive {
+        Directive::Allow {
+            lint_name,
+            reason,
+            tracked,
+        } => {
+            let mut lints = BTreeSet::new();
+            lints.insert(lint_name);
+            out.suppressions.push(SuppressionScope {
+                scope: record.span,
+                lints,
+                kind: SuppressionKind::Allow,
+                tracked,
+                reason,
+            });
+        }
+        Directive::Defer {
+            lint_name,
+            until,
+            reason,
+        } => {
+            // Defer suppresses the named lint within the same scope as
+            // the directive. The `until: <task-id>` argument fills
+            // `tracked`; the meta-lint reads `kind == Defer` to apply
+            // expiration semantics distinct from `Allow`.
+            let mut lints = BTreeSet::new();
+            lints.insert(lint_name);
+            out.suppressions.push(SuppressionScope {
+                scope: record.span,
+                lints,
+                kind: SuppressionKind::Defer,
+                tracked: Some(until),
+                reason,
+            });
+        }
+        Directive::ScopeAdd {
+            lint_name,
+            axis,
+            value,
+        } => {
+            out.scope_adds.push(ScopeAddEntry {
+                scope: record.span,
+                lint_name,
+                axis,
+                value,
+            });
+        }
+        Directive::FileDisable {
+            lint_name,
+            reason,
+            tracked,
+        } => {
+            out.file_disables.push(FileDisableEntry {
+                file: doc_path.to_path_buf(),
+                lint_name,
+                directive_span: record.span,
+                tracked,
+                reason,
+            });
+        }
+        Directive::Prop {
+            name,
+            value,
+            reason,
+        } => {
+            out.props.push(record.span, name, value, reason);
+        }
     }
 }
 
@@ -386,5 +427,117 @@ fn imports() {}
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         assert!(extracts.suppressions.scopes().is_empty());
         assert!(extracts.props.is_empty());
+    }
+
+    // ---- Attribute-form integration (#545) ----
+
+    #[test]
+    fn extract_picks_up_attribute_form_allow() {
+        // Pure attribute form: no comment-form directive in the source.
+        // The native parser pass picks this up and routes it into the
+        // suppression map alongside what comment-form directives would
+        // produce.
+        let doc = StubDocument {
+            path: "lib.rs".into(),
+            source: r##"
+#[mockspace::allow("no-bare-numeric", reason = "fixture", tracked = "#427")]
+const X: u64 = 1;
+"##
+            .to_string(),
+            hash: ContentHash::ZERO,
+        };
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        let scopes = extracts.suppressions.scopes();
+        assert_eq!(scopes.len(), 1);
+        assert!(scopes[0].lints.contains("no-bare-numeric"));
+        assert_eq!(scopes[0].reason.as_deref(), Some("fixture"));
+        assert_eq!(scopes[0].tracked.as_deref(), Some("#427"));
+    }
+
+    #[test]
+    fn extract_merges_comment_and_attribute_forms() {
+        // Both surfaces produce records in one extract call. The engine
+        // does not care which surface a directive came from.
+        let doc = StubDocument {
+            path: "lib.rs".into(),
+            source: r##"// lint:allow(no-bare-string) reason: "comment-form" tracked: #3
+
+#[mockspace::allow("no-bare-numeric", reason = "attr-form", tracked = "#4")]
+const X: u64 = 1;
+"##
+            .to_string(),
+            hash: ContentHash::ZERO,
+        };
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        let scopes = extracts.suppressions.scopes();
+        assert_eq!(scopes.len(), 2);
+        let names: BTreeSet<&str> = scopes
+            .iter()
+            .flat_map(|s| s.lints.iter().map(|l| l.as_str()))
+            .collect();
+        assert!(names.contains("no-bare-numeric"));
+        assert!(names.contains("no-bare-string"));
+    }
+
+    #[test]
+    fn extract_routes_attribute_form_scope_add_and_file_disable() {
+        let doc = StubDocument {
+            path: "lib.rs".into(),
+            source: r##"
+#[mockspace::scope_add("no-bare-numeric", axis = "exempt_categories", value = "ffi")]
+mod ffi {}
+
+#[mockspace::file_disable("writing-style", reason = "generated", tracked = "#207")]
+fn generated_thing() {}
+"##
+            .to_string(),
+            hash: ContentHash::ZERO,
+        };
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        assert_eq!(extracts.scope_adds.entries().len(), 1);
+        assert_eq!(extracts.scope_adds.entries()[0].lint_name, "no-bare-numeric");
+        assert_eq!(extracts.file_disables.entries().len(), 1);
+        assert!(extracts.file_disables.disabled(
+            std::path::Path::new("lib.rs"),
+            "writing-style",
+        ));
+    }
+
+    #[test]
+    fn extract_prop_attribute_is_dropped_today() {
+        // Documents the current gap noted by the rust_attr.rs FOLLOWUP
+        // comment: `prop` is not yet recognised by the attribute parser
+        // (the AttrArg parser only handles string literals, but prop
+        // values can be Bool / Integer / String). Consumers must use
+        // the comment form `// lint:prop(audited)` until the gap is
+        // closed. This test locks the silent-drop so a future patch
+        // that fixes the gap also updates this regression record.
+        let doc = StubDocument {
+            path: "lib.rs".into(),
+            source: r##"
+#[mockspace::prop("audited")]
+fn x() {}
+"##
+            .to_string(),
+            hash: ContentHash::ZERO,
+        };
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        assert!(extracts.props.is_empty(), "attribute-form prop is not yet routed");
+    }
+
+    #[test]
+    fn extract_tolerates_unparseable_rust_falls_back_to_comments() {
+        // Source is not valid Rust but the comment-form parser is
+        // syntax-agnostic. The attribute parse fails silently; the
+        // comment directive still lands.
+        let doc = StubDocument {
+            path: "lib.rs".into(),
+            source: "// lint:allow(no-bare-numeric) reason: \"x\" tracked: #1\n@@@ this is not rust @@@\n".to_string(),
+            hash: ContentHash::ZERO,
+        };
+        let extracts = RustPreprocessor.extract(&doc).unwrap();
+        let scopes = extracts.suppressions.scopes();
+        assert_eq!(scopes.len(), 1);
+        assert!(scopes[0].lints.contains("no-bare-numeric"));
     }
 }
