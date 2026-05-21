@@ -93,13 +93,7 @@ impl Lint for NoManualImplLint {
                     if let Some(seg) = trait_path.segments.last() {
                         let trait_name = seg.ident.to_string();
                         if self.forbidden.contains(&trait_name) {
-                            emit(
-                                self.name,
-                                doc.path(),
-                                &trait_name,
-                                active,
-                                sink,
-                            );
+                            emit(self.name, doc.path(), &trait_name, active, sink);
                         }
                     }
                 }

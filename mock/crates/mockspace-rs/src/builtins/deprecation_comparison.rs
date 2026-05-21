@@ -52,7 +52,8 @@ impl DeprecationComparisonLint {
         config: DeprecationComparisonConfig,
     ) -> Result<Self, ConfigError> {
         let active_glob = compile_glob(name, &config.active_cls_glob, "active_cls_glob")?;
-        let deprecated_glob = compile_glob(name, &config.deprecated_cls_glob, "deprecated_cls_glob")?;
+        let deprecated_glob =
+            compile_glob(name, &config.deprecated_cls_glob, "deprecated_cls_glob")?;
         Ok(Self {
             name,
             description,

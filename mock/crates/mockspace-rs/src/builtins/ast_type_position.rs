@@ -318,15 +318,17 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: AstTypePositionConfig = config.clone().try_into().map_err(
-        |e: toml::de::Error| ConfigError {
-            lint_name: name.to_string(),
-            field_path: String::new(),
-            kind: ConfigErrorKind::InvalidValue,
-            message: format!("ast-type-position config: {e}"),
-            source_location: None,
-        },
-    )?;
+    let parsed: AstTypePositionConfig =
+        config
+            .clone()
+            .try_into()
+            .map_err(|e: toml::de::Error| ConfigError {
+                lint_name: name.to_string(),
+                field_path: String::new(),
+                kind: ConfigErrorKind::InvalidValue,
+                message: format!("ast-type-position config: {e}"),
+                source_location: None,
+            })?;
     Ok(Box::new(AstTypePositionLint::new(
         name,
         description,
@@ -350,11 +352,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,
@@ -365,12 +363,8 @@ mod tests {
     }
 
     fn run(source: &str, config: AstTypePositionConfig) -> Vec<mockspace_core::lint::Finding> {
-        let lint = AstTypePositionLint::new(
-            "test",
-            "",
-            GateSeverity::uniform(Severity::Warn),
-            config,
-        );
+        let lint =
+            AstTypePositionLint::new("test", "", GateSeverity::uniform(Severity::Warn), config);
         let doc = MockspaceDocument::new("a.rs", "t", Language::Rust, source);
         let sink = VecFindingSink::new();
         let root = PathBuf::from("/tmp");

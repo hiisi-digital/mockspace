@@ -183,17 +183,23 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: TokenScanConfig = config
-        .clone()
-        .try_into()
-        .map_err(|e: toml::de::Error| ConfigError {
-            lint_name: name.to_string(),
-            field_path: String::new(),
-            kind: ConfigErrorKind::InvalidValue,
-            message: format!("token-scan config: {e}"),
-            source_location: None,
-        })?;
-    Ok(Box::new(TokenScanLint::new(name, description, parsed, default_severity)))
+    let parsed: TokenScanConfig =
+        config
+            .clone()
+            .try_into()
+            .map_err(|e: toml::de::Error| ConfigError {
+                lint_name: name.to_string(),
+                field_path: String::new(),
+                kind: ConfigErrorKind::InvalidValue,
+                message: format!("token-scan config: {e}"),
+                source_location: None,
+            })?;
+    Ok(Box::new(TokenScanLint::new(
+        name,
+        description,
+        parsed,
+        default_severity,
+    )))
 }
 
 // =========================================================================
@@ -282,7 +288,11 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(root: &'a PathBuf, severities: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
+    fn make_ctx<'a>(
+        root: &'a PathBuf,
+        severities: GateSeverity,
+        cfg: &'a EmptyCfg,
+    ) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities,
@@ -338,12 +348,7 @@ mod tests {
             config,
             GateSeverity::uniform(Severity::Warn),
         );
-        let doc = MockspaceDocument::new(
-            "a.rs",
-            "t",
-            Language::Rust,
-            "let s = \"Vec<u8>\";",
-        );
+        let doc = MockspaceDocument::new("a.rs", "t", Language::Rust, "let s = \"Vec<u8>\";");
         let sink = VecFindingSink::new();
         let (root, sev) = test_ctx();
         let cfg = EmptyCfg;
@@ -359,13 +364,13 @@ mod tests {
             word_boundary: false,
             ..Default::default()
         };
-        let lint = TokenScanLint::new("no-alloc", "", config, GateSeverity::uniform(Severity::Warn));
-        let doc = MockspaceDocument::new(
-            "a.rs",
-            "t",
-            Language::Rust,
-            "// Vec<u8>\nfn x() {}",
+        let lint = TokenScanLint::new(
+            "no-alloc",
+            "",
+            config,
+            GateSeverity::uniform(Severity::Warn),
         );
+        let doc = MockspaceDocument::new("a.rs", "t", Language::Rust, "// Vec<u8>\nfn x() {}");
         let sink = VecFindingSink::new();
         let (root, sev) = test_ctx();
         let cfg = EmptyCfg;

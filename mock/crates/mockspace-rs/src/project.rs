@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use mockspace_core::lint::{
-    FileDisableSet, Gate, Project, RunSurface, ScopeAddMap, SuppressionMap,
+    DirectiveRecord, FileDisableSet, Gate, Project, RunSurface, ScopeAddMap, SuppressionMap,
 };
 
 use crate::document::MockspaceDocument;
@@ -28,6 +28,11 @@ pub struct MockspaceProject {
     pub(crate) suppressions: SuppressionMap,
     pub(crate) scope_adds: ScopeAddMap,
     pub(crate) file_disables: FileDisableSet,
+    /// Raw `DirectiveRecord` inventory across every document, with
+    /// `source_form` preserved. Cross-cutting lints read this; the
+    /// per-kind maps (suppressions/scope_adds/file_disables) drop
+    /// `source_form` when routing.
+    pub(crate) directive_records: Vec<DirectiveRecord>,
     pub(crate) surface: RunSurface,
     pub(crate) gate: Gate,
     pub(crate) introduced_categories: HashMap<String, HashSet<String>>,
@@ -111,10 +116,20 @@ impl MockspaceProject {
         suppressions: SuppressionMap,
         scope_adds: ScopeAddMap,
         file_disables: FileDisableSet,
+        directive_records: Vec<DirectiveRecord>,
     ) {
         self.suppressions = suppressions;
         self.scope_adds = scope_adds;
         self.file_disables = file_disables;
+        self.directive_records = directive_records;
+    }
+
+    /// All directive records collected by the preprocessor, preserving
+    /// the `source_form` (`Comment` vs `Attribute`) per record. The
+    /// `directive-style-consistency` lint reads this; routine lints
+    /// stick to the resolved per-kind maps.
+    pub fn directive_records(&self) -> &[DirectiveRecord] {
+        &self.directive_records
     }
 
     pub fn surface(&self) -> RunSurface {
@@ -347,6 +362,7 @@ impl ProjectBuilder {
             suppressions: self.suppressions,
             scope_adds: ScopeAddMap::new(),
             file_disables: FileDisableSet::new(),
+            directive_records: Vec::new(),
             surface: self.surface,
             gate: self.gate,
             introduced_categories: self.introduced_categories,

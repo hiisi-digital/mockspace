@@ -208,11 +208,11 @@ mod tests {
 
     #[test]
     fn topic_filename_pads_sequence() {
-        assert_eq!(topic_filename(1, "kit-trait-split"), "01_topic.kit-trait-split.md");
         assert_eq!(
-            topic_filename(12, "corrective"),
-            "12_topic.corrective.md"
+            topic_filename(1, "kit-trait-split"),
+            "01_topic.kit-trait-split.md"
         );
+        assert_eq!(topic_filename(12, "corrective"), "12_topic.corrective.md");
     }
 
     #[test]
@@ -284,12 +284,8 @@ mod tests {
             },
             closed: ClosedMeta {
                 closed_at: Some("2026-05-19T18:30:00Z".to_owned()),
-                final_source_sha: Some(
-                    "deadbeefcafebabe0000000000000000deadbeef".to_owned(),
-                ),
-                original_mock_ref: Some(
-                    "refs/mock/round/202605181400-arvo-graph-csr".to_owned(),
-                ),
+                final_source_sha: Some("deadbeefcafebabe0000000000000000deadbeef".to_owned()),
+                original_mock_ref: Some("refs/mock/round/202605181400-arvo-graph-csr".to_owned()),
                 original_source_ref: Some(
                     "refs/heads/round/202605181400-arvo-graph-csr".to_owned(),
                 ),

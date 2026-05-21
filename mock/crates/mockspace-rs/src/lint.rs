@@ -158,9 +158,7 @@ pub enum LintMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mockspace_core::lint::{
-        Gate, Language, LintCfgStore, RunSurface, Severity, Span,
-    };
+    use mockspace_core::lint::{Gate, Language, LintCfgStore, RunSurface, Severity, Span};
     use std::borrow::Cow;
     use std::path::Path;
 

@@ -207,11 +207,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,
@@ -233,12 +229,7 @@ mod tests {
                 inclusive: true,
             },
         );
-        let doc = MockspaceDocument::new(
-            "a.rs",
-            "t",
-            Language::Rust,
-            "a\nb\nc\n",
-        );
+        let doc = MockspaceDocument::new("a.rs", "t", Language::Rust, "a\nb\nc\n");
         let sink = VecFindingSink::new();
         let root = PathBuf::from("/tmp");
         let sev = GateSeverity::uniform(Severity::Warn);

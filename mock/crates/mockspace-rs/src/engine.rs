@@ -10,13 +10,13 @@
 
 use std::path::Path;
 
-use mockspace_core::lint::{
-    FileDisableSet, Finding, Gate, HashAlgorithm, Language, LintCfgStore,
-    LintContext, LintEngine, RunSurface, ScopeAddMap, SuppressionMap,
-};
 use crate::preprocessor::PreprocessorError;
+use mockspace_core::lint::{
+    FileDisableSet, Finding, Gate, HashAlgorithm, Language, LintCfgStore, LintContext, LintEngine,
+    RunSurface, ScopeAddMap, SuppressionMap,
+};
 
-use crate::config_loader::{InstantiatedLint, LintsConfig, detect_prop_name_conflicts};
+use crate::config_loader::{detect_prop_name_conflicts, InstantiatedLint, LintsConfig};
 use crate::errors::{
     DirectiveValidationError, DispatchError, LoadError, ParseError, StartupWarning,
 };
@@ -99,8 +99,7 @@ impl MockspaceEngine {
     ) -> Result<(), Vec<DirectiveValidationError>> {
         use std::collections::BTreeSet;
         // Build registry from the loaded lint set.
-        let known_lints: BTreeSet<&str> =
-            self.lints.iter().map(|e| e.lint.name()).collect();
+        let known_lints: BTreeSet<&str> = self.lints.iter().map(|e| e.lint.name()).collect();
 
         let mut errors = Vec::new();
 
@@ -166,13 +165,9 @@ impl MockspaceEngine {
         &self,
         project: &mut MockspaceProject,
     ) -> Result<(), PreprocessorError> {
-        let (suppressions, scope_adds, file_disables) =
+        let (suppressions, scope_adds, file_disables, records) =
             self.aggregate_directives(project)?;
-        project.set_resolved_directives(
-            suppressions,
-            scope_adds,
-            file_disables,
-        );
+        project.set_resolved_directives(suppressions, scope_adds, file_disables, records);
         Ok(())
     }
 
@@ -180,12 +175,18 @@ impl MockspaceEngine {
         &self,
         project: &MockspaceProject,
     ) -> Result<
-        (SuppressionMap, ScopeAddMap, FileDisableSet),
+        (
+            SuppressionMap,
+            ScopeAddMap,
+            FileDisableSet,
+            Vec<mockspace_core::lint::DirectiveRecord>,
+        ),
         PreprocessorError,
     > {
         let mut suppressions = SuppressionMap::new();
         let mut scope_adds = ScopeAddMap::new();
         let mut file_disables = FileDisableSet::new();
+        let mut records = Vec::new();
         for doc in project.documents() {
             if doc.language() == Language::Rust {
                 let extracts = self.rust_preprocessor.extract(doc)?;
@@ -198,9 +199,10 @@ impl MockspaceEngine {
                 for entry in extracts.file_disables.entries() {
                     file_disables.push(entry.clone());
                 }
+                records.extend(extracts.records);
             }
         }
-        Ok((suppressions, scope_adds, file_disables))
+        Ok((suppressions, scope_adds, file_disables, records))
     }
 }
 
@@ -278,8 +280,7 @@ impl LintEngine for MockspaceEngine {
             // gate-specific only_staged flag is set. Editor surface marks
             // every document staged (see ProjectBuilder::mark_all_staged),
             // so commit-gate parity is preserved at editor-time.
-            let only_staged_here =
-                entry.staging_aware && entry.only_staged.at(gate);
+            let only_staged_here = entry.staging_aware && entry.only_staged.at(gate);
 
             match entry.mode {
                 LintMode::PerDocument => {
@@ -303,12 +304,13 @@ impl LintEngine for MockspaceEngine {
                         if !entry.scope_filter.accepts(doc, project) {
                             return Ok(());
                         }
-                        entry.lint.check_document(&ctx, doc, &sink).map_err(|source| {
-                            DispatchError::LintErrored {
+                        entry
+                            .lint
+                            .check_document(&ctx, doc, &sink)
+                            .map_err(|source| DispatchError::LintErrored {
                                 lint_name: entry.lint.name().to_owned(),
                                 source,
-                            }
-                        })
+                            })
                     };
                     if only_staged_here {
                         for doc in project.staged_documents() {
@@ -321,12 +323,13 @@ impl LintEngine for MockspaceEngine {
                     }
                 }
                 LintMode::ProjectScoped | LintMode::TwoPhaseProject => {
-                    entry.lint.check_project(&ctx, project, &sink).map_err(|source| {
-                        DispatchError::LintErrored {
+                    entry
+                        .lint
+                        .check_project(&ctx, project, &sink)
+                        .map_err(|source| DispatchError::LintErrored {
                             lint_name: entry.lint.name().to_owned(),
                             source,
-                        }
-                    })?;
+                        })?;
                 }
             }
         }
@@ -395,7 +398,11 @@ mod tests {
             staging_aware: true,
             editor_skip: false,
             only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config("test", &crate::config_types::ScopeConfig::default()).unwrap(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+                "test",
+                &crate::config_types::ScopeConfig::default(),
+            )
+            .unwrap(),
         }];
         let engine = MockspaceEngine::with_entries(entries);
 
@@ -436,16 +443,15 @@ mod tests {
             staging_aware: false,
             editor_skip: false,
             only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config("test", &crate::config_types::ScopeConfig::default()).unwrap(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+                "test",
+                &crate::config_types::ScopeConfig::default(),
+            )
+            .unwrap(),
         }];
         let engine = MockspaceEngine::with_entries(entries);
         let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
-        builder.push_document(MockspaceDocument::new(
-            "a.rs",
-            "t",
-            Language::Rust,
-            "X",
-        ));
+        builder.push_document(MockspaceDocument::new("a.rs", "t", Language::Rust, "X"));
         let project = builder.build();
         let cfg = EmptyCfg;
         let findings = engine.run(&project, Gate::Commit, &cfg).unwrap();
@@ -608,8 +614,7 @@ mod tests {
             stub_lint_entry("no-banned"),
             stub_lint_entry("no-bare-numeric"),
         ]);
-        let mut builder =
-            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
         builder.push_document(MockspaceDocument::new(
             "a.rs",
             "c",
@@ -624,8 +629,7 @@ mod tests {
     #[test]
     fn validation_gate_rejects_unknown_lint_name_in_allow() {
         let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("known")]);
-        let mut builder =
-            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
         builder.push_document(MockspaceDocument::new(
             "a.rs",
             "c",
@@ -637,7 +641,9 @@ mod tests {
         let err = engine.validate_directives(&project).unwrap_err();
         assert_eq!(err.len(), 1);
         match &err[0] {
-            DirectiveValidationError::UnknownLintName { directive, name, .. } => {
+            DirectiveValidationError::UnknownLintName {
+                directive, name, ..
+            } => {
                 assert_eq!(*directive, "lint:allow");
                 assert_eq!(name, "unknown-lint");
             }
@@ -647,8 +653,7 @@ mod tests {
     #[test]
     fn validation_gate_rejects_unknown_lint_in_defer_and_file_disable_and_scope_add() {
         let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("known")]);
-        let mut builder =
-            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
         builder.push_document(MockspaceDocument::new(
             "a.rs",
             "c",
@@ -664,9 +669,7 @@ mod tests {
         let directives: Vec<&str> = err
             .iter()
             .map(|e| match e {
-                DirectiveValidationError::UnknownLintName { directive, .. } => {
-                    *directive
-                }
+                DirectiveValidationError::UnknownLintName { directive, .. } => *directive,
             })
             .collect();
         assert!(directives.contains(&"lint:defer"));
@@ -705,8 +708,7 @@ mod tests {
         match err {
             ParseError::DirectiveValidation { errors } => {
                 assert_eq!(errors.len(), 1);
-                let DirectiveValidationError::UnknownLintName { name, .. } =
-                    &errors[0];
+                let DirectiveValidationError::UnknownLintName { name, .. } = &errors[0];
                 assert_eq!(name, "unknown-lint-name");
             }
             other => panic!("expected DirectiveValidation, got {other:?}"),
@@ -722,8 +724,7 @@ mod tests {
         // `directive_span`, so this test pins that the diagnostic
         // tracks the real comment location.
         let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("known")]);
-        let mut builder =
-            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
         builder.push_document(MockspaceDocument::new(
             "a.rs",
             "c",
@@ -748,8 +749,7 @@ mod tests {
     #[test]
     fn validation_gate_collects_all_errors_at_once() {
         let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("ok")]);
-        let mut builder =
-            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
         builder.push_document(MockspaceDocument::new(
             "a.rs",
             "c",
@@ -785,16 +785,15 @@ mod tests {
             staging_aware: false,
             editor_skip: true,
             only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config("test", &crate::config_types::ScopeConfig::default()).unwrap(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+                "test",
+                &crate::config_types::ScopeConfig::default(),
+            )
+            .unwrap(),
         }];
         let engine = MockspaceEngine::with_entries(entries);
         let mut builder = ProjectBuilder::new("/tmp", RunSurface::Editor, Gate::Commit);
-        builder.push_document(MockspaceDocument::new(
-            "a.rs",
-            "t",
-            Language::Rust,
-            "X",
-        ));
+        builder.push_document(MockspaceDocument::new("a.rs", "t", Language::Rust, "X"));
         let project = builder.build();
         let cfg = EmptyCfg;
         let findings = engine.run(&project, Gate::Commit, &cfg).unwrap();

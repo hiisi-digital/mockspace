@@ -179,7 +179,7 @@ fn parse_attr(attr: &syn::Attribute, path: &str) -> Option<DirectiveRecord> {
         // comment form (`// lint:prop(...)`) for prop directives.
         _ => return None,
     };
-    Some(DirectiveRecord { directive, span })
+    Some(DirectiveRecord::from_attribute(directive, span))
 }
 
 /// Extract `<keyword>` from `#[mockspace::<keyword>(...)]`. Accepts
@@ -279,9 +279,7 @@ fn collect_args(attr: &syn::Attribute) -> Option<Args> {
     //   - a string literal (positional)
     //   - `<ident> = <string-literal>` (keyed)
     let parsed = attr
-        .parse_args_with(
-            syn::punctuated::Punctuated::<AttrArg, syn::Token![,]>::parse_terminated,
-        )
+        .parse_args_with(syn::punctuated::Punctuated::<AttrArg, syn::Token![,]>::parse_terminated)
         .ok()?;
     for arg in parsed {
         match arg {

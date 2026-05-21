@@ -71,9 +71,7 @@ impl Default for ReplanMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransitionValidity {
     /// The transition is valid; the round will land in `next`.
-    Valid {
-        next: Phase,
-    },
+    Valid { next: Phase },
     /// The transition is invalid from the current phase.
     InvalidFromPhase {
         current: Phase,
@@ -139,9 +137,7 @@ impl Transition {
     pub fn validate(&self, current: Phase) -> TransitionValidity {
         let verb = self.verb();
         match verb.next_phase(current) {
-            Some(next) => TransitionValidity::Valid {
-                next,
-            },
+            Some(next) => TransitionValidity::Valid { next },
             None => TransitionValidity::InvalidFromPhase {
                 current,
                 verb,
@@ -162,7 +158,10 @@ mod tests {
     #[test]
     fn happy_path_plan_apply_finish_doc_side() {
         // Topic → plan → PlanDoc → apply → ApplyDoc → finish → PlanSrc
-        assert_eq!(next(TransitionVerb::Plan, Phase::Topic), Some(Phase::PlanDoc));
+        assert_eq!(
+            next(TransitionVerb::Plan, Phase::Topic),
+            Some(Phase::PlanDoc)
+        );
         assert_eq!(
             next(TransitionVerb::Apply, Phase::PlanDoc),
             Some(Phase::ApplyDoc)
@@ -271,9 +270,9 @@ mod tests {
 
     #[test]
     fn replan_carries_mode_through_verb_tag() {
-        let t = Transition::Replan(ReplanMode::AcceptRestorationLoss(vec![
-            PathBuf::from("crates/x/src/lib.rs"),
-        ]));
+        let t = Transition::Replan(ReplanMode::AcceptRestorationLoss(vec![PathBuf::from(
+            "crates/x/src/lib.rs",
+        )]));
         assert_eq!(t.verb(), TransitionVerb::Replan);
         assert!(matches!(
             t.validate(Phase::ApplyDoc),

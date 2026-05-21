@@ -49,14 +49,14 @@ pub mod scope_filter;
 pub mod staging;
 pub mod strip;
 
-pub use catalog::{CatalogEntry, catalog_entries, find_entry};
+pub use catalog::{catalog_entries, find_entry, CatalogEntry};
 pub use config_loader::{InstantiatedLint, LintsConfig, OverrideCascade};
 pub use config_types::{ItemKind, Language, TypePosition, Visibility};
 pub use document::{MockspaceDocument, StripOpts};
 pub use engine::MockspaceEngine;
 pub use errors::{
-    ConfigError, ConfigErrorKind, DirectiveValidationError, DispatchError, LintError,
-    LoadError, ParseError, StartupWarning,
+    ConfigError, ConfigErrorKind, DirectiveValidationError, DispatchError, LintError, LoadError,
+    ParseError, StartupWarning,
 };
 pub use finding_sink::{FindingSink, RunReport, VecFindingSink};
 pub use lint::{Lint, LintMode};

@@ -163,12 +163,10 @@ impl VerbMarker for ApplyVerb {
     const VERB: crate::transition::TransitionVerb = crate::transition::TransitionVerb::Apply;
 }
 impl VerbMarker for FinishVerb {
-    const VERB: crate::transition::TransitionVerb =
-        crate::transition::TransitionVerb::Finish;
+    const VERB: crate::transition::TransitionVerb = crate::transition::TransitionVerb::Finish;
 }
 impl VerbMarker for ReplanVerb {
-    const VERB: crate::transition::TransitionVerb =
-        crate::transition::TransitionVerb::Replan;
+    const VERB: crate::transition::TransitionVerb = crate::transition::TransitionVerb::Replan;
 }
 
 /// Compile-time witness that a phase state can advance via verb `V`.
@@ -493,11 +491,7 @@ impl<S: Side> TypedManifest<S, AuthoringStage> {
 impl<S: Side> TypedManifest<S, LockedStage> {
     /// Deprecate this sealed manifest, producing a deprecated-stage
     /// typed manifest at iteration `n`.
-    pub fn deprecate(
-        self,
-        n: u32,
-        _lock: &LockProof<'_>,
-    ) -> TypedManifest<S, DeprecatedStage> {
+    pub fn deprecate(self, n: u32, _lock: &LockProof<'_>) -> TypedManifest<S, DeprecatedStage> {
         TypedManifest {
             inner: self.inner,
             deprecation: Some(n),

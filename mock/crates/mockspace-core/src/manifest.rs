@@ -32,7 +32,10 @@ pub enum ValidationError {
     /// `mockspace_version` did not parse as `<major>.<minor>`.
     VersionMalformed { version: String },
     /// `mockspace_version` major does not match what this loader supports.
-    SchemaVersionMismatch { expected_major: u32, found_major: u32 },
+    SchemaVersionMismatch {
+        expected_major: u32,
+        found_major: u32,
+    },
     /// `phase` does not match the expected side (e.g. caller is sealing
     /// the doc manifest but parsed an `src` manifest).
     PhaseMismatch {
@@ -508,8 +511,7 @@ file = "DESIGN.md"
 
     #[test]
     fn parse_task_uri_bare() {
-        let (task, step) =
-            parse_task_uri("mock://task/arvo::graph::csr-backend").unwrap();
+        let (task, step) = parse_task_uri("mock://task/arvo::graph::csr-backend").unwrap();
         assert_eq!(task.as_uri_form(), "arvo::graph::csr-backend");
         assert!(step.is_none());
     }
@@ -594,8 +596,7 @@ file = "DESIGN.md"
     #[test]
     fn validate_structural_rejects_bad_task_uri_in_scope() {
         let mut manifest = Manifest::from_toml(SPEC_EXAMPLE).unwrap();
-        manifest.scope.in_scope_tasks =
-            vec!["arvo::graph::csr-backend".to_owned()];
+        manifest.scope.in_scope_tasks = vec!["arvo::graph::csr-backend".to_owned()];
         let err = validate_structural(&manifest, ManifestSide::Doc).unwrap_err();
         match err {
             ValidationError::InvalidTaskUri { uri, reason } => {

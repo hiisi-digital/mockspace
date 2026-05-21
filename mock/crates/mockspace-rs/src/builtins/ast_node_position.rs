@@ -159,12 +159,8 @@ fn walk_node(
     let kind = node.kind();
 
     // Update exclusion state for descendants.
-    let now_under_excluded = under_excluded
-        || lint
-            .config
-            .exclude_under
-            .iter()
-            .any(|k| k.matches(kind));
+    let now_under_excluded =
+        under_excluded || lint.config.exclude_under.iter().any(|k| k.matches(kind));
 
     // Match check.
     if !under_excluded
@@ -180,10 +176,7 @@ fn walk_node(
             severity,
             impact: None,
             category: None,
-            message: Cow::Owned(format!(
-                "forbidden {} construct",
-                kind.replace('_', " ")
-            )),
+            message: Cow::Owned(format!("forbidden {} construct", kind.replace('_', " "))),
             span: Span::single_line(
                 path,
                 (start.row + 1) as u32,
@@ -314,11 +307,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,

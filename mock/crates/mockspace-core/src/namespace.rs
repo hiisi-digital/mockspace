@@ -51,8 +51,8 @@ impl Namespace {
             if raw.is_empty() {
                 return Err(NamespaceError::EmptySegment { position: byte_pos });
             }
-            let slug = Slug::new(raw)
-                .map_err(|error| NamespaceError::InvalidSegment { index, error })?;
+            let slug =
+                Slug::new(raw).map_err(|error| NamespaceError::InvalidSegment { index, error })?;
             segments.push(slug);
             byte_pos += raw.len() + 2; // segment + "::" separator
         }

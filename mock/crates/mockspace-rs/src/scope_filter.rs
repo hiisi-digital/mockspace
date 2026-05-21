@@ -48,18 +48,14 @@ impl ScopeFilter {
     /// `UnparseableGlob` on bad glob syntax in any of paths / exempt_paths
     /// / crates / exempt_crates. Bad crate patterns no longer silently
     /// filter everything out.
-    pub fn from_config(
-        lint_name: &str,
-        config: &ScopeConfig,
-    ) -> Result<Self, ConfigError> {
+    pub fn from_config(lint_name: &str, config: &ScopeConfig) -> Result<Self, ConfigError> {
         let paths = build_globset(lint_name, "paths", &config.paths)?;
         let exempt_paths = build_globset(lint_name, "exempt_paths", &config.exempt_paths)?;
 
         // Crate patterns accept-all when the list is empty OR any entry
         // is the literal `*`. Otherwise compile into a GlobSet so the
         // per-doc match is a single hash + extension table lookup.
-        let crates_accepts_all =
-            config.crates.is_empty() || config.crates.iter().any(|p| p == "*");
+        let crates_accepts_all = config.crates.is_empty() || config.crates.iter().any(|p| p == "*");
         let crates = if crates_accepts_all {
             GlobSet::empty()
         } else {
@@ -112,20 +108,14 @@ impl ScopeFilter {
         }
 
         // Proc-macro filter.
-        if self.proc_macro_exempt
-            && project.workspace().proc_macro_crates.contains(crate_name)
-        {
+        if self.proc_macro_exempt && project.workspace().proc_macro_crates.contains(crate_name) {
             return false;
         }
 
         // Category exempt.
         if !self.exempt_categories.is_empty() {
             if let Some(declared) = project.introduced_categories(crate_name) {
-                if self
-                    .exempt_categories
-                    .iter()
-                    .any(|c| declared.contains(c))
-                {
+                if self.exempt_categories.iter().any(|c| declared.contains(c)) {
                     return false;
                 }
             }
@@ -181,8 +171,7 @@ mod tests {
 
     #[test]
     fn empty_scope_accepts_anything() {
-        let filter =
-            ScopeFilter::from_config("test", &ScopeConfig::default()).unwrap();
+        let filter = ScopeFilter::from_config("test", &ScopeConfig::default()).unwrap();
         let doc = make_doc("foo/bar.rs", "anything", Language::Rust);
         assert!(filter.accepts(&doc, &empty_project()));
     }
@@ -257,13 +246,9 @@ mod tests {
         let filter = ScopeFilter::from_config("test", &cfg).unwrap();
         let mut project_set = std::collections::HashSet::new();
         project_set.insert("mac".to_string());
-        let project = ProjectBuilder::new(
-            PathBuf::from("/tmp"),
-            RunSurface::Local,
-            Gate::Commit,
-        )
-        .with_proc_macro_crates(project_set)
-        .build();
+        let project = ProjectBuilder::new(PathBuf::from("/tmp"), RunSurface::Local, Gate::Commit)
+            .with_proc_macro_crates(project_set)
+            .build();
         assert!(!filter.accepts(&make_doc("a.rs", "mac", Language::Rust), &project));
         assert!(filter.accepts(&make_doc("a.rs", "regular", Language::Rust), &project));
     }
@@ -279,7 +264,10 @@ mod tests {
             ProjectBuilder::new(PathBuf::from("/tmp"), RunSurface::Local, Gate::Commit);
         builder.declare_introduced_category("hilavitkutin-str", "string-foundation");
         let project = builder.build();
-        assert!(!filter.accepts(&make_doc("a.rs", "hilavitkutin-str", Language::Rust), &project));
+        assert!(!filter.accepts(
+            &make_doc("a.rs", "hilavitkutin-str", Language::Rust),
+            &project
+        ));
         assert!(filter.accepts(&make_doc("a.rs", "other", Language::Rust), &project));
     }
 

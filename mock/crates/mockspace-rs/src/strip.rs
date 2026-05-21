@@ -114,7 +114,8 @@ pub fn strip(source: &str, opts: StripOpts) -> String {
 
         i += 1;
     }
-    String::from_utf8(out).expect("strip preserved length and only blanked bytes; UTF-8 boundaries survive")
+    String::from_utf8(out)
+        .expect("strip preserved length and only blanked bytes; UTF-8 boundaries survive")
 }
 
 fn find_line_end(bytes: &[u8], from: usize) -> usize {

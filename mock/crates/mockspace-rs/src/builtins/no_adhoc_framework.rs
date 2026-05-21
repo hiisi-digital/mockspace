@@ -124,7 +124,10 @@ impl Lint for NoAdhocFrameworkLint {
                                 if matches!(n.as_str(), "run" | "execute" | "tick") {
                                     has_run = true;
                                 }
-                                if matches!(n.as_str(), "cleanup" | "teardown" | "shutdown" | "destroy") {
+                                if matches!(
+                                    n.as_str(),
+                                    "cleanup" | "teardown" | "shutdown" | "destroy"
+                                ) {
                                     has_cleanup = true;
                                 }
                             }

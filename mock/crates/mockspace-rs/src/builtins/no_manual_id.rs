@@ -148,15 +148,17 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: NoManualIdConfig = config.clone().try_into().map_err(
-        |e: toml::de::Error| ConfigError {
-            lint_name: name.to_string(),
-            field_path: String::new(),
-            kind: ConfigErrorKind::InvalidValue,
-            message: format!("no-manual-id config: {e}"),
-            source_location: None,
-        },
-    )?;
+    let parsed: NoManualIdConfig =
+        config
+            .clone()
+            .try_into()
+            .map_err(|e: toml::de::Error| ConfigError {
+                lint_name: name.to_string(),
+                field_path: String::new(),
+                kind: ConfigErrorKind::InvalidValue,
+                message: format!("no-manual-id config: {e}"),
+                source_location: None,
+            })?;
     Ok(Box::new(NoManualIdLint::new(
         name,
         description,

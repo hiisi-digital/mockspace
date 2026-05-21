@@ -174,10 +174,7 @@ fn scan_term<F: FnMut(u32, u32, usize, usize)>(
         if &bytes[i..i + term_bytes.len()] == term_bytes {
             let first_is_word = is_word_byte(term_bytes[0]);
             let last_is_word = is_word_byte(term_bytes[term_bytes.len() - 1]);
-            let lhs_ok = !word_boundary
-                || !first_is_word
-                || i == 0
-                || !is_word_byte(bytes[i - 1]);
+            let lhs_ok = !word_boundary || !first_is_word || i == 0 || !is_word_byte(bytes[i - 1]);
             let after = i + term_bytes.len();
             let rhs_ok = !word_boundary
                 || !last_is_word
@@ -205,15 +202,17 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: TermReplacementTableConfig = config.clone().try_into().map_err(
-        |e: toml::de::Error| ConfigError {
-            lint_name: name.to_string(),
-            field_path: String::new(),
-            kind: ConfigErrorKind::InvalidValue,
-            message: format!("term-replacement-table config: {e}"),
-            source_location: None,
-        },
-    )?;
+    let parsed: TermReplacementTableConfig =
+        config
+            .clone()
+            .try_into()
+            .map_err(|e: toml::de::Error| ConfigError {
+                lint_name: name.to_string(),
+                field_path: String::new(),
+                kind: ConfigErrorKind::InvalidValue,
+                message: format!("term-replacement-table config: {e}"),
+                source_location: None,
+            })?;
     Ok(Box::new(TermReplacementTableLint::new(
         name,
         description,
@@ -237,11 +236,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,

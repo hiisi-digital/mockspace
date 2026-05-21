@@ -112,9 +112,7 @@ impl Lint for UndocumentedItemLint {
                 severity: active,
                 impact: None,
                 category: None,
-                message: Cow::Owned(format!(
-                    "{kind:?} `{name}` is undocumented"
-                )),
+                message: Cow::Owned(format!("{kind:?} `{name}` is undocumented")),
                 span: Span::single_line(path, 1, 1, name.len() as u32),
                 hint: None,
                 help: None,
@@ -196,15 +194,17 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: UndocumentedItemConfig = config.clone().try_into().map_err(
-        |e: toml::de::Error| ConfigError {
-            lint_name: name.to_string(),
-            field_path: String::new(),
-            kind: ConfigErrorKind::InvalidValue,
-            message: format!("undocumented-item config: {e}"),
-            source_location: None,
-        },
-    )?;
+    let parsed: UndocumentedItemConfig =
+        config
+            .clone()
+            .try_into()
+            .map_err(|e: toml::de::Error| ConfigError {
+                lint_name: name.to_string(),
+                field_path: String::new(),
+                kind: ConfigErrorKind::InvalidValue,
+                message: format!("undocumented-item config: {e}"),
+                source_location: None,
+            })?;
     Ok(Box::new(UndocumentedItemLint::new(
         name,
         description,
@@ -228,11 +228,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(
-        root: &'a PathBuf,
-        sev: GateSeverity,
-        cfg: &'a EmptyCfg,
-    ) -> LintContext<'a> {
+    fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
             gate: Gate::Commit,
             severities: sev,

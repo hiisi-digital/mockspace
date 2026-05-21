@@ -274,8 +274,8 @@ impl TaskId {
             if raw.is_empty() {
                 return Err(TaskIdError::EmptySegment { position: byte_pos });
             }
-            let slug = Slug::new(raw)
-                .map_err(|error| TaskIdError::InvalidSegment { index, error })?;
+            let slug =
+                Slug::new(raw).map_err(|error| TaskIdError::InvalidSegment { index, error })?;
             segments.push(slug);
             byte_pos += raw.len() + 2;
         }
@@ -338,7 +338,6 @@ impl TaskId {
     }
 }
 
-
 impl fmt::Display for TaskId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.as_uri_form())
@@ -353,7 +352,10 @@ impl fmt::Display for TaskIdError {
             ),
             Self::Empty => f.write_str("task identifier is empty"),
             Self::EmptySegment { position } => {
-                write!(f, "empty segment in task identifier at byte position {position}")
+                write!(
+                    f,
+                    "empty segment in task identifier at byte position {position}"
+                )
             }
             Self::InvalidSegment { index, error } => {
                 write!(f, "segment {index} is not a valid slug: {error}")
@@ -436,9 +438,7 @@ impl fmt::Display for StepRefError {
             Self::MissingSeparator => {
                 f.write_str("step reference missing `#` between task path and step key")
             }
-            Self::DuplicateSeparator => {
-                f.write_str("step reference contains more than one `#`")
-            }
+            Self::DuplicateSeparator => f.write_str("step reference contains more than one `#`"),
             Self::EmptyStep => f.write_str("step key is empty after `#`"),
             Self::InvalidTask(e) => write!(f, "task half invalid: {e}"),
         }
@@ -507,10 +507,7 @@ mod tests {
         let id = TaskId::parse("compiler::ir::structural-robust-ir").unwrap();
         assert_eq!(id.namespace().unwrap().as_ref_path(), "compiler/ir");
         assert_eq!(id.slug().as_str(), "structural-robust-ir");
-        assert_eq!(
-            id.as_ref_path(),
-            "compiler/ir/structural-robust-ir"
-        );
+        assert_eq!(id.as_ref_path(), "compiler/ir/structural-robust-ir");
     }
 
     #[test]
@@ -563,10 +560,7 @@ mod tests {
     #[test]
     fn step_ref_parse_simple() {
         let r = StepRef::parse("compiler::ir::structural-robust-ir#define-grammar").unwrap();
-        assert_eq!(
-            r.task().as_uri_form(),
-            "compiler::ir::structural-robust-ir"
-        );
+        assert_eq!(r.task().as_uri_form(), "compiler::ir::structural-robust-ir");
         assert_eq!(r.step(), "define-grammar");
         assert_eq!(
             r.to_string(),
