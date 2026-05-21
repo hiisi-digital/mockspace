@@ -637,6 +637,40 @@ pub enum Directive {
         reason: Option<String>,
         tracked: Option<String>,
     },
+
+    /// Lint-provided per-site property consumed by lints. Per the
+    /// design memo at
+    /// `mock/research/202605220600_lint-provided-marker-directive.md`.
+    /// The framework does not interpret the prop name or value; lints
+    /// declare via `Lint::declared_props` which names they read and
+    /// query the resolved `PropMap` for matches.
+    ///
+    /// Presence form (`lint:prop(audited)`) parses to
+    /// `PropValue::Bool(true)`. Key-value forms accept Bool / Integer
+    /// / String literals. The optional `reason` clause attaches to
+    /// any prop variant for human notes.
+    Prop {
+        name: String,
+        value: PropValue,
+        reason: Option<String>,
+    },
+}
+
+/// The value carried by a [`Directive::Prop`]. Three concrete leaf
+/// types covering the common cases: presence and boolean flags, sized
+/// counts, and free-form string identifiers. No `List` variant in v1;
+/// multi-value props write multiple directives that accumulate in the
+/// `PropMap` naturally.
+///
+/// The serde shape is `#[untagged]`: the wire form is the raw value
+/// (`true`, `42`, `"foo"`) without a discriminator tag. The three
+/// primitive types are distinguishable by TOML / JSON type alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PropValue {
+    Bool(bool),
+    Integer(i64),
+    String(String),
 }
 
 /// The bounded set of `ScopeConfig` axes a `Directive::ScopeAdd` may
@@ -1124,6 +1158,72 @@ mod tests {
         };
         let s = toml::to_string(&r).unwrap();
         assert!(s.contains("kind = \"file-disable\""), "got: {s}");
+    }
+
+    #[test]
+    fn directive_prop_presence_round_trips() {
+        let r = DirectiveRecord {
+            directive: Directive::Prop {
+                name: "audited".to_string(),
+                value: PropValue::Bool(true),
+                reason: None,
+            },
+            span: Span::single_line("a.rs", 1, 1, 1),
+        };
+        let s = toml::to_string(&r).unwrap();
+        let back: DirectiveRecord = toml::from_str(&s).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn directive_prop_integer_round_trips() {
+        let r = DirectiveRecord {
+            directive: Directive::Prop {
+                name: "arena_size".to_string(),
+                value: PropValue::Integer(4096),
+                reason: None,
+            },
+            span: Span::single_line("a.rs", 1, 1, 1),
+        };
+        let s = toml::to_string(&r).unwrap();
+        let back: DirectiveRecord = toml::from_str(&s).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn directive_prop_string_round_trips() {
+        let r = DirectiveRecord {
+            directive: Directive::Prop {
+                name: "audit_id".to_string(),
+                value: PropValue::String("A-2026-04".to_string()),
+                reason: Some("audit pass 2026-04".to_string()),
+            },
+            span: Span::single_line("a.rs", 1, 1, 1),
+        };
+        let s = toml::to_string(&r).unwrap();
+        let back: DirectiveRecord = toml::from_str(&s).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn prop_value_serialises_as_untagged_primitive() {
+        // PropValue is #[serde(untagged)] — the wire form is the raw
+        // value with no discriminator. TOML primitive type carries the
+        // PropValue variant.
+        let r = DirectiveRecord {
+            directive: Directive::Prop {
+                name: "x".to_string(),
+                value: PropValue::Integer(7),
+                reason: None,
+            },
+            span: Span::single_line("a.rs", 1, 1, 1),
+        };
+        let s = toml::to_string(&r).unwrap();
+        // The directive carries `kind = "prop"` from Directive's
+        // serde tag. The PropValue itself serialises as the raw
+        // untagged integer (no inner kind tag).
+        assert!(s.contains("kind = \"prop\""), "got: {s}");
+        assert!(s.contains("value = 7"), "got: {s}");
     }
 
     #[test]
