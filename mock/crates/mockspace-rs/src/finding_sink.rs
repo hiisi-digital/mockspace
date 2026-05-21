@@ -98,7 +98,9 @@ mod tests {
             category: None,
             message: Cow::Borrowed("x"),
             span: Span::single_line("a.rs", line, 1, 1),
-            fix_suggestion: None,
+            hint: None,
+            help: None,
+            suggestion: None,
             related_spans: Vec::new(),
             metadata: None,
         }

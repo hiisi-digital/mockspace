@@ -299,11 +299,104 @@ pub struct MetadataBlob {
     pub bytes: Vec<u8>,
 }
 
-/// A mechanical replacement a lint suggests for a finding.
+/// A structured suggestion attached to a finding. Carries human-readable
+/// `description` plus an optional [`Fix`] recipe. When `fix` is present
+/// the suggestion is mechanically applicable; when absent it is advice
+/// the human reviews.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FixSuggestion {
-    pub label: Cow<'static, str>,
-    pub replacement: Cow<'static, str>,
+pub struct Suggestion {
+    pub description: Cow<'static, str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<Fix>,
+}
+
+/// A mechanically applicable edit recipe.
+///
+/// # Reference frame for byte offsets
+///
+/// All byte offsets (`start`, `end`, `position`) are **UTF-8 byte indices
+/// into the original source bytes** of the finding's containing document,
+/// as read from disk. Specifically:
+///
+/// - Offsets are byte indices, not char indices and not grapheme indices.
+/// - Offsets are into the source pre-strip, even when the lint that emitted
+///   the finding ran against a stripped view (with comments / strings
+///   removed). A lint scanning a stripped view that wants to emit a `Fix`
+///   must translate stripped-view offsets back to original-source offsets
+///   before constructing the recipe. Until that translation is wired, such
+///   lints should emit `Suggestion { description, fix: None }` — advice
+///   only.
+/// - The `Span` on the parent `Finding` is for human-readable display
+///   (file, line, column, length). `Fix` byte ranges are the authoritative
+///   coordinate system for mechanical application; they are not derived
+///   from `Span` and must be set independently.
+///
+/// # Composition
+///
+/// `Multi` permits arbitrary nesting of any variant, including other
+/// `Multi` and `File` nodes. The runner walks the tree, collects all leaf
+/// edits, verifies no byte-range overlaps among `Replace`/`Insert`/`Delete`
+/// touching the same file, and applies them atomically. A `File` node
+/// inside a `Multi` is allowed (e.g. "replace bytes here AND create this
+/// sidecar file"). Conflicts between `File::Delete` of a path and any
+/// in-buffer edit to the same path are detected at apply time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Fix {
+    /// Replace bytes `[start, end)` with `replacement`. Byte offsets are
+    /// UTF-8 indices into the original (pre-strip) source.
+    Replace {
+        start: usize,
+        end: usize,
+        replacement: Cow<'static, str>,
+    },
+
+    /// Insert `text` at byte `position`. Adjacent inserts at the same
+    /// position from different findings are a conflict caught at apply.
+    /// Byte `position` is a UTF-8 index into the original (pre-strip)
+    /// source.
+    Insert {
+        position: usize,
+        text: Cow<'static, str>,
+    },
+
+    /// Delete bytes `[start, end)`. Byte offsets are UTF-8 indices into
+    /// the original (pre-strip) source.
+    Delete { start: usize, end: usize },
+
+    /// Multiple sub-fixes applied atomically. Inner fixes may be any
+    /// variant including nested `Multi`. The runner walks the tree,
+    /// collects all leaf edits, and verifies no byte-range overlaps
+    /// among byte-edit variants on the same file.
+    Multi { fixes: Vec<Fix> },
+
+    /// File-level operation (create, delete, rename). Distinct from
+    /// the byte-range variants so the runner can dispatch to a
+    /// filesystem path rather than an in-memory buffer. May appear at
+    /// any nesting depth, including as a sibling of byte-edits inside
+    /// a `Multi`.
+    File { op: FileOp },
+}
+
+/// File-level operations a [`Fix::File`] can represent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum FileOp {
+    /// Create `path` with `content`. Errors if path already exists.
+    Create {
+        path: Cow<'static, str>,
+        content: Cow<'static, str>,
+    },
+
+    /// Delete `path`. Errors if path does not exist.
+    Delete { path: Cow<'static, str> },
+
+    /// Rename `from` to `to`. Errors if `to` exists or `from` does
+    /// not.
+    Rename {
+        from: Cow<'static, str>,
+        to: Cow<'static, str>,
+    },
 }
 
 /// A single lint finding. Strict superset of viola's `Diagnostic`.
@@ -321,8 +414,24 @@ pub struct Finding {
     pub category: Option<Category>,
     pub message: Cow<'static, str>,
     pub span: Span,
+    /// Short hint pointing at what the author should consider. One
+    /// line; not a full explanation. Example: "consider Maybe<T>,
+    /// Just<T>, or Outcome<T, E>".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fix_suggestion: Option<FixSuggestion>,
+    pub hint: Option<Cow<'static, str>>,
+    /// Broader help text explaining why the lint exists. May span
+    /// multiple lines. Example: "arvo is the workspace's exclusive
+    /// numeric substrate; bare primitives are forbidden in pub API
+    /// per .claude/rules/no-bare-primitives.md".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<Cow<'static, str>>,
+    /// Optional structured suggestion. Carries a description and a
+    /// possibly-mechanical [`Fix`] recipe. Replaces the older
+    /// `fix_suggestion` shape; the new form expresses the same simple
+    /// cases via `Suggestion { description, fix: Some(Fix::Replace {
+    /// ... }) }` plus the richer multi-edit and file-level shapes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<Suggestion>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_spans: Vec<RelatedSpan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -752,9 +861,17 @@ mod tests {
             category: Some(Category::Correctness),
             message: Cow::Borrowed("found `u32`"),
             span: Span::single_line("a.rs", 10, 5, 3),
-            fix_suggestion: Some(FixSuggestion {
-                label: Cow::Borrowed("Replace"),
-                replacement: Cow::Borrowed("UFixed<32, 0, Hot>"),
+            hint: Some(Cow::Borrowed("consider Uint32 or USize")),
+            help: Some(Cow::Borrowed(
+                "arvo is the workspace's exclusive numeric substrate",
+            )),
+            suggestion: Some(Suggestion {
+                description: Cow::Borrowed("replace bare u32 with UFixed<32, 0, Hot>"),
+                fix: Some(Fix::Replace {
+                    start: 42,
+                    end: 45,
+                    replacement: Cow::Borrowed("UFixed<32, 0, Hot>"),
+                }),
             }),
             related_spans: vec![RelatedSpan {
                 span: Span::single_line("a.rs", 8, 1, 6),
@@ -781,7 +898,9 @@ mod tests {
             category: None,
             message: Cow::Borrowed("tab"),
             span: Span::single_line("a.rs", 1, 1, 1),
-            fix_suggestion: None,
+            hint: None,
+            help: None,
+            suggestion: None,
             related_spans: Vec::new(),
             metadata: None,
         };
@@ -790,6 +909,9 @@ mod tests {
         assert!(!s.contains("plugin_id"));
         assert!(!s.contains("impact"));
         assert!(!s.contains("category"));
+        assert!(!s.contains("hint"));
+        assert!(!s.contains("help"));
+        assert!(!s.contains("suggestion"));
         assert!(!s.contains("metadata"));
     }
 

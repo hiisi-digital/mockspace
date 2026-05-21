@@ -133,7 +133,9 @@ impl Lint for RegistrableCompletenessLint {
                                     req.min_signature_complexity
                                 )),
                                 span: Span::single_line(doc.path(), 1, 1, 1),
-                                fix_suggestion: None,
+                                hint: None,
+                                help: None,
+                                suggestion: None,
                                 related_spans: Vec::new(),
                                 metadata: None,
                             });

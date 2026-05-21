@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-use mockspace_core::lint::{Finding, FixSuggestion, GateSeverity, LintContext, Severity, Span};
+use mockspace_core::lint::{Finding, Fix, GateSeverity, LintContext, Severity, Span, Suggestion};
 use serde::Deserialize;
 use syn::visit::Visit;
 
@@ -294,9 +294,17 @@ fn emit(
         category: None,
         message: Cow::Owned(message),
         span: Span::single_line(path, 1, 1, forbidden_ty.len() as u32),
-        fix_suggestion: replacement.map(|r| FixSuggestion {
-            label: Cow::Borrowed("replace with canonical type"),
-            replacement: Cow::Owned(r.to_string()),
+        hint: None,
+        help: None,
+        // Description only; no Fix recipe. The Span coordinates here
+        // are fabricated (line 1, col 1, length-as-width) because the
+        // syn visitor surface in this lint has not been threaded through
+        // for real source positions yet. Shipping a Fix::Replace with
+        // those coordinates would corrupt files at byte 0; emit advice
+        // until the visitor is updated to carry proc_macro2::Span.
+        suggestion: replacement.map(|r| Suggestion {
+            description: Cow::Owned(format!("replace with canonical type `{r}`")),
+            fix: None,
         }),
         related_spans: Vec::new(),
         metadata: None,
@@ -447,8 +455,15 @@ mod tests {
             },
         );
         assert_eq!(findings.len(), 1);
-        let fix = findings[0].fix_suggestion.as_ref().unwrap();
-        assert_eq!(fix.replacement.as_ref(), "Str");
+        let suggestion = findings[0].suggestion.as_ref().unwrap();
+        assert!(
+            suggestion.description.contains("Str"),
+            "description should name the replacement: {}",
+            suggestion.description,
+        );
+        // Fix is None today; the syn visitor surface has not been threaded
+        // for real proc_macro2::Span coordinates. See ast_type_position::emit.
+        assert!(suggestion.fix.is_none());
     }
 
     #[test]

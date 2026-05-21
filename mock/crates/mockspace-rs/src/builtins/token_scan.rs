@@ -147,7 +147,9 @@ impl Lint for TokenScanLint {
                     category: None,
                     message: Cow::Owned(self.message_template.replace("{}", token)),
                     span: Span::single_line(doc.path(), line, column, length as u32),
-                    fix_suggestion: None,
+                    hint: None,
+                    help: None,
+                    suggestion: None,
                     related_spans: Vec::new(),
                     metadata: None,
                 });

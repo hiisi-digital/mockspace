@@ -158,7 +158,9 @@ impl Lint for SuppressionMetaLint {
                             "crate `{crate_name}` has {count} lint:allow scopes (threshold: {threshold})"
                         )),
                         span: Span::single_line(&crate_name, 1, 1, 1),
-                        fix_suggestion: None,
+                        hint: None,
+                        help: None,
+                        suggestion: None,
                         related_spans: Vec::new(),
                         metadata: None,
                     });
@@ -188,7 +190,9 @@ fn emit_scope(
         category: None,
         message: Cow::Owned(message.to_string()),
         span: scope.scope.clone(),
-        fix_suggestion: None,
+        hint: None,
+        help: None,
+        suggestion: None,
         related_spans: Vec::new(),
         metadata: None,
     });

@@ -171,7 +171,9 @@ impl Lint for NoAdhocFrameworkLint {
                     "ad-hoc framework heuristics fired: dispatch={dispatch_signal}, lifecycle={lifecycle_signal}, callback={callback_signal}; use hilavitkutin scheduler instead"
                 )),
                 span: Span::single_line("project", 1, 1, 1),
-                fix_suggestion: None,
+                hint: None,
+                help: None,
+                suggestion: None,
                 related_spans: Vec::new(),
                 metadata: None,
             });
