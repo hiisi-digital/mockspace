@@ -108,6 +108,14 @@ pub struct InstantiatedLint {
     /// whitelist, proc-macro exempt, category exempt). Consulted per
     /// document at dispatch.
     pub scope_filter: crate::scope_filter::ScopeFilter,
+    /// Severity resolved through the cascade (preset chain plus user
+    /// TOML plus CLI overrides, walked over the lint's catalog default).
+    /// `None` means no overlay touched the severity at any cascade
+    /// layer and the engine should fall back to `lint.default_severity()`.
+    /// Per the cascade memo and task #566, the layers compose:
+    /// catalog default (engine fallback) -> preset chain (innermost
+    /// first) -> user TOML per-lint -> CLI severity_overrides.
+    pub resolved_severity: Option<mockspace_core::lint::GateSeverity>,
 }
 
 /// Parsed configuration plus instantiated lints, ready for engine
@@ -355,12 +363,11 @@ fn instantiate_with_cascade(
     // Reads `extends = "<host>::<name>"` from the per-lint block top
     // level, resolves the chain through `preset_source`, applies each
     // preset's `config` and `scope` BTreeMap as a toml::Table overlay
-    // in innermost-first order. Severity overlay is tracked separately;
-    // see #566 (severity flows through LintCfgStore, not through this
-    // instantiation cascade). List-merge `.add`/`.remove` semantics
-    // are tracked at #567; current overlay() uses replace-on-list,
-    // which matches the documented default.
-    if let Some(block) = user_block {
+    // in innermost-first order. The chain is captured into
+    // `resolved_chain` so the severity-cascade pass at the bottom of
+    // this function (#566) can walk the same preset list without
+    // re-resolving.
+    let resolved_chain: Vec<PresetFile> = if let Some(block) = user_block {
         if let Some(extends_ref) = parse_extends(block.get("extends")).map_err(|e| {
             preset_error_to_config_error(entry.name, "extends", e)
         })? {
@@ -368,8 +375,13 @@ fn instantiate_with_cascade(
                 preset_error_to_config_error(entry.name, "extends", e)
             })?;
             apply_preset_chain(&chain, &mut merged_config, &mut merged_scope);
+            chain
+        } else {
+            Vec::new()
         }
-    }
+    } else {
+        Vec::new()
+    };
 
     // Level 3: workspace defaults (overlay where present).
     overlay(&mut merged_config, workspace_defaults);
@@ -460,6 +472,21 @@ fn instantiate_with_cascade(
         })?;
     let scope_filter = crate::scope_filter::ScopeFilter::from_config(entry.name, &scope_config)?;
 
+    // Severity cascade (#566). Walk the resolved preset chain in the
+    // same innermost-first order that `apply_preset_chain` uses for
+    // config and scope. The starting preset (consumer's direct
+    // reference) overlays whatever the deeper extends-targets
+    // established. Then user TOML and CLI overrides layer on top.
+    // Untouched axes inherit from the catalog default so a consumer
+    // touching only one gate does not silently downgrade the others.
+    let resolved_severity = resolve_severity_cascade(
+        entry.default_severity,
+        &resolved_chain,
+        user_block,
+        &overrides.severity_overrides,
+        entry.name,
+    );
+
     // Construct the lint.
     let lint = (entry.instantiate)(&merged_config, &merged_scope)?;
     Ok(InstantiatedLint {
@@ -469,6 +496,7 @@ fn instantiate_with_cascade(
         editor_skip: entry.editor_skip,
         only_staged,
         scope_filter,
+        resolved_severity,
     })
 }
 
@@ -555,6 +583,131 @@ fn apply_list_merge(dst: &mut Vec<toml::Value>, op: &toml::Table) {
                 dst.push(item.clone());
             }
         }
+    }
+}
+
+// =========================================================================
+// Severity cascade (#566).
+// =========================================================================
+
+/// Convert a `mockspace_config::Severity` (4-variant TOML wire form) to
+/// the engine's `mockspace_core::lint::Severity` (6-variant runtime
+/// enum). The wire form is the consumer surface: `error` / `warn` /
+/// `info` / `off`. The engine's enum carries extra variants (`Skip`,
+/// `Hint`) that the wire form does not address; they remain reachable
+/// to lint authors through `default_severity` but are not selectable
+/// through the cascade overlay surface.
+fn convert_severity(s: mockspace_config::Severity) -> mockspace_core::lint::Severity {
+    use mockspace_core::lint::Severity as Core;
+    use mockspace_config::Severity as Wire;
+    match s {
+        Wire::Error => Core::Error,
+        Wire::Warn => Core::Warn,
+        Wire::Info => Core::Info,
+        Wire::Off => Core::Off,
+    }
+}
+
+/// Overlay `gs` onto `dst`, applying each `Some` field and leaving
+/// `None` fields pass-through. Mirrors the cascade memo's "gate
+/// severities compose per-axis" rule: a preset can refine the
+/// commit gate's severity without touching build or push.
+fn overlay_gate_severities(
+    dst: &mut mockspace_core::lint::GateSeverity,
+    gs: &mockspace_config::GateSeverities,
+) {
+    if let Some(s) = gs.commit {
+        dst.commit = convert_severity(s);
+    }
+    if let Some(s) = gs.build {
+        dst.build = convert_severity(s);
+    }
+    if let Some(s) = gs.push {
+        dst.push = convert_severity(s);
+    }
+}
+
+/// Walk the resolved preset chain + user TOML + CLI overrides building
+/// the cascaded `GateSeverity`. Returns `None` if no cascade layer
+/// touches severity at any axis, so the engine falls back to the
+/// lint's `default_severity()` per the documented invariant.
+///
+/// `default_severity` is the catalog's per-gate baseline (the same
+/// value `entry.default_severity` carries). It seeds `acc` so untouched
+/// axes inherit the catalog default; a consumer setting only `commit`
+/// does not silently downgrade `build` / `push` to Off. This matches
+/// the cascade memo's `cargo mock explain` output, which renders each
+/// axis with its own per-layer origin annotation rather than the
+/// touched-axis-wins-takes-all path.
+///
+/// Cascade order (low to high precedence):
+///   1. Preset chain, innermost-first. The starting preset (consumer's
+///      direct reference) overlays whatever deeper extends-targets
+///      established. Each preset's `[severity]` block can refine one
+///      or more of commit / build / push independently.
+///   2. User TOML per-lint `[lints.<name>]` `commit` / `build` / `push`
+///      fields. Wins over preset chain.
+///   3. CLI `--severity-override <name>=<sev>` (uniform across all
+///      gates; bumps the same severity onto every gate of the named
+///      lint).
+fn resolve_severity_cascade(
+    default_severity: mockspace_core::lint::GateSeverity,
+    chain: &[PresetFile],
+    user_block: Option<&toml::Table>,
+    cli_overrides: &std::collections::HashMap<String, mockspace_core::lint::Severity>,
+    lint_name: &str,
+) -> Option<mockspace_core::lint::GateSeverity> {
+    use mockspace_core::lint::GateSeverity;
+
+    let mut touched = false;
+    // Seed from the catalog default so untouched axes inherit the
+    // lint's per-gate default rather than the permissive Off baseline.
+    // The returned `Option` distinguishes "no layer touched severity"
+    // (None, engine still uses lint default identically) from "layers
+    // touched it" (Some, engine uses the cascaded value, where
+    // untouched axes still equal the catalog default).
+    let mut acc = default_severity;
+
+    for preset in chain {
+        let gs = &preset.severity;
+        if gs.commit.is_some() || gs.build.is_some() || gs.push.is_some() {
+            touched = true;
+            overlay_gate_severities(&mut acc, gs);
+        }
+    }
+
+    if let Some(block) = user_block {
+        let user_gs = mockspace_config::GateSeverities {
+            commit: block.get("commit").and_then(parse_wire_severity),
+            build: block.get("build").and_then(parse_wire_severity),
+            push: block.get("push").and_then(parse_wire_severity),
+        };
+        if user_gs.commit.is_some() || user_gs.build.is_some() || user_gs.push.is_some() {
+            touched = true;
+            overlay_gate_severities(&mut acc, &user_gs);
+        }
+    }
+
+    if let Some(cli_sev) = cli_overrides.get(lint_name) {
+        touched = true;
+        acc = GateSeverity::uniform(*cli_sev);
+    }
+
+    if touched { Some(acc) } else { None }
+}
+
+/// Parse a `toml::Value` representing a severity string (one of
+/// `"error"` / `"warn"` / `"info"` / `"off"`) into the wire-form enum.
+/// Returns `None` on type mismatch or unknown variant; the cascade
+/// then treats the field as absent.
+fn parse_wire_severity(v: &toml::Value) -> Option<mockspace_config::Severity> {
+    use mockspace_config::Severity as Wire;
+    match v.as_str()? {
+        "error" => Some(Wire::Error),
+        "warn" => Some(Wire::Warn),
+        "info" => Some(Wire::Info),
+        "off" => Some(Wire::Off),
+        _ => None,
     }
 }
 
@@ -788,6 +941,118 @@ mod tests {
         assert!(dst.get("forbidden").is_none());
     }
 
+    // ---- severity cascade (#566) ----------------------------------------
+
+    use mockspace_config::{GateSeverities, Severity as WireSeverity};
+
+    fn preset_with_severity(commit: Option<WireSeverity>, build: Option<WireSeverity>, push: Option<WireSeverity>) -> PresetFile {
+        PresetFile {
+            schema_version: "1.0".to_string(),
+            name: "test".to_string(),
+            primitive: "token-scan".to_string(),
+            description: None,
+            extends: None,
+            config: Default::default(),
+            severity: GateSeverities { commit, build, push },
+            scope: Default::default(),
+        }
+    }
+
+    /// Lint catalog default used across the severity-cascade tests:
+    /// uniform Warn at every gate. Used so the "untouched axes
+    /// inherit catalog default" property is observable.
+    const DEFAULT_WARN: mockspace_core::lint::GateSeverity =
+        mockspace_core::lint::GateSeverity::uniform(mockspace_core::lint::Severity::Warn);
+
+    #[test]
+    fn severity_cascade_returns_none_when_nothing_touches_it() {
+        let chain: Vec<PresetFile> = Vec::new();
+        let cli = HashMap::new();
+        let resolved = resolve_severity_cascade(DEFAULT_WARN, &chain, None, &cli, "x");
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn severity_cascade_applies_preset_to_specific_gate_keeping_default_elsewhere() {
+        // Preset refines only `commit`. `build` and `push` inherit
+        // the catalog default (uniform Warn), not the permissive Off
+        // baseline. This is the load-bearing per-axis-inheritance
+        // property that the cascade memo's `cargo mock explain`
+        // output documents.
+        let chain = vec![preset_with_severity(Some(WireSeverity::Error), None, None)];
+        let cli = HashMap::new();
+        let resolved = resolve_severity_cascade(DEFAULT_WARN, &chain, None, &cli, "x").unwrap();
+        assert_eq!(resolved.commit, mockspace_core::lint::Severity::Error);
+        assert_eq!(resolved.build, mockspace_core::lint::Severity::Warn);
+        assert_eq!(resolved.push, mockspace_core::lint::Severity::Warn);
+    }
+
+    #[test]
+    fn severity_cascade_starting_preset_overlays_deeper_extends_target() {
+        // Innermost-first walk: chain[0] is the deepest extends-target
+        // (resolved earlier in the chain). chain[1] is the starting
+        // preset (consumer's direct reference). Deep sets commit=Warn,
+        // starting overrides with commit=Error.
+        let chain = vec![
+            preset_with_severity(Some(WireSeverity::Warn), None, None),
+            preset_with_severity(Some(WireSeverity::Error), None, None),
+        ];
+        let cli = HashMap::new();
+        let resolved = resolve_severity_cascade(DEFAULT_WARN, &chain, None, &cli, "x").unwrap();
+        assert_eq!(resolved.commit, mockspace_core::lint::Severity::Error);
+    }
+
+    #[test]
+    fn severity_cascade_user_toml_wins_over_preset_chain() {
+        let chain = vec![preset_with_severity(Some(WireSeverity::Warn), None, None)];
+        let mut user_block = toml::Table::new();
+        user_block.insert("commit".to_string(), toml::Value::String("error".to_string()));
+        let cli = HashMap::new();
+        let resolved = resolve_severity_cascade(DEFAULT_WARN, &chain, Some(&user_block), &cli, "x").unwrap();
+        assert_eq!(resolved.commit, mockspace_core::lint::Severity::Error);
+    }
+
+    #[test]
+    fn severity_cascade_cli_override_wins_and_is_uniform() {
+        let chain = vec![preset_with_severity(Some(WireSeverity::Warn), Some(WireSeverity::Info), Some(WireSeverity::Info))];
+        let mut cli = HashMap::new();
+        cli.insert("x".to_string(), mockspace_core::lint::Severity::Error);
+        let resolved = resolve_severity_cascade(DEFAULT_WARN, &chain, None, &cli, "x").unwrap();
+        // CLI override is uniform across all gates per OverrideCascade
+        // documentation; every gate becomes Error.
+        assert_eq!(resolved.commit, mockspace_core::lint::Severity::Error);
+        assert_eq!(resolved.build, mockspace_core::lint::Severity::Error);
+        assert_eq!(resolved.push, mockspace_core::lint::Severity::Error);
+    }
+
+    #[test]
+    fn severity_cascade_per_axis_inherits_default_for_untouched_axes() {
+        // Preset sets commit; user TOML sets build; push remains at
+        // the catalog default (uniform Warn). This is the corrected
+        // per-axis behaviour: untouched axes inherit the catalog
+        // default rather than silently downgrade to Off.
+        let chain = vec![preset_with_severity(Some(WireSeverity::Error), None, None)];
+        let mut user_block = toml::Table::new();
+        user_block.insert("build".to_string(), toml::Value::String("info".to_string()));
+        let cli = HashMap::new();
+        let resolved = resolve_severity_cascade(DEFAULT_WARN, &chain, Some(&user_block), &cli, "x").unwrap();
+        assert_eq!(resolved.commit, mockspace_core::lint::Severity::Error);
+        assert_eq!(resolved.build, mockspace_core::lint::Severity::Info);
+        assert_eq!(resolved.push, mockspace_core::lint::Severity::Warn);
+    }
+
+    #[test]
+    fn severity_cascade_unknown_string_in_user_toml_falls_through() {
+        // Garbage severity string in user TOML: parse_wire_severity
+        // returns None, and that axis is treated as not-set. The
+        // cascade returns None if no other layer set anything.
+        let chain: Vec<PresetFile> = Vec::new();
+        let mut user_block = toml::Table::new();
+        user_block.insert("commit".to_string(), toml::Value::String("BANANA".to_string()));
+        let cli = HashMap::new();
+        assert!(resolve_severity_cascade(DEFAULT_WARN, &chain, Some(&user_block), &cli, "x").is_none());
+    }
+
     #[test]
     fn lint_filter_drops_unmatched_entries() {
         let overrides = OverrideCascade {
@@ -847,6 +1112,7 @@ mod tests {
                 &crate::config_types::ScopeConfig::default(),
             )
             .expect("default scope config compiles"),
+            resolved_severity: None,
         }
     }
 

@@ -403,6 +403,7 @@ mod tests {
                 &crate::config_types::ScopeConfig::default(),
             )
             .unwrap(),
+            resolved_severity: None,
         }];
         let engine = MockspaceEngine::with_entries(entries);
 
@@ -448,6 +449,7 @@ mod tests {
                 &crate::config_types::ScopeConfig::default(),
             )
             .unwrap(),
+            resolved_severity: None,
         }];
         let engine = MockspaceEngine::with_entries(entries);
         let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
@@ -491,6 +493,7 @@ mod tests {
                 &crate::config_types::ScopeConfig::default(),
             )
             .unwrap(),
+            resolved_severity: None,
         };
         let engine = MockspaceEngine::with_entries(vec![make("lint-a"), make("lint-b")]);
         let warnings = engine.startup_warnings();
@@ -533,6 +536,7 @@ mod tests {
                 &crate::config_types::ScopeConfig::default(),
             )
             .unwrap(),
+            resolved_severity: None,
         }];
         let engine = MockspaceEngine::with_entries(entries);
 
@@ -609,6 +613,7 @@ mod tests {
                 &crate::config_types::ScopeConfig::default(),
             )
             .unwrap(),
+            resolved_severity: None,
         }];
         let engine = MockspaceEngine::with_entries(entries);
 
@@ -690,6 +695,7 @@ mod tests {
                 &crate::config_types::ScopeConfig::default(),
             )
             .unwrap(),
+            resolved_severity: None,
         }
     }
 
@@ -881,6 +887,7 @@ mod tests {
                 &crate::config_types::ScopeConfig::default(),
             )
             .unwrap(),
+            resolved_severity: None,
         }];
         let engine = MockspaceEngine::with_entries(entries);
         let mut builder = ProjectBuilder::new("/tmp", RunSurface::Editor, Gate::Commit);
