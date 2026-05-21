@@ -714,6 +714,29 @@ pub struct DirectiveRecord {
 // Suppression model.
 // =========================================================================
 
+/// Kind of suppression carried by a [`SuppressionScope`]. Distinguishes
+/// long-lived `Allow` policy entries from time-bounded `Defer`
+/// acknowledgements that expire when their `tracked` task closes.
+///
+/// At suppression-resolution time both kinds suppress the matching
+/// finding. The meta-lint (`suppression-meta`) reads this field to
+/// enforce per-kind validation: `Allow` accumulates as a policy
+/// question; `Defer` carries an expiration semantics and surfaces a
+/// finding once the linked task is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuppressionKind {
+    /// `// lint:allow(...)`: accumulating per-site policy.
+    Allow,
+    /// `// lint:defer(...)`: acknowledgement bounded by `tracked`.
+    Defer,
+}
+
+impl Default for SuppressionKind {
+    fn default() -> Self {
+        Self::Allow
+    }
+}
+
 /// A single suppression scope. Covers a span; suppresses a set of lint
 /// names within that span; carries a mandatory tracking task id and
 /// optional human reason.
@@ -725,9 +748,16 @@ pub struct SuppressionScope {
     pub scope: Span,
     /// Lint names suppressed within this scope.
     pub lints: BTreeSet<String>,
+    /// Whether the scope was created by `lint:allow` (long-lived policy)
+    /// or `lint:defer` (expiring acknowledgement). Defaults to `Allow`
+    /// so pre-existing callers that construct the struct field-by-field
+    /// continue to compile.
+    pub kind: SuppressionKind,
     /// Tracking task identifier. Mandatory per the
     /// `lint-allow-requires-task-id` workspace rule; engines emit a
-    /// meta-finding if a scope is populated without one.
+    /// meta-finding if a scope is populated without one. For
+    /// [`SuppressionKind::Defer`] this holds the `until: <task-id>`
+    /// argument.
     pub tracked: Option<String>,
     /// Optional human-readable reason.
     pub reason: Option<String>,
@@ -947,6 +977,233 @@ impl PropMap {
     /// `true` if no props have been pushed.
     pub fn is_empty(&self) -> bool {
         self.by_span.is_empty()
+    }
+}
+
+// =========================================================================
+// IntroducerMap (lint:introduces directive resolver).
+// =========================================================================
+
+/// Project-level resolver for `// lint:introduces(<category>)` directives.
+///
+/// Records sites that declare themselves as the canonical introducer of
+/// a primitive category. Category-checked lints (`no-bare-numeric`,
+/// `no-bare-string`, the rest of the bare-primitive family) consult
+/// `IntroducerMap` to carve out their own findings on the introducer
+/// site itself.
+///
+/// Replaces the pre-v2 `[primitive-introductions]` TOML table. Per the
+/// canonical-directive-vocabulary memo at
+/// `mock/research/202605220000_canonical-directive-vocabulary.md` and
+/// the implementing task #546.
+///
+/// # Indexing
+///
+/// Dual `BTreeMap` index for the two common queries:
+///
+/// - `by_category`: "which sites introduce this category?"
+/// - `by_span`:     "what categories does this site introduce?"
+///
+/// `push` keeps both indices in sync. Same dedup contract as
+/// [`PropMap`]: repeated `(span, category)` pairs record both
+/// occurrences and the meta-lint surfaces duplicates downstream.
+#[derive(Debug, Clone, Default)]
+pub struct IntroducerMap {
+    by_category: BTreeMap<String, Vec<Span>>,
+    by_span: BTreeMap<Span, Vec<String>>,
+}
+
+impl IntroducerMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a `(span, category)` introducer entry.
+    pub fn push(&mut self, span: Span, category: String) {
+        self.by_category
+            .entry(category.clone())
+            .or_default()
+            .push(span.clone());
+        self.by_span.entry(span).or_default().push(category);
+    }
+
+    /// All sites declaring themselves introducer of `category`.
+    pub fn sites_for<'a>(&'a self, category: &str) -> impl Iterator<Item = &'a Span> + 'a {
+        self.by_category
+            .get(category)
+            .into_iter()
+            .flat_map(|v| v.iter())
+    }
+
+    /// Categories introduced at this span.
+    pub fn categories_at<'a>(&'a self, span: &Span) -> impl Iterator<Item = &'a str> + 'a {
+        self.by_span
+            .get(span)
+            .into_iter()
+            .flat_map(|v| v.iter().map(String::as_str))
+    }
+
+    /// `true` if any site declares itself introducer of `category`
+    /// covering `finding_span`. Coverage is span-contained: the
+    /// introducer's span must contain the finding's span. Lints
+    /// use this as the carve-out check.
+    pub fn covers(&self, category: &str, finding_span: &Span) -> bool {
+        self.sites_for(category)
+            .any(|introducer_span| introducer_span.contains(finding_span))
+    }
+
+    /// Flat iterator over every `(span, category)` introducer pair.
+    /// Used by engines aggregating per-document maps into a project-
+    /// level resolver.
+    pub fn entries<'a>(&'a self) -> impl Iterator<Item = (&'a Span, &'a str)> + 'a {
+        self.by_span.iter().flat_map(|(span, cats)| {
+            cats.iter().map(move |c| (span, c.as_str()))
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_span.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.by_span.values().map(|v| v.len()).sum()
+    }
+}
+
+// =========================================================================
+// ScopeAddMap (lint:scope-add directive resolver).
+// =========================================================================
+
+/// One `// lint:scope-add(<lint_name>, <axis>=<value>)` directive
+/// resolved to a structured record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeAddEntry {
+    /// The span over which the scope extension applies. For an
+    /// item-attached directive, the item's span; for a module-level
+    /// directive, the module's span; for a file-level directive,
+    /// the file's span.
+    pub scope: Span,
+    /// Lint whose scope the directive extends.
+    pub lint_name: String,
+    /// Which axis of `ScopeConfig` is extended.
+    pub axis: ScopeAxis,
+    /// Value added to the named axis.
+    pub value: String,
+}
+
+/// Project-level collection of `lint:scope-add` directives. Engines
+/// merge per-document maps before scope-filter evaluation.
+///
+/// Stored as a flat `Vec` because the three plausible queries
+/// (entries-for-lint, entries-covering-span, full enumeration) all
+/// stream over the collection and the realistic count per project is
+/// small. A future index lands additively if a bench shows it pays.
+#[derive(Debug, Clone, Default)]
+pub struct ScopeAddMap {
+    entries: Vec<ScopeAddEntry>,
+}
+
+impl ScopeAddMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, entry: ScopeAddEntry) {
+        self.entries.push(entry);
+    }
+
+    pub fn entries(&self) -> &[ScopeAddEntry] {
+        &self.entries
+    }
+
+    /// Entries that extend `lint_name`'s scope and cover `finding_span`.
+    pub fn entries_for<'a>(
+        &'a self,
+        lint_name: &'a str,
+        finding_span: &'a Span,
+    ) -> impl Iterator<Item = &'a ScopeAddEntry> + 'a {
+        self.entries.iter().filter(move |e| {
+            e.lint_name == lint_name && e.scope.contains(finding_span)
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+// =========================================================================
+// FileDisableSet (lint:file-disable directive resolver).
+// =========================================================================
+
+/// One `// lint:file-disable(<lint_name>) reason: "..." tracked: #...`
+/// directive resolved to a structured record. The `reason` and
+/// `tracked` fields parallel [`SuppressionScope`] so the meta-lint
+/// validates both surfaces with one rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDisableEntry {
+    pub file: PathBuf,
+    pub lint_name: String,
+    pub tracked: Option<String>,
+    pub reason: Option<String>,
+}
+
+/// Per-file lint-disable set. Engines consult before emitting a
+/// finding: if `disabled(finding.span.file, finding.lint_name)` is
+/// true, the finding is dropped before suppression resolution.
+///
+/// File-disable is structurally distinct from [`SuppressionMap`]:
+/// suppression scopes are span-bounded and nest; file-disable is
+/// whole-file and flat. Folding it into the suppression map would
+/// require constructing a synthetic file-spanning [`Span`], which the
+/// engine cannot do cheaply without reading the file to find
+/// end-of-file. Keeping the two separate sidesteps the synthesis.
+#[derive(Debug, Clone, Default)]
+pub struct FileDisableSet {
+    entries: Vec<FileDisableEntry>,
+    by_file: BTreeMap<PathBuf, BTreeSet<String>>,
+}
+
+impl FileDisableSet {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, entry: FileDisableEntry) {
+        self.by_file
+            .entry(entry.file.clone())
+            .or_default()
+            .insert(entry.lint_name.clone());
+        self.entries.push(entry);
+    }
+
+    /// `true` if the given lint is disabled for the given file.
+    pub fn disabled(&self, file: &Path, lint_name: &str) -> bool {
+        self.by_file
+            .get(file)
+            .is_some_and(|lints| lints.contains(lint_name))
+    }
+
+    /// All lint names disabled for `file`. Empty set when no
+    /// directive named `file`.
+    pub fn disabled_lints(&self, file: &Path) -> Option<&BTreeSet<String>> {
+        self.by_file.get(file)
+    }
+
+    pub fn entries(&self) -> &[FileDisableEntry] {
+        &self.entries
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
     }
 }
 
@@ -1626,6 +1883,7 @@ mod tests {
         SuppressionScope {
             scope: Span::range(file, lines.0, 0, lines.1, 0),
             lints: names.iter().map(|s| s.to_string()).collect(),
+            kind: SuppressionKind::Allow,
             tracked: tracked.map(|s| s.to_string()),
             reason: None,
         }
@@ -1672,6 +1930,105 @@ mod tests {
         map.push(scope("a.rs", (10, 20), &["no-foo"], Some("#1")));
         let finding = Span::single_line("b.rs", 15, 0, 1);
         assert!(map.resolves("no-foo", &finding).is_none());
+    }
+
+    // ---- IntroducerMap ----
+
+    #[test]
+    fn introducer_map_dual_index_returns_both_views() {
+        let mut map = IntroducerMap::new();
+        let span_a = Span::range("a.rs", 1, 0, 5, 0);
+        let span_b = Span::range("b.rs", 1, 0, 5, 0);
+        map.push(span_a.clone(), "string-foundation".to_string());
+        map.push(span_b.clone(), "string-foundation".to_string());
+        map.push(span_a.clone(), "numeric-foundation".to_string());
+
+        let sites: Vec<&Span> = map.sites_for("string-foundation").collect();
+        assert_eq!(sites.len(), 2);
+        let cats_at_a: Vec<&str> = map.categories_at(&span_a).collect();
+        assert_eq!(cats_at_a.len(), 2);
+        assert!(cats_at_a.contains(&"string-foundation"));
+        assert!(cats_at_a.contains(&"numeric-foundation"));
+        assert_eq!(map.len(), 3);
+    }
+
+    #[test]
+    fn introducer_map_covers_uses_span_containment() {
+        let mut map = IntroducerMap::new();
+        let outer = Span::range("a.rs", 1, 0, 100, 0);
+        map.push(outer.clone(), "string-foundation".to_string());
+        let inner_finding = Span::single_line("a.rs", 50, 5, 3);
+        assert!(map.covers("string-foundation", &inner_finding));
+        let other_file = Span::single_line("b.rs", 50, 5, 3);
+        assert!(!map.covers("string-foundation", &other_file));
+        assert!(!map.covers("never-introduced", &inner_finding));
+    }
+
+    // ---- ScopeAddMap ----
+
+    #[test]
+    fn scope_add_map_entries_for_filters_by_lint_and_span() {
+        let mut map = ScopeAddMap::new();
+        let scope_a = Span::range("a.rs", 1, 0, 50, 0);
+        let scope_b = Span::range("b.rs", 1, 0, 50, 0);
+        map.push(ScopeAddEntry {
+            scope: scope_a.clone(),
+            lint_name: "no-bare-numeric".to_string(),
+            axis: ScopeAxis::ExemptCategories,
+            value: "ffi".to_string(),
+        });
+        map.push(ScopeAddEntry {
+            scope: scope_b.clone(),
+            lint_name: "no-bare-numeric".to_string(),
+            axis: ScopeAxis::ExemptCategories,
+            value: "tests".to_string(),
+        });
+
+        let in_a = Span::single_line("a.rs", 25, 0, 1);
+        let entries_a: Vec<&ScopeAddEntry> =
+            map.entries_for("no-bare-numeric", &in_a).collect();
+        assert_eq!(entries_a.len(), 1);
+        assert_eq!(entries_a[0].value, "ffi");
+
+        let entries_other_lint: Vec<&ScopeAddEntry> =
+            map.entries_for("no-bare-string", &in_a).collect();
+        assert!(entries_other_lint.is_empty());
+    }
+
+    // ---- FileDisableSet ----
+
+    #[test]
+    fn file_disable_set_disabled_lookup() {
+        let mut set = FileDisableSet::new();
+        set.push(FileDisableEntry {
+            file: "a.rs".into(),
+            lint_name: "writing-style".to_string(),
+            tracked: Some("#207".to_string()),
+            reason: Some("generated".to_string()),
+        });
+        assert!(set.disabled(Path::new("a.rs"), "writing-style"));
+        assert!(!set.disabled(Path::new("a.rs"), "no-bare-numeric"));
+        assert!(!set.disabled(Path::new("b.rs"), "writing-style"));
+    }
+
+    #[test]
+    fn file_disable_set_multiple_lints_per_file() {
+        let mut set = FileDisableSet::new();
+        set.push(FileDisableEntry {
+            file: "a.rs".into(),
+            lint_name: "lint-a".to_string(),
+            tracked: None,
+            reason: None,
+        });
+        set.push(FileDisableEntry {
+            file: "a.rs".into(),
+            lint_name: "lint-b".to_string(),
+            tracked: None,
+            reason: None,
+        });
+        let disabled = set.disabled_lints(Path::new("a.rs")).unwrap();
+        assert!(disabled.contains("lint-a"));
+        assert!(disabled.contains("lint-b"));
     }
 
     // ---- matches_pattern ----

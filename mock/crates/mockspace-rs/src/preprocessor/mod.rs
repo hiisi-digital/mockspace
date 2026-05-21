@@ -20,7 +20,8 @@ pub mod comment;
 pub mod rust_attr;
 
 use mockspace_core::lint::{
-    Directive, Document, Language, PropMap, SuppressionMap, SuppressionScope,
+    Directive, Document, FileDisableEntry, FileDisableSet, IntroducerMap, Language, PropMap,
+    ScopeAddEntry, ScopeAddMap, SuppressionKind, SuppressionMap, SuppressionScope,
 };
 use std::collections::BTreeSet;
 
@@ -28,19 +29,25 @@ use std::collections::BTreeSet;
 /// [`LanguagePreprocessor::extract`]; engines merge the per-document
 /// bundles into a project-level bundle before resolving findings.
 ///
-/// One bundled output replaces the previous parallel-methods shape
-/// (`extract` + `extract_props`) so future directive-routing additions
-/// (#546: IntroducerMap, ScopeAddMap, FileDisableSet, deferred entries)
-/// extend this struct rather than the trait. Single parse per document
-/// drives every routed map.
+/// One bundled output: a single parse over the document populates
+/// every per-kind map and the trait surface stays a single method.
+/// Each new [`Directive`] variant grows a field on this struct rather
+/// than a method on [`LanguagePreprocessor`].
 #[derive(Debug, Default)]
 pub struct DirectiveExtracts {
-    /// `lint:allow` records routed into [`SuppressionMap`].
+    /// `lint:allow` and `lint:defer` records routed into
+    /// [`SuppressionMap`]. Allows carry [`SuppressionKind::Allow`];
+    /// defers carry [`SuppressionKind::Defer`] with the `until: <task>`
+    /// argument stored in `tracked`.
     pub suppressions: SuppressionMap,
     /// `lint:prop` records routed into [`PropMap`].
     pub props: PropMap,
-    // Future fields (#546): introducers, scope_adds, file_disables,
-    // deferred. Each grows a field here; trait stays one method.
+    /// `lint:introduces` records routed into [`IntroducerMap`].
+    pub introducers: IntroducerMap,
+    /// `lint:scope-add` records routed into [`ScopeAddMap`].
+    pub scope_adds: ScopeAddMap,
+    /// `lint:file-disable` records routed into [`FileDisableSet`].
+    pub file_disables: FileDisableSet,
 }
 
 /// Per-language preprocessor. Engines invoke one per document; the
@@ -113,6 +120,10 @@ impl LanguagePreprocessor for RustPreprocessor {
         let path_str = document.path().to_string_lossy();
         let records = comment::parse_directives(document.source(), &path_str);
         let mut out = DirectiveExtracts::default();
+        // The directive path inside the document is the file the
+        // record lives in. File-disable entries key off this for
+        // per-file lookup.
+        let doc_path = document.path().to_path_buf();
         for record in records {
             match record.directive {
                 Directive::Allow {
@@ -125,6 +136,54 @@ impl LanguagePreprocessor for RustPreprocessor {
                     out.suppressions.push(SuppressionScope {
                         scope: record.span,
                         lints,
+                        kind: SuppressionKind::Allow,
+                        tracked,
+                        reason,
+                    });
+                }
+                Directive::Defer {
+                    lint_name,
+                    until,
+                    reason,
+                } => {
+                    // Defer suppresses the named lint within the same
+                    // scope as the directive. The `until: <task-id>`
+                    // argument fills `tracked`; the meta-lint reads
+                    // `kind == Defer` to apply expiration semantics
+                    // distinct from `Allow`.
+                    let mut lints = BTreeSet::new();
+                    lints.insert(lint_name);
+                    out.suppressions.push(SuppressionScope {
+                        scope: record.span,
+                        lints,
+                        kind: SuppressionKind::Defer,
+                        tracked: Some(until),
+                        reason,
+                    });
+                }
+                Directive::Introduces { category } => {
+                    out.introducers.push(record.span, category);
+                }
+                Directive::ScopeAdd {
+                    lint_name,
+                    axis,
+                    value,
+                } => {
+                    out.scope_adds.push(ScopeAddEntry {
+                        scope: record.span,
+                        lint_name,
+                        axis,
+                        value,
+                    });
+                }
+                Directive::FileDisable {
+                    lint_name,
+                    reason,
+                    tracked,
+                } => {
+                    out.file_disables.push(FileDisableEntry {
+                        file: doc_path.clone(),
+                        lint_name,
                         tracked,
                         reason,
                     });
@@ -136,19 +195,6 @@ impl LanguagePreprocessor for RustPreprocessor {
                 } => {
                     out.props.push(record.span, name, value, reason);
                 }
-                // Introduces, ScopeAdd, Defer, FileDisable parsed but
-                // unrouted at this slice; #546 adds their per-kind
-                // fields to DirectiveExtracts and routes them here.
-                //
-                // Explicit arms, not a wildcard: the whole point of
-                // the bundled-output collapse is for a new Directive
-                // variant to fail compile until it has a route. A
-                // wildcard would silently swallow new variants and
-                // defeat the contract.
-                Directive::Introduces { .. }
-                | Directive::ScopeAdd { .. }
-                | Directive::Defer { .. }
-                | Directive::FileDisable { .. } => {}
             }
         }
         Ok(out)
@@ -204,10 +250,14 @@ mod tests {
     }
 
     #[test]
-    fn extract_silently_drops_unrouted_directives() {
-        // Introduces, ScopeAdd, Defer, FileDisable are parsed but not
-        // routed at this slice; #546 wires them up. They must not
-        // generate suppression or prop entries.
+    fn extract_routes_introduces_scope_add_defer_file_disable() {
+        // Per #546: every Directive variant routes into its per-kind
+        // map. The bundled-output collapse means a new variant fails
+        // compile in the preprocessor `match` until it has a route,
+        // and the per-kind fields surface the resolved state to the
+        // engine.
+        use mockspace_core::lint::{ScopeAxis, SuppressionKind};
+
         let doc = StubDocument {
             path: "lib.rs".into(),
             source: r#"// lint:introduces(string-foundation)
@@ -219,7 +269,40 @@ mod tests {
             hash: ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
-        assert!(extracts.suppressions.scopes().is_empty());
+
+        // Introduces → IntroducerMap.
+        let intro: Vec<&str> = extracts
+            .introducers
+            .entries()
+            .map(|(_, cat)| cat)
+            .collect();
+        assert_eq!(intro, vec!["string-foundation"]);
+
+        // ScopeAdd → ScopeAddMap.
+        let adds = extracts.scope_adds.entries();
+        assert_eq!(adds.len(), 1);
+        assert_eq!(adds[0].lint_name, "no-bare-numeric");
+        assert_eq!(adds[0].axis, ScopeAxis::ExemptCategories);
+        assert_eq!(adds[0].value, "ffi");
+
+        // Defer → SuppressionMap with SuppressionKind::Defer.
+        let scopes = extracts.suppressions.scopes();
+        assert_eq!(scopes.len(), 1);
+        assert_eq!(scopes[0].kind, SuppressionKind::Defer);
+        assert!(scopes[0].lints.contains("no-bare-string"));
+        assert_eq!(scopes[0].tracked.as_deref(), Some("#185"));
+
+        // FileDisable → FileDisableSet.
+        assert!(extracts.file_disables.disabled(
+            std::path::Path::new("lib.rs"),
+            "writing-style"
+        ));
+        let file_entries = extracts.file_disables.entries();
+        assert_eq!(file_entries.len(), 1);
+        assert_eq!(file_entries[0].reason.as_deref(), Some("generated"));
+        assert_eq!(file_entries[0].tracked.as_deref(), Some("#207"));
+
+        // Props untouched.
         assert!(extracts.props.is_empty());
     }
 
