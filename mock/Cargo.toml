@@ -7,6 +7,7 @@ members = [
     "crates/mockspace-rs",
     "crates/mockspace-rs-attrs",
     "crates/mockspace-cli",
+    "crates/mockspace-test-fixtures",
 ]
 
 # Release profile mirrors the parent workspace.
