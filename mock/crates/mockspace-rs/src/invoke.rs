@@ -17,6 +17,7 @@
 //! steps slot in without API churn.
 
 use std::path::PathBuf;
+use std::process::Command;
 
 /// Environment variable consulted by step 1 of the resolution chain.
 /// If set and pointing at an executable file, this wins outright; the
@@ -149,6 +150,41 @@ fn resolve_env_var() -> Result<Option<PathBuf>, ResolutionError> {
     Ok(Some(path))
 }
 
+/// Build a [`Command`] that spawns the `mock` binary using whichever
+/// resolution succeeded. Callers append their own subcommand args
+/// (e.g. `check`, `lock`, `status`) to the returned `Command` before
+/// invoking `.spawn()` or `.output()`. Returns a `ResolutionError`
+/// when no step yields a usable invocation.
+///
+/// This is the consumer surface that bootstraps, hooks, and `cargo mock`
+/// wrappers all funnel through. The cascade is run once per call; the
+/// caller is responsible for any further argument or environment
+/// configuration on the returned `Command`.
+///
+/// `ResolvedInvocation::Absolute(path)` becomes `Command::new(path)`.
+/// `ResolvedInvocation::CargoAlias` becomes `Command::new("cargo").args(["mock"])`;
+/// downstream args appended by the caller flow through cargo's alias
+/// machinery to the underlying binary.
+pub fn mockspace_call() -> Result<Command, ResolutionError> {
+    Ok(command_for(resolve_invocation()?))
+}
+
+/// Build a [`Command`] from an already-resolved invocation. Test-friendly
+/// form of [`mockspace_call`]: callers (typically tests) that have a
+/// fixed [`ResolvedInvocation`] in hand can build the command without
+/// re-walking the resolution chain. Production callers use
+/// [`mockspace_call`].
+pub fn command_for(invocation: ResolvedInvocation) -> Command {
+    match invocation {
+        ResolvedInvocation::Absolute(path) => Command::new(path),
+        ResolvedInvocation::CargoAlias => {
+            let mut cmd = Command::new("cargo");
+            cmd.arg("mock");
+            cmd
+        }
+    }
+}
+
 /// Step 4 of [`resolve_invocation`]: probe whether `cargo mock` is
 /// reachable as a cargo subcommand. The standard mockspace bootstrap
 /// writes a `[alias] mock = "..."` entry into the consumer's
@@ -162,7 +198,6 @@ fn resolve_env_var() -> Result<Option<PathBuf>, ResolutionError> {
 /// The function does not surface errors; like step 3, a negative
 /// outcome falls through silently to the terminal error.
 fn resolve_cargo_probe() -> bool {
-    use std::process::Command;
     match Command::new("cargo").args(["mock", "--version"]).output() {
         Ok(out) => out.status.success(),
         Err(_) => false,
@@ -791,6 +826,70 @@ mod tests {
         }
         cleanup(&root);
         assert_eq!(observed, Some(bin));
+    }
+
+    // ---- mockspace_call + command_for ----------------------------------
+
+    #[test]
+    fn command_for_absolute_uses_resolved_path_as_program() {
+        let cmd = command_for(ResolvedInvocation::Absolute(PathBuf::from("/some/bin/mock")));
+        assert_eq!(cmd.get_program(), std::ffi::OsStr::new("/some/bin/mock"));
+        assert_eq!(cmd.get_args().count(), 0);
+    }
+
+    #[test]
+    fn command_for_cargo_alias_uses_cargo_with_mock_subcommand() {
+        let cmd = command_for(ResolvedInvocation::CargoAlias);
+        assert_eq!(cmd.get_program(), std::ffi::OsStr::new("cargo"));
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(args, vec![std::ffi::OsStr::new("mock")]);
+    }
+
+    /// RAII guard that chdir's into `target` for the duration of a
+    /// test and restores the prior cwd on drop. Caller is responsible
+    /// for serialising cwd-touching tests with the shared
+    /// [`ENV_LOCK`] mutex (cwd is process-global, not covered by
+    /// per-var locks). The restore happens in `Drop` so the cwd is
+    /// returned even if the test body panics between the chdir and
+    /// the assertion.
+    struct CwdGuard {
+        prior: Option<PathBuf>,
+    }
+
+    impl CwdGuard {
+        fn enter(target: &std::path::Path) -> Self {
+            let prior = std::env::current_dir().ok();
+            std::env::set_current_dir(target).expect("chdir into cwd-guard target");
+            Self { prior }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            if let Some(p) = self.prior.take() {
+                let _ = std::env::set_current_dir(p);
+            }
+        }
+    }
+
+    #[test]
+    fn mockspace_call_propagates_resolution_error_when_chain_falls_through() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        // Unset every cascade input so the chain falls through cleanly.
+        let _env = EnvVarGuard::unset();
+        let root = fixture_dir("mockspace-call-empty");
+        std::fs::create_dir_all(&root).expect("mkdir empty");
+        let _path = PathEnvGuard::set(&root);
+        let _cwd = CwdGuard::enter(&root);
+        let observed = mockspace_call();
+        // Drop _cwd before cleanup so the restored cwd is not the
+        // about-to-be-removed fixture root.
+        drop(_cwd);
+        cleanup(&root);
+        match observed {
+            Err(ResolutionError::NoUsablePath) => {}
+            other => panic!("expected NoUsablePath, got {other:?}"),
+        }
     }
 
     // ---- step 4 (cargo mock --version probe) ---------------------------
