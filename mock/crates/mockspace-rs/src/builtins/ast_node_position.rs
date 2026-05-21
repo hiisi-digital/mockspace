@@ -190,7 +190,9 @@ fn walk_node(
                 (start.column + 1) as u32,
                 length.max(1),
             ),
-            fix_suggestion: None,
+            hint: None,
+            help: None,
+            suggestion: None,
             related_spans: Vec::new(),
             metadata: None,
         });

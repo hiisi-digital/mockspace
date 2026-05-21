@@ -245,7 +245,9 @@ fn make_finding(
         category: None,
         message: Cow::Owned(pattern.message.clone()),
         span: Span::single_line(path, line, column, length),
-        fix_suggestion: None,
+        hint: None,
+        help: None,
+        suggestion: None,
         related_spans: Vec::new(),
         metadata: None,
     }

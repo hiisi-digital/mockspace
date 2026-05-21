@@ -314,7 +314,9 @@ fn emit(
         category: None,
         message: Cow::Owned(format!("forbidden collection `{forbidden}` ({context})")),
         span: Span::single_line(path, line.max(1), column.max(1), forbidden.len() as u32),
-        fix_suggestion: None,
+        hint: None,
+        help: None,
+        suggestion: None,
         related_spans: Vec::new(),
         metadata: None,
     });

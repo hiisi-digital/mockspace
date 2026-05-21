@@ -116,7 +116,9 @@ impl Lint for UndocumentedItemLint {
                     "{kind:?} `{name}` is undocumented"
                 )),
                 span: Span::single_line(path, 1, 1, name.len() as u32),
-                fix_suggestion: None,
+                hint: None,
+                help: None,
+                suggestion: None,
                 related_spans: Vec::new(),
                 metadata: None,
             });

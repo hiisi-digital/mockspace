@@ -110,7 +110,9 @@ impl Lint for FileMetricLint {
                 self.config.metric, self.config.threshold
             )),
             span: Span::single_line(doc.path(), 1, 1, 1),
-            fix_suggestion: None,
+            hint: None,
+            help: None,
+            suggestion: None,
             related_spans: Vec::new(),
             metadata: None,
         });

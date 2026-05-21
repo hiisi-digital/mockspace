@@ -4,7 +4,7 @@
 //! "dead term" to "canonical replacement". Drives the workspace's
 //! `vocabulary-discipline` lint (substrate → foundations, HList → cons-list,
 //! entity → record, etc.). Each match produces a Finding plus a
-//! `FixSuggestion` carrying the canonical form.
+//! `Suggestion` carrying the canonical form via a `Fix::Replace` recipe.
 //!
 //! Implemented as a self-contained scanner rather than as TokenScan-with-
 //! replacements because the matching surface is asymmetric: TokenScan
@@ -15,7 +15,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use mockspace_core::lint::{Finding, FixSuggestion, GateSeverity, LintContext, Span};
+use mockspace_core::lint::{Finding, Fix, GateSeverity, LintContext, Span, Suggestion};
 use serde::Deserialize;
 
 use crate::document::MockspaceDocument;
@@ -111,7 +111,7 @@ impl Lint for TermReplacementTableLint {
                 term,
                 replacement,
                 self.config.word_boundary,
-                |line, column, length| {
+                |line, column, length, _byte_offset_in_view| {
                     sink.emit(Finding {
                         lint_name: Cow::Borrowed(lint_name),
                         rule_id: None,
@@ -123,9 +123,21 @@ impl Lint for TermReplacementTableLint {
                             "dead term `{term}`; use `{replacement}` instead"
                         )),
                         span: Span::single_line(doc.path(), line, column, length as u32),
-                        fix_suggestion: Some(FixSuggestion {
-                            label: Cow::Borrowed("replace with canonical term"),
-                            replacement: Cow::Owned(replacement.clone()),
+                        hint: None,
+                        help: None,
+                        // Description only; no Fix recipe. The byte offset
+                        // we have here (`_byte_offset_in_view`) is into the
+                        // source-stripped view, not the original document
+                        // bytes that Fix::Replace expects. Translating
+                        // stripped offsets back requires a position map the
+                        // stripper does not currently maintain. Emit advice
+                        // until that translation is wired (or until
+                        // term_replacement scans the unstripped source).
+                        suggestion: Some(Suggestion {
+                            description: Cow::Owned(format!(
+                                "replace `{term}` with `{replacement}`"
+                            )),
+                            fix: None,
                         }),
                         related_spans: Vec::new(),
                         metadata: None,
@@ -137,7 +149,7 @@ impl Lint for TermReplacementTableLint {
     }
 }
 
-fn scan_term<F: FnMut(u32, u32, usize)>(
+fn scan_term<F: FnMut(u32, u32, usize, usize)>(
     view: &str,
     term: &str,
     _replacement: &str,
@@ -173,7 +185,7 @@ fn scan_term<F: FnMut(u32, u32, usize)>(
                 || !is_word_byte(bytes[after]);
             if lhs_ok && rhs_ok {
                 let col = (i - line_start) as u32 + 1;
-                on_match(line, col, term_bytes.len());
+                on_match(line, col, term_bytes.len(), i);
                 i = after;
                 continue;
             }
@@ -270,13 +282,16 @@ mod tests {
         let findings = sink.into_findings();
         assert_eq!(findings.len(), 1);
         assert!(findings[0].message.contains("foundations"));
+        let suggestion = findings[0].suggestion.as_ref().expect("suggestion");
         assert!(
-            findings[0]
-                .fix_suggestion
-                .as_ref()
-                .map(|f| f.replacement.as_ref() == "foundations")
-                .unwrap_or(false)
+            suggestion.description.contains("foundations"),
+            "description should name the replacement: {}",
+            suggestion.description,
         );
+        // Fix is None today; byte offsets in the scanner are into the
+        // stripped view, not the original source. See the comment in
+        // check_document above.
+        assert!(suggestion.fix.is_none());
     }
 
     #[test]

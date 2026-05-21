@@ -40,10 +40,10 @@ pub use atomicity::{
 };
 pub use bookkeeping::{BookkeepingFile, RootEntry, classify_root_entry};
 pub use lint::{
-    Category, ContentHash, Document, Finding, FixSuggestion, Gate, GateSeverity,
+    Category, ContentHash, Document, FileOp, Finding, Fix, Gate, GateSeverity,
     HashAlgorithm, Impact, LINT_CONTRACT_VERSION, Language, LintCfgStore, LintContext,
     LintEngine, LintError, MetadataBlob, Project, RelatedSpan, RunSurface, Severity, Span,
-    SuppressionMap, SuppressionScope, matches_pattern,
+    Suggestion, SuppressionMap, SuppressionScope, matches_pattern,
 };
 pub use manifest::{
     AcceptanceBlock, ChangeBlock, DeprecatedAccounting, Manifest, SCHEMA_MAJOR,

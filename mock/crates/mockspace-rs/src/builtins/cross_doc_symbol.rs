@@ -179,7 +179,9 @@ impl Lint for CrossDocSymbolCheckLint {
                                 crates.join(", ")
                             )),
                             span: entries[0].span.clone(),
-                            fix_suggestion: None,
+                            hint: None,
+                            help: None,
+                            suggestion: None,
                             related_spans: Vec::new(),
                             metadata: None,
                         });
@@ -202,7 +204,9 @@ impl Lint for CrossDocSymbolCheckLint {
                                 sym.name
                             )),
                             span: sym.span.clone(),
-                            fix_suggestion: None,
+                            hint: None,
+                            help: None,
+                            suggestion: None,
                             related_spans: Vec::new(),
                             metadata: None,
                         });
@@ -226,7 +230,9 @@ impl Lint for CrossDocSymbolCheckLint {
                                 "doc backticks `{name}` but no matching pub item exists in source"
                             )),
                             span: Span::single_line(&path, line, 1, name.len() as u32),
-                            fix_suggestion: None,
+                            hint: None,
+                            help: None,
+                            suggestion: None,
                             related_spans: Vec::new(),
                             metadata: None,
                         });
@@ -273,7 +279,9 @@ impl Lint for CrossDocSymbolCheckLint {
                                 sym.name
                             )),
                             span: sym.span.clone(),
-                            fix_suggestion: None,
+                            hint: None,
+                            help: None,
+                            suggestion: None,
                             related_spans: Vec::new(),
                             metadata: None,
                         });

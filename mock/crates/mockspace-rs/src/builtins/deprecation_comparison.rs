@@ -133,7 +133,9 @@ fn emit_drift(
             "{direction}: {kind:?} `{symbol}` listed in deprecated CL but missing from active CL"
         )),
         span: Span::single_line("mock/design_rounds", 1, 1, 1),
-        fix_suggestion: None,
+        hint: None,
+        help: None,
+        suggestion: None,
         related_spans: Vec::new(),
         metadata: None,
     });

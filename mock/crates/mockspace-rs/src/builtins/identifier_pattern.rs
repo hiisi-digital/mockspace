@@ -212,7 +212,9 @@ fn emit_for_ident(
         category: None,
         message: Cow::Owned(message.to_string()),
         span: Span::single_line(path, 1, 1, ident.len() as u32),
-        fix_suggestion: None,
+        hint: None,
+        help: None,
+        suggestion: None,
         related_spans: Vec::new(),
         metadata: None,
     });

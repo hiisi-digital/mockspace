@@ -147,7 +147,9 @@ fn emit(lint_name: &'static str, severity: Severity, sink: &dyn FindingSink, mes
         category: None,
         message: Cow::Owned(message.to_string()),
         span: Span::single_line("mock/design_rounds", 1, 1, 1),
-        fix_suggestion: None,
+        hint: None,
+        help: None,
+        suggestion: None,
         related_spans: Vec::new(),
         metadata: None,
     });
