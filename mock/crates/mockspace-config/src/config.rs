@@ -215,12 +215,74 @@ pub enum MergeStyle {
 /// `[imports]` block. Static ref imports and per-host extensions.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ImportsSection {
-    /// Flat list of `mock://...` URIs to pull at load.
+    /// Flat list of `mock://...` imports to pull at load.
+    ///
+    /// Each entry is either a bare URI string (legacy form) or a
+    /// structured `{ uri, kind }` table (per the preset infrastructure
+    /// memo at `mock/research/202605220500_lint-preset-infrastructure.md`).
+    /// The structured form names the trust tier under which the import
+    /// resolves; the bare form defaults to the `executable` tier for
+    /// backward compatibility with v1 imports.
     #[serde(default)]
-    pub import: Vec<String>,
+    pub import: Vec<ImportEntry>,
     /// `[imports.ext.<host>]` entries. Per-host file-glob and runner config.
     #[serde(default)]
     pub ext: BTreeMap<String, ExtImport>,
+}
+
+/// One `[imports]` entry. Untagged: TOML parses a bare string into
+/// [`ImportEntry::Uri`] and a `{ uri, kind = "..." }` table into
+/// [`ImportEntry::Typed`].
+///
+/// The `kind` axis carries the trust tier so the loader applies the
+/// right verification ceremony per the preset memo (`kind = "config"`
+/// is SHA-pinned but NOT signature-verified; the default executable
+/// kind is signature-verified + TOFU per spec §30).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ImportEntry {
+    /// Bare URI string. Defaults to [`ImportKind::Executable`] at
+    /// resolution time. Equivalent to v1's flat-string import list.
+    Uri(String),
+    /// Structured entry with explicit kind.
+    Typed(TypedImport),
+}
+
+/// Structured `{ uri = "...", kind = "..." }` import. The `kind` field
+/// selects the trust tier; see [`ImportKind`].
+///
+/// `deny_unknown_fields` catches typos in the inline-table form (e.g.
+/// `{ uri = "x", knd = "config" }`) which would otherwise silently
+/// resolve under the default trust tier and lose the author's intent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TypedImport {
+    pub uri: String,
+    #[serde(default)]
+    pub kind: ImportKind,
+}
+
+/// Trust tier under which an [`ImportEntry`] resolves.
+///
+/// Per the preset infrastructure memo:
+/// - [`ImportKind::Executable`] (default): the import is code (hooks,
+///   lint plugins, runners). Signature-verified per spec §30, lockfile-
+///   pinned, TOFU on first contact.
+/// - [`ImportKind::Config`]: the import is inert TOML (presets). SHA-
+///   pinned for reproducibility but NOT signature-verified. Applying
+///   signature ceremony to a `severity = "warn"` TOML overlay is theatre
+///   and would block bootstrap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportKind {
+    Executable,
+    Config,
+}
+
+impl Default for ImportKind {
+    fn default() -> Self {
+        Self::Executable
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -244,8 +306,19 @@ pub struct LintCrateRef {
 /// three pipeline points. `max_lines`, `forbidden`, `reason`, and any other
 /// lint-specific extras are captured in `extras` for the lint implementation
 /// to consume directly.
+///
+/// `extends` carries the optional preset shorthand (e.g.
+/// `extends = "stack-lints::no-heap"` or `extends = "mockspace::no-bare-numeric"`).
+/// The loader expands `<host>::<name>` into the full
+/// `mock://(@|ext/<host>)/export/lint-preset/<name>` URI and resolves
+/// the preset chain before applying this entry's overrides. Per the
+/// preset infrastructure memo at
+/// `mock/research/202605220500_lint-preset-infrastructure.md`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct LintConfig {
+    /// Preset shorthand: `<host>::<preset-name>`. See struct docs.
+    #[serde(default)]
+    pub extends: Option<String>,
     #[serde(default)]
     pub commit: Option<Severity>,
     #[serde(default)]
@@ -384,4 +457,79 @@ fn default_undo_keep_entries() -> u32 {
 }
 fn default_undo_keep_days() -> u32 {
     30
+}
+
+// =========================================================================
+// PresetFile: parsed `<name>.preset.toml` packaged under a lint preset
+// export. Per the preset infrastructure memo at
+// `mock/research/202605220500_lint-preset-infrastructure.md`.
+// =========================================================================
+
+/// A parsed lint preset TOML file.
+///
+/// Presets are inert TOML overlays packaged as exports under
+/// `refs/mock/export/<package>/lint-preset/<name>`. They name a
+/// catalog primitive and supply a configuration overlay (forbidden
+/// patterns, severities, scope filters, reason text) without
+/// shipping any executable code.
+///
+/// The cascade (catalog defaults → preset chain → workspace defaults
+/// → per-lint TOML → CLI overrides) applies preset state below
+/// workspace defaults. Consumers retain full override authority; a
+/// preset cannot dictate behaviour the consumer's TOML has pinned.
+///
+/// `deny_unknown_fields` catches typos in preset files (e.g.
+/// `extens = "..."` instead of `extends`) at load time rather than
+/// silently dropping the field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresetFile {
+    /// Preset schema version. Loader rejects unknown major versions.
+    pub schema_version: String,
+    /// Preset name; combined with the host name to form the
+    /// `<host>::<name>` shorthand at consumer sites.
+    pub name: String,
+    /// Catalog primitive this preset configures (e.g. `forbidden_imports`,
+    /// `token_scan`). Must match a registered catalog kind.
+    pub primitive: String,
+    /// Human-readable summary surfaced by `cargo mock explain`.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Optional shorthand to another preset whose overrides apply
+    /// before this preset's. Resolution walks the chain innermost-
+    /// extends-target first; cycles are a hard load-time error.
+    #[serde(default)]
+    pub extends: Option<String>,
+    /// Configuration overlay applied over the primitive's catalog
+    /// defaults. Keys depend on the primitive (e.g.
+    /// `forbidden`, `reason`, `max_lines`). The loader passes the
+    /// merged table to the primitive's `instantiate` constructor.
+    #[serde(default)]
+    pub config: BTreeMap<String, toml::Value>,
+    /// Per-gate default severities for the preset. Scalar overrides
+    /// from `[lints.<name>]` per-lint TOML win.
+    #[serde(default)]
+    pub severity: GateSeverities,
+    /// Scope overlay applied over the primitive's default scope.
+    /// Same axes as [`ScopedLintConfig`]; list-merge semantics with
+    /// `.add` / `.remove` sub-keys resolve at the cascade layer.
+    #[serde(default)]
+    pub scope: BTreeMap<String, toml::Value>,
+}
+
+/// Per-gate severity overrides at the three pipeline points.
+///
+/// Used by [`PresetFile::severity`] today. `LintConfig` and
+/// [`ScopedLintConfig`] carry the same three fields inline; a
+/// follow-up (#538) migrates those sites to this shared type so the
+/// wire shape stays identical and the Rust types deduplicate.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateSeverities {
+    #[serde(default)]
+    pub commit: Option<Severity>,
+    #[serde(default)]
+    pub build: Option<Severity>,
+    #[serde(default)]
+    pub push: Option<Severity>,
 }

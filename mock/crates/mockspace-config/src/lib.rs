@@ -7,10 +7,11 @@ pub mod error;
 pub mod parse;
 
 pub use config::{
-    BuiltInLiteral, Config, CrateColor, DomainKind, ExtImport, ForgeKind, HostSection,
-    ImportsSection, KnownMacro, LanguageEntry, LanguageHost, LintConfig, LintCrateRef,
-    MergeStyle, MockspaceSection, OnDirtyState, ProfileSection, RefsSection,
-    RefsSecuritySection, ScopedLintConfig, Severity, TransparencySection, UndoSection,
+    BuiltInLiteral, Config, CrateColor, DomainKind, ExtImport, ForgeKind, GateSeverities,
+    HostSection, ImportEntry, ImportKind, ImportsSection, KnownMacro, LanguageEntry,
+    LanguageHost, LintConfig, LintCrateRef, MergeStyle, MockspaceSection, OnDirtyState,
+    PresetFile, ProfileSection, RefsSection, RefsSecuritySection, ScopedLintConfig,
+    Severity, TransparencySection, TypedImport, UndoSection,
 };
 pub use error::ConfigError;
 pub use parse::{parse_mockspace_toml, parse_mockspace_toml_str};
