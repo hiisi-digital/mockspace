@@ -6,21 +6,21 @@
 //!
 //! # Today
 //!
-//! [`RustPreprocessor::extract`] calls
-//! [`comment::parse_directives`] over the document's source, converts
-//! every [`Directive::Allow`] record into a [`SuppressionScope`] entry,
-//! and writes the result into the caller's [`SuppressionMap`]. The
-//! other four directive kinds (Introduces, ScopeAdd, Defer, FileDisable)
-//! are parsed but currently dropped; their per-kind maps land in #546.
-//! [`comment::parse_directives`] itself parses the canonical five-
-//! directive vocabulary per the design memo at
+//! [`RustPreprocessor::extract`] calls [`comment::parse_directives`]
+//! over the document's source and routes each directive variant into
+//! the right field of a [`DirectiveExtracts`] bundle: `Allow` and
+//! `Defer` become [`SuppressionScope`] entries (distinguished by
+//! [`SuppressionKind`]); `ScopeAdd` becomes a [`ScopeAddEntry`];
+//! `FileDisable` becomes a [`FileDisableEntry`]; `Prop` becomes a
+//! [`PropMap`] entry. The parser implements the canonical directive
+//! vocabulary per the design memo at
 //! `mock/research/202605220000_canonical-directive-vocabulary.md`.
 
 pub mod comment;
 pub mod rust_attr;
 
 use mockspace_core::lint::{
-    Directive, Document, FileDisableEntry, FileDisableSet, IntroducerMap, Language, PropMap,
+    Directive, Document, FileDisableEntry, FileDisableSet, Language, PropMap,
     ScopeAddEntry, ScopeAddMap, SuppressionKind, SuppressionMap, SuppressionScope,
 };
 use std::collections::BTreeSet;
@@ -42,8 +42,6 @@ pub struct DirectiveExtracts {
     pub suppressions: SuppressionMap,
     /// `lint:prop` records routed into [`PropMap`].
     pub props: PropMap,
-    /// `lint:introduces` records routed into [`IntroducerMap`].
-    pub introducers: IntroducerMap,
     /// `lint:scope-add` records routed into [`ScopeAddMap`].
     pub scope_adds: ScopeAddMap,
     /// `lint:file-disable` records routed into [`FileDisableSet`].
@@ -91,20 +89,15 @@ impl std::error::Error for PreprocessorError {}
 /// Rust preprocessor.
 ///
 /// Reads source comments, parses canonical directives via
-/// [`comment::parse_directives`], and forwards `Allow` directives as
-/// [`SuppressionScope`] entries into the caller's [`SuppressionMap`].
+/// [`comment::parse_directives`], and routes each variant into its
+/// per-kind field on [`DirectiveExtracts`]:
 ///
-/// The three remaining directive kinds (`Introduces`, `ScopeAdd`,
-/// `FileDisable`) plus `Defer` are parsed but currently dropped by
-/// [`Self::extract`]; the maps they feed into land in #546. `Defer`
-/// will join `Allow` in the suppression map at that point;
-/// `Introduces` / `ScopeAdd` route into separate `IntroducerMap` /
-/// `ScopeAddMap` shapes; `FileDisable` becomes a per-document set
-/// checked at finding-emit time.
-///
-/// `lint:prop` directives are routed via [`Self::extract_props`] into
-/// a [`PropMap`] (slice 4 of `lint:prop`; the only routed kind that
-/// landed before #546).
+/// - `Allow` and `Defer` records → [`SuppressionMap`] (distinguished
+///   by [`SuppressionKind`]; `Defer` carries the `until: <task>`
+///   argument as `tracked`).
+/// - `ScopeAdd` records → [`ScopeAddMap`].
+/// - `FileDisable` records → [`FileDisableSet`].
+/// - `Prop` records → [`PropMap`].
 #[derive(Debug, Default)]
 pub struct RustPreprocessor;
 
@@ -160,9 +153,6 @@ impl LanguagePreprocessor for RustPreprocessor {
                         tracked: Some(until),
                         reason,
                     });
-                }
-                Directive::Introduces { category } => {
-                    out.introducers.push(record.span, category);
                 }
                 Directive::ScopeAdd {
                     lint_name,
@@ -251,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_routes_introduces_scope_add_defer_file_disable() {
+    fn extract_routes_scope_add_defer_file_disable() {
         // Per #546: every Directive variant routes into its per-kind
         // map. The bundled-output collapse means a new variant fails
         // compile in the preprocessor `match` until it has a route,
@@ -261,8 +251,7 @@ mod tests {
 
         let doc = StubDocument {
             path: "lib.rs".into(),
-            source: r#"// lint:introduces(string-foundation)
-// lint:scope-add(no-bare-numeric, exempt_categories=ffi)
+            source: r#"// lint:scope-add(no-bare-numeric, exempt_categories=ffi)
 // lint:defer(no-bare-string, until: #185)
 // lint:file-disable(writing-style) reason: "generated" tracked: #207
 "#
@@ -270,14 +259,6 @@ mod tests {
             hash: ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
-
-        // Introduces → IntroducerMap.
-        let intro: Vec<&str> = extracts
-            .introducers
-            .entries()
-            .map(|(_, cat)| cat)
-            .collect();
-        assert_eq!(intro, vec!["string-foundation"]);
 
         // ScopeAdd → ScopeAddMap.
         let adds = extracts.scope_adds.entries();

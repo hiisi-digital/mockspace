@@ -10,7 +10,6 @@
 //!
 //! ```text
 //! lint:allow(<name>)                       [reason: "..."]  [tracked: #N]
-//! lint:introduces(<category>)
 //! lint:scope-add(<name>, <axis>=<value>)
 //! lint:defer(<name>, until: #N)            [reason: "..."]
 //! lint:file-disable(<name>)                [reason: "..."]  [tracked: #N]
@@ -139,7 +138,6 @@ fn parse_directive_body(
     let span = Span::single_line(path, line, directive_byte_start + 1, body_byte_len);
     let directive = match keyword {
         "allow" => parse_allow(args, tail)?,
-        "introduces" => parse_introduces(args)?,
         "scope-add" => parse_scope_add(args)?,
         "defer" => parse_defer(args, tail)?,
         "file-disable" => parse_file_disable(args, tail)?,
@@ -184,11 +182,6 @@ fn parse_allow(args: &str, tail: &str) -> Option<Directive> {
         reason,
         tracked,
     })
-}
-
-fn parse_introduces(args: &str) -> Option<Directive> {
-    let category = trim_name(args)?;
-    Some(Directive::Introduces { category })
 }
 
 fn parse_scope_add(args: &str) -> Option<Directive> {
@@ -414,17 +407,6 @@ const FNV_PRIME: u64 = 0x100000001b3;
     }
 
     #[test]
-    fn parses_lint_introduces_solo_argument() {
-        let src = "// lint:introduces(string-foundation)\npub struct Str(u32);\n";
-        let recs = parse_directives(src, "lib.rs");
-        assert_eq!(recs.len(), 1);
-        assert!(matches!(
-            &recs[0].directive,
-            Directive::Introduces { category } if category == "string-foundation"
-        ));
-    }
-
-    #[test]
     fn parses_lint_scope_add_with_axis_value() {
         let src = "// lint:scope-add(no-bare-numeric, exempt_categories=ffi-boundary)\nmod ffi {}\n";
         let recs = parse_directives(src, "m.rs");
@@ -524,10 +506,10 @@ fn legacy(name: String) {}
 
     #[test]
     fn block_comment_form_is_recognised() {
-        let src = "/* lint:introduces(string-foundation) */\n";
+        let src = "/* lint:allow(no-bare-numeric) reason: \"x\" tracked: #1 */\n";
         let recs = parse_directives(src, "x.rs");
         assert_eq!(recs.len(), 1);
-        assert!(matches!(&recs[0].directive, Directive::Introduces { .. }));
+        assert!(matches!(&recs[0].directive, Directive::Allow { .. }));
     }
 
     #[test]
@@ -651,10 +633,10 @@ fn legacy(name: String) {}
 
     #[test]
     fn multiple_directives_in_one_file() {
-        let src = "// lint:introduces(foundation-a)\n// lint:allow(no-bare-numeric)\n// lint:file-disable(writing-style)\n";
+        let src = "// lint:defer(no-bare-vec, until: #99)\n// lint:allow(no-bare-numeric)\n// lint:file-disable(writing-style)\n";
         let recs = parse_directives(src, "x.rs");
         assert_eq!(recs.len(), 3);
-        assert!(matches!(&recs[0].directive, Directive::Introduces { .. }));
+        assert!(matches!(&recs[0].directive, Directive::Defer { .. }));
         assert!(matches!(&recs[1].directive, Directive::Allow { .. }));
         assert!(matches!(&recs[2].directive, Directive::FileDisable { .. }));
     }

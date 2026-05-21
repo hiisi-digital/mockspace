@@ -606,14 +606,6 @@ pub enum Directive {
         tracked: Option<String>,
     },
 
-    /// Marks the current item as the canonical introducer of the named
-    /// primitive category. Carves out the marked item and its direct
-    /// impl blocks (same file, same module, same type) from category-
-    /// checked lints. Does not extend to transitive helpers or whole
-    /// modules. Replaces the pre-v2 `[primitive-introductions]` TOML
-    /// table.
-    Introduces { category: String },
-
     /// At a module or file boundary, extends a lint's scope along one
     /// axis for the contained items. Axis set is bounded to
     /// `ScopeConfig` fields ([`ScopeAxis`]); lint packs cannot invent
@@ -700,10 +692,9 @@ pub enum ScopeAxis {
 /// A parsed directive with its source location.
 ///
 /// Preprocessors emit a `Vec<DirectiveRecord>` per document; the engine
-/// folds those into per-kind maps (suppressions into `SuppressionMap`,
-/// introductions into `IntroducerMap`, scope extensions into
-/// `ScopeAddMap`, defers into expanded `SuppressionMap` entries,
-/// file-disables into `FileDisableSet`) before dispatching lints.
+/// folds those into per-kind maps (suppressions and defers into
+/// `SuppressionMap`, scope extensions into `ScopeAddMap`, file-disables
+/// into `FileDisableSet`, props into `PropMap`) before dispatching lints.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectiveRecord {
     pub directive: Directive,
@@ -834,7 +825,7 @@ impl SuppressionMap {
 ///
 /// Three scope resolutions are exposed as distinct methods so consuming
 /// lints declare which one they want. The default attachment rule is
-/// "item + direct impl blocks", matching `introduces`.
+/// "item + direct impl blocks" (same file, same module, same type).
 ///
 /// - [`at_site`](Self::at_site): props with span equal to the query.
 /// - [`including_impl_blocks`](Self::including_impl_blocks): item plus
@@ -977,96 +968,6 @@ impl PropMap {
     /// `true` if no props have been pushed.
     pub fn is_empty(&self) -> bool {
         self.by_span.is_empty()
-    }
-}
-
-// =========================================================================
-// IntroducerMap (lint:introduces directive resolver).
-// =========================================================================
-
-/// Project-level resolver for `// lint:introduces(<category>)` directives.
-///
-/// Records sites that declare themselves as the canonical introducer of
-/// a primitive category. Category-checked lints (`no-bare-numeric`,
-/// `no-bare-string`, the rest of the bare-primitive family) consult
-/// `IntroducerMap` to carve out their own findings on the introducer
-/// site itself.
-///
-/// Replaces the pre-v2 `[primitive-introductions]` TOML table. Per the
-/// canonical-directive-vocabulary memo at
-/// `mock/research/202605220000_canonical-directive-vocabulary.md` and
-/// the implementing task #546.
-///
-/// # Indexing
-///
-/// Dual `BTreeMap` index for the two common queries:
-///
-/// - `by_category`: "which sites introduce this category?"
-/// - `by_span`:     "what categories does this site introduce?"
-///
-/// `push` keeps both indices in sync. Same dedup contract as
-/// [`PropMap`]: repeated `(span, category)` pairs record both
-/// occurrences and the meta-lint surfaces duplicates downstream.
-#[derive(Debug, Clone, Default)]
-pub struct IntroducerMap {
-    by_category: BTreeMap<String, Vec<Span>>,
-    by_span: BTreeMap<Span, Vec<String>>,
-}
-
-impl IntroducerMap {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Record a `(span, category)` introducer entry.
-    pub fn push(&mut self, span: Span, category: String) {
-        self.by_category
-            .entry(category.clone())
-            .or_default()
-            .push(span.clone());
-        self.by_span.entry(span).or_default().push(category);
-    }
-
-    /// All sites declaring themselves introducer of `category`.
-    pub fn sites_for<'a>(&'a self, category: &str) -> impl Iterator<Item = &'a Span> + 'a {
-        self.by_category
-            .get(category)
-            .into_iter()
-            .flat_map(|v| v.iter())
-    }
-
-    /// Categories introduced at this span.
-    pub fn categories_at<'a>(&'a self, span: &Span) -> impl Iterator<Item = &'a str> + 'a {
-        self.by_span
-            .get(span)
-            .into_iter()
-            .flat_map(|v| v.iter().map(String::as_str))
-    }
-
-    /// `true` if any site declares itself introducer of `category`
-    /// covering `finding_span`. Coverage is span-contained: the
-    /// introducer's span must contain the finding's span. Lints
-    /// use this as the carve-out check.
-    pub fn covers(&self, category: &str, finding_span: &Span) -> bool {
-        self.sites_for(category)
-            .any(|introducer_span| introducer_span.contains(finding_span))
-    }
-
-    /// Flat iterator over every `(span, category)` introducer pair.
-    /// Used by engines aggregating per-document maps into a project-
-    /// level resolver.
-    pub fn entries<'a>(&'a self) -> impl Iterator<Item = (&'a Span, &'a str)> + 'a {
-        self.by_span.iter().flat_map(|(span, cats)| {
-            cats.iter().map(move |c| (span, c.as_str()))
-        })
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.by_span.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.by_span.values().map(|v| v.len()).sum()
     }
 }
 
@@ -1524,19 +1425,6 @@ mod tests {
     }
 
     #[test]
-    fn directive_introduces_round_trips() {
-        let r = DirectiveRecord {
-            directive: Directive::Introduces {
-                category: "string-foundation".to_string(),
-            },
-            span: Span::single_line("hilavitkutin-str/src/lib.rs", 42, 1, 10),
-        };
-        let s = toml::to_string(&r).unwrap();
-        let back: DirectiveRecord = toml::from_str(&s).unwrap();
-        assert_eq!(back, r);
-    }
-
-    #[test]
     fn directive_scope_add_round_trips_each_axis() {
         for axis in [
             ScopeAxis::Paths,
@@ -1938,38 +1826,6 @@ mod tests {
         map.push(scope("a.rs", (10, 20), &["no-foo"], Some("#1")));
         let finding = Span::single_line("b.rs", 15, 0, 1);
         assert!(map.resolves("no-foo", &finding).is_none());
-    }
-
-    // ---- IntroducerMap ----
-
-    #[test]
-    fn introducer_map_dual_index_returns_both_views() {
-        let mut map = IntroducerMap::new();
-        let span_a = Span::range("a.rs", 1, 0, 5, 0);
-        let span_b = Span::range("b.rs", 1, 0, 5, 0);
-        map.push(span_a.clone(), "string-foundation".to_string());
-        map.push(span_b.clone(), "string-foundation".to_string());
-        map.push(span_a.clone(), "numeric-foundation".to_string());
-
-        let sites: Vec<&Span> = map.sites_for("string-foundation").collect();
-        assert_eq!(sites.len(), 2);
-        let cats_at_a: Vec<&str> = map.categories_at(&span_a).collect();
-        assert_eq!(cats_at_a.len(), 2);
-        assert!(cats_at_a.contains(&"string-foundation"));
-        assert!(cats_at_a.contains(&"numeric-foundation"));
-        assert_eq!(map.len(), 3);
-    }
-
-    #[test]
-    fn introducer_map_covers_uses_span_containment() {
-        let mut map = IntroducerMap::new();
-        let outer = Span::range("a.rs", 1, 0, 100, 0);
-        map.push(outer.clone(), "string-foundation".to_string());
-        let inner_finding = Span::single_line("a.rs", 50, 5, 3);
-        assert!(map.covers("string-foundation", &inner_finding));
-        let other_file = Span::single_line("b.rs", 50, 5, 3);
-        assert!(!map.covers("string-foundation", &other_file));
-        assert!(!map.covers("never-introduced", &inner_finding));
     }
 
     // ---- ScopeAddMap ----

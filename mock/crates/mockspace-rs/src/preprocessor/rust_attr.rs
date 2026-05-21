@@ -15,7 +15,6 @@
 //!
 //! ```rust
 //! #[mockspace::allow("no-bare-numeric", reason = "...", tracked = "#427")]
-//! #[mockspace::introduces("string-foundation")]
 //! #[mockspace::scope_add("no-bare-numeric", axis = "exempt_categories", value = "ffi")]
 //! #[mockspace::defer("no-bare-string", until = "#185", reason = "...")]
 //! #[mockspace::file_disable("writing-style", reason = "...", tracked = "#207")]
@@ -166,7 +165,6 @@ fn parse_attr(attr: &syn::Attribute, path: &str) -> Option<DirectiveRecord> {
     let span = span_of(attr.span(), path);
     let directive = match keyword.as_str() {
         "allow" => parse_allow(attr)?,
-        "introduces" => parse_introduces(attr)?,
         "scope_add" => parse_scope_add(attr)?,
         "defer" => parse_defer(attr)?,
         "file_disable" => parse_file_disable(attr)?,
@@ -196,12 +194,6 @@ fn parse_allow(attr: &syn::Attribute) -> Option<Directive> {
         reason: args.keyed("reason"),
         tracked: args.keyed("tracked"),
     })
-}
-
-fn parse_introduces(attr: &syn::Attribute) -> Option<Directive> {
-    let args = collect_args(attr)?;
-    let category = args.positional.first().cloned()?;
-    Some(Directive::Introduces { category })
 }
 
 fn parse_scope_add(attr: &syn::Attribute) -> Option<Directive> {
@@ -363,20 +355,6 @@ const X: u64 = 1;
     }
 
     #[test]
-    fn parses_mockspace_introduces_attribute() {
-        let src = r##"
-#[mockspace::introduces("string-foundation")]
-pub struct Str(u32);
-"##;
-        let recs = parse(src);
-        assert_eq!(recs.len(), 1);
-        assert!(matches!(
-            &recs[0].directive,
-            Directive::Introduces { category } if category == "string-foundation"
-        ));
-    }
-
-    #[test]
     fn parses_mockspace_scope_add_attribute() {
         let src = r##"
 #[mockspace::scope_add("no-bare-numeric", axis = "exempt_categories", value = "ffi-boundary")]
@@ -468,7 +446,7 @@ mod inner {
 
 struct Y;
 impl Y {
-    #[mockspace::introduces("string-foundation")]
+    #[mockspace::file_disable("writing-style")]
     fn helper() {}
 }
 "##;
@@ -478,12 +456,12 @@ impl Y {
             .iter()
             .map(|r| match &r.directive {
                 Directive::Allow { lint_name, .. } => lint_name.as_str(),
-                Directive::Introduces { category } => category.as_str(),
+                Directive::FileDisable { lint_name, .. } => lint_name.as_str(),
                 _ => "other",
             })
             .collect();
         assert!(names.contains(&"no-bare-numeric"));
-        assert!(names.contains(&"string-foundation"));
+        assert!(names.contains(&"writing-style"));
     }
 
     #[test]
@@ -541,7 +519,7 @@ trait T {
     #[mockspace::allow("no-bare-numeric")]
     fn method();
 
-    #[mockspace::introduces("string-foundation")]
+    #[mockspace::allow("no-bare-vec")]
     type Assoc;
 
     #[mockspace::allow("no-bare-string")]
@@ -559,7 +537,7 @@ extern "C" {
     #[mockspace::allow("no-bare-numeric")]
     fn external_call();
 
-    #[mockspace::introduces("ffi-boundary")]
+    #[mockspace::allow("no-bare-string")]
     static FOO: i32;
 }
 "##;
@@ -573,7 +551,7 @@ extern "C" {
 enum E {
     #[mockspace::allow("no-bare-numeric")]
     A,
-    #[mockspace::introduces("ffi-boundary")]
+    #[mockspace::allow("no-bare-string")]
     B(u32),
 }
 "##;
@@ -587,7 +565,7 @@ enum E {
 struct S {
     #[mockspace::allow("no-bare-numeric")]
     raw_count: u64,
-    #[mockspace::introduces("ffi-boundary")]
+    #[mockspace::allow("no-bare-string")]
     raw_ptr: *const u8,
 }
 "##;

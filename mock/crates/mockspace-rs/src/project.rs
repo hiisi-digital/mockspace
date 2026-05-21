@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use mockspace_core::lint::{
-    FileDisableSet, Gate, IntroducerMap, Project, RunSurface, ScopeAddMap, SuppressionMap,
+    FileDisableSet, Gate, Project, RunSurface, ScopeAddMap, SuppressionMap,
 };
 
 use crate::document::MockspaceDocument;
@@ -26,7 +26,6 @@ pub struct MockspaceProject {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) design_rounds: DesignRoundsView,
     pub(crate) suppressions: SuppressionMap,
-    pub(crate) introducers: IntroducerMap,
     pub(crate) scope_adds: ScopeAddMap,
     pub(crate) file_disables: FileDisableSet,
     pub(crate) surface: RunSurface,
@@ -91,14 +90,6 @@ impl MockspaceProject {
         &self.suppressions
     }
 
-    /// Aggregated `lint:introduces` records from every Rust document
-    /// in this project. Populated at `scope_project` time by the
-    /// engine's preprocessor pass; consumer lints read this to
-    /// decide their own carve-outs.
-    pub fn introducers(&self) -> &IntroducerMap {
-        &self.introducers
-    }
-
     /// Aggregated `lint:scope-add` records. Lints that consult this
     /// extend their pre-compiled `ScopeFilter` per-finding.
     pub fn scope_adds(&self) -> &ScopeAddMap {
@@ -118,12 +109,10 @@ impl MockspaceProject {
     pub fn set_resolved_directives(
         &mut self,
         suppressions: SuppressionMap,
-        introducers: IntroducerMap,
         scope_adds: ScopeAddMap,
         file_disables: FileDisableSet,
     ) {
         self.suppressions = suppressions;
-        self.introducers = introducers;
         self.scope_adds = scope_adds;
         self.file_disables = file_disables;
     }
@@ -356,7 +345,6 @@ impl ProjectBuilder {
             workspace: self.workspace,
             design_rounds: self.design_rounds,
             suppressions: self.suppressions,
-            introducers: IntroducerMap::new(),
             scope_adds: ScopeAddMap::new(),
             file_disables: FileDisableSet::new(),
             surface: self.surface,

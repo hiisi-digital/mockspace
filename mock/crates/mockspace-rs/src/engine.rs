@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use mockspace_core::lint::{
-    FileDisableSet, Finding, Gate, HashAlgorithm, IntroducerMap, Language, LintCfgStore,
+    FileDisableSet, Finding, Gate, HashAlgorithm, Language, LintCfgStore,
     LintContext, LintEngine, RunSurface, ScopeAddMap, SuppressionMap,
 };
 use crate::preprocessor::PreprocessorError;
@@ -148,16 +148,6 @@ impl MockspaceEngine {
             }
         }
 
-        // No category validation: `lint:introduces(<category>)` is a
-        // legacy directive scheduled for retirement. The per-site
-        // exemption it provided is now written as
-        // `// lint:allow(<lint-name>) reason: "..." tracked: #N`
-        // directly. While `Directive::Introduces` and
-        // [`mockspace_core::lint::IntroducerMap`] still exist for the
-        // benefit of consumers mid-migration, the validation gate
-        // does not enforce category-name consistency. Retirement
-        // lands in a follow-up PR that drops the directive variant.
-
         if errors.is_empty() {
             Ok(())
         } else {
@@ -176,11 +166,10 @@ impl MockspaceEngine {
         &self,
         project: &mut MockspaceProject,
     ) -> Result<(), PreprocessorError> {
-        let (suppressions, introducers, scope_adds, file_disables) =
+        let (suppressions, scope_adds, file_disables) =
             self.aggregate_directives(project)?;
         project.set_resolved_directives(
             suppressions,
-            introducers,
             scope_adds,
             file_disables,
         );
@@ -191,11 +180,10 @@ impl MockspaceEngine {
         &self,
         project: &MockspaceProject,
     ) -> Result<
-        (SuppressionMap, IntroducerMap, ScopeAddMap, FileDisableSet),
+        (SuppressionMap, ScopeAddMap, FileDisableSet),
         PreprocessorError,
     > {
         let mut suppressions = SuppressionMap::new();
-        let mut introducers = IntroducerMap::new();
         let mut scope_adds = ScopeAddMap::new();
         let mut file_disables = FileDisableSet::new();
         for doc in project.documents() {
@@ -203,14 +191,6 @@ impl MockspaceEngine {
                 let extracts = self.rust_preprocessor.extract(doc)?;
                 for scope in extracts.suppressions.scopes() {
                     suppressions.push(scope.clone());
-                }
-                let intro_pairs: Vec<(_, String)> = extracts
-                    .introducers
-                    .entries()
-                    .map(|(span, cat)| (span.clone(), cat.to_string()))
-                    .collect();
-                for (span, category) in intro_pairs {
-                    introducers.push(span, category);
                 }
                 for entry in extracts.scope_adds.entries() {
                     scope_adds.push(entry.clone());
@@ -220,7 +200,7 @@ impl MockspaceEngine {
                 }
             }
         }
-        Ok((suppressions, introducers, scope_adds, file_disables))
+        Ok((suppressions, scope_adds, file_disables))
     }
 }
 
