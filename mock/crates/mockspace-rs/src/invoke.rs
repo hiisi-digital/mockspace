@@ -104,9 +104,9 @@ impl std::error::Error for ResolutionError {}
 ///    [`ResolvedInvocation::CargoAlias`].
 /// 5. [`ResolutionError::NoUsablePath`].
 ///
-/// Steps 3-4 are not yet implemented and currently fall through to
-/// step 5; they land as separate slices of task #559. The dispatch
-/// shape here is the seam the follow-up slices slot into without
+/// Step 4 is not yet implemented and currently falls through to
+/// step 5; it lands as a separate slice of task #559. The dispatch
+/// shape here is the seam the follow-up slice slots into without
 /// touching the public type surface.
 pub fn resolve_invocation() -> Result<ResolvedInvocation, ResolutionError> {
     if let Some(path) = resolve_env_var()? {
@@ -115,9 +115,13 @@ pub fn resolve_invocation() -> Result<ResolvedInvocation, ResolutionError> {
     if let Some(path) = resolve_toml(&std::env::current_dir().unwrap_or_default())? {
         return Ok(ResolvedInvocation::Absolute(path));
     }
+    if let Some(path) = resolve_path_lookup() {
+        return Ok(ResolvedInvocation::Absolute(path));
+    }
 
-    // Steps 3-4 land in subsequent slices of task #559. Until then,
-    // the chain falls through to the terminal error.
+    // Step 4 (cargo mock --version probe) lands in a subsequent slice
+    // of task #559. Until then, the chain falls through to the
+    // terminal error.
     Err(ResolutionError::NoUsablePath)
 }
 
@@ -143,6 +147,37 @@ fn resolve_env_var() -> Result<Option<PathBuf>, ResolutionError> {
     }
     Ok(Some(path))
 }
+
+/// Step 3 of [`resolve_invocation`]: walk `$PATH` looking for an
+/// executable named `mock` (Unix) or `mock.exe` (Windows; falls back
+/// to existence-only check there per the same rationale as step 1).
+/// Returns the first match or `None` when no candidate is found.
+/// Does not return errors: a missing or unset `$PATH` falls through
+/// silently to the next step rather than surfacing a "broken
+/// environment" error, because the resolution chain is itself the
+/// diagnostic for that condition.
+fn resolve_path_lookup() -> Option<PathBuf> {
+    let path_env = std::env::var_os("PATH")?;
+    for entry in std::env::split_paths(&path_env) {
+        if entry.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = entry.join(BINARY_NAME);
+        if is_executable_file(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Binary name searched for in step 3. The bootstrap installs the
+/// mockspace tool under this name; deviating consumers can still
+/// reach the binary through the env var (step 1) or TOML field
+/// (step 2).
+#[cfg(unix)]
+const BINARY_NAME: &str = "mock";
+#[cfg(not(unix))]
+const BINARY_NAME: &str = "mock.exe";
 
 /// Step 2 of [`resolve_invocation`]: discover the nearest
 /// `mock/mockspace.toml` (or `mockspace.toml`) starting from
@@ -587,6 +622,154 @@ mod tests {
             Ok(Some(p)) => assert!(p.ends_with("bin/mock"), "got {p:?}"),
             other => panic!("expected resolution via upward walk, got {other:?}"),
         }
+    }
+
+    // ---- step 3 (PATH lookup) -------------------------------------------
+
+    /// RAII guard for the `PATH` env var; mirrors `EnvVarGuard` for
+    /// `MOCKSPACE_BIN_PATH`. Holds the shared `ENV_LOCK` invariant
+    /// (caller acquires before constructing) so the global env var
+    /// stays serialised across the parallel test runner.
+    struct PathEnvGuard {
+        prior: Option<std::ffi::OsString>,
+    }
+
+    impl PathEnvGuard {
+        fn set(value: &std::path::Path) -> Self {
+            let prior = std::env::var_os("PATH");
+            // SAFETY: caller holds ENV_LOCK; see EnvVarGuard docs for
+            // the env-mutation safety invariant.
+            unsafe { std::env::set_var("PATH", value) };
+            Self { prior }
+        }
+
+        fn unset() -> Self {
+            let prior = std::env::var_os("PATH");
+            // SAFETY: see EnvVarGuard docs.
+            unsafe { std::env::remove_var("PATH") };
+            Self { prior }
+        }
+    }
+
+    impl Drop for PathEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: see EnvVarGuard docs.
+            match self.prior.take() {
+                Some(v) => unsafe { std::env::set_var("PATH", v) },
+                None => unsafe { std::env::remove_var("PATH") },
+            }
+        }
+    }
+
+    fn write_fake_mock_binary(dir: &std::path::Path) -> PathBuf {
+        std::fs::create_dir_all(dir).expect("mkdir bin-dir");
+        let path = dir.join(BINARY_NAME);
+        std::fs::write(&path, b"#!/bin/sh\n").expect("write fake mock");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod fake mock");
+        }
+        path
+    }
+
+    #[test]
+    fn path_lookup_returns_none_when_path_unset() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = PathEnvGuard::unset();
+        assert!(resolve_path_lookup().is_none());
+    }
+
+    #[test]
+    fn path_lookup_finds_executable_in_path_entry() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let root = fixture_dir("path-find");
+        let bin = write_fake_mock_binary(&root);
+        let _g = PathEnvGuard::set(&root);
+        let observed = resolve_path_lookup();
+        cleanup(&root);
+        match observed {
+            Some(p) => assert_eq!(p, bin),
+            None => panic!("expected Some(path), got None"),
+        }
+    }
+
+    #[test]
+    fn path_lookup_returns_first_match_across_multiple_entries() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let root = fixture_dir("path-first-match");
+        let first = root.join("a");
+        let second = root.join("b");
+        let first_bin = write_fake_mock_binary(&first);
+        let _second_bin = write_fake_mock_binary(&second);
+        let mut joined = std::ffi::OsString::new();
+        joined.push(first.as_os_str());
+        joined.push(":");
+        joined.push(second.as_os_str());
+        // SAFETY: holding ENV_LOCK; mirrors PathEnvGuard's safety.
+        let prior = std::env::var_os("PATH");
+        unsafe { std::env::set_var("PATH", &joined) };
+        let observed = resolve_path_lookup();
+        match prior {
+            Some(v) => unsafe { std::env::set_var("PATH", v) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+        cleanup(&root);
+        match observed {
+            Some(p) => assert_eq!(p, first_bin, "first entry should win"),
+            None => panic!("expected Some(path), got None"),
+        }
+    }
+
+    #[test]
+    fn path_lookup_skips_non_executable_candidate() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let root = fixture_dir("path-skip-non-exec");
+        // Create a regular non-exec file at the candidate path.
+        std::fs::create_dir_all(&root).expect("mkdir root");
+        let candidate = root.join(BINARY_NAME);
+        std::fs::write(&candidate, b"not a binary").expect("write non-exec");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o644))
+                .expect("chmod non-exec");
+        }
+        let _g = PathEnvGuard::set(&root);
+        let observed = resolve_path_lookup();
+        cleanup(&root);
+        #[cfg(unix)]
+        assert!(
+            observed.is_none(),
+            "non-exec file should not match, got {observed:?}"
+        );
+        #[cfg(not(unix))]
+        {
+            // On non-Unix the executable check is existence-only, so
+            // this case would actually match. Skip the assertion.
+            let _ = observed;
+        }
+    }
+
+    #[test]
+    fn path_lookup_skips_empty_path_entries() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let root = fixture_dir("path-skip-empty");
+        let bin = write_fake_mock_binary(&root);
+        let mut joined = std::ffi::OsString::new();
+        joined.push("::");
+        joined.push(root.as_os_str());
+        let prior = std::env::var_os("PATH");
+        // SAFETY: holding ENV_LOCK.
+        unsafe { std::env::set_var("PATH", &joined) };
+        let observed = resolve_path_lookup();
+        match prior {
+            Some(v) => unsafe { std::env::set_var("PATH", v) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+        cleanup(&root);
+        assert_eq!(observed, Some(bin));
     }
 
     #[test]
