@@ -1,0 +1,18 @@
+schema_version = "1.0"
+name = "strategy-marker-required"
+primitive = "ast-type-position"
+description = "pub numeric types must carry S: Strategy"
+
+[config]
+forbidden_types = ["UFixed", "IFixed", "Bits"]
+positions = ["fn-param", "fn-return", "struct-field"]
+visibility = "public"
+
+[severity]
+commit = "warn"
+build = "warn"
+push = "warn"
+
+[scope]
+paths = ["**/*.rs"]
+crates = ["arvo*"]

@@ -1,0 +1,18 @@
+schema_version = "1.0"
+name = "lint-allow-requires-task-id"
+primitive = "suppression-meta"
+description = "every lint:allow scope must carry a tracked task id and reason"
+
+[config]
+require_tracked = true
+require_reason = true
+require_reason_min_words = 3
+forbid_expired = false
+
+[severity]
+commit = "error"
+build = "error"
+push = "error"
+
+[scope]
+paths = ["**/*.rs"]

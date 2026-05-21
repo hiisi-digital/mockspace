@@ -1,0 +1,17 @@
+schema_version = "1.0"
+name = "no-vec-in-trait-sig"
+primitive = "ast-type-position"
+description = "trait method signatures must not take or return Vec"
+
+[config]
+forbidden_types = ["Vec"]
+positions = ["fn-param", "fn-return"]
+visibility = "public"
+
+[severity]
+commit = "error"
+build = "error"
+push = "error"
+
+[scope]
+paths = ["**/*.rs"]

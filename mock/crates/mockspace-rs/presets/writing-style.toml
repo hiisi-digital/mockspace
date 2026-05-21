@@ -1,0 +1,31 @@
+schema_version = "1.0"
+name = "writing-style"
+primitive = "content-regex"
+description = "writing style: em-dashes, marketing words, filler"
+
+[[config.patterns]]
+regex = "—"
+message = "em-dashes are forbidden; use period, comma, or parens"
+finding_kind = "em-dash"
+strip_code_fences = true
+replace_with = "."
+
+[[config.patterns]]
+regex = '\b(leverage|seamless|robust|powerful|holistic|paradigm|unlock|streamline|utilize)\b'
+message = "marketing word; rewrite to describe the concrete property"
+finding_kind = "marketing-word"
+strip_code_fences = true
+
+[[config.patterns]]
+regex = '\b(essentially|basically|fundamentally|literally)\b'
+message = "filler word; cut entirely"
+finding_kind = "filler"
+strip_code_fences = true
+
+[severity]
+commit = "warn"
+build = "warn"
+push = "warn"
+
+[scope]
+paths = ["**/*.md", "**/*.md.tmpl"]
