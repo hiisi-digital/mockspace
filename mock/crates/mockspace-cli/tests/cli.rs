@@ -1,20 +1,23 @@
 //! End-to-end integration tests for the `mock` binary.
 //!
 //! Each test builds the CLI as a process fixture via `assert_cmd` and
-//! drives it against a fresh `tempfile::TempDir` so no state leaks
-//! between cases. The bootstrap module's unit tests already cover the
-//! per-function behaviour matrix; this suite verifies the wiring
-//! through the `clap` parser + `main` dispatch + stdout / stderr +
-//! exit-code surface.
+//! drives it against a fresh `MockspaceFixture` (from the
+//! `mockspace-test-fixtures` crate) so no state leaks between cases.
+//! The bootstrap module's unit tests already cover the per-function
+//! behaviour matrix; this suite verifies the wiring through the
+//! `clap` parser + `main` dispatch + stdout / stderr + exit-code
+//! surface.
 //!
-//! All tests pass `--repo-root <tempdir>` so they never touch the
-//! actual working directory. The fixtures stay independent of cargo's
-//! own `target/` tree.
+//! Tests that need filesystem state pass `--repo-root <fixture-path>`
+//! so they never touch the actual working directory. Tests that don't
+//! need filesystem state (e.g. `explain` against the catalog defaults
+//! when no user TOML is required) omit the flag and let the CLI
+//! default to cwd.
 
 use assert_cmd::Command;
+use mockspace_test_fixtures::MockspaceFixture;
 use predicates::prelude::*;
 use std::fs;
-use tempfile::TempDir;
 
 fn mock() -> Command {
     Command::cargo_bin("mock").expect("cargo build provides the mock binary")
@@ -44,11 +47,11 @@ fn version_flag_succeeds() {
 
 #[test]
 fn status_reports_not_installed_in_fresh_directory() {
-    let tmp = TempDir::new().unwrap();
+    let fixture = MockspaceFixture::new().build().expect("fixture");
     mock()
         .arg("status")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("not installed"))
@@ -59,21 +62,15 @@ fn status_reports_not_installed_in_fresh_directory() {
 
 #[test]
 fn status_reports_fully_adopted_after_install_with_mock_dir() {
-    let tmp = TempDir::new().unwrap();
-    // The bootstrap install creates the cargo alias + hooks; the
-    // `mock/` directory is part of the consumer's repo skeleton and
-    // not created by bootstrap, so the test fixture pre-creates it.
-    fs::create_dir_all(tmp.path().join("mock")).unwrap();
-    mock()
-        .arg("install")
-        .arg("--repo-root")
-        .arg(tmp.path())
-        .assert()
-        .success();
+    let fixture = MockspaceFixture::new()
+        .with_mock_dir()
+        .with_install()
+        .build()
+        .expect("fixture");
     mock()
         .arg("status")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("fully adopted"))
@@ -84,23 +81,23 @@ fn status_reports_fully_adopted_after_install_with_mock_dir() {
 
 #[test]
 fn install_then_status_reports_installed_state() {
-    let tmp = TempDir::new().unwrap();
     // Install creates `mock/target/hooks/` as a side effect of
     // writing the hook scripts, which makes the `has_mock_dir`
     // signal true. So after install, status reports fully adopted
     // even though the test fixture did not pre-create `mock/`.
     // This codifies the observable post-install shape.
+    let fixture = MockspaceFixture::new().build().expect("fixture");
     mock()
         .arg("install")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("installed"));
     mock()
         .arg("status")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("mock/ directory       : yes"))
@@ -110,14 +107,14 @@ fn install_then_status_reports_installed_state() {
 
 #[test]
 fn install_creates_cargo_alias_file() {
-    let tmp = TempDir::new().unwrap();
+    let fixture = MockspaceFixture::new().build().expect("fixture");
     mock()
         .arg("install")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success();
-    let cargo_config = tmp.path().join(".cargo").join("config.toml");
+    let cargo_config = fixture.path().join(".cargo").join("config.toml");
     assert!(cargo_config.is_file(), "cargo alias config should exist");
     let body = fs::read_to_string(&cargo_config).unwrap();
     assert!(
@@ -128,14 +125,14 @@ fn install_creates_cargo_alias_file() {
 
 #[test]
 fn install_creates_hook_scripts() {
-    let tmp = TempDir::new().unwrap();
+    let fixture = MockspaceFixture::new().build().expect("fixture");
     mock()
         .arg("install")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success();
-    let hooks_dir = tmp.path().join("mock").join("target").join("hooks");
+    let hooks_dir = fixture.path().join("mock").join("target").join("hooks");
     assert!(
         hooks_dir.join("pre-commit").is_file(),
         "pre-commit hook should exist"
@@ -148,18 +145,16 @@ fn install_creates_hook_scripts() {
 
 #[test]
 fn install_is_idempotent_via_cli() {
-    let tmp = TempDir::new().unwrap();
+    // First "install" via the fixture builder; second via the CLI
+    // should observe AlreadyInstalled.
+    let fixture = MockspaceFixture::new()
+        .with_install()
+        .build()
+        .expect("fixture");
     mock()
         .arg("install")
         .arg("--repo-root")
-        .arg(tmp.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("installed"));
-    mock()
-        .arg("install")
-        .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("already installed"));
@@ -167,32 +162,29 @@ fn install_is_idempotent_via_cli() {
 
 #[test]
 fn uninstall_round_trip_via_cli() {
-    let tmp = TempDir::new().unwrap();
-    mock()
-        .arg("install")
-        .arg("--repo-root")
-        .arg(tmp.path())
-        .assert()
-        .success();
+    let fixture = MockspaceFixture::new()
+        .with_install()
+        .build()
+        .expect("fixture");
     mock()
         .arg("uninstall")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("removed"));
-    let hooks_dir = tmp.path().join("mock").join("target").join("hooks");
+    let hooks_dir = fixture.path().join("mock").join("target").join("hooks");
     assert!(!hooks_dir.join("pre-commit").exists());
     assert!(!hooks_dir.join("pre-push").exists());
 }
 
 #[test]
 fn uninstall_on_clean_directory_reports_not_installed() {
-    let tmp = TempDir::new().unwrap();
+    let fixture = MockspaceFixture::new().build().expect("fixture");
     mock()
         .arg("uninstall")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("was not installed"));
@@ -200,11 +192,11 @@ fn uninstall_on_clean_directory_reports_not_installed() {
 
 #[test]
 fn refresh_acts_as_install_when_nothing_present() {
-    let tmp = TempDir::new().unwrap();
+    let fixture = MockspaceFixture::new().build().expect("fixture");
     mock()
         .arg("refresh")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("refreshed"));
@@ -212,14 +204,11 @@ fn refresh_acts_as_install_when_nothing_present() {
 
 #[test]
 fn refresh_repairs_drifted_hook_body() {
-    let tmp = TempDir::new().unwrap();
-    mock()
-        .arg("install")
-        .arg("--repo-root")
-        .arg(tmp.path())
-        .assert()
-        .success();
-    let pre_commit = tmp
+    let fixture = MockspaceFixture::new()
+        .with_install()
+        .build()
+        .expect("fixture");
+    let pre_commit = fixture
         .path()
         .join("mock")
         .join("target")
@@ -229,7 +218,7 @@ fn refresh_repairs_drifted_hook_body() {
     mock()
         .arg("refresh")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success();
     let body = fs::read_to_string(&pre_commit).unwrap();
@@ -266,20 +255,20 @@ fn explain_unknown_lint_fails_with_clear_error() {
 
 #[test]
 fn explain_picks_up_per_lint_toml_override() {
-    let tmp = TempDir::new().unwrap();
-    fs::write(
-        tmp.path().join("lints.toml"),
-        r#"
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml(
+            r#"
 [lints.no-bare-numeric.scope]
 exempt_paths = ["**/cli_fixture/**"]
 "#,
-    )
-    .unwrap();
+        )
+        .build()
+        .expect("fixture");
     mock()
         .arg("explain")
         .arg("no-bare-numeric")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("Layer 4: per-lint TOML"))
@@ -293,28 +282,26 @@ fn explain_picks_up_workspace_defaults_at_layer_3() {
     // the config side; `[defaults.scope]` reads as a config key
     // named `scope` carrying a table value, not a scope-side
     // override. This codifies the as-shipped contract.
-    let tmp = TempDir::new().unwrap();
-    fs::write(
-        tmp.path().join("lints.toml"),
-        r#"
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml(
+            r#"
 [defaults]
 visibility = "all"
 "#,
-    )
-    .unwrap();
+        )
+        .build()
+        .expect("fixture");
     mock()
         .arg("explain")
         .arg("no-bare-numeric")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(
             "Layer 3: workspace defaults (`[defaults]` in lints.toml)",
         ))
         .stdout(predicate::str::contains("config.visibility = \"all\""))
-        // Final value resolves to Layer 3 because per-lint TOML
-        // (Layer 4) and CLI overrides (Layer 5) are empty.
         .stdout(predicate::str::contains(
             "config.visibility = \"all\" (Layer 3: workspace defaults)",
         ));
@@ -325,23 +312,23 @@ fn explain_per_lint_toml_wins_over_workspace_defaults() {
     // Layer 4 ranks above Layer 3 in the cascade. When both
     // `[defaults]` and `[lints.<name>.config]` set the same key,
     // the per-lint value wins. This pins the cascade ordering.
-    let tmp = TempDir::new().unwrap();
-    fs::write(
-        tmp.path().join("lints.toml"),
-        r#"
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml(
+            r#"
 [defaults]
 visibility = "all"
 
 [lints.no-bare-numeric.config]
 visibility = "crate"
 "#,
-    )
-    .unwrap();
+        )
+        .build()
+        .expect("fixture");
     mock()
         .arg("explain")
         .arg("no-bare-numeric")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -351,13 +338,18 @@ visibility = "crate"
 
 #[test]
 fn explain_warns_on_unparseable_user_toml_but_still_runs() {
-    let tmp = TempDir::new().unwrap();
-    fs::write(tmp.path().join("lints.toml"), "<<<not toml>>>").unwrap();
+    // The fixture builder writes lints.toml contents verbatim with
+    // no validation, so feeding it garbage exercises the CLI's
+    // warn-and-proceed path against an unparseable user TOML.
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml("<<<not toml>>>")
+        .build()
+        .expect("fixture");
     mock()
         .arg("explain")
         .arg("no-bare-numeric")
         .arg("--repo-root")
-        .arg(tmp.path())
+        .arg(fixture.path())
         .assert()
         .success()
         .stderr(predicate::str::contains("warning"))
