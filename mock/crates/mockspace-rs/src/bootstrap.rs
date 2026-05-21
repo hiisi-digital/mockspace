@@ -317,6 +317,243 @@ pub fn uninstall_cargo_alias(repo_root: &Path) -> Result<UninstallOutcome, Insta
     Ok(UninstallOutcome::Removed)
 }
 
+/// The relative directory the bootstrap writes hook scripts into.
+/// `core.hooksPath` in the consumer's `.git/config` points at the
+/// joined `<repo_root>/<HOOKS_DIR>` path; the prefix-match check in
+/// [`has_hooks_path`] requires the configured path to be under
+/// `<repo_root>/mock/target/`, which `mock/target/hooks` satisfies.
+const HOOKS_DIR: &str = "mock/target/hooks";
+
+/// The hook script bodies the bootstrap writes. Each entry is
+/// `(hook-name, body)`. The bodies invoke `cargo mock check --gate <g>`
+/// once the v2 CLI (#560) ships; until then the scripts will fail
+/// with "no such subcommand", which is the right transitional
+/// behaviour: hook fires, mockspace is not yet available, push or
+/// commit is rejected. The user fixes by completing the bootstrap
+/// (which includes installing the CLI binary).
+const HOOK_SCRIPTS: &[(&str, &str)] = &[
+    (
+        "pre-commit",
+        "#!/bin/sh\n\
+         # Installed by mockspace v2 bootstrap. Invokes the mockspace\n\
+         # commit gate; do not edit by hand. Re-run `cargo mock\n\
+         # install` to refresh.\n\
+         exec cargo mock check --gate commit\n",
+    ),
+    (
+        "pre-push",
+        "#!/bin/sh\n\
+         # Installed by mockspace v2 bootstrap. Invokes the mockspace\n\
+         # push gate; do not edit by hand. Re-run `cargo mock\n\
+         # install` to refresh.\n\
+         exec cargo mock check --gate push\n",
+    ),
+];
+
+/// Install the git hook scripts under `<repo_root>/mock/target/hooks/`
+/// and point `<repo_root>/.git/config`'s `core.hooksPath` at that
+/// directory. Symmetric to [`install_cargo_alias`]; together they
+/// give the consumer the full v2 adoption state that
+/// [`AdoptionStatus`] reports.
+///
+/// Behaviour matrix:
+///
+/// - Hook directory and scripts are written unconditionally each
+///   call. The content is canonical; an existing user-edited script
+///   gets overwritten without warning, mirroring the cargo-alias
+///   "canonical-value-or-bust" policy. Consumers who hand-edit the
+///   scripts should re-derive their edits as a wrapper that calls
+///   the canonical body.
+/// - Scripts are made executable on Unix (chmod 0o755). On non-Unix
+///   the executable bit is not set; git on those platforms uses the
+///   `core.fileMode` setting or the file extension to determine
+///   executability.
+/// - `.git/config`'s `[core] hooksPath` is set to the relative
+///   `mock/target/hooks` form. If the file does not exist or has no
+///   `[core]` section, both are created. If `hooksPath` already
+///   exists in `[core]` with a different value, it is overwritten;
+///   this is a hook install, not a hook discovery.
+/// - The implementation reads `.git/config` as INI, mutates the
+///   `[core] hooksPath` line in place (or inserts it), and writes
+///   the file back. Other sections survive unchanged.
+pub fn install_hooks(repo_root: &Path) -> Result<InstallOutcome, InstallError> {
+    let hooks_dir = repo_root.join(HOOKS_DIR);
+    std::fs::create_dir_all(&hooks_dir)?;
+    let mut any_changed = false;
+    for (name, body) in HOOK_SCRIPTS {
+        let path = hooks_dir.join(name);
+        let existing = std::fs::read_to_string(&path).ok();
+        if existing.as_deref() != Some(*body) {
+            std::fs::write(&path, body)?;
+            any_changed = true;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&path)?.permissions();
+            if perms.mode() & 0o755 != 0o755 {
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&path, perms)?;
+                any_changed = true;
+            }
+        }
+    }
+    let git_changed = set_hooks_path(repo_root, Some(HOOKS_DIR))?;
+    let outcome = if any_changed || git_changed {
+        InstallOutcome::Installed
+    } else {
+        InstallOutcome::AlreadyInstalled
+    };
+    Ok(outcome)
+}
+
+/// Uninstall the git hook scripts and clear `core.hooksPath`. Removes
+/// `<repo_root>/mock/target/hooks/{pre-commit, pre-push}`; leaves
+/// `mock/target/hooks/` itself in place even after the scripts are
+/// gone (the directory is part of cargo's target tree and the user
+/// may have other content there). Clears the `core.hooksPath` line
+/// from `.git/config`'s `[core]` section if present.
+pub fn uninstall_hooks(repo_root: &Path) -> Result<UninstallOutcome, InstallError> {
+    let hooks_dir = repo_root.join(HOOKS_DIR);
+    let mut any_changed = false;
+    for (name, _) in HOOK_SCRIPTS {
+        let path = hooks_dir.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => any_changed = true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(InstallError::Io(e)),
+        }
+    }
+    let git_changed = set_hooks_path(repo_root, None)?;
+    let outcome = if any_changed || git_changed {
+        UninstallOutcome::Removed
+    } else {
+        UninstallOutcome::AlreadyUninstalled
+    };
+    Ok(outcome)
+}
+
+/// Set (or clear) `core.hooksPath` in `<repo_root>/.git/config`.
+/// `Some(value)` writes the value into the `[core]` section,
+/// creating the file and section if needed. `None` removes the
+/// `hooksPath` line; if `[core]` becomes empty as a result, the
+/// section header is removed too. Returns `Ok(true)` if the file
+/// content changed, `Ok(false)` if no mutation was needed.
+fn set_hooks_path(repo_root: &Path, value: Option<&str>) -> Result<bool, InstallError> {
+    let git_dir = repo_root.join(".git");
+    let path = git_dir.join("config");
+    let mut lines: Vec<String> = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents.lines().map(str::to_string).collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(InstallError::Io(e)),
+    };
+
+    // Locate `[core]` section bounds. `core_start` is the index of
+    // the `[core]` header line; `core_end` is the index of the next
+    // section header (or `lines.len()` if `[core]` runs to EOF).
+    let mut core_start: Option<usize> = None;
+    let mut core_end = lines.len();
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if trimmed == "[core]" {
+                core_start = Some(i);
+            } else if core_start.is_some() {
+                core_end = i;
+                break;
+            }
+        }
+    }
+
+    let mut hooks_idx: Option<usize> = None;
+    if let Some(start) = core_start {
+        for i in (start + 1)..core_end {
+            let trimmed = lines[i].trim();
+            if trimmed.starts_with('#') || trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                break;
+            }
+            if let Some((key, _)) = trimmed.split_once('=') {
+                if key.trim() == "hooksPath" {
+                    hooks_idx = Some(i);
+                    break;
+                }
+            }
+        }
+    }
+
+    let original_lines = lines.clone();
+    let canonical_line = value.map(|v| format!("\thooksPath = {v}"));
+
+    match (canonical_line, hooks_idx, core_start) {
+        (Some(line), Some(idx), _) => {
+            // Replace existing hooksPath line.
+            lines[idx] = line;
+        }
+        (Some(line), None, Some(_start)) => {
+            // Insert hooksPath at the tail of the existing [core]
+            // section (just before the next section header, or at
+            // EOF if [core] runs to the end). Matches git's own
+            // emit order, which appends new keys at section tails.
+            lines.insert(core_end, line);
+        }
+        (Some(line), None, None) => {
+            // No [core] section yet; append a fresh one.
+            if !lines.is_empty() && !lines.last().is_some_and(|l| l.is_empty()) {
+                lines.push(String::new());
+            }
+            lines.push("[core]".to_string());
+            lines.push(line);
+        }
+        (None, Some(idx), _) => {
+            // Remove the hooksPath line.
+            lines.remove(idx);
+            // If [core] is now empty (no key lines), remove the
+            // section header too. Empty means: between core_start
+            // and the next section header, every line is a comment
+            // or blank.
+            if let Some(start) = core_start {
+                let new_end = lines
+                    .iter()
+                    .enumerate()
+                    .skip(start + 1)
+                    .find(|(_, l)| {
+                        let t = l.trim();
+                        t.starts_with('[') && t.ends_with(']')
+                    })
+                    .map(|(i, _)| i)
+                    .unwrap_or(lines.len());
+                let core_has_content = (start + 1..new_end).any(|i| {
+                    let t = lines[i].trim();
+                    !t.is_empty() && !t.starts_with('#')
+                });
+                if !core_has_content {
+                    // Remove lines from `start` up to (but not
+                    // including) `new_end`.
+                    lines.drain(start..new_end);
+                }
+            }
+        }
+        (None, None, _) => {
+            // Nothing to do.
+        }
+    }
+
+    if lines == original_lines {
+        return Ok(false);
+    }
+
+    std::fs::create_dir_all(&git_dir)?;
+    let mut out = lines.join("\n");
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(&path, out)?;
+    Ok(true)
+}
+
 /// Returns true if `<repo_root>/.cargo/config.toml` contains an
 /// `[alias]` table with a `mock = ...` key. The check is structural
 /// (parses the TOML) rather than substring-based so `# mock = ...`
@@ -912,6 +1149,174 @@ mod tests {
         // [build] survives both operations; [alias] gone.
         assert!(parsed.get("build").and_then(|v| v.as_table()).is_some());
         assert!(parsed.get("alias").is_none());
+        cleanup(&root);
+    }
+
+    // ---- install_hooks / uninstall_hooks --------------------------------
+
+    #[test]
+    fn install_hooks_creates_scripts_and_sets_hooks_path() {
+        let root = fixture_dir("install-hooks-fresh");
+        let outcome = install_hooks(&root).expect("install");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        let hooks_dir = root.join("mock").join("target").join("hooks");
+        assert!(hooks_dir.join("pre-commit").is_file());
+        assert!(hooks_dir.join("pre-push").is_file());
+        // Status diagnostic flips.
+        assert!(status(&root).has_hooks_path);
+        cleanup(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_hooks_marks_scripts_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = fixture_dir("install-hooks-exec");
+        install_hooks(&root).expect("install");
+        let hooks_dir = root.join("mock").join("target").join("hooks");
+        for name in ["pre-commit", "pre-push"] {
+            let mode = std::fs::metadata(hooks_dir.join(name))
+                .expect("stat")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode & 0o755, 0o755, "{name} should have 0o755 bits set");
+        }
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_hooks_is_idempotent_when_state_matches() {
+        let root = fixture_dir("install-hooks-idem");
+        install_hooks(&root).expect("first install");
+        let outcome = install_hooks(&root).expect("second install");
+        assert_eq!(outcome, InstallOutcome::AlreadyInstalled);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_hooks_overwrites_drifted_script_body() {
+        let root = fixture_dir("install-hooks-drift");
+        let hooks_dir = root.join("mock").join("target").join("hooks");
+        std::fs::create_dir_all(&hooks_dir).expect("mkdir hooks");
+        std::fs::write(hooks_dir.join("pre-commit"), "#!/bin/sh\necho stale\n")
+            .expect("write stale");
+        let outcome = install_hooks(&root).expect("install");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        let after = std::fs::read_to_string(hooks_dir.join("pre-commit")).expect("read after");
+        assert!(after.contains("cargo mock check --gate commit"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_hooks_writes_core_section_when_git_config_missing() {
+        let root = fixture_dir("install-hooks-no-gitconfig");
+        install_hooks(&root).expect("install");
+        let contents = std::fs::read_to_string(root.join(".git").join("config")).expect("read");
+        assert!(contents.contains("[core]"));
+        assert!(contents.contains("hooksPath"));
+        assert!(contents.contains("mock/target/hooks"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_hooks_overwrites_existing_hookspath() {
+        let root = fixture_dir("install-hooks-overwrite-path");
+        let git_dir = root.join(".git");
+        std::fs::create_dir_all(&git_dir).expect("mkdir .git");
+        std::fs::write(
+            git_dir.join("config"),
+            "[core]\n\thooksPath = /opt/team-hooks\n",
+        )
+        .expect("write existing");
+        install_hooks(&root).expect("install");
+        let contents = std::fs::read_to_string(git_dir.join("config")).expect("read");
+        // Old value gone, canonical value present.
+        assert!(!contents.contains("/opt/team-hooks"));
+        assert!(contents.contains("mock/target/hooks"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_hooks_preserves_other_git_config_sections() {
+        let root = fixture_dir("install-hooks-preserve-sections");
+        let git_dir = root.join(".git");
+        std::fs::create_dir_all(&git_dir).expect("mkdir .git");
+        std::fs::write(
+            git_dir.join("config"),
+            "[user]\n\tname = Test User\n\temail = test@example.com\n",
+        )
+        .expect("write existing");
+        install_hooks(&root).expect("install");
+        let contents = std::fs::read_to_string(git_dir.join("config")).expect("read");
+        assert!(contents.contains("[user]"));
+        assert!(contents.contains("Test User"));
+        assert!(contents.contains("test@example.com"));
+        assert!(contents.contains("[core]"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_hooks_removes_scripts_and_clears_hookspath() {
+        let root = fixture_dir("uninstall-hooks");
+        install_hooks(&root).expect("install");
+        assert!(status(&root).has_hooks_path);
+        let outcome = uninstall_hooks(&root).expect("uninstall");
+        assert_eq!(outcome, UninstallOutcome::Removed);
+        let hooks_dir = root.join("mock").join("target").join("hooks");
+        assert!(!hooks_dir.join("pre-commit").exists());
+        assert!(!hooks_dir.join("pre-push").exists());
+        assert!(!status(&root).has_hooks_path);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_hooks_is_idempotent_when_nothing_present() {
+        let root = fixture_dir("uninstall-hooks-empty");
+        let outcome = uninstall_hooks(&root).expect("uninstall");
+        assert_eq!(outcome, UninstallOutcome::AlreadyUninstalled);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_hooks_preserves_other_git_config_sections() {
+        let root = fixture_dir("uninstall-hooks-preserve");
+        install_hooks(&root).expect("install");
+        // Insert a sibling [user] section.
+        let git_config = root.join(".git").join("config");
+        let mut contents = std::fs::read_to_string(&git_config).expect("read");
+        contents.push_str("\n[user]\n\tname = Test User\n");
+        std::fs::write(&git_config, contents).expect("write");
+        uninstall_hooks(&root).expect("uninstall");
+        let after = std::fs::read_to_string(&git_config).expect("read after");
+        assert!(after.contains("[user]"));
+        assert!(after.contains("Test User"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_hooks_removes_empty_core_section_after_hookspath_clear() {
+        let root = fixture_dir("uninstall-hooks-empty-core");
+        install_hooks(&root).expect("install");
+        uninstall_hooks(&root).expect("uninstall");
+        let contents = std::fs::read_to_string(root.join(".git").join("config")).expect("read");
+        // [core] section was only the hooksPath key; should be gone now.
+        assert!(
+            !contents.contains("[core]"),
+            "expected [core] section removed, got: {contents:?}"
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_then_uninstall_hooks_round_trip_returns_to_clean_state() {
+        let root = fixture_dir("hooks-round-trip");
+        let before = status(&root);
+        assert!(!before.has_hooks_path);
+        install_hooks(&root).expect("install");
+        assert!(status(&root).has_hooks_path);
+        uninstall_hooks(&root).expect("uninstall");
+        assert!(!status(&root).has_hooks_path);
         cleanup(&root);
     }
 
