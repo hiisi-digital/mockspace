@@ -287,6 +287,69 @@ exempt_paths = ["**/cli_fixture/**"]
 }
 
 #[test]
+fn explain_picks_up_workspace_defaults_at_layer_3() {
+    // The `[defaults]` block in lints.toml populates Layer 3 of
+    // the cascade. By design the block is flat and merges onto
+    // the config side; `[defaults.scope]` reads as a config key
+    // named `scope` carrying a table value, not a scope-side
+    // override. This codifies the as-shipped contract.
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("lints.toml"),
+        r#"
+[defaults]
+visibility = "all"
+"#,
+    )
+    .unwrap();
+    mock()
+        .arg("explain")
+        .arg("no-bare-numeric")
+        .arg("--repo-root")
+        .arg(tmp.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Layer 3: workspace defaults (`[defaults]` in lints.toml)",
+        ))
+        .stdout(predicate::str::contains("config.visibility = \"all\""))
+        // Final value resolves to Layer 3 because per-lint TOML
+        // (Layer 4) and CLI overrides (Layer 5) are empty.
+        .stdout(predicate::str::contains(
+            "config.visibility = \"all\" (Layer 3: workspace defaults)",
+        ));
+}
+
+#[test]
+fn explain_per_lint_toml_wins_over_workspace_defaults() {
+    // Layer 4 ranks above Layer 3 in the cascade. When both
+    // `[defaults]` and `[lints.<name>.config]` set the same key,
+    // the per-lint value wins. This pins the cascade ordering.
+    let tmp = TempDir::new().unwrap();
+    fs::write(
+        tmp.path().join("lints.toml"),
+        r#"
+[defaults]
+visibility = "all"
+
+[lints.no-bare-numeric.config]
+visibility = "crate"
+"#,
+    )
+    .unwrap();
+    mock()
+        .arg("explain")
+        .arg("no-bare-numeric")
+        .arg("--repo-root")
+        .arg(tmp.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "config.visibility = \"crate\" (Layer 4: per-lint TOML)",
+        ));
+}
+
+#[test]
 fn explain_warns_on_unparseable_user_toml_but_still_runs() {
     let tmp = TempDir::new().unwrap();
     fs::write(tmp.path().join("lints.toml"), "<<<not toml>>>").unwrap();
