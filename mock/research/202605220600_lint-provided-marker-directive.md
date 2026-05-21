@@ -1,13 +1,17 @@
 ---
 date: 2026-05-22
 phase: research
-status: design-locked-pending-user-confirmation
+status: superseded-by-reconciliation
+superseded_by: mock/research/202605221700_directive-vocabulary-reconciled.md
 scope: mockspace-rs 6th directive (lint-provided per-site properties consumed by lints)
 related:
   - mock/research/202605220000_canonical-directive-vocabulary.md
 review:
   - 2026-05-22 architect (feature-dev:code-architect): all 8 questions answered, name locked to `prop`, dual-index PropMap, three explicit scope accessors, declared_props on Lint trait
 ---
+
+> **Status update 2026-05-22**: This memo is preserved as a research artifact. The implementation took `lint:prop` as the 5th directive (not the 6th) because `lint:introduces` was never shipped. References below to `Introduces { /* existing */ }` and `IntroducerMap` describe surfaces that do not exist in source. The truth-of-impl is documented in `mock/research/202605221700_directive-vocabulary-reconciled.md`. Per #570 user decision: option (b). Read the body below for the `lint:prop` design rationale (name choice, dual-index PropMap, scope accessors, declared_props); the surrounding "6th-directive joining the canonical 5" framing is historical.
+
 
 # A sixth directive: `lint:prop` (lint-provided per-site properties)
 

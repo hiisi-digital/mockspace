@@ -2,13 +2,17 @@
 date: 2026-05-22
 phase: research
 scope: mockspace-rs preprocessor + cross-language directive surface
-status: design-locked
+status: superseded-by-reconciliation
+superseded_by: mock/research/202605221700_directive-vocabulary-reconciled.md
 supersedes:
   - Concept of `[primitive-introductions]` per-crate TOML table
 related:
   - mock/research/202605211200_lint-schema-design.md
   - mock/research/202605201700_engine-preprocessor-architecture.md
 ---
+
+> **Status update 2026-05-22**: This memo is preserved as a research artifact. The implementation diverged: `lint:introduces` was never shipped and `IntroducerMap` does not exist in source. The truth-of-impl is documented in `mock/research/202605221700_directive-vocabulary-reconciled.md`. Per #570 user decision: option (b), update the memos to match the shipped 5-directive set (Allow, ScopeAdd, Defer, FileDisable, Prop). The retired `[primitive-introductions]` TOML now migrates to per-site `lint:allow` + optional `lint:scope-add` per the reconciled memo. Read the body below for design intent and history; do not treat it as the directive-vocabulary reference.
+
 
 # Canonical directive vocabulary
 
