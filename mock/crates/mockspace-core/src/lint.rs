@@ -1334,18 +1334,44 @@ mod tests {
     // ---- Language / RunSurface / ContentHash ----
 
     #[test]
-    fn language_round_trips_through_toml() {
+    fn language_round_trips_every_variant() {
+        // Covers all sixteen Language variants. The earlier shape
+        // exercised only TypeScript; the parallel audit pass expanded
+        // Impact and Category to all-variants but left Language at
+        // one-of-sixteen. `#[serde(rename_all = "snake_case")]`
+        // produces non-obvious markers for multi-word variants
+        // (`type_script`, `java_script`); each wire form is locked
+        // explicitly here.
         #[derive(Serialize, Deserialize)]
-        struct Wrap {
+        struct W {
             l: Language,
         }
-        let s = toml::to_string(&Wrap {
-            l: Language::TypeScript,
-        })
-        .unwrap();
-        assert!(s.contains("type_script"));
-        let r: Wrap = toml::from_str(&s).unwrap();
-        assert_eq!(r.l, Language::TypeScript);
+        for (variant, marker) in [
+            (Language::Rust, "rust"),
+            (Language::TypeScript, "type_script"),
+            (Language::JavaScript, "java_script"),
+            (Language::Tsx, "tsx"),
+            (Language::Jsx, "jsx"),
+            (Language::Python, "python"),
+            (Language::Go, "go"),
+            (Language::Zig, "zig"),
+            (Language::C, "c"),
+            (Language::Cpp, "cpp"),
+            (Language::Json, "json"),
+            (Language::Toml, "toml"),
+            (Language::Yaml, "yaml"),
+            (Language::Markdown, "markdown"),
+            (Language::Shell, "shell"),
+            (Language::Other, "other"),
+        ] {
+            let s = toml::to_string(&W { l: variant }).unwrap();
+            assert!(
+                s.contains(marker),
+                "language `{variant:?}` missing marker `{marker}` in `{s}`"
+            );
+            let r: W = toml::from_str(&s).unwrap();
+            assert_eq!(r.l, variant);
+        }
     }
 
     #[test]

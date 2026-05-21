@@ -386,6 +386,133 @@ mod tests {
     // production scope walk would surface here.
 
     #[test]
+    fn fires_on_expired_suppression_referring_to_closed_task() {
+        // `forbid_expired = true` reads `project.workspace().task_state`
+        // and emits when a scope's `tracked: #N` names a closed task.
+        // The check is gated behind `forbid_expired`; without it, the
+        // closed-task list is ignored. Both the config flag and the
+        // closed-task lookup are exercised here.
+        use crate::project::{TaskStateView, WorkspaceMetadata};
+
+        let lint = SuppressionMetaLint::new(
+            "no-stale-suppressions",
+            "",
+            GateSeverity::uniform(Severity::Warn),
+            SuppressionMetaConfig {
+                require_tracked: false,
+                require_reason: false,
+                require_reason_min_words: 1,
+                forbid_expired: true,
+                overuse_threshold_per_crate: None,
+            },
+        );
+        let mut closed = std::collections::HashSet::new();
+        closed.insert("#9".to_string());
+        let workspace = WorkspaceMetadata {
+            root: PathBuf::from("/tmp"),
+            proc_macro_crates: std::collections::HashSet::new(),
+            task_state: TaskStateView {
+                open_tasks: std::collections::HashSet::new(),
+                closed_tasks: closed,
+            },
+        };
+        let mut map = SuppressionMap::new();
+        map.push(SuppressionScope {
+            scope: Span::single_line("a.rs", 1, 1, 5),
+            lints: lint_set(),
+            kind: SuppressionKind::Allow,
+            tracked: Some("#9".to_string()),
+            reason: None,
+        });
+        let project = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit)
+            .with_workspace(workspace)
+            .with_suppressions(map)
+            .build();
+        let sink = VecFindingSink::new();
+        let root = PathBuf::from("/tmp");
+        let sev = GateSeverity::uniform(Severity::Warn);
+        let cfg = EmptyCfg;
+        let ctx = make_ctx(&root, sev, &cfg);
+        lint.check_project(&ctx, &project, &sink).unwrap();
+        let findings = sink.into_findings();
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0].message.contains("closed"),
+            "message should mention the closed task; got: {:?}",
+            findings[0].message
+        );
+    }
+
+    #[test]
+    fn fires_on_overuse_threshold_per_crate() {
+        // `overuse_threshold_per_crate` counts scopes per crate (derived
+        // from the scope's file path) and emits one finding per crate
+        // exceeding the threshold. With threshold = 1 and two scopes in
+        // `crates/a/`, the crate exceeds; one scope in `crates/b/`
+        // does not. Verify the emitted finding names the offending
+        // crate and the count.
+        let lint = SuppressionMetaLint::new(
+            "no-overused-suppressions",
+            "",
+            GateSeverity::uniform(Severity::Warn),
+            SuppressionMetaConfig {
+                require_tracked: false,
+                require_reason: false,
+                require_reason_min_words: 1,
+                forbid_expired: false,
+                overuse_threshold_per_crate: Some(1),
+            },
+        );
+        let project = project_with_suppressions(vec![
+            SuppressionScope {
+                scope: Span::single_line("mock/crates/a/src/lib.rs", 1, 1, 5),
+                lints: lint_set(),
+                kind: SuppressionKind::Allow,
+                tracked: Some("#1".to_string()),
+                reason: None,
+            },
+            SuppressionScope {
+                scope: Span::single_line("mock/crates/a/src/other.rs", 2, 1, 5),
+                lints: lint_set(),
+                kind: SuppressionKind::Allow,
+                tracked: Some("#2".to_string()),
+                reason: None,
+            },
+            SuppressionScope {
+                scope: Span::single_line("mock/crates/b/src/lib.rs", 3, 1, 5),
+                lints: lint_set(),
+                kind: SuppressionKind::Allow,
+                tracked: Some("#3".to_string()),
+                reason: None,
+            },
+        ]);
+        let sink = VecFindingSink::new();
+        let root = PathBuf::from("/tmp");
+        let sev = GateSeverity::uniform(Severity::Warn);
+        let cfg = EmptyCfg;
+        let ctx = make_ctx(&root, sev, &cfg);
+        lint.check_project(&ctx, &project, &sink).unwrap();
+        let findings = sink.into_findings();
+        assert_eq!(
+            findings.len(),
+            1,
+            "exactly one crate should exceed threshold; got {findings:?}"
+        );
+        let f = &findings[0];
+        assert_eq!(f.rule_id.as_deref(), Some("overuse"));
+        assert!(
+            f.message.contains("a"),
+            "finding should name crate `a`; got: {:?}",
+            f.message
+        );
+        assert!(
+            f.message.contains("2"),
+            "finding should report count 2; got: {:?}",
+            f.message
+        );
+    }
+
+    #[test]
     fn meta_lint_sees_scope_from_real_preprocessor_run() {
         use crate::document::MockspaceDocument;
         use crate::MockspaceEngine;
