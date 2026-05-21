@@ -17,6 +17,7 @@
 //! `mock/research/202605220000_canonical-directive-vocabulary.md`.
 
 pub mod comment;
+pub mod rust_attr;
 
 use mockspace_core::lint::{
     Directive, Document, Language, SuppressionMap, SuppressionScope,
