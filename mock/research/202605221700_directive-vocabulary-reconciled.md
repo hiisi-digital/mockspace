@@ -100,7 +100,7 @@ The directive vocabulary is comment-based across all languages. Each language's 
 
 Comments work everywhere; the parser cost is one branch per language paid once.
 
-In addition, languages with idiomatic decorator syntax MAY support attribute-based aliases. The Rust attribute parser at `preprocessor/rust_attr.rs` currently aliases four directives (`allow`, `scope-add`, `defer`, `file-disable`); `prop` is comment-only pending the followup that adds `#[mockspace::prop(...)]` parsing. Where the alias exists, the canonical internal record is the same regardless of which surface the author used; the alias is a parsing-time transformation, not a separate concept.
+In addition, languages with idiomatic decorator syntax MAY support attribute-based aliases. The Rust attribute parser at `preprocessor/rust_attr.rs` aliases all five directives (`allow`, `scope-add`, `defer`, `file-disable`, `prop`). The canonical internal record is the same regardless of which surface the author used; the alias is a parsing-time transformation, not a separate concept.
 
 For Rust:
 
