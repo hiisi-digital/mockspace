@@ -640,6 +640,7 @@ regex = "—"
 message = "em-dashes are forbidden; use period, comma, or parens"
 finding_kind = "em-dash"
 strip_code_fences = true
+replace_with = "."
 
 [[patterns]]
 regex = '\b(leverage|seamless|robust|powerful|holistic|paradigm|unlock|streamline|utilize)\b'

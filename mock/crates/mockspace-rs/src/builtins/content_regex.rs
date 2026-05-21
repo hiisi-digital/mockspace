@@ -9,7 +9,7 @@
 
 use std::borrow::Cow;
 
-use mockspace_core::lint::{Finding, GateSeverity, LintContext, Severity, Span};
+use mockspace_core::lint::{Finding, Fix, GateSeverity, LintContext, Severity, Span, Suggestion};
 use regex::Regex;
 use serde::Deserialize;
 
@@ -51,6 +51,15 @@ pub struct ContentPattern {
     /// Strip doc comments before matching.
     #[serde(default)]
     pub strip_doc_comments: bool,
+    /// Optional replacement string for auto-fix. When set, every match
+    /// emits a `Finding` carrying `suggestion.fix = Some(Fix::Replace {
+    /// start: match.start, end: match.end, replacement: replace_with })`
+    /// so `cargo mock check --fix` can apply the substitution. Leave
+    /// `None` (the default) when the right replacement depends on
+    /// call-site context the regex cannot capture; the `message` field
+    /// then carries the prose advice instead.
+    #[serde(default)]
+    pub replace_with: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -163,7 +172,14 @@ fn emit_regex_matches(
         let (line, column) = byte_offset_to_line_col(view, m.start());
         let length = (m.end() - m.start()) as u32;
         sink.emit(make_finding(
-            lint_name, pattern, path, line, column, length, severity,
+            lint_name,
+            pattern,
+            path,
+            line,
+            column,
+            length,
+            severity,
+            Some((m.start(), m.end())),
         ));
     }
 }
@@ -204,9 +220,12 @@ fn emit_ratio_gated(
         }
         if count >= threshold {
             // Emit one finding pointing at the first match in the window.
+            // Ratio-gated findings represent a window aggregate, not a
+            // single substitution; no Fix is attached even when
+            // `replace_with` is set on the pattern.
             let (line, column, length) = matches[i];
             sink.emit(make_finding(
-                lint_name, pattern, path, line, column, length, severity,
+                lint_name, pattern, path, line, column, length, severity, None,
             ));
             i = j;
         } else {
@@ -223,7 +242,24 @@ fn make_finding(
     column: u32,
     length: u32,
     severity: Severity,
+    byte_range: Option<(usize, usize)>,
 ) -> Finding {
+    // When the pattern declares an auto-fix replacement AND the caller
+    // supplied byte offsets (the per-match path, not the ratio-window
+    // aggregate path), attach a Fix::Replace recipe so
+    // `cargo mock check --fix` can apply the substitution. Otherwise
+    // the message field carries the advice and the consumer hand-fixes.
+    let suggestion = match (pattern.replace_with.as_ref(), byte_range) {
+        (Some(replacement), Some((start, end))) => Some(Suggestion {
+            description: Cow::Owned(format!("replace with `{replacement}`")),
+            fix: Some(Fix::Replace {
+                start,
+                end,
+                replacement: Cow::Owned(replacement.clone()),
+            }),
+        }),
+        _ => None,
+    };
     Finding {
         lint_name: Cow::Borrowed(lint_name),
         rule_id: pattern.finding_kind.clone().map(Cow::Owned),
@@ -235,7 +271,7 @@ fn make_finding(
         span: Span::single_line(path, line, column, length),
         hint: None,
         help: None,
-        suggestion: None,
+        suggestion,
         related_spans: Vec::new(),
         metadata: None,
     }
@@ -324,6 +360,7 @@ mod tests {
                 strip_strings: false,
                 strip_comments: false,
                 strip_doc_comments: false,
+                replace_with: None,
             }],
         };
         let lint =
@@ -357,6 +394,7 @@ mod tests {
                 strip_strings: false,
                 strip_comments: false,
                 strip_doc_comments: false,
+                replace_with: None,
             }],
         };
         let lint = ContentRegexLint::new(
@@ -381,6 +419,203 @@ mod tests {
     }
 
     #[test]
+    fn replace_with_populates_suggestion_fix() {
+        // Per-match emit path: the pattern's `replace_with` produces a
+        // Suggestion + Fix::Replace recipe per finding so the auto-fix
+        // runner can apply the substitution. Byte offsets cover the
+        // matched range exactly.
+        let config = ContentRegexConfig {
+            patterns: vec![ContentPattern {
+                regex: r"—".to_string(),
+                message: "em-dash found".to_string(),
+                finding_kind: Some("em-dash".to_string()),
+                ratio: None,
+                strip_code_fences: false,
+                strip_strings: false,
+                strip_comments: false,
+                strip_doc_comments: false,
+                replace_with: Some(".".to_string()),
+            }],
+        };
+        let lint = ContentRegexLint::new(
+            "writing-style",
+            "",
+            GateSeverity::uniform(Severity::Warn),
+            config,
+        )
+        .unwrap();
+        let source = "Hello — world.";
+        let doc = MockspaceDocument::new("a.md", "t", Language::Markdown, source);
+        let sink = VecFindingSink::new();
+        let root = PathBuf::from("/tmp");
+        let sev = GateSeverity::uniform(Severity::Warn);
+        let cfg = EmptyCfg;
+        let ctx = make_ctx(&root, sev, &cfg);
+        lint.check_document(&ctx, &doc, &sink).unwrap();
+        let findings = sink.into_findings();
+        assert_eq!(findings.len(), 1);
+        let suggestion = findings[0]
+            .suggestion
+            .as_ref()
+            .expect("replace_with populates suggestion");
+        match suggestion.fix.as_ref().expect("fix present") {
+            mockspace_core::lint::Fix::Replace {
+                start,
+                end,
+                replacement,
+            } => {
+                // Em-dash is U+2014, encoded as 3 UTF-8 bytes. Source:
+                // "Hello — world.". Match starts at byte 6 (after the
+                // "Hello " prefix) and ends at byte 9.
+                assert_eq!(*start, 6);
+                assert_eq!(*end, 9);
+                assert_eq!(replacement.as_ref(), ".");
+            }
+            other => panic!("expected Fix::Replace, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ratio_window_does_not_attach_fix_even_when_replace_with_set() {
+        // Ratio-gated findings represent an aggregate window, not a
+        // single substitution. Even when the pattern declares
+        // `replace_with`, the ratio emit path does not attach a fix
+        // because there is no single byte range to act on.
+        let config = ContentRegexConfig {
+            patterns: vec![ContentPattern {
+                regex: r"—".to_string(),
+                message: "em-dash burst".to_string(),
+                finding_kind: None,
+                ratio: Some(RatioThreshold {
+                    max_matches: 3,
+                    lines_window: 5,
+                }),
+                strip_code_fences: false,
+                strip_strings: false,
+                strip_comments: false,
+                strip_doc_comments: false,
+                replace_with: Some(".".to_string()),
+            }],
+        };
+        let lint =
+            ContentRegexLint::new("burst", "", GateSeverity::uniform(Severity::Warn), config)
+                .unwrap();
+        let source = "a — b\nc — d\ne — f\ng — h";
+        let doc = MockspaceDocument::new("a.md", "t", Language::Markdown, source);
+        let sink = VecFindingSink::new();
+        let root = PathBuf::from("/tmp");
+        let sev = GateSeverity::uniform(Severity::Warn);
+        let cfg = EmptyCfg;
+        let ctx = make_ctx(&root, sev, &cfg);
+        lint.check_document(&ctx, &doc, &sink).unwrap();
+        let findings = sink.into_findings();
+        assert_eq!(findings.len(), 1);
+        // No suggestion attached because the byte_range parameter was
+        // None at the ratio aggregate emit site.
+        assert!(findings[0].suggestion.is_none());
+    }
+
+    #[test]
+    fn writing_style_em_dash_in_default_config_attaches_fix() {
+        // The catalog-default writing-style config declares
+        // `replace_with = "."` on the em-dash pattern. Instantiate via
+        // the public path and verify the fix lands.
+        let toml_str = r#"
+[[patterns]]
+regex = "—"
+message = "em-dashes are forbidden; use period, comma, or parens"
+finding_kind = "em-dash"
+strip_code_fences = true
+replace_with = "."
+"#;
+        let table: toml::Table = toml::from_str(toml_str).unwrap();
+        let lint = instantiate_with(
+            "writing-style",
+            "",
+            GateSeverity::uniform(Severity::Warn),
+            &table,
+            &toml::Table::new(),
+        )
+        .unwrap();
+        let doc = MockspaceDocument::new("a.md", "t", Language::Markdown, "x — y");
+        let sink = VecFindingSink::new();
+        let root = PathBuf::from("/tmp");
+        let sev = GateSeverity::uniform(Severity::Warn);
+        let cfg = EmptyCfg;
+        let ctx = make_ctx(&root, sev, &cfg);
+        lint.check_document(&ctx, &doc, &sink).unwrap();
+        let findings = sink.into_findings();
+        assert_eq!(findings.len(), 1);
+        let suggestion = findings[0]
+            .suggestion
+            .as_ref()
+            .expect("default config attaches em-dash fix");
+        assert!(matches!(
+            suggestion.fix,
+            Some(mockspace_core::lint::Fix::Replace { .. })
+        ));
+    }
+
+    #[test]
+    fn replace_with_byte_offsets_index_original_source_when_strip_active() {
+        // Strip is length-preserving and only blanks bytes (see strip.rs),
+        // so a `regex::Match` against the stripped view carries byte
+        // offsets that index correctly into the original source per the
+        // `Fix` type contract. This test pins that property: an em-dash
+        // inside a fenced code block is filtered out (no finding), and
+        // an em-dash outside the fence emits a finding whose Fix points
+        // at the original-source byte range.
+        let config = ContentRegexConfig {
+            patterns: vec![ContentPattern {
+                regex: r"—".to_string(),
+                message: "em-dash".to_string(),
+                finding_kind: Some("em-dash".to_string()),
+                ratio: None,
+                strip_code_fences: true,
+                strip_strings: false,
+                strip_comments: false,
+                strip_doc_comments: false,
+                replace_with: Some(".".to_string()),
+            }],
+        };
+        let lint =
+            ContentRegexLint::new("writing-style", "", GateSeverity::uniform(Severity::Warn), config)
+                .unwrap();
+        // Two em-dashes. The first is inside a fenced block (should be
+        // skipped by the strip), the second is in prose (should emit).
+        let source = "intro\n```\nfence — body\n```\nafter — end\n";
+        let doc = MockspaceDocument::new("a.md", "t", Language::Markdown, source);
+        let sink = VecFindingSink::new();
+        let root = PathBuf::from("/tmp");
+        let sev = GateSeverity::uniform(Severity::Warn);
+        let cfg = EmptyCfg;
+        let ctx = make_ctx(&root, sev, &cfg);
+        lint.check_document(&ctx, &doc, &sink).unwrap();
+        let findings = sink.into_findings();
+        assert_eq!(
+            findings.len(),
+            1,
+            "in-fence em-dash filtered; out-of-fence em-dash fires"
+        );
+        let suggestion = findings[0].suggestion.as_ref().expect("fix present");
+        match suggestion.fix.as_ref().expect("Replace recipe") {
+            mockspace_core::lint::Fix::Replace { start, end, .. } => {
+                // The reported byte range must index into the ORIGINAL
+                // source, not the stripped view. Verify by slicing the
+                // original source: the em-dash bytes between `start` and
+                // `end` should be the literal em-dash sequence.
+                let slice = &source.as_bytes()[*start..*end];
+                assert_eq!(
+                    slice,
+                    "—".as_bytes(),
+                    "Fix::Replace offsets must index the em-dash in the original source"
+                );
+            }
+            other => panic!("expected Fix::Replace, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn bad_regex_surfaces_as_config_error() {
         let config = ContentRegexConfig {
             patterns: vec![ContentPattern {
@@ -392,6 +627,7 @@ mod tests {
                 strip_strings: false,
                 strip_comments: false,
                 strip_doc_comments: false,
+                replace_with: None,
             }],
         };
         let result =
