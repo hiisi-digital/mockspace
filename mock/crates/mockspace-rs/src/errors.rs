@@ -171,6 +171,36 @@ impl From<mockspace_core::lint::LintError> for LintError {
 // ParseError: project scope-phase faults.
 // =========================================================================
 
+/// One issue found by the post-extraction validation gate (#547).
+///
+/// Distinct from [`ConfigError`] (TOML config) and `Finding` (source
+/// code findings): directive-validation errors target the directive
+/// records resolved at scope time. The gate collects every issue
+/// into a vector and reports them all in one [`ParseError::DirectiveValidation`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectiveValidationError {
+    /// `lint:allow` / `lint:defer` / `lint:file-disable` / `lint:scope-add`
+    /// named a lint name not in the registered catalog.
+    UnknownLintName {
+        directive: &'static str,
+        name: String,
+        span: Span,
+    },
+}
+
+impl fmt::Display for DirectiveValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownLintName { directive, name, span } => write!(
+                f,
+                "`{directive}({name})` at {}:{} names a lint not in the catalog",
+                span.file.display(),
+                span.start_line
+            ),
+        }
+    }
+}
+
 /// Error from `MockspaceEngine::scope_project`.
 #[derive(Debug)]
 pub enum ParseError {
@@ -191,6 +221,13 @@ pub enum ParseError {
     /// and other internal preprocessor faults.
     Preprocessor {
         message: String,
+    },
+    /// Post-extraction validation gate (#547) found one or more
+    /// directive records naming lints or categories not in the
+    /// registered catalog. Hard-fail at scope time: the project is
+    /// not handed to dispatch when this fires.
+    DirectiveValidation {
+        errors: Vec<DirectiveValidationError>,
     },
     NotYetImplemented(&'static str),
 }
@@ -214,6 +251,13 @@ impl fmt::Display for ParseError {
             ),
             Self::Preprocessor { message } => {
                 write!(f, "preprocessor error during scope: {message}")
+            }
+            Self::DirectiveValidation { errors } => {
+                writeln!(f, "{} directive validation error(s):", errors.len())?;
+                for e in errors {
+                    writeln!(f, "  - {e}")?;
+                }
+                Ok(())
             }
             Self::NotYetImplemented(msg) => write!(f, "not yet implemented: {msg}"),
         }

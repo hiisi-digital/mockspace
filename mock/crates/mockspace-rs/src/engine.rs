@@ -17,7 +17,9 @@ use mockspace_core::lint::{
 use crate::preprocessor::PreprocessorError;
 
 use crate::config_loader::{InstantiatedLint, LintsConfig, detect_prop_name_conflicts};
-use crate::errors::{DispatchError, LoadError, ParseError, StartupWarning};
+use crate::errors::{
+    DirectiveValidationError, DispatchError, LoadError, ParseError, StartupWarning,
+};
 use crate::finding_sink::VecFindingSink;
 use crate::lint::LintMode;
 use crate::preprocessor::{LanguagePreprocessor, RustPreprocessor};
@@ -77,6 +79,90 @@ impl MockspaceEngine {
     /// declarations without blocking the run.
     pub fn startup_warnings(&self) -> &[StartupWarning] {
         &self.startup_warnings
+    }
+
+    /// Validate the directives resolved on the project against the
+    /// registered lint catalog. Hard-fails when a directive names a
+    /// lint not in the catalog or a category no registered lint
+    /// declares. Per task #547.
+    ///
+    /// Collects ALL errors into one vector so CI users see every
+    /// issue in one pass; the gate returns `Err` only when the
+    /// vector is non-empty.
+    ///
+    /// Called from [`Self::scope_project`] after
+    /// [`Self::populate_directives`]; exposed publicly so test
+    /// fixtures and downstream tools can run the gate explicitly.
+    pub fn validate_directives(
+        &self,
+        project: &MockspaceProject,
+    ) -> Result<(), Vec<DirectiveValidationError>> {
+        use std::collections::BTreeSet;
+        // Build registry from the loaded lint set.
+        let known_lints: BTreeSet<&str> =
+            self.lints.iter().map(|e| e.lint.name()).collect();
+
+        let mut errors = Vec::new();
+
+        // Suppression scopes cover both `lint:allow` (kind Allow) and
+        // `lint:defer` (kind Defer); the wire directive name shown in
+        // diagnostics depends on the scope's kind.
+        for scope in project.suppressions().scopes() {
+            let directive_label = match scope.kind {
+                mockspace_core::lint::SuppressionKind::Allow => "lint:allow",
+                mockspace_core::lint::SuppressionKind::Defer => "lint:defer",
+            };
+            for name in &scope.lints {
+                if !known_lints.contains(name.as_str()) {
+                    errors.push(DirectiveValidationError::UnknownLintName {
+                        directive: directive_label,
+                        name: name.clone(),
+                        span: scope.scope.clone(),
+                    });
+                }
+            }
+        }
+
+        // ScopeAdd entries name a lint and a value; lint name validates here.
+        for entry in project.scope_adds().entries() {
+            if !known_lints.contains(entry.lint_name.as_str()) {
+                errors.push(DirectiveValidationError::UnknownLintName {
+                    directive: "lint:scope-add",
+                    name: entry.lint_name.clone(),
+                    span: entry.scope.clone(),
+                });
+            }
+        }
+
+        // FileDisable entries carry the directive comment's source
+        // span (added alongside the validation gate in #547). The
+        // diagnostic points straight at the offending
+        // `// lint:file-disable(...)` line so CI users can jump to it.
+        for entry in project.file_disables().entries() {
+            if !known_lints.contains(entry.lint_name.as_str()) {
+                errors.push(DirectiveValidationError::UnknownLintName {
+                    directive: "lint:file-disable",
+                    name: entry.lint_name.clone(),
+                    span: entry.directive_span.clone(),
+                });
+            }
+        }
+
+        // No category validation: `lint:introduces(<category>)` is a
+        // legacy directive scheduled for retirement. The per-site
+        // exemption it provided is now written as
+        // `// lint:allow(<lint-name>) reason: "..." tracked: #N`
+        // directly. While `Directive::Introduces` and
+        // [`mockspace_core::lint::IntroducerMap`] still exist for the
+        // benefit of consumers mid-migration, the validation gate
+        // does not enforce category-name consistency. Retirement
+        // lands in a follow-up PR that drops the directive variant.
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 
     /// Walk every Rust document through the preprocessor and stash
@@ -168,6 +254,13 @@ impl LintEngine for MockspaceEngine {
             .map_err(|e| ParseError::Preprocessor {
                 message: e.to_string(),
             })?;
+        // Post-extraction validation gate (#547): reject the project
+        // outright if any directive names an unknown lint or category.
+        // Runs after population so every directive across every
+        // document is visible at once and CI sees the full list of
+        // failures rather than only the first.
+        self.validate_directives(&project)
+            .map_err(|errors| ParseError::DirectiveValidation { errors })?;
         Ok(project)
     }
 
@@ -490,6 +583,209 @@ mod tests {
     fn engine_with_no_prop_conflicts_has_empty_startup_warnings() {
         let engine = MockspaceEngine::with_entries(Vec::new());
         assert!(engine.startup_warnings().is_empty());
+    }
+
+    // ---- directive validation gate (#547) ----------------------------
+
+    /// Build an `InstantiatedLint` whose `Lint` impl reports the given
+    /// name and an optional set of declared categories. Used by the
+    /// validation-gate tests below to spin up a catalog that knows
+    /// about specific lints/categories without registering full lint
+    /// machinery via inventory.
+    fn stub_lint_entry(name: &'static str) -> InstantiatedLint {
+        use crate::lint::Lint;
+        struct StubLint {
+            name: &'static str,
+        }
+        impl Lint for StubLint {
+            fn name(&self) -> &'static str {
+                self.name
+            }
+            fn description(&self) -> &'static str {
+                "stub"
+            }
+            fn default_severity(&self) -> GateSeverity {
+                GateSeverity::uniform(Severity::Warn)
+            }
+        }
+        InstantiatedLint {
+            lint: Box::new(StubLint { name }),
+            mode: LintMode::PerDocument,
+            staging_aware: false,
+            editor_skip: false,
+            only_staged: crate::config_loader::OnlyStaged::default(),
+            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+                name,
+                &crate::config_types::ScopeConfig::default(),
+            )
+            .unwrap(),
+        }
+    }
+
+    #[test]
+    fn validation_gate_passes_when_all_directives_name_known_lints() {
+        let engine = MockspaceEngine::with_entries(vec![
+            stub_lint_entry("no-banned"),
+            stub_lint_entry("no-bare-numeric"),
+        ]);
+        let mut builder =
+            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        builder.push_document(MockspaceDocument::new(
+            "a.rs",
+            "c",
+            Language::Rust,
+            "// lint:allow(no-banned) reason: \"x\" tracked: #1\nfn x() {}\n",
+        ));
+        let mut project = builder.build();
+        engine.populate_directives(&mut project).unwrap();
+        engine.validate_directives(&project).unwrap();
+    }
+
+    #[test]
+    fn validation_gate_rejects_unknown_lint_name_in_allow() {
+        let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("known")]);
+        let mut builder =
+            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        builder.push_document(MockspaceDocument::new(
+            "a.rs",
+            "c",
+            Language::Rust,
+            "// lint:allow(unknown-lint) reason: \"x\" tracked: #1\nfn x() {}\n",
+        ));
+        let mut project = builder.build();
+        engine.populate_directives(&mut project).unwrap();
+        let err = engine.validate_directives(&project).unwrap_err();
+        assert_eq!(err.len(), 1);
+        match &err[0] {
+            DirectiveValidationError::UnknownLintName { directive, name, .. } => {
+                assert_eq!(*directive, "lint:allow");
+                assert_eq!(name, "unknown-lint");
+            }
+        }
+    }
+
+    #[test]
+    fn validation_gate_rejects_unknown_lint_in_defer_and_file_disable_and_scope_add() {
+        let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("known")]);
+        let mut builder =
+            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        builder.push_document(MockspaceDocument::new(
+            "a.rs",
+            "c",
+            Language::Rust,
+            "// lint:defer(unknown-a, until: #1)\n\
+             // lint:scope-add(unknown-b, exempt_categories=ffi)\n\
+             // lint:file-disable(unknown-c) reason: \"x\" tracked: #2\n\
+             fn x() {}\n",
+        ));
+        let mut project = builder.build();
+        engine.populate_directives(&mut project).unwrap();
+        let err = engine.validate_directives(&project).unwrap_err();
+        let directives: Vec<&str> = err
+            .iter()
+            .map(|e| match e {
+                DirectiveValidationError::UnknownLintName { directive, .. } => {
+                    *directive
+                }
+            })
+            .collect();
+        assert!(directives.contains(&"lint:defer"));
+        assert!(directives.contains(&"lint:scope-add"));
+        assert!(directives.contains(&"lint:file-disable"));
+    }
+
+    #[test]
+    fn scope_project_returns_directive_validation_error_for_unknown_lint() {
+        // End-to-end integration test: drives the public
+        // `scope_project` path so a future regression that removed
+        // or reordered the validate_directives call surfaces here.
+        // Writes a Rust file to a tempdir, scope_walks it, then
+        // asserts the ParseError::DirectiveValidation variant fires.
+        use std::fs;
+
+        let tmp = std::env::temp_dir().join("mockspace_validation_gate_e2e");
+        let _ = fs::remove_dir_all(&tmp);
+        let crate_dir = tmp.join("test_crate").join("src");
+        fs::create_dir_all(&crate_dir).unwrap();
+        fs::write(
+            tmp.join("test_crate").join("Cargo.toml"),
+            "[package]\nname = \"test_crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(
+            crate_dir.join("lib.rs"),
+            "// lint:allow(unknown-lint-name) reason: \"x\" tracked: #1\nfn x() {}\n",
+        )
+        .unwrap();
+
+        let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("known")]);
+        let err = engine
+            .scope_project(&tmp, RunSurface::Local)
+            .expect_err("scope_project should reject project with unknown lint");
+        match err {
+            ParseError::DirectiveValidation { errors } => {
+                assert_eq!(errors.len(), 1);
+                let DirectiveValidationError::UnknownLintName { name, .. } =
+                    &errors[0];
+                assert_eq!(name, "unknown-lint-name");
+            }
+            other => panic!("expected DirectiveValidation, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn validation_gate_uses_real_directive_span_for_file_disable() {
+        // The file-disable diagnostic must point at the comment line,
+        // not at a synthesised file:1 placeholder. Previous shape
+        // synthesised line=1; the FileDisableEntry now carries a
+        // `directive_span`, so this test pins that the diagnostic
+        // tracks the real comment location.
+        let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("known")]);
+        let mut builder =
+            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        builder.push_document(MockspaceDocument::new(
+            "a.rs",
+            "c",
+            Language::Rust,
+            // line 1 is a blank; line 2 has the offending directive.
+            "\n// lint:file-disable(unknown-lint) reason: \"x\" tracked: #1\nfn x() {}\n",
+        ));
+        let mut project = builder.build();
+        engine.populate_directives(&mut project).unwrap();
+        let err = engine.validate_directives(&project).unwrap_err();
+        assert_eq!(err.len(), 1);
+        let DirectiveValidationError::UnknownLintName { span, .. } = &err[0];
+        // The directive lives on line 2; the prior implementation
+        // would have reported line 1.
+        assert_eq!(
+            span.start_line, 2,
+            "expected real comment line, got {}",
+            span.start_line
+        );
+    }
+
+    #[test]
+    fn validation_gate_collects_all_errors_at_once() {
+        let engine = MockspaceEngine::with_entries(vec![stub_lint_entry("ok")]);
+        let mut builder =
+            ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
+        builder.push_document(MockspaceDocument::new(
+            "a.rs",
+            "c",
+            Language::Rust,
+            "// lint:allow(unk-a) reason: \"x\" tracked: #1\n\
+             // lint:allow(unk-b) reason: \"y\" tracked: #2\n\
+             // lint:defer(unk-c, until: #3)\n\
+             fn x() {}\n",
+        ));
+        let mut project = builder.build();
+        engine.populate_directives(&mut project).unwrap();
+        let err = engine.validate_directives(&project).unwrap_err();
+        // Three unknown lint names surfaced together rather than
+        // one-at-a-time. Confirms the validator continues past the
+        // first violation and collects every issue.
+        assert_eq!(err.len(), 3);
     }
 
     #[test]
