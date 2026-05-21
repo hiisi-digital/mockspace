@@ -83,6 +83,164 @@ fn has_mock_dir(repo_root: &Path) -> bool {
     repo_root.join("mock").is_dir()
 }
 
+/// The cargo alias value the bootstrap installs. Quoted as a TOML
+/// string when written into `.cargo/config.toml`. Configured to run
+/// the mock binary out of the workspace `mock/` crate at the workspace
+/// root; consumers who want a different invocation shape (precompiled
+/// binary, alternate manifest path) edit the value after install.
+const CARGO_ALIAS_VALUE: &str = "run --manifest-path mock/Cargo.toml --bin mock --";
+
+/// Failure modes for [`install_cargo_alias`]. Each variant carries
+/// enough context for the CLI surface to point the user at the
+/// offending file or condition without needing to repeat the work.
+#[derive(Debug)]
+pub enum InstallError {
+    /// `<repo_root>/.cargo/config.toml` exists but is not parseable
+    /// as TOML. Mutating it would risk losing unrelated keys the
+    /// user has hand-edited; the bootstrap bails out and asks the
+    /// user to repair the file first. The variant carries the
+    /// underlying parse error.
+    UnparseableCargoConfig(toml::de::Error),
+    /// A filesystem operation (read / write / create_dir_all) failed.
+    /// Wraps the underlying `io::Error` so the caller can inspect
+    /// the kind (NotFound, PermissionDenied, etc.).
+    Io(std::io::Error),
+    /// `[alias] mock = ...` already exists but points at a value
+    /// other than the canonical `CARGO_ALIAS_VALUE`. The bootstrap
+    /// leaves the user's value alone rather than silently
+    /// overwriting; the CLI surface prompts the user to confirm
+    /// the overwrite explicitly. The variant carries the existing
+    /// value so the diagnostic can quote it.
+    AliasMismatch {
+        existing: String,
+    },
+}
+
+impl std::fmt::Display for InstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnparseableCargoConfig(e) => write!(
+                f,
+                ".cargo/config.toml is not parseable as TOML; repair the file before re-running bootstrap. Underlying error: {e}"
+            ),
+            Self::Io(e) => write!(f, "filesystem operation failed: {e}"),
+            Self::AliasMismatch { existing } => write!(
+                f,
+                "`[alias] mock` already exists with a different value: {existing:?}. Refusing to overwrite; remove the existing entry or re-run with the overwrite flag once the CLI surface ships it"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InstallError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::UnparseableCargoConfig(e) => Some(e),
+            Self::Io(e) => Some(e),
+            Self::AliasMismatch { .. } => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for InstallError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+/// Result of [`install_cargo_alias`]: whether the bootstrap actually
+/// changed the file. Distinguishes the no-op case (alias already
+/// present and matches) from the genuinely-installed case so the CLI
+/// surface can print "ok, no change" vs "wrote cargo alias".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallOutcome {
+    /// The alias was missing; the bootstrap added it.
+    Installed,
+    /// The alias was already present with the canonical value; the
+    /// bootstrap made no changes.
+    AlreadyInstalled,
+}
+
+/// Install (or verify) the `[alias] mock = ...` entry in
+/// `<repo_root>/.cargo/config.toml`. Preserves every other key in
+/// the file; this is the operation that makes step 4 of the
+/// invocation resolution chain ([`crate::invoke`]) succeed.
+///
+/// Behaviour matrix:
+///
+/// - File does not exist: create it with a sole `[alias]` table
+///   carrying the canonical `mock` entry.
+/// - File exists, no `[alias]` table: append the table and entry.
+/// - File exists, `[alias]` table present, no `mock` key: add the
+///   `mock` key to the existing table.
+/// - File exists, `mock` key present, matching canonical value:
+///   no-op; returns [`InstallOutcome::AlreadyInstalled`].
+/// - File exists, `mock` key present, value differs: refuse to
+///   overwrite; returns [`InstallError::AliasMismatch`] carrying
+///   the existing value so the CLI surface can quote it.
+/// - File exists but is unparseable: refuse to mutate; returns
+///   [`InstallError::UnparseableCargoConfig`] so the user can
+///   repair the file before re-running.
+///
+/// The serialised output uses `toml::to_string_pretty` so the
+/// emitted file is diff-friendly. Existing whitespace and comments
+/// are NOT preserved; the file gets a clean structural rewrite
+/// when this function mutates it. Consumers who hand-edited
+/// comments into the file should pin the comments via a comment
+/// in their workspace docs rather than relying on round-trip
+/// preservation.
+pub fn install_cargo_alias(repo_root: &Path) -> Result<InstallOutcome, InstallError> {
+    let dir = repo_root.join(".cargo");
+    let path = dir.join("config.toml");
+    let mut doc = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents
+            .parse::<toml::Table>()
+            .map_err(InstallError::UnparseableCargoConfig)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Table::new(),
+        Err(e) => return Err(InstallError::Io(e)),
+    };
+
+    // Find or insert the [alias] table without disturbing other
+    // top-level keys.
+    let alias_table = doc
+        .entry("alias".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    let alias_table = match alias_table {
+        toml::Value::Table(t) => t,
+        // Existing `alias` key is not a table. Surface this as an
+        // unparseable shape rather than overwriting the user's
+        // (admittedly broken) data.
+        other => {
+            return Err(InstallError::AliasMismatch {
+                existing: other.to_string(),
+            });
+        }
+    };
+
+    if let Some(existing) = alias_table.get("mock") {
+        let existing_str = match existing {
+            toml::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        if existing_str == CARGO_ALIAS_VALUE {
+            return Ok(InstallOutcome::AlreadyInstalled);
+        }
+        return Err(InstallError::AliasMismatch {
+            existing: existing_str,
+        });
+    }
+
+    alias_table.insert(
+        "mock".to_string(),
+        toml::Value::String(CARGO_ALIAS_VALUE.to_string()),
+    );
+
+    std::fs::create_dir_all(&dir)?;
+    let serialised = toml::to_string_pretty(&doc).expect("Table serialisation is infallible");
+    std::fs::write(&path, serialised)?;
+    Ok(InstallOutcome::Installed)
+}
+
 /// Returns true if `<repo_root>/.cargo/config.toml` contains an
 /// `[alias]` table with a `mock = ...` key. The check is structural
 /// (parses the TOML) rather than substring-based so `# mock = ...`
@@ -384,6 +542,135 @@ mod tests {
             !s.has_hooks_path,
             "hooksPath outside [core] should not match"
         );
+    }
+
+    // ---- install_cargo_alias --------------------------------------------
+
+    #[test]
+    fn install_cargo_alias_creates_file_when_missing() {
+        let root = fixture_dir("install-create");
+        let outcome = install_cargo_alias(&root).expect("install");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        // Verify via the structural status check that the alias is
+        // observable through the same path the diagnostic surface
+        // reads.
+        assert!(status(&root).has_cargo_alias);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_cargo_alias_appends_to_existing_table_without_mock_key() {
+        let root = fixture_dir("install-append-table");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(
+            dir.join("config.toml"),
+            "[alias]\nother = \"build --release\"\n",
+        )
+        .expect("write existing");
+        let outcome = install_cargo_alias(&root).expect("install");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        let contents = std::fs::read_to_string(dir.join("config.toml")).expect("read back");
+        // Both keys must survive.
+        assert!(contents.contains("mock = "));
+        assert!(contents.contains("other = "));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_cargo_alias_preserves_unrelated_top_level_keys() {
+        let root = fixture_dir("install-preserve");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(
+            dir.join("config.toml"),
+            "[build]\ntarget = \"x86_64-unknown-linux-gnu\"\n",
+        )
+        .expect("write existing");
+        install_cargo_alias(&root).expect("install");
+        let parsed: toml::Table =
+            std::fs::read_to_string(dir.join("config.toml")).unwrap().parse().unwrap();
+        // [build] survives the install.
+        assert!(parsed.get("build").and_then(|v| v.as_table()).is_some());
+        // [alias.mock] now exists.
+        assert!(
+            parsed
+                .get("alias")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("mock"))
+                .is_some()
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_cargo_alias_is_idempotent_when_value_matches() {
+        let root = fixture_dir("install-idempotent");
+        install_cargo_alias(&root).expect("first install");
+        let outcome = install_cargo_alias(&root).expect("second install");
+        assert_eq!(outcome, InstallOutcome::AlreadyInstalled);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_cargo_alias_refuses_to_overwrite_mismatched_value() {
+        let root = fixture_dir("install-mismatch");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(
+            dir.join("config.toml"),
+            "[alias]\nmock = \"some-other-thing\"\n",
+        )
+        .expect("write existing");
+        let observed = install_cargo_alias(&root);
+        cleanup(&root);
+        match observed {
+            Err(InstallError::AliasMismatch { existing }) => {
+                assert_eq!(existing, "some-other-thing");
+            }
+            other => panic!("expected AliasMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn install_cargo_alias_surfaces_unparseable_toml() {
+        let root = fixture_dir("install-bad-toml");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(dir.join("config.toml"), "<<< not toml >>>").expect("write bad");
+        let observed = install_cargo_alias(&root);
+        cleanup(&root);
+        match observed {
+            Err(InstallError::UnparseableCargoConfig(_)) => {}
+            other => panic!("expected UnparseableCargoConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn install_cargo_alias_handles_alias_as_non_table_shape() {
+        // A pathological case: someone wrote `alias = "string"` at
+        // the top level. The bootstrap refuses to overwrite (this
+        // is the user's broken data, not ours to clobber).
+        let root = fixture_dir("install-alias-as-scalar");
+        let dir = root.join(".cargo");
+        std::fs::create_dir_all(&dir).expect("mkdir .cargo");
+        std::fs::write(dir.join("config.toml"), "alias = \"not a table\"\n").expect("write bad");
+        let observed = install_cargo_alias(&root);
+        cleanup(&root);
+        match observed {
+            Err(InstallError::AliasMismatch { .. }) => {}
+            other => panic!("expected AliasMismatch for non-table alias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn install_cargo_alias_error_display_includes_key_strings() {
+        let mismatch = InstallError::AliasMismatch {
+            existing: "weird-value".to_string(),
+        };
+        let s = mismatch.to_string();
+        assert!(s.contains("weird-value"));
+        assert!(s.contains("alias"));
     }
 
     #[test]
