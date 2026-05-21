@@ -477,13 +477,82 @@ fn instantiate_with_cascade(
 // =========================================================================
 
 /// Shallow overlay: keys in `src` overwrite keys in `dst` at the top
-/// level. Nested tables get recursive overlay.
+/// level. Nested tables get recursive overlay. List-field merge ops
+/// (`<field>.add = [...]` / `<field>.remove = [...]`) compose against
+/// the array `dst` already carries; see [`is_list_merge_op`] for the
+/// trigger shape and [`apply_list_merge`] for the merge order.
 fn overlay(dst: &mut toml::Table, src: &toml::Table) {
     for (k, v) in src {
+        if let toml::Value::Table(src_tbl) = v {
+            if is_list_merge_op(src_tbl) {
+                apply_list_merge_into(dst, k, src_tbl);
+                continue;
+            }
+        }
         match (dst.get_mut(k), v) {
             (Some(toml::Value::Table(d)), toml::Value::Table(s)) => overlay(d, s),
             _ => {
                 dst.insert(k.clone(), v.clone());
+            }
+        }
+    }
+}
+
+/// Detect the list-merge operator shape: a non-empty table whose every
+/// key is `add` or `remove` and whose every value is an array. Matches
+/// the toml source `<field>.add = [...]` / `<field>.remove = [...]`
+/// which parses into a sub-table on the field. Anything else (including
+/// a table that carries `add` plus an unrelated key) falls through to
+/// the normal table-merge path so nested-config sub-tables that happen
+/// to contain an `add` field are not misidentified.
+fn is_list_merge_op(t: &toml::Table) -> bool {
+    !t.is_empty()
+        && t.iter().all(|(k, v)| {
+            (k == "add" || k == "remove") && matches!(v, toml::Value::Array(_))
+        })
+}
+
+/// Apply a list-merge op rooted at `key` in `dst`. If `dst[key]` is an
+/// array, mutate it in place; if missing, synthesize from `add`; if
+/// present but not an array, fall back to replace (the user mixed list
+/// ops with a scalar value, surfaced as a replace so the writer sees
+/// the type mismatch through `cargo mock explain`).
+fn apply_list_merge_into(dst: &mut toml::Table, key: &str, op: &toml::Table) {
+    match dst.get_mut(key) {
+        Some(toml::Value::Array(arr)) => apply_list_merge(arr, op),
+        Some(_) => {
+            // Type mismatch (scalar where array expected): replace with
+            // whatever `add` carries so the writer sees the cascade
+            // result, or remove the key entirely if only `remove` was
+            // present.
+            if let Some(toml::Value::Array(add)) = op.get("add") {
+                dst.insert(key.to_string(), toml::Value::Array(add.clone()));
+            } else {
+                dst.remove(key);
+            }
+        }
+        None => {
+            if let Some(toml::Value::Array(add)) = op.get("add") {
+                dst.insert(key.to_string(), toml::Value::Array(add.clone()));
+            }
+            // `remove` against a missing key is a no-op.
+        }
+    }
+}
+
+/// Merge order: `remove` first, then `add`. Removal is value-equality
+/// based (TOML's `PartialEq` on `Value`). `add` is set-like: items
+/// already present in `dst` are not duplicated. This gives consumers
+/// intuitive semantics for token lists (`forbidden = [...]` and similar)
+/// where double-adding a value should not multiply it in the output.
+fn apply_list_merge(dst: &mut Vec<toml::Value>, op: &toml::Table) {
+    if let Some(toml::Value::Array(remove)) = op.get("remove") {
+        dst.retain(|item| !remove.contains(item));
+    }
+    if let Some(toml::Value::Array(add)) = op.get("add") {
+        for item in add {
+            if !dst.contains(item) {
+                dst.push(item.clone());
             }
         }
     }
@@ -599,6 +668,124 @@ mod tests {
         assert_eq!(b.get("z").unwrap().as_integer().unwrap(), 4);
         // Sibling keys preserved.
         assert_eq!(a.get("x").unwrap().as_integer().unwrap(), 1);
+    }
+
+    // ---- list-merge .add / .remove (#567) -------------------------------
+
+    fn arr_strs(t: &toml::Table, key: &str) -> Vec<String> {
+        t.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn list_merge_add_appends_to_existing_array() {
+        let mut dst: toml::Table = r#"forbidden = ["alloc", "std"]"#.parse().unwrap();
+        let src: toml::Table = r#"forbidden = { add = ["dyn"] }"#.parse().unwrap();
+        overlay(&mut dst, &src);
+        assert_eq!(arr_strs(&dst, "forbidden"), vec!["alloc", "std", "dyn"]);
+    }
+
+    #[test]
+    fn list_merge_remove_drops_named_items() {
+        let mut dst: toml::Table = r#"forbidden = ["alloc", "std", "core"]"#.parse().unwrap();
+        let src: toml::Table = r#"forbidden = { remove = ["std"] }"#.parse().unwrap();
+        overlay(&mut dst, &src);
+        assert_eq!(arr_strs(&dst, "forbidden"), vec!["alloc", "core"]);
+    }
+
+    #[test]
+    fn list_merge_remove_runs_before_add() {
+        // Same item removed and added: net add (remove first, then add).
+        let mut dst: toml::Table = r#"forbidden = ["alloc"]"#.parse().unwrap();
+        let src: toml::Table =
+            r#"forbidden = { remove = ["alloc"], add = ["alloc", "std"] }"#
+                .parse()
+                .unwrap();
+        overlay(&mut dst, &src);
+        assert_eq!(arr_strs(&dst, "forbidden"), vec!["alloc", "std"]);
+    }
+
+    #[test]
+    fn list_merge_add_dedupes_items_already_present() {
+        let mut dst: toml::Table = r#"forbidden = ["alloc"]"#.parse().unwrap();
+        let src: toml::Table = r#"forbidden = { add = ["alloc", "std"] }"#.parse().unwrap();
+        overlay(&mut dst, &src);
+        assert_eq!(arr_strs(&dst, "forbidden"), vec!["alloc", "std"]);
+    }
+
+    #[test]
+    fn list_merge_creates_field_from_add_when_dst_missing() {
+        let mut dst: toml::Table = "".parse().unwrap();
+        let src: toml::Table = r#"forbidden = { add = ["alloc"] }"#.parse().unwrap();
+        overlay(&mut dst, &src);
+        assert_eq!(arr_strs(&dst, "forbidden"), vec!["alloc"]);
+    }
+
+    #[test]
+    fn list_merge_remove_against_missing_field_is_noop() {
+        let mut dst: toml::Table = "".parse().unwrap();
+        let src: toml::Table = r#"forbidden = { remove = ["alloc"] }"#.parse().unwrap();
+        overlay(&mut dst, &src);
+        assert!(dst.get("forbidden").is_none());
+    }
+
+    #[test]
+    fn list_merge_op_with_unrelated_key_falls_through_to_table_merge() {
+        // `extra` key alongside `add` disqualifies this as a list-merge op;
+        // the overlay match's default arm runs and inserts the whole src
+        // table over dst[forbidden] (array-to-table type mismatch hits
+        // the same `_` arm a scalar replace would).
+        let mut dst: toml::Table = r#"forbidden = ["alloc"]"#.parse().unwrap();
+        let src: toml::Table = r#"forbidden = { add = ["dyn"], extra = "x" }"#
+            .parse()
+            .unwrap();
+        overlay(&mut dst, &src);
+        // dst[forbidden] becomes a clone of the src table; the list-merge
+        // op was rejected so the table replaces the array verbatim.
+        let result = dst.get("forbidden").unwrap();
+        assert!(result.is_table(), "expected table after fall-through, got {result:?}");
+    }
+
+    #[test]
+    fn list_merge_chain_remove_followed_by_add_at_outer_layer() {
+        // Simulates a three-layer cascade: deepest layer establishes the
+        // base list, middle layer adds an item, outer layer removes the
+        // base. Final state matches the documented chain semantics.
+        let mut merged: toml::Table = r#"forbidden = ["alloc"]"#.parse().unwrap();
+        // Middle layer: add "bar".
+        let middle: toml::Table = r#"forbidden = { add = ["bar"] }"#.parse().unwrap();
+        overlay(&mut merged, &middle);
+        assert_eq!(arr_strs(&merged, "forbidden"), vec!["alloc", "bar"]);
+        // Outer layer: remove "alloc".
+        let outer: toml::Table = r#"forbidden = { remove = ["alloc"] }"#.parse().unwrap();
+        overlay(&mut merged, &outer);
+        assert_eq!(arr_strs(&merged, "forbidden"), vec!["bar"]);
+    }
+
+    #[test]
+    fn list_merge_op_with_scalar_dst_replaces_with_add_array() {
+        // Type mismatch (scalar where the merge op expected array): the
+        // op falls back to a replace using `add` as the new value. The
+        // mismatch surfaces in `cargo mock explain` cascade output.
+        let mut dst: toml::Table = r#"forbidden = "alloc""#.parse().unwrap();
+        let src: toml::Table = r#"forbidden = { add = ["dyn"] }"#.parse().unwrap();
+        overlay(&mut dst, &src);
+        assert_eq!(arr_strs(&dst, "forbidden"), vec!["dyn"]);
+    }
+
+    #[test]
+    fn list_merge_op_with_scalar_dst_and_remove_only_deletes_key() {
+        // Type mismatch (scalar dst) plus a `remove`-only op: the key
+        // is deleted entirely, because there is no `add` value to
+        // synthesise a replacement from. Pins the silent-delete
+        // branch in `apply_list_merge_into` documented at the
+        // function's "Some(_)" arm.
+        let mut dst: toml::Table = r#"forbidden = "alloc""#.parse().unwrap();
+        let src: toml::Table = r#"forbidden = { remove = ["alloc"] }"#.parse().unwrap();
+        overlay(&mut dst, &src);
+        assert!(dst.get("forbidden").is_none());
     }
 
     #[test]
