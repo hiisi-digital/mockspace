@@ -201,6 +201,27 @@ mod tests {
     }
 
     #[test]
+    fn exempt_crates_overrides_crates() {
+        // `exempt_crates` short-circuits the include side. A document
+        // belonging to a listed crate but also in `exempt_crates` must
+        // be rejected. Previously this axis had no test coverage at
+        // all even though the implementation routes through a
+        // pre-compiled GlobSet.
+        let cfg = ScopeConfig {
+            crates: vec!["arvo".to_string(), "notko".to_string()],
+            exempt_crates: vec!["notko".to_string()],
+            ..Default::default()
+        };
+        let filter = ScopeFilter::from_config("test", &cfg).unwrap();
+        let project = empty_project();
+        assert!(filter.accepts(&make_doc("a.rs", "arvo", Language::Rust), &project));
+        assert!(
+            !filter.accepts(&make_doc("a.rs", "notko", Language::Rust), &project),
+            "exempt_crates must block a doc whose crate matches the exempt pattern"
+        );
+    }
+
+    #[test]
     fn star_crate_pattern_accepts_anything() {
         let cfg = ScopeConfig {
             crates: vec!["*".to_string()],

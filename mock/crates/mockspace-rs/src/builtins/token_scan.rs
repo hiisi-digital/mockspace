@@ -414,5 +414,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(lint.name(), "no-alloc");
+        // The default for `word_boundary` is `true`; the fixture
+        // passes `false`. Verify the non-default field actually
+        // round-trips through TOML by running the configured lint
+        // against a substring: with `word_boundary = false` the
+        // lint fires inside an identifier; with the default it
+        // would not. The previous assertion only checked `name()`,
+        // which would pass even if `word_boundary` silently dropped
+        // to its default.
+        let doc = MockspaceDocument::new(
+            "x.rs",
+            "my-crate",
+            Language::Rust,
+            "fn x() { let prealloc::y = 1; }\n",
+        );
+        let sink = VecFindingSink::new();
+        let (root, sev) = test_ctx();
+        let cfg = EmptyCfg;
+        let ctx = make_ctx(&root, sev, &cfg);
+        lint.check_document(&ctx, &doc, &sink).unwrap();
+        assert!(
+            !sink.into_findings().is_empty(),
+            "with word_boundary=false the lint should match the substring",
+        );
     }
 }

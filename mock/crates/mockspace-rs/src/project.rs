@@ -366,6 +366,12 @@ mod tests {
         let project = b.build();
         assert_eq!(project.document_count(), 1);
         assert_eq!(project.gate(), Gate::Commit);
+        assert_eq!(project.surface(), RunSurface::Local);
+        // Local surface does not auto-stage; only Editor surface does
+        // (covered by `editor_marks_all_staged`). The builder's default
+        // staged-document count is zero on Local and a non-zero check
+        // pins the surface-dependent behaviour.
+        assert_eq!(project.staged_documents().count(), 0);
     }
 
     #[test]
