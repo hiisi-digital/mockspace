@@ -31,6 +31,7 @@
 //! HashMap, and rayon freely. The discipline this engine *enforces* on
 //! consumer crates does not apply to the engine itself.
 
+pub mod bootstrap;
 pub mod builtins;
 pub mod catalog;
 pub mod config_loader;
