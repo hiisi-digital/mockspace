@@ -15,7 +15,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use mockspace_rs::bootstrap;
+use mockspace_rs::{
+    bootstrap,
+    config_loader::{LintsTomlFile, OverrideCascade},
+    explain, preset_source,
+};
 
 /// Top-level CLI shape. Subcommands branch per intent; the
 /// `--repo-root` global flag overrides the default (cwd) so the
@@ -47,6 +51,15 @@ enum Command {
     /// to `install`; named separately so drift-repair has a
     /// distinct command-line affordance.
     Refresh,
+    /// Explain how a lint resolves through the cascade. Prints the
+    /// per-layer contributions (catalog defaults, preset chain,
+    /// workspace defaults, per-lint TOML, CLI overrides) plus the
+    /// final per-field winners.
+    Explain {
+        /// Lint name to explain. Must match a name registered in the
+        /// catalog; misspellings surface `LintNotFound`.
+        name: String,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -69,6 +82,7 @@ fn main() -> std::process::ExitCode {
         Command::Install => run_install(&repo_root),
         Command::Uninstall => run_uninstall(&repo_root),
         Command::Refresh => run_refresh(&repo_root),
+        Command::Explain { name } => run_explain(&name),
     }
 }
 
@@ -135,6 +149,63 @@ fn run_refresh(repo_root: &std::path::Path) -> std::process::ExitCode {
         Err(e) => {
             eprintln!("refresh failed: {e}");
             std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// Run the explain subcommand. Walks the cascade for the named
+/// lint and prints the structured report. Uses an empty user TOML
+/// and default CLI overrides for now; threading the consumer's
+/// mockspace.toml through here is a follow-up (the CLI's
+/// `--repo-root` flag would feed `LintsConfig::load` to populate
+/// the user-TOML side).
+fn run_explain(lint_name: &str) -> std::process::ExitCode {
+    let user_toml = LintsTomlFile::default();
+    let overrides = OverrideCascade::default();
+    let source = preset_source::FirstPartyPresetSource::new();
+    match explain::explain_lint(lint_name, &user_toml, &overrides, &source) {
+        Ok(report) => {
+            print_explain_report(&report);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("explain failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_explain_report(report: &explain::ExplainReport) {
+    println!("lint: {}", report.lint_name);
+    println!("primitive: {}", report.primitive_kind);
+    println!(
+        "catalog severity: commit={:?} build={:?} push={:?}",
+        report.catalog_severity.commit,
+        report.catalog_severity.build,
+        report.catalog_severity.push,
+    );
+    println!();
+    println!("Cascade layers:");
+    for layer in &report.layers {
+        match &layer.source {
+            Some(src) => println!("  {} ({})", layer.label, src),
+            None => println!("  {}", layer.label),
+        }
+        for (key, value) in &layer.config {
+            println!("    config.{key} = {value}");
+        }
+        for (key, value) in &layer.scope {
+            println!("    scope.{key} = {value}");
+        }
+    }
+    if !report.final_values.is_empty() {
+        println!();
+        println!("Final values:");
+        for entry in &report.final_values {
+            println!(
+                "  {} = {} (layer {}: {})",
+                entry.field_path, entry.value, entry.winning_layer, entry.winning_label
+            );
         }
     }
 }
