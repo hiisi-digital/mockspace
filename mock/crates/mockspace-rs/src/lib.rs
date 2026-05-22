@@ -109,7 +109,9 @@ pub use mockspace_core::io::{
 pub use mockspace_core::phase::{ManifestSide, Phase};
 pub use mockspace_core::namespace::{DefaultNamespace, DefaultNamespaceError, Namespace};
 pub use mockspace_core::slug::{DefaultSlug, DefaultSlugError, Slug};
-pub use mockspace_core::task::{TaskId, TaskIdError, TaskMeta, TaskRefs, TaskResolution, TaskState};
+pub use mockspace_core::task::{
+    DefaultTaskId, DefaultTaskIdError, TaskId, TaskMeta, TaskRefs, TaskResolution, TaskState,
+};
 pub use mockspace_core::transition::ReplanMode;
 // Re-export gix's ObjectId so callers can parse user-supplied
 // hex OIDs (e.g. `--source-tip <hex>` on `mock phase apply`)

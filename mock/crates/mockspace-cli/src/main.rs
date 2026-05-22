@@ -24,7 +24,7 @@ use mockspace_rs::{
     scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport,
     CloseMetadata, DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore,
     LintEngine, LockError, Namespace, ObjectId, Phase, RegenerateError, RegenerateReport,
-    RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, DefaultSlug, TaskId,
+    RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, DefaultSlug, DefaultTaskId,
     TaskMeta, TaskResolution, WriteState,
 };
 
@@ -250,7 +250,7 @@ enum TaskVerb {
         /// Task identifier in URI form. Examples:
         /// `migrate-to-codeberg`, `compiler::ir::lower-pass::define-grammar`.
         #[arg(value_parser = parse_task_id)]
-        id: TaskId,
+        id: DefaultTaskId,
         /// One-line human-facing title. Defaults to the slug if absent.
         /// Free-form prose; String is the right type here.
         #[arg(long)]
@@ -266,26 +266,26 @@ enum TaskVerb {
     Show {
         /// Task identifier in URI form.
         #[arg(value_parser = parse_task_id)]
-        id: TaskId,
+        id: DefaultTaskId,
     },
     /// Transition a task into the `in-progress` state. Valid from any
     /// non-terminal (non-closed) state.
     Start {
         /// Task identifier in URI form.
         #[arg(value_parser = parse_task_id)]
-        id: TaskId,
+        id: DefaultTaskId,
     },
     /// Transition a task into the `blocked` state.
     Block {
         /// Task identifier in URI form.
         #[arg(value_parser = parse_task_id)]
-        id: TaskId,
+        id: DefaultTaskId,
     },
     /// Transition a task into the `deferred` state.
     Defer {
         /// Task identifier in URI form.
         #[arg(value_parser = parse_task_id)]
-        id: TaskId,
+        id: DefaultTaskId,
     },
     /// Close a task. Writes the `[closure]` block into `meta.toml`
     /// and rotates the state marker to `closed`. Closed is terminal:
@@ -296,7 +296,7 @@ enum TaskVerb {
     Close {
         /// Task identifier in URI form.
         #[arg(value_parser = parse_task_id)]
-        id: TaskId,
+        id: DefaultTaskId,
         /// Why the task closed.
         #[arg(long, value_enum)]
         resolution: TaskResolutionArg,
@@ -486,10 +486,10 @@ fn parse_slug(raw: &str) -> Result<DefaultSlug, String> {
 }
 
 /// Parse a task identifier (URI form `<seg>::<seg>::...::<slug>`)
-/// into [`TaskId`] with a CLI-friendly error message. Used as a
+/// into [`DefaultTaskId`] with a CLI-friendly error message. Used as a
 /// clap `value_parser`.
-fn parse_task_id(raw: &str) -> Result<TaskId, String> {
-    TaskId::parse(raw).map_err(|e| format!("invalid task id `{raw}`: {e}"))
+fn parse_task_id(raw: &str) -> Result<DefaultTaskId, String> {
+    DefaultTaskId::parse(raw).map_err(|e| format!("invalid task id `{raw}`: {e}"))
 }
 
 /// Parse a hex object id into [`ObjectId`] with a CLI-friendly
@@ -682,7 +682,7 @@ enum TaskTransitionVerb {
 
 fn run_task_new(
     handle: &RepoHandle,
-    task_id: TaskId,
+    task_id: DefaultTaskId,
     title: Option<&str>,
 ) -> std::process::ExitCode {
     let namespace_path = task_id
@@ -745,7 +745,7 @@ fn run_task_list(handle: &RepoHandle) -> std::process::ExitCode {
     }
 }
 
-fn run_task_show(handle: &RepoHandle, task_id: &TaskId) -> std::process::ExitCode {
+fn run_task_show(handle: &RepoHandle, task_id: &DefaultTaskId) -> std::process::ExitCode {
     match handle.show_task(task_id) {
         Ok(meta) => match meta.to_toml() {
             Ok(toml) => {
@@ -769,7 +769,7 @@ fn run_task_show(handle: &RepoHandle, task_id: &TaskId) -> std::process::ExitCod
 
 fn run_task_transition(
     handle: &RepoHandle,
-    task_id: &TaskId,
+    task_id: &DefaultTaskId,
     verb: TaskTransitionVerb,
 ) -> std::process::ExitCode {
     let (verb_name, result) = match verb {
@@ -798,7 +798,7 @@ fn run_task_transition(
 
 fn run_task_close(
     handle: &RepoHandle,
-    task_id: &TaskId,
+    task_id: &DefaultTaskId,
     resolution: TaskResolutionArg,
     branch: Option<&str>,
     phase: Option<Phase>,

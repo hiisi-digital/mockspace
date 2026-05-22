@@ -13,8 +13,10 @@ use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use core::hash::Hash;
+
 use crate::namespace::{DefaultNamespace, Namespace};
-use crate::slug::{DefaultSlug, DefaultSlugError};
+use crate::slug::{DefaultSlug, DefaultSlugError, Slug};
 
 /// A task's lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -201,33 +203,85 @@ impl TaskMeta {
     }
 }
 
-/// A task identity: a path of slug-shaped segments where the final segment
-/// is the leaf slug and preceding segments (if any) form the namespace.
+/// A composite task identifier (namespace segments + leaf slug).
 ///
+/// Implementations carry the parser + accessors per spec §16. Slug and
+/// Namespace appear as associated types so the trait coordinates a
+/// consistent slug shape across both. Per the harness-the-type-system
+/// rule, deeper APIs (`RefPath::task_from_id`, the IO executors)
+/// parameterise over `T: TaskId` so future impls (different slug
+/// charset, different namespace separator, alternative composition)
+/// plug in without codebase-wide rewrites.
+pub trait TaskId: fmt::Display + Eq + Hash + Clone + Sized {
+    /// The slug type each segment + the leaf takes.
+    type Slug: Slug;
+    /// The namespace type carrying the segment list. The
+    /// `Namespace<Slug = Self::Slug>` bound ensures the namespace's
+    /// slug shape matches the task identifier's slug shape; one impl
+    /// cannot accidentally mix slug shapes.
+    type Namespace: Namespace<Slug = Self::Slug>;
+    /// Why parsing failed.
+    type Error: fmt::Display + fmt::Debug;
+
+    /// Parse the URI / prose form `<seg>::<seg>::...::<slug>`. A
+    /// single segment yields a top-level (no-namespace) identifier.
+    fn parse(s: &str) -> Result<Self, Self::Error>;
+
+    /// The leaf slug.
+    fn slug(&self) -> &Self::Slug;
+
+    /// The namespace segments (possibly empty for top-level tasks).
+    ///
+    /// **Storage constraint**: same as [`Namespace::segments`]. Returning
+    /// a slice requires the impl to back its segments with contiguous
+    /// memory. Lift to `impl Iterator<Item = &Self::Slug>` if a future
+    /// impl needs non-contiguous storage.
+    fn namespace_segments(&self) -> &[Self::Slug];
+
+    /// The namespace as a value, if any. Returns `None` for top-level
+    /// (no-namespace) tasks.
+    fn namespace(&self) -> Option<Self::Namespace>;
+
+    /// True for single-segment task identifiers (no namespace).
+    fn is_top_level(&self) -> bool;
+
+    /// URI / prose form: segments joined with `::`.
+    fn as_uri_form(&self) -> String;
+
+    /// Ref-path form: segments joined with `/`.
+    fn as_ref_path(&self) -> String;
+}
+
+/// The canonical mockspace task identifier: [`DefaultSlug`] segments,
+/// [`DefaultNamespace`] for the namespace value. Implements [`TaskId`].
+///
+/// Identity is a path of slug-shaped segments where the final segment
+/// is the leaf slug and preceding segments (if any) form the namespace.
 /// The same shape renders two ways:
 ///
 /// - URI / prose form: segments joined with `::` (e.g. `compiler::ir::lower-pass`)
 /// - Ref form: segments joined with `/` (e.g. `compiler/ir/lower-pass`)
 ///
-/// **Single-segment task identifiers are permitted.** A bare `migrate-to-codeberg`
-/// is a valid TaskId with namespace empty and slug `migrate-to-codeberg`.
-/// Spec §16's convention note recommends namespacing for tooling UX
-/// (filtering, search, hierarchy) but mockspace does not police away the
-/// no-namespace case.
+/// **Single-segment task identifiers are permitted.** A bare
+/// `migrate-to-codeberg` is a valid identifier with namespace empty
+/// and slug `migrate-to-codeberg`. Spec §16's convention note
+/// recommends namespacing for tooling UX (filtering, search,
+/// hierarchy) but mockspace does not police away the no-namespace
+/// case.
 ///
-/// The `#` character is reserved for step references (see [`StepRef`]) and
-/// is never part of task identity itself.
+/// The `#` character is reserved for step references (see
+/// [`StepRef`]) and is never part of task identity itself.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TaskId {
+pub struct DefaultTaskId {
     /// Namespace segments. Empty for top-level (no-namespace) tasks.
     namespace_segments: Vec<DefaultSlug>,
     /// Leaf slug.
     slug: DefaultSlug,
 }
 
-/// Why a task-identifier string rejected at parse time.
+/// Why a [`DefaultTaskId`] string rejected at parse time.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskIdError {
+pub enum DefaultTaskIdError {
     /// Identifier contains `#`; that character is reserved for step refs.
     ContainsStepSeparator,
     /// Identifier was empty.
@@ -238,7 +292,7 @@ pub enum TaskIdError {
     InvalidSegment { index: usize, error: DefaultSlugError },
 }
 
-impl TaskId {
+impl DefaultTaskId {
     /// Construct from validated parts: a possibly-empty list of namespace
     /// segments plus a leaf slug.
     pub fn new(namespace_segments: Vec<DefaultSlug>, slug: DefaultSlug) -> Self {
@@ -261,21 +315,25 @@ impl TaskId {
     /// segment becomes the slug; any preceding segments form the namespace.
     /// A single segment yields a top-level (no-namespace) task identity.
     /// Rejects any `#` character.
-    pub fn parse(input: &str) -> Result<Self, TaskIdError> {
+    ///
+    /// Kept as an inherent method for sites that genuinely want the
+    /// default impl and value concise call syntax. The trait method
+    /// [`TaskId::parse`] delegates to this.
+    pub fn parse(input: &str) -> Result<Self, DefaultTaskIdError> {
         if input.contains('#') {
-            return Err(TaskIdError::ContainsStepSeparator);
+            return Err(DefaultTaskIdError::ContainsStepSeparator);
         }
         if input.is_empty() {
-            return Err(TaskIdError::Empty);
+            return Err(DefaultTaskIdError::Empty);
         }
         let mut segments: Vec<DefaultSlug> = Vec::new();
         let mut byte_pos: usize = 0;
         for (index, raw) in input.split("::").enumerate() {
             if raw.is_empty() {
-                return Err(TaskIdError::EmptySegment { position: byte_pos });
+                return Err(DefaultTaskIdError::EmptySegment { position: byte_pos });
             }
             let slug =
-                DefaultSlug::new(raw).map_err(|error| TaskIdError::InvalidSegment { index, error })?;
+                DefaultSlug::new(raw).map_err(|error| DefaultTaskIdError::InvalidSegment { index, error })?;
             segments.push(slug);
             byte_pos += raw.len() + 2;
         }
@@ -338,13 +396,50 @@ impl TaskId {
     }
 }
 
-impl fmt::Display for TaskId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.as_uri_form())
+impl TaskId for DefaultTaskId {
+    type Slug = DefaultSlug;
+    type Namespace = DefaultNamespace;
+    type Error = DefaultTaskIdError;
+
+    // `Self::<method>` here resolves to the inherent impl, not the
+    // trait method, because inherent methods win method resolution
+    // under `Self::` prefix. The delegations below are not recursive.
+    fn parse(s: &str) -> Result<Self, Self::Error> {
+        Self::parse(s)
+    }
+
+    fn slug(&self) -> &Self::Slug {
+        Self::slug(self)
+    }
+
+    fn namespace_segments(&self) -> &[Self::Slug] {
+        Self::namespace_segments(self)
+    }
+
+    fn namespace(&self) -> Option<Self::Namespace> {
+        Self::namespace(self)
+    }
+
+    fn is_top_level(&self) -> bool {
+        Self::is_top_level(self)
+    }
+
+    fn as_uri_form(&self) -> String {
+        Self::as_uri_form(self)
+    }
+
+    fn as_ref_path(&self) -> String {
+        Self::as_ref_path(self)
     }
 }
 
-impl fmt::Display for TaskIdError {
+impl fmt::Display for DefaultTaskId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&<Self as TaskId>::as_uri_form(self))
+    }
+}
+
+impl fmt::Display for DefaultTaskIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ContainsStepSeparator => f.write_str(
@@ -364,7 +459,7 @@ impl fmt::Display for TaskIdError {
     }
 }
 
-impl std::error::Error for TaskIdError {}
+impl std::error::Error for DefaultTaskIdError {}
 
 /// A reference to a specific step within a task.
 ///
@@ -372,7 +467,7 @@ impl std::error::Error for TaskIdError {}
 /// `<step>` is the step's key from `meta.toml`'s `[steps.<key>]` table.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StepRef {
-    task: TaskId,
+    task: DefaultTaskId,
     step: String,
 }
 
@@ -386,14 +481,14 @@ pub enum StepRefError {
     /// Step key was empty.
     EmptyStep,
     /// Task half rejected.
-    InvalidTask(TaskIdError),
+    InvalidTask(DefaultTaskIdError),
 }
 
 impl StepRef {
     /// Construct from validated parts. `step` is stored verbatim; the
     /// canonical step-key shape comes from `meta.toml`'s `[steps.<key>]`
     /// table and is project-defined (typically snake_case).
-    pub fn new(task: TaskId, step: String) -> Self {
+    pub fn new(task: DefaultTaskId, step: String) -> Self {
         Self { task, step }
     }
 
@@ -408,7 +503,7 @@ impl StepRef {
         if step_part.is_empty() {
             return Err(StepRefError::EmptyStep);
         }
-        let task = TaskId::parse(task_part).map_err(StepRefError::InvalidTask)?;
+        let task = DefaultTaskId::parse(task_part).map_err(StepRefError::InvalidTask)?;
         Ok(Self {
             task,
             step: step_part.to_owned(),
@@ -416,7 +511,7 @@ impl StepRef {
     }
 
     /// The task half.
-    pub fn task(&self) -> &TaskId {
+    pub fn task(&self) -> &DefaultTaskId {
         &self.task
     }
 
@@ -483,7 +578,7 @@ mod tests {
 
     #[test]
     fn task_id_parse_single_segment_top_level() {
-        let id = TaskId::parse("migrate-to-codeberg").unwrap();
+        let id = DefaultTaskId::parse("migrate-to-codeberg").unwrap();
         assert!(id.is_top_level());
         assert!(id.namespace().is_none());
         assert_eq!(id.namespace_segments().len(), 0);
@@ -494,7 +589,7 @@ mod tests {
 
     #[test]
     fn task_id_parse_two_segments() {
-        let id = TaskId::parse("workspace::migrate-to-codeberg").unwrap();
+        let id = DefaultTaskId::parse("workspace::migrate-to-codeberg").unwrap();
         assert!(!id.is_top_level());
         assert_eq!(id.namespace().unwrap().as_uri_form(), "workspace");
         assert_eq!(id.slug().as_str(), "migrate-to-codeberg");
@@ -504,7 +599,7 @@ mod tests {
 
     #[test]
     fn task_id_parse_nested() {
-        let id = TaskId::parse("compiler::ir::structural-robust-ir").unwrap();
+        let id = DefaultTaskId::parse("compiler::ir::structural-robust-ir").unwrap();
         assert_eq!(id.namespace().unwrap().as_ref_path(), "compiler/ir");
         assert_eq!(id.slug().as_str(), "structural-robust-ir");
         assert_eq!(id.as_ref_path(), "compiler/ir/structural-robust-ir");
@@ -512,7 +607,7 @@ mod tests {
 
     #[test]
     fn task_id_parse_deeper() {
-        let id = TaskId::parse("compiler::ir::lower-pass::define-grammar").unwrap();
+        let id = DefaultTaskId::parse("compiler::ir::lower-pass::define-grammar").unwrap();
         assert_eq!(
             id.namespace().unwrap().as_ref_path(),
             "compiler/ir/lower-pass"
@@ -523,36 +618,36 @@ mod tests {
     #[test]
     fn task_id_rejects_step_separator() {
         assert_eq!(
-            TaskId::parse("workspace#migrate"),
-            Err(TaskIdError::ContainsStepSeparator)
+            DefaultTaskId::parse("workspace#migrate"),
+            Err(DefaultTaskIdError::ContainsStepSeparator)
         );
         assert_eq!(
-            TaskId::parse("compiler::ir::lower-pass#define-grammar"),
-            Err(TaskIdError::ContainsStepSeparator)
+            DefaultTaskId::parse("compiler::ir::lower-pass#define-grammar"),
+            Err(DefaultTaskIdError::ContainsStepSeparator)
         );
     }
 
     #[test]
     fn task_id_rejects_empty() {
-        assert_eq!(TaskId::parse(""), Err(TaskIdError::Empty));
+        assert_eq!(DefaultTaskId::parse(""), Err(DefaultTaskIdError::Empty));
     }
 
     #[test]
     fn task_id_rejects_empty_segment() {
-        match TaskId::parse("::foo") {
-            Err(TaskIdError::EmptySegment { .. }) => {}
+        match DefaultTaskId::parse("::foo") {
+            Err(DefaultTaskIdError::EmptySegment { .. }) => {}
             other => panic!("expected EmptySegment, got {other:?}"),
         }
-        match TaskId::parse("foo::") {
-            Err(TaskIdError::EmptySegment { .. }) => {}
+        match DefaultTaskId::parse("foo::") {
+            Err(DefaultTaskIdError::EmptySegment { .. }) => {}
             other => panic!("expected EmptySegment, got {other:?}"),
         }
     }
 
     #[test]
     fn task_id_rejects_invalid_segment() {
-        match TaskId::parse("Bad::ns::slug") {
-            Err(TaskIdError::InvalidSegment { index: 0, .. }) => {}
+        match DefaultTaskId::parse("Bad::ns::slug") {
+            Err(DefaultTaskIdError::InvalidSegment { index: 0, .. }) => {}
             other => panic!("expected InvalidSegment(0), got {other:?}"),
         }
     }

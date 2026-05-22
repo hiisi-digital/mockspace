@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::phase::ManifestSide;
-use crate::task::{StepRef, StepRefError, TaskId, TaskIdError};
+use crate::task::{StepRef, StepRefError, DefaultTaskId, DefaultTaskIdError};
 use crate::verifier::VerifierCheck;
 
 /// URI prefix every task or step reference in a manifest must carry.
@@ -60,7 +60,7 @@ pub enum TaskUriError {
     /// Task identity (the part between prefix and `#`) was empty.
     EmptyIdentity,
     /// Task-half failed `<seg>::<seg>::...::<slug>` grammar.
-    InvalidTask(TaskIdError),
+    InvalidTask(DefaultTaskIdError),
     /// Step-form URI failed `<task>#<step>` grammar.
     InvalidStep(StepRefError),
 }
@@ -73,9 +73,9 @@ pub enum TaskUriError {
 pub const SCHEMA_MAJOR: u32 = 1;
 
 /// Parse a manifest task URI of the form `mock://task/<path>` or
-/// `mock://task/<path>#<step>` and return the underlying [`TaskId`] (and,
+/// `mock://task/<path>#<step>` and return the underlying [`DefaultTaskId`] (and,
 /// when a step was named, the [`StepRef`]).
-pub fn parse_task_uri(uri: &str) -> Result<(TaskId, Option<StepRef>), TaskUriError> {
+pub fn parse_task_uri(uri: &str) -> Result<(DefaultTaskId, Option<StepRef>), TaskUriError> {
     let body = uri
         .strip_prefix(TASK_URI_PREFIX)
         .ok_or(TaskUriError::MissingPrefix)?;
@@ -87,7 +87,7 @@ pub fn parse_task_uri(uri: &str) -> Result<(TaskId, Option<StepRef>), TaskUriErr
         let task = step_ref.task().clone();
         Ok((task, Some(step_ref)))
     } else {
-        let task = TaskId::parse(body).map_err(TaskUriError::InvalidTask)?;
+        let task = DefaultTaskId::parse(body).map_err(TaskUriError::InvalidTask)?;
         Ok((task, None))
     }
 }

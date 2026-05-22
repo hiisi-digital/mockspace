@@ -48,12 +48,14 @@ impl RefPath {
     }
 
     /// `refs/mock/task/<ns-path>/<slug>` constructor that accepts the
-    /// full TaskId shape, including top-level (namespace-less) tasks.
+    /// full DefaultTaskId shape, including top-level (namespace-less) tasks.
     /// A top-level task `migrate-to-codeberg` resolves to
     /// `refs/mock/task/migrate-to-codeberg`. A namespaced task
     /// `compiler::ir::lower-pass::define-grammar` resolves to
     /// `refs/mock/task/compiler/ir/lower-pass/define-grammar`.
-    pub fn task_from_id(id: &crate::task::TaskId) -> Self {
+    /// Generic over any [`crate::task::TaskId`] impl; the trait's
+    /// `as_ref_path()` method is the load-bearing contract here.
+    pub fn task_from_id<T: crate::task::TaskId>(id: &T) -> Self {
         Self(format!("refs/mock/task/{}", id.as_ref_path()))
     }
 
@@ -149,7 +151,7 @@ mod tests {
 
     #[test]
     fn task_from_id_top_level() {
-        let id = crate::task::TaskId::parse("migrate-to-codeberg").expect("parse");
+        let id = crate::task::DefaultTaskId::parse("migrate-to-codeberg").expect("parse");
         assert_eq!(
             RefPath::task_from_id(&id).as_str(),
             "refs/mock/task/migrate-to-codeberg"
@@ -159,7 +161,7 @@ mod tests {
     #[test]
     fn task_from_id_namespaced() {
         let id =
-            crate::task::TaskId::parse("compiler::ir::lower-pass::define-grammar").expect("parse");
+            crate::task::DefaultTaskId::parse("compiler::ir::lower-pass::define-grammar").expect("parse");
         assert_eq!(
             RefPath::task_from_id(&id).as_str(),
             "refs/mock/task/compiler/ir/lower-pass/define-grammar"
