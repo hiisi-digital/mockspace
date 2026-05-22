@@ -11,6 +11,7 @@ publish = false
 mockspace-core = { path = "../mockspace-core" }
 mockspace-config = { path = "../mockspace-config" }
 mockspace-rs-attrs = { path = "../mockspace-rs-attrs" }
+mockspace-template = { path = "../mockspace-template" }
 
 # Pulled in solely to re-export `gix::ObjectId` for downstream
 # crates (the `mock` CLI) that need to parse user-supplied hex

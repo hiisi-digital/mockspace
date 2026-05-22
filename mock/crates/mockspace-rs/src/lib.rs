@@ -50,6 +50,7 @@ pub mod lint;
 pub mod preprocessor;
 pub mod preset_source;
 pub mod project;
+pub mod render;
 pub mod scope;
 pub mod scope_filter;
 pub mod staging;
@@ -68,6 +69,10 @@ pub use fix::{
 };
 pub use explain::{explain_lint, explain_with_entry, ExplainError, ExplainReport, FinalEntry, LayerContribution};
 pub use preset_source::{FirstPartyPresetSource, FIRST_PARTY_HOST};
+pub use render::{
+    check as render_check, regenerate as render_regenerate, CheckReport, RegenerateError,
+    RegenerateReport, RenderedFile, WriteState,
+};
 pub use errors::{
     ConfigError, ConfigErrorKind, DirectiveValidationError, DispatchError, LintError, LoadError,
     ParseError, StartupWarning,
