@@ -57,7 +57,7 @@ pub use manifest::{
     ChangeBlock, DeprecatedAccounting, Manifest, ScopeBlock, TaskUriError, ValidationError,
     SCHEMA_MAJOR, TASK_URI_PREFIX,
 };
-pub use namespace::{Namespace, NamespaceError};
+pub use namespace::{DefaultNamespace, DefaultNamespaceError, Namespace};
 pub use phase::{ManifestSide, Phase};
 pub use ref_path::RefPath;
 pub use round::{comment_filename, topic_filename, ClosedMeta, ManifestStage, PrMeta, RoundMeta};
