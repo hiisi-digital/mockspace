@@ -29,6 +29,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::branch_name::BranchName;
 use crate::io::ref_tree::{RefTreeReadError, RoundRefTree};
 use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
@@ -293,17 +294,22 @@ pub struct TaskTransitionReport {
     pub new_state: TaskState,
 }
 
-/// Metadata fields the caller supplies when closing a task. All
-/// fields beyond `resolution` are typed as `String` and may be left
-/// empty when the call site has no value (e.g. closing a task from
-/// outside an active round). The `closed_at` timestamp is filled by
-/// the executor itself so concurrent callers cannot drift on it.
+/// Metadata fields the caller supplies when closing a task. The
+/// `closed_at` timestamp is filled by the executor itself so
+/// concurrent callers cannot drift on it.
+///
+/// The `closed_branch` field is typed as `Option<BranchName>`: `None`
+/// means "no branch named at close time" (e.g. closing a task from
+/// outside an active round). The two remaining `String` fields
+/// (`closing_phase`, `closing_round_slug`) stay as `String` here
+/// pending #595's IO carrier audit; they hold serde-shaped values
+/// that the executor collapses into the wire-format `TaskClosure`.
 #[derive(Debug, Clone)]
 pub struct CloseMetadata {
     /// Why the task closed.
     pub resolution: TaskResolution,
-    /// Source-side branch that carried the closing work, or empty.
-    pub closed_branch: String,
+    /// Source-side branch that carried the closing work, or `None`.
+    pub closed_branch: Option<BranchName>,
     /// Phase marker at close time (e.g. `apply_src`), or empty.
     pub closing_phase: String,
     /// Round slug that closed this task, or empty.
@@ -494,7 +500,13 @@ impl RepoHandle {
             parsed.closure = Some(TaskClosure {
                 resolution: meta.resolution,
                 closed_at: format_iso8601(now),
-                closed_branch: meta.closed_branch,
+                // TaskClosure's wire-format field stays String per
+                // #595's pending IO carrier retyping. Collapse the
+                // typed input at the boundary.
+                closed_branch: meta
+                    .closed_branch
+                    .map(|b| b.to_string())
+                    .unwrap_or_default(),
                 closing_phase: meta.closing_phase,
                 closing_round_slug: meta.closing_round_slug,
             });
@@ -702,7 +714,7 @@ mod tests {
     fn close_meta() -> CloseMetadata {
         CloseMetadata {
             resolution: TaskResolution::Completed,
-            closed_branch: "feat/test".to_owned(),
+            closed_branch: Some(BranchName::new("feat/test").expect("valid branch")),
             closing_phase: "apply_src".to_owned(),
             closing_round_slug: "test-round".to_owned(),
         }
