@@ -1400,7 +1400,7 @@ mod tests {
         // Equality is structural over the 32-byte array; inequality
         // surfaces from any differing byte. The previous shape only
         // asserted ZERO == [0u8; 32], which is a type-system tautology
-        // (ZERO is literally Self([0u8; 32])); this version verifies
+        // (ZERO is defined as Self([0u8; 32])); this version verifies
         // the meaningful contract instead: that hashes compare on
         // contents.
         let z1 = ContentHash::from_bytes([0u8; 32]);
