@@ -68,14 +68,21 @@ pub struct RoundRefTree {
 }
 
 impl RoundRefTree {
-    /// Construct from a raw entry map. Crate-visible so tests in the
-    /// same crate can compose snapshots without going through gix;
-    /// not exposed to downstream consumers, who use the reader. If a
-    /// downstream test fixture ever needs this, promote with a typed
-    /// builder rather than re-publishing the raw map.
+    /// Construct from a raw entry map. Crate-visible so other IO
+    /// slices (e.g. `seal_manifest`) can compose snapshots without
+    /// going through gix on the read path. Not exposed to downstream
+    /// consumers, who use the reader. If a downstream test fixture
+    /// ever needs this, promote with a typed builder rather than
+    /// re-publishing the raw map.
+    pub(crate) fn from_entries_pub(entries: BTreeMap<String, Vec<u8>>) -> Self {
+        Self { entries }
+    }
+
+    /// Alias retained for the existing test-only call sites that
+    /// constructed `RoundRefTree` via `from_entries`.
     #[cfg(test)]
     pub(crate) fn from_entries(entries: BTreeMap<String, Vec<u8>>) -> Self {
-        Self { entries }
+        Self::from_entries_pub(entries)
     }
 
     /// Lookup the bytes at `path`. Returns None when the path is
@@ -102,6 +109,40 @@ impl RoundRefTree {
 }
 
 impl RepoHandle {
+    /// Resolve a ref to its current commit OID. Returns
+    /// [`RefTreeReadError::RefNotFound`] when the ref does not
+    /// exist. Useful as the "expected current" input for a CAS
+    /// update via [`RepoHandle::write_round_ref`]: a caller reads
+    /// the tree (via [`read_ref_tree`](Self::read_ref_tree)) AND
+    /// the OID, mutates the tree in memory, and writes back with
+    /// the OID as the CAS expectation.
+    pub fn resolve_ref_oid(
+        &self,
+        ref_path: &RefPath,
+    ) -> Result<gix::ObjectId, RefTreeReadError> {
+        use gix::reference::find::existing::Error as ExistingErr;
+        let repo = self.repo();
+        let mut reference = match repo.find_reference(ref_path.as_str()) {
+            Ok(r) => r,
+            Err(ExistingErr::NotFound { .. }) => {
+                return Err(RefTreeReadError::RefNotFound {
+                    ref_path: ref_path.as_str().to_owned(),
+                });
+            }
+            Err(e) => {
+                return Err(RefTreeReadError::GixOdb {
+                    source: Box::new(e),
+                });
+            }
+        };
+        let id = reference
+            .peel_to_id_in_place()
+            .map_err(|e| RefTreeReadError::GixOdb {
+                source: Box::new(e),
+            })?;
+        Ok(id.detach())
+    }
+
     /// Read the orphan ref's tree into an in-memory snapshot.
     ///
     /// The ref is expected to point at a commit whose tree carries
