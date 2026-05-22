@@ -9,6 +9,7 @@
 //! for the filesystem-tree variant.
 
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 
 /// Resolve the path to a checked-in golden file under
 /// `<crate>/tests/goldens/<name>.golden`. Centralised so consumers
@@ -48,6 +49,90 @@ pub fn scrub_oid_lines(s: &str, prefix: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
         + "\n"
+}
+
+/// Snapshot every ref under `refs/mock/` plus the full blob payload
+/// of each ref's tree, formatted as a stable sorted text blob suitable
+/// for golden comparison.
+///
+/// The output shape is one block per ref, sorted by refname. Each
+/// block looks like:
+///
+/// ```text
+/// === <refname> ===
+/// <path-1>:
+/// <blob-1 content>
+///
+/// <path-2>:
+/// <blob-2 content>
+///
+/// ```
+///
+/// Blob content is reproduced verbatim. Callers that need to scrub
+/// non-deterministic fields (timestamps, commit OIDs embedded in
+/// payloads) apply [`scrub_oid_lines`] / per-test scrubbers AFTER
+/// snapshotting.
+///
+/// Implementation uses git plumbing (`for-each-ref` + `ls-tree -r` +
+/// `cat-file -p`) rather than the in-process [`RoundRefTree`] reader
+/// so the snapshot reflects literal on-disk state, including any
+/// drift between the writer's intent and what landed.
+///
+/// Panics on git invocation failure; e2e tests treat that as a hard
+/// test infrastructure error, not a snapshot drift.
+#[allow(dead_code)]
+pub fn snapshot_mock_refs(repo_root: &Path) -> String {
+    let listing = git_capture(
+        repo_root,
+        &[
+            "for-each-ref",
+            "refs/mock",
+            "--format=%(refname)",
+            "--sort=refname",
+        ],
+    );
+    let mut out = String::new();
+    for refname in listing.lines() {
+        if refname.is_empty() {
+            continue;
+        }
+        out.push_str("=== ");
+        out.push_str(refname);
+        out.push_str(" ===\n");
+        let paths = git_capture(
+            repo_root,
+            &["ls-tree", "-r", "--name-only", refname],
+        );
+        for path in paths.lines() {
+            if path.is_empty() {
+                continue;
+            }
+            out.push_str(path);
+            out.push_str(":\n");
+            let spec = format!("{refname}:{path}");
+            let content = git_capture(repo_root, &["cat-file", "-p", &spec]);
+            out.push_str(&content);
+            if !content.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn git_capture(repo_root: &Path, args: &[&str]) -> String {
+    let output = StdCommand::new("git")
+        .args(args)
+        .current_dir(repo_root)
+        .output()
+        .unwrap_or_else(|e| panic!("invoke git {args:?}: {e}"));
+    assert!(
+        output.status.success(),
+        "git {args:?} exited non-zero; stderr was: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("git stdout is UTF-8")
 }
 
 /// Compare `actual` against the checked-in golden at `<name>.golden`.
