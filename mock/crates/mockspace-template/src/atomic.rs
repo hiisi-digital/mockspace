@@ -92,6 +92,33 @@ pub fn render_atomic<C: Serialize>(
     Ok(())
 }
 
+/// Atomic-write a pre-rendered string to `dest`. Peer of
+/// [`render_atomic`] for callers that already hold the rendered
+/// bytes (e.g. dep-graph `.dot` source emitted directly rather than
+/// via a template). Same atomicity and idempotency contract:
+/// write-to-sibling-temp, fsync, rename; identical bytes skip the
+/// write and preserve mtime.
+pub fn write_atomic(content: &str, dest: &Path) -> Result<(), RenderError> {
+    if let Ok(existing) = fs::read_to_string(dest) {
+        if existing == content {
+            return Ok(());
+        }
+    }
+
+    let parent = dest.parent().ok_or_else(|| {
+        RenderError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("dest has no parent directory: {}", dest.display()),
+        ))
+    })?;
+
+    let mut tmp = NamedTempFile::new_in(parent)?;
+    tmp.write_all(content.as_bytes())?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(dest).map_err(|e| RenderError::Io(e.error))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
