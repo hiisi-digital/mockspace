@@ -191,7 +191,7 @@ impl RepoHandle {
             contributed += 1;
         }
 
-        let new_tree = RoundRefTree::from_entries_pub(new_entries);
+        let new_tree = RoundRefTree::from_entries(new_entries);
         let message = format!("archive: round `{slug_prefix}` -> round-archive");
         let archive_commit =
             self.write_round_ref(&archive_ref, &new_tree, &message, prior_archive_oid)?;
@@ -302,7 +302,7 @@ mod tests {
         for (k, v) in extra {
             entries.insert((*k).to_owned(), v.to_vec());
         }
-        let tree = RoundRefTree::from_entries_pub(entries);
+        let tree = RoundRefTree::from_entries(entries);
         handle
             .write_round_ref(&ref_path, &tree, "seed DONE", None)
             .expect("seed");
@@ -358,7 +358,7 @@ mod tests {
         let ref_path = RefPath::round_mock(&slug);
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
-        let tree = RoundRefTree::from_entries_pub(entries);
+        let tree = RoundRefTree::from_entries(entries);
         handle
             .write_round_ref(&ref_path, &tree, "seed PLAN(doc)", None)
             .unwrap();

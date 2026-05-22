@@ -68,21 +68,15 @@ pub struct RoundRefTree {
 }
 
 impl RoundRefTree {
-    /// Construct from a raw entry map. Crate-visible so other IO
-    /// slices (e.g. `seal_manifest`) can compose snapshots without
-    /// going through gix on the read path. Not exposed to downstream
-    /// consumers, who use the reader. If a downstream test fixture
-    /// ever needs this, promote with a typed builder rather than
-    /// re-publishing the raw map.
-    pub(crate) fn from_entries_pub(entries: BTreeMap<String, Vec<u8>>) -> Self {
+    /// Construct from a raw entry map. Public so IO slices (e.g.
+    /// `seal_manifest`) can compose snapshots without going through
+    /// gix on the read path, and so downstream test fixtures can
+    /// seed round refs without reaching into private state. The
+    /// raw-map shape IS the natural typed contract here (path -> bytes);
+    /// higher-level seeding wrappers like the `seed_topic_round`
+    /// helper in `mockspace-cli/tests/e2e_phase.rs` build on this.
+    pub fn from_entries(entries: BTreeMap<String, Vec<u8>>) -> Self {
         Self { entries }
-    }
-
-    /// Alias retained for the existing test-only call sites that
-    /// constructed `RoundRefTree` via `from_entries`.
-    #[cfg(test)]
-    pub(crate) fn from_entries(entries: BTreeMap<String, Vec<u8>>) -> Self {
-        Self::from_entries_pub(entries)
     }
 
     /// Lookup the bytes at `path`. Returns None when the path is

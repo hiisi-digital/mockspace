@@ -197,7 +197,7 @@ impl RepoHandle {
         entries.insert("meta.toml".to_owned(), meta_toml.into_bytes());
         entries.insert(TaskState::Open.marker_filename(), Vec::new());
 
-        let tree = RoundRefTree::from_entries_pub(entries);
+        let tree = RoundRefTree::from_entries(entries);
         let message = format!("task: create `{}`", task_id.as_uri_form());
         // expected_current = None: this is a ref CREATE, no prior
         // commit to CAS against. The precondition check above
@@ -591,7 +591,7 @@ impl RepoHandle {
             entries.insert(name.to_owned(), bytes.to_vec());
         }
         entries.insert("meta.toml".to_owned(), new_meta_toml.into_bytes());
-        let new_tree = RoundRefTree::from_entries_pub(entries);
+        let new_tree = RoundRefTree::from_entries(entries);
 
         // Write destination ref (no prior commit; this is a create).
         let message = format!(
@@ -741,7 +741,7 @@ impl RepoHandle {
             new_entries.insert("meta.toml".to_owned(), new_toml.into_bytes());
         }
 
-        let new_tree = RoundRefTree::from_entries_pub(new_entries);
+        let new_tree = RoundRefTree::from_entries(new_entries);
         let message = match (close_metadata.is_some(), new_state) {
             (true, TaskState::Closed) => {
                 format!("task: close `{}`", task_id.as_uri_form())
