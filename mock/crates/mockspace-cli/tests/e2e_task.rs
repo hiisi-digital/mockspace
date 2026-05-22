@@ -21,7 +21,7 @@ use std::path::Path;
 use std::process::Command as StdCommand;
 
 mod common;
-use common::assert_matches_golden;
+use common::{assert_matches_golden, scrub_oid_lines};
 
 /// Run `git init --quiet` inside the fixture so task refs (which
 /// live on `refs/mock/task/...`) have somewhere to land. Task verbs
@@ -56,31 +56,10 @@ fn run_task(fixture: &MockspaceFixture, args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("task stdout is UTF-8")
 }
 
-/// Replace commit OIDs (40-char lowercase hex strings on a line
-/// starting with "  commit:" or similar) with a stable placeholder.
-/// Without this scrub the golden would change on every run because
-/// the commit signature carries a wall-clock timestamp.
-fn scrub_commit_oids(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for line in s.lines() {
-        if line.trim_start().starts_with("commit:") {
-            // Find the prefix up to and including "commit:" and the
-            // trailing OID; rewrite to a placeholder.
-            if let Some(idx) = line.find("commit:") {
-                out.push_str(&line[..idx]);
-                out.push_str("commit: <OID>");
-                out.push('\n');
-                continue;
-            }
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
 /// Replace the `created = "<ISO-8601>"` line inside a serialised
-/// TaskMeta TOML with a stable placeholder.
+/// TaskMeta TOML with a stable placeholder. Lives here (not in the
+/// shared `common` module) because it's TaskMeta-specific; the
+/// generic `scrub_oid_lines` covers the OID-line case.
 fn scrub_created_timestamp(s: &str) -> String {
     s.lines()
         .map(|line| {
@@ -97,9 +76,10 @@ fn scrub_created_timestamp(s: &str) -> String {
         + "\n"
 }
 
-/// Apply both scrubs in sequence.
+/// Apply both scrubs in sequence: OID lines first, then the
+/// TaskMeta `created` timestamp.
 fn scrub(s: &str) -> String {
-    scrub_created_timestamp(&scrub_commit_oids(s))
+    scrub_created_timestamp(&scrub_oid_lines(s, "commit:"))
 }
 
 #[test]
