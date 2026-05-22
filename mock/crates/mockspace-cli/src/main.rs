@@ -13,13 +13,29 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
+use mockspace_core::lint::{Gate, LintCfgStore, LintEngine, RunSurface, Severity};
 use mockspace_rs::{
     bootstrap,
-    config_loader::{find_and_read_lints_toml, LintsTomlFile, OverrideCascade},
+    config_loader::{find_and_read_lints_toml, LintsConfig, LintsTomlFile, OverrideCascade},
+    engine::MockspaceEngine,
     explain, preset_source,
 };
+
+/// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
+/// engine consults this for per-lint runtime severity overrides; an
+/// empty store means "fall back to the lint's `default_severity()`",
+/// which the `LintsConfig::load` cascade already populated with the
+/// fully merged value. Future CLI work that adds runtime `--severity
+/// <lint>=<value>` overrides can replace this with a richer store.
+struct EmptyCfgStore;
+
+impl LintCfgStore for EmptyCfgStore {
+    fn get(&self, _lint_name: &str) -> Option<&toml::Table> {
+        None
+    }
+}
 
 /// Top-level CLI shape. Subcommands branch per intent; the
 /// `--repo-root` global flag overrides the default (cwd) so the
@@ -60,6 +76,34 @@ enum Command {
         /// catalog; misspellings surface `LintNotFound`.
         name: String,
     },
+    /// Run the lint engine against the repo. Prints findings to
+    /// stdout in the `<file>:<line>:<col>: [<severity>] <name>:
+    /// <message>` format. Exits non-zero if any finding is
+    /// classified as error at the chosen gate.
+    Check {
+        /// Severity gate to evaluate at. `commit` is the lightest
+        /// (pre-commit hook), `build` is intermediate (CI), `push`
+        /// is the strictest. Defaults to `commit`.
+        #[arg(long, value_enum, default_value_t = GateArg::Commit)]
+        gate: GateArg,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum GateArg {
+    Commit,
+    Build,
+    Push,
+}
+
+impl From<GateArg> for Gate {
+    fn from(g: GateArg) -> Gate {
+        match g {
+            GateArg::Commit => Gate::Commit,
+            GateArg::Build => Gate::Build,
+            GateArg::Push => Gate::Push,
+        }
+    }
 }
 
 fn main() -> std::process::ExitCode {
@@ -83,6 +127,7 @@ fn main() -> std::process::ExitCode {
         Command::Uninstall => run_uninstall(&repo_root),
         Command::Refresh => run_refresh(&repo_root),
         Command::Explain { name } => run_explain(&repo_root, &name),
+        Command::Check { gate } => run_check(&repo_root, gate.into()),
     }
 }
 
@@ -226,6 +271,77 @@ fn print_explain_report(report: &explain::ExplainReport) {
                 entry.field_path, entry.value, entry.winning_label
             );
         }
+    }
+}
+
+/// Run the lint engine against `repo_root` at the given `gate`.
+/// Composes the four engine pieces:
+///
+/// 1. `LintsConfig::load(repo_root, OverrideCascade::default())` reads
+///    the user TOML + applies cascade (Layer 5 CLI overrides remain
+///    empty for this slice; flagged for a follow-up).
+/// 2. `MockspaceEngine::new()` instantiates the catalog-default lint
+///    set.
+/// 3. `engine.scope_project(repo_root, RunSurface::Local)` walks the
+///    project tree and parses the relevant documents.
+/// 4. `engine.run(&project, gate, &cfg)` produces a `Vec<Finding>`.
+///
+/// Findings render one per line to stdout. Exit code is FAILURE iff
+/// any finding's severity is `Error` at the chosen gate (matching
+/// the pre-commit / pre-push hook gate semantics).
+fn run_check(repo_root: &std::path::Path, gate: Gate) -> std::process::ExitCode {
+    let cfg_obj = match LintsConfig::load(repo_root, OverrideCascade::default()) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("check failed: could not load lints config: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    // The cascade-resolved entries carry the merged severities and
+    // configs; the engine reads them at instantiation time. The
+    // `cfg` argument to `engine.run` covers per-lint runtime
+    // overrides, which the CLI does not surface yet.
+    let engine = MockspaceEngine::with_entries(cfg_obj.entries);
+    let project = match engine.scope_project(repo_root, RunSurface::Local) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("check failed: could not scope project: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let cfg_store = EmptyCfgStore;
+    let findings = match engine.run(&project, gate, &cfg_store) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("check failed: engine dispatch error: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
+    if findings.is_empty() {
+        println!("no findings at gate {gate:?}");
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    let mut had_error = false;
+    for f in &findings {
+        let path = f.span.file.display();
+        let line = f.span.start_line;
+        let col = f.span.start_column;
+        let sev = format!("{:?}", f.severity);
+        println!(
+            "{path}:{line}:{col}: [{sev}] {name}: {msg}",
+            name = f.lint_name,
+            msg = f.message
+        );
+        if matches!(f.severity, Severity::Error) {
+            had_error = true;
+        }
+    }
+    if had_error {
+        std::process::ExitCode::FAILURE
+    } else {
+        std::process::ExitCode::SUCCESS
     }
 }
 
