@@ -896,13 +896,31 @@ fn run_check(
         }
     };
     let cfg_store = EmptyCfgStore;
-    let findings = match engine.run(&project, gate, &cfg_store) {
+    let mut findings = match engine.run(&project, gate, &cfg_store) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("check failed: engine dispatch error: {e}");
             return std::process::ExitCode::FAILURE;
         }
     };
+    // Stable sort by (file, line, column, severity). The engine
+    // returns findings in catalog-dispatch order, which is
+    // deterministic per build but changes whenever catalog
+    // registration reorders. A presentation-side sort gives
+    // consumers a stable diagnostic ordering independent of
+    // catalog churn. `sort_by_key` keeps the existing within-tie
+    // order so multiple findings on the same span at the same
+    // severity preserve dispatch-relative order. The engine API
+    // contract stays "dispatch order"; this is a CLI render
+    // affordance for the human + JSON output paths.
+    findings.sort_by_key(|f| {
+        (
+            f.span.file.clone(),
+            f.span.start_line,
+            f.span.start_column,
+            f.severity,
+        )
+    });
 
     // JSON branch: pretty-print the findings as a serde_json
     // array and short-circuit. Exit code semantics still hinge on
