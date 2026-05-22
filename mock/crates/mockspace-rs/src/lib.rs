@@ -89,6 +89,22 @@ pub use mockspace_core::lint::{
     Finding, Gate, GateSeverity, LintCfgStore, LintEngine, RunSurface, Severity, Span,
 };
 
+// Re-export the Phase 5 IO surface (transition executors + the
+// types they operate on) so the `mock` binary composes them
+// without reaching into mockspace-core. Same indirection rule as
+// the lint-engine vocabulary above.
+pub use mockspace_core::io::{
+    AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, FlockTransitionLock,
+    LockError, RepoError, RepoHandle, SealError, SealReport,
+};
+pub use mockspace_core::phase::{ManifestSide, Phase};
+pub use mockspace_core::slug::{Slug, SlugError};
+pub use mockspace_core::transition::ReplanMode;
+// Re-export gix's ObjectId so callers can parse user-supplied
+// hex OIDs (e.g. `--source-tip <hex>` on `mock phase apply`)
+// without taking a direct gix dep on top of mockspace-rs.
+pub use gix::ObjectId;
+
 /// The active engine on the host. Swap point: change this alias to switch
 /// engines workspace-wide (e.g. to a future viola-driven engine).
 pub type ActiveEngine = MockspaceEngine;

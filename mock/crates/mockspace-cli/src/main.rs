@@ -19,7 +19,9 @@ use mockspace_rs::{
     bootstrap,
     config_loader::{find_and_read_lints_toml, LintsConfig, LintsTomlFile, OverrideCascade},
     engine::MockspaceEngine,
-    explain, preset_source, Gate, LintCfgStore, LintEngine, RunSurface, Severity,
+    explain, preset_source, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError,
+    ArchiveReport, FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError, ObjectId,
+    Phase, RepoError, RepoHandle, ReplanMode, RunSurface, Severity, Slug,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -100,6 +102,99 @@ enum Command {
         #[arg(long, value_enum, default_value_t = SurfaceArg::Local)]
         surface: SurfaceArg,
     },
+    /// Run a phase-transition verb against a round. The four
+    /// verbs follow spec §14: `plan` opens TOPIC -> PLAN(doc),
+    /// `apply` seals PLAN(side) -> APPLY(side) and captures the
+    /// anchor, `finish` advances APPLY(doc) -> PLAN(src) or
+    /// APPLY(src) -> DONE, `replan` deprecates the locked
+    /// manifest and returns to PLAN(side).
+    Phase {
+        #[command(subcommand)]
+        verb: PhaseVerb,
+    },
+    /// Archive a DONE round to `refs/mock/round-archive` and
+    /// delete the source `refs/mock/round/<slug>`. Spec §26.
+    Close {
+        /// Slug of the round to archive.
+        slug: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PhaseVerb {
+    /// Open a planning surface on a TOPIC-phase round. Rewrites
+    /// `.phase` to `plan_doc`; the manifest authoring itself
+    /// happens via separate ref edits.
+    Plan {
+        /// Slug of the round to open PLAN(doc) on. Must currently
+        /// be in TOPIC phase.
+        slug: String,
+    },
+    /// Seal the authoring manifest and transition PLAN(side) ->
+    /// APPLY(side). Requires the source-side branch tip OID as
+    /// a hex SHA so the anchor capture sees a stable input.
+    Apply {
+        /// Slug of the round to seal. Must currently be in
+        /// PLAN(doc) or PLAN(src) phase.
+        slug: String,
+        /// Source-side branch tip OID at APPLY entry, in hex
+        /// form (e.g. the output of `git rev-parse HEAD`). The
+        /// anchor records this OID for provenance.
+        #[arg(long)]
+        source_tip: String,
+    },
+    /// Advance the round past APPLY: APPLY(doc) -> PLAN(src), or
+    /// APPLY(src) -> DONE. The doc-side locked manifest is
+    /// preserved through the doc-to-src transition.
+    Finish {
+        /// Slug of the round to advance. Must currently be in
+        /// APPLY(doc) or APPLY(src) phase.
+        slug: String,
+    },
+    /// Deprecate the locked manifest and return APPLY(side) to
+    /// PLAN(side). The locked manifest is renamed to the next
+    /// `manifest.<side>.deprecated.<n>.toml` slot.
+    Replan {
+        /// Slug of the round to replan. Must currently be in
+        /// APPLY(doc) or APPLY(src) phase.
+        slug: String,
+        /// Replan mode. Currently the local-ref portion does not
+        /// branch on mode (rename plus phase flip is identical
+        /// across modes); the parameter exists for API stability
+        /// and forwards to higher orchestration when wired.
+        #[arg(long, value_enum, default_value_t = ReplanModeArg::Destructive)]
+        mode: ReplanModeArg,
+        /// Claimed source-side file path that may have lost
+        /// post-APPLY work. Repeatable. Only consulted when
+        /// `--mode accept-loss`; ignored otherwise. Each occurrence
+        /// adds one path to the accept-loss list.
+        #[arg(long = "accept-loss-path", value_name = "PATH")]
+        accept_loss_paths: Vec<std::path::PathBuf>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ReplanModeArg {
+    /// Overwrite source-side files at restoration time.
+    /// Refuses if post-APPLY commits touch claimed files.
+    Destructive,
+    /// Commit the restoration on top of post-APPLY state.
+    AdditiveByCommit,
+    /// Accept post-APPLY work loss for the paths supplied via
+    /// `--accept-loss-path`. Other claimed files refuse as in
+    /// `destructive`.
+    AcceptLoss,
+}
+
+/// Convert a CLI mode + the optional `--accept-loss-path` list
+/// into the core's `ReplanMode`. The list is only consulted for
+/// the `accept-loss` variant; other variants ignore it.
+fn replan_mode_from(arg: ReplanModeArg, accept_loss_paths: Vec<std::path::PathBuf>) -> ReplanMode {
+    match arg {
+        ReplanModeArg::Destructive => ReplanMode::Destructive,
+        ReplanModeArg::AdditiveByCommit => ReplanMode::AdditiveByCommit,
+        ReplanModeArg::AcceptLoss => ReplanMode::AcceptRestorationLoss(accept_loss_paths),
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -160,6 +255,239 @@ fn main() -> std::process::ExitCode {
         Command::Check { gate, json, surface } => {
             run_check(&repo_root, gate.into(), json, surface.into())
         }
+        Command::Phase { verb } => run_phase(&repo_root, verb),
+        Command::Close { slug } => run_close(&repo_root, &slug),
+    }
+}
+
+/// Parse a slug string into [`Slug`] with a CLI-friendly error
+/// message. The `Slug::new` validation rejects empty, too-long,
+/// and out-of-charset inputs.
+fn parse_slug(raw: &str) -> Result<Slug, String> {
+    Slug::new(raw).map_err(|e| format!("invalid slug `{raw}`: {e}"))
+}
+
+/// Open the repo handle from `repo_root` with a CLI-friendly error
+/// message. `RepoError::NotFound` is rendered as "not inside a git
+/// repository"; other variants surface their inner error.
+fn open_repo(repo_root: &std::path::Path) -> Result<RepoHandle, String> {
+    RepoHandle::open(repo_root).map_err(|e| match e {
+        RepoError::NotFound { .. } => format!(
+            "not inside a git repository: no .git directory found under `{}`",
+            repo_root.display()
+        ),
+        other => format!("cannot open repository at `{}`: {other}", repo_root.display()),
+    })
+}
+
+/// Acquire the transition lock at `<repo_root>/.git/mockspace/.lock`
+/// with a CLI-friendly error message. Blocking acquire so the user
+/// waits for any concurrent process to release.
+///
+/// `LockError::AlreadyHeld` is unreachable here because `acquire`
+/// is blocking. Only `try_acquire` ever surfaces it; this CLI uses
+/// the blocking path. The match still covers the variant defensively
+/// in case a future caller switches to `try_acquire`, but the body
+/// of those arms is currently unreachable in practice.
+fn acquire_lock(repo_root: &std::path::Path) -> Result<FlockTransitionLock, String> {
+    FlockTransitionLock::acquire(repo_root).map_err(|e| match e {
+        LockError::GitDirMissing { workspace_root } => format!(
+            "cannot acquire transition lock: no .git directory at `{}`",
+            workspace_root.display()
+        ),
+        LockError::AlreadyHeld { previous: Some(h) } => format!(
+            "transition lock held by host={} pid={} acquired_at={}",
+            h.hostname, h.pid, h.acquired_at
+        ),
+        LockError::AlreadyHeld { previous: None } => {
+            "transition lock held by an unknown process".to_owned()
+        }
+        LockError::Io { during, path, error } => format!(
+            "transition lock IO failed during {during} on `{}`: {error}",
+            path.display()
+        ),
+    })
+}
+
+fn run_phase(
+    repo_root: &std::path::Path,
+    verb: PhaseVerb,
+) -> std::process::ExitCode {
+    // Parse the per-verb inputs FIRST so a malformed slug or
+    // source-tip bails out before we touch the repo or hold the
+    // transition lock. (The lock release on error path is
+    // automatic via Drop, but skipping the acquire is cheaper.)
+    let (slug_raw, advance_verb) = match verb {
+        PhaseVerb::Plan { slug } => (slug, AdvanceVerb::Plan),
+        PhaseVerb::Apply { slug, source_tip } => {
+            let oid = match ObjectId::from_hex(source_tip.as_bytes()) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!(
+                        "invalid --source-tip `{source_tip}`: {e}. Expected a hex SHA \
+                         (40 chars for SHA-1, 64 for SHA-256)."
+                    );
+                    return std::process::ExitCode::FAILURE;
+                }
+            };
+            (
+                slug,
+                AdvanceVerb::Apply {
+                    source_branch_tip: oid,
+                },
+            )
+        }
+        PhaseVerb::Finish { slug } => (slug, AdvanceVerb::Finish),
+        PhaseVerb::Replan {
+            slug,
+            mode,
+            accept_loss_paths,
+        } => (
+            slug,
+            AdvanceVerb::Replan(replan_mode_from(mode, accept_loss_paths)),
+        ),
+    };
+
+    let slug = match parse_slug(&slug_raw) {
+        Ok(s) => s,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
+    let handle = match open_repo(repo_root) {
+        Ok(h) => h,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let lock = match acquire_lock(repo_root) {
+        Ok(l) => l,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
+    match handle.advance_phase(&lock, &slug, advance_verb) {
+        Ok(report) => {
+            print_advance_report(&slug_raw, &report);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("phase transition failed: {}", render_advance_error(&e));
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_advance_report(slug_raw: &str, report: &AdvanceReport) {
+    println!(
+        "round `{slug_raw}` -> phase `{phase}` via verb `{verb:?}`",
+        phase = phase_marker(report.landed_in),
+        verb = report.verb,
+    );
+    println!("  new commit: {}", report.new_commit);
+    if let Some(seal) = &report.seal {
+        println!("  locked manifest: {}", seal.locked_manifest_path);
+        println!("  anchor blobs: {}", seal.anchor_blob_count);
+    }
+    if let Some(n) = report.deprecated_iteration {
+        println!("  deprecated as iteration {n}");
+    }
+}
+
+fn phase_marker(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Topic => "topic",
+        Phase::PlanDoc => "plan_doc",
+        Phase::ApplyDoc => "apply_doc",
+        Phase::PlanSrc => "plan_src",
+        Phase::ApplySrc => "apply_src",
+        Phase::Done => "done",
+    }
+}
+
+fn render_advance_error(e: &AdvanceError) -> String {
+    match e {
+        AdvanceError::RoundRefMissing { slug } => {
+            format!("no round ref exists for slug `{slug}`")
+        }
+        AdvanceError::InvalidFromPhase {
+            verb,
+            current,
+            allowed_from,
+        } => format!(
+            "verb {verb:?} is not valid from phase {current:?}; allowed from {allowed_from:?}"
+        ),
+        other => format!("{other}"),
+    }
+}
+
+fn run_close(repo_root: &std::path::Path, slug_raw: &str) -> std::process::ExitCode {
+    // Parse the slug first so a malformed input bails out before
+    // any repo or lock work happens.
+    let slug = match parse_slug(slug_raw) {
+        Ok(s) => s,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let handle = match open_repo(repo_root) {
+        Ok(h) => h,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let lock = match acquire_lock(repo_root) {
+        Ok(l) => l,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
+    match handle.archive_round(&lock, &slug) {
+        Ok(report) => {
+            print_archive_report(slug_raw, &report);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("archive failed: {}", render_archive_error(&e));
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn print_archive_report(slug_raw: &str, report: &ArchiveReport) {
+    println!("round `{slug_raw}` archived to refs/mock/round-archive");
+    println!("  new archive commit: {}", report.archive_commit);
+    println!("  entries archived: {}", report.entries_archived);
+    if report.source_ref_deleted {
+        println!("  source ref `refs/mock/round/{slug_raw}` deleted");
+    } else {
+        println!(
+            "  WARNING: source ref `refs/mock/round/{slug_raw}` NOT deleted; re-run is idempotent"
+        );
+        if let Some(err) = &report.source_delete_error {
+            println!("  delete error: {err}");
+        }
+    }
+}
+
+fn render_archive_error(e: &ArchiveError) -> String {
+    match e {
+        ArchiveError::RoundRefMissing { slug } => {
+            format!("no round ref exists for slug `{slug}`")
+        }
+        ArchiveError::NotDone { current } => {
+            format!("round is in phase {current:?}; only DONE rounds may be archived")
+        }
+        other => format!("{other}"),
     }
 }
 
