@@ -128,3 +128,140 @@ fn plan_verb_refuses_when_round_missing() {
         "expected typed phase-failure prefix in stderr; got: {stderr}"
     );
 }
+
+#[test]
+fn apply_verb_rejects_invalid_source_tip_hex() {
+    // The --source-tip flag uses value_parser = parse_object_id; an
+    // invalid hex string must fail at clap parse time before any IO
+    // happens. Pins the typed-clap rejection from the #591 audit.
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    git_init(&fixture);
+
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .args(["phase", "apply", "some-round", "--source-tip", "not-a-hex"])
+        .output()
+        .expect("invoke mock phase apply");
+    assert!(
+        !output.status.success(),
+        "phase apply with invalid hex must reject at clap parse; stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.contains("invalid object id"),
+        "expected clap-time typed-parse rejection naming object-id error; got: {stderr}"
+    );
+}
+
+#[test]
+fn apply_verb_refuses_when_round_missing() {
+    // No round seeded; apply must reject typed phase-failure even
+    // with a valid (but unused) source-tip hex.
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    git_init(&fixture);
+    let zero_oid = "0000000000000000000000000000000000000000";
+
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .args(["phase", "apply", "missing-round", "--source-tip", zero_oid])
+        .output()
+        .expect("invoke mock phase apply");
+    assert!(
+        !output.status.success(),
+        "phase apply against missing round must reject; stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.contains("phase transition failed"),
+        "expected typed phase-failure prefix; got: {stderr}"
+    );
+}
+
+#[test]
+fn finish_verb_refuses_when_round_missing() {
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    git_init(&fixture);
+
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .args(["phase", "finish", "missing-round"])
+        .output()
+        .expect("invoke mock phase finish");
+    assert!(
+        !output.status.success(),
+        "phase finish against missing round must reject; stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.contains("phase transition failed"),
+        "expected typed phase-failure prefix; got: {stderr}"
+    );
+}
+
+#[test]
+fn replan_verb_refuses_when_round_missing() {
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    git_init(&fixture);
+
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .args(["phase", "replan", "missing-round"])
+        .output()
+        .expect("invoke mock phase replan");
+    assert!(
+        !output.status.success(),
+        "phase replan against missing round must reject; stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.contains("phase transition failed"),
+        "expected typed phase-failure prefix; got: {stderr}"
+    );
+}
+
+#[test]
+fn plan_verb_refuses_when_round_already_advanced() {
+    // Seed a round already in PLAN(doc); plan against a non-TOPIC
+    // round must reject with a typed phase-failure. Catches the
+    // transition validity matrix's TOPIC -> PLAN(doc) precondition.
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    git_init(&fixture);
+    let slug = Slug::new("already-planned").expect("slug");
+    let handle = RepoHandle::open(fixture.path()).expect("open repo");
+    let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
+    let tree = RoundRefTree::from_entries(entries);
+    handle
+        .write_round_ref(&RefPath::round_mock(&slug), &tree, "seed", None)
+        .expect("seed");
+
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .args(["phase", "plan", slug.as_str()])
+        .output()
+        .expect("invoke mock phase plan");
+    assert!(
+        !output.status.success(),
+        "plan against plan_doc round must reject; stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert!(
+        stderr.contains("phase transition failed"),
+        "expected typed phase-failure prefix; got: {stderr}"
+    );
+}
