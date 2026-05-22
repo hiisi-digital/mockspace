@@ -312,6 +312,18 @@ enum TaskVerb {
         #[arg(long = "round-slug", value_parser = parse_slug)]
         round_slug: Option<Slug>,
     },
+    /// Move a task from one identifier to another. Reads the source
+    /// ref tree, updates `meta.toml` to match the destination's
+    /// namespace + slug, writes the destination ref, then deletes
+    /// the source ref. Refuses to clobber an existing destination.
+    Move {
+        /// Source task identifier in URI form.
+        #[arg(value_parser = parse_task_id)]
+        from: TaskId,
+        /// Destination task identifier in URI form.
+        #[arg(value_parser = parse_task_id)]
+        to: TaskId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -673,6 +685,7 @@ fn run_task(repo_root: &std::path::Path, verb: TaskVerb) -> std::process::ExitCo
             phase,
             round_slug,
         } => run_task_close(&handle, &id, resolution, branch, phase, round_slug.as_ref()),
+        TaskVerb::Move { from, to } => run_task_move(&handle, &from, &to),
     }
 }
 
@@ -834,6 +847,26 @@ fn run_task_close(
         }
         Err(e) => {
             eprintln!("task close failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_task_move(handle: &RepoHandle, from: &TaskId, to: &TaskId) -> std::process::ExitCode {
+    match handle.move_task(from, to) {
+        Ok(report) => {
+            println!(
+                "task `{}` moved to `{}`",
+                from.as_uri_form(),
+                to.as_uri_form(),
+            );
+            println!("  from-ref: {}", report.from_ref_path);
+            println!("  to-ref:   {}", report.to_ref_path);
+            println!("  commit:   {}", report.commit_oid);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("task move failed: {e}");
             std::process::ExitCode::FAILURE
         }
     }
