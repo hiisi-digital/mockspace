@@ -18,10 +18,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use mockspace_rs::{
     bootstrap,
     config_loader::{find_and_read_lints_toml, LintsConfig, LintsTomlFile, OverrideCascade},
+    design_rounds::discover_design_rounds,
     engine::MockspaceEngine,
     explain, preset_source, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError,
-    ArchiveReport, FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError, ObjectId,
-    Phase, RepoError, RepoHandle, ReplanMode, RunSurface, Severity, Slug,
+    ArchiveReport, DesignRound, FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError,
+    ObjectId, Phase, RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, Slug,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -118,6 +119,17 @@ enum Command {
         /// Slug of the round to archive.
         slug: String,
     },
+    /// Walk the v1 mockspace state under `mock/design_rounds/`
+    /// and print a per-round migration report plus a checklist
+    /// of human-side updates (agent docs, hook configs that
+    /// reference the old subcommand surface) needed to finish
+    /// the v1 -> v2 transition.
+    ///
+    /// This is a guide. The auto-conversion (writing v2 ref
+    /// trees from v1 filesystem state) lands in a follow-up
+    /// behind an explicit `--auto` flag once the classification
+    /// surface here is reviewed.
+    Migrate,
 }
 
 #[derive(Subcommand, Debug)]
@@ -257,6 +269,7 @@ fn main() -> std::process::ExitCode {
         }
         Command::Phase { verb } => run_phase(&repo_root, verb),
         Command::Close { slug } => run_close(&repo_root, &slug),
+        Command::Migrate => run_migrate(&repo_root),
     }
 }
 
@@ -489,6 +502,148 @@ fn render_archive_error(e: &ArchiveError) -> String {
         }
         other => format!("{other}"),
     }
+}
+
+/// Walk `mock/design_rounds/` and print a per-round migration
+/// report. Each entry classifies the v1 state, names the target
+/// v2 phase, and gives concrete next-step instructions for what
+/// the human must do. After the per-round table, prints a
+/// checklist of project-wide updates (agent docs, hook configs)
+/// that the tool does not attempt to mutate automatically.
+fn run_migrate(repo_root: &std::path::Path) -> std::process::ExitCode {
+    let view = discover_design_rounds(repo_root);
+    if view.rounds.is_empty() {
+        println!(
+            "no v1 round directories found under `{}/mock/design_rounds/`",
+            repo_root.display()
+        );
+        println!();
+        print_migration_postscript();
+        return std::process::ExitCode::SUCCESS;
+    }
+
+    println!(
+        "v1 mockspace state discovered under `{}/mock/design_rounds/`:",
+        repo_root.display()
+    );
+    println!("  {} round(s) to migrate", view.rounds.len());
+    println!();
+    println!("Per-round migration plan:");
+    println!();
+    for round in &view.rounds {
+        print_round_migration_report(round);
+        println!();
+    }
+    print_migration_postscript();
+    std::process::ExitCode::SUCCESS
+}
+
+fn print_round_migration_report(round: &DesignRound) {
+    println!("  round `{}`:", round.timestamp);
+    println!("    v1 state:    {:?}", round.state);
+    if let Some(doc_cl) = &round.doc_cl {
+        println!("    doc CL:      `{}`", doc_cl.display());
+    }
+    if let Some(src_cl) = &round.src_cl {
+        println!("    src CL:      `{}`", src_cl.display());
+    }
+    println!("    locked:      {}", round.locked);
+
+    let (target_phase, action) = classify_v1_round(round);
+    println!("    target v2:   phase = `{target_phase}`");
+    println!("    action:      {action}");
+}
+
+/// Map a v1 [`DesignRound`] to (target v2 phase marker, human
+/// action narrative). The mapping is conservative: states that
+/// can be auto-constructed from the v1 filesystem alone print a
+/// "tool can write" hint; states that require human authoring
+/// (e.g., translating markdown CLs to v2 structured TOML
+/// manifests) print explicit manual steps.
+fn classify_v1_round(round: &DesignRound) -> (&'static str, String) {
+    match round.state {
+        RoundState::Topic => (
+            "topic",
+            "Empty v1 round (no CLs). Tool can construct the v2 ref directly: \
+             run `mock phase plan <slug>` once `mock migrate --auto` ships, or \
+             manually push an orphan ref carrying `.phase = topic`."
+                .to_owned(),
+        ),
+        RoundState::Doc => (
+            "plan_doc",
+            "v1 doc CL exists in markdown form. v2 stores manifests as \
+             structured TOML (see `mock/crates/mockspace-core/src/manifest.rs::Manifest`), \
+             so the doc CL is NOT 1:1 translatable. Manual step: author \
+             `manifest.doc.toml` for the round, then run `mock phase plan <slug>` \
+             plus follow-up writes to seat the manifest."
+                .to_owned(),
+        ),
+        RoundState::Src => (
+            "plan_src",
+            "v1 round advanced to src side; doc was previously sealed. \
+             Manual steps: author both `manifest.doc.locked.toml` (from the \
+             prior doc CL) and `manifest.src.toml` (from the current src CL), \
+             then drive the round through `mock phase apply` (doc) + \
+             `mock phase finish` to land at PLAN(src)."
+                .to_owned(),
+        ),
+        RoundState::Locked => {
+            // Infer the side from which CLs are present. v1 stores
+            // them as `Option<PathBuf>` so both being present means
+            // doc was already sealed and src is the live work
+            // (=> apply_src); only doc present means the lock is on
+            // the doc side (=> apply_doc).
+            let (target_phase, side_marker) = match (&round.doc_cl, &round.src_cl) {
+                (_, Some(_)) => ("apply_src", "src"),
+                (Some(_), None) => ("apply_doc", "doc"),
+                (None, None) => ("apply_<side>", "<side>"),
+            };
+            (
+                target_phase,
+                format!(
+                    "v1 round has a locked CL. v2 APPLY phase requires a captured \
+                 anchor; v1 carries no equivalent record. Manual steps: author \
+                 `manifest.{side_marker}.locked.toml` from the locked CL, run \
+                 `mock phase apply <slug> --source-tip <hex>` to capture a \
+                 fresh anchor against the current source-side branch tip."
+                ),
+            )
+        }
+        RoundState::Closed => (
+            "done (then archived)",
+            "v1 closed round. Manual steps: reconstruct the v2 round-ref \
+             tree carrying `.phase = done` plus the locked manifests for \
+             both sides, then `mock close <slug>` to move it into \
+             `refs/mock/round-archive`."
+                .to_owned(),
+        ),
+    }
+}
+
+fn print_migration_postscript() {
+    println!("Things you (the consumer) need to update by hand:");
+    println!();
+    println!("  CI workflows (`.github/workflows/*.yml`, equivalent on other forges):");
+    println!("    If your CI invokes `cargo mock lock` or `cargo mock deprecate`,");
+    println!("    switch the calls to the v2 verb surface:");
+    println!("      `cargo mock lock <slug>`        -> `cargo mock phase apply <slug> --source-tip <hex>`");
+    println!("      `cargo mock deprecate <slug>`   -> `cargo mock phase replan <slug> [--mode ...]`");
+    println!("      `cargo mock close <slug>`       -> (unchanged in v2)");
+    println!();
+    println!("  Tracked tasks / project memos that reference v1 verbs:");
+    println!("    Grep your repo for `mock lock` / `mock deprecate` in prose and");
+    println!("    update by hand. Mockspace does not edit your in-repo writing.");
+    println!();
+    println!("Things mockspace ships builtin (do NOT update by hand):");
+    println!();
+    println!("  Canonical agent rules describing mockspace itself (what the phases");
+    println!("  are, what the verbs do, the workflow shape) and the canonical hook");
+    println!("  scripts that drive `cargo mock check` at the commit/build/push gates");
+    println!("  are part of the mockspace install surface. Run `cargo mock refresh`");
+    println!("  to pull the current canonical state. Anything mockspace-internal in");
+    println!("  your repo's agent docs / hooks is overwritten by the refresh; only");
+    println!("  consumer-authored conventions (project lints, repo-specific");
+    println!("  workflows, the bits NOT about mockspace itself) are preserved.");
 }
 
 fn run_status(repo_root: &std::path::Path) -> std::process::ExitCode {
