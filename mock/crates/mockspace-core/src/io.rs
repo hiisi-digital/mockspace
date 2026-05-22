@@ -11,11 +11,14 @@
 //! impl, anchor capture, and the executors that compose them
 //! (`seal_manifest`, `advance_phase`, `archive_round`).
 
+mod anchor_capture;
 mod lock;
 mod ref_tree;
 mod ref_write;
 mod repo;
+mod time;
 
+pub use anchor_capture::AnchorCaptureError;
 pub use lock::{FlockTransitionLock, LockError};
 pub use ref_tree::{RefTreeReadError, RoundRefTree};
 pub use ref_write::RefTreeWriteError;
