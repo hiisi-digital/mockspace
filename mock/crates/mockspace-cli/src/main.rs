@@ -684,6 +684,7 @@ fn run_status(repo_root: &std::path::Path) -> std::process::ExitCode {
     println!("  mock/ directory       : {}", yes_no(s.has_mock_dir));
     println!("  cargo alias `mock`    : {}", yes_no(s.has_cargo_alias));
     println!("  core.hooksPath set    : {}", yes_no(s.has_hooks_path));
+    println!("  builtin agent rules   : {}", s.agent_extract.label());
     std::process::ExitCode::SUCCESS
 }
 
