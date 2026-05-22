@@ -243,6 +243,32 @@ impl From<SurfaceArg> for RunSurface {
     }
 }
 
+/// Cold-start helper for subcommands that benefit from having the
+/// builtin agent rules extracted to `<root>/mock/target/agent/`.
+/// Calls `bootstrap::ensure_agent_extracted`, which is a no-op when
+/// the extract is current. Runs silently on success (presence is
+/// reported by `cargo mock status`, not by every other subcommand).
+/// On error, logs a warning but does not abort the subcommand: the
+/// agent rules are a nice-to-have for the consumer's agent reading
+/// them, not a runtime dependency of the subcommand itself.
+///
+/// Not called from `status` (observational; should have no side
+/// effects), nor from `install` / `uninstall` / `refresh` (those
+/// drive agent extraction or removal themselves).
+fn ensure_agent_ready(repo_root: &std::path::Path) {
+    // The successful `InstallOutcome` (Installed vs AlreadyInstalled)
+    // is dropped on purpose. Reporting cold-extract events here would
+    // appear on stderr of every subcommand and broke golden tests on
+    // the chatty first iteration. Slice 4's `cargo mock status`
+    // surface reads the same sentinel state from disk and is the
+    // right place to surface presence / staleness to the consumer.
+    if let Err(e) = bootstrap::ensure_agent_extracted(repo_root) {
+        eprintln!(
+            "warning: could not extract mockspace agent rules: {e}. Subcommand continues without them."
+        );
+    }
+}
+
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let repo_root = match cli.repo_root {
@@ -263,13 +289,26 @@ fn main() -> std::process::ExitCode {
         Command::Install => run_install(&repo_root),
         Command::Uninstall => run_uninstall(&repo_root),
         Command::Refresh => run_refresh(&repo_root),
-        Command::Explain { name } => run_explain(&repo_root, &name),
+        Command::Explain { name } => {
+            ensure_agent_ready(&repo_root);
+            run_explain(&repo_root, &name)
+        }
         Command::Check { gate, json, surface } => {
+            ensure_agent_ready(&repo_root);
             run_check(&repo_root, gate.into(), json, surface.into())
         }
-        Command::Phase { verb } => run_phase(&repo_root, verb),
-        Command::Close { slug } => run_close(&repo_root, &slug),
-        Command::Migrate => run_migrate(&repo_root),
+        Command::Phase { verb } => {
+            ensure_agent_ready(&repo_root);
+            run_phase(&repo_root, verb)
+        }
+        Command::Close { slug } => {
+            ensure_agent_ready(&repo_root);
+            run_close(&repo_root, &slug)
+        }
+        Command::Migrate => {
+            ensure_agent_ready(&repo_root);
+            run_migrate(&repo_root)
+        }
     }
 }
 
