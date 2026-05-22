@@ -104,8 +104,8 @@ pub use mockspace_core::lint::{
 pub use mockspace_core::io::{
     AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CloseMetadata,
     CreateTaskError, CreateTaskReport, FlockTransitionLock, ListTasksError, LockError,
-    MoveTaskError, MoveTaskReport, RepoError, RepoHandle, SealError, SealReport, ShowTaskError,
-    TaskTransitionError, TaskTransitionReport,
+    MoveTaskError, MoveTaskReport, RepoError, RepoHandle, RoundRefTree, SealError, SealReport,
+    ShowTaskError, TaskTransitionError, TaskTransitionReport,
 };
 pub use mockspace_core::branch_name::{BranchName, BranchNameError};
 pub use mockspace_core::entity::{Branch, GitRef, Instant, Round, Task};

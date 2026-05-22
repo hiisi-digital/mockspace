@@ -276,7 +276,7 @@ fn exec_plan(
     current_tree: &RoundRefTree,
 ) -> Result<AdvanceReport, AdvanceError> {
     let new_entries = rewrite_phase(current_tree, Phase::PlanDoc);
-    let new_tree = RoundRefTree::from_entries_pub(new_entries);
+    let new_tree = RoundRefTree::from_entries(new_entries);
     let new_commit = handle.write_round_ref(
         ref_path,
         &new_tree,
@@ -335,7 +335,7 @@ fn exec_finish(
         _ => unreachable!("validate guard verified APPLY phase"),
     };
     let new_entries = rewrite_phase(current_tree, landed_in);
-    let new_tree = RoundRefTree::from_entries_pub(new_entries);
+    let new_tree = RoundRefTree::from_entries(new_entries);
     let message = match landed_in {
         Phase::PlanSrc => "finish: APPLY(doc) -> PLAN(src)".to_owned(),
         Phase::Done => "finish: APPLY(src) -> DONE".to_owned(),
@@ -391,7 +391,7 @@ fn exec_replan(
     let phase_blob = format!("{}\n", landed_in.marker());
     entries.insert(".phase".to_owned(), phase_blob.into_bytes());
 
-    let new_tree = RoundRefTree::from_entries_pub(entries);
+    let new_tree = RoundRefTree::from_entries(entries);
     let message = format!("replan: APPLY({side}) -> PLAN({side}) [iter {next_n}]");
     let new_commit = handle.write_round_ref(ref_path, &new_tree, &message, Some(current_oid))?;
 
@@ -518,7 +518,7 @@ mod tests {
     fn seed_round(repo_dir: &Path, slug: &Slug, entries: BTreeMap<String, Vec<u8>>) {
         let handle = RepoHandle::open(repo_dir).expect("open");
         let ref_path = RefPath::round_mock(slug);
-        let tree = RoundRefTree::from_entries_pub(entries);
+        let tree = RoundRefTree::from_entries(entries);
         handle
             .write_round_ref(&ref_path, &tree, "seed", None)
             .expect("seed writes");

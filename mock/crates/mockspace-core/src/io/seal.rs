@@ -283,7 +283,7 @@ impl RepoHandle {
         let apply_marker = format!("{}\n", apply_phase_for(side).marker());
         new_entries.insert(".phase".to_owned(), apply_marker.into_bytes());
 
-        let new_tree = RoundRefTree::from_entries_pub(new_entries);
+        let new_tree = RoundRefTree::from_entries(new_entries);
 
         // Step 11: write the new commit + CAS-advance the ref.
         let message = format!("seal: PLAN({side}) -> APPLY({side})");
@@ -382,7 +382,7 @@ mod tests {
             "manifest.doc.toml".to_owned(),
             doc_manifest_toml(slug.as_ref()).into_bytes(),
         );
-        let tree = RoundRefTree::from_entries_pub(entries);
+        let tree = RoundRefTree::from_entries(entries);
         handle
             .write_round_ref(&ref_path, &tree, "init PLAN(doc)", None)
             .expect("init writes");
@@ -458,7 +458,7 @@ mod tests {
         handle
             .write_round_ref(
                 &ref_path,
-                &RoundRefTree::from_entries_pub(entries),
+                &RoundRefTree::from_entries(entries),
                 "init APPLY(doc)",
                 None,
             )
@@ -505,7 +505,7 @@ mod tests {
         handle
             .write_round_ref(
                 &ref_path,
-                &RoundRefTree::from_entries_pub(entries),
+                &RoundRefTree::from_entries(entries),
                 "init with stray locked",
                 None,
             )
@@ -533,7 +533,7 @@ mod tests {
         handle
             .write_round_ref(
                 &ref_path,
-                &RoundRefTree::from_entries_pub(entries),
+                &RoundRefTree::from_entries(entries),
                 "init",
                 None,
             )
