@@ -80,6 +80,15 @@ pub use project::{
 };
 pub use staging::{StagedSet, StagingFilter, StagingFilterError};
 
+// Re-export the lint-engine vocabulary from mockspace-core so
+// consumer crates (e.g. the `mock` binary) can import via this
+// crate rather than reaching into mockspace-core directly. Keeps
+// the dependency surface "consumer talks to mockspace-rs only";
+// substrate types stay one indirection away.
+pub use mockspace_core::lint::{
+    Finding, Gate, GateSeverity, LintCfgStore, LintEngine, RunSurface, Severity, Span,
+};
+
 /// The active engine on the host. Swap point: change this alias to switch
 /// engines workspace-wide (e.g. to a future viola-driven engine).
 pub type ActiveEngine = MockspaceEngine;

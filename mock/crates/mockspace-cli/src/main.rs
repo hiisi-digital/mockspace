@@ -15,12 +15,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use mockspace_core::lint::{Gate, LintCfgStore, LintEngine, RunSurface, Severity};
 use mockspace_rs::{
     bootstrap,
     config_loader::{find_and_read_lints_toml, LintsConfig, LintsTomlFile, OverrideCascade},
     engine::MockspaceEngine,
-    explain, preset_source,
+    explain, preset_source, Gate, LintCfgStore, LintEngine, RunSurface, Severity,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
