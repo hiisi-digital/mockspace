@@ -1,0 +1,44 @@
+# BACKLOG: mockspace-rs
+
+Future work tracked for mockspace-rs (the consumer-facing facade crate). Each entry has a trigger condition and a sketch of the change. Items here are NOT in-flight; they wait for the trigger.
+
+## Workspace-aware template fragment includes
+
+Trigger: when the manual shared-fragment sync script (currently the workaround in clause-dev) stabilises across multiple workspaces, or when sibling workspaces (saalis, polka-dots) ask for the same mechanism.
+
+Sketch: add an `{{include "fragment-url-or-path"}}` directive to the .tmpl render pipeline. Two flavours:
+
+- Local file: `{{include "../.shared/principles-fragment.md"}}`. Resolved if a workspace context is detected (multi-repo parent directory), otherwise the directive becomes a no-op with a comment warning.
+- Git-hosted: `{{include "git://owner/repo/path@ref"}}`. For extra-repo sharing; advanced and may never be needed.
+
+Pipeline changes:
+1. New "workspace context" mode: detect when `cargo mock` runs from a parent directory containing multiple mock-aware repos.
+2. Resolve `{{include}}` directives BEFORE other minijinja substitutions so fragment-internal templating still runs.
+3. Graceful degradation: single-repo clones without workspace context get a comment block explaining the section is injected in workspace context; standalone clones see the last-synced rendering.
+
+Cross-references: this BACKLOG entry exists because consumers ran into the limitation that `cargo mock` runs within a single repo and templates under `mock/` can only reference paths within that repo. The manual sync script handles the use case today; promote when the pattern stabilises.
+
+## TaskMeta / TaskClosure / TaskRefs wire-format retypification via serde adapters
+
+Trigger: when the in-memory carrier slice of the type-harness audit (the CloseMetadata typed-fields refactor) needs to extend through to the persisted wire-format structs.
+
+Sketch: add `#[serde(try_from = "String", into = "String")]` (or equivalent custom impls) to the identity types so they roundtrip through TOML as their validated body string. Identity types affected: `Slug`, `Iso8601Utc`, `BranchName`, `Namespace`, `TaskId`. Each needs `TryFrom<String>` and `From<X> for String` impls.
+
+Then retype the carrier struct fields in `mockspace-core/src/task.rs`:
+
+- `TaskMeta::slug: String` becomes `Slug`.
+- `TaskMeta::namespace: String` becomes `Namespace`.
+- `TaskMeta::created: String` becomes `Iso8601Utc`.
+- `TaskClosure::closed_at: String` becomes `Iso8601Utc`.
+- `TaskClosure::closed_branch: String` becomes `BranchName`.
+- `TaskClosure::closing_phase: String` becomes `Phase`.
+- `TaskClosure::closing_round_slug: String` becomes `Slug`.
+- `TaskRefs::blocks`, `blocked_by`, `relates_to`: `Vec<String>` becomes `Vec<TaskId>`.
+
+The retypification preserves the on-disk wire shape: empty-string represents the absent value, and the serde adapter maps the empty case to the type's default constructor or a documented sentinel. Any decision to lift fields to `Option<T>` (representing absence as missing-key in TOML) is a separate wire-format change and is NOT in scope for this entry; raise it explicitly if it surfaces during the coordinated round.
+
+Update the executor's TaskClosure construction in `io/task.rs` to forward CloseMetadata's typed fields directly (no string collapse anymore). Update CLI `run_task_close` to drop any remaining manual collapse. Update test fixtures and golden assertions.
+
+Acceptance: all identity types roundtrip through `toml::to_string` + `toml::from_str` byte-identically; the e2e tree-of-refs goldens regenerate byte-identical (wire format on disk unchanged); no pub struct field in mockspace-core's task surface holds raw `String` for a slug, id, timestamp, or branch shape.
+
+Deferred because the work touches every identity type's serde contract simultaneously; a partial cascade would leave intermediate code in a brittle state. Worth shipping as a single coordinated round when picked up.
