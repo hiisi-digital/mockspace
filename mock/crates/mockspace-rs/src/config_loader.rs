@@ -834,6 +834,75 @@ mod tests {
         assert_eq!(a.get("x").unwrap().as_integer().unwrap(), 1);
     }
 
+    // ---- issue #106 bisection probes ------------------------------------
+    //
+    // The two tests below isolate where the cascade-vs-dispatch gap
+    // lives for `[defaults] visibility = "any"`. Each test makes one
+    // claim against one layer of the resolved-config pipeline; their
+    // pass/fail pattern bisects between:
+    //
+    //   * overlay() not merging the [defaults] override into
+    //     merged_config (Layer 3 gap), OR
+    //   * AstTypePositionConfig deserialization dropping the value
+    //     (deserializer gap), OR
+    //   * the gap is downstream of both (engine.run / scope filter /
+    //     lint enabling).
+    //
+    // Result: both probes PASS. The gap is downstream of overlay() and
+    // deserialization. The original repro used `visibility = "all"`,
+    // which is not a Visibility variant (only Any | Public exist); the
+    // resulting ConfigError gets silently swallowed in the load path.
+    // Task #572 surfaces that error as a visible diagnostic.
+
+    #[test]
+    fn issue_106_overlay_propagates_visibility_into_merged_table() {
+        // The catalog default for ast-type-position carries
+        // `visibility = "public"`. A [defaults] block setting
+        // `visibility = "any"` should overwrite that key after
+        // overlay() runs.
+        let mut merged: toml::Table = "forbidden_types = [\"usize\"]\n\
+             positions = [\"fn-return\"]\n\
+             visibility = \"public\"\n\
+             replacements = []\n"
+            .parse()
+            .unwrap();
+        let workspace_defaults: toml::Table = "visibility = \"any\"\n".parse().unwrap();
+        overlay(&mut merged, &workspace_defaults);
+        assert_eq!(
+            merged.get("visibility").and_then(|v| v.as_str()),
+            Some("any"),
+            "overlay() should leave merged_config with visibility=\"any\" \
+             after applying [defaults] visibility = \"any\""
+        );
+    }
+
+    #[test]
+    fn issue_106_deserializer_reads_visibility_from_merged_table() {
+        // Given a merged_config table with visibility = "any", the
+        // AstTypePositionConfig deserializer at
+        // ast_type_position.rs:316 should populate
+        // parsed.visibility = Visibility::Any. This is the
+        // second-leg bisection probe; combined with the overlay
+        // probe above, the pair pinpoints which layer drops the
+        // override.
+        use crate::builtins::ast_type_position::AstTypePositionConfig;
+        use crate::config_types::Visibility;
+        let merged: toml::Table = "forbidden_types = [\"usize\"]\n\
+             positions = [\"fn-return\"]\n\
+             visibility = \"any\"\n\
+             replacements = []\n"
+            .parse()
+            .unwrap();
+        let parsed: AstTypePositionConfig =
+            merged.try_into().expect("deserialize must succeed");
+        assert_eq!(
+            parsed.visibility,
+            Visibility::Any,
+            "deserialized AstTypePositionConfig should reflect \
+             visibility=\"any\" from the merged_config table"
+        );
+    }
+
     // ---- list-merge .add / .remove (#567) -------------------------------
 
     fn arr_strs(t: &toml::Table, key: &str) -> Vec<String> {
