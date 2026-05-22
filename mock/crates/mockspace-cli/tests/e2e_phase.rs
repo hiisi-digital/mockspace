@@ -388,3 +388,126 @@ fn apply_verb_seals_doc_manifest_and_advances_to_apply_doc() {
     );
 }
 
+
+#[test]
+fn finish_verb_advances_apply_doc_to_plan_src() {
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    git_init(&fixture);
+    let slug = Slug::new("finish-doc-test").expect("slug");
+
+    // Seed APPLY(doc): .phase + the locked doc manifest. No anchor
+    // entries required for finish (anchor is consumed only by close).
+    let handle = RepoHandle::open(fixture.path()).expect("open repo");
+    let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    entries.insert(".phase".to_owned(), b"apply_doc\n".to_vec());
+    entries.insert(
+        "manifest.doc.locked.toml".to_owned(),
+        doc_manifest_toml(slug.as_str()).into_bytes(),
+    );
+    let tree = RoundRefTree::from_entries(entries);
+    handle
+        .write_round_ref(&RefPath::round_mock(&slug), &tree, "seed apply-doc", None)
+        .expect("seed");
+
+    let stdout = run_phase(&fixture, &["finish", slug.as_str()]);
+    assert!(
+        stdout.contains("phase `plan_src`"),
+        "expected stdout to name plan_src landing phase; got: {stdout}"
+    );
+
+    let post = handle
+        .read_ref_tree(&RefPath::round_mock(&slug))
+        .expect("read");
+    assert_eq!(
+        post.get(".phase").unwrap(),
+        b"plan_src\n",
+        "expected .phase to advance to plan_src after finish",
+    );
+    assert!(
+        post.get("manifest.doc.locked.toml").is_some(),
+        "doc-side locked manifest must be preserved across the doc-to-src finish",
+    );
+}
+
+#[test]
+fn finish_verb_advances_apply_src_to_done() {
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    git_init(&fixture);
+    let slug = Slug::new("finish-src-test").expect("slug");
+
+    // Seed APPLY(src): just the phase marker. The src-to-done finish
+    // does not require any manifest in the seed (the src-locked
+    // manifest would be there in a real flow, but finish does not
+    // read it).
+    let handle = RepoHandle::open(fixture.path()).expect("open repo");
+    let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    entries.insert(".phase".to_owned(), b"apply_src\n".to_vec());
+    let tree = RoundRefTree::from_entries(entries);
+    handle
+        .write_round_ref(&RefPath::round_mock(&slug), &tree, "seed apply-src", None)
+        .expect("seed");
+
+    let stdout = run_phase(&fixture, &["finish", slug.as_str()]);
+    assert!(
+        stdout.contains("phase `done`"),
+        "expected stdout to name done landing phase; got: {stdout}"
+    );
+
+    let post = handle
+        .read_ref_tree(&RefPath::round_mock(&slug))
+        .expect("read");
+    assert_eq!(
+        post.get(".phase").unwrap(),
+        b"done\n",
+        "expected .phase to advance to done after src-side finish",
+    );
+}
+
+#[test]
+fn replan_verb_deprecates_locked_doc_manifest_and_returns_to_plan_doc() {
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    git_init(&fixture);
+    let slug = Slug::new("replan-test").expect("slug");
+
+    // Seed APPLY(doc) with locked manifest.
+    let handle = RepoHandle::open(fixture.path()).expect("open repo");
+    let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    entries.insert(".phase".to_owned(), b"apply_doc\n".to_vec());
+    entries.insert(
+        "manifest.doc.locked.toml".to_owned(),
+        doc_manifest_toml(slug.as_str()).into_bytes(),
+    );
+    let tree = RoundRefTree::from_entries(entries);
+    handle
+        .write_round_ref(&RefPath::round_mock(&slug), &tree, "seed apply-doc", None)
+        .expect("seed");
+
+    let stdout = run_phase(&fixture, &["replan", slug.as_str()]);
+    assert!(
+        stdout.contains("phase `plan_doc`"),
+        "expected stdout to name plan_doc landing phase after replan; got: {stdout}"
+    );
+    assert!(
+        stdout.contains("deprecated as iteration 1"),
+        "expected stdout to report first-iteration deprecation; got: {stdout}"
+    );
+
+    // Integrity: locked manifest renamed to deprecated.1; phase flipped.
+    let post = handle
+        .read_ref_tree(&RefPath::round_mock(&slug))
+        .expect("read");
+    assert_eq!(
+        post.get(".phase").unwrap(),
+        b"plan_doc\n",
+        "expected .phase to revert to plan_doc after replan",
+    );
+    assert!(
+        post.get("manifest.doc.locked.toml").is_none(),
+        "locked doc manifest must be gone after replan deprecation",
+    );
+    assert!(
+        post.get("manifest.doc.deprecated.1.toml").is_some(),
+        "deprecated doc manifest must be present at iteration 1 slot",
+    );
+}
+
