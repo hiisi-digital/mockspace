@@ -42,7 +42,7 @@ pub use atomicity::{
 pub use bookkeeping::{classify_root_entry, BookkeepingFile, RootEntry};
 pub use io::{
     AnchorCaptureError, FlockTransitionLock, LockError, RefTreeReadError, RefTreeWriteError,
-    RepoError, RepoHandle, RoundRefTree,
+    RepoError, RepoHandle, RoundRefTree, SealError, SealReport,
 };
 pub use lint::{
     matches_pattern, Category, ContentHash, Directive, DirectiveRecord, Document, FileDisableEntry,
