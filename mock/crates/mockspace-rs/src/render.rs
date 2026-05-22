@@ -15,11 +15,17 @@
 //! Both surfaces flow through [`mockspace_template::render_atomic`]
 //! for the write step.
 //!
+//! A third output, `<out_dir>/dep-graph.dot`, captures the
+//! workspace's crate dependency graph as Graphviz source. When the
+//! system `dot` binary is on PATH a sibling `<out_dir>/dep-graph.svg`
+//! lands too; absent Graphviz only the `.dot` is produced. The same
+//! source string is exposed to templates via `{{ dep_graph }}`.
+//!
 //! Public surface: two functions ([`regenerate`] and [`check`]) reused
 //! across the broader render-pipeline slice plan. New behaviour lands
 //! behind private helpers without breaking the consumer surface.
-//! Dependency-graph rendering will follow as an additive extension of
-//! the same entry points.
+
+pub mod dep_graph;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -28,7 +34,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use mockspace_template::{render_atomic, RenderError, Template, TemplateEnv};
+use mockspace_template::{render_atomic, write_atomic, RenderError, Template, TemplateEnv};
 
 use crate::project::{CrateInfo, MockspaceProject};
 
@@ -159,6 +165,11 @@ impl std::error::Error for RegenerateError {
 /// renders to `out_dir/<name>/<file>.md`. Templates that are absent
 /// silently skip; `SHAME.md.tmpl` is never read.
 ///
+/// Dependency-graph: `out_dir/dep-graph.dot` always lands; when the
+/// system `dot` binary is on PATH the rendered SVG lands beside it as
+/// `out_dir/dep-graph.svg`. Both appear in the returned
+/// [`RegenerateReport`].
+///
 /// The output root directory is created if absent; per-crate subdirs
 /// are auto-created by the atomic-write helper.
 pub fn regenerate(
@@ -183,8 +194,87 @@ pub fn regenerate(
     }
 
     regenerate_per_crate(project, out_dir, &mut files)?;
+    write_dep_graph(&context.dep_graph, out_dir, &mut files)?;
 
     Ok(RegenerateReport { files })
+}
+
+/// Output filename for the Graphviz dependency-graph `.dot` source.
+const DEP_GRAPH_DOT: &str = "dep-graph.dot";
+
+/// Output filename for the rendered SVG; produced only when the
+/// system `dot` binary is on PATH.
+const DEP_GRAPH_SVG: &str = "dep-graph.svg";
+
+/// Write the dep-graph `.dot` source to `out_dir/dep-graph.dot`
+/// atomically. When the system `dot` binary succeeds at rendering
+/// the source to SVG, also writes `out_dir/dep-graph.svg`. Both
+/// outputs are appended to `out` so the report reflects what landed.
+///
+/// SVG output is best-effort. Graphviz absent on PATH, spawn
+/// failure, or non-zero exit all result in no SVG file and no
+/// report entry. The `.dot` file is always written; templates can
+/// reference it directly for downstream consumers who need the
+/// source rather than the rendered image.
+fn write_dep_graph(
+    dot_source: &str,
+    out_dir: &Path,
+    out: &mut Vec<RenderedFile>,
+) -> Result<(), RegenerateError> {
+    let dot_dest = out_dir.join(DEP_GRAPH_DOT);
+    let dot_state = write_raw_with_state(dot_source, &dot_dest)?;
+    out.push(RenderedFile { path: dot_dest, state: dot_state });
+
+    if let Some(svg) = dep_graph::try_render_svg(dot_source) {
+        let svg_dest = out_dir.join(DEP_GRAPH_SVG);
+        let svg_state = write_raw_with_state(&svg, &svg_dest)?;
+        out.push(RenderedFile { path: svg_dest, state: svg_state });
+    }
+
+    Ok(())
+}
+
+/// Classify the dep-graph `.dot` output against on-disk content,
+/// appending to `report`. The SVG is best-effort and skipped here:
+/// it depends on Graphviz being on PATH at check time, and CI
+/// environments that lack the binary should not fail check on
+/// `.svg` drift.
+fn check_dep_graph(
+    dot_source: &str,
+    out_dir: &Path,
+    report: &mut CheckReport,
+) -> Result<(), RegenerateError> {
+    let dest = out_dir.join(DEP_GRAPH_DOT);
+    classify_against_disk(&dest, dot_source, report)
+}
+
+/// Atomic-write helper for raw (non-template-rendered) byte content.
+/// Mirrors [`write_with_state`] but skips the template render step;
+/// used for outputs like the dep-graph `.dot` and rendered SVG where
+/// the source is already a fully formed string.
+///
+/// Parent-dir creation and byte-classification happen here; the
+/// underlying atomic-rename is delegated to
+/// [`mockspace_template::write_atomic`] for consistency with the
+/// template-render path.
+fn write_raw_with_state(
+    content: &str,
+    dest: &Path,
+) -> Result<WriteState, RegenerateError> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| RegenerateError::io(parent, e))?;
+    }
+
+    let state = match fs::read_to_string(dest) {
+        Ok(existing) if existing == content => return Ok(WriteState::Unchanged),
+        Ok(_) => WriteState::Updated,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => WriteState::Created,
+        Err(e) => return Err(RegenerateError::io(dest, e)),
+    };
+
+    write_atomic(content, dest)?;
+    Ok(state)
 }
 
 /// Render the templates in memory and compare against the existing
@@ -212,6 +302,7 @@ pub fn check(
     }
 
     check_per_crate(project, out_dir, &mut report)?;
+    check_dep_graph(&context.dep_graph, out_dir, &mut report)?;
 
     Ok(report)
 }
@@ -438,10 +529,9 @@ fn build_context(project: &MockspaceProject) -> Result<RenderContext, Regenerate
         .map(|(name, body)| CrateSummary { name, body })
         .collect();
 
-    Ok(RenderContext {
-        crates,
-        dep_graph: String::new(),
-    })
+    let dep_graph = dep_graph::render_dot(project.crate_graph());
+
+    Ok(RenderContext { crates, dep_graph })
 }
 
 fn build_env(mock_root: &Path) -> Result<TemplateEnv, RegenerateError> {
@@ -562,10 +652,15 @@ mod tests {
 
         let report = regenerate(&proj, &out).expect("regenerate");
 
-        assert_eq!(report.files.len(), 3);
+        // Mock-root templates plus dep-graph.dot (always emitted).
+        // dep-graph.svg also lands when the test host has the
+        // Graphviz `dot` binary on PATH; asserting on at-least
+        // count keeps the test portable.
+        assert!(report.files.len() >= 4, "expected >=4 files, got {}", report.files.len());
         assert!(out.join("DESIGN.md").is_file());
         assert!(out.join("PRINCIPLES.md").is_file());
         assert!(out.join("WORKFLOW.md").is_file());
+        assert!(out.join("dep-graph.dot").is_file());
         for f in &report.files {
             assert_eq!(f.state, WriteState::Created);
         }
@@ -661,7 +756,9 @@ mod tests {
         regenerate(&proj, &out).expect("seed");
         let report = check(&proj, &out).expect("check");
 
-        assert_eq!(report.matched.len(), 3);
+        // Mock-root templates plus dep-graph.dot. SVG is best-effort
+        // and not classified by check (see check_dep_graph doc).
+        assert_eq!(report.matched.len(), 4);
         assert!(report.drifted.is_empty());
         assert!(report.missing.is_empty());
         assert!(!report.needs_regen());
@@ -681,7 +778,8 @@ mod tests {
         let report = check(&proj, &out).expect("check");
         assert_eq!(report.drifted.len(), 1);
         assert!(report.drifted[0].ends_with("PRINCIPLES.md"));
-        assert_eq!(report.matched.len(), 2);
+        // 4 minus the drifted PRINCIPLES.md = 3 matched (DESIGN.md, WORKFLOW.md, dep-graph.dot).
+        assert_eq!(report.matched.len(), 3);
         assert!(report.needs_regen());
     }
 
@@ -694,7 +792,8 @@ mod tests {
         // Note: no regenerate first, so out_dir doesn't even exist.
 
         let report = check(&proj, &out).expect("check");
-        assert_eq!(report.missing.len(), 3);
+        // 3 mock-root + dep-graph.dot.
+        assert_eq!(report.missing.len(), 4);
         assert!(report.matched.is_empty());
         assert!(report.drifted.is_empty());
         assert!(report.needs_regen());
@@ -712,7 +811,7 @@ mod tests {
         fs::create_dir(&out).unwrap();
 
         let report = regenerate(&proj, &out).expect("regenerate");
-        assert_eq!(report.files.len(), 3);
+        assert!(report.files.len() >= 4, "expected >=4 files, got {}", report.files.len());
         for f in &report.files {
             assert_eq!(f.state, WriteState::Created);
         }
@@ -768,8 +867,9 @@ mod tests {
 
         let report = regenerate(&proj, &out).expect("regenerate");
 
-        // 3 mock-root + 2 per-crate = 5
-        assert_eq!(report.files.len(), 5);
+        // 3 mock-root + 2 per-crate + dep-graph.dot (+ optional .svg
+        // when Graphviz is on PATH) >= 6.
+        assert!(report.files.len() >= 6, "expected >=6 files, got {}", report.files.len());
         let design = fs::read_to_string(out.join("alpha").join("DESIGN.md")).unwrap();
         assert_eq!(design, "alpha design alpha");
         let backlog = fs::read_to_string(out.join("alpha").join("BACKLOG.md")).unwrap();
@@ -816,8 +916,9 @@ mod tests {
         let out = tmp.path().join("docs");
 
         let report = regenerate(&proj, &out).expect("regenerate");
-        // Only the 3 mock-root files; per-crate walk silently produces zero.
-        assert_eq!(report.files.len(), 3);
+        // Mock-root files plus dep-graph.dot; per-crate walk silently
+        // produces zero (no per-crate templates on disk).
+        assert!(report.files.len() >= 4, "expected >=4 files, got {}", report.files.len());
         assert!(!out.join("alpha").exists());
     }
 
@@ -921,6 +1022,50 @@ mod tests {
             .find(|f| f.path.ends_with("alpha/DESIGN.md"))
             .unwrap();
         assert_eq!(alpha_third.state, WriteState::Updated);
+    }
+
+    #[test]
+    fn regenerate_writes_dep_graph_dot() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let proj = project(tmp.path(), &["alpha", "beta"]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let dot = fs::read_to_string(out.join("dep-graph.dot")).expect("dep-graph.dot");
+        assert!(
+            dot.starts_with("digraph workspace {\n"),
+            "expected dot header, got: {dot}"
+        );
+        assert!(dot.contains("\"alpha\""));
+        assert!(dot.contains("\"beta\""));
+    }
+
+    #[test]
+    fn dep_graph_context_is_populated_for_templates() {
+        // A mock-root template that references {{ dep_graph }} must
+        // see the rendered .dot source, not the slice 2 empty
+        // placeholder.
+        let tmp = TempDir::new().unwrap();
+        let mock = tmp.path().join("mock");
+        fs::create_dir_all(&mock).unwrap();
+        fs::write(
+            mock.join("DESIGN.md.tmpl"),
+            "graph:\n{{ dep_graph }}",
+        )
+        .unwrap();
+        fs::write(mock.join("PRINCIPLES.md.tmpl"), "principles").unwrap();
+        fs::write(mock.join("WORKFLOW.md.tmpl"), "workflow").unwrap();
+        let proj = project(tmp.path(), &["alpha"]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let design = fs::read_to_string(out.join("DESIGN.md")).unwrap();
+        assert!(
+            design.contains("digraph workspace"),
+            "DESIGN.md should embed the dep-graph source, got: {design}"
+        );
+        assert!(design.contains("\"alpha\""));
     }
 
     #[test]

@@ -9,7 +9,7 @@ pub mod platforms;
 pub mod renderer;
 pub mod template;
 
-pub use atomic::render_atomic;
+pub use atomic::{render_atomic, write_atomic};
 pub use error::RenderError;
 pub use platform::{HookDecl, Platform};
 pub use platforms::{ClaudePlatform, CopilotPlatform};
