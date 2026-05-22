@@ -11,6 +11,7 @@
 //! impl, anchor capture, and the executors that compose them
 //! (`seal_manifest`, `advance_phase`, `archive_round`).
 
+mod advance;
 mod anchor_capture;
 mod lock;
 mod ref_tree;
@@ -19,6 +20,7 @@ mod repo;
 mod seal;
 mod time;
 
+pub use advance::{AdvanceError, AdvanceReport, AdvanceVerb};
 pub use anchor_capture::AnchorCaptureError;
 pub use lock::{FlockTransitionLock, LockError};
 pub use ref_tree::{RefTreeReadError, RoundRefTree};
