@@ -293,17 +293,24 @@ pub struct TaskTransitionReport {
     pub new_state: TaskState,
 }
 
-/// Metadata fields the caller supplies when closing a task. All
-/// fields beyond `resolution` are typed as `String` and may be left
-/// empty when the call site has no value (e.g. closing a task from
-/// outside an active round). The `closed_at` timestamp is filled by
-/// the executor itself so concurrent callers cannot drift on it.
+/// Metadata fields the caller supplies when closing a task. The
+/// `closed_at` timestamp is filled by the executor itself so
+/// concurrent callers cannot drift on it.
+///
+/// The `closed_branch` field is typed as `Option<DefaultBranchName>`
+/// per #601: the audit retypes consumer-input positions that name
+/// constrained values, with `None` meaning "no branch named at
+/// close time" (e.g. closing a task from outside an active round).
+///
+/// The `closing_phase` and `closing_round_slug` fields are still
+/// `String` here, deferred to #595's IO-carrier audit alongside the
+/// `TaskClosure` serde retyping.
 #[derive(Debug, Clone)]
 pub struct CloseMetadata {
     /// Why the task closed.
     pub resolution: TaskResolution,
-    /// Source-side branch that carried the closing work, or empty.
-    pub closed_branch: String,
+    /// Source-side branch that carried the closing work, or `None`.
+    pub closed_branch: Option<crate::branch_name::DefaultBranchName>,
     /// Phase marker at close time (e.g. `apply_src`), or empty.
     pub closing_phase: String,
     /// Round slug that closed this task, or empty.
@@ -494,7 +501,14 @@ impl RepoHandle {
             parsed.closure = Some(TaskClosure {
                 resolution: meta.resolution,
                 closed_at: format_iso8601(now),
-                closed_branch: meta.closed_branch,
+                // TaskClosure's serialized field is still String per
+                // #595; collapse the typed input here at the boundary.
+                // The default impl's Display matches the validated
+                // string back out.
+                closed_branch: meta
+                    .closed_branch
+                    .map(|b| b.to_string())
+                    .unwrap_or_default(),
                 closing_phase: meta.closing_phase,
                 closing_round_slug: meta.closing_round_slug,
             });
@@ -712,7 +726,9 @@ mod tests {
     fn close_meta() -> CloseMetadata {
         CloseMetadata {
             resolution: TaskResolution::Completed,
-            closed_branch: "feat/test".to_owned(),
+            closed_branch: Some(
+                crate::branch_name::DefaultBranchName::new("feat/test").expect("valid branch"),
+            ),
             closing_phase: "apply_src".to_owned(),
             closing_round_slug: "test-round".to_owned(),
         }
