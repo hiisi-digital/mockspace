@@ -22,6 +22,7 @@ pub mod anchor;
 pub mod atomicity;
 pub mod bookkeeping;
 pub mod io;
+pub mod branch_name;
 pub mod lint;
 pub mod manifest;
 pub mod namespace;
@@ -35,6 +36,7 @@ pub mod typestate;
 pub mod verifier;
 
 pub use anchor::{Anchor, BlobSha, BlobShaError, FileEntry};
+pub use branch_name::{BranchName, DefaultBranchName, DefaultBranchNameError};
 pub use atomicity::{
     AtomicityFinding, LockHolder, OnPhaseRaceAction, PhaseRaceConflict, ResolveStrategy,
     TransitionLock,
