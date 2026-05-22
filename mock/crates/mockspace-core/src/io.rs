@@ -13,6 +13,7 @@
 
 mod advance;
 mod anchor_capture;
+mod archive;
 mod lock;
 mod ref_tree;
 mod ref_write;
@@ -22,6 +23,7 @@ mod time;
 
 pub use advance::{AdvanceError, AdvanceReport, AdvanceVerb};
 pub use anchor_capture::AnchorCaptureError;
+pub use archive::{ArchiveError, ArchiveReport};
 pub use lock::{FlockTransitionLock, LockError};
 pub use ref_tree::{RefTreeReadError, RoundRefTree};
 pub use ref_write::RefTreeWriteError;
