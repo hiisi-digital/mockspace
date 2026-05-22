@@ -546,7 +546,7 @@ fn nuke_mock_sources(cfg: &Config) -> ExitCode {
         let lib_rs = src_dir.join("lib.rs");
         let stub = if is_proc_macro {
             format!(
-                "//! {crate_name} — proc macro crate.\n\
+                "//! {crate_name}: proc macro crate.\n\
                  //!\n\
                  //! {}. Rewrite from design docs (mechanical, no reinterpretation).\n\
                  \n\
@@ -555,7 +555,7 @@ fn nuke_mock_sources(cfg: &Config) -> ExitCode {
             )
         } else {
             format!(
-                "//! {crate_name} — nuked.\n\
+                "//! {crate_name}: nuked.\n\
                  //!\n\
                  //! {}. Rewrite from design docs (mechanical, no reinterpretation).\n",
                 cfg.nuke_marker
@@ -635,7 +635,7 @@ fn simple_hash(s: &str) -> u64 {
 fn resolve_mock_dir(raw: &str) -> PathBuf {
     let path = PathBuf::from(raw);
 
-    // Absolute and exists — use directly.
+    // Absolute and exists: use directly.
     if path.is_absolute() && path.join("mockspace.toml").exists() {
         return path;
     }
@@ -657,7 +657,7 @@ fn resolve_mock_dir(raw: &str) -> PathBuf {
         }
     }
 
-    // Nothing matched — return canonicalized or raw for a clear downstream error.
+    // Nothing matched: return canonicalized or raw for a clear downstream error.
     fs::canonicalize(&path).unwrap_or(path)
 }
 
@@ -688,7 +688,7 @@ fn find_mockspace_root() -> Option<PathBuf> {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// `cargo mock check` — readiness report.
+// `cargo mock check`: readiness report.
 //
 // Non-mutating. Answers one question: "can I advance this round right
 // now, or is something blocking?" Reports git cleanliness, remote

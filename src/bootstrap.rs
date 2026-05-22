@@ -8,14 +8,14 @@
 //!
 //! # How it works
 //!
-//! mockspace bakes `env!("CARGO_MANIFEST_DIR")` at compile time — its own
+//! mockspace bakes `env!("CARGO_MANIFEST_DIR")` at compile time: its own
 //! source path, wherever cargo cached it. The cargo alias points `cargo mock`
 //! at that path.
 //!
 //! # Hook model
 //!
 //! mockspace never touches `.git/hooks/`. Those are the user's hooks and
-//! always run — with or without mockspace.
+//! always run: with or without mockspace.
 //!
 //! Instead, mockspace generates intermediate hooks into a build-artifact
 //! directory (default: `<mock_dir>/target/hooks/`). These generated hooks
@@ -37,11 +37,11 @@
 //! Two mechanisms, both wired through the generated proxy crate in
 //! `target/mockspace-proxy/`:
 //!
-//! 1. **In-tree lint files** — `.rs` files under `{mock_dir}/lints/`. Each
+//! 1. **In-tree lint files**: `.rs` files under `{mock_dir}/lints/`. Each
 //!    file defines `pub fn lint()` and/or `pub fn cross_lint()` (singular,
 //!    one lint per file). Good for quick project-specific rules.
 //!
-//! 2. **External lint-pack crates** — cargo dependencies declared under
+//! 2. **External lint-pack crates**: cargo dependencies declared under
 //!    `[lint-crates]` in `mockspace.toml`. Each pack must expose:
 //!    - `pub fn lints() -> Vec<Box<dyn mockspace_lint_rules::Lint>>`
 //!    - `pub fn cross_lints() -> Vec<Box<dyn mockspace_lint_rules::CrossCrateLint>>`
@@ -85,7 +85,7 @@ const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push"];
 /// ```
 pub fn bootstrap_from_buildscript() {
     let build_crate_dir = PathBuf::from(
-        env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set — call from build.rs"),
+        env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set: call from build.rs"),
     );
     let mockspace_manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
@@ -235,7 +235,7 @@ fn ensure_cargo_alias(
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| mock_dir.display().to_string());
 
-    // Both paths are relative to repo root — fully portable.
+    // Both paths are relative to repo root: fully portable.
     // The machine-specific mockspace path lives inside the generated
     // proxy crate at target/mockspace-proxy/ (gitignored).
     let alias_value = format!(
@@ -256,7 +256,7 @@ fn ensure_cargo_alias(
                     return; // Healthy.
                 }
             }
-            // Stale — update in place.
+            // Stale: update in place.
             let updated: Vec<&str> = current
                 .lines()
                 .map(|l| {
@@ -273,7 +273,7 @@ fn ensure_cargo_alias(
         }
     }
 
-    // Missing — add.
+    // Missing: add.
     let _ = fs::create_dir_all(&config_dir);
     let new_content = if current.is_empty() {
         format!("[alias]\n{alias_line}\n")
@@ -477,7 +477,7 @@ fn discover_custom_lint_files(lints_dir: &Path) -> Vec<String> {
                         files.push(stem_str);
                     } else {
                         eprintln!(
-                            "warning: skipping custom lint file `{}` — stem `{}` is not a valid Rust identifier (only [a-z0-9_] allowed)",
+                            "warning: skipping custom lint file `{}`: stem `{}` is not a valid Rust identifier (only [a-z0-9_] allowed)",
                             path.display(),
                             stem_str,
                         );
@@ -928,7 +928,7 @@ if [ -n "$CHANGED_CRATES" ]; then
 fi
 
 if grep -rq "Nuked by" "$MOCK_DIR/crates/"*/src/lib.rs 2>/dev/null; then
-    echo "  nuked workspace — skipping source checks"
+    echo "  nuked workspace: skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
 elif [ "$NEW_BRANCH" = "1" ] || [ -z "$CHANGED_CRATES" ]; then
     echo "  scope: full project ($([ "$NEW_BRANCH" = "1" ] && echo "new branch" || echo "no crate changes"))"

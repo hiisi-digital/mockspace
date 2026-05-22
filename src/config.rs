@@ -114,7 +114,7 @@ pub struct Config {
     /// crates. Everything not listed remains subject to the lint.
     ///
     /// Example: `arvo = ["u8", "u16", "u32", "u64", "u128", "i8", ...,
-    /// "f32", "f64", "usize", "isize", "bool"]` — arvo defines the
+    /// "f32", "f64", "usize", "isize", "bool"]`: arvo defines the
     /// numeric substrate, so it legitimately wraps every std numeric
     /// primitive; meanwhile `Option` / `Result` / `String` still fire
     /// on arvo because arvo does not introduce them.
@@ -134,8 +134,8 @@ pub struct Config {
     /// than living in a parallel TOML table that can drift.
     ///
     /// Until that detection lands, the explicit map wins. When it
-    /// lands, the map becomes additive — anything declared here
-    /// supplements the detected set rather than replacing it —
+    /// lands, the map becomes additive: anything declared here
+    /// supplements the detected set rather than replacing it,
     /// letting both paths coexist during the migration.
     pub primitive_introductions: BTreeMap<String, Vec<String>>,
 }
