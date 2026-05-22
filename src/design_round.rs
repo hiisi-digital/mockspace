@@ -1,10 +1,10 @@
 //! Subcommands for managing design round lifecycle.
 //!
-//! `cargo mock lock` — lock the current phase's changelist.
-//! `cargo mock deprecate` — deprecate the current unlocked changelist.
-//! `cargo mock unlock` — destructive: nuke source, deprecate src CL, unlock doc CL.
-//! `cargo mock close` — archive a completed round (CLOSED phase).
-//! `cargo mock archive` — archive an abandoned round from any phase.
+//! `cargo mock lock`: lock the current phase's changelist.
+//! `cargo mock deprecate`: deprecate the current unlocked changelist.
+//! `cargo mock unlock`: destructive: nuke source, deprecate src CL, unlock doc CL.
+//! `cargo mock close`: archive a completed round (CLOSED phase).
+//! `cargo mock archive`: archive an abandoned round from any phase.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1021,7 +1021,7 @@ mod tests {
     #[test]
     fn archive_round_name_skips_non_timestamp_files() {
         // Anything without a 12-digit prefix is ignored. README, leftover
-        // notes, dotfiles produced elsewhere — none should affect naming.
+        // notes, dotfiles produced elsewhere: none should affect naming.
         let tmp = tempfile::tempdir().expect("tempdir");
         let dr = tmp.path();
         std::fs::write(dr.join("README.md"), "x").unwrap();
