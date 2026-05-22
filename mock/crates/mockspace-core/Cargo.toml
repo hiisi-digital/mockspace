@@ -11,5 +11,12 @@ publish = false
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+# Phase 5 IO storage substrate (orphan refs per spec §19). Same version
+# as homma uses for git ops to keep the workspace dep graph coherent.
+# Minimal feature set: enough to open + discover + read refs/objects.
+# Expanded by later Phase 5 slices as needed (network ops at the push CAS
+# slice; worktree-mutation NOT planned since spec §20 forbids `git worktree`).
+gix = { version = "0.66", default-features = false, features = ["revision"] }
 
 [dev-dependencies]
+tempfile = "3"
