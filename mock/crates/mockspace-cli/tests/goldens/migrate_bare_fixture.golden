@@ -1,0 +1,11 @@
+no v1 round directories found under `<FIXTURE>/mock/design_rounds/`
+
+To fix by hand:
+
+- CI workflows calling the old verbs:
+    lock      -> cargo mock phase apply <slug> --source-tip <hex>
+    deprecate -> cargo mock phase replan <slug> [--mode ...]
+    close     -> (unchanged)
+
+- Tasks, memos, prose that mention `mock lock` or `mock deprecate`.
+  Grep and update.
