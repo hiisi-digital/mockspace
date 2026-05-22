@@ -6,8 +6,8 @@
 //!
 //! Mockspace ships its own tiny civil-calendar conversion (Howard
 //! Hinnant's algorithm) instead of pulling in `chrono` or `time` for
-//! what is essentially a debug field + provenance record. The
-//! 1970-9999 range is the supported domain.
+//! a debug field + provenance record. The 1970-9999 range is the
+//! supported domain.
 
 use core::fmt;
 
