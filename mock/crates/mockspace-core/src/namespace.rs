@@ -40,7 +40,7 @@ pub trait Namespace: fmt::Display + Eq + Hash + Clone + Sized {
     /// (linked list, tree, segment table) cannot satisfy this trait as
     /// written. Lift to `impl Iterator<Item = &Self::Slug>` if a future
     /// impl genuinely needs non-contiguous backing; until then the
-    /// slice return is the minimum viable shape for [`RefPath::task`]
+    /// slice return is the minimum viable shape for [`DefaultRefPath::task`]
     /// and the other consumers that walk segments tightly.
     fn segments(&self) -> &[Self::Slug];
 

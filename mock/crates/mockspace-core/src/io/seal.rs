@@ -42,7 +42,7 @@ use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
 use crate::manifest::{validate_structural, Manifest, ValidationError};
 use crate::phase::{ManifestSide, Phase};
-use crate::ref_path::RefPath;
+use crate::ref_path::DefaultRefPath;
 use crate::round::ManifestStage;
 use crate::slug::DefaultSlug;
 
@@ -192,7 +192,7 @@ impl RepoHandle {
         side: ManifestSide,
         source_branch_tip: gix::ObjectId,
     ) -> Result<SealReport, SealError> {
-        let ref_path = RefPath::round_mock(slug);
+        let ref_path = DefaultRefPath::round_mock(slug);
 
         // Step 2: read the current round ref tree and pin its OID
         // for the CAS update later.
@@ -375,7 +375,7 @@ mod tests {
         // Use the slice E3 writer through RepoHandle since it is
         // the same machinery seal will compose with.
         let handle = RepoHandle::open(repo_dir).expect("open");
-        let ref_path = RefPath::round_mock(slug);
+        let ref_path = DefaultRefPath::round_mock(slug);
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
         entries.insert(
@@ -410,7 +410,7 @@ mod tests {
         // the new path; the authoring path should be gone; .phase
         // should read apply_doc; the anchor TOML and a blob entry
         // for README.md should be present.
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
         let sealed_tree = handle.read_ref_tree(&ref_path).expect("read sealed");
         assert!(sealed_tree.get("manifest.doc.toml").is_none());
         assert!(sealed_tree.get("manifest.doc.locked.toml").is_some());
@@ -448,7 +448,7 @@ mod tests {
         // Seed with .phase = apply_doc (already sealed) instead of
         // plan_doc. seal_manifest should refuse.
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"apply_doc\n".to_vec());
         entries.insert(
@@ -491,7 +491,7 @@ mod tests {
         let slug = DefaultSlug::new("already-locked").unwrap();
 
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
         entries.insert(
@@ -527,7 +527,7 @@ mod tests {
 
         // Seed with .phase = plan_doc but no manifest.doc.toml.
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
         handle

@@ -1,19 +1,71 @@
 //! Type-safe ref-path composition (spec §19).
 //!
-//! Centralises the literal strings that name git refs. The constructors here
-//! are the only path through which mockspace builds ref names; anything else
-//! risks drift from the canonical layout.
+//! Per the workspace harness-the-type-system rule, ref-path identity
+//! lives as a trait abstraction with a default impl. Function
+//! signatures parameterise over `R: RefPath` so future swaps
+//! (alternative storage layouts, refs/heads/-rooted rather than
+//! refs/mock/-rooted naming, different prefix conventions) land as
+//! new impls rather than codebase-wide rewrites.
+//!
+//! The mockspace canonical layout lives in [`DefaultRefPath`]:
+//! `refs/mock/round/<slug>` for round refs, `refs/mock/task/<ns>/<slug>`
+//! for task refs, `refs/mock/{round,task}-archive` for the unified
+//! archives. Constructors are inherent to [`DefaultRefPath`] because
+//! the layout is impl-specific; the trait carries only the abstraction
+//! contract (parse + the `AsRef<str>` / `Display` supertrait bundle).
 
 use core::fmt;
+use core::hash::Hash;
 
 use crate::namespace::{DefaultNamespace, Namespace};
 use crate::slug::DefaultSlug;
 
-/// A fully-qualified git ref path (e.g. `refs/mock/round/foo`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RefPath(String);
+/// A fully-qualified git ref path identifier.
+///
+/// Implementations carry a parser + the supertrait bundle that lets
+/// consumers treat any ref-path value uniformly (`AsRef<str>` for git
+/// plumbing, `Display` for diagnostics). Construction lives on the
+/// impl-side because the layout (prefix, segment separators, archive
+/// conventions) is impl-specific. [`DefaultRefPath`] ships the mockspace
+/// canonical layout.
+pub trait RefPath: AsRef<str> + fmt::Display + Eq + Hash + Clone + Sized {
+    /// Why parsing failed.
+    type Error: fmt::Display + fmt::Debug;
 
-impl RefPath {
+    /// Parse a ref-path from its string form. Validates the impl's
+    /// layout invariants (prefix, segment shape, charset).
+    fn parse(s: &str) -> Result<Self, Self::Error>;
+}
+
+/// The canonical mockspace ref-path: `refs/mock/<...>` prefix family
+/// per spec §19. Implements [`RefPath`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DefaultRefPath(String);
+
+/// Why a [`DefaultRefPath`] rejected at parse time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefaultRefPathError {
+    /// Empty input.
+    Empty,
+    /// Did not start with a recognised mockspace prefix
+    /// (`refs/mock/`, `refs/heads/round/`).
+    InvalidPrefix,
+}
+
+impl fmt::Display for DefaultRefPathError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("ref-path is empty"),
+            Self::InvalidPrefix => f.write_str(
+                "ref-path does not carry a recognised mockspace prefix (`refs/mock/` or `refs/heads/round/`)",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DefaultRefPathError {}
+
+impl DefaultRefPath {
     /// `refs/mock/round/<slug>` — per-round orphan mock-side ref (spec §21).
     /// Generic over any [`Slug`] impl; the slug's [`fmt::Display`]
     /// supertrait is the load-bearing contract here.
@@ -80,9 +132,34 @@ impl RefPath {
     }
 }
 
-impl fmt::Display for RefPath {
+impl AsRef<str> for DefaultRefPath {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for DefaultRefPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl RefPath for DefaultRefPath {
+    type Error = DefaultRefPathError;
+
+    fn parse(s: &str) -> Result<Self, Self::Error> {
+        if s.is_empty() {
+            return Err(DefaultRefPathError::Empty);
+        }
+        // Recognise the mockspace-canonical prefixes; anything else
+        // rejects. Deeper structural validation (segment shape per
+        // ref family) lives in the constructors that build the
+        // refs in the first place.
+        if s.starts_with("refs/mock/") || s.starts_with("refs/heads/round/") {
+            Ok(Self(s.to_owned()))
+        } else {
+            Err(DefaultRefPathError::InvalidPrefix)
+        }
     }
 }
 
@@ -101,7 +178,7 @@ mod tests {
     #[test]
     fn round_mock_path() {
         assert_eq!(
-            RefPath::round_mock(&s("arvo-graph-csr")).as_str(),
+            DefaultRefPath::round_mock(&s("arvo-graph-csr")).as_str(),
             "refs/mock/round/arvo-graph-csr"
         );
     }
@@ -109,7 +186,7 @@ mod tests {
     #[test]
     fn round_source_path() {
         assert_eq!(
-            RefPath::round_source(&s("arvo-graph-csr")).as_str(),
+            DefaultRefPath::round_source(&s("arvo-graph-csr")).as_str(),
             "refs/heads/round/arvo-graph-csr"
         );
     }
@@ -117,20 +194,20 @@ mod tests {
     #[test]
     fn round_conflict_path() {
         assert_eq!(
-            RefPath::round_conflict(&s("foo"), "host1", "202605181400").as_str(),
+            DefaultRefPath::round_conflict(&s("foo"), "host1", "202605181400").as_str(),
             "refs/mock/round/foo-conflict-host1-202605181400"
         );
     }
 
     #[test]
     fn harness_path() {
-        assert_eq!(RefPath::harness().as_str(), "refs/mock/harness");
+        assert_eq!(DefaultRefPath::harness().as_str(), "refs/mock/harness");
     }
 
     #[test]
     fn task_path_single_segment() {
         assert_eq!(
-            RefPath::task(&ns("workspace"), &s("migrate-to-codeberg")).as_str(),
+            DefaultRefPath::task(&ns("workspace"), &s("migrate-to-codeberg")).as_str(),
             "refs/mock/task/workspace/migrate-to-codeberg"
         );
     }
@@ -138,22 +215,22 @@ mod tests {
     #[test]
     fn task_path_nested_namespace() {
         assert_eq!(
-            RefPath::task(&ns("compiler::ir::lower-pass"), &s("define-grammar")).as_str(),
+            DefaultRefPath::task(&ns("compiler::ir::lower-pass"), &s("define-grammar")).as_str(),
             "refs/mock/task/compiler/ir/lower-pass/define-grammar"
         );
     }
 
     #[test]
     fn archive_paths() {
-        assert_eq!(RefPath::task_archive().as_str(), "refs/mock/task-archive");
-        assert_eq!(RefPath::round_archive().as_str(), "refs/mock/round-archive");
+        assert_eq!(DefaultRefPath::task_archive().as_str(), "refs/mock/task-archive");
+        assert_eq!(DefaultRefPath::round_archive().as_str(), "refs/mock/round-archive");
     }
 
     #[test]
     fn task_from_id_top_level() {
         let id = crate::task::DefaultTaskId::parse("migrate-to-codeberg").expect("parse");
         assert_eq!(
-            RefPath::task_from_id(&id).as_str(),
+            DefaultRefPath::task_from_id(&id).as_str(),
             "refs/mock/task/migrate-to-codeberg"
         );
     }
@@ -163,8 +240,29 @@ mod tests {
         let id =
             crate::task::DefaultTaskId::parse("compiler::ir::lower-pass::define-grammar").expect("parse");
         assert_eq!(
-            RefPath::task_from_id(&id).as_str(),
+            DefaultRefPath::task_from_id(&id).as_str(),
             "refs/mock/task/compiler/ir/lower-pass/define-grammar"
         );
+    }
+
+    #[test]
+    fn trait_parse_round_trip_via_default_impl() {
+        let path = <DefaultRefPath as RefPath>::parse("refs/mock/round/foo").expect("parse");
+        assert_eq!(path.as_ref(), "refs/mock/round/foo");
+    }
+
+    #[test]
+    fn trait_parse_rejects_unknown_prefix() {
+        let err = <DefaultRefPath as RefPath>::parse("refs/heads/main").expect_err("rejects");
+        assert!(matches!(err, DefaultRefPathError::InvalidPrefix));
+    }
+
+    #[test]
+    fn trait_bounds_satisfied_by_default_impl() {
+        fn takes_ref_path<R: RefPath>(p: R) -> String {
+            p.to_string()
+        }
+        let p = DefaultRefPath::round_mock(&s("alpha"));
+        assert_eq!(takes_ref_path(p), "refs/mock/round/alpha");
     }
 }

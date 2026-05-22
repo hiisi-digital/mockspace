@@ -59,7 +59,7 @@ pub use manifest::{
 };
 pub use namespace::{DefaultNamespace, DefaultNamespaceError, Namespace};
 pub use phase::{ManifestSide, Phase};
-pub use ref_path::RefPath;
+pub use ref_path::{DefaultRefPath, DefaultRefPathError, RefPath};
 pub use round::{comment_filename, topic_filename, ClosedMeta, ManifestStage, PrMeta, RoundMeta};
 pub use slug::{DefaultSlug, DefaultSlugError, Slug};
 pub use task::{

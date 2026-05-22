@@ -208,7 +208,7 @@ impl TaskMeta {
 /// Implementations carry the parser + accessors per spec §16. Slug and
 /// Namespace appear as associated types so the trait coordinates a
 /// consistent slug shape across both. Per the harness-the-type-system
-/// rule, deeper APIs (`RefPath::task_from_id`, the IO executors)
+/// rule, deeper APIs (`DefaultRefPath::task_from_id`, the IO executors)
 /// parameterise over `T: TaskId` so future impls (different slug
 /// charset, different namespace separator, alternative composition)
 /// plug in without codebase-wide rewrites.

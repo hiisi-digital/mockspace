@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use crate::io::repo::RepoHandle;
-use crate::ref_path::RefPath;
+use crate::ref_path::DefaultRefPath;
 
 /// Failure modes for [`RepoHandle::read_ref_tree`].
 #[derive(Debug)]
@@ -118,7 +118,7 @@ impl RepoHandle {
     /// the OID as the CAS expectation.
     pub fn resolve_ref_oid(
         &self,
-        ref_path: &RefPath,
+        ref_path: &DefaultRefPath,
     ) -> Result<gix::ObjectId, RefTreeReadError> {
         use gix::reference::find::existing::Error as ExistingErr;
         let repo = self.repo();
@@ -150,7 +150,7 @@ impl RepoHandle {
     /// (e.g. `.anchor.<phase>.blobs/<sha-prefix>/`) are walked
     /// transparently; subtree paths use `/` separators in the
     /// returned map.
-    pub fn read_ref_tree(&self, ref_path: &RefPath) -> Result<RoundRefTree, RefTreeReadError> {
+    pub fn read_ref_tree(&self, ref_path: &DefaultRefPath) -> Result<RoundRefTree, RefTreeReadError> {
         use gix::reference::find::existing::Error as ExistingErr;
         let repo = self.repo();
         let mut reference = match repo.find_reference(ref_path.as_str()) {
@@ -337,7 +337,7 @@ mod tests {
     fn read_ref_tree_round_trips_a_flat_orphan_ref() {
         let dir = TempDir::new().unwrap();
         let slug = DefaultSlug::new("test-round").unwrap();
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
         author_orphan_ref(
             dir.path(),
             ref_path.as_str(),
@@ -364,7 +364,7 @@ mod tests {
     fn read_ref_tree_walks_subtrees_for_anchor_blobs() {
         let dir = TempDir::new().unwrap();
         let slug = DefaultSlug::new("anchor-round").unwrap();
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
         // Mimic spec §25 anchor blob path: .anchor.doc.blobs/<2-hex>/<rest>.
         author_orphan_ref(
             dir.path(),
@@ -395,7 +395,7 @@ mod tests {
     fn read_ref_tree_iter_yields_lex_order() {
         let dir = TempDir::new().unwrap();
         let slug = DefaultSlug::new("order-round").unwrap();
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
         author_orphan_ref(
             dir.path(),
             ref_path.as_str(),
@@ -415,7 +415,7 @@ mod tests {
         let handle = RepoHandle::open(dir.path()).expect("open repo");
         let slug = DefaultSlug::new("not-there").unwrap();
         let err = handle
-            .read_ref_tree(&RefPath::round_mock(&slug))
+            .read_ref_tree(&DefaultRefPath::round_mock(&slug))
             .unwrap_err();
         assert!(matches!(err, RefTreeReadError::RefNotFound { .. }), "got {err:?}");
     }
