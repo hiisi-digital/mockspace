@@ -1,4 +1,4 @@
-# Current mockspace state — pre-redesign snapshot
+# Current mockspace state: pre-redesign snapshot
 
 **Status:** research / current-state inventory
 **Authored:** 2026-05-17
@@ -33,20 +33,20 @@ Mockspace is a multi-crate Rust workspace at `~/Dev/clause-dev/mockspace/`.
 
 **Core crates:**
 
-- **`mockspace`** (root, library + binary) — entry point `src/main.rs`,
+- **`mockspace`** (root, library + binary): entry point `src/main.rs`,
   implements the `cargo mock` CLI. Exports modules:
-  - `bootstrap` — proxy crate + hook generation, `bootstrap_from_buildscript()`, `activate()`, `deactivate()`.
-  - `design_round` — `lock`, `unlock`, `deprecate`, `close` subcommands.
-  - `config` — `mockspace.toml` parsing.
-  - `lint` — lint execution pipeline.
-  - `render`, `render_agent`, `render_design`, `render_md` — template rendering for docs, agent files, dep graphs.
-- **`mockspace-lint-rules`** — AST-based lints via tree-sitter (Rust grammar). 30+ lints across categories: changelist immutability, gate enforcement, design-doc-vs-source matching, deprecation chain integrity, file size, etc.
-- **`bench-core`**, **`bench-harness`**, **`bench-macro`**, **`benches`** — v2 bench harness ported from polka-dots (tasks #269-#280).
+  - `bootstrap`: proxy crate + hook generation, `bootstrap_from_buildscript()`, `activate()`, `deactivate()`.
+  - `design_round`: `lock`, `unlock`, `deprecate`, `close` subcommands.
+  - `config`: `mockspace.toml` parsing.
+  - `lint`: lint execution pipeline.
+  - `render`, `render_agent`, `render_design`, `render_md`: template rendering for docs, agent files, dep graphs.
+- **`mockspace-lint-rules`**: AST-based lints via tree-sitter (Rust grammar). 30+ lints across categories: changelist immutability, gate enforcement, design-doc-vs-source matching, deprecation chain integrity, file size, etc.
+- **`bench-core`**, **`bench-harness`**, **`bench-macro`**, **`benches`**: v2 bench harness ported from polka-dots (tasks #269-#280).
 
 **Extracted library crates** (PR #18, commit `f3fd2eb`, task #444):
 
-- **`mockspace-config`** at `mock/crates/mockspace-config/` — serde-backed parser for `mockspace.toml`. Exports `Config` + `IntoMockspaceConfig` bridge. **Already language-agnostic.**
-- **`mockspace-template`** at `mock/crates/mockspace-template/` — minijinja-based template rendering engine for agent file generation. **Already language-agnostic.**
+- **`mockspace-config`** at `mock/crates/mockspace-config/`: serde-backed parser for `mockspace.toml`. Exports `Config` + `IntoMockspaceConfig` bridge. **Already language-agnostic.**
+- **`mockspace-template`** at `mock/crates/mockspace-template/`: minijinja-based template rendering engine for agent file generation. **Already language-agnostic.**
 
 These two extracted libs are the substrate that homma already consumes
 (see workspace tasks #445-#447). They survive the redesign without
@@ -86,10 +86,10 @@ The `Phase` enum (in `mockspace_lint_rules::changelist_helpers`) labels:
 
 **State-changing operations:**
 
-- `cargo mock lock` — rename active CL to `.lock.md`; phase advances.
-- `cargo mock unlock` — destructive: reverts source-side state, marks src CL as deprecated, unlocks doc CL. Used when a round needs reworking after locking.
-- `cargo mock deprecate` — mark an unlocked CL as `.deprecated.md`, creating a chain that a successor CL replaces.
-- `cargo mock close` — archive a completed CLOSED-phase round into a dated subdirectory.
+- `cargo mock lock`: rename active CL to `.lock.md`; phase advances.
+- `cargo mock unlock`: destructive: reverts source-side state, marks src CL as deprecated, unlocks doc CL. Used when a round needs reworking after locking.
+- `cargo mock deprecate`: mark an unlocked CL as `.deprecated.md`, creating a chain that a successor CL replaces.
+- `cargo mock close`: archive a completed CLOSED-phase round into a dated subdirectory.
 
 No central state file. State is entirely emergent from filenames.
 
@@ -115,17 +115,17 @@ Crate-level READMEs render from `mock/crates/<crate>/README.md.tmpl`. Per consum
 Two parallel sets of agent files generated from `mock/agent/` templates:
 
 **`.claude/` (Claude Code):**
-- `.claude/CLAUDE.md` — top-level agent instructions
-- `.claude/rules/*.md` — per-rule files (rule-per-file with `description` + `paths` front-matter for scoped activation)
-- `.claude/skills/*/SKILL.md` — invocable skills
-- `.claude/hooks/*.sh` — PreToolUse, pre-commit, pre-push hook scripts
-- `.claude/settings.json` — merged from templates plus per-repo overrides
+- `.claude/CLAUDE.md`: top-level agent instructions
+- `.claude/rules/*.md`: per-rule files (rule-per-file with `description` + `paths` front-matter for scoped activation)
+- `.claude/skills/*/SKILL.md`: invocable skills
+- `.claude/hooks/*.sh`: PreToolUse, pre-commit, pre-push hook scripts
+- `.claude/settings.json`: merged from templates plus per-repo overrides
 
 **`.github/` (GitHub Copilot):**
-- `.github/copilot-instructions.md` — Claude analog
-- `.github/instructions/*.instructions.md` — rule analogs
-- `.github/skills/*/SKILL.md` — same skill content, different platform
-- `.github/hooks/*.sh` — Copilot hook equivalents
+- `.github/copilot-instructions.md`: Claude analog
+- `.github/instructions/*.instructions.md`: rule analogs
+- `.github/skills/*/SKILL.md`: same skill content, different platform
+- `.github/hooks/*.sh`: Copilot hook equivalents
 
 Both platforms render from the same source-of-truth templates in `mock/agent/`. The `render_agent` module handles the platform-specific output shape.
 
@@ -367,50 +367,50 @@ Pending mockspace-related tasks in the clause-dev workspace, grouped by how they
 
 ### Tasks-as-refs (#234, #235, #202, #233)
 
-- **#234** (Namespace task tree under mock/tasks/ + ref resolution + identity lints) — proposes a `mock/tasks/` directory tree. Redesign: tasks are orphan refs under `refs/mock/task/<slug>`. Index handles registration; `mock://task/<slug>` URI handles resolution.
-- **#235** (mock task command family — create/close/move) — `mock task new`, `mock task start`, `mock task close` operate on task refs. Sub-task transitions edit `meta.toml` `[steps.*]`.
-- **#202** (Canonicalize TaskCreate + bundle tasks into mockspace mock/tasks/) — folds into the same task-as-ref design. The TaskCreate tool's tasks (workspace-session-scoped, like the ones tracked in `MEMORY.md`) become a different namespace, but the principle (durable structured task storage) is the same. May be worth folding agent-session TaskCreate output into mockspace tasks as an integration step.
-- **#233** (Issue model + workflow-aware diagnostic context) — Issues collapse into the task ref namespace (no separate "issue" concept; everything trackable is a task). Diagnostics emitted by lints/hooks carry workflow context.
+- **#234** (Namespace task tree under mock/tasks/ + ref resolution + identity lints): proposes a `mock/tasks/` directory tree. Redesign: tasks are orphan refs under `refs/mock/task/<slug>`. Index handles registration; `mock://task/<slug>` URI handles resolution.
+- **#235** (mock task command family: create/close/move): `mock task new`, `mock task start`, `mock task close` operate on task refs. Sub-task transitions edit `meta.toml` `[steps.*]`.
+- **#202** (Canonicalize TaskCreate + bundle tasks into mockspace mock/tasks/): folds into the same task-as-ref design. The TaskCreate tool's tasks (workspace-session-scoped, like the ones tracked in `MEMORY.md`) become a different namespace, but the principle (durable structured task storage) is the same. May be worth folding agent-session TaskCreate output into mockspace tasks as an integration step.
+- **#233** (Issue model + workflow-aware diagnostic context): Issues collapse into the task ref namespace (no separate "issue" concept; everything trackable is a task). Diagnostics emitted by lints/hooks carry workflow context.
 
 ### Phase machine cluster (#236, #238)
 
-- **#236** (Phase state machine + plan/apply/finish transitions) — original framing had plan/apply/finish; redesign keeps DOC/SRC phases with the marker-file convention. The transitions are still phase advance commands. The "plan/apply/finish" framing folds into "phase doc / phase src / lock / close" naturally.
-- **#238** (mock phase replan = always deprecating, restore phase-owned surfaces only) — Replan deprecates the current manifest in the round ref, restores phase-owned surfaces (the source-side files that were claimed) to round-open state for THOSE files only. This survives the redesign as a `mock replan` command operating on the round ref and the source-side feature branch.
+- **#236** (Phase state machine + plan/apply/finish transitions): original framing had plan/apply/finish; redesign keeps DOC/SRC phases with the marker-file convention. The transitions are still phase advance commands. The "plan/apply/finish" framing folds into "phase doc / phase src / lock / close" naturally.
+- **#238** (mock phase replan = always deprecating, restore phase-owned surfaces only): Replan deprecates the current manifest in the round ref, restores phase-owned surfaces (the source-side files that were claimed) to round-open state for THOSE files only. This survives the redesign as a `mock replan` command operating on the round ref and the source-side feature branch.
 
 ### Manifest cluster (#237, #318)
 
-- **#237** (Manifest model — rename of changelist — + task ref linkage + seal-time snapshot) — the redesign's `manifest.doc.toml` + `manifest.src.toml` IS the manifest model. Task ref linkage via `[[change]] task = "mock://task/..."`. Seal-time snapshot is the lock event.
-- **#318** (cl-claim-vs-source-mismatch lint + structured CL claim grammar) — verifier runs on manifest lock. Each `[[change]]` has a `verification` command that runs against source-side branch tip; mismatch blocks lock. The "structured CL claim grammar" IS the manifest's `[[change]]` TOML shape.
+- **#237** (Manifest model: rename of changelist: + task ref linkage + seal-time snapshot): the redesign's `manifest.doc.toml` + `manifest.src.toml` IS the manifest model. Task ref linkage via `[[change]] task = "mock://task/..."`. Seal-time snapshot is the lock event.
+- **#318** (cl-claim-vs-source-mismatch lint + structured CL claim grammar): verifier runs on manifest lock. Each `[[change]]` has a `verification` command that runs against source-side branch tip; mismatch blocks lock. The "structured CL claim grammar" IS the manifest's `[[change]]` TOML shape.
 
 ### Status and discovery cluster (#241, #242, #240)
 
-- **#241** (mock status as primary entrypoint + guidance-oriented diagnostics) — `mock status` reads the index, shows current round, current phase, recent activity, pending tasks, suggests next action. Becomes the canonical CLI entry for "what's going on".
-- **#242** (Reorganize mockspace docs + write summary starting-round doc) — Documentation refresh. Redesign updates this naturally; new design doc + WORKFLOW.md.tmpl in harness.
-- **#240** (One active workspace + branch demoted to context) — Aligns with redesign's "one active round by default" assumption. Branch on the source side is contextual; round on the mock side is primary.
+- **#241** (mock status as primary entrypoint + guidance-oriented diagnostics): `mock status` reads the index, shows current round, current phase, recent activity, pending tasks, suggests next action. Becomes the canonical CLI entry for "what's going on".
+- **#242** (Reorganize mockspace docs + write summary starting-round doc): Documentation refresh. Redesign updates this naturally; new design doc + WORKFLOW.md.tmpl in harness.
+- **#240** (One active workspace + branch demoted to context): Aligns with redesign's "one active round by default" assumption. Branch on the source side is contextual; round on the mock side is primary.
 
 ### Template and rendering cluster (#88, #43, #245, #246)
 
-- **#88** (workspace-aware template fragment includes) — template engine supports include directives. mockspace-template already does this via minijinja. Survives as-is; redesign just keeps the engine in core.
-- **#43** (Formalise BACKLOG.md.tmpl convention in mockspace) — template-convention task. Redesign accommodates by including BACKLOG.md.tmpl as a recognised template shape.
-- **#245, #246** (auto-inject AI responsibility notice + canonical workflow description into rendered WORKFLOW.md + PRINCIPLES.md) — template-time render features. The harness ref carries the AI-responsibility text + canonical workflow text as a fragment; templates include it via the standard include mechanism.
+- **#88** (workspace-aware template fragment includes): template engine supports include directives. mockspace-template already does this via minijinja. Survives as-is; redesign just keeps the engine in core.
+- **#43** (Formalise BACKLOG.md.tmpl convention in mockspace): template-convention task. Redesign accommodates by including BACKLOG.md.tmpl as a recognised template shape.
+- **#245, #246** (auto-inject AI responsibility notice + canonical workflow description into rendered WORKFLOW.md + PRINCIPLES.md): template-time render features. The harness ref carries the AI-responsibility text + canonical workflow text as a fragment; templates include it via the standard include mechanism.
 
 ### Lint and hook cluster (#54, #186, #289, #40)
 
-- **#54** (Scope pre-push lint to changed crates) — hook-policy change. Harness hook scripts compute changed files via git diff against the remote tip; lint only those. No architectural change.
-- **#186** (Unify lint:allow token naming) — internal naming consistency. Carries over.
-- **#289** (Pre-commit cargo check should not block) — hook-policy change in harness. Pre-commit relaxed; build/push stay strict.
-- **#40** (Explicit project-root hook scoping and workspace aggregation) — project-root scoping is intrinsic to per-project ref isolation (each project's hooks live on its own harness ref). Workspace aggregation is homma's job (already shipped in PR #10).
+- **#54** (Scope pre-push lint to changed crates): hook-policy change. Harness hook scripts compute changed files via git diff against the remote tip; lint only those. No architectural change.
+- **#186** (Unify lint:allow token naming): internal naming consistency. Carries over.
+- **#289** (Pre-commit cargo check should not block): hook-policy change in harness. Pre-commit relaxed; build/push stay strict.
+- **#40** (Explicit project-root hook scoping and workspace aggregation): project-root scoping is intrinsic to per-project ref isolation (each project's hooks live on its own harness ref). Workspace aggregation is homma's job (already shipped in PR #10).
 
 ### Misc (#42, #444, #224, #203)
 
-- **#42** (Tighten cargo mock check to verify CL fulfillment + tests + lints) — `mock check` becomes a verification command. After redesign: checks current round's state across all surfaces (manifest claims, tests pass, lints clean). Maps to existing `cargo mock check` + manifest-verifier from #318.
-- **#444** (Extract reusable internals as lib crates) — **DONE.** Survives the redesign as-is.
-- **#224** (Self-hosted mockspace — mockspace uses mockspace) — already true in spirit (mockspace has its own `mock/`). Under redesign, mockspace's design rounds live on its own `refs/mock/round/*`. Validated last per the open-question.
-- **#203** (cargo mock ci feature — forge-agnostic CI orchestrator) — separate feature, not load-bearing for the redesign. Lands later.
+- **#42** (Tighten cargo mock check to verify CL fulfillment + tests + lints): `mock check` becomes a verification command. After redesign: checks current round's state across all surfaces (manifest claims, tests pass, lints clean). Maps to existing `cargo mock check` + manifest-verifier from #318.
+- **#444** (Extract reusable internals as lib crates): **DONE.** Survives the redesign as-is.
+- **#224** (Self-hosted mockspace: mockspace uses mockspace): already true in spirit (mockspace has its own `mock/`). Under redesign, mockspace's design rounds live on its own `refs/mock/round/*`. Validated last per the open-question.
+- **#203** (cargo mock ci feature: forge-agnostic CI orchestrator): separate feature, not load-bearing for the redesign. Lands later.
 
 ### Dropped
 
-- **#239** (Epoch concept) — DROPPED. Release tags carry the archival-boundary function. See redesign doc's "Open questions" section.
+- **#239** (Epoch concept): DROPPED. Release tags carry the archival-boundary function. See redesign doc's "Open questions" section.
 
 ## Migration risk inventory
 
@@ -473,10 +473,10 @@ This is also the design goal, not a bug.
 
 ## Cross-references
 
-- [`docs/research/TASKS_BRANCHES_PHASES_EPOCHS_DESIGN.md`](../../docs/research/TASKS_BRANCHES_PHASES_EPOCHS_DESIGN.md) (TBPED) — **the authoritative workflow redesign spec.** Defines the 6-phase model, plan/apply/finish/replan verbs, task model, manifest model, branch demotion. The companion storage redesign (this doc's sibling) layers on top of TBPED, not in conflict with it.
-- [202605171033_ref-based-mockspace-redesign.md](./202605171033_ref-based-mockspace-redesign.md) — companion design doc for the ref-based storage layer.
-- `docs/research/LINT_SYSTEM_REDESIGN.md` — companion to TBPED for lint engine + diagnostic shape redesign (referenced by #233).
-- `docs/research/BUG_LOCK_SEMANTICS.md` — the bug record that motivates TBPED's replacement of lock/unlock with plan/apply/finish (closed as #227).
-- `~/Dev/clause-dev/.claude/rules/mockspace-toml-edits.md` — workspace rule on severity downgrades.
-- Closed round `202605131900-extracted-lib-crates` — the lib-crate extraction that produced `mockspace-config` + `mockspace-template`.
-- Tasks in workspace MEMORY.md `#231-#243` (workflow gate cluster) — the pending workflow tasks TBPED defines; the storage redesign incorporates without reframing them.
+- [`docs/research/TASKS_BRANCHES_PHASES_EPOCHS_DESIGN.md`](../../docs/research/TASKS_BRANCHES_PHASES_EPOCHS_DESIGN.md) (TBPED): **the authoritative workflow redesign spec.** Defines the 6-phase model, plan/apply/finish/replan verbs, task model, manifest model, branch demotion. The companion storage redesign (this doc's sibling) layers on top of TBPED, not in conflict with it.
+- [202605171033_ref-based-mockspace-redesign.md](./202605171033_ref-based-mockspace-redesign.md): companion design doc for the ref-based storage layer.
+- `docs/research/LINT_SYSTEM_REDESIGN.md`: companion to TBPED for lint engine + diagnostic shape redesign (referenced by #233).
+- `docs/research/BUG_LOCK_SEMANTICS.md`: the bug record that motivates TBPED's replacement of lock/unlock with plan/apply/finish (closed as #227).
+- `~/Dev/clause-dev/.claude/rules/mockspace-toml-edits.md`: workspace rule on severity downgrades.
+- Closed round `202605131900-extracted-lib-crates`: the lib-crate extraction that produced `mockspace-config` + `mockspace-template`.
+- Tasks in workspace MEMORY.md `#231-#243` (workflow gate cluster): the pending workflow tasks TBPED defines; the storage redesign incorporates without reframing them.

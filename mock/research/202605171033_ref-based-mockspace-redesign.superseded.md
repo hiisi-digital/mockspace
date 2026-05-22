@@ -33,7 +33,7 @@ Source never deviates first.
 
 ### The workflow heart
 
-Design takes several rounds of discussions, recorded as topic files —
+Design takes several rounds of discussions, recorded as topic files,
 historically often running over 10 topic discussion transcripts before
 the first doc manifests are attempted to be consolidated (the
 establishing-the-framework usage); short rounds are also a valid and
@@ -47,10 +47,10 @@ Once docs are consolidated based on these discussions, research,
 benches, sketches and all, the docs are implemented into **design
 templates at several distinct levels**:
 
-- **README** — repo-level summary
+- **README**: repo-level summary
 - A short-form description (one paragraph) for the "crate" / "domain"
-  / etc. — assembled into the overall design files
-- **Design doc** — the regular top-level design
+  / etc.: assembled into the overall design files
+- **Design doc**: the regular top-level design
 - **Arbitrary deep-dive docs** per domain or topic within the design
 
 All naturally generated into sophisticated publish-ready documents,
@@ -65,7 +65,7 @@ Once docs are locked in, **lints, git hooks, custom hooks, and agent
 integrations** (rules, skills, hooks per AI tool) ensure that there
 literally can not be any drift between the docs and the source.
 
-At the centre: **convention lints** — configurable conventions,
+At the centre: **convention lints**: configurable conventions,
 principles, and workflows, such as:
 
 - maximum lines per individual source file
@@ -79,7 +79,7 @@ principles, and workflows, such as:
 Lints fire at **configurable severities** and at **configurable gate
 levels** (build, commit, push). Convention lints, doc-source-drift
 lints, primitive-vocabulary lints, no-bare-type lints, custom project
-lints — all run on the same machinery; all gate-able.
+lints: all run on the same machinery; all gate-able.
 
 ### What is and isn't part of the redesign
 
@@ -88,7 +88,7 @@ the above workflow). We're rewriting underneath for maintainability,
 restructuring for clarity, improving the storage layer (refs), and
 formalising the different domains within the framework. **The way it
 is used stays.** Short rounds, long rounds, the bench/sketch/research
-interleave, the multi-tier doc generation, the convention-lint heart —
+interleave, the multi-tier doc generation, the convention-lint heart:
 all preserved.
 
 ### What the current doc misframes or misses
@@ -138,7 +138,7 @@ Concrete revision targets, in priority order:
 
 9. **Configurable gate levels (build/commit/push) aren't called out.**
    The lint pack has gate severities but the framing is buried.
-   Should be a top-level section: "Lint gates — same lints, multiple
+   Should be a top-level section: "Lint gates: same lints, multiple
    blocking thresholds."
 
 10. **Agent integrations (rules/skills/hooks per AI tool) aren't named
@@ -151,7 +151,7 @@ Concrete revision targets, in priority order:
     Demote to late in the doc (§40s).
 
 12. **Replan and undo get full sections.** The user explicitly noted
-    these are inconsequential — replan exists because the old design
+    these are inconsequential: replan exists because the old design
     needed it (replacing unlock+deprecation); undo is a recoverability
     nicety. Trim both heavily; both become small recovery primitives,
     not headline features.
@@ -234,7 +234,7 @@ Concrete additions to the misframing list (continuing from item 14):
     blocked at commit/build/push time. The redesign doc has hooks +
     profiles but no concept of "lint config flows into agent rules."
 
-19. **`mockspace.toml` doc-generation metadata** — `[crate_colors]`
+19. **`mockspace.toml` doc-generation metadata**: `[crate_colors]`
     bg/fg pairs for the dependency graph; `[domain_kinds]` with
     emoji glyphs + label strings; `[known_macros]` description +
     usage; `layers = [...]` for depth-index labels; `primary_domain_macro`
@@ -330,14 +330,14 @@ Concrete additions to the misframing list (continuing from item 14):
 ### What the redesign needs to become
 
 The current 3170-line ref-based-mockspace-redesign doc is, at best,
-**one chapter of the full mockspace v2 design** — the storage layer.
+**one chapter of the full mockspace v2 design**: the storage layer.
 Other chapters need to exist before "what is mockspace" is a
 complete answer:
 
-- **Doc template system** — README/DESIGN/BACKLOG/SHAME/DEEPDIVE
+- **Doc template system**: README/DESIGN/BACKLOG/SHAME/DEEPDIVE
   hierarchy, per-crate + mock-root, `{{crate_summaries}}` and other
   template substitution, assembly pipeline.
-- **Lint engine** — built-in lints, custom `.rs` lints registered
+- **Lint engine**: built-in lints, custom `.rs` lints registered
   via `mockspace::Lint`, external lint packs, per-gate severities
   (commit/build/push × error/warn/info/off), per-scope rules with
   reasons, the `design-doc-source-mismatch` lint as docs-as-truth
@@ -345,33 +345,33 @@ complete answer:
   the `forbidden-imports` lint as layer enforcement, the
   `[primitive-introductions]` self-exemption machinery, the
   `SHAME.md.tmpl` structured-escape-hatch protocol.
-- **AST extraction** — tree-sitter-driven pub-item parse, language
+- **AST extraction**: tree-sitter-driven pub-item parse, language
   plugin shape, per-language extension surface.
-- **Doc generation pipeline** — templates with metadata
+- **Doc generation pipeline**: templates with metadata
   (`crate_colors`, `domain_kinds`, `layers`, `known_macros`),
   dependency graph + visualisation generation, render to source-tree
   vs forge-API vs local-only, single-source-of-truth update
   propagation.
-- **Bench framework** — `bench.toml` schema, workload + variants +
+- **Bench framework**: `bench.toml` schema, workload + variants +
   sizes, statistical depth in findings, integration with topic
   phase, `mock bench run|report` commands.
-- **Sketch framework** — sketch dir layout per round, compile-probe
+- **Sketch framework**: sketch dir layout per round, compile-probe
   vs design-probe distinction, sketch ↔ topic file cross-reference,
   `cl-claim-sketch-discipline` rule integration.
-- **Research workflow** — `mock/research/` cross-references,
+- **Research workflow**: `mock/research/` cross-references,
   imports-from-prior-art (`imported-from-polka-dots/`,
   `imported-from-saalis/`), history files
   (`<crate>-history.md`), audit subdir for external review.
-- **Agent integration** — `mock/agent/` per-repo: `MAIN.md.tmpl`,
+- **Agent integration**: `mock/agent/` per-repo: `MAIN.md.tmpl`,
   `PREAMBLE.md.tmpl`, `POSTAMBLE.md.tmpl`, `config.toml`,
   `rules/<rule>.md.tmpl`, `skills/<skill>/SKILL.md.tmpl`,
   `hooks/<hook>.sh.tmpl`. Auto-generation of per-scope rule files
   from lint config. Header injection on every rule context-load.
   Workspace-level aggregation surface (homma's responsibility but
   consumed by mockspace).
-- **Multi-topic round discipline** — sister topics, scope absorption,
+- **Multi-topic round discipline**: sister topics, scope absorption,
   `.history` audit log, `.meta` metadata, deprecated-CL renames.
-- **Workflow state machine** (the ref-based piece) — refs/mock/* as
+- **Workflow state machine** (the ref-based piece): refs/mock/* as
   storage substrate, phase transitions, manifest grammar, verifier
   catalog (which needs to include the AST-aware lints, not just
   filesystem-shape verifiers).
@@ -490,7 +490,7 @@ the install channel, or the project's review process).
 
 ### In scope (mockspace mitigates structurally)
 
-These are attacks at the import / fetch / verification boundary —
+These are attacks at the import / fetch / verification boundary,
 where mockspace pulls external code and runs it.
 
 - **MITM substitution of imported package content.** Lockfile pinning
@@ -532,8 +532,8 @@ These are attack classes mockspace deliberately does not address.
 They're handled by layers above or below mockspace, or by the project's
 own governance.
 
-- **Who can change project state.** Project access control — who can
-  push to the repo, who can merge PRs, what review gates apply — is
+- **Who can change project state.** Project access control: who can
+  push to the repo, who can merge PRs, what review gates apply: is
   the forge's and the project's concern. Mockspace operates on
   whatever state lands in the repo; it does not arbitrate who is
   allowed to put state there. Projects that want signed commits use
@@ -553,7 +553,7 @@ own governance.
   team member with push access can rewrite history, change `.gitignore`,
   inject `.gitattributes` filters, modify CI workflows, alter `Cargo.toml`
   dependencies. The defence is review, governance, and forge access
-  control — not a mockspace-specific layer.
+  control: not a mockspace-specific layer.
 - **Coordinated host + canonical-log compromise.** An attacker who
   controls both the package's host AND the project's transparency log
   can produce coherent malicious records. Cross-host federation
@@ -658,14 +658,14 @@ TOPIC ──new──▶ PLAN(DOC) ──apply──▶ APPLY(DOC) ──finish�
 
 **Phase semantics:**
 
-- **TOPIC** — exploration; topic documents authored; no manifest.
-- **PLAN(DOC)** — drafting doc manifest; mutable.
-- **APPLY(DOC)** — doc manifest sealed; source-side commits land;
+- **TOPIC**: exploration; topic documents authored; no manifest.
+- **PLAN(DOC)**: drafting doc manifest; mutable.
+- **APPLY(DOC)**: doc manifest sealed; source-side commits land;
   PR projection open; `.anchor.doc.toml` captured.
-- **PLAN(SRC)** — drafting src manifest.
-- **APPLY(SRC)** — src manifest sealed; source-side commits land;
+- **PLAN(SRC)**: drafting src manifest.
+- **APPLY(SRC)**: src manifest sealed; source-side commits land;
   `.anchor.src.toml` captured.
-- **DONE** — ready for `mock close`.
+- **DONE**: ready for `mock close`.
 
 **Forward transitions:**
 
@@ -783,7 +783,7 @@ mockspace surface.
 
 Three distinct storage locations, three distinct concerns:
 
-### `.mock/` — user-facing rendered surface (per-project, gitignored)
+### `.mock/`: user-facing rendered surface (per-project, gitignored)
 
 ```
 <repo>/                          parent worktree on refs/heads/<branch>
@@ -811,7 +811,7 @@ advisory locks. Cache and internals live in `.git/mockspace/` (per
 the git-LFS convention); machine-global content-addressed import bytes
 live in `~/.cache/mockspace/`.
 
-### `.git/mockspace/` — per-project per-developer internals
+### `.git/mockspace/`: per-project per-developer internals
 
 Following git-LFS's convention (which stores objects under
 `.git/lfs/`), all mockspace-internal per-project per-developer state
@@ -831,7 +831,7 @@ repo delete.
     └── <ts>-<seq>.json          per-snapshot ref-state
 ```
 
-### `~/.cache/mockspace/` — machine-global content cache
+### `~/.cache/mockspace/`: machine-global content cache
 
 ```
 ~/.cache/mockspace/              XDG_CACHE_HOME; shared across all projects
@@ -842,10 +842,10 @@ repo delete.
 
 Imported package bytes are content-addressed by SHA. Two projects on
 the same machine importing `mock://ext/runner-rs@<a1b2...>` share the
-same on-disk bytes — no per-project duplication. Cache eviction via
+same on-disk bytes: no per-project duplication. Cache eviction via
 `mock cache prune` (see CLI).
 
-### `~/.config/mockspace/` — per-developer config
+### `~/.config/mockspace/`: per-developer config
 
 ```
 ~/.config/mockspace/             XDG_CONFIG_HOME; per-developer, machine-global
@@ -1308,7 +1308,7 @@ Both are required for trust:
 
 SHA-1 is technically supported (40-hex sha) but SHA-256 (64-hex)
 preferred when the host repo supports it. With signature verification,
-an SHA-1 collision attack is insufficient — the attacker would still
+an SHA-1 collision attack is insufficient: the attacker would still
 need the maintainer's signing key.
 
 ### Trust commands
@@ -1359,7 +1359,7 @@ On every `@/` resolution:
 
 There is no per-project `trust.toml` for the `@/` source. There is no
 "first-run recording" step. The user's per-developer trust file
-(`~/.config/mockspace/trust.toml` — see
+(`~/.config/mockspace/trust.toml`: see
 [Trust on First Use](#trust-on-first-use-tofu-is-per-developer))
 records TOFU acceptances for OTHER hosts (third-party imports), not
 for `@/`. The `@/` source is governed entirely by the binary's
@@ -1399,7 +1399,7 @@ hardcoded.
 This does NOT defend against compromise of the binary itself at install
 time. The user's package manager / install channel is the root of trust,
 exactly as it is for git, cargo, or any other tool. Mockspace inherits
-whatever trust the user already extended to the binary — no more,
+whatever trust the user already extended to the binary: no more,
 no less.
 
 ## The transparency log
@@ -1453,7 +1453,7 @@ Mockspace-Witness: <signature of (host, ref, version, sha, key, at)>
 ```
 
 The canonical log is signed by the binary-hardcoded
-`MOCKSPACE_LOG_KEY` — a key DISTINCT from the content-signing key
+`MOCKSPACE_LOG_KEY`: a key DISTINCT from the content-signing key
 (`MOCKSPACE_CONTENT_KEY`). The two keys can be held by the same
 maintainer but should be in different security boundaries (different
 hardware tokens, different machines, etc.). This separation is what
@@ -1491,7 +1491,7 @@ force-pushes are refused by branch protection on the canonical host.
 The log is an orphan git ref. Any forge can serve it; any client can
 mirror it; cross-mirror verification is trivial because the commits
 are signed. The log is small (one commit per published version; a
-busy ecosystem might produce a few hundred commits per year — `git
+busy ecosystem might produce a few hundred commits per year: `git
 clone --depth 1` keeps the working size small). No separate service
 infrastructure, no separate registry, no separate transparency
 backend. It is git all the way down.
@@ -1595,7 +1595,7 @@ config change. Mockspace doesn't impose a special supply-chain
 trust-root ceremony on top of git's existing access-control mechanisms.
 Projects that want signed commits, branch protection, or merge
 gating use forge facilities (`commit.gpgsign`, branch rulesets,
-required reviews) — not a mockspace-specific layer.
+required reviews): not a mockspace-specific layer.
 
 ### Lockfile semantics
 
@@ -1647,10 +1647,10 @@ operations.
 
 Per-developer state lives in two places, both outside version control:
 
-- **`~/.config/mockspace/trust.toml`** — TOFU acceptances. The
+- **`~/.config/mockspace/trust.toml`**: TOFU acceptances. The
   developer's "I have personally seen this (host, fingerprint)
   combination" record. Analogous to SSH's `~/.ssh/known_hosts`.
-- **`.git/mockspace/observations.toml`** — per-project, per-developer
+- **`.git/mockspace/observations.toml`**: per-project, per-developer
   freshness cache. Records `last_observed_at` and `last_witness_at`
   per import. Used to compute `D030` (staleness) and `D032`
   (witness-staleness). Gitignored. Not shared.
@@ -2246,7 +2246,7 @@ paths:
 - Special paths (`/dev/*`, `/proc/*`, named pipes, sockets) are
   refused; only regular files and directories are accepted.
 - Maximum file-size budget (default 16 MB; configurable via
-  `[verifier].max_file_bytes`) — verifier short-circuits with a
+  `[verifier].max_file_bytes`): verifier short-circuits with a
   diagnostic if the file exceeds.
 
 Mockspace reads file contents via `std::fs::read_to_string` (or
@@ -2897,7 +2897,7 @@ mock harness show                                show resolved harness config + 
 
 Note: there is no `mock harness verify` or `mock harness accept-rotation`.
 Commit signing of harness commits is project policy handled by git
-(`commit.gpgsign`) or forge branch protection — not a mockspace
+(`commit.gpgsign`) or forge branch protection: not a mockspace
 concern. `mock harness show` is informational only.
 
 ### Domain: cache
@@ -2967,25 +2967,25 @@ mock redo                                re-apply the last undone operation
 
 ### Per-verb decomposition
 
-- **`mock status`** — already in plumbing root commands; the porcelain
+- **`mock status`**: already in plumbing root commands; the porcelain
   status command is the same call. Cold under 300ms, warm under 50ms,
   `--fast` under 20ms. Shows: current round, current phase, dirty
   areas, recent undo entries, top doctor findings if any.
 
-- **`mock work [<topic>]`** — if no active round, runs `mock round new`
+- **`mock work [<topic>]`**: if no active round, runs `mock round new`
   with an auto-generated slug, then `mock topic new <topic>`. If
   active round exists and `<topic>` provided, runs `mock topic new
   <topic>` on it. If active round and no `<topic>`, opens the active
   round's current phase surface (equivalent to `mock open`). Sets
   the active-round context for subsequent invocations.
 
-- **`mock advance`** — reads current phase. If dirty areas exist,
+- **`mock advance`**: reads current phase. If dirty areas exist,
   prompts to `mock commit` first (or auto-commits per profile). Then
   runs the next plumbing transition: `mock phase plan` from
   TOPIC/PLAN(...), `mock phase apply` from PLAN(...), `mock phase
   finish` from APPLY(...).
 
-- **`mock commit [-m "..."]`** — inspects every `.mock/<area>/` for
+- **`mock commit [-m "..."]`**: inspects every `.mock/<area>/` for
   changes against the rendered ref state. Routes commit per area:
   - Changes in `.mock/round/<active>/` → mock-side commit on
     `refs/mock/round/<active>`.
@@ -3002,16 +3002,16 @@ mock redo                                re-apply the last undone operation
   mockspace generates a per-area commit message. `--per-area` lets
   the developer specify different messages per area interactively.
 
-- **`mock done`** — runs `mock phase finish`, then `mock round close`,
+- **`mock done`**: runs `mock phase finish`, then `mock round close`,
   then `mock forge sync`. Each step described before execution; the
   developer accepts the whole composite or per step.
 
-- **`mock sync`** — already in plumbing root commands; the porcelain
+- **`mock sync`**: already in plumbing root commands; the porcelain
   shape adds `--all` which subsumes: fetch all imports
   (`mock import update`), fetch all ext mirrors
   (`mock ext refresh --all`), refresh forge state (`mock forge sync`).
 
-- **`mock add <ext>/<pkg>`** — porcelain for "add this import":
+- **`mock add <ext>/<pkg>`**: porcelain for "add this import":
   1. If `<ext>` (host alias) is not configured, prompt for URL +
      optional mirrors; write to `[hosts.<ext>]` in harness's
      `mockspace.toml`.
@@ -3022,7 +3022,7 @@ mock redo                                re-apply the last undone operation
   6. Commit harness changes.
   Each step shown before execution.
 
-- **`mock open [<area>]`** — opens the relevant rendered surface in
+- **`mock open [<area>]`**: opens the relevant rendered surface in
   `$EDITOR`:
   - No arg: opens the active round's current-phase manifest file.
   - `mock open round`: opens `.mock/round/<active>/` (directory).
@@ -3031,7 +3031,7 @@ mock redo                                re-apply the last undone operation
   - `mock open lock`: opens `.mock/mockspace.lock`.
   - `mock open <slug>`: opens the matching round/task/research/sketch.
 
-- **`mock undo` / `mock redo`** — see
+- **`mock undo` / `mock redo`**: see
   [Undo and redo](#undo-and-redo).
 
 ### When porcelain refuses
@@ -3094,7 +3094,7 @@ appends a counter-entry marking the prior entry as undone.
 
 Because refs are SHAs, snapshots record SHA + description, not
 content. Git's normal reflog retention (default 90 days) keeps the
-underlying objects reachable for the undo window — no extra storage.
+underlying objects reachable for the undo window: no extra storage.
 
 ### Operations snapshotted
 
@@ -3154,7 +3154,7 @@ Configurable via `[undo].keep_entries` and `[undo].keep_days` in
 Beyond that, entries roll out of the log. The referenced ref state
 remains in git's object store for git's reflog retention window
 (default 90 days); after that, GC may reclaim. Mockspace's undo log
-falling off does not guarantee object-store unreachability — `mock
+falling off does not guarantee object-store unreachability: `mock
 undo` past the log boundary just isn't a thing mockspace will do
 for you. Manual recovery via `git reflog` remains possible during
 git's own retention window.

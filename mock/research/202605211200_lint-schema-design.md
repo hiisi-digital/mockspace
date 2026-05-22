@@ -531,7 +531,7 @@ pub enum CrossDocPredicate {
     /// fire if no matching pub item exists in source.
     /// (Direction: doc -> source; "every documented item must exist".)
     /// This is the design_doc_source_mismatch failure mode the per-lint audit
-    /// flagged — backticked claims about source state that have rotted.
+    /// flagged: backticked claims about source state that have rotted.
     DocMustReferenceSource { design_doc_glob: String },
 
     /// For each symbol in source, fire if it does not match the corresponding
@@ -860,8 +860,8 @@ impl MockspaceProject {
     }
 
     // Project construction: in RunSurface::Editor, the project carries one
-    // document (the currently-edited buffer) and `staged_indices = [0..1]` —
-    // the buffer counts as staged so PerDocument lints with only_staged = true
+    // document (the currently-edited buffer) and `staged_indices = [0..1]`,
+    // so the buffer counts as staged and PerDocument lints with only_staged = true
     // actually see it. This preserves commit-gate parity for editor-time
     // diagnostics.
 
