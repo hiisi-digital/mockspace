@@ -92,6 +92,13 @@ enum Command {
         /// as editor integrations and CI dashboards.
         #[arg(long)]
         json: bool,
+        /// Run surface to scope the project under. `local` is the
+        /// default and matches developer-machine usage. `ci`
+        /// simulates a CI run (useful for reproducing CI-only lint
+        /// outcomes locally). `editor` is the LSP-like surface for
+        /// editor integrations.
+        #[arg(long, value_enum, default_value_t = SurfaceArg::Local)]
+        surface: SurfaceArg,
     },
 }
 
@@ -108,6 +115,23 @@ impl From<GateArg> for Gate {
             GateArg::Commit => Gate::Commit,
             GateArg::Build => Gate::Build,
             GateArg::Push => Gate::Push,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SurfaceArg {
+    Local,
+    Ci,
+    Editor,
+}
+
+impl From<SurfaceArg> for RunSurface {
+    fn from(s: SurfaceArg) -> RunSurface {
+        match s {
+            SurfaceArg::Local => RunSurface::Local,
+            SurfaceArg::Ci => RunSurface::Ci,
+            SurfaceArg::Editor => RunSurface::Editor,
         }
     }
 }
@@ -133,7 +157,9 @@ fn main() -> std::process::ExitCode {
         Command::Uninstall => run_uninstall(&repo_root),
         Command::Refresh => run_refresh(&repo_root),
         Command::Explain { name } => run_explain(&repo_root, &name),
-        Command::Check { gate, json } => run_check(&repo_root, gate.into(), json),
+        Command::Check { gate, json, surface } => {
+            run_check(&repo_root, gate.into(), json, surface.into())
+        }
     }
 }
 
@@ -280,22 +306,29 @@ fn print_explain_report(report: &explain::ExplainReport) {
     }
 }
 
-/// Run the lint engine against `repo_root` at the given `gate`.
-/// Composes the four engine pieces:
+/// Run the lint engine against `repo_root` at the given `gate` and
+/// `surface`. Composes the four engine pieces:
 ///
 /// 1. `LintsConfig::load(repo_root, OverrideCascade::default())` reads
 ///    the user TOML + applies cascade (Layer 5 CLI overrides remain
 ///    empty for this slice; flagged for a follow-up).
 /// 2. `MockspaceEngine::new()` instantiates the catalog-default lint
 ///    set.
-/// 3. `engine.scope_project(repo_root, RunSurface::Local)` walks the
-///    project tree and parses the relevant documents.
+/// 3. `engine.scope_project(repo_root, surface)` walks the project
+///    tree and parses the relevant documents. The surface lets a
+///    consumer simulate `ci` runs locally, or run as the `editor`
+///    surface for LSP-style integrations.
 /// 4. `engine.run(&project, gate, &cfg)` produces a `Vec<Finding>`.
 ///
 /// Findings render one per line to stdout. Exit code is FAILURE iff
 /// any finding's severity is `Error` at the chosen gate (matching
 /// the pre-commit / pre-push hook gate semantics).
-fn run_check(repo_root: &std::path::Path, gate: Gate, json: bool) -> std::process::ExitCode {
+fn run_check(
+    repo_root: &std::path::Path,
+    gate: Gate,
+    json: bool,
+    surface: RunSurface,
+) -> std::process::ExitCode {
     let cfg_obj = match LintsConfig::load(repo_root, OverrideCascade::default()) {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -308,7 +341,7 @@ fn run_check(repo_root: &std::path::Path, gate: Gate, json: bool) -> std::proces
     // `cfg` argument to `engine.run` covers per-lint runtime
     // overrides, which the CLI does not surface yet.
     let engine = MockspaceEngine::with_entries(cfg_obj.entries);
-    let project = match engine.scope_project(repo_root, RunSurface::Local) {
+    let project = match engine.scope_project(repo_root, surface) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("check failed: could not scope project: {e}");
