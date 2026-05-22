@@ -85,6 +85,13 @@ enum Command {
         /// is the strictest. Defaults to `commit`.
         #[arg(long, value_enum, default_value_t = GateArg::Commit)]
         gate: GateArg,
+        /// Emit findings as a pretty-printed JSON array on stdout
+        /// instead of the human-readable diagnostic format. The
+        /// exit code semantics stay the same (failure on any Error
+        /// at the gate); the format suits machine consumers such
+        /// as editor integrations and CI dashboards.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -126,7 +133,7 @@ fn main() -> std::process::ExitCode {
         Command::Uninstall => run_uninstall(&repo_root),
         Command::Refresh => run_refresh(&repo_root),
         Command::Explain { name } => run_explain(&repo_root, &name),
-        Command::Check { gate } => run_check(&repo_root, gate.into()),
+        Command::Check { gate, json } => run_check(&repo_root, gate.into(), json),
     }
 }
 
@@ -288,7 +295,7 @@ fn print_explain_report(report: &explain::ExplainReport) {
 /// Findings render one per line to stdout. Exit code is FAILURE iff
 /// any finding's severity is `Error` at the chosen gate (matching
 /// the pre-commit / pre-push hook gate semantics).
-fn run_check(repo_root: &std::path::Path, gate: Gate) -> std::process::ExitCode {
+fn run_check(repo_root: &std::path::Path, gate: Gate, json: bool) -> std::process::ExitCode {
     let cfg_obj = match LintsConfig::load(repo_root, OverrideCascade::default()) {
         Ok(cfg) => cfg,
         Err(e) => {
@@ -316,6 +323,30 @@ fn run_check(repo_root: &std::path::Path, gate: Gate) -> std::process::ExitCode 
             return std::process::ExitCode::FAILURE;
         }
     };
+
+    // JSON branch: pretty-print the findings as a serde_json
+    // array and short-circuit. Exit code semantics still hinge on
+    // whether any Error-severity finding hit the gate; compute
+    // that from `findings` before returning. The serde-derived
+    // rendering of `Severity` / `Gate` uses the substrate's
+    // canonical lowercase labels (`warn`, not `warning`), which
+    // intentionally diverges from the human stdout vocabulary.
+    if json {
+        let body = match serde_json::to_string_pretty(&findings) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("check failed: could not serialise findings as JSON: {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+        println!("{body}");
+        let had_error = findings.iter().any(|f| matches!(f.severity, Severity::Error));
+        return if had_error {
+            std::process::ExitCode::FAILURE
+        } else {
+            std::process::ExitCode::SUCCESS
+        };
+    }
 
     // Render the gate as a lowercase word that matches the
     // `--gate {commit|build|push}` flag value the user types. The
