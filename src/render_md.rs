@@ -21,7 +21,7 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
     let reduced = graph::transitive_reduction(crates);
 
     // Header
-    writeln!(md, "# {project_name} — Structure Reference").unwrap();
+    writeln!(md, "# {project_name}: Structure Reference").unwrap();
     writeln!(md).unwrap();
     writeln!(md, "> Auto-generated from the mock workspace. This document is the canonical").unwrap();
     writeln!(md, "> description of every crate, type, and macro in the framework.").unwrap();
@@ -46,7 +46,7 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
     for (d, names) in by_depth.iter().enumerate() {
         if names.is_empty() { continue; }
         let label = cfg.layer_label(d);
-        writeln!(md, "**Layer {d} — {label}**").unwrap();
+        writeln!(md, "**Layer {d}: {label}**").unwrap();
         writeln!(md).unwrap();
         for name in names {
             let short = &crates[*name].short_name;
@@ -62,7 +62,7 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
     for (d, names) in by_depth.iter().enumerate() {
         if names.is_empty() { continue; }
         let label = cfg.layer_label(d);
-        writeln!(md, "## Layer {d} — {label}").unwrap();
+        writeln!(md, "## Layer {d}: {label}").unwrap();
         writeln!(md).unwrap();
 
         for dir_name in names {
@@ -132,7 +132,7 @@ fn write_crate_section(
             let dep_short = crates.get(*dep).map(|c| c.short_name.as_str()).unwrap_or(dep);
             let is_reduced = reduced_deps.contains(dep);
             let direct = "✓";
-            let reduced_mark = if is_reduced { "✓ (edge drawn)" } else { "— (transitively implied)" };
+            let reduced_mark = if is_reduced { "✓ (edge drawn)" } else { "(transitively implied)" };
             writeln!(md, "| {dep_short} | {direct} | {reduced_mark} |").unwrap();
         }
         writeln!(md).unwrap();

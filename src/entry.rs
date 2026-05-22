@@ -780,8 +780,8 @@ fn cmd_check(cfg: &Config) -> ExitCode {
                     let behind: u32 = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
                     let (result, msg) = match (ahead, behind) {
                         (0, 0) => (CheckResult::Pass, format!("{branch} in sync with {up}")),
-                        (a, 0) => (CheckResult::Warn, format!("{branch} {a} ahead of {up} — push needed")),
-                        (0, b) => (CheckResult::Warn, format!("{branch} {b} behind {up} — pull needed")),
+                        (a, 0) => (CheckResult::Warn, format!("{branch} {a} ahead of {up}, push needed")),
+                        (0, b) => (CheckResult::Warn, format!("{branch} {b} behind {up}, pull needed")),
                         (a, b) => (CheckResult::Warn, format!("{branch} diverged from {up} ({a} ahead, {b} behind)")),
                     };
                     print_row("remote", result, &msg);
@@ -792,7 +792,7 @@ fn cmd_check(cfg: &Config) -> ExitCode {
             }
         }
         _ => {
-            print_row("remote", CheckResult::Warn, &format!("{branch} has no upstream — `git push -u` first"));
+            print_row("remote", CheckResult::Warn, &format!("{branch} has no upstream; `git push -u` first"));
         }
     }
 
@@ -814,7 +814,7 @@ fn cmd_check(cfg: &Config) -> ExitCode {
     match check_status {
         Ok(s) if s.success() => print_row("build", CheckResult::Pass, "cargo check green"),
         Ok(_) => {
-            print_row("build", CheckResult::Fail, "cargo check failed — run `cargo check` in mock/ for details");
+            print_row("build", CheckResult::Fail, "cargo check failed; run `cargo check` in mock/ for details");
             any_fail = true;
         }
         Err(e) => {
@@ -838,7 +838,7 @@ fn cmd_check(cfg: &Config) -> ExitCode {
     match test_status {
         Ok(s) if s.success() => print_row("tests", CheckResult::Pass, "cargo test green"),
         Ok(_) => {
-            print_row("tests", CheckResult::Fail, "cargo test failed — run `cargo test` in mock/ for details");
+            print_row("tests", CheckResult::Fail, "cargo test failed; run `cargo test` in mock/ for details");
             any_fail = true;
         }
         Err(e) => {
@@ -864,7 +864,7 @@ fn cmd_check(cfg: &Config) -> ExitCode {
             print_row(
                 "lints",
                 CheckResult::Fail,
-                "mockspace lints failed — run `cargo mock --lint-only --strict` for details",
+                "mockspace lints failed; run `cargo mock --lint-only --strict` for details",
             );
             any_fail = true;
         }
@@ -900,7 +900,7 @@ fn cmd_check(cfg: &Config) -> ExitCode {
         }
         Phase::Src => {
             let msg = if any_fail {
-                "IMPL in progress — build failing; fix before `cargo mock lock`"
+                "IMPL in progress: build failing; fix before `cargo mock lock`"
             } else {
                 "IMPL ready for `cargo mock lock` (IMPL → CLOSED) once CL is fulfilled"
             };
@@ -914,7 +914,7 @@ fn cmd_check(cfg: &Config) -> ExitCode {
             print_row(
                 "advance",
                 CheckResult::Pass,
-                "round complete — `cargo mock close` to archive",
+                "round complete; `cargo mock close` to archive",
             );
         }
     }
