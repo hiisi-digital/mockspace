@@ -382,6 +382,86 @@ impl core::fmt::Display for TaskTransitionError {
 
 impl std::error::Error for TaskTransitionError {}
 
+/// Outcome of a successful [`RepoHandle::move_task`] call.
+#[derive(Debug, Clone)]
+pub struct MoveTaskReport {
+    /// The ref path that was deleted (source).
+    pub from_ref_path: RefPath,
+    /// The ref path that now points at the moved task (destination).
+    pub to_ref_path: RefPath,
+    /// The commit OID of the newly-written destination ref.
+    pub commit_oid: gix::ObjectId,
+}
+
+/// Failure modes for [`RepoHandle::move_task`].
+#[derive(Debug)]
+pub enum MoveTaskError {
+    /// Source ref does not exist.
+    SourceNotFound { ref_path: String },
+    /// Destination ref already exists. Move refuses to clobber.
+    DestinationExists { ref_path: String },
+    /// Source and destination are the same task identifier; no-op moves
+    /// are rejected so callers do not mistake them for a real rename.
+    SameTaskId,
+    /// Reading the source ref tree failed for a non-not-found reason.
+    SourceReadFailed(RefTreeReadError),
+    /// Resolving the destination ref (the "must not exist" check)
+    /// failed for a non-not-found reason.
+    DestinationCheckFailed(RefTreeReadError),
+    /// The source tree did not carry a `meta.toml` blob.
+    MetaMissing { ref_path: String },
+    /// `meta.toml` was not valid UTF-8.
+    MetaNotUtf8 { ref_path: String },
+    /// `meta.toml` did not parse as a [`TaskMeta`].
+    MetaParse {
+        ref_path: String,
+        source: toml::de::Error,
+    },
+    /// The updated `meta.toml` did not serialize.
+    MetaSerialise(toml::ser::Error),
+    /// Writing the destination ref failed.
+    WriteFailed(RefTreeWriteError),
+    /// Deleting the source ref failed after the destination was
+    /// successfully written. This leaves both refs present and
+    /// pointing at equivalent trees; the caller can retry or repair
+    /// manually.
+    SourceDeleteFailed { message: String },
+}
+
+impl core::fmt::Display for MoveTaskError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::SourceNotFound { ref_path } => {
+                write!(f, "source task ref `{ref_path}` not found")
+            }
+            Self::DestinationExists { ref_path } => {
+                write!(f, "destination task ref `{ref_path}` already exists")
+            }
+            Self::SameTaskId => f.write_str("source and destination task ids are identical"),
+            Self::SourceReadFailed(e) => write!(f, "source ref read failed: {e}"),
+            Self::DestinationCheckFailed(e) => {
+                write!(f, "destination ref existence check failed: {e}")
+            }
+            Self::MetaMissing { ref_path } => {
+                write!(f, "source ref `{ref_path}` carries no meta.toml")
+            }
+            Self::MetaNotUtf8 { ref_path } => {
+                write!(f, "source ref `{ref_path}` meta.toml is not valid UTF-8")
+            }
+            Self::MetaParse { ref_path, source } => {
+                write!(f, "source ref `{ref_path}` meta.toml parse failed: {source}")
+            }
+            Self::MetaSerialise(e) => write!(f, "updated meta.toml serialise failed: {e}"),
+            Self::WriteFailed(e) => write!(f, "destination ref write failed: {e}"),
+            Self::SourceDeleteFailed { message } => {
+                write!(f, "source ref delete failed after destination write: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MoveTaskError {}
+
 impl RepoHandle {
     /// Transition a task to `InProgress`.
     pub fn start_task(
@@ -417,6 +497,151 @@ impl RepoHandle {
         metadata: CloseMetadata,
     ) -> Result<TaskTransitionReport, TaskTransitionError> {
         self.transition_task(task_id, TaskState::Closed, Some(metadata))
+    }
+
+    /// Move a task from one identifier to another. Reads the source
+    /// ref tree, updates `meta.toml` to reflect the destination's
+    /// namespace + leaf slug, writes the destination ref, then
+    /// deletes the source ref.
+    ///
+    /// Operates on active task refs (under `refs/mock/task/...`).
+    /// Archived tasks are not movable; archive lookup is left to a
+    /// future verb if a use case emerges.
+    ///
+    /// Atomicity: the write + delete is NOT a single git transaction.
+    /// On a crash between the destination write and the source delete,
+    /// both refs end up present with equivalent trees. The retry path
+    /// re-resolves the source (still pointing at the old commit),
+    /// observes the destination exists, and surfaces a
+    /// [`MoveTaskError::DestinationExists`]. The repair is manual:
+    /// delete the duplicate at one end.
+    pub fn move_task(
+        &self,
+        from: &TaskId,
+        to: &TaskId,
+    ) -> Result<MoveTaskReport, MoveTaskError> {
+        if from == to {
+            return Err(MoveTaskError::SameTaskId);
+        }
+        let from_ref = RefPath::task_from_id(from);
+        let to_ref = RefPath::task_from_id(to);
+
+        // Source must exist.
+        let from_oid = match self.resolve_ref_oid(&from_ref) {
+            Ok(oid) => oid,
+            Err(RefTreeReadError::RefNotFound { .. }) => {
+                return Err(MoveTaskError::SourceNotFound {
+                    ref_path: from_ref.as_str().to_owned(),
+                });
+            }
+            Err(other) => return Err(MoveTaskError::SourceReadFailed(other)),
+        };
+
+        // Destination must not exist. This pre-check is a UX nicety
+        // that surfaces a typed `DestinationExists` error; the actual
+        // race-safe guard is `write_round_ref(..., None)` below,
+        // which translates to `PreviousValue::MustNotExist` at the
+        // gix transaction layer and rejects clobbers atomically. A
+        // concurrent move that wins the gix transaction here will
+        // surface as `WriteFailed` rather than `DestinationExists`.
+        match self.resolve_ref_oid(&to_ref) {
+            Ok(_) => {
+                return Err(MoveTaskError::DestinationExists {
+                    ref_path: to_ref.as_str().to_owned(),
+                });
+            }
+            Err(RefTreeReadError::RefNotFound { .. }) => {}
+            Err(other) => return Err(MoveTaskError::DestinationCheckFailed(other)),
+        }
+
+        // Read source tree.
+        let tree = self
+            .read_ref_tree(&from_ref)
+            .map_err(MoveTaskError::SourceReadFailed)?;
+        let meta_bytes = tree
+            .get("meta.toml")
+            .ok_or_else(|| MoveTaskError::MetaMissing {
+                ref_path: from_ref.as_str().to_owned(),
+            })?;
+        let meta_text =
+            core::str::from_utf8(meta_bytes).map_err(|_| MoveTaskError::MetaNotUtf8 {
+                ref_path: from_ref.as_str().to_owned(),
+            })?;
+        let mut meta: TaskMeta =
+            TaskMeta::from_toml(meta_text).map_err(|source| MoveTaskError::MetaParse {
+                ref_path: from_ref.as_str().to_owned(),
+                source,
+            })?;
+
+        // Update meta.toml's slug + namespace to match destination.
+        meta.slug = to.slug().as_str().to_owned();
+        meta.namespace = to
+            .namespace()
+            .map(|ns| ns.as_ref_path())
+            .unwrap_or_default();
+        let new_meta_toml = meta.to_toml().map_err(MoveTaskError::MetaSerialise)?;
+
+        // Build the destination tree by cloning the source and
+        // replacing meta.toml.
+        let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        for (name, bytes) in tree.iter() {
+            if name == "meta.toml" {
+                continue;
+            }
+            entries.insert(name.to_owned(), bytes.to_vec());
+        }
+        entries.insert("meta.toml".to_owned(), new_meta_toml.into_bytes());
+        let new_tree = RoundRefTree::from_entries_pub(entries);
+
+        // Write destination ref (no prior commit; this is a create).
+        let message = format!(
+            "task: move `{}` -> `{}`",
+            from.as_uri_form(),
+            to.as_uri_form()
+        );
+        let commit_oid = self
+            .write_round_ref(&to_ref, &new_tree, &message, None)
+            .map_err(MoveTaskError::WriteFailed)?;
+
+        // Delete source ref. If this fails, the destination already
+        // landed; surface the error so the caller can repair manually.
+        self.delete_task_ref(&from_ref, from_oid)
+            .map_err(|message| MoveTaskError::SourceDeleteFailed { message })?;
+
+        Ok(MoveTaskReport {
+            from_ref_path: from_ref,
+            to_ref_path: to_ref,
+            commit_oid,
+        })
+    }
+
+    /// Delete a task ref with CAS on the current OID. Inline gix call
+    /// because the typed error from [`move_task`] needs more structure
+    /// than the archive-side helper's `Box<dyn Error>` return.
+    fn delete_task_ref(
+        &self,
+        ref_path: &RefPath,
+        expected_oid: gix::ObjectId,
+    ) -> Result<(), String> {
+        use gix::refs::transaction::{Change, PreviousValue, RefEdit, RefLog};
+        let repo = self.repo();
+        let name = ref_path
+            .as_str()
+            .try_into()
+            .map_err(|e: gix::refs::name::Error| e.to_string())?;
+        let edit = RefEdit {
+            change: Change::Delete {
+                expected: PreviousValue::ExistingMustMatch(gix::refs::Target::Object(
+                    expected_oid,
+                )),
+                log: RefLog::AndReference,
+            },
+            name,
+            deref: false,
+        };
+        repo.edit_reference(edit)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     /// Shared executor for the four lifecycle verbs. Reads the task
@@ -859,6 +1084,110 @@ mod tests {
             .filter(|(k, _)| is_root_state_marker(k))
             .count();
         assert_eq!(marker_count, 1, "exactly one .state.<marker> must remain");
+        let entries: BTreeMap<String, Vec<u8>> = tree
+            .iter()
+            .map(|(k, v)| (k.to_owned(), v.to_vec()))
+            .collect();
+        assert_eq!(infer_state_from_entries(&entries), Some(TaskState::Blocked));
+    }
+
+    // -----------------------------------------------------------------
+    // Slice B: move_task.
+
+    #[test]
+    fn move_top_level_to_namespaced() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let from = setup_open_task(&handle, "migrate");
+        let to = TaskId::parse("workspace::migrate").expect("parse");
+
+        let report = handle.move_task(&from, &to).expect("move");
+
+        // Source ref gone.
+        assert!(matches!(
+            handle.resolve_ref_oid(&report.from_ref_path),
+            Err(RefTreeReadError::RefNotFound { .. })
+        ));
+        // Destination ref present and carries updated meta.
+        let dest_meta = handle.show_task(&to).expect("show");
+        assert_eq!(dest_meta.slug, "migrate");
+        assert_eq!(dest_meta.namespace, "workspace");
+    }
+
+    #[test]
+    fn move_namespaced_to_top_level() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let from = TaskId::parse("compiler::lower").expect("parse");
+        handle
+            .create_task(&from, &meta("lower", "compiler"))
+            .expect("create");
+        let to = TaskId::parse("lower").expect("parse");
+
+        handle.move_task(&from, &to).expect("move");
+
+        let dest_meta = handle.show_task(&to).expect("show");
+        assert_eq!(dest_meta.slug, "lower");
+        assert_eq!(dest_meta.namespace, "");
+    }
+
+    #[test]
+    fn move_refuses_same_id() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = setup_open_task(&handle, "same");
+
+        assert!(matches!(
+            handle.move_task(&id, &id),
+            Err(MoveTaskError::SameTaskId)
+        ));
+    }
+
+    #[test]
+    fn move_refuses_missing_source() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let from = TaskId::parse("never-existed").expect("parse");
+        let to = TaskId::parse("destination").expect("parse");
+
+        assert!(matches!(
+            handle.move_task(&from, &to),
+            Err(MoveTaskError::SourceNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn move_refuses_existing_destination() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let from = setup_open_task(&handle, "from-task");
+        let to = setup_open_task(&handle, "to-task");
+
+        assert!(matches!(
+            handle.move_task(&from, &to),
+            Err(MoveTaskError::DestinationExists { .. })
+        ));
+    }
+
+    #[test]
+    fn move_preserves_state_marker() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let from = setup_open_task(&handle, "movable");
+        handle.block_task(&from).expect("block");
+
+        let to = TaskId::parse("archived::movable").expect("parse");
+        handle.move_task(&from, &to).expect("move");
+
+        let tree = handle
+            .read_ref_tree(&RefPath::task_from_id(&to))
+            .expect("read");
         let entries: BTreeMap<String, Vec<u8>> = tree
             .iter()
             .map(|(k, v)| (k.to_owned(), v.to_vec()))
