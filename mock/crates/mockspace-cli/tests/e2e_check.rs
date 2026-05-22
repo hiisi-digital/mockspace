@@ -157,3 +157,39 @@ fn check_json_on_rust_crate_with_violations_at_commit_gate() {
     assert_matches_golden("check_rust_crate_violations_commit_gate_json", &stdout);
 }
 
+#[test]
+fn check_human_on_rust_crate_with_violations_at_commit_gate() {
+    // Parallel to the JSON failing-fixture test: same probe crate
+    // shape, same engine output, but captures the human-readable
+    // diagnostic format (`<file>:<line>:<col>: [<severity>] <name>:
+    // <message>` per finding, no JSON envelope). The human path is
+    // what pre-commit hook users actually see; this pins it.
+    //
+    // KNOWN LIMITATION: same as the JSON test above. Engine spans
+    // currently report `1:1` for every finding regardless of the
+    // actual line in the source. Future engine work refining span
+    // precision will regenerate this golden. The order is also
+    // engine emission order, not alphabetical.
+    let lib_rs = "pub fn count() -> usize { 42 }\npub struct Bag {\n    pub items: u64,\n}\n";
+    let fixture = MockspaceFixture::new()
+        .with_rust_crate("probe", lib_rs)
+        .build()
+        .expect("fixture");
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("check")
+        .arg("--gate")
+        .arg("commit")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .output()
+        .expect("invoke mock check");
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit because of Error findings; stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("check stdout is UTF-8");
+    assert_matches_golden("check_rust_crate_violations_commit_gate", &stdout);
+}
+
