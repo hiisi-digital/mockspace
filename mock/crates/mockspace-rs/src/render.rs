@@ -184,12 +184,17 @@ pub fn regenerate(
         .map_err(|e| RegenerateError::io(out_dir, e))?;
 
     let mut files = Vec::with_capacity(MOCK_ROOT_TEMPLATES.len());
+    // Mock-root templates go through fragment injection (see
+    // `inject_mock_root_fragments`); per-crate templates do not, so
+    // their loop below uses the simpler `write_with_state`.
     for tmpl_name in MOCK_ROOT_TEMPLATES {
         let template = env.get_template(tmpl_name)?;
         let output_name = strip_tmpl_suffix(tmpl_name);
         let dest = out_dir.join(output_name);
 
-        let state = write_with_state(&template, &context, &dest)?;
+        let rendered = template.render(&context)?;
+        let injected = inject_mock_root_fragments(tmpl_name, rendered);
+        let state = write_raw_with_state(&injected, &dest)?;
         files.push(RenderedFile { path: dest, state });
     }
 
@@ -591,10 +596,11 @@ pub fn check(
     for tmpl_name in MOCK_ROOT_TEMPLATES {
         let template = env.get_template(tmpl_name)?;
         let rendered = template.render(&context)?;
+        let injected = inject_mock_root_fragments(tmpl_name, rendered);
         let output_name = strip_tmpl_suffix(tmpl_name);
         let dest = out_dir.join(output_name);
 
-        classify_against_disk(&dest, &rendered, &mut report)?;
+        classify_against_disk(&dest, &injected, &mut report)?;
     }
 
     check_per_crate(project, out_dir, &mut report)?;
@@ -868,6 +874,37 @@ fn strip_tmpl_suffix(name: &str) -> &str {
 /// per-crate fan-out scales this to N files, fold the classification
 /// into `mockspace-template` by exposing a `render_atomic_classified`
 /// variant that returns `WriteState` from the single internal compare.
+
+/// Apply builtin-fragment auto-injection to a rendered mock-root
+/// template's body. Currently injects:
+///
+/// - The Form A AI/agent responsibility notice into `WORKFLOW.md.tmpl`
+///   output when its marker is absent.
+/// - The Form B (rule-list) AI notice into `PRINCIPLES.md.tmpl` output
+///   when its marker is absent.
+///
+/// Other templates (e.g. `DESIGN.md.tmpl`) pass through unchanged.
+/// The injection is idempotent: a template that already includes the
+/// canonical wording (with its marker comment) sees no double-stamp.
+///
+/// See `crate::render_fragments` for the fragment bodies and marker
+/// strings.
+fn inject_mock_root_fragments(tmpl_name: &str, rendered: String) -> String {
+    use crate::render_fragments::{
+        inject_if_absent, AI_NOTICE_FORM_A, AI_NOTICE_FORM_A_MARKER, AI_NOTICE_FORM_B,
+        AI_NOTICE_FORM_B_MARKER,
+    };
+    match tmpl_name {
+        "WORKFLOW.md.tmpl" => {
+            inject_if_absent(rendered, AI_NOTICE_FORM_A_MARKER, AI_NOTICE_FORM_A)
+        }
+        "PRINCIPLES.md.tmpl" => {
+            inject_if_absent(rendered, AI_NOTICE_FORM_B_MARKER, AI_NOTICE_FORM_B)
+        }
+        _ => rendered,
+    }
+}
+
 fn write_with_state<C: Serialize>(
     template: &Template<'_>,
     context: &C,
@@ -1679,5 +1716,121 @@ mod tests {
             .missing
             .iter()
             .any(|p| p.ends_with(format!("sketches/{slug}.md"))));
+    }
+
+    // -----------------------------------------------------------------
+    // AI-notice fragment auto-injection tests (#245).
+
+    #[test]
+    fn regenerate_injects_ai_notice_form_a_into_workflow() {
+        // Template lacks the marker; the renderer must append Form A
+        // to the rendered output before writing.
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("WORKFLOW.md")).unwrap();
+        assert!(
+            body.contains("<!-- mockspace:ai-notice-form-a -->"),
+            "Form A marker must appear in rendered WORKFLOW.md, got: {body}"
+        );
+        assert!(
+            body.contains("## A note on coding agents"),
+            "Form A heading must appear in rendered WORKFLOW.md, got: {body}"
+        );
+    }
+
+    #[test]
+    fn regenerate_injects_ai_notice_form_b_into_principles() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("PRINCIPLES.md")).unwrap();
+        assert!(
+            body.contains("<!-- mockspace:ai-notice-form-b -->"),
+            "Form B marker must appear in rendered PRINCIPLES.md, got: {body}"
+        );
+        assert!(
+            body.contains("## Responsible tooling"),
+            "Form B heading must appear in rendered PRINCIPLES.md, got: {body}"
+        );
+    }
+
+    #[test]
+    fn regenerate_skips_ai_notice_when_template_authors_it() {
+        // Template already carries the canonical marker plus its
+        // own (possibly customised) wording. The renderer must NOT
+        // double-stamp; the marker presence suppresses injection.
+        let tmp = TempDir::new().unwrap();
+        let mock = tmp.path().join("mock");
+        fs::create_dir_all(&mock).unwrap();
+        fs::write(
+            mock.join("WORKFLOW.md.tmpl"),
+            "custom prose\n<!-- mockspace:ai-notice-form-a -->\nour own notice\n",
+        )
+        .unwrap();
+        fs::write(mock.join("PRINCIPLES.md.tmpl"), "principles only").unwrap();
+        fs::write(mock.join("DESIGN.md.tmpl"), "design only").unwrap();
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("WORKFLOW.md")).unwrap();
+        let marker_hits = body.matches("<!-- mockspace:ai-notice-form-a -->").count();
+        assert_eq!(
+            marker_hits, 1,
+            "marker present in template must suppress auto-injection so only one copy lands; got {marker_hits} hits in: {body}"
+        );
+        // The template's own wording must be preserved.
+        assert!(body.contains("our own notice"));
+        // The builtin canonical heading must NOT have been appended
+        // on top of the template's authored notice.
+        assert!(!body.contains("## A note on coding agents"));
+    }
+
+    #[test]
+    fn regenerate_does_not_inject_into_design_md() {
+        // Only WORKFLOW.md and PRINCIPLES.md receive injection.
+        // DESIGN.md passes through unchanged.
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("DESIGN.md")).unwrap();
+        assert!(
+            !body.contains("<!-- mockspace:ai-notice-form-a -->"),
+            "DESIGN.md must not receive AI notice injection"
+        );
+        assert!(
+            !body.contains("<!-- mockspace:ai-notice-form-b -->"),
+            "DESIGN.md must not receive AI notice injection"
+        );
+    }
+
+    #[test]
+    fn check_treats_injected_output_as_canonical() {
+        // The injected body is what regenerate writes; check must
+        // classify on the same body. A regenerate-then-check cycle
+        // converges (no drift surfaced for the injection step).
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("seed");
+        let report = check(&proj, &out).expect("check after seed");
+        assert!(
+            !report.needs_regen(),
+            "regenerate-then-check must converge; drifted: {:?}, missing: {:?}",
+            report.drifted,
+            report.missing
+        );
     }
 }

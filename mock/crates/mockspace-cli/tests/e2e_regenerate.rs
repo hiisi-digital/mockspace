@@ -60,18 +60,20 @@ fn regenerate_writes_three_mock_root_files() {
         .success();
 
     let docs = fixture.path().join("docs");
+    // DESIGN.md passes through unchanged; no fragment is injected.
     assert_eq!(
         fs::read_to_string(docs.join("DESIGN.md")).unwrap(),
         "design body"
     );
-    assert_eq!(
-        fs::read_to_string(docs.join("PRINCIPLES.md")).unwrap(),
-        "principles body"
-    );
-    assert_eq!(
-        fs::read_to_string(docs.join("WORKFLOW.md")).unwrap(),
-        "workflow body"
-    );
+    // PRINCIPLES.md and WORKFLOW.md receive auto-injected AI-notice
+    // fragments (#245). The template body still leads; the canonical
+    // notice is appended.
+    let principles = fs::read_to_string(docs.join("PRINCIPLES.md")).unwrap();
+    assert!(principles.starts_with("principles body"));
+    assert!(principles.contains("<!-- mockspace:ai-notice-form-b -->"));
+    let workflow = fs::read_to_string(docs.join("WORKFLOW.md")).unwrap();
+    assert!(workflow.starts_with("workflow body"));
+    assert!(workflow.contains("<!-- mockspace:ai-notice-form-a -->"));
 }
 
 #[test]

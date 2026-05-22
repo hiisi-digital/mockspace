@@ -51,6 +51,7 @@ pub mod preprocessor;
 pub mod preset_source;
 pub mod project;
 pub mod render;
+pub mod render_fragments;
 pub mod scope;
 pub mod scope_filter;
 pub mod staging;
