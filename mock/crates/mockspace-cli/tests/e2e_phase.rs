@@ -14,9 +14,13 @@
 //! scrubbed before comparison.
 
 use assert_cmd::Command;
-use mockspace_rs::{RefPath, RepoHandle, RoundRefTree, Slug};
+use mockspace_rs::{
+    AcceptanceBlock, ChangeBlock, Manifest, ManifestSide, RefPath, RepoHandle, RoundRefTree,
+    ScopeBlock, Slug, VerifierCheck, VerifierKind,
+};
 use mockspace_test_fixtures::MockspaceFixture;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::process::Command as StdCommand;
 
 mod common;
@@ -265,3 +269,122 @@ fn plan_verb_refuses_when_round_already_advanced() {
         "expected typed phase-failure prefix; got: {stderr}"
     );
 }
+
+/// Create a real git commit in the fixture so phase apply can resolve a
+/// source-tip OID. Writes a `README.md`, stages it, commits, then parses
+/// the resulting HEAD OID via `git rev-parse HEAD`.
+fn init_source_tip(fixture: &MockspaceFixture, filename: &str, content: &str) -> String {
+    std::fs::write(fixture.path().join(filename), content).expect("write file");
+    let add = StdCommand::new("git")
+        .args(["add", filename])
+        .current_dir(fixture.path())
+        .status()
+        .expect("git add runs");
+    assert!(add.success(), "git add failed");
+    let commit_status = StdCommand::new("git")
+        .args(["-c", "user.email=t@t.local", "-c", "user.name=tester", "commit", "--quiet", "-m", "source tip"])
+        .current_dir(fixture.path())
+        .status()
+        .expect("git commit runs");
+    assert!(commit_status.success(), "git commit failed");
+    let out = StdCommand::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(fixture.path())
+        .output()
+        .expect("git rev-parse runs");
+    assert!(out.status.success(), "git rev-parse failed");
+    String::from_utf8(out.stdout).expect("rev-parse stdout is UTF-8").trim().to_owned()
+}
+
+/// Construct a valid minimal doc-side manifest for `slug` and serialise
+/// to TOML. Mirrors the canonical fixture in mockspace-core::io::advance
+/// unit tests; lifted here because the cli e2e crate cannot reach into
+/// another crate's `#[cfg(test)]` module.
+fn doc_manifest_toml(slug: &str) -> String {
+    Manifest {
+        mockspace_version: "1.0".to_owned(),
+        round_slug: slug.to_owned(),
+        phase: ManifestSide::Doc,
+        scope: ScopeBlock {
+            description: "test apply happy path".to_owned(),
+            in_scope_tasks: vec![],
+            out_of_scope: vec![],
+        },
+        acceptance: AcceptanceBlock {
+            criteria: "passes".to_owned(),
+        },
+        changes: vec![ChangeBlock {
+            task: None,
+            file: PathBuf::from("README.md"),
+            description: "doc change".to_owned(),
+            verify: VerifierCheck::Kind(VerifierKind::PathExists {
+                file: PathBuf::from("README.md"),
+            }),
+        }],
+        deprecated_accounting: vec![],
+    }
+    .to_toml()
+    .expect("manifest toml")
+}
+
+#[test]
+fn apply_verb_seals_doc_manifest_and_advances_to_apply_doc() {
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    git_init(&fixture);
+    let source_tip = init_source_tip(&fixture, "README.md", "hello\n");
+    let slug = Slug::new("apply-happy").expect("slug");
+
+    // Seed a PLAN(doc) round with the matching manifest blob.
+    let handle = RepoHandle::open(fixture.path()).expect("open repo");
+    let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
+    entries.insert(
+        "manifest.doc.toml".to_owned(),
+        doc_manifest_toml(slug.as_str()).into_bytes(),
+    );
+    let tree = RoundRefTree::from_entries(entries);
+    handle
+        .write_round_ref(&RefPath::round_mock(&slug), &tree, "seed plan-doc round", None)
+        .expect("seed round ref");
+
+    // Act: mock phase apply --source-tip <oid>.
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .args(["phase", "apply", slug.as_str(), "--source-tip", &source_tip])
+        .output()
+        .expect("invoke mock phase apply");
+    assert!(
+        output.status.success(),
+        "phase apply exited non-zero; stderr was: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("apply stdout is UTF-8");
+    assert!(
+        stdout.contains("phase `apply_doc`"),
+        "expected stdout to name apply_doc landing phase; got: {stdout}"
+    );
+    assert!(
+        stdout.contains("locked manifest"),
+        "expected stdout to report locked manifest; got: {stdout}"
+    );
+
+    // Integrity: the on-disk `.phase` marker is now apply_doc and the
+    // doc manifest is locked under `manifest.doc.lock.toml`.
+    let post = handle
+        .read_ref_tree(&RefPath::round_mock(&slug))
+        .expect("read ref tree");
+    let phase_bytes = post.get(".phase").expect(".phase present after apply");
+    assert_eq!(
+        phase_bytes,
+        b"apply_doc\n",
+        "expected .phase to advance to apply_doc; got {:?}",
+        std::str::from_utf8(phase_bytes).unwrap_or("<non-utf8>")
+    );
+    assert!(
+        post.get("manifest.doc.locked.toml").is_some(),
+        "expected locked doc manifest at manifest.doc.locked.toml"
+    );
+}
+
