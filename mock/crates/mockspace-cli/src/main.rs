@@ -821,16 +821,13 @@ fn run_task_close(
     phase: Option<Phase>,
     round_slug: Option<&Slug>,
 ) -> std::process::ExitCode {
-    // CloseMetadata.closed_branch is now Option<BranchName>.
-    // The remaining String fields (closing_phase, closing_round_slug)
-    // collapse to String here pending #595's IO carrier retyping.
+    // Every CloseMetadata field is now typed; the executor collapses
+    // to wire-format strings on TaskClosure at the persistence boundary.
     let metadata = CloseMetadata {
         resolution: resolution.into(),
         closed_branch: branch,
-        closing_phase: phase.map(|p| phase_marker(p).to_owned()).unwrap_or_default(),
-        closing_round_slug: round_slug
-            .map(|s| s.as_str().to_owned())
-            .unwrap_or_default(),
+        closing_phase: phase,
+        closing_round_slug: round_slug.cloned(),
     };
     match handle.close_task(task_id, metadata) {
         Ok(report) => {
