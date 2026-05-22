@@ -830,11 +830,11 @@ fn generate_lint_derived_content(
 
         // --- Agent Rule ---
         let mut body = String::new();
-        let _ = writeln!(body, "## Forbidden imports — scope `{scope}` (auto-generated from lint config)\n");
+        let _ = writeln!(body, "## Forbidden imports for scope `{scope}` (auto-generated from lint config)\n");
         let _ = writeln!(body, "The following are **forbidden** in crates matching `{scope}`.");
         let _ = writeln!(body, "Violations are caught by the `forbidden-imports` lint at error level.\n");
         for (forbidden, reason) in rules {
-            let _ = writeln!(body, "- `{forbidden}` — {reason}");
+            let _ = writeln!(body, "- `{forbidden}`: {reason}");
         }
         let _ = writeln!(body, "\nDo NOT write code that uses any of these. Check before writing.");
 

@@ -274,7 +274,7 @@ pub fn generate_deep_dives_md(cfg: &Config) -> String {
     let name = &cfg.project_name;
     let mut md = String::new();
     writeln!(md, "{header}").unwrap();
-    writeln!(md, "# {name} — Deep Dives").unwrap();
+    writeln!(md, "# {name}: Deep Dives").unwrap();
     writeln!(md).unwrap();
     writeln!(md, "> Detailed technical deep dives into {name} subsystems.").unwrap();
     writeln!(md, "> See also: [DESIGN.md](DESIGN.md) for the high-level design.").unwrap();
