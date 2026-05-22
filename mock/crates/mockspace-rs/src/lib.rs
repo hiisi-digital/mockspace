@@ -112,7 +112,11 @@ pub use mockspace_core::entity::{Branch, GitRef, Instant, Round, Task};
 pub use mockspace_core::identity::{NamedRefTo, RefTo};
 pub use mockspace_core::iso8601::{Iso8601Utc, Iso8601UtcError};
 pub use mockspace_core::namespace::{Namespace, NamespaceError};
+pub use mockspace_core::manifest::{
+    AcceptanceBlock, ChangeBlock, DeprecatedAccounting, Manifest, ScopeBlock,
+};
 pub use mockspace_core::phase::{ManifestSide, Phase};
+pub use mockspace_core::verifier::{VerifierAllOf, VerifierAnyOf, VerifierCheck, VerifierKind};
 pub use mockspace_core::ref_path::{RefPath, RefPathError};
 pub use mockspace_core::slug::{Slug, SlugError};
 pub use mockspace_core::task::{
