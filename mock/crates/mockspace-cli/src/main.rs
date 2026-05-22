@@ -22,9 +22,10 @@ use mockspace_rs::{
     engine::MockspaceEngine,
     explain, plan_fixes, preset_source, render_check, render_regenerate, render_unified_diff,
     scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport,
-    DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError,
-    ObjectId, Phase, RegenerateError, RegenerateReport, RepoError, RepoHandle, ReplanMode,
-    RoundState, RunSurface, Severity, Slug, TaskId, TaskMeta, WriteState,
+    CloseMetadata, DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore,
+    LintEngine, LockError, ObjectId, Phase, RegenerateError, RegenerateReport, RepoError,
+    RepoHandle, ReplanMode, RoundState, RunSurface, Severity, Slug, TaskId, TaskMeta,
+    TaskResolution, WriteState,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -256,6 +257,68 @@ enum TaskVerb {
         /// Task identifier in URI form.
         id: String,
     },
+    /// Transition a task into the `in-progress` state. Valid from any
+    /// non-terminal (non-closed) state.
+    Start {
+        /// Task identifier in URI form.
+        id: String,
+    },
+    /// Transition a task into the `blocked` state.
+    Block {
+        /// Task identifier in URI form.
+        id: String,
+    },
+    /// Transition a task into the `deferred` state.
+    Defer {
+        /// Task identifier in URI form.
+        id: String,
+    },
+    /// Close a task. Writes the `[closure]` block into `meta.toml`
+    /// and rotates the state marker to `closed`. Closed is terminal:
+    /// subsequent lifecycle verbs refuse with a `Terminal` error.
+    /// The closing branch / phase / round-slug arguments are
+    /// optional (default to empty); set them when the close is
+    /// driven from inside an active round so the audit trail
+    /// captures provenance.
+    Close {
+        /// Task identifier in URI form.
+        id: String,
+        /// Why the task closed.
+        #[arg(long, value_enum)]
+        resolution: TaskResolutionArg,
+        /// Source-side branch carrying the closing work.
+        #[arg(long, default_value = "")]
+        branch: String,
+        /// Phase marker at close time (e.g. `apply_src`).
+        #[arg(long, default_value = "")]
+        phase: String,
+        /// Round slug that closed this task.
+        #[arg(long = "round-slug", default_value = "")]
+        round_slug: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TaskResolutionArg {
+    /// Work shipped.
+    Completed,
+    /// Cancelled before ship.
+    Cancelled,
+    /// Replaced by another task.
+    Superseded,
+    /// Not going to be done by design choice.
+    Wontfix,
+}
+
+impl From<TaskResolutionArg> for TaskResolution {
+    fn from(value: TaskResolutionArg) -> Self {
+        match value {
+            TaskResolutionArg::Completed => TaskResolution::Completed,
+            TaskResolutionArg::Cancelled => TaskResolution::Cancelled,
+            TaskResolutionArg::Superseded => TaskResolution::Superseded,
+            TaskResolutionArg::Wontfix => TaskResolution::Wontfix,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -572,7 +635,26 @@ fn run_task(repo_root: &std::path::Path, verb: TaskVerb) -> std::process::ExitCo
         TaskVerb::New { id, title } => run_task_new(&handle, &id, title.as_deref()),
         TaskVerb::List => run_task_list(&handle),
         TaskVerb::Show { id } => run_task_show(&handle, &id),
+        TaskVerb::Start { id } => run_task_transition(&handle, &id, TaskTransitionVerb::Start),
+        TaskVerb::Block { id } => run_task_transition(&handle, &id, TaskTransitionVerb::Block),
+        TaskVerb::Defer { id } => run_task_transition(&handle, &id, TaskTransitionVerb::Defer),
+        TaskVerb::Close {
+            id,
+            resolution,
+            branch,
+            phase,
+            round_slug,
+        } => run_task_close(&handle, &id, resolution, &branch, &phase, &round_slug),
     }
+}
+
+/// Internal tag selecting which non-close lifecycle verb to dispatch.
+/// Close has its own runner because it carries extra arguments.
+#[derive(Clone, Copy)]
+enum TaskTransitionVerb {
+    Start,
+    Block,
+    Defer,
 }
 
 fn run_task_new(
@@ -667,6 +749,82 @@ fn run_task_show(handle: &RepoHandle, id_raw: &str) -> std::process::ExitCode {
         },
         Err(e) => {
             eprintln!("task show failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_task_transition(
+    handle: &RepoHandle,
+    id_raw: &str,
+    verb: TaskTransitionVerb,
+) -> std::process::ExitCode {
+    let task_id = match TaskId::parse(id_raw) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("invalid task identifier `{id_raw}`: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let (verb_name, result) = match verb {
+        TaskTransitionVerb::Start => ("start", handle.start_task(&task_id)),
+        TaskTransitionVerb::Block => ("block", handle.block_task(&task_id)),
+        TaskTransitionVerb::Defer => ("defer", handle.defer_task(&task_id)),
+    };
+    match result {
+        Ok(report) => {
+            println!(
+                "task `{}` transitioned: {} -> {}",
+                task_id.as_uri_form(),
+                report.previous_state,
+                report.new_state,
+            );
+            println!("  ref: {}", report.ref_path);
+            println!("  commit: {}", report.commit_oid);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("task {verb_name} failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_task_close(
+    handle: &RepoHandle,
+    id_raw: &str,
+    resolution: TaskResolutionArg,
+    branch: &str,
+    phase: &str,
+    round_slug: &str,
+) -> std::process::ExitCode {
+    let task_id = match TaskId::parse(id_raw) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("invalid task identifier `{id_raw}`: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let metadata = CloseMetadata {
+        resolution: resolution.into(),
+        closed_branch: branch.to_owned(),
+        closing_phase: phase.to_owned(),
+        closing_round_slug: round_slug.to_owned(),
+    };
+    match handle.close_task(&task_id, metadata) {
+        Ok(report) => {
+            println!(
+                "task `{}` closed: {} -> {}",
+                task_id.as_uri_form(),
+                report.previous_state,
+                report.new_state,
+            );
+            println!("  ref: {}", report.ref_path);
+            println!("  commit: {}", report.commit_oid);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("task close failed: {e}");
             std::process::ExitCode::FAILURE
         }
     }
