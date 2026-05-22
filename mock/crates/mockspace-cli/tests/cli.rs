@@ -40,7 +40,17 @@ fn help_lists_all_subcommands() {
 
 #[test]
 fn version_flag_succeeds() {
-    mock().arg("--version").assert().success();
+    // clap-derive auto-generates `--version` from the `[package]
+    // version` in mockspace-cli's Cargo.toml. Asserts both
+    // exit-zero and the canonical `mock <semver>` stdout shape.
+    // Loose contains-match keeps the assertion stable across
+    // release bumps; tight enough to catch clap-derive dropping
+    // the binary-name prefix.
+    mock()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mock "));
 }
 
 // ---- status --------------------------------------------------------------
