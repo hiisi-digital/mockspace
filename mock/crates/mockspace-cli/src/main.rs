@@ -21,11 +21,11 @@ use mockspace_rs::{
     design_rounds::discover_design_rounds,
     engine::MockspaceEngine,
     explain, plan_fixes, preset_source, render_check, render_regenerate, render_unified_diff,
-    scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport,
-    CloseMetadata, DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore,
-    LintEngine, LockError, Namespace, ObjectId, Phase, RegenerateError, RegenerateReport,
-    RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, Slug, TaskId,
-    TaskMeta, TaskResolution, WriteState,
+    scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, BranchName,
+    CheckReport, CloseMetadata, DesignRound, Finding, FixOpts, FlockTransitionLock, Gate,
+    LintCfgStore, LintEngine, LockError, Namespace, ObjectId, Phase, RegenerateError,
+    RegenerateReport, RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, Slug,
+    TaskId, TaskMeta, TaskResolution, WriteState,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -300,13 +300,11 @@ enum TaskVerb {
         /// Why the task closed.
         #[arg(long, value_enum)]
         resolution: TaskResolutionArg,
-        /// Source-side branch carrying the closing work. Free-form
-        /// git branch name; no `BranchName` newtype exists yet, so
-        /// `String` is documented as the boundary type here per
-        /// `harness-the-type-system.md`'s "documented exceptions"
-        /// clause. Track via #595 if a newtype lands later.
-        #[arg(long)]
-        branch: Option<String>,
+        /// Source-side branch carrying the closing work. Parsed via
+        /// the [`BranchName`] validator (subset of
+        /// `git-check-ref-format`).
+        #[arg(long, value_parser = parse_branch_name)]
+        branch: Option<BranchName>,
         /// Phase marker at close time (e.g. `apply_src`).
         #[arg(long, value_parser = parse_phase)]
         phase: Option<Phase>,
@@ -508,6 +506,13 @@ fn parse_phase(raw: &str) -> Result<Phase, String> {
         .ok_or_else(|| format!("unknown phase marker `{raw}`"))
 }
 
+/// Parse a git branch name into [`BranchName`] with a CLI-friendly
+/// error message. Used as a clap `value_parser` for flags that name
+/// a git branch (e.g. `mock task close --branch=<name>`).
+fn parse_branch_name(raw: &str) -> Result<BranchName, String> {
+    BranchName::new(raw).map_err(|e| format!("invalid branch name `{raw}`: {e}"))
+}
+
 /// Open the repo handle from `repo_root` with a CLI-friendly error
 /// message. `RepoError::NotFound` is rendered as "not inside a git
 /// repository"; other variants surface their inner error.
@@ -667,7 +672,7 @@ fn run_task(repo_root: &std::path::Path, verb: TaskVerb) -> std::process::ExitCo
             branch,
             phase,
             round_slug,
-        } => run_task_close(&handle, &id, resolution, branch.as_deref(), phase, round_slug.as_ref()),
+        } => run_task_close(&handle, &id, resolution, branch, phase, round_slug.as_ref()),
     }
 }
 
@@ -800,16 +805,16 @@ fn run_task_close(
     handle: &RepoHandle,
     task_id: &TaskId,
     resolution: TaskResolutionArg,
-    branch: Option<&str>,
+    branch: Option<BranchName>,
     phase: Option<Phase>,
     round_slug: Option<&Slug>,
 ) -> std::process::ExitCode {
-    // CloseMetadata still carries String fields per #595's pending
-    // retype. Collapse typed inputs to their wire form here at the
-    // CLI/IO boundary; the typed values survive up to this point.
+    // CloseMetadata.closed_branch is now Option<BranchName>.
+    // The remaining String fields (closing_phase, closing_round_slug)
+    // collapse to String here pending #595's IO carrier retyping.
     let metadata = CloseMetadata {
         resolution: resolution.into(),
-        closed_branch: branch.unwrap_or("").to_owned(),
+        closed_branch: branch,
         closing_phase: phase.map(|p| phase_marker(p).to_owned()).unwrap_or_default(),
         closing_round_slug: round_slug
             .map(|s| s.as_str().to_owned())
