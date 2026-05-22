@@ -1,4 +1,4 @@
-# BACKLOG — mockspace-template
+# BACKLOG: mockspace-template
 
 Future work tracked for mockspace-template. Each entry has a trigger condition and a sketch of the change. Items here are NOT in-flight; they wait for the trigger.
 
@@ -6,19 +6,19 @@ Future work tracked for mockspace-template. Each entry has a trigger condition a
 
 The minijinja-wrapped `TemplateEnv` exposes no custom filters in v1. As concrete needs emerge, register the following:
 
-### `mockspace_field(name)` — typed lookup with informative error
+### `mockspace_field(name)`: typed lookup with informative error
 
 Trigger: when a template references a field that consumers commonly typo (project_name vs project-name etc.).
 
 Sketch: a function-style template helper that fetches a field by name and emits a render-time error with the available field list if the name is wrong. Stricter than minijinja's default error which just says "undefined".
 
-### `repo_root` — platform-aware path resolution
+### `repo_root`: platform-aware path resolution
 
 Trigger: when templates need to emit absolute paths that must work across both per-repo (when mockspace bootstraps inside a consumer repo) and workspace-level (when homma runs across multiple repos) contexts.
 
 Sketch: a function returning the appropriate `repo_root` for the current render call; the consumer registers the resolver at TemplateEnv construction.
 
-### `format_byline()` — well-formed Co-Authored-By trailers
+### `format_byline()`: well-formed Co-Authored-By trailers
 
 Trigger: when the workspace's byline policy (see `~/Dev/clause-dev/.claude/rules/ai-agent-framing.md`) needs templated emission. Deferred until commit-message templating becomes a thing.
 
