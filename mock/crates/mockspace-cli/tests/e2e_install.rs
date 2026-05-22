@@ -46,10 +46,14 @@ fn snapshot_tree(root: &Path) -> String {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = fs::metadata(abs) {
-                if meta.permissions().mode() & 0o100 != 0 {
-                    out.push_str(" (executable)");
-                }
+            // Stat must succeed under a fixture-controlled tempdir.
+            // A failure here means the snapshot is silently incomplete,
+            // which makes the golden test pass against an incorrect
+            // tree shape. Panic loud instead.
+            let meta = fs::metadata(abs)
+                .unwrap_or_else(|e| panic!("metadata read failed for {abs:?}: {e}"));
+            if meta.permissions().mode() & 0o100 != 0 {
+                out.push_str(" (executable)");
             }
         }
         out.push('\n');
@@ -81,10 +85,15 @@ fn collect(
     current: &Path,
     out: &mut Vec<(String, std::path::PathBuf)>,
 ) {
-    let Ok(entries) = fs::read_dir(current) else {
-        return;
-    };
-    for entry in entries.flatten() {
+    // Same rationale as the metadata stat above: a fixture-controlled
+    // tempdir that fails to read_dir is a snapshot bug, not a permitted
+    // run-time condition. Panic loud so a missing subdir doesn't
+    // silently shrink the snapshot.
+    let entries = fs::read_dir(current)
+        .unwrap_or_else(|e| panic!("read_dir failed for {current:?}: {e}"));
+    for entry in entries {
+        let entry =
+            entry.unwrap_or_else(|e| panic!("read_dir entry failed under {current:?}: {e}"));
         let path = entry.path();
         if path.is_dir() {
             collect(root, &path, out);
@@ -121,4 +130,31 @@ fn install_on_bare_fixture_produces_canonical_tree() {
         .success();
     let snapshot = snapshot_tree(fixture.path());
     assert_matches_golden("install_bare_fixture_tree", &snapshot);
+}
+
+// ---- uninstall round trip ------------------------------------------------
+
+#[test]
+fn install_then_uninstall_produces_residue_tree() {
+    // Install then uninstall via the CLI. The golden captures
+    // what bootstrap leaves behind after teardown. The current
+    // contract: hook script files removed; cargo alias entry and
+    // `core.hooksPath` cleared from their respective config files;
+    // the config files themselves remain on disk (potentially
+    // empty or sparse) because removing a config the user may
+    // have authored is overreach. Directory entries like
+    // `mock/target/hooks/` may persist as empty dirs and are
+    // invisible to the snapshot.
+    let fixture = MockspaceFixture::new()
+        .with_install()
+        .build()
+        .expect("fixture");
+    mock()
+        .arg("uninstall")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .assert()
+        .success();
+    let snapshot = snapshot_tree(fixture.path());
+    assert_matches_golden("install_then_uninstall_residue_tree", &snapshot);
 }
