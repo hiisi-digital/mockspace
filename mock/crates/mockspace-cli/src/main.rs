@@ -23,7 +23,7 @@ use mockspace_rs::{
     explain, plan_fixes, preset_source, render_check, render_regenerate, render_unified_diff,
     scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, BranchName,
     CheckReport, CloseMetadata, DesignRound, Finding, FixOpts, FlockTransitionLock, Gate,
-    LintCfgStore, LintEngine, LockError, Namespace, ObjectId, Phase, RegenerateError,
+    LintCfgStore, LintEngine, LockError, ObjectId, Phase, RegenerateError,
     RegenerateReport, RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, Slug,
     TaskId, TaskMeta, TaskResolution, WriteState,
 };
@@ -152,10 +152,9 @@ enum Command {
     /// behind an explicit `--auto` flag once the classification
     /// surface here is reviewed.
     Migrate,
-    /// Manage tasks. Slice A ships `new`, `list`, `show`; lifecycle
-    /// verbs (start/block/defer/close), move semantics, archival,
-    /// and step tracking land in follow-up slices per spec
-    /// §16, §26.
+    /// Manage tasks. Ships the full task lifecycle: `new`, `list`,
+    /// `show`, `start`, `block`, `defer`, `close`, `move`. Archival
+    /// and step tracking remain follow-ups per spec §16, §26.
     Task {
         #[command(subcommand)]
         verb: TaskVerb,
