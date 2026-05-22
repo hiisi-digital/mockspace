@@ -102,11 +102,13 @@ pub use mockspace_core::lint::{
 // without reaching into mockspace-core. Same indirection rule as
 // the lint-engine vocabulary above.
 pub use mockspace_core::io::{
-    AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, FlockTransitionLock,
-    LockError, RepoError, RepoHandle, SealError, SealReport,
+    AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CreateTaskError,
+    CreateTaskReport, FlockTransitionLock, ListTasksError, LockError, RepoError, RepoHandle,
+    SealError, SealReport, ShowTaskError,
 };
 pub use mockspace_core::phase::{ManifestSide, Phase};
 pub use mockspace_core::slug::{Slug, SlugError};
+pub use mockspace_core::task::{TaskId, TaskIdError, TaskMeta, TaskRefs, TaskState};
 pub use mockspace_core::transition::ReplanMode;
 // Re-export gix's ObjectId so callers can parse user-supplied
 // hex OIDs (e.g. `--source-tip <hex>` on `mock phase apply`)
