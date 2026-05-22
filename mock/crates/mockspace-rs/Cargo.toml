@@ -12,6 +12,13 @@ mockspace-core = { path = "../mockspace-core" }
 mockspace-config = { path = "../mockspace-config" }
 mockspace-rs-attrs = { path = "../mockspace-rs-attrs" }
 
+# Pulled in solely to re-export `gix::ObjectId` for downstream
+# crates (the `mock` CLI) that need to parse user-supplied hex
+# OIDs without a direct gix dep on top of mockspace-rs. Version
+# pinned to match mockspace-core so the same `ObjectId` type
+# flows through the re-export chain.
+gix = { version = "0.66", default-features = false, features = ["revision"] }
+
 # AST parsing.
 syn = { version = "2", features = ["full", "extra-traits", "visit", "parsing"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
