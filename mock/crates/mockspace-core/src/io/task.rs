@@ -16,10 +16,16 @@
 //! - [`RepoHandle::show_task`]: read a task ref's tree and parse
 //!   `meta.toml` into a [`TaskMeta`].
 //!
-//! Slices B + C extend with lifecycle verbs (start/block/defer/close),
-//! move semantics with redirect markers, archival to
-//! `refs/mock/task-archive`, and step tracking (per spec §16's step
-//! sub-structure).
+//! Slice B ships the lifecycle verbs:
+//!
+//! - [`RepoHandle::start_task`] / [`RepoHandle::block_task`] /
+//!   [`RepoHandle::defer_task`]: rotate the state marker file.
+//! - [`RepoHandle::close_task`]: rotate the state marker AND write
+//!   the `[closure]` block into `meta.toml`.
+//!
+//! Slice C extends with move semantics (redirect markers), archival
+//! to `refs/mock/task-archive`, and step tracking (per spec §16's
+//! step sub-structure).
 
 use std::collections::BTreeMap;
 
@@ -27,7 +33,7 @@ use crate::io::ref_tree::{RefTreeReadError, RoundRefTree};
 use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
 use crate::ref_path::RefPath;
-use crate::task::{TaskId, TaskIdError, TaskMeta, TaskState};
+use crate::task::{TaskClosure, TaskId, TaskIdError, TaskMeta, TaskResolution, TaskState};
 
 /// The task-ref namespace prefix shared by every task ref. Used by
 /// [`RepoHandle::list_tasks`] to filter the global ref iteration.
@@ -271,6 +277,294 @@ impl RepoHandle {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Slice B: lifecycle verbs (start / block / defer / close).
+
+/// Outcome of a successful state-transition verb.
+#[derive(Debug, Clone)]
+pub struct TaskTransitionReport {
+    /// The ref that now points at the new orphan commit.
+    pub ref_path: RefPath,
+    /// The commit OID of the freshly-written ref.
+    pub commit_oid: gix::ObjectId,
+    /// The state observed before the transition.
+    pub previous_state: TaskState,
+    /// The state the task moved to.
+    pub new_state: TaskState,
+}
+
+/// Metadata fields the caller supplies when closing a task. All
+/// fields beyond `resolution` are typed as `String` and may be left
+/// empty when the call site has no value (e.g. closing a task from
+/// outside an active round). The `closed_at` timestamp is filled by
+/// the executor itself so concurrent callers cannot drift on it.
+#[derive(Debug, Clone)]
+pub struct CloseMetadata {
+    /// Why the task closed.
+    pub resolution: TaskResolution,
+    /// Source-side branch that carried the closing work, or empty.
+    pub closed_branch: String,
+    /// Phase marker at close time (e.g. `apply_src`), or empty.
+    pub closing_phase: String,
+    /// Round slug that closed this task, or empty.
+    pub closing_round_slug: String,
+}
+
+/// Failure modes for the four lifecycle verbs.
+#[derive(Debug)]
+pub enum TaskTransitionError {
+    /// Task ref does not exist.
+    NotFound { ref_path: String },
+    /// Reading the existing ref tree failed for a non-not-found reason.
+    ReadFailed(RefTreeReadError),
+    /// The task tree did not carry a `meta.toml` blob.
+    MetaMissing { ref_path: String },
+    /// `meta.toml` exists but is not valid UTF-8.
+    MetaNotUtf8 { ref_path: String },
+    /// `meta.toml` parse failed.
+    MetaParse {
+        ref_path: String,
+        source: toml::de::Error,
+    },
+    /// The task tree did not carry a recognisable `.state.<marker>`
+    /// file at its root. Indicates external corruption (e.g. a
+    /// hand-pushed ref missing the marker).
+    StateMarkerMissing { ref_path: String },
+    /// Cannot transition out of `Closed`. Lifecycle verbs treat the
+    /// closed state as terminal; re-opening a closed task requires
+    /// a new task identity.
+    Terminal { current: TaskState },
+    /// The task is already in the requested state. Surfaces as a
+    /// no-op for the caller to render distinctly from a success.
+    NoOp { state: TaskState },
+    /// Re-serialising `meta.toml` failed (only relevant when the
+    /// verb mutates meta, i.e. `close_task`).
+    MetaSerialise(toml::ser::Error),
+    /// Writing the new ref's commit failed.
+    WriteFailed(RefTreeWriteError),
+}
+
+impl core::fmt::Display for TaskTransitionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotFound { ref_path } => write!(f, "task ref `{ref_path}` not found"),
+            Self::ReadFailed(e) => write!(f, "task ref read failed: {e}"),
+            Self::MetaMissing { ref_path } => {
+                write!(f, "task ref `{ref_path}` carries no meta.toml")
+            }
+            Self::MetaNotUtf8 { ref_path } => {
+                write!(f, "task ref `{ref_path}` meta.toml is not valid UTF-8")
+            }
+            Self::MetaParse { ref_path, source } => {
+                write!(f, "task ref `{ref_path}` meta.toml parse failed: {source}")
+            }
+            Self::StateMarkerMissing { ref_path } => {
+                write!(
+                    f,
+                    "task ref `{ref_path}` carries no `.state.<marker>` file"
+                )
+            }
+            Self::Terminal { current } => {
+                write!(f, "task is in terminal state `{current}`; cannot transition")
+            }
+            Self::NoOp { state } => write!(f, "task already in state `{state}`"),
+            Self::MetaSerialise(e) => write!(f, "TaskMeta serialise failed: {e}"),
+            Self::WriteFailed(e) => write!(f, "task ref write failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for TaskTransitionError {}
+
+impl RepoHandle {
+    /// Transition a task to `InProgress`.
+    pub fn start_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<TaskTransitionReport, TaskTransitionError> {
+        self.transition_task(task_id, TaskState::InProgress, None)
+    }
+
+    /// Transition a task to `Blocked`.
+    pub fn block_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<TaskTransitionReport, TaskTransitionError> {
+        self.transition_task(task_id, TaskState::Blocked, None)
+    }
+
+    /// Transition a task to `Deferred`.
+    pub fn defer_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<TaskTransitionReport, TaskTransitionError> {
+        self.transition_task(task_id, TaskState::Deferred, None)
+    }
+
+    /// Close a task. Rotates the state marker to `Closed` AND writes
+    /// the `[closure]` block into `meta.toml` per spec §16. The
+    /// `closed_at` field is filled by the executor with the current
+    /// wall-clock time formatted as ISO-8601 UTC.
+    pub fn close_task(
+        &self,
+        task_id: &TaskId,
+        metadata: CloseMetadata,
+    ) -> Result<TaskTransitionReport, TaskTransitionError> {
+        self.transition_task(task_id, TaskState::Closed, Some(metadata))
+    }
+
+    /// Shared executor for the four lifecycle verbs. Reads the task
+    /// tree, validates the transition, mutates the tree (rotate
+    /// state marker; for `close`, also splice in the closure block),
+    /// writes back with CAS against the current commit OID.
+    fn transition_task(
+        &self,
+        task_id: &TaskId,
+        new_state: TaskState,
+        close_metadata: Option<CloseMetadata>,
+    ) -> Result<TaskTransitionReport, TaskTransitionError> {
+        let ref_path = RefPath::task_from_id(task_id);
+        let current_oid = match self.resolve_ref_oid(&ref_path) {
+            Ok(oid) => oid,
+            Err(RefTreeReadError::RefNotFound { .. }) => {
+                return Err(TaskTransitionError::NotFound {
+                    ref_path: ref_path.as_str().to_owned(),
+                });
+            }
+            Err(other) => return Err(TaskTransitionError::ReadFailed(other)),
+        };
+        let tree = self.read_ref_tree(&ref_path).map_err(|e| match e {
+            RefTreeReadError::RefNotFound { .. } => TaskTransitionError::NotFound {
+                ref_path: ref_path.as_str().to_owned(),
+            },
+            other => TaskTransitionError::ReadFailed(other),
+        })?;
+
+        // Locate the current state marker. Any prefix `.state.` file
+        // counts; we strip exactly one such entry and replace it with
+        // the new marker. Drift (multiple state markers) is treated
+        // as "first match wins" for the previous-state inference,
+        // and ALL prefix matches get stripped on rewrite so the new
+        // tree carries exactly one.
+        let mut new_entries: BTreeMap<String, Vec<u8>> = tree
+            .iter()
+            .map(|(k, v)| (k.to_owned(), v.to_vec()))
+            .collect();
+        let prior_state = infer_state_from_entries(&new_entries).ok_or_else(|| {
+            TaskTransitionError::StateMarkerMissing {
+                ref_path: ref_path.as_str().to_owned(),
+            }
+        })?;
+        if matches!(prior_state, TaskState::Closed) {
+            return Err(TaskTransitionError::Terminal { current: prior_state });
+        }
+        if prior_state == new_state {
+            return Err(TaskTransitionError::NoOp { state: prior_state });
+        }
+        // Strip every `.state.*` entry at the tree root; rewrite a
+        // single fresh marker for the target state. Subdir entries
+        // beginning with `.state.` are not at the root and are
+        // preserved (defensive; the on-disk shape does not put state
+        // markers under subdirs today).
+        new_entries.retain(|k, _| !is_root_state_marker(k));
+        new_entries.insert(new_state.marker_filename(), Vec::new());
+
+        // For `close`, also splice the closure block into meta.toml.
+        if let Some(meta) = close_metadata.clone() {
+            let meta_bytes = new_entries.get("meta.toml").ok_or_else(|| {
+                TaskTransitionError::MetaMissing {
+                    ref_path: ref_path.as_str().to_owned(),
+                }
+            })?;
+            let meta_text = core::str::from_utf8(meta_bytes).map_err(|_| {
+                TaskTransitionError::MetaNotUtf8 {
+                    ref_path: ref_path.as_str().to_owned(),
+                }
+            })?;
+            let mut parsed: TaskMeta = TaskMeta::from_toml(meta_text).map_err(|source| {
+                TaskTransitionError::MetaParse {
+                    ref_path: ref_path.as_str().to_owned(),
+                    source,
+                }
+            })?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            parsed.closure = Some(TaskClosure {
+                resolution: meta.resolution,
+                closed_at: format_iso8601(now),
+                closed_branch: meta.closed_branch,
+                closing_phase: meta.closing_phase,
+                closing_round_slug: meta.closing_round_slug,
+            });
+            let new_toml = parsed
+                .to_toml()
+                .map_err(TaskTransitionError::MetaSerialise)?;
+            new_entries.insert("meta.toml".to_owned(), new_toml.into_bytes());
+        }
+
+        let new_tree = RoundRefTree::from_entries_pub(new_entries);
+        let message = match (close_metadata.is_some(), new_state) {
+            (true, TaskState::Closed) => {
+                format!("task: close `{}`", task_id.as_uri_form())
+            }
+            (_, target) => format!(
+                "task: transition `{}` to `{target}`",
+                task_id.as_uri_form()
+            ),
+        };
+        let commit_oid = self
+            .write_round_ref(&ref_path, &new_tree, &message, Some(current_oid))
+            .map_err(TaskTransitionError::WriteFailed)?;
+        Ok(TaskTransitionReport {
+            ref_path,
+            commit_oid,
+            previous_state: prior_state,
+            new_state,
+        })
+    }
+}
+
+/// Return the first recognised `.state.<marker>` filename at the
+/// tree root, decoded into a [`TaskState`]. Returns `None` when no
+/// such marker file exists.
+fn infer_state_from_entries(entries: &BTreeMap<String, Vec<u8>>) -> Option<TaskState> {
+    for key in entries.keys() {
+        if let Some(marker) = key.strip_prefix(".state.") {
+            // Only consider root-level markers, not subdir entries
+            // like `subdir/.state.foo`.
+            if key == &format!(".state.{marker}") {
+                if let Some(state) = TaskState::from_marker(marker) {
+                    return Some(state);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// True when `name` is a root-level `.state.<marker>` file.
+fn is_root_state_marker(name: &str) -> bool {
+    if let Some(rest) = name.strip_prefix(".state.") {
+        !rest.is_empty() && !rest.contains('/')
+    } else {
+        false
+    }
+}
+
+/// Format a unix epoch as a minimal ISO-8601 UTC string. Delegates
+/// to [`crate::iso8601::Iso8601Utc::from_unix_secs`]; kept as a thin
+/// wrapper here because the close-task body writes into
+/// `TaskClosure.closed_at: String` (still a wire-format String per
+/// #595's deferred IO carrier retyping). Once #595 lands, the
+/// `TaskClosure` field becomes typed and this shim collapses.
+fn format_iso8601(unix_secs: u64) -> String {
+    crate::iso8601::Iso8601Utc::from_unix_secs(unix_secs)
+        .as_str()
+        .to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,4 +688,169 @@ mod tests {
         assert_eq!(names, vec!["alpha", "beta", "compiler::lower", "zeta"]);
     }
 
+    // -----------------------------------------------------------------
+    // Slice B: lifecycle verbs.
+
+    fn setup_open_task(handle: &RepoHandle, id_str: &str) -> TaskId {
+        let id = TaskId::parse(id_str).expect("parse");
+        handle
+            .create_task(&id, &meta(id.slug().as_str(), ""))
+            .expect("create");
+        id
+    }
+
+    fn close_meta() -> CloseMetadata {
+        CloseMetadata {
+            resolution: TaskResolution::Completed,
+            closed_branch: "feat/test".to_owned(),
+            closing_phase: "apply_src".to_owned(),
+            closing_round_slug: "test-round".to_owned(),
+        }
+    }
+
+    #[test]
+    fn start_transitions_open_to_in_progress() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = setup_open_task(&handle, "alpha");
+
+        let report = handle.start_task(&id).expect("start");
+        assert_eq!(report.previous_state, TaskState::Open);
+        assert_eq!(report.new_state, TaskState::InProgress);
+
+        // Show confirms the new state is persisted via the marker
+        // file rotation. (Inferring from tree, not from meta, since
+        // meta does not carry state.)
+        let read_tree = handle.read_ref_tree(&report.ref_path).expect("read");
+        let entries: BTreeMap<String, Vec<u8>> = read_tree
+            .iter()
+            .map(|(k, v)| (k.to_owned(), v.to_vec()))
+            .collect();
+        assert_eq!(infer_state_from_entries(&entries), Some(TaskState::InProgress));
+    }
+
+    #[test]
+    fn block_transitions_open_to_blocked() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = setup_open_task(&handle, "beta");
+
+        let report = handle.block_task(&id).expect("block");
+        assert_eq!(report.new_state, TaskState::Blocked);
+    }
+
+    #[test]
+    fn defer_transitions_open_to_deferred() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = setup_open_task(&handle, "gamma");
+
+        let report = handle.defer_task(&id).expect("defer");
+        assert_eq!(report.new_state, TaskState::Deferred);
+    }
+
+    #[test]
+    fn close_writes_closure_block_into_meta() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = setup_open_task(&handle, "delta");
+
+        let report = handle.close_task(&id, close_meta()).expect("close");
+        assert_eq!(report.new_state, TaskState::Closed);
+
+        let loaded = handle.show_task(&id).expect("show");
+        let closure = loaded.closure.expect("closure block written");
+        assert_eq!(closure.resolution, TaskResolution::Completed);
+        assert_eq!(closure.closed_branch, "feat/test");
+        assert_eq!(closure.closing_phase, "apply_src");
+        assert_eq!(closure.closing_round_slug, "test-round");
+        // The executor fills closed_at; assert it parses as ISO-8601
+        // shape rather than pinning a specific value (depends on
+        // wall-clock at test time).
+        assert!(closure.closed_at.contains('T') && closure.closed_at.ends_with('Z'));
+    }
+
+    #[test]
+    fn start_then_close_chains_cleanly() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = setup_open_task(&handle, "epsilon");
+
+        handle.start_task(&id).expect("start");
+        let report = handle.close_task(&id, close_meta()).expect("close");
+        assert_eq!(report.previous_state, TaskState::InProgress);
+        assert_eq!(report.new_state, TaskState::Closed);
+    }
+
+    #[test]
+    fn transition_refuses_when_task_missing() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = TaskId::parse("nonexistent").expect("parse");
+        let err = handle.start_task(&id).expect_err("start");
+        assert!(matches!(err, TaskTransitionError::NotFound { .. }));
+    }
+
+    #[test]
+    fn transition_refuses_no_op_when_state_already_target() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = setup_open_task(&handle, "zeta");
+
+        handle.start_task(&id).expect("start");
+        // Already in InProgress; second start is a no-op error.
+        let err = handle.start_task(&id).expect_err("second start");
+        assert!(matches!(
+            err,
+            TaskTransitionError::NoOp {
+                state: TaskState::InProgress
+            }
+        ));
+    }
+
+    #[test]
+    fn close_is_terminal() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = setup_open_task(&handle, "eta");
+
+        handle.close_task(&id, close_meta()).expect("close");
+        // Cannot transition out of Closed.
+        let err = handle.start_task(&id).expect_err("start after close");
+        assert!(matches!(
+            err,
+            TaskTransitionError::Terminal {
+                current: TaskState::Closed
+            }
+        ));
+    }
+
+    #[test]
+    fn transition_strips_old_marker_and_writes_exactly_one() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let handle = RepoHandle::open(dir.path()).expect("open");
+        let id = setup_open_task(&handle, "theta");
+
+        let report = handle.block_task(&id).expect("block");
+        let tree = handle.read_ref_tree(&report.ref_path).expect("read");
+        let marker_count = tree
+            .iter()
+            .filter(|(k, _)| is_root_state_marker(k))
+            .count();
+        assert_eq!(marker_count, 1, "exactly one .state.<marker> must remain");
+        let entries: BTreeMap<String, Vec<u8>> = tree
+            .iter()
+            .map(|(k, v)| (k.to_owned(), v.to_vec()))
+            .collect();
+        assert_eq!(infer_state_from_entries(&entries), Some(TaskState::Blocked));
+    }
 }

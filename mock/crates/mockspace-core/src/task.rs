@@ -13,6 +13,8 @@ use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use core::hash::Hash;
+
 use crate::namespace::Namespace;
 use crate::slug::{Slug, SlugError};
 
@@ -201,31 +203,43 @@ impl TaskMeta {
     }
 }
 
-/// A task identity: a path of slug-shaped segments where the final segment
-/// is the leaf slug and preceding segments (if any) form the namespace.
+/// The canonical mockspace task identifier: composite of namespace
+/// segments + leaf slug. Plays the **stable identifier** role for
+/// [`Task`] entity: impls [`RefTo<Task>`] only, NOT [`NamedRefTo<Task>`].
 ///
-/// The same shape renders two ways:
+/// The composite structure (segments + leaf) IS TaskId's canonical
+/// identity. The `as_uri_form()` and `as_ref_path()` rendered strings
+/// are serializations of the composite, not the canonical name.
+/// Consumers needing a flat human-readable name reach for [`Slug`]
+/// (which impls `NamedRefTo<Task>`). Consumers needing the structural
+/// view reach for inherent methods on the concrete `TaskId`.
 ///
-/// - URI / prose form: segments joined with `::` (e.g. `compiler::ir::lower-pass`)
-/// - Ref form: segments joined with `/` (e.g. `compiler/ir/lower-pass`)
+/// Identity is a path of slug-shaped segments where the final
+/// segment is the leaf slug and preceding segments (if any) form
+/// the namespace. The same shape renders two ways:
 ///
-/// **Single-segment task identifiers are permitted.** A bare `migrate-to-codeberg`
-/// is a valid TaskId with namespace empty and slug `migrate-to-codeberg`.
-/// Spec §16's convention note recommends namespacing for tooling UX
-/// (filtering, search, hierarchy) but mockspace does not police away the
-/// no-namespace case.
+/// - URI / prose form: segments joined with `::`
+///   (e.g. `compiler::ir::lower-pass`)
+/// - Ref form: segments joined with `/`
+///   (e.g. `compiler/ir/lower-pass`)
 ///
-/// The `#` character is reserved for step references (see [`StepRef`]) and
-/// is never part of task identity itself.
+/// **Single-segment task identifiers are permitted.** A bare
+/// `migrate-to-codeberg` is a valid identifier with namespace empty
+/// and slug `migrate-to-codeberg`. Spec §16's convention note
+/// recommends namespacing for tooling UX but mockspace does not
+/// police away the no-namespace case.
+///
+/// The `#` character is reserved for step references (see
+/// [`StepRef`]) and is never part of task identity itself.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TaskId {
-    /// Namespace segments. May be empty for top-level tasks.
+    /// Namespace segments. Empty for top-level (no-namespace) tasks.
     namespace_segments: Vec<Slug>,
     /// Leaf slug.
     slug: Slug,
 }
 
-/// Why a task-identifier string rejected at parse time.
+/// Why a [`TaskId`] string rejected at parse time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskIdError {
     /// Identifier contains `#`; that character is reserved for step refs.
@@ -274,8 +288,8 @@ impl TaskId {
             if raw.is_empty() {
                 return Err(TaskIdError::EmptySegment { position: byte_pos });
             }
-            let slug =
-                Slug::new(raw).map_err(|error| TaskIdError::InvalidSegment { index, error })?;
+            let slug = Slug::new(raw)
+                .map_err(|error| TaskIdError::InvalidSegment { index, error })?;
             segments.push(slug);
             byte_pos += raw.len() + 2;
         }
@@ -291,8 +305,8 @@ impl TaskId {
         &self.namespace_segments
     }
 
-    /// The namespace as a [`Namespace`] value, if any. Returns `None` for
-    /// top-level (no-namespace) tasks.
+    /// The namespace as a [`Namespace`] value, if any. Returns `None`
+    /// for top-level (no-namespace) tasks.
     pub fn namespace(&self) -> Option<Namespace> {
         Namespace::from_segments(self.namespace_segments.clone())
     }
@@ -337,6 +351,8 @@ impl TaskId {
         }
     }
 }
+
+impl crate::identity::RefTo<crate::entity::Task> for TaskId {}
 
 impl fmt::Display for TaskId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

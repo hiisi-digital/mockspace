@@ -1,10 +1,12 @@
 //! Hierarchical namespace for tasks (spec §16).
 //!
-//! Tasks live under `<ns-path>#<slug>` where `<ns-path>` is one or more
-//! [`Slug`]-shaped segments. Two render forms:
-//!
-//! - URI form: segments joined with `::` (e.g. `compiler::ir::lower-pass`)
-//! - Ref form: segments joined with `/`  (e.g. `compiler/ir/lower-pass`)
+//! [`Namespace`] is purely structural composition for
+//! [`crate::task::TaskId`]: a non-empty list of [`Slug`] segments,
+//! joined by `::` in URI form and `/` in ref-path form. It does NOT
+//! impl [`crate::identity::RefTo`] or
+//! [`crate::identity::NamedRefTo`] because mockspace does not track
+//! "a namespace" as a distinct entity; namespaces are part of how
+//! task identifiers compose, not a thing identifiers point at.
 
 use core::fmt;
 
@@ -28,10 +30,9 @@ pub enum NamespaceError {
 }
 
 impl Namespace {
-    /// Construct from a non-empty list of segments.
-    ///
-    /// Returns `None` if `segments` is empty (every namespace requires at
-    /// least one segment per spec §16).
+    /// Construct from a non-empty list of segments. Returns `None`
+    /// if `segments` is empty (every namespace requires at least
+    /// one segment per spec §16).
     pub fn from_segments(segments: Vec<Slug>) -> Option<Self> {
         if segments.is_empty() {
             None
@@ -51,10 +52,10 @@ impl Namespace {
             if raw.is_empty() {
                 return Err(NamespaceError::EmptySegment { position: byte_pos });
             }
-            let slug =
-                Slug::new(raw).map_err(|error| NamespaceError::InvalidSegment { index, error })?;
+            let slug = Slug::new(raw)
+                .map_err(|error| NamespaceError::InvalidSegment { index, error })?;
             segments.push(slug);
-            byte_pos += raw.len() + 2; // segment + "::" separator
+            byte_pos += raw.len() + 2;
         }
         Ok(Self { segments })
     }

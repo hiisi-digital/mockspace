@@ -302,18 +302,58 @@ Mockspace identifies rounds, tasks, and stored content via four
 related shapes. Each is a deterministic string (no random suffixes,
 no clock dependencies in the identifier itself).
 
+## The RefTo / NamedRefTo abstraction
+
+Identifier types live as concrete shapes (`Slug`, `Namespace`,
+`TaskId`, `RefPath`, `BranchName`) but their **abstraction** lives at
+two function-named traits in `mockspace-core::identity`:
+
+- `trait RefTo<T>`, marks that a type acts as a reference to entity
+  `T`. Carries no behaviour; pure type-level anchor. Generic code
+  that needs "any reference to T" reaches for this trait. Marked
+  `#[marker]` (nightly): overlapping impls are sound because the
+  trait grants no read-or-write capability that could conflict.
+- `trait NamedRefTo<T>: RefTo<T> + AsRef<str> + Display`, adds the
+  visible-name surface (parse, display, AsRef). Generic code that
+  needs to read, write, or display a reference reaches for this
+  trait.
+
+The `T` parameter is the **actual entity** the identifier refers to.
+The entity types live in `mockspace-core::entity`: `Round`, `Task`,
+`Branch`, `GitRef`, `Instant`. Each identifier impls `RefTo<E>` (and
+`NamedRefTo<E>` where the human-name role applies) for the entity it
+points at.
+
+The two-trait split captures two distinct **roles** a reference can
+play for the same entity:
+
+- **Stable identifier** (`RefTo<T>`), long-lived, machine-keyed,
+  composite. Identity is what it IS, not what it spells.
+- **Human-readable name** (`NamedRefTo<T>`), short, parseable from
+  a single token. The string form IS the canonical name.
+
+For Task, both roles exist: `TaskId` is the stable identifier
+(`RefTo<Task>` only), `Slug` is the human-readable name
+(`NamedRefTo<Task>`).
+
 ## Slug
 
-A slug is a validated identifier string used for round names, task
-leaf names, and namespace segments. Validation lives in
-`mockspace-core::slug::Slug::new`:
+A slug is a validated identifier string used for round names and
+task leaf names. Validation per `mockspace-core::slug::Slug::new`:
 
 - First character: ASCII lowercase letter (`a`-`z`).
 - Remaining characters: ASCII lowercase letter, ASCII digit, or
   ASCII hyphen `-`.
 - Length: 1 to `MAX_SLUG_LEN` characters inclusive.
 
-Examples that validate (from the slug test suite):
+`Slug` impls `NamedRefTo<Round>` (human-name role for rounds) and
+`NamedRefTo<Task>` (human-name role for tasks). The same validated
+shape names either; the trait bound at the use site picks which
+kind. Construct via `Slug::new(s)` (inherent) or
+`<Slug as NamedRefTo<Task>>::parse(s)` (trait method, with explicit T
+disambiguation).
+
+Examples that validate:
 
 ```
 arvo-graph-csr
@@ -329,21 +369,19 @@ Examples that fail:
 - `-abc` (hyphen-leading)
 - `Abc` (uppercase)
 - `_abc` (underscore)
-- `a_b` (underscore inner)
-- `abc.def` (period inner)
 - empty string (`SlugError::Empty`)
 - anything longer than `MAX_SLUG_LEN` (`SlugError::TooLong`)
-
-For round identifiers built around a timestamp, the convention is
-to prefix: `round-202605181400` rather than `202605181400`. The
-leading-letter rule rejects digit-leading inputs, so naked
-timestamps are not valid slugs.
 
 ## Namespace
 
 A namespace is a non-empty list of slug segments, joined by `::` in
-the wire form. The shape comes from `mockspace-core::namespace::Namespace`.
-The segments share the slug charset.
+URI form and `/` in ref-path form. Per
+`mockspace-core::namespace::Namespace`.
+
+**Namespace does not impl `RefTo` or `NamedRefTo`.** It is purely
+structural composition of `TaskId`, mockspace does not track "a
+namespace" as a distinct entity that could be referenced. The
+namespace handling is impl-detail of TaskId composition.
 
 Wire form examples:
 
@@ -352,13 +390,10 @@ workspace
 compiler::ir::lower-pass
 ```
 
-A namespace with one segment is allowed; a namespace with zero
-segments is not (the type is non-empty by construction).
-
 ## TaskId
 
 A task is identified by zero or more namespace segments plus a leaf
-slug, per `mockspace-core::task::TaskId`. The struct carries:
+slug. Per `mockspace-core::task::TaskId`. Carries:
 
 ```rust
 pub struct TaskId {
@@ -366,6 +401,14 @@ pub struct TaskId {
     slug: Slug,
 }
 ```
+
+`TaskId` impls `RefTo<Task>` ONLY, it is the **stable identifier**
+role for the Task entity. Its identity is the composite structure
+(segments + leaf), not the joined string. Functions that need the
+human-readable name reach for `Slug` (which impls
+`NamedRefTo<Task>`); functions that need the composite view reach
+for inherent methods (`namespace()`, `slug()`,
+`namespace_segments()`).
 
 The wire / prose form is `<seg>::<seg>::...::<slug>`, where the
 final segment is the leaf slug and any preceding segments form the
@@ -400,13 +443,13 @@ joined by `#`. Per `mockspace-core::task::StepRef`. Wire form:
 <task-id>#<step-slug>
 ```
 
-The step slug follows slug validation rules; the task ID portion
-follows TaskId parsing.
-
 ## RefPath
 
-A `RefPath` wraps a fully-qualified git ref name. The canonical
-constructors in `mockspace-core::ref_path::RefPath` produce:
+A `RefPath` wraps a fully-qualified git ref name. Per
+`mockspace-core::ref_path::RefPath`. Impls `NamedRefTo<GitRef>` (the
+human-name role for git refs).
+
+Canonical constructors (inherent on `RefPath`):
 
 - `RefPath::round_mock(slug)` -> `refs/mock/round/<slug>`: per-round
   orphan mock-side ref.
@@ -416,11 +459,9 @@ constructors in `mockspace-core::ref_path::RefPath` produce:
   `refs/mock/round/<slug>-conflict-<host>-<timestamp>`: side branch
   written by the conflict-resolution path when a push CAS loses.
 - `RefPath::round_archive()` -> `refs/mock/round-archive`: unified
-  closed-rounds archive. Each archived round occupies a `<slug>/`
-  subtree.
+  closed-rounds archive.
 - `RefPath::task(namespace, slug)` -> `refs/mock/task/<ns-path>/<slug>`:
-  per-active-task orphan ref. The namespace path uses `/`
-  separators (`compiler/ir/lower-pass`), not `::`.
+  per-active-task orphan ref.
 - `RefPath::task_archive()` -> `refs/mock/task-archive`: unified
   closed-tasks archive.
 - `RefPath::harness()` -> `refs/mock/harness`: the project's
@@ -431,6 +472,28 @@ refs that don't share ancestry with the consumer's branches. The
 source-side companion (`refs/heads/round/<slug>`) is a regular
 branch carrying the round's source-side commit history.
 
+## BranchName
+
+`BranchName` names a git branch in the consumer's repository. Per
+`mockspace-core::branch_name::BranchName`. Impls `NamedRefTo<Branch>`.
+Validation follows a practical subset of `git-check-ref-format(1)`.
+
+## Iso8601Utc
+
+`Iso8601Utc` names a point in time as a validated ISO-8601 UTC
+timestamp string. Per `mockspace-core::iso8601::Iso8601Utc`. Impls
+`NamedRefTo<Instant>`. Format: `YYYY-MM-DDTHH:MM:SSZ`, second
+resolution, no fractional seconds.
+
+Construct via `Iso8601Utc::now()` (system clock) or
+`Iso8601Utc::from_unix_secs(secs)` (typed construction from epoch
+seconds). The string form parses back via
+`<Iso8601Utc as NamedRefTo<Instant>>::parse(s)`. The 1970-9999 range
+is the supported domain. The civil-calendar conversion is Howard
+Hinnant's algorithm; mockspace ships its own implementation to avoid
+a chrono or time dependency for what is essentially a provenance
+record.
+
 ## ContentHash
 
 Mockspace records content hashes in two distinct contexts:
@@ -438,27 +501,27 @@ Mockspace records content hashes in two distinct contexts:
 - Anchor file entries (`anchor::FileEntry::blob_sha`): hex SHA of
   source-side file content at apply time. Algorithm is whatever the
   source-side git object format uses (SHA-1 today; SHA-256 where
-  the consumer's git config selects it). The `BlobSha::parse`
-  accepts both lengths (40 hex chars for SHA-1, 64 for SHA-256).
+  the consumer's git config selects it).
 - Manifest verifier records: per-manifest hash declarations live in
   the verifier catalog (`mockspace-core::verifier`); the algorithm
   is named per verifier entry.
 
 ## What is identifier vs what is content
 
-| Kind | Allocation |
-|---|---|
-| Slug | Consumer chooses; validated charset |
-| Namespace | Consumer chooses; segments are slugs |
-| TaskId (segments + slug) | Consumer chooses |
-| StepRef step slug | Consumer chooses |
-| RefPath | Derived from slug + namespace, no consumer choice |
-| ContentHash | Derived from content, no consumer choice |
+| Kind | Allocation | RefTo / NamedRefTo |
+|---|---|---|
+| `Slug` | Consumer chooses; validated charset | `RefTo<Round>` + `NamedRefTo<Round>`, `RefTo<Task>` + `NamedRefTo<Task>` |
+| `Namespace` | Consumer chooses; segments are slugs | (none. purely structural) |
+| `TaskId` | Consumer chooses | `RefTo<Task>` only (stable identifier role) |
+| `BranchName` | Git's job to allocate | `RefTo<Branch>` + `NamedRefTo<Branch>` |
+| `RefPath` | Derived from slug + namespace | `RefTo<GitRef>` + `NamedRefTo<GitRef>` |
+| `Iso8601Utc` | Derived from system clock or epoch seconds | `RefTo<Instant>` + `NamedRefTo<Instant>` |
+| ContentHash | Derived from content | (none. content addressing, not reference identity) |
 
-Identifiers (slug, namespace, TaskId, ref path) are stable once
-assigned. Content hashes change as content changes. Renaming a
-round in place is not supported; the consumer opens a new round
-with the desired slug and deprecates the old one.
+Identifiers (slug, namespace, task id, ref path, branch name) are
+stable once assigned. Content hashes change as content changes.
+Renaming a round in place is not supported; the consumer opens a
+new round with the desired slug and deprecates the old one.
 --- end ---
 mock/target/agent/phases.md
 +++ content +++

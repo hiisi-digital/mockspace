@@ -22,9 +22,10 @@ use mockspace_rs::{
     engine::MockspaceEngine,
     explain, plan_fixes, preset_source, render_check, render_regenerate, render_unified_diff,
     scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport,
-    DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError,
-    ObjectId, Phase, RegenerateError, RegenerateReport, RepoError, RepoHandle, ReplanMode,
-    RoundState, RunSurface, Severity, Slug, TaskId, TaskMeta, WriteState,
+    CloseMetadata, DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore,
+    LintEngine, LockError, Namespace, ObjectId, Phase, RegenerateError, RegenerateReport,
+    RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, Slug, TaskId,
+    TaskMeta, TaskResolution, WriteState,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -76,9 +77,12 @@ enum Command {
     /// workspace defaults, per-lint TOML, CLI overrides) plus the
     /// final per-field winners.
     Explain {
-        /// Lint name to explain. Must match a name registered in the
-        /// catalog; misspellings surface `LintNotFound`.
-        name: String,
+        /// Lint name to explain. Lint names follow [`Slug`] shape
+        /// (kebab-case, ASCII lowercase start). Misspellings that
+        /// pass slug validation but do not match a catalog entry
+        /// surface `LintNotFound` at lookup time.
+        #[arg(value_parser = parse_slug)]
+        name: Slug,
     },
     /// Run the lint engine against the repo. Prints findings to
     /// stdout in the `<file>:<line>:<col>: [<severity>] <name>:
@@ -134,7 +138,8 @@ enum Command {
     /// delete the source `refs/mock/round/<slug>`. Spec §26.
     Close {
         /// Slug of the round to archive.
-        slug: String,
+        #[arg(value_parser = parse_slug)]
+        slug: Slug,
     },
     /// Walk the v1 mockspace state under `mock/design_rounds/`
     /// and print a per-round migration report plus a checklist
@@ -186,7 +191,8 @@ enum PhaseVerb {
     Plan {
         /// Slug of the round to open PLAN(doc) on. Must currently
         /// be in TOPIC phase.
-        slug: String,
+        #[arg(value_parser = parse_slug)]
+        slug: Slug,
     },
     /// Seal the authoring manifest and transition PLAN(side) ->
     /// APPLY(side). Requires the source-side branch tip OID as
@@ -194,12 +200,13 @@ enum PhaseVerb {
     Apply {
         /// Slug of the round to seal. Must currently be in
         /// PLAN(doc) or PLAN(src) phase.
-        slug: String,
+        #[arg(value_parser = parse_slug)]
+        slug: Slug,
         /// Source-side branch tip OID at APPLY entry, in hex
         /// form (e.g. the output of `git rev-parse HEAD`). The
         /// anchor records this OID for provenance.
-        #[arg(long)]
-        source_tip: String,
+        #[arg(long, value_parser = parse_object_id)]
+        source_tip: ObjectId,
     },
     /// Advance the round past APPLY: APPLY(doc) -> PLAN(src), or
     /// APPLY(src) -> DONE. The doc-side locked manifest is
@@ -207,7 +214,8 @@ enum PhaseVerb {
     Finish {
         /// Slug of the round to advance. Must currently be in
         /// APPLY(doc) or APPLY(src) phase.
-        slug: String,
+        #[arg(value_parser = parse_slug)]
+        slug: Slug,
     },
     /// Deprecate the locked manifest and return APPLY(side) to
     /// PLAN(side). The locked manifest is renamed to the next
@@ -215,7 +223,8 @@ enum PhaseVerb {
     Replan {
         /// Slug of the round to replan. Must currently be in
         /// APPLY(doc) or APPLY(src) phase.
-        slug: String,
+        #[arg(value_parser = parse_slug)]
+        slug: Slug,
         /// Replan mode. Currently the local-ref portion does not
         /// branch on mode (rename plus phase flip is identical
         /// across modes); the parameter exists for API stability
@@ -240,8 +249,10 @@ enum TaskVerb {
     New {
         /// Task identifier in URI form. Examples:
         /// `migrate-to-codeberg`, `compiler::ir::lower-pass::define-grammar`.
-        id: String,
+        #[arg(value_parser = parse_task_id)]
+        id: TaskId,
         /// One-line human-facing title. Defaults to the slug if absent.
+        /// Free-form prose; String is the right type here.
         #[arg(long)]
         title: Option<String>,
     },
@@ -254,8 +265,78 @@ enum TaskVerb {
     /// to consume programmatically.
     Show {
         /// Task identifier in URI form.
-        id: String,
+        #[arg(value_parser = parse_task_id)]
+        id: TaskId,
     },
+    /// Transition a task into the `in-progress` state. Valid from any
+    /// non-terminal (non-closed) state.
+    Start {
+        /// Task identifier in URI form.
+        #[arg(value_parser = parse_task_id)]
+        id: TaskId,
+    },
+    /// Transition a task into the `blocked` state.
+    Block {
+        /// Task identifier in URI form.
+        #[arg(value_parser = parse_task_id)]
+        id: TaskId,
+    },
+    /// Transition a task into the `deferred` state.
+    Defer {
+        /// Task identifier in URI form.
+        #[arg(value_parser = parse_task_id)]
+        id: TaskId,
+    },
+    /// Close a task. Writes the `[closure]` block into `meta.toml`
+    /// and rotates the state marker to `closed`. Closed is terminal:
+    /// subsequent lifecycle verbs refuse with a `Terminal` error.
+    /// The closing branch / phase / round-slug arguments are
+    /// optional; set them when the close is driven from inside an
+    /// active round so the audit trail captures provenance.
+    Close {
+        /// Task identifier in URI form.
+        #[arg(value_parser = parse_task_id)]
+        id: TaskId,
+        /// Why the task closed.
+        #[arg(long, value_enum)]
+        resolution: TaskResolutionArg,
+        /// Source-side branch carrying the closing work. Free-form
+        /// git branch name; no `BranchName` newtype exists yet, so
+        /// `String` is documented as the boundary type here per
+        /// `harness-the-type-system.md`'s "documented exceptions"
+        /// clause. Track via #595 if a newtype lands later.
+        #[arg(long)]
+        branch: Option<String>,
+        /// Phase marker at close time (e.g. `apply_src`).
+        #[arg(long, value_parser = parse_phase)]
+        phase: Option<Phase>,
+        /// Round slug that closed this task.
+        #[arg(long = "round-slug", value_parser = parse_slug)]
+        round_slug: Option<Slug>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TaskResolutionArg {
+    /// Work shipped.
+    Completed,
+    /// Cancelled before ship.
+    Cancelled,
+    /// Replaced by another task.
+    Superseded,
+    /// Not going to be done by design choice.
+    Wontfix,
+}
+
+impl From<TaskResolutionArg> for TaskResolution {
+    fn from(value: TaskResolutionArg) -> Self {
+        match value {
+            TaskResolutionArg::Completed => TaskResolution::Completed,
+            TaskResolutionArg::Cancelled => TaskResolution::Cancelled,
+            TaskResolutionArg::Superseded => TaskResolution::Superseded,
+            TaskResolutionArg::Wontfix => TaskResolution::Wontfix,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -376,7 +457,7 @@ fn main() -> std::process::ExitCode {
         }
         Command::Close { slug } => {
             ensure_agent_ready(&repo_root);
-            run_close(&repo_root, &slug)
+            run_close(&repo_root, slug)
         }
         Command::Migrate => {
             ensure_agent_ready(&repo_root);
@@ -397,8 +478,34 @@ fn main() -> std::process::ExitCode {
 /// Parse a slug string into [`Slug`] with a CLI-friendly error
 /// message. The `Slug::new` validation rejects empty, too-long,
 /// and out-of-charset inputs.
+///
+/// Used as a clap `value_parser` so wrong-shape inputs fail at
+/// argument-parse time rather than inside a runner.
 fn parse_slug(raw: &str) -> Result<Slug, String> {
     Slug::new(raw).map_err(|e| format!("invalid slug `{raw}`: {e}"))
+}
+
+/// Parse a task identifier (URI form `<seg>::<seg>::...::<slug>`)
+/// into [`TaskId`] with a CLI-friendly error message. Used as a
+/// clap `value_parser`.
+fn parse_task_id(raw: &str) -> Result<TaskId, String> {
+    TaskId::parse(raw).map_err(|e| format!("invalid task id `{raw}`: {e}"))
+}
+
+/// Parse a hex object id into [`ObjectId`] with a CLI-friendly
+/// error message. Used as a clap `value_parser` for the
+/// `--source-tip <hex>` flag.
+fn parse_object_id(raw: &str) -> Result<ObjectId, String> {
+    ObjectId::from_hex(raw.as_bytes())
+        .map_err(|e| format!("invalid object id `{raw}`: {e}"))
+}
+
+/// Parse a phase marker (e.g. `apply_src`, `plan_doc`) into
+/// [`Phase`]. Used as a clap `value_parser` for flags that name a
+/// phase by its on-disk marker.
+fn parse_phase(raw: &str) -> Result<Phase, String> {
+    Phase::from_marker(raw)
+        .ok_or_else(|| format!("unknown phase marker `{raw}`"))
 }
 
 /// Open the repo handle from `repo_root` with a CLI-friendly error
@@ -447,30 +554,17 @@ fn run_phase(
     repo_root: &std::path::Path,
     verb: PhaseVerb,
 ) -> std::process::ExitCode {
-    // Parse the per-verb inputs FIRST so a malformed slug or
-    // source-tip bails out before we touch the repo or hold the
-    // transition lock. (The lock release on error path is
-    // automatic via Drop, but skipping the acquire is cheaper.)
-    let (slug_raw, advance_verb) = match verb {
+    // clap's `value_parser`s have already validated the per-verb
+    // inputs (slug shape, source-tip hex). The body just maps the
+    // typed PhaseVerb into the typed AdvanceVerb the executor takes.
+    let (slug, advance_verb) = match verb {
         PhaseVerb::Plan { slug } => (slug, AdvanceVerb::Plan),
-        PhaseVerb::Apply { slug, source_tip } => {
-            let oid = match ObjectId::from_hex(source_tip.as_bytes()) {
-                Ok(o) => o,
-                Err(e) => {
-                    eprintln!(
-                        "invalid --source-tip `{source_tip}`: {e}. Expected a hex SHA \
-                         (40 chars for SHA-1, 64 for SHA-256)."
-                    );
-                    return std::process::ExitCode::FAILURE;
-                }
-            };
-            (
-                slug,
-                AdvanceVerb::Apply {
-                    source_branch_tip: oid,
-                },
-            )
-        }
+        PhaseVerb::Apply { slug, source_tip } => (
+            slug,
+            AdvanceVerb::Apply {
+                source_branch_tip: source_tip,
+            },
+        ),
         PhaseVerb::Finish { slug } => (slug, AdvanceVerb::Finish),
         PhaseVerb::Replan {
             slug,
@@ -480,14 +574,6 @@ fn run_phase(
             slug,
             AdvanceVerb::Replan(replan_mode_from(mode, accept_loss_paths)),
         ),
-    };
-
-    let slug = match parse_slug(&slug_raw) {
-        Ok(s) => s,
-        Err(msg) => {
-            eprintln!("{msg}");
-            return std::process::ExitCode::FAILURE;
-        }
     };
 
     let handle = match open_repo(repo_root) {
@@ -507,7 +593,7 @@ fn run_phase(
 
     match handle.advance_phase(&lock, &slug, advance_verb) {
         Ok(report) => {
-            print_advance_report(&slug_raw, &report);
+            print_advance_report(&slug, &report);
             std::process::ExitCode::SUCCESS
         }
         Err(e) => {
@@ -517,9 +603,9 @@ fn run_phase(
     }
 }
 
-fn print_advance_report(slug_raw: &str, report: &AdvanceReport) {
+fn print_advance_report(slug: &Slug, report: &AdvanceReport) {
     println!(
-        "round `{slug_raw}` -> phase `{phase}` via verb `{verb:?}`",
+        "round `{slug}` -> phase `{phase}` via verb `{verb:?}`",
         phase = phase_marker(report.landed_in),
         verb = report.verb,
     );
@@ -569,24 +655,36 @@ fn run_task(repo_root: &std::path::Path, verb: TaskVerb) -> std::process::ExitCo
         }
     };
     match verb {
-        TaskVerb::New { id, title } => run_task_new(&handle, &id, title.as_deref()),
+        TaskVerb::New { id, title } => run_task_new(&handle, id, title.as_deref()),
         TaskVerb::List => run_task_list(&handle),
         TaskVerb::Show { id } => run_task_show(&handle, &id),
+        TaskVerb::Start { id } => run_task_transition(&handle, &id, TaskTransitionVerb::Start),
+        TaskVerb::Block { id } => run_task_transition(&handle, &id, TaskTransitionVerb::Block),
+        TaskVerb::Defer { id } => run_task_transition(&handle, &id, TaskTransitionVerb::Defer),
+        TaskVerb::Close {
+            id,
+            resolution,
+            branch,
+            phase,
+            round_slug,
+        } => run_task_close(&handle, &id, resolution, branch.as_deref(), phase, round_slug.as_ref()),
     }
+}
+
+/// Internal tag selecting which non-close lifecycle verb to dispatch.
+/// Close has its own runner because it carries extra arguments.
+#[derive(Clone, Copy)]
+enum TaskTransitionVerb {
+    Start,
+    Block,
+    Defer,
 }
 
 fn run_task_new(
     handle: &RepoHandle,
-    id_raw: &str,
+    task_id: TaskId,
     title: Option<&str>,
 ) -> std::process::ExitCode {
-    let task_id = match TaskId::parse(id_raw) {
-        Ok(id) => id,
-        Err(e) => {
-            eprintln!("invalid task identifier `{id_raw}`: {e}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
     let namespace_path = task_id
         .namespace()
         .map(|ns| ns.as_ref_path())
@@ -597,6 +695,10 @@ fn run_task_new(
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let meta = TaskMeta {
+        // TaskMeta's serde-derived String fields are the wire format
+        // (TOML); the in-memory shape should retype to Slug/Namespace
+        // via #595's serde adapter pattern. Until that lands, the
+        // CLI does the bottom-of-the-boundary conversion here.
         mockspace_version: env!("CARGO_PKG_VERSION").to_owned(),
         slug: task_id.slug().as_str().to_owned(),
         namespace: namespace_path,
@@ -643,15 +745,8 @@ fn run_task_list(handle: &RepoHandle) -> std::process::ExitCode {
     }
 }
 
-fn run_task_show(handle: &RepoHandle, id_raw: &str) -> std::process::ExitCode {
-    let task_id = match TaskId::parse(id_raw) {
-        Ok(id) => id,
-        Err(e) => {
-            eprintln!("invalid task identifier `{id_raw}`: {e}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    match handle.show_task(&task_id) {
+fn run_task_show(handle: &RepoHandle, task_id: &TaskId) -> std::process::ExitCode {
+    match handle.show_task(task_id) {
         Ok(meta) => match meta.to_toml() {
             Ok(toml) => {
                 // toml::to_string_pretty does not guarantee a
@@ -667,6 +762,73 @@ fn run_task_show(handle: &RepoHandle, id_raw: &str) -> std::process::ExitCode {
         },
         Err(e) => {
             eprintln!("task show failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_task_transition(
+    handle: &RepoHandle,
+    task_id: &TaskId,
+    verb: TaskTransitionVerb,
+) -> std::process::ExitCode {
+    let (verb_name, result) = match verb {
+        TaskTransitionVerb::Start => ("start", handle.start_task(task_id)),
+        TaskTransitionVerb::Block => ("block", handle.block_task(task_id)),
+        TaskTransitionVerb::Defer => ("defer", handle.defer_task(task_id)),
+    };
+    match result {
+        Ok(report) => {
+            println!(
+                "task `{}` transitioned: {} -> {}",
+                task_id.as_uri_form(),
+                report.previous_state,
+                report.new_state,
+            );
+            println!("  ref: {}", report.ref_path);
+            println!("  commit: {}", report.commit_oid);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("task {verb_name} failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_task_close(
+    handle: &RepoHandle,
+    task_id: &TaskId,
+    resolution: TaskResolutionArg,
+    branch: Option<&str>,
+    phase: Option<Phase>,
+    round_slug: Option<&Slug>,
+) -> std::process::ExitCode {
+    // CloseMetadata still carries String fields per #595's pending
+    // retype. Collapse typed inputs to their wire form here at the
+    // CLI/IO boundary; the typed values survive up to this point.
+    let metadata = CloseMetadata {
+        resolution: resolution.into(),
+        closed_branch: branch.unwrap_or("").to_owned(),
+        closing_phase: phase.map(|p| phase_marker(p).to_owned()).unwrap_or_default(),
+        closing_round_slug: round_slug
+            .map(|s| s.as_str().to_owned())
+            .unwrap_or_default(),
+    };
+    match handle.close_task(task_id, metadata) {
+        Ok(report) => {
+            println!(
+                "task `{}` closed: {} -> {}",
+                task_id.as_uri_form(),
+                report.previous_state,
+                report.new_state,
+            );
+            println!("  ref: {}", report.ref_path);
+            println!("  commit: {}", report.commit_oid);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("task close failed: {e}");
             std::process::ExitCode::FAILURE
         }
     }
@@ -702,16 +864,7 @@ fn format_iso8601(unix_secs: u64) -> String {
     )
 }
 
-fn run_close(repo_root: &std::path::Path, slug_raw: &str) -> std::process::ExitCode {
-    // Parse the slug first so a malformed input bails out before
-    // any repo or lock work happens.
-    let slug = match parse_slug(slug_raw) {
-        Ok(s) => s,
-        Err(msg) => {
-            eprintln!("{msg}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
+fn run_close(repo_root: &std::path::Path, slug: Slug) -> std::process::ExitCode {
     let handle = match open_repo(repo_root) {
         Ok(h) => h,
         Err(msg) => {
@@ -729,7 +882,7 @@ fn run_close(repo_root: &std::path::Path, slug_raw: &str) -> std::process::ExitC
 
     match handle.archive_round(&lock, &slug) {
         Ok(report) => {
-            print_archive_report(slug_raw, &report);
+            print_archive_report(&slug, &report);
             std::process::ExitCode::SUCCESS
         }
         Err(e) => {
@@ -739,15 +892,15 @@ fn run_close(repo_root: &std::path::Path, slug_raw: &str) -> std::process::ExitC
     }
 }
 
-fn print_archive_report(slug_raw: &str, report: &ArchiveReport) {
-    println!("round `{slug_raw}` archived to refs/mock/round-archive");
+fn print_archive_report(slug: &Slug, report: &ArchiveReport) {
+    println!("round `{slug}` archived to refs/mock/round-archive");
     println!("  new archive commit: {}", report.archive_commit);
     println!("  entries archived: {}", report.entries_archived);
     if report.source_ref_deleted {
-        println!("  source ref `refs/mock/round/{slug_raw}` deleted");
+        println!("  source ref `refs/mock/round/{slug}` deleted");
     } else {
         println!(
-            "  WARNING: source ref `refs/mock/round/{slug_raw}` NOT deleted; re-run is idempotent"
+            "  WARNING: source ref `refs/mock/round/{slug}` NOT deleted; re-run is idempotent"
         );
         if let Some(err) = &report.source_delete_error {
             println!("  delete error: {err}");
@@ -972,7 +1125,7 @@ fn run_refresh(repo_root: &std::path::Path) -> std::process::ExitCode {
 /// the catalog defaults. CLI-side overrides (Layer 5) and the
 /// workspace-defaults intermediate layer (Layer 3) are still empty
 /// for this slice and land separately.
-fn run_explain(repo_root: &std::path::Path, lint_name: &str) -> std::process::ExitCode {
+fn run_explain(repo_root: &std::path::Path, lint_name: &Slug) -> std::process::ExitCode {
     let user_toml = match find_and_read_lints_toml(repo_root) {
         Ok(toml) => toml,
         Err(e) => {
@@ -989,7 +1142,10 @@ fn run_explain(repo_root: &std::path::Path, lint_name: &str) -> std::process::Ex
     };
     let overrides = OverrideCascade::default();
     let source = preset_source::FirstPartyPresetSource::new();
-    match explain::explain_lint(lint_name, &user_toml, &overrides, &source) {
+    // explain_lint's mockspace-rs signature takes &str today; that's
+    // a #594-tracked surface to retype. Passing through the slug's
+    // validated str preserves type-safety up to the boundary.
+    match explain::explain_lint(lint_name.as_str(), &user_toml, &overrides, &source) {
         Ok(report) => {
             print_explain_report(&report);
             std::process::ExitCode::SUCCESS

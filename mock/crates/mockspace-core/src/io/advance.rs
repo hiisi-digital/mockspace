@@ -202,7 +202,7 @@ impl RepoHandle {
             Ok(oid) => oid,
             Err(RefTreeReadError::RefNotFound { .. }) => {
                 return Err(AdvanceError::RoundRefMissing {
-                    slug: slug.as_str().to_owned(),
+                    slug: slug.as_ref().to_owned(),
                 });
             }
             Err(other) => return Err(other.into()),

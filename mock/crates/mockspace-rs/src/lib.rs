@@ -102,13 +102,21 @@ pub use mockspace_core::lint::{
 // without reaching into mockspace-core. Same indirection rule as
 // the lint-engine vocabulary above.
 pub use mockspace_core::io::{
-    AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CreateTaskError,
-    CreateTaskReport, FlockTransitionLock, ListTasksError, LockError, RepoError, RepoHandle,
-    SealError, SealReport, ShowTaskError,
+    AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CloseMetadata,
+    CreateTaskError, CreateTaskReport, FlockTransitionLock, ListTasksError, LockError, RepoError,
+    RepoHandle, SealError, SealReport, ShowTaskError, TaskTransitionError, TaskTransitionReport,
 };
+pub use mockspace_core::branch_name::{BranchName, BranchNameError};
+pub use mockspace_core::entity::{Branch, GitRef, Instant, Round, Task};
+pub use mockspace_core::identity::{NamedRefTo, RefTo};
+pub use mockspace_core::iso8601::{Iso8601Utc, Iso8601UtcError};
+pub use mockspace_core::namespace::{Namespace, NamespaceError};
 pub use mockspace_core::phase::{ManifestSide, Phase};
+pub use mockspace_core::ref_path::{RefPath, RefPathError};
 pub use mockspace_core::slug::{Slug, SlugError};
-pub use mockspace_core::task::{TaskId, TaskIdError, TaskMeta, TaskRefs, TaskState};
+pub use mockspace_core::task::{
+    TaskId, TaskIdError, TaskMeta, TaskRefs, TaskResolution, TaskState,
+};
 pub use mockspace_core::transition::ReplanMode;
 // Re-export gix's ObjectId so callers can parse user-supplied
 // hex OIDs (e.g. `--source-tip <hex>` on `mock phase apply`)
