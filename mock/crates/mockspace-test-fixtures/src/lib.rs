@@ -113,8 +113,18 @@ impl MockspaceFixtureBuilder {
     /// `src/` for linting.
     ///
     /// Multiple calls accumulate: each crate becomes its own
-    /// workspace member. Crate names are taken verbatim and become
-    /// both the `[package].name` and the directory under `crates/`.
+    /// workspace member. Crate names become both the `[package].name`
+    /// and the directory under `crates/`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` is empty or contains characters outside the
+    /// `[a-zA-Z0-9_-]+` charset. The name is interpolated unquoted
+    /// into the generated Cargo.toml; allowing arbitrary input would
+    /// produce malformed TOML on quote or backslash characters and
+    /// would let a slash escape the intended `crates/<name>/` parent
+    /// directory. The charset matches cargo's own crate-name rules
+    /// closely enough for test fixtures.
     ///
     /// Useful for failing-fixture tests that need to surface real
     /// lint findings against synthetic Rust source.
@@ -123,8 +133,19 @@ impl MockspaceFixtureBuilder {
         name: impl Into<String>,
         src_lib_rs: impl Into<String>,
     ) -> Self {
+        let name = name.into();
+        assert!(
+            !name.is_empty(),
+            "with_rust_crate: crate name must not be empty"
+        );
+        assert!(
+            name.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+            "with_rust_crate: crate name {name:?} contains characters outside \
+             the [a-zA-Z0-9_-] charset; would produce malformed Cargo.toml"
+        );
         self.rust_crates.push(RustCrateSpec {
-            name: name.into(),
+            name,
             src_lib_rs: src_lib_rs.into(),
         });
         self
@@ -343,6 +364,40 @@ mod tests {
         )
         .expect("crate src/lib.rs exists");
         assert_eq!(lib_rs, "pub fn count() -> usize { 42 }\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "must not be empty")]
+    fn with_rust_crate_rejects_empty_name() {
+        MockspaceFixture::new().with_rust_crate("", "pub fn a() {}\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the [a-zA-Z0-9_-] charset")]
+    fn with_rust_crate_rejects_name_with_quote() {
+        // A quote character in the name would terminate the TOML
+        // string prematurely and append garbage; reject loud.
+        MockspaceFixture::new().with_rust_crate("bad\"name", "pub fn a() {}\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "outside the [a-zA-Z0-9_-] charset")]
+    fn with_rust_crate_rejects_name_with_path_separator() {
+        // A slash would escape the `crates/` parent into an unexpected
+        // location on disk. Reject loud.
+        MockspaceFixture::new().with_rust_crate("crates/escape", "pub fn a() {}\n");
+    }
+
+    #[test]
+    fn with_rust_crate_accepts_underscores_hyphens_digits() {
+        // The canonical cargo-name charset is allowed: alphanumeric,
+        // underscore, hyphen. Verify each in turn.
+        let fixture = MockspaceFixture::new()
+            .with_rust_crate("a_b-c_123", "pub fn a() {}\n")
+            .build()
+            .expect("build");
+        let workspace_toml = std::fs::read_to_string(fixture.path().join("Cargo.toml")).unwrap();
+        assert!(workspace_toml.contains("\"crates/a_b-c_123\""));
     }
 
     #[test]
