@@ -96,6 +96,28 @@ the current toolchain. Those committed sketches stay forever, never get
 deleted, and form part of the audit trail alongside deprecated CLs and
 git history.
 
+### Where designed-but-deferred items belong
+
+Each crate may carry a `BACKLOG.md.tmpl` alongside its `DESIGN.md.tmpl`.
+The split is load-bearing:
+
+- `DESIGN.md.tmpl` documents what the crate ships today. Every claim in
+  it must match source state; the design-doc lints gate on this.
+- `BACKLOG.md.tmpl` documents what is decided but out of current shipping
+  scope. Each entry names a trigger condition (when the work moves from
+  promissory to active) and a sketch of the change.
+
+The separation keeps `DESIGN.md` honest: design claims map to source,
+backlog entries map to future work that is intentionally not yet built.
+Examples in the codebase live at `mock/crates/mockspace-config/BACKLOG.md.tmpl`
+and `mock/crates/mockspace-template/BACKLOG.md.tmpl`.
+
+Future tooling may surface BACKLOG entries in generated docs and provide
+move-to-backlog / move-from-backlog verbs that operate on changelist
+entries before freezing. Until that ships, the convention is enforced
+by discipline plus the regenerate render which picks up any
+`BACKLOG.md.tmpl` it finds.
+
 ### Commands surface
 
 `cargo mock` ships these subcommands:
