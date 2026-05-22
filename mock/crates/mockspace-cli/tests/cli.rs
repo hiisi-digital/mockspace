@@ -359,7 +359,13 @@ fn explain_warns_on_unparseable_user_toml_but_still_runs() {
 // ---- check ---------------------------------------------------------------
 
 #[test]
-fn check_help_lists_gate_flag() {
+fn check_help_lists_all_flags() {
+    // Help text smoke: catches drift if any of the flags added
+    // across PRs #97 (--gate, --repo-root) and #102 (--json) are
+    // renamed, removed, or accidentally hidden from clap output.
+    // The empty-fixture and explain tests already exercise the
+    // semantics; this just pins the surface a user sees on
+    // `mock check --help`.
     mock()
         .arg("check")
         .arg("--help")
@@ -368,7 +374,9 @@ fn check_help_lists_gate_flag() {
         .stdout(predicate::str::contains("--gate"))
         .stdout(predicate::str::contains("commit"))
         .stdout(predicate::str::contains("build"))
-        .stdout(predicate::str::contains("push"));
+        .stdout(predicate::str::contains("push"))
+        .stdout(predicate::str::contains("--json"))
+        .stdout(predicate::str::contains("--repo-root"));
 }
 
 #[test]
