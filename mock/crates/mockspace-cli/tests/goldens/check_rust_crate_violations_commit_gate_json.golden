@@ -1,0 +1,50 @@
+[
+  {
+    "lint_name": "no-public-raw-field",
+    "severity": "warn",
+    "message": "forbidden type `u64` in this position",
+    "span": {
+      "file": "crates/probe/src/lib.rs",
+      "start_line": 1,
+      "start_column": 1,
+      "end_line": 1,
+      "end_column": 4
+    }
+  },
+  {
+    "lint_name": "no-bare-numeric",
+    "severity": "error",
+    "message": "forbidden type `usize` in this position",
+    "span": {
+      "file": "crates/probe/src/lib.rs",
+      "start_line": 1,
+      "start_column": 1,
+      "end_line": 1,
+      "end_column": 6
+    }
+  },
+  {
+    "lint_name": "no-bare-numeric",
+    "severity": "error",
+    "message": "forbidden type `u64` in this position",
+    "span": {
+      "file": "crates/probe/src/lib.rs",
+      "start_line": 1,
+      "start_column": 1,
+      "end_line": 1,
+      "end_column": 4
+    }
+  },
+  {
+    "lint_name": "no-manual-id",
+    "severity": "warn",
+    "message": "`Bag` is a newtype over primitive `u64`; use an arvo alias or named typestate",
+    "span": {
+      "file": "crates/probe/src/lib.rs",
+      "start_line": 1,
+      "start_column": 1,
+      "end_line": 1,
+      "end_column": 2
+    }
+  }
+]
