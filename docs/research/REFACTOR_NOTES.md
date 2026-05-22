@@ -103,12 +103,12 @@ It **does not**:
 - Reference specific consumer projects by name
 - Assume the reader is operating Claude or Copilot or any agent
 
-The previous draft README (currently at `README.md`) is agent-first in framing and cites specific consumer projects. It will be moved to clause-dev's session memory as a mockspace-internals reference and replaced with a proper upstream-worthy README after the D1–D4 refactor lands.
+The previous draft README (currently at `README.md`) is agent-first in framing and cites specific consumer projects. It will be moved to clause-dev's session memory as a mockspace-internals reference and replaced with a proper upstream-worthy README after the D1 through D4 refactor lands.
 
 ## Scope of this change
 
 **Code:**
-- `src/render_agent.rs`: remove the `mock/agent/settings/claude.json` reading path (lines currently 508–524) and the `extract_json_string_field` helper (lines currently 578–590).
+- `src/render_agent.rs`: remove the `mock/agent/settings/claude.json` reading path (lines currently 508 to 524) and the `extract_json_string_field` helper (lines currently 578 to 590).
 - No other code changes. Hook generation was already unified; this pass just removes the vestigial non-hook settings reader.
 
 **Documentation:**
