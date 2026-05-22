@@ -433,17 +433,145 @@ pub fn uninstall_hooks(repo_root: &Path) -> Result<UninstallOutcome, InstallErro
     Ok(outcome)
 }
 
-/// Full v2 bootstrap install: runs [`install_cargo_alias`] then
-/// [`install_hooks`] and combines their outcomes. This is the
-/// canonical entry point the CLI's `cargo mock install` subcommand
-/// (#560) wires through.
+/// Directory the agent-builtin extraction lands in, relative to
+/// the repo root. Sibling to [`HOOKS_DIR`] under `mock/target/` per
+/// the revised install-surface memo at
+/// `mock/research/202605221200_mockspace-builtin-install-surface-revised.md`.
+const AGENT_DIR: &str = "mock/target/agent";
+
+/// Name of the version sidecar inside [`AGENT_DIR`]. Carries the
+/// mockspace binary's `CARGO_PKG_VERSION` string so refresh can
+/// detect staleness without re-hashing the extracted content.
+const AGENT_VERSION_FILE: &str = "VERSION";
+
+/// Mockspace binary version, baked in at compile time. The version
+/// sidecar written to [`AGENT_DIR`] carries this string; on
+/// subsequent invocations a mismatch between sidecar and constant
+/// means the binary was upgraded and the extract is stale.
 ///
-/// Returns [`InstallOutcome::Installed`] if either half made a
-/// change, [`InstallOutcome::AlreadyInstalled`] only when both
-/// halves were no-ops. Propagates the first error encountered;
-/// the install is not transactional, so a partial state can result
-/// when the alias half succeeds but the hooks half fails. The user
-/// reruns to converge.
+/// Resolves to the `mockspace-rs` library version specifically (the
+/// crate this code compiles in). The CLI binary is a separate crate
+/// that depends on `mockspace-rs`; both ship from the same workspace
+/// publish cycle, so the two stay lockstep in practice. If they
+/// diverge, the staleness check tracks the library, not the CLI
+/// binary, which is the right side because the embedded content
+/// lives in this crate.
+const BINARY_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Install the agent-builtin canonical content under
+/// `<repo_root>/mock/target/agent/`. Walks every entry of
+/// [`crate::agent_builtin::FILES`], writes the embedded content out
+/// to disk, and emits a `VERSION` sidecar carrying [`BINARY_VERSION`].
+///
+/// Behaviour matrix:
+///
+/// - Directory and files are written unconditionally per call. The
+///   content is canonical; an existing user-edited file gets
+///   overwritten without warning. Consumers must not edit content
+///   under `mock/target/agent/`; the directory is mockspace-managed
+///   per the install-surface memo.
+/// - The `VERSION` sidecar is written each call. If it already
+///   matches [`BINARY_VERSION`] AND every file content matches the
+///   embedded version, the call reports [`InstallOutcome::AlreadyInstalled`].
+///   Otherwise [`InstallOutcome::Installed`].
+/// - On non-Unix platforms the permission set is whatever
+///   `std::fs::write` produces; the content is plain markdown so no
+///   executability bit is needed.
+pub fn install_agent_builtin(repo_root: &Path) -> Result<InstallOutcome, InstallError> {
+    let agent_dir = repo_root.join(AGENT_DIR);
+    std::fs::create_dir_all(&agent_dir)?;
+    let mut any_changed = false;
+    for (name, body) in crate::agent_builtin::FILES {
+        let path = agent_dir.join(name);
+        let existing = std::fs::read_to_string(&path).ok();
+        if existing.as_deref() != Some(*body) {
+            std::fs::write(&path, body)?;
+            any_changed = true;
+        }
+    }
+    let version_path = agent_dir.join(AGENT_VERSION_FILE);
+    let existing_version = std::fs::read_to_string(&version_path).ok();
+    let canonical_version = format!("{BINARY_VERSION}\n");
+    if existing_version.as_deref() != Some(canonical_version.as_str()) {
+        std::fs::write(&version_path, &canonical_version)?;
+        any_changed = true;
+    }
+    Ok(if any_changed {
+        InstallOutcome::Installed
+    } else {
+        InstallOutcome::AlreadyInstalled
+    })
+}
+
+/// Uninstall the agent-builtin extraction. Removes every file
+/// [`install_agent_builtin`] writes, plus the `VERSION` sidecar.
+/// Leaves the empty `mock/target/agent/` directory in place because
+/// the surrounding `mock/target/` is cargo-managed.
+pub fn uninstall_agent_builtin(repo_root: &Path) -> Result<UninstallOutcome, InstallError> {
+    let agent_dir = repo_root.join(AGENT_DIR);
+    let mut any_changed = false;
+    for (name, _) in crate::agent_builtin::FILES {
+        let path = agent_dir.join(name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => any_changed = true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(InstallError::Io(e)),
+        }
+    }
+    let version_path = agent_dir.join(AGENT_VERSION_FILE);
+    match std::fs::remove_file(&version_path) {
+        Ok(()) => any_changed = true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(InstallError::Io(e)),
+    }
+    Ok(if any_changed {
+        UninstallOutcome::Removed
+    } else {
+        UninstallOutcome::AlreadyUninstalled
+    })
+}
+
+/// Lazy-fallback entry point for subcommands that want the
+/// agent-builtin content present without forcing the user to run
+/// `cargo mock install` first. Re-extracts the embedded content
+/// when the `VERSION` sidecar is missing, disagrees with the
+/// binary, OR when a sentinel file under `AGENT_DIR` is missing;
+/// no-op when the extract is current.
+///
+/// The sentinel probe (checking `INDEX.md` presence in addition to
+/// the version match) catches the partial-delete drift mode: a
+/// consumer or stray `rm` removes one of the markdown files but
+/// leaves `VERSION` intact. A version-only check would miss this;
+/// the extra probe is one syscall per cold start, which is
+/// negligible alongside the version read.
+///
+/// Returns the outcome so callers can detect "did extraction
+/// happen on this call" and message accordingly, or ignore it for
+/// the silent-cold-start case the slice-3 plan calls out.
+pub fn ensure_agent_extracted(repo_root: &Path) -> Result<InstallOutcome, InstallError> {
+    let agent_dir = repo_root.join(AGENT_DIR);
+    let version_path = agent_dir.join(AGENT_VERSION_FILE);
+    let existing_version = std::fs::read_to_string(&version_path).ok();
+    let canonical_version = format!("{BINARY_VERSION}\n");
+    let version_matches = existing_version.as_deref() == Some(canonical_version.as_str());
+    let sentinel_present = agent_dir.join("INDEX.md").exists();
+    if version_matches && sentinel_present {
+        return Ok(InstallOutcome::AlreadyInstalled);
+    }
+    install_agent_builtin(repo_root)
+}
+
+/// Full v2 bootstrap install: runs [`install_cargo_alias`],
+/// [`install_hooks`], and [`install_agent_builtin`] and combines
+/// their outcomes. This is the canonical entry point the CLI's
+/// `cargo mock install` subcommand (#560) wires through.
+///
+/// Returns [`InstallOutcome::Installed`] if any half made a
+/// change, [`InstallOutcome::AlreadyInstalled`] only when all
+/// three halves were no-ops. Propagates the first error
+/// encountered; the install is not transactional, so a partial
+/// state can result when one half succeeds but a later half fails.
+/// The user reruns to converge.
 ///
 /// Calling [`install`] on a fully-installed repo is idempotent.
 /// [`refresh`] is an alias for this behaviour with no semantic
@@ -452,8 +580,10 @@ pub fn uninstall_hooks(repo_root: &Path) -> Result<UninstallOutcome, InstallErro
 pub fn install(repo_root: &Path) -> Result<InstallOutcome, InstallError> {
     let alias_outcome = install_cargo_alias(repo_root)?;
     let hooks_outcome = install_hooks(repo_root)?;
+    let agent_outcome = install_agent_builtin(repo_root)?;
     let installed = matches!(alias_outcome, InstallOutcome::Installed)
-        || matches!(hooks_outcome, InstallOutcome::Installed);
+        || matches!(hooks_outcome, InstallOutcome::Installed)
+        || matches!(agent_outcome, InstallOutcome::Installed);
     Ok(if installed {
         InstallOutcome::Installed
     } else {
@@ -461,18 +591,20 @@ pub fn install(repo_root: &Path) -> Result<InstallOutcome, InstallError> {
     })
 }
 
-/// Full v2 bootstrap uninstall: runs [`uninstall_hooks`] then
-/// [`uninstall_cargo_alias`] (reverse install order) and combines
-/// their outcomes. The CLI's `cargo mock uninstall` subcommand
-/// (#560) wires through here.
+/// Full v2 bootstrap uninstall: runs [`uninstall_agent_builtin`],
+/// [`uninstall_hooks`], and [`uninstall_cargo_alias`] (reverse
+/// install order) and combines their outcomes. The CLI's
+/// `cargo mock uninstall` subcommand (#560) wires through here.
 ///
-/// Returns [`UninstallOutcome::Removed`] if either half removed
+/// Returns [`UninstallOutcome::Removed`] if any half removed
 /// something, [`UninstallOutcome::AlreadyUninstalled`] only when
-/// both halves were no-ops.
+/// all three halves were no-ops.
 pub fn uninstall(repo_root: &Path) -> Result<UninstallOutcome, InstallError> {
+    let agent_outcome = uninstall_agent_builtin(repo_root)?;
     let hooks_outcome = uninstall_hooks(repo_root)?;
     let alias_outcome = uninstall_cargo_alias(repo_root)?;
-    let removed = matches!(hooks_outcome, UninstallOutcome::Removed)
+    let removed = matches!(agent_outcome, UninstallOutcome::Removed)
+        || matches!(hooks_outcome, UninstallOutcome::Removed)
         || matches!(alias_outcome, UninstallOutcome::Removed);
     Ok(if removed {
         UninstallOutcome::Removed
@@ -1402,6 +1534,129 @@ mod tests {
         cleanup(&root);
         assert_eq!(first, InstallOutcome::Installed);
         assert_eq!(second, InstallOutcome::AlreadyInstalled);
+    }
+
+    // ---- agent_builtin extraction --------------------------------------
+
+    #[test]
+    fn install_agent_builtin_writes_every_file_plus_version_sidecar() {
+        let root = fixture_dir("install-agent-builtin");
+        let outcome = install_agent_builtin(&root).expect("install");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        let agent_dir = root.join("mock").join("target").join("agent");
+        for (name, body) in crate::agent_builtin::FILES {
+            let on_disk = std::fs::read_to_string(agent_dir.join(name))
+                .unwrap_or_else(|e| panic!("missing `{name}`: {e}"));
+            assert_eq!(&on_disk, body, "extracted `{name}` content mismatch");
+        }
+        let version = std::fs::read_to_string(agent_dir.join("VERSION")).expect("VERSION");
+        assert_eq!(version, format!("{BINARY_VERSION}\n"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn install_agent_builtin_is_idempotent_after_first_call() {
+        let root = fixture_dir("install-agent-builtin-idem");
+        let first = install_agent_builtin(&root).expect("first install");
+        let second = install_agent_builtin(&root).expect("second install");
+        cleanup(&root);
+        assert_eq!(first, InstallOutcome::Installed);
+        assert_eq!(second, InstallOutcome::AlreadyInstalled);
+    }
+
+    #[test]
+    fn install_agent_builtin_overwrites_drifted_file() {
+        let root = fixture_dir("install-agent-builtin-drift");
+        install_agent_builtin(&root).expect("install");
+        let phases_path = root
+            .join("mock")
+            .join("target")
+            .join("agent")
+            .join("phases.md");
+        std::fs::write(&phases_path, "# Tampered\n").expect("write tampered");
+        let outcome = install_agent_builtin(&root).expect("refresh");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        let restored = std::fs::read_to_string(&phases_path).expect("read");
+        assert!(
+            restored.starts_with("# Phases"),
+            "expected restored canonical body, got: {}",
+            &restored[..restored.len().min(60)]
+        );
+        cleanup(&root);
+    }
+
+    #[test]
+    fn ensure_agent_extracted_is_noop_when_version_matches() {
+        let root = fixture_dir("ensure-agent-noop");
+        install_agent_builtin(&root).expect("install");
+        let outcome = ensure_agent_extracted(&root).expect("ensure");
+        assert_eq!(outcome, InstallOutcome::AlreadyInstalled);
+        cleanup(&root);
+    }
+
+    #[test]
+    fn ensure_agent_extracted_writes_when_version_missing() {
+        let root = fixture_dir("ensure-agent-cold");
+        let agent_dir = root.join("mock").join("target").join("agent");
+        assert!(!agent_dir.exists());
+        let outcome = ensure_agent_extracted(&root).expect("ensure");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        assert!(agent_dir.join("phases.md").exists());
+        assert!(agent_dir.join("VERSION").exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn ensure_agent_extracted_re_runs_when_version_matches_but_sentinel_missing() {
+        let root = fixture_dir("ensure-agent-sentinel-missing");
+        install_agent_builtin(&root).expect("install");
+        let agent_dir = root.join("mock").join("target").join("agent");
+        // VERSION stays intact; INDEX.md gets removed. Partial-delete
+        // drift mode: lazy fallback must heal instead of trusting VERSION.
+        std::fs::remove_file(agent_dir.join("INDEX.md")).expect("remove INDEX.md");
+        let outcome = ensure_agent_extracted(&root).expect("ensure");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        assert!(agent_dir.join("INDEX.md").exists(), "INDEX.md restored");
+        cleanup(&root);
+    }
+
+    #[test]
+    fn ensure_agent_extracted_re_runs_when_version_stale() {
+        let root = fixture_dir("ensure-agent-stale");
+        install_agent_builtin(&root).expect("install");
+        let version_path = root
+            .join("mock")
+            .join("target")
+            .join("agent")
+            .join("VERSION");
+        std::fs::write(&version_path, "0.0.0-stale\n").expect("write stale version");
+        let outcome = ensure_agent_extracted(&root).expect("ensure");
+        assert_eq!(outcome, InstallOutcome::Installed);
+        let now = std::fs::read_to_string(&version_path).expect("read");
+        assert_eq!(now, format!("{BINARY_VERSION}\n"));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_agent_builtin_removes_files_and_version() {
+        let root = fixture_dir("uninstall-agent-builtin");
+        install_agent_builtin(&root).expect("install");
+        let outcome = uninstall_agent_builtin(&root).expect("uninstall");
+        assert_eq!(outcome, UninstallOutcome::Removed);
+        let agent_dir = root.join("mock").join("target").join("agent");
+        for (name, _) in crate::agent_builtin::FILES {
+            assert!(!agent_dir.join(name).exists(), "`{name}` should be removed");
+        }
+        assert!(!agent_dir.join("VERSION").exists());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn uninstall_agent_builtin_is_idempotent_when_nothing_present() {
+        let root = fixture_dir("uninstall-agent-builtin-empty");
+        let outcome = uninstall_agent_builtin(&root).expect("uninstall");
+        assert_eq!(outcome, UninstallOutcome::AlreadyUninstalled);
+        cleanup(&root);
     }
 
     #[test]
