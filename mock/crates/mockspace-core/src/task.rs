@@ -13,7 +13,7 @@ use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::namespace::Namespace;
+use crate::namespace::{DefaultNamespace, Namespace};
 use crate::slug::{DefaultSlug, DefaultSlugError};
 
 /// A task's lifecycle state.
@@ -219,7 +219,7 @@ impl TaskMeta {
 /// is never part of task identity itself.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TaskId {
-    /// Namespace segments. May be empty for top-level tasks.
+    /// Namespace segments. Empty for top-level (no-namespace) tasks.
     namespace_segments: Vec<DefaultSlug>,
     /// Leaf slug.
     slug: DefaultSlug,
@@ -249,8 +249,8 @@ impl TaskId {
     }
 
     /// Construct from a namespace plus slug. Convenience for callers that
-    /// already have a [`Namespace`] (which is non-empty by construction).
-    pub fn with_namespace(namespace: Namespace, slug: DefaultSlug) -> Self {
+    /// already have a [`DefaultNamespace`] (which is non-empty by construction).
+    pub fn with_namespace(namespace: DefaultNamespace, slug: DefaultSlug) -> Self {
         Self {
             namespace_segments: namespace.segments().to_vec(),
             slug,
@@ -291,10 +291,10 @@ impl TaskId {
         &self.namespace_segments
     }
 
-    /// The namespace as a [`Namespace`] value, if any. Returns `None` for
+    /// The namespace as a [`DefaultNamespace`] value, if any. Returns `None` for
     /// top-level (no-namespace) tasks.
-    pub fn namespace(&self) -> Option<Namespace> {
-        Namespace::from_segments(self.namespace_segments.clone())
+    pub fn namespace(&self) -> Option<DefaultNamespace> {
+        DefaultNamespace::from_segments(self.namespace_segments.clone())
     }
 
     /// The leaf slug.

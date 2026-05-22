@@ -23,9 +23,9 @@ use mockspace_rs::{
     explain, plan_fixes, preset_source, render_check, render_regenerate, render_unified_diff,
     scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport,
     CloseMetadata, DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore,
-    LintEngine, LockError, ObjectId, Phase, RegenerateError, RegenerateReport, RepoError,
-    RepoHandle, ReplanMode, RoundState, RunSurface, Severity, DefaultSlug, TaskId, TaskMeta,
-    TaskResolution, WriteState,
+    LintEngine, LockError, Namespace, ObjectId, Phase, RegenerateError, RegenerateReport,
+    RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, DefaultSlug, TaskId,
+    TaskMeta, TaskResolution, WriteState,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -696,7 +696,7 @@ fn run_task_new(
         .unwrap_or(0);
     let meta = TaskMeta {
         // TaskMeta's serde-derived String fields are the wire format
-        // (TOML); the in-memory shape should retype to DefaultSlug/Namespace
+        // (TOML); the in-memory shape should retype to DefaultSlug/DefaultNamespace
         // via #595's serde adapter pattern. Until that lands, the
         // CLI does the bottom-of-the-boundary conversion here.
         mockspace_version: env!("CARGO_PKG_VERSION").to_owned(),

@@ -6,7 +6,7 @@
 
 use core::fmt;
 
-use crate::namespace::Namespace;
+use crate::namespace::{DefaultNamespace, Namespace};
 use crate::slug::DefaultSlug;
 
 /// A fully-qualified git ref path (e.g. `refs/mock/round/foo`).
@@ -40,7 +40,10 @@ impl RefPath {
     }
 
     /// `refs/mock/task/<ns-path>/<slug>` — per-active-task orphan ref (spec §16).
-    pub fn task<S: crate::slug::Slug>(ns: &Namespace, slug: &S) -> Self {
+    /// Generic over both identity traits; the slug's [`fmt::Display`]
+    /// supertrait + the namespace's `as_ref_path()` trait method are
+    /// the load-bearing contracts here.
+    pub fn task<N: Namespace, S: crate::slug::Slug>(ns: &N, slug: &S) -> Self {
         Self(format!("refs/mock/task/{}/{}", ns.as_ref_path(), slug))
     }
 
@@ -89,8 +92,8 @@ mod tests {
         DefaultSlug::new(name).expect("test slug")
     }
 
-    fn ns(s: &str) -> Namespace {
-        Namespace::parse(s).expect("test namespace")
+    fn ns(s: &str) -> DefaultNamespace {
+        DefaultNamespace::parse(s).expect("test namespace")
     }
 
     #[test]
