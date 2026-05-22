@@ -77,6 +77,25 @@ The two manifests share the same round but seal independently. The
 doc side seals first; the src side seals second. Re-planning either
 side is independent of the other.
 
+### Where exploratory work belongs
+
+Mockspace v2 does not maintain a freestanding sketch directory the way some
+sibling tooling did. Exploratory work lives inside the design round it
+informs: the round's topic captures the question, the doc CL captures the
+design answer, and the src CL captures the implementation. The locked CLs
+are the durable artifact; the exploratory work is captured implicitly in
+the round's history.
+
+For pre-round experimentation that has no home round yet, `mock/research/`
+is acceptable scratch space, but no formal lifecycle applies. Once the
+work matures, fold it into a fresh design round.
+
+The cl-claim-sketch-discipline rule (workspace-level) recognises `mock/research/sketches/`
+as the home for committed sketches that prove a design idea works under
+the current toolchain. Those committed sketches stay forever, never get
+deleted, and form part of the audit trail alongside deprecated CLs and
+git history.
+
 ### Commands surface
 
 `cargo mock` ships these subcommands:
