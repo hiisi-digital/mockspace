@@ -63,8 +63,8 @@ pub use ref_path::RefPath;
 pub use round::{comment_filename, topic_filename, ClosedMeta, ManifestStage, PrMeta, RoundMeta};
 pub use slug::{DefaultSlug, DefaultSlugError, Slug};
 pub use task::{
-    Step, StepPhase, StepRef, StepRefError, TaskClosure, TaskId, TaskIdError, TaskMeta, TaskRefs,
-    TaskResolution, TaskState,
+    DefaultTaskId, DefaultTaskIdError, Step, StepPhase, StepRef, StepRefError, TaskClosure,
+    TaskId, TaskMeta, TaskRefs, TaskResolution, TaskState,
 };
 pub use transition::{ReplanMode, Transition, TransitionValidity, TransitionVerb};
 pub use typestate::{

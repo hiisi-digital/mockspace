@@ -12,7 +12,7 @@
 //! - [`RepoHandle::create_task`]: write a new task ref carrying
 //!   `meta.toml` + `.state.open`.
 //! - [`RepoHandle::list_tasks`]: enumerate every `refs/mock/task/*`
-//!   ref and return the parsed [`TaskId`] set.
+//!   ref and return the parsed [`DefaultTaskId`] set.
 //! - [`RepoHandle::show_task`]: read a task ref's tree and parse
 //!   `meta.toml` into a [`TaskMeta`].
 //!
@@ -33,7 +33,7 @@ use crate::io::ref_tree::{RefTreeReadError, RoundRefTree};
 use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
 use crate::ref_path::RefPath;
-use crate::task::{TaskClosure, TaskId, TaskIdError, TaskMeta, TaskResolution, TaskState};
+use crate::task::{TaskClosure, DefaultTaskId, DefaultTaskIdError, TaskMeta, TaskResolution, TaskState};
 
 /// The task-ref namespace prefix shared by every task ref. Used by
 /// [`RepoHandle::list_tasks`] to filter the global ref iteration.
@@ -127,12 +127,12 @@ pub enum ListTasksError {
     /// gix's reference iterator failed at startup or mid-walk.
     GixIter { message: String },
     /// A ref name under `refs/mock/task/` did not parse back to a
-    /// valid [`TaskId`]. Indicates external mutation (a hand-pushed
+    /// valid [`DefaultTaskId`]. Indicates external mutation (a hand-pushed
     /// ref with an invalid slug); the listing surfaces the offender
     /// rather than skipping it silently.
     InvalidRef {
         ref_name: String,
-        source: TaskIdError,
+        source: DefaultTaskIdError,
     },
 }
 
@@ -171,7 +171,7 @@ impl RepoHandle {
     /// error, not as `AlreadyExists`.
     pub fn create_task(
         &self,
-        task_id: &TaskId,
+        task_id: &(impl crate::task::TaskId),
         meta: &TaskMeta,
     ) -> Result<CreateTaskReport, CreateTaskError> {
         let ref_path = RefPath::task_from_id(task_id);
@@ -209,11 +209,11 @@ impl RepoHandle {
     }
 
     /// Enumerate every `refs/mock/task/*` ref and parse its name into
-    /// a [`TaskId`]. Returns the IDs in stable lexicographic ref-name
+    /// a [`DefaultTaskId`]. Returns the IDs in stable lexicographic ref-name
     /// order (the gix iterator yields refs in that order). Excludes
     /// `refs/mock/task-archive` (a sibling ref, not under the
     /// per-task prefix).
-    pub fn list_tasks(&self) -> Result<Vec<TaskId>, ListTasksError> {
+    pub fn list_tasks(&self) -> Result<Vec<DefaultTaskId>, ListTasksError> {
         let repo = self.repo();
         let platform = repo
             .references()
@@ -225,20 +225,20 @@ impl RepoHandle {
             .map_err(|e| ListTasksError::GixIter {
                 message: e.to_string(),
             })?;
-        let mut out: Vec<TaskId> = Vec::new();
+        let mut out: Vec<DefaultTaskId> = Vec::new();
         for r in iter {
             let r = r.map_err(|e| ListTasksError::GixIter {
                 message: e.to_string(),
             })?;
             let name = r.name().as_bstr().to_string();
             // Strip the prefix to get the dotted-path form, then
-            // convert path separators back to `::` for TaskId::parse.
+            // convert path separators back to `::` for DefaultTaskId::parse.
             let suffix = match name.strip_prefix(TASK_REF_PREFIX) {
                 Some(s) => s,
                 None => continue,
             };
             let uri_form = suffix.replace('/', "::");
-            let id = TaskId::parse(&uri_form).map_err(|source| ListTasksError::InvalidRef {
+            let id = DefaultTaskId::parse(&uri_form).map_err(|source| ListTasksError::InvalidRef {
                 ref_name: name.clone(),
                 source,
             })?;
@@ -252,7 +252,7 @@ impl RepoHandle {
     /// exist; returns [`ShowTaskError::MetaMissing`] when the ref
     /// exists but its tree lacks `meta.toml` (drift mode, treated as
     /// an error rather than a default-meta fallback).
-    pub fn show_task(&self, task_id: &TaskId) -> Result<TaskMeta, ShowTaskError> {
+    pub fn show_task(&self, task_id: &(impl crate::task::TaskId)) -> Result<TaskMeta, ShowTaskError> {
         let ref_path = RefPath::task_from_id(task_id);
         let tree = match self.read_ref_tree(&ref_path) {
             Ok(t) => t,
@@ -380,7 +380,7 @@ impl RepoHandle {
     /// Transition a task to `InProgress`.
     pub fn start_task(
         &self,
-        task_id: &TaskId,
+        task_id: &(impl crate::task::TaskId),
     ) -> Result<TaskTransitionReport, TaskTransitionError> {
         self.transition_task(task_id, TaskState::InProgress, None)
     }
@@ -388,7 +388,7 @@ impl RepoHandle {
     /// Transition a task to `Blocked`.
     pub fn block_task(
         &self,
-        task_id: &TaskId,
+        task_id: &(impl crate::task::TaskId),
     ) -> Result<TaskTransitionReport, TaskTransitionError> {
         self.transition_task(task_id, TaskState::Blocked, None)
     }
@@ -396,7 +396,7 @@ impl RepoHandle {
     /// Transition a task to `Deferred`.
     pub fn defer_task(
         &self,
-        task_id: &TaskId,
+        task_id: &(impl crate::task::TaskId),
     ) -> Result<TaskTransitionReport, TaskTransitionError> {
         self.transition_task(task_id, TaskState::Deferred, None)
     }
@@ -407,7 +407,7 @@ impl RepoHandle {
     /// wall-clock time formatted as ISO-8601 UTC.
     pub fn close_task(
         &self,
-        task_id: &TaskId,
+        task_id: &(impl crate::task::TaskId),
         metadata: CloseMetadata,
     ) -> Result<TaskTransitionReport, TaskTransitionError> {
         self.transition_task(task_id, TaskState::Closed, Some(metadata))
@@ -419,7 +419,7 @@ impl RepoHandle {
     /// writes back with CAS against the current commit OID.
     fn transition_task(
         &self,
-        task_id: &TaskId,
+        task_id: &(impl crate::task::TaskId),
         new_state: TaskState,
         close_metadata: Option<CloseMetadata>,
     ) -> Result<TaskTransitionReport, TaskTransitionError> {
@@ -610,7 +610,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let id = TaskId::parse("migrate-to-codeberg").expect("parse");
+        let id = DefaultTaskId::parse("migrate-to-codeberg").expect("parse");
 
         let report = handle
             .create_task(&id, &meta("migrate-to-codeberg", ""))
@@ -630,7 +630,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let id = TaskId::parse("compiler::ir::lower-pass").expect("parse");
+        let id = DefaultTaskId::parse("compiler::ir::lower-pass").expect("parse");
 
         let report = handle
             .create_task(&id, &meta("lower-pass", "compiler/ir"))
@@ -649,7 +649,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let id = TaskId::parse("duplicate-slug").expect("parse");
+        let id = DefaultTaskId::parse("duplicate-slug").expect("parse");
 
         handle
             .create_task(&id, &meta("duplicate-slug", ""))
@@ -665,7 +665,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let id = TaskId::parse("nonexistent").expect("parse");
+        let id = DefaultTaskId::parse("nonexistent").expect("parse");
         let err = handle.show_task(&id).expect_err("show must refuse");
         assert!(matches!(err, ShowTaskError::NotFound { .. }));
     }
@@ -687,7 +687,7 @@ mod tests {
 
         // Insert in a non-sorted order; iterator yields lexicographic.
         for id_str in ["zeta", "alpha", "compiler::lower", "beta"] {
-            let id = TaskId::parse(id_str).expect("parse");
+            let id = DefaultTaskId::parse(id_str).expect("parse");
             handle
                 .create_task(&id, &meta(id.slug().as_str(), ""))
                 .expect("create");
@@ -701,8 +701,8 @@ mod tests {
     // -----------------------------------------------------------------
     // Slice B: lifecycle verbs.
 
-    fn setup_open_task(handle: &RepoHandle, id_str: &str) -> TaskId {
-        let id = TaskId::parse(id_str).expect("parse");
+    fn setup_open_task(handle: &RepoHandle, id_str: &str) -> DefaultTaskId {
+        let id = DefaultTaskId::parse(id_str).expect("parse");
         handle
             .create_task(&id, &meta(id.slug().as_str(), ""))
             .expect("create");
@@ -802,7 +802,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let id = TaskId::parse("nonexistent").expect("parse");
+        let id = DefaultTaskId::parse("nonexistent").expect("parse");
         let err = handle.start_task(&id).expect_err("start");
         assert!(matches!(err, TaskTransitionError::NotFound { .. }));
     }
