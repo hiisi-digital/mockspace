@@ -26,11 +26,11 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use fs2::FileExt;
 
 use crate::atomicity::LockHolder;
+use crate::io::time::current_iso8601;
 
 /// Failure modes for [`FlockTransitionLock::acquire`].
 #[derive(Debug)]
@@ -279,51 +279,6 @@ fn hostname_lookup() -> Option<String> {
     }
 }
 
-/// Synthesise a minimal ISO-8601 UTC timestamp without pulling in a
-/// date crate. Format: `YYYY-MM-DDTHH:MM:SSZ`. Approximate; second-
-/// resolution is enough for a debug payload.
-fn current_iso8601() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // Days since 1970-01-01.
-    let days = secs / 86_400;
-    let time_of_day = secs % 86_400;
-    let hour = time_of_day / 3600;
-    let minute = (time_of_day % 3600) / 60;
-    let second = time_of_day % 60;
-
-    let (year, month, day) = days_to_ymd(days);
-
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z",
-        year = year,
-        month = month,
-        day = day,
-        hour = hour,
-        minute = minute,
-        second = second,
-    )
-}
-
-/// Convert days-since-1970 to (year, month, day). Civil calendar
-/// algorithm; correct for the full range we care about (1970 to
-/// 9999). Adapted from Howard Hinnant's date library reference.
-fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    let days = days as i64 + 719_468;
-    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
-    let doe = (days - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + (era as u64) * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,22 +353,4 @@ mod tests {
         assert!(second.lock_path().exists());
     }
 
-    #[test]
-    fn iso8601_format_matches_yyyy_mm_dd_pattern() {
-        let s = current_iso8601();
-        // Sanity-check the shape: 20 chars, separators at every
-        // canonical position. We do not assert calendar
-        // correctness here; the timestamp is a debug payload, not
-        // load-bearing. Positions 13 and 16 lock the time-of-day
-        // separators against the kind of bug a reviewer caught
-        // pre-merge where a `-` slipped into the minute-second
-        // boundary.
-        assert_eq!(s.len(), 20, "got {s:?}");
-        assert!(s.ends_with('Z'));
-        assert_eq!(&s[4..5], "-", "got {s:?}");
-        assert_eq!(&s[7..8], "-", "got {s:?}");
-        assert_eq!(&s[10..11], "T", "got {s:?}");
-        assert_eq!(&s[13..14], ":", "got {s:?}");
-        assert_eq!(&s[16..17], ":", "got {s:?}");
-    }
 }

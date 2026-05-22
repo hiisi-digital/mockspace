@@ -41,8 +41,8 @@ pub use atomicity::{
 };
 pub use bookkeeping::{classify_root_entry, BookkeepingFile, RootEntry};
 pub use io::{
-    FlockTransitionLock, LockError, RefTreeReadError, RefTreeWriteError, RepoError, RepoHandle,
-    RoundRefTree,
+    AnchorCaptureError, FlockTransitionLock, LockError, RefTreeReadError, RefTreeWriteError,
+    RepoError, RepoHandle, RoundRefTree,
 };
 pub use lint::{
     matches_pattern, Category, ContentHash, Directive, DirectiveRecord, Document, FileDisableEntry,
