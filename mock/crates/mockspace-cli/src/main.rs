@@ -24,7 +24,7 @@ use mockspace_rs::{
     scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport,
     DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError,
     ObjectId, Phase, RegenerateError, RegenerateReport, RepoError, RepoHandle, ReplanMode,
-    RoundState, RunSurface, Severity, Slug, WriteState,
+    RoundState, RunSurface, Severity, Slug, TaskId, TaskMeta, WriteState,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -147,6 +147,14 @@ enum Command {
     /// behind an explicit `--auto` flag once the classification
     /// surface here is reviewed.
     Migrate,
+    /// Manage tasks. Slice A ships `new`, `list`, `show`; lifecycle
+    /// verbs (start/block/defer/close), move semantics, archival,
+    /// and step tracking land in follow-up slices per spec
+    /// §16, §26.
+    Task {
+        #[command(subcommand)]
+        verb: TaskVerb,
+    },
     /// Render the `mock/*.md.tmpl` templates into `docs/`. Walks
     /// both the mock-root templates (DESIGN / PRINCIPLES / WORKFLOW)
     /// and every per-crate template under `mock/crates/<name>/`
@@ -220,6 +228,33 @@ enum PhaseVerb {
         /// adds one path to the accept-loss list.
         #[arg(long = "accept-loss-path", value_name = "PATH")]
         accept_loss_paths: Vec<std::path::PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TaskVerb {
+    /// Create a new task at `refs/mock/task/<ns-path>/<slug>`. The
+    /// task starts in the `open` state with the supplied title. The
+    /// task ID is parsed from URI form (`<seg>::<seg>::...::<slug>`);
+    /// a single segment yields a top-level (no-namespace) task.
+    New {
+        /// Task identifier in URI form. Examples:
+        /// `migrate-to-codeberg`, `compiler::ir::lower-pass::define-grammar`.
+        id: String,
+        /// One-line human-facing title. Defaults to the slug if absent.
+        #[arg(long)]
+        title: Option<String>,
+    },
+    /// Enumerate every task ref under `refs/mock/task/*` and print
+    /// the task identifiers in lexicographic order. Excludes the
+    /// `refs/mock/task-archive` ref.
+    List,
+    /// Read a task ref's `meta.toml` and print its contents. Output
+    /// is the canonical TOML representation; pair with a TOML parser
+    /// to consume programmatically.
+    Show {
+        /// Task identifier in URI form.
+        id: String,
     },
 }
 
@@ -351,6 +386,10 @@ fn main() -> std::process::ExitCode {
             ensure_agent_ready(&repo_root);
             let out = out_dir.unwrap_or_else(|| repo_root.join("docs"));
             run_regenerate(&repo_root, &out, check)
+        }
+        Command::Task { verb } => {
+            ensure_agent_ready(&repo_root);
+            run_task(&repo_root, verb)
         }
     }
 }
@@ -519,6 +558,148 @@ fn render_advance_error(e: &AdvanceError) -> String {
         ),
         other => format!("{other}"),
     }
+}
+
+fn run_task(repo_root: &std::path::Path, verb: TaskVerb) -> std::process::ExitCode {
+    let handle = match open_repo(repo_root) {
+        Ok(h) => h,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    match verb {
+        TaskVerb::New { id, title } => run_task_new(&handle, &id, title.as_deref()),
+        TaskVerb::List => run_task_list(&handle),
+        TaskVerb::Show { id } => run_task_show(&handle, &id),
+    }
+}
+
+fn run_task_new(
+    handle: &RepoHandle,
+    id_raw: &str,
+    title: Option<&str>,
+) -> std::process::ExitCode {
+    let task_id = match TaskId::parse(id_raw) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("invalid task identifier `{id_raw}`: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let namespace_path = task_id
+        .namespace()
+        .map(|ns| ns.as_ref_path())
+        .unwrap_or_default();
+    let title = title.unwrap_or_else(|| task_id.slug().as_str()).to_owned();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let meta = TaskMeta {
+        mockspace_version: env!("CARGO_PKG_VERSION").to_owned(),
+        slug: task_id.slug().as_str().to_owned(),
+        namespace: namespace_path,
+        title,
+        // ISO-8601 from unix epoch. minimal stdlib-only formatter
+        // suitable for the synthetic mockspace identity.
+        created: format_iso8601(now),
+        priority: None,
+        group: None,
+        steps: Default::default(),
+        refs: Default::default(),
+        closure: None,
+    };
+    match handle.create_task(&task_id, &meta) {
+        Ok(report) => {
+            println!("task `{}` created", task_id.as_uri_form());
+            println!("  ref: {}", report.ref_path);
+            println!("  commit: {}", report.commit_oid);
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("task new failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_task_list(handle: &RepoHandle) -> std::process::ExitCode {
+    match handle.list_tasks() {
+        Ok(tasks) => {
+            if tasks.is_empty() {
+                println!("no tasks");
+            } else {
+                for t in tasks {
+                    println!("{}", t.as_uri_form());
+                }
+            }
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("task list failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_task_show(handle: &RepoHandle, id_raw: &str) -> std::process::ExitCode {
+    let task_id = match TaskId::parse(id_raw) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("invalid task identifier `{id_raw}`: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    match handle.show_task(&task_id) {
+        Ok(meta) => match meta.to_toml() {
+            Ok(toml) => {
+                // toml::to_string_pretty does not guarantee a
+                // trailing newline; use println! so the rendered
+                // body terminates cleanly under shell consumers.
+                println!("{}", toml.trim_end_matches('\n'));
+                std::process::ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("task show: failed to serialise meta as TOML: {e}");
+                std::process::ExitCode::FAILURE
+            }
+        },
+        Err(e) => {
+            eprintln!("task show failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// Format a unix epoch as a minimal ISO-8601 UTC string. Avoids
+/// pulling chrono/time crates for a single timestamp surface; the
+/// format is sufficient for the synthetic mockspace authoring
+/// identity, which carries the same shape as the round refs'
+/// committer timestamps.
+fn format_iso8601(unix_secs: u64) -> String {
+    // Compute Y/M/D from epoch using the algorithm from RFC 3339
+    // appendix A. Adapted to UTC, no leap-seconds.
+    let days_since_epoch = (unix_secs / 86_400) as i64;
+    let seconds_of_day = (unix_secs % 86_400) as u32;
+    let hh = seconds_of_day / 3600;
+    let mm = (seconds_of_day % 3600) / 60;
+    let ss = seconds_of_day % 60;
+    // Convert days-since-1970-01-01 to civil date using Howard
+    // Hinnant's days_from_civil inverse.
+    let z = days_since_epoch + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{year:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z"
+    )
 }
 
 fn run_close(repo_root: &std::path::Path, slug_raw: &str) -> std::process::ExitCode {

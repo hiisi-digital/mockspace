@@ -42,6 +42,16 @@ impl RefPath {
         Self(format!("refs/mock/task/{}/{}", ns.as_ref_path(), slug))
     }
 
+    /// `refs/mock/task/<ns-path>/<slug>` constructor that accepts the
+    /// full TaskId shape, including top-level (namespace-less) tasks.
+    /// A top-level task `migrate-to-codeberg` resolves to
+    /// `refs/mock/task/migrate-to-codeberg`. A namespaced task
+    /// `compiler::ir::lower-pass::define-grammar` resolves to
+    /// `refs/mock/task/compiler/ir/lower-pass/define-grammar`.
+    pub fn task_from_id(id: &crate::task::TaskId) -> Self {
+        Self(format!("refs/mock/task/{}", id.as_ref_path()))
+    }
+
     /// `refs/mock/task-archive` — unified closed-tasks archive (spec §26).
     pub fn task_archive() -> Self {
         Self("refs/mock/task-archive".to_owned())
@@ -130,5 +140,24 @@ mod tests {
     fn archive_paths() {
         assert_eq!(RefPath::task_archive().as_str(), "refs/mock/task-archive");
         assert_eq!(RefPath::round_archive().as_str(), "refs/mock/round-archive");
+    }
+
+    #[test]
+    fn task_from_id_top_level() {
+        let id = crate::task::TaskId::parse("migrate-to-codeberg").expect("parse");
+        assert_eq!(
+            RefPath::task_from_id(&id).as_str(),
+            "refs/mock/task/migrate-to-codeberg"
+        );
+    }
+
+    #[test]
+    fn task_from_id_namespaced() {
+        let id =
+            crate::task::TaskId::parse("compiler::ir::lower-pass::define-grammar").expect("parse");
+        assert_eq!(
+            RefPath::task_from_id(&id).as_str(),
+            "refs/mock/task/compiler/ir/lower-pass/define-grammar"
+        );
     }
 }

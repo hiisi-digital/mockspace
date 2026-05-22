@@ -19,6 +19,7 @@ mod ref_tree;
 mod ref_write;
 mod repo;
 mod seal;
+mod task;
 mod time;
 
 pub use advance::{AdvanceError, AdvanceReport, AdvanceVerb};
@@ -29,3 +30,4 @@ pub use ref_tree::{RefTreeReadError, RoundRefTree};
 pub use ref_write::RefTreeWriteError;
 pub use repo::{RepoError, RepoHandle};
 pub use seal::{SealError, SealReport};
+pub use task::{CreateTaskError, CreateTaskReport, ListTasksError, ShowTaskError};
