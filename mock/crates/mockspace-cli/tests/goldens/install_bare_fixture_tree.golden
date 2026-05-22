@@ -8,6 +8,949 @@ mock = "run --manifest-path mock/Cargo.toml --bin mock --"
 [core]
 	hooksPath = mock/target/hooks
 --- end ---
+mock/target/agent/INDEX.md
++++ content +++
+# Mockspace builtin agent rules
+
+This directory carries the canonical descriptions of mockspace
+itself. Read these when you need to understand what mockspace is
+and how to use it.
+
+The files are extracted from the mockspace binary on
+`cargo mock install` / `refresh` and land at
+`mock/target/agent/`. They are gitignored. Edits to the extracted
+copies are blown away on next refresh; the source of truth lives
+inside the mockspace crate.
+
+## Files
+
+| File | Subject |
+|---|---|
+| `phases.md` | The six-phase state machine. What each phase means, what enters and exits it. |
+| `verbs.md` | The four transition verbs (`plan`, `apply`, `finish`, `replan`) and the full validity matrix. |
+| `sides.md` | Doc and src vocabulary. What a manifest is, what each side carries, how the two sides relate. |
+| `anchors.md` | What an anchor captures, when, why. Content-addressed snapshot storage. |
+| `suppressions.md` | The five comment-canonical directives (`lint:allow`, `lint:scope-add`, `lint:defer`, `lint:file-disable`, `lint:prop`) plus Rust attribute aliases. |
+| `commands.md` | The `cargo mock` subcommand surface as it ships today. |
+| `identity.md` | Slugs, task IDs, ref paths, content hashes. How mockspace names things. |
+
+## What's NOT here
+
+These are mockspace-internal facts only. Project-specific
+conventions, domain rules, repo workflows belong in the consumer's
+own agent rules at `mock/agent/<whatever>`. Those stay
+consumer-authored and mockspace never touches them.
+
+When the mockspace binary updates, this directory updates with it
+(via `cargo mock refresh`). When the consumer updates their own
+project rules, that's their working tree to manage.
+--- end ---
+mock/target/agent/VERSION
++++ content +++
+0.1.0
+--- end ---
+mock/target/agent/anchors.md
++++ content +++
+# Anchors
+
+An anchor is a content-addressed snapshot of the source-side files
+a sealed manifest claimed it would change, taken at the moment the
+manifest sealed. Anchors exist so a future `mock phase replan` can
+restore the pre-apply state of those files deterministically,
+without relying on git history or consumer-side bookkeeping.
+
+## Anchor shape
+
+The persisted form (TOML, at `.anchor.<side>.toml` in the round-ref
+tree) carries four top-level fields per the `Anchor` struct in
+`mockspace-core::anchor`:
+
+- `mockspace_version`: schema version string for the anchor format.
+  Future schema changes bump this.
+- `captured_at`: ISO 8601 timestamp when the snapshot was taken.
+- `captured_from_source_branch_tip`: source-side branch tip SHA at
+  capture, recorded for provenance.
+- `file`: a TOML array of per-file entries (serialised as
+  `[[file]]`). Each entry carries:
+  - `path`: source-side path, relative to repo root, forward-slash
+    separated.
+  - `blob_sha`: hex SHA of the file's content at capture time.
+
+The blob bodies themselves live at
+`.anchor.<side>.blobs/<sha-prefix>/<sha-rest>` for content-addressed
+storage (the same content under two different paths shares one
+blob).
+
+## Hash algorithms
+
+`BlobSha::parse` accepts both 40-hex-char SHA-1 and 64-hex-char
+SHA-256. Which algorithm gets used depends on the source-side git
+object format; modern repos default to SHA-1 today, with SHA-256
+support per repo configuration.
+
+## When anchors are written
+
+The intended writer is the `apply` transition executor: as part of
+sealing the manifest, the executor reads each claimed file's
+current content, computes its hash, writes the blob if absent,
+records the per-file entry, and writes the anchor TOML alongside
+the locked manifest. The executor lives behind
+`Transition::Apply` and currently routes through the Phase 5 IO
+machinery; see `mockspace-core::transition` for the validity
+contract and the in-flight `mock/research/202605220843_phase-5-io-slice-plan.md`
+for the implementation slice plan. Earlier slices land the value
+shapes; the apply-time anchor capture is the executor's job.
+
+## When anchors are read
+
+A future `replan` reads the anchor of the side being deprecated
+and uses the entries to restore source-side files to their
+pre-apply state. The replan mode (declared in
+`transition::ReplanMode`) controls how restoration handles
+post-APPLY work touching claimed files:
+
+- `Destructive`: overwrites claimed files from their anchor blobs.
+  Refuses if post-APPLY commits touched any claimed file.
+- `AdditiveByCommit`: commits the restoration on top of post-APPLY
+  state rather than overwriting.
+- `AcceptRestorationLoss(paths)`: accepts post-APPLY work loss for
+  the named paths; other claimed paths follow the destructive
+  policy.
+
+## What anchors do NOT capture
+
+- Files not claimed by the manifest. A file the manifest did not
+  list in its `change` block is not anchored, even if it lives in
+  the round's working directory. Restoration leaves those files
+  alone.
+- The full repository state. Anchors are scoped to manifest claims,
+  not to a whole-tree snapshot. If post-APPLY work touched files
+  outside the manifest's scope, those edits survive a replan.
+- Build artifacts, target directories, anything in `.gitignore`.
+  Anchors only capture files the manifest's `change` block names.
+
+## Why anchor instead of git history
+
+Two reasons.
+
+First, the source side may not be in git when apply happens. The
+round-ref tree is a separate orphan-ref space; the consumer's
+working tree may have uncommitted changes the manifest claims.
+Anchors capture the working-tree state, not just the committed
+state.
+
+Second, git history changes shape (rebase, force-push). An anchor
+is immutable once written. The restoration is identical regardless
+of what happens to the source branch between apply and replan.
+
+## What is not yet implemented
+
+The `Anchor` and `FileEntry` value shapes ship today and round-trip
+TOML cleanly. The executor that captures and consumes anchors is
+in-flight under the Phase 5 IO work; the validity matrix in
+`transition::TransitionVerb::next_phase` covers when an apply is
+allowed but does not yet bind the I/O sequence. Treat this file's
+"when anchors are written / read" sections as describing intent;
+the wiring lands progressively.
+--- end ---
+mock/target/agent/commands.md
++++ content +++
+# The `cargo mock` command surface
+
+Mockspace exposes its operations through a `cargo mock` alias. The
+bootstrap installs `[alias] mock = "run --manifest-path
+mock/Cargo.toml --bin mock --"` so `cargo mock <subcommand>` from
+the repo root resolves to the mockspace binary.
+
+This file covers what's shipping today. Newly added subcommands
+land here; retired ones leave.
+
+## Bootstrap commands
+
+### `cargo mock status`
+
+Read-only. Reports the bootstrap state of the current repo:
+whether the cargo alias is installed, whether git hooks point at
+`mock/target/hooks/`, whether `mock/` exists.
+
+Exit 0 always; the report is the output.
+
+### `cargo mock install`
+
+Writes the bootstrap state into the current repo:
+- Adds `[alias] mock = ...` to `.cargo/config.toml`.
+- Sets `core.hooksPath` to `mock/target/hooks/`.
+- Writes the canonical git hook scripts under `mock/target/hooks/`.
+- Extracts the canonical agent rule files to `mock/target/agent/`.
+
+Idempotent. Re-running on an already-installed repo prints
+"already installed" and exits 0.
+
+### `cargo mock uninstall`
+
+Reverses `install`. Removes the alias, the `core.hooksPath` setting,
+and the contents of `mock/target/hooks/` and `mock/target/agent/`.
+The `mock/` directory itself stays (it carries the consumer's
+round content).
+
+### `cargo mock refresh`
+
+Functionally identical to `install`. Named separately so
+drift-repair has a distinct command-line affordance. Overwrites the
+hooks and agent rule extracts with the canonical content for the
+installed mockspace version.
+
+## Engine commands
+
+### `cargo mock check`
+
+Runs the lint engine against the repo. Surfaces findings to stdout
+in `<file>:<line>:<col>: [<severity>] <name>: <message>` format
+(or `--json` for machine consumers).
+
+Flags:
+- `--gate <commit|build|push>`: which severity gate to evaluate at.
+  Default `commit`. Pre-commit hooks use `commit`; CI uses `build`;
+  pre-push uses `push`.
+- `--json`: emit findings as a JSON array.
+- `--surface <local|ci|editor>`: run surface. Default `local`. `ci`
+  simulates a CI run; `editor` is LSP-shaped.
+
+Exits non-zero if any finding is classified as error at the chosen
+gate.
+
+### `cargo mock explain <lint>`
+
+Reports how the named lint resolves through the config cascade.
+Prints catalog defaults plus any user TOML override seen for that
+lint. Full per-layer breakdown (presets, workspace defaults, CLI
+overrides) lands progressively as the cascade implementation
+completes.
+
+## Phase transition commands
+
+### `cargo mock phase plan <slug>`
+
+Opens PlanDoc on a Topic-phase round. See `phases.md` and
+`verbs.md` for the full state machine.
+
+### `cargo mock phase apply <slug> --source-tip <hex>`
+
+Seals the current authoring manifest and transitions to the
+matching APPLY phase. The transition validity matrix lives in
+`mockspace-core::transition`; the I/O sequence (read manifest,
+hash claimed files, write anchor TOML and blobs, rename manifest
+to `.locked` form, bump phase marker, push with CAS) is the Phase 5
+executor and lands progressively under
+`mock/research/202605220843_phase-5-io-slice-plan.md`. Requires the
+source-side branch tip OID as a hex SHA so the anchor records a
+stable input for restoration.
+
+### `cargo mock phase finish <slug>`
+
+Advances past APPLY. From ApplyDoc lands in PlanSrc; from ApplySrc
+lands in Done.
+
+### `cargo mock phase replan <slug> [--mode <mode>] [--accept-loss-path <path>]...`
+
+Deprecates the current sealed manifest and returns to PLAN on the
+same side. See `verbs.md` for the three mode options.
+
+### `cargo mock close <slug>`
+
+Archives a Done-phase round into `refs/mock/round-archive` and
+deletes the source round ref. Idempotent on partial-success
+(source-ref delete failure can be retried; the archive write is
+already content-addressed).
+
+## Migration
+
+### `cargo mock migrate`
+
+Walks the v1 mockspace state under `mock/design_rounds/` (the
+filesystem layout from before the v2 ref-based storage) and prints
+a per-round migration report. Each round shows its v1 state, the
+target v2 phase, and the action needed.
+
+Print-only today. Auto-conversion is a future slice.
+
+## What's not yet shipped
+
+- `cargo mock task {create|list|close|move}`: task identity commands.
+- `cargo mock check --fix`: auto-fix integration. The fix recipes
+  exist in the catalog; the CLI wiring lands later.
+- Network-side commands (push CAS for round refs).
+
+Each is tracked under task #579 / #580 in the project's task tree.
+
+## Exit codes
+
+- `0`: success.
+- `1`: command-level failure (verifier finding at gate, validation
+  error, IO error, transition-validity refusal).
+- `2`: usage error (bad flags, unknown subcommand).
+
+The pre-commit and pre-push hook scripts treat exit code 1 from
+`mock check` as commit-blocking; exit code 2 also blocks but
+indicates a config error rather than a lint finding.
+--- end ---
+mock/target/agent/identity.md
++++ content +++
+# Identity: slugs, tasks, refs, content hashes
+
+Mockspace identifies rounds, tasks, and stored content via four
+related shapes. Each is a deterministic string (no random suffixes,
+no clock dependencies in the identifier itself).
+
+## Slug
+
+A slug is a validated identifier string used for round names, task
+leaf names, and namespace segments. Validation lives in
+`mockspace-core::slug::Slug::new`:
+
+- First character: ASCII lowercase letter (`a`-`z`).
+- Remaining characters: ASCII lowercase letter, ASCII digit, or
+  ASCII hyphen `-`.
+- Length: 1 to `MAX_SLUG_LEN` characters inclusive.
+
+Examples that validate (from the slug test suite):
+
+```
+arvo-graph-csr
+a
+structural-robust-ir
+quickstart
+round-202605181400
+```
+
+Examples that fail:
+
+- `1abc` (digit-leading)
+- `-abc` (hyphen-leading)
+- `Abc` (uppercase)
+- `_abc` (underscore)
+- `a_b` (underscore inner)
+- `abc.def` (period inner)
+- empty string (`SlugError::Empty`)
+- anything longer than `MAX_SLUG_LEN` (`SlugError::TooLong`)
+
+For round identifiers built around a timestamp, the convention is
+to prefix: `round-202605181400` rather than `202605181400`. The
+leading-letter rule rejects digit-leading inputs, so naked
+timestamps are not valid slugs.
+
+## Namespace
+
+A namespace is a non-empty list of slug segments, joined by `::` in
+the wire form. The shape comes from `mockspace-core::namespace::Namespace`.
+The segments share the slug charset.
+
+Wire form examples:
+
+```
+workspace
+compiler::ir::lower-pass
+```
+
+A namespace with one segment is allowed; a namespace with zero
+segments is not (the type is non-empty by construction).
+
+## TaskId
+
+A task is identified by zero or more namespace segments plus a leaf
+slug, per `mockspace-core::task::TaskId`. The struct carries:
+
+```rust
+pub struct TaskId {
+    namespace_segments: Vec<Slug>,  // may be empty
+    slug: Slug,
+}
+```
+
+The wire / prose form is `<seg>::<seg>::...::<slug>`, where the
+final segment is the leaf slug and any preceding segments form the
+namespace. A single segment yields a top-level task with no
+namespace.
+
+Examples:
+
+```
+migrate-to-codeberg                                # top-level task
+workspace::migrate-to-codeberg                     # one-segment namespace
+compiler::ir::lower-pass::define-grammar           # three-segment namespace
+```
+
+The `#` character is reserved for step references (see `StepRef`)
+and is never part of task identity itself.
+
+`TaskId::parse` errors include:
+- `Empty`: input was an empty string.
+- `ContainsStepSeparator`: input contained `#`.
+- `EmptySegment { position }`: `::` appeared with no content on one
+  side.
+- `InvalidSegment { index, error }`: a segment failed slug
+  validation.
+
+## StepRef
+
+A step within a task is identified by the task ID plus a step slug,
+joined by `#`. Per `mockspace-core::task::StepRef`. Wire form:
+
+```
+<task-id>#<step-slug>
+```
+
+The step slug follows slug validation rules; the task ID portion
+follows TaskId parsing.
+
+## RefPath
+
+A `RefPath` wraps a fully-qualified git ref name. The canonical
+constructors in `mockspace-core::ref_path::RefPath` produce:
+
+- `RefPath::round_mock(slug)` -> `refs/mock/round/<slug>`: per-round
+  orphan mock-side ref.
+- `RefPath::round_source(slug)` -> `refs/heads/round/<slug>`:
+  source-side branch for a round (regular ref, not orphan).
+- `RefPath::round_conflict(slug, host, timestamp)` ->
+  `refs/mock/round/<slug>-conflict-<host>-<timestamp>`: side branch
+  written by the conflict-resolution path when a push CAS loses.
+- `RefPath::round_archive()` -> `refs/mock/round-archive`: unified
+  closed-rounds archive. Each archived round occupies a `<slug>/`
+  subtree.
+- `RefPath::task(namespace, slug)` -> `refs/mock/task/<ns-path>/<slug>`:
+  per-active-task orphan ref. The namespace path uses `/`
+  separators (`compiler/ir/lower-pass`), not `::`.
+- `RefPath::task_archive()` -> `refs/mock/task-archive`: unified
+  closed-tasks archive.
+- `RefPath::harness()` -> `refs/mock/harness`: the project's
+  configuration ref.
+
+Mockspace stores rounds and tasks under `refs/mock/...` as orphan
+refs that don't share ancestry with the consumer's branches. The
+source-side companion (`refs/heads/round/<slug>`) is a regular
+branch carrying the round's source-side commit history.
+
+## ContentHash
+
+Mockspace records content hashes in two distinct contexts:
+
+- Anchor file entries (`anchor::FileEntry::blob_sha`): hex SHA of
+  source-side file content at apply time. Algorithm is whatever the
+  source-side git object format uses (SHA-1 today; SHA-256 where
+  the consumer's git config selects it). The `BlobSha::parse`
+  accepts both lengths (40 hex chars for SHA-1, 64 for SHA-256).
+- Manifest verifier records: per-manifest hash declarations live in
+  the verifier catalog (`mockspace-core::verifier`); the algorithm
+  is named per verifier entry.
+
+## What is identifier vs what is content
+
+| Kind | Allocation |
+|---|---|
+| Slug | Consumer chooses; validated charset |
+| Namespace | Consumer chooses; segments are slugs |
+| TaskId (segments + slug) | Consumer chooses |
+| StepRef step slug | Consumer chooses |
+| RefPath | Derived from slug + namespace, no consumer choice |
+| ContentHash | Derived from content, no consumer choice |
+
+Identifiers (slug, namespace, TaskId, ref path) are stable once
+assigned. Content hashes change as content changes. Renaming a
+round in place is not supported; the consumer opens a new round
+with the desired slug and deprecates the old one.
+--- end ---
+mock/target/agent/phases.md
++++ content +++
+# Phases
+
+A mockspace round carries exactly one current phase at a time. The phase
+drives what every command does: `mock phase apply` seals different
+manifests in PLAN(doc) vs PLAN(src), and `mock close` is only valid from
+DONE.
+
+There are six phases. Three pairs across two sides (doc and src), plus
+the entry and exit phases that have no side.
+
+```
+Topic
+  |  (mock phase plan)
+  v
+PlanDoc
+  |  (mock phase apply)
+  v
+ApplyDoc
+  |  (mock phase finish)
+  v
+PlanSrc
+  |  (mock phase apply)
+  v
+ApplySrc
+  |  (mock phase finish)
+  v
+Done
+```
+
+## Topic
+
+Free-form exploration. The round directory carries topic files,
+sketches, benches, research notes. No manifest exists. The verifier
+does not run; lints scoped to authoring rounds are inactive.
+
+Exit: `mock phase plan <slug>` opens PlanDoc.
+
+## PlanDoc
+
+Doc-side manifest authoring. The manifest at
+`manifest.doc.toml` is mutable; the consumer edits it freely. No
+template or doc-side file is sealed yet.
+
+Exit: `mock phase apply <slug> --source-tip <hex>` seals the manifest
+and transitions to ApplyDoc. The anchor captures the doc-side surface
+state at apply entry.
+
+## ApplyDoc
+
+Doc execution. The doc manifest is sealed: read-only, content-hashed,
+its claims drive the verifier. Doc templates listed in the manifest's
+`change` block get edited per the manifest. Every commit re-runs the
+verifier.
+
+Exit: `mock phase finish <slug>` advances bookkeeping and opens
+PlanSrc.
+
+Backward exit: `mock phase replan <slug>` deprecates the sealed
+manifest and returns to PlanDoc. The locked manifest is renamed to
+`manifest.doc.deprecated.<n>.toml` and stays as audit trail.
+
+## PlanSrc
+
+Src-side manifest authoring. Same shape as PlanDoc; src side. The
+locked doc manifest from ApplyDoc remains read-only.
+
+Exit: `mock phase apply <slug> --source-tip <hex>` seals the src
+manifest and transitions to ApplySrc.
+
+## ApplySrc
+
+Src execution. The src manifest is sealed; source files listed in its
+`change` block get edited per the manifest. The verifier runs every
+commit, plus `design-doc-source-mismatch` runs across the project.
+
+Exit: `mock phase finish <slug>` advances to Done.
+
+Backward exit: `mock phase replan <slug>` deprecates the sealed src
+manifest and returns to PlanSrc. Restoration of source-side files
+follows the replan mode (see `verbs.md`).
+
+## Done
+
+Round closed. Both sides sealed. PR comments may still ingest into
+the round-meta document for audit. The round is not deleted; it lives
+on `refs/mock/round/<slug>` until archived.
+
+Exit: `mock close <slug>` archives the round into the unified
+`refs/mock/round-archive` and deletes the source round ref.
+
+## The four verbs
+
+Each verb moves a round between exactly one phase pair. The full
+matrix:
+
+| Verb | Valid from | Lands in |
+|---|---|---|
+| `plan` | Topic | PlanDoc |
+| `apply` | PlanDoc | ApplyDoc |
+| `apply` | PlanSrc | ApplySrc |
+| `finish` | ApplyDoc | PlanSrc |
+| `finish` | ApplySrc | Done |
+| `replan` | ApplyDoc | PlanDoc |
+| `replan` | ApplySrc | PlanSrc |
+
+Any other (verb, current-phase) combination is invalid and the CLI
+refuses with an `InvalidFromPhase { current, verb, allowed_from }`
+error.
+--- end ---
+mock/target/agent/sides.md
++++ content +++
+# Sides: doc and src
+
+A round has two sides. The doc side is where design lives; the src
+side is where source code matching that design lives. The two-sided
+shape exists so design and implementation can each go through
+manifest-sealed authoring without contaminating each other's audit
+trail.
+
+## What each side covers
+
+**Doc side.** Templates, topic files, sketches, research notes,
+design rounds, anything that describes what the round is about.
+The doc-side manifest at `manifest.doc.toml` (mutable in PlanDoc,
+sealed as `manifest.doc.locked.toml` in ApplyDoc) claims which
+doc-side files the round will edit and what verifier checks them.
+
+**Src side.** Source code files, tests, configuration. Edited
+during the second authoring loop, after the doc side has sealed.
+The src-side manifest at `manifest.src.toml` (mutable in PlanSrc,
+sealed in ApplySrc) does the same job for source files.
+
+## What's in a manifest
+
+A manifest is structured TOML. The shape comes from
+`mockspace-core::manifest::Manifest`:
+
+- `scope`: paths the round will touch, with explicit include/exempt
+  patterns and per-axis bounds.
+- `acceptance`: what passing looks like, expressed as verifier
+  catalog entries.
+- `change`: the actual edits the round commits to. Per-file claims
+  about what gets added / modified / removed.
+- `deprecated_accounting`: when this manifest supersedes a prior
+  deprecated manifest in the same round, this block records which
+  claims carry over and which were dropped.
+
+Manifests are TOML so the consumer can author them by hand and
+machines can verify them mechanically. The structured form is the
+contract; rendered prose versions live in templates the consumer
+keeps separately.
+
+## Lifecycle per side
+
+Each side moves through its own PLAN -> APPLY pair:
+
+```
+(side = doc)               (side = src)
+  PlanDoc                    PlanSrc
+    |                          |
+   apply                      apply
+    |                          |
+  ApplyDoc -- finish -> PlanSrc -- finish -> Done
+```
+
+The doc side completes before the src side begins. This ordering
+exists because the src manifest can claim adherence to the
+already-sealed doc manifest (verifiers check that the src side
+matches what the doc side committed to).
+
+## File layout per side
+
+In the round-ref tree (read via `mock` IO, not the working tree):
+
+```
+manifest.doc.toml                # mutable in PlanDoc
+manifest.doc.locked.toml         # sealed at ApplyDoc entry
+manifest.doc.deprecated.0.toml   # first replan, zero-indexed
+manifest.doc.deprecated.1.toml   # second replan
+.anchor.doc.toml                 # anchor metadata captured at apply
+.anchor.doc.blobs/<sha-prefix>/<sha-rest>  # content-addressed blobs
+
+manifest.src.toml                # parallel surface for src
+manifest.src.locked.toml
+manifest.src.deprecated.0.toml
+.anchor.src.toml
+.anchor.src.blobs/<sha-prefix>/<sha-rest>
+```
+
+Both sides' surfaces live in the same round-ref tree. The side is
+encoded in the filename. The `<side>.toml` -> `<side>.locked.toml`
+rename is the seal; the `<side>.locked.toml` -> `<side>.deprecated.<n>.toml`
+rename is the replan.
+
+## When the verifier knows which side
+
+Every verifier check declares which side it applies to. Doc-side
+verifiers run during ApplyDoc (and on every commit during that
+phase). Src-side verifiers run during ApplySrc. Verifiers that span
+both sides (e.g., `design-doc-source-mismatch`, which checks that
+src-side claims match the locked doc-side manifest) run during
+ApplySrc only, since both sides are sealed by then.
+
+## What's not split by side
+
+Tasks. Anchors. The round-ref itself. Topic files. Sketches. These
+belong to the round as a whole. The side split is specifically
+about which manifest is in scope at each authoring loop.
+--- end ---
+mock/target/agent/suppressions.md
++++ content +++
+# Suppression directives
+
+Mockspace ships five directives that source files can carry to
+modify how lints apply at specific sites. The directives are
+comment-canonical: every language preprocessor parses the same five
+verbs from comment syntax. Per-language attribute aliases (Rust
+attributes, TS decorators) map to the same internal record.
+
+Lint packs ship new lint names and new categories, but cannot ship
+new directive variants. The directive set is bounded to these five;
+adding a sixth requires a framework schema version bump.
+
+## The five directives
+
+### lint:allow
+
+Per-site suppression of a specific lint at a single source location.
+
+Comment form:
+
+```rust
+// lint:allow(no-bare-string, reason = "ABI boundary; FFI shim", tracked = "#42")
+const C_NAME: &str = "...";
+```
+
+Rust attribute alias:
+
+```rust
+#[lint::allow(no_bare_string, reason = "ABI boundary; FFI shim", tracked = "#42")]
+const C_NAME: &str = "...";
+```
+
+Required fields: `lint_name`. The `reason` and `tracked` clauses are
+required at the project level (per the `lint-allow-requires-task-id`
+workspace rule) but parsed as optional at the directive parsing
+layer; the meta-lint reports missing fields as findings rather than
+parser failures.
+
+### lint:scope-add
+
+At a module or file boundary, extends a lint's scope along one axis
+for the contained items. Useful for opt-in patterns where a few
+modules need a stricter scope than the workspace default.
+
+Comment form:
+
+```rust
+// lint:scope-add(no-bare-vec, axis = "crates", value = "loimu-bench")
+```
+
+The axis must be one of the `ScopeAxis` variants:
+`paths`, `exempt_paths`, `crates`, `exempt_crates`, `languages`,
+`exempt_categories`. Lint packs cannot invent new axes through this
+directive; the axis set is bounded to the `ScopeConfig` fields.
+
+### lint:defer
+
+Acknowledges a known violation that will be fixed when the linked
+task closes. Semantically distinct from `allow`: defers expire when
+the linked task closes, while allows accumulate as a policy
+question.
+
+Comment form:
+
+```rust
+// lint:defer(no-bare-numeric, until = "#118", reason = "post-Round-D type debt")
+```
+
+The `SuppressionMetaLint`'s `forbid_expired` config flags defers
+that reference closed tasks; the lint catches the case where a
+defer outlives its anchor.
+
+### lint:file-disable
+
+File-level disable for the named lint. Placed at the top of a file.
+Distinct from `scope-add` in that it is a disable, not a scope
+extension.
+
+Comment form (must be the first non-blank line of the file):
+
+```rust
+// lint:file-disable(no-bare-vec, reason = "generated code", tracked = "#0")
+```
+
+Requires the same `reason` + `tracked` shape as `allow`.
+
+### lint:prop
+
+Lint-provided per-site property consumed by lints. The framework
+does not interpret the prop name or value; lints declare via
+`Lint::declared_props` which names they read and query the resolved
+`PropMap` for matches.
+
+Comment forms:
+
+```rust
+// lint:prop(audited)                          # presence form, true bool
+// lint:prop(rate-limit = 100)                 # key-value, integer
+// lint:prop(category = "experimental")        # key-value, string
+// lint:prop(audited, reason = "see #42")      # presence + reason
+```
+
+Value types: bool, integer (i64), string. No list variant; multi-value
+props write multiple directives that accumulate in the `PropMap`
+naturally.
+
+## Where directives go
+
+All five directives parse from comments anywhere a comment can
+appear in the source file. The preprocessor pairs each directive
+with the item it precedes (per-site directives) or with the file
+itself (`lint:file-disable` only).
+
+`lint:allow` and `lint:defer` apply to the immediately following
+item: function definition, type declaration, impl block, etc. A
+directive at end-of-file or between items unaffiliates and surfaces
+as a warning.
+
+`lint:scope-add` and `lint:file-disable` apply at module or file
+scope. They land before any item declaration.
+
+`lint:prop` applies to the next item, same as `lint:allow`. Props
+do not stack with other directives on the same item; if both
+`lint:allow` and `lint:prop` precede an item, they each take effect
+once.
+
+## Rust attribute aliases
+
+The five verbs all have Rust attribute aliases under the `lint::`
+prefix:
+
+| Comment form | Attribute form |
+|---|---|
+| `lint:allow` | `#[lint::allow(...)]` |
+| `lint:scope-add` | `#[lint::scope_add(...)]` |
+| `lint:defer` | `#[lint::defer(...)]` |
+| `lint:file-disable` | comment form only (no attribute alias yet) |
+| `lint:prop` | `#[lint::prop(...)]` |
+
+The attribute aliases parse into the same `Directive` enum as the
+comment form. `lint:file-disable` currently ships as comment-only;
+the inner-attribute alias `#![lint::file_disable(...)]` is reserved
+for future wiring. Style preference for the four wired aliases is
+per-project; mockspace does not prefer one over the other.
+
+## What directives do NOT cover
+
+- Reordering lint priority. Use TOML config + the cascade.
+- Adding new lint names. Lint packs do that via the catalog.
+- Defining new severity levels. Severity is a fixed enum
+  (`info / warn / error`).
+- Disabling lints workspace-wide. Use `mockspace.toml`.
+--- end ---
+mock/target/agent/verbs.md
++++ content +++
+# Transition verbs
+
+Four verbs move a round between phases. Three are forward-moving;
+one is backward. The verb names map directly to `cargo mock phase
+<verb>` invocations.
+
+## plan
+
+Opens the planning surface for the first time. Valid only from Topic.
+
+```
+Topic ---(plan)---> PlanDoc
+```
+
+Effect: writes `.phase = plan_doc` on the round ref. The
+doc-side manifest is not scaffolded by `plan` itself; the consumer
+authors `manifest.doc.toml` and pushes it as a separate edit before
+the next `apply`.
+
+No anchor capture. No verifier run. Cheap and idempotent.
+
+## apply
+
+Seals the current authoring manifest and transitions to the
+matching APPLY phase. Valid from PlanDoc or PlanSrc.
+
+```
+PlanDoc ---(apply)---> ApplyDoc
+PlanSrc ---(apply)---> ApplySrc
+```
+
+Effect (per side):
+- Reads `manifest.<side>.toml`, validates it structurally and against
+  the verifier catalog.
+- Hashes the manifest content; writes it back as
+  `manifest.<side>.locked.toml` (read-only from this point).
+- Captures an anchor of the surface files the manifest claims will
+  change. Anchor blobs land at `.anchor.<side>.blobs/<sha-prefix>/<rest>`
+  for content-addressed storage.
+- Writes `.phase = apply_<side>`.
+- Pushes the new round-ref tip via the atomicity protocol.
+
+`apply` takes one required argument: `--source-tip <hex>`. This is
+the OID of the source-side branch tip at the moment of seal. The
+anchor records this OID so the round has a stable reference for
+restoration on replan.
+
+## finish
+
+Advances bookkeeping past APPLY. Valid from ApplyDoc or ApplySrc.
+
+```
+ApplyDoc ---(finish)---> PlanSrc
+ApplySrc ---(finish)---> Done
+```
+
+Effect:
+- From ApplyDoc: the locked doc manifest stays in place; phase
+  rewrites to `.phase = plan_src`. The consumer authors
+  `manifest.src.toml` next.
+- From ApplySrc: phase rewrites to `.phase = done`. Both manifests
+  remain locked. The round is closed but not yet archived.
+
+No anchor capture. No verifier run. Cheap.
+
+## replan
+
+Deprecates the current sealed manifest and returns to PLAN on the
+same side. Valid from ApplyDoc or ApplySrc.
+
+```
+ApplyDoc ---(replan)---> PlanDoc
+ApplySrc ---(replan)---> PlanSrc
+```
+
+Effect:
+- Renames `manifest.<side>.locked.toml` to the next free
+  `manifest.<side>.deprecated.<n>.toml` slot, where `<n>` is
+  zero-indexed (first replan writes `deprecated.0`).
+- Restores the source-side surface from the anchor, per the
+  `--mode` flag.
+- Writes `.phase = plan_<side>`.
+
+`replan` is the backward verb. It is **always deprecating**: the
+sealed manifest does not just unseal; it joins the deprecated chain
+as audit trail. The consumer can read prior deprecated manifests to
+see what the round committed to before each replan.
+
+### Replan modes
+
+`--mode <mode>` controls how restoration handles post-APPLY work
+that touches files the locked manifest claimed.
+
+- `destructive` (default): overwrites source-side files at
+  restoration time. Refuses (hard error) if any post-APPLY commits
+  touched claimed files. Use when no post-APPLY work has been done.
+- `additive-by-commit`: commits the restoration on top of post-APPLY
+  state rather than overwriting. History gets cluttered (post-APPLY
+  work + additive replan commit) but no work is lost.
+- `accept-loss --accept-loss-path <PATH>`: accepts post-APPLY work
+  loss for the named paths. Other claimed files refuse as in
+  `destructive`. Repeat `--accept-loss-path` per file.
+
+The local-ref portion of replan does not branch on mode (the rename
++ phase flip is identical across modes); the mode informs the
+higher-orchestration restoration step that runs alongside.
+
+## Validity matrix
+
+Putting all four verbs in one table:
+
+| From \ Verb | plan | apply | finish | replan |
+|---|---|---|---|---|
+| Topic | -> PlanDoc | invalid | invalid | invalid |
+| PlanDoc | invalid | -> ApplyDoc | invalid | invalid |
+| ApplyDoc | invalid | invalid | -> PlanSrc | -> PlanDoc |
+| PlanSrc | invalid | -> ApplySrc | invalid | invalid |
+| ApplySrc | invalid | invalid | -> Done | -> PlanSrc |
+| Done | invalid | invalid | invalid | invalid |
+
+Done has no outgoing verb. The exit is `mock close <slug>`, which
+archives the round.
+--- end ---
 mock/target/hooks/pre-commit (executable)
 +++ content +++
 #!/bin/sh

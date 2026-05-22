@@ -1,5 +1,8 @@
 /target
-/mock/target
+# Unanchored: matches `<repo>/mock/target/` AND any nested
+# `<crate>/mock/target/` produced by test fixtures that invoke
+# `cargo mock install` against a tempdir-shaped path.
+mock/target/
 /mock/Cargo.lock
 .DS_Store
 *.swp
