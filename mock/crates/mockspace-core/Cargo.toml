@@ -17,6 +17,10 @@ toml = "0.8"
 # Expanded by later Phase 5 slices as needed (network ops at the push CAS
 # slice; worktree-mutation NOT planned since spec §20 forbids `git worktree`).
 gix = { version = "0.66", default-features = false, features = ["revision"] }
+# Cross-platform advisory file locking for the Phase 5 transition lock
+# at `.git/mockspace/.lock`. fs2 wraps fcntl(F_SETLK) on POSIX and
+# LockFileEx on Windows; matches the flock(2) semantics spec §24 names.
+fs2 = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
