@@ -1,5 +1,15 @@
 # Mockspace builtin install surface
 
+> **Superseded by `202605221200_mockspace-builtin-install-surface-revised.md`.**
+> The path layout proposed here (`mock/agent/{builtin,consumer}/` as
+> tracked content) was reversed shortly after this memo merged.
+> Builtins now live at gitignored `mock/target/agent/`, reusing the
+> existing `mock/target/hooks/` precedent. The principle (split
+> between mockspace-managed and consumer-authored content) carries
+> forward; the path layout, marker convention, and migration story
+> in this memo are obsolete. Read the revised memo for the current
+> design. This file stays as audit trail.
+
 Companion memo to task #581. Captures the architectural split between
 mockspace-managed content (ships builtin with the tool, updates on refresh)
 and consumer-authored content (the project owns it; mockspace never edits).
