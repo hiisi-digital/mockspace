@@ -318,8 +318,18 @@ fn run_check(repo_root: &std::path::Path, gate: Gate) -> std::process::ExitCode 
         }
     };
 
+    // Render the gate as a lowercase word that matches the
+    // `--gate {commit|build|push}` flag value the user types. The
+    // Debug derive on `Gate` produces PascalCase, which mismatches
+    // the input vocabulary; a local match keeps the fix scoped to
+    // the CLI without broadening `Gate`'s public surface.
+    let gate_name = match gate {
+        Gate::Commit => "commit",
+        Gate::Build => "build",
+        Gate::Push => "push",
+    };
     if findings.is_empty() {
-        println!("no findings at gate {gate:?}");
+        println!("no findings at gate {gate_name}");
         return std::process::ExitCode::SUCCESS;
     }
 
