@@ -44,6 +44,27 @@ fn capture_explain_stdout(fixture: &MockspaceFixture, lint_name: &str) -> String
     String::from_utf8(output.stdout).expect("explain stdout is UTF-8")
 }
 
+/// Run `cargo mock explain <name>` against the fixture and capture
+/// stderr as a UTF-8 string. Asserts the CLI exited non-zero (this
+/// helper is for the failure path; the lint-not-found case is the
+/// canonical use). The fixture is optional because failure cases
+/// like `LintNotFound` don't depend on any fixture TOML; pass `None`
+/// to run without `--repo-root`.
+fn capture_explain_failure_stderr(fixture: Option<&MockspaceFixture>, lint_name: &str) -> String {
+    let mut command = Command::cargo_bin("mock").expect("cargo build provides the mock binary");
+    command.arg("explain").arg(lint_name);
+    if let Some(f) = fixture {
+        command.arg("--repo-root").arg(f.path());
+    }
+    let output = command.output().expect("invoke mock explain");
+    assert!(
+        !output.status.success(),
+        "mock explain unexpectedly succeeded; stdout was: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    String::from_utf8(output.stderr).expect("explain stderr is UTF-8")
+}
+
 /// Resolve the path to a checked-in golden file under
 /// `<crate>/tests/goldens/<name>.golden`. Centralised so consumers
 /// don't repeat the `CARGO_MANIFEST_DIR` join idiom.
@@ -107,4 +128,63 @@ fn explain_no_bare_numeric_against_catalog_defaults() {
     let fixture = MockspaceFixture::new().build().expect("fixture");
     let stdout = capture_explain_stdout(&fixture, "no-bare-numeric");
     assert_matches_golden("explain_no_bare_numeric_catalog_defaults", &stdout);
+}
+
+// ---- explain Layer 4 (per-lint TOML override) ----------------------------
+
+#[test]
+fn explain_no_bare_numeric_with_per_lint_toml_override() {
+    // A user-authored lints.toml drives Layer 4. The override changes
+    // scope.exempt_paths; Final values for that key resolves to
+    // Layer 4, while the unchanged config.* keys still resolve to
+    // Layer 1. This golden pins both the override-applies semantics
+    // and the layer-precedence ordering.
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml(
+            r#"
+[lints.no-bare-numeric.scope]
+exempt_paths = ["**/golden_fixture/**"]
+"#,
+        )
+        .build()
+        .expect("fixture");
+    let stdout = capture_explain_stdout(&fixture, "no-bare-numeric");
+    assert_matches_golden(
+        "explain_no_bare_numeric_per_lint_toml_override",
+        &stdout,
+    );
+}
+
+// ---- explain Layer 3 (workspace defaults) --------------------------------
+
+#[test]
+fn explain_no_bare_numeric_with_workspace_defaults() {
+    // The `[defaults]` block populates Layer 3. By design the block
+    // is flat and merges onto the config side; `[defaults] visibility
+    // = "all"` overrides the catalog default Layer 1 value. The
+    // golden captures both the Layer 3 contribution and the Final
+    // value resolving to Layer 3.
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml(
+            r#"
+[defaults]
+visibility = "all"
+"#,
+        )
+        .build()
+        .expect("fixture");
+    let stdout = capture_explain_stdout(&fixture, "no-bare-numeric");
+    assert_matches_golden("explain_no_bare_numeric_workspace_defaults", &stdout);
+}
+
+// ---- explain unknown-lint error path -------------------------------------
+
+#[test]
+fn explain_unknown_lint_stderr_diagnostic() {
+    // The unknown-lint error path surfaces ExplainError::LintNotFound
+    // on stderr with a structured message that names what the user
+    // typed back. This golden pins the error format so any drift in
+    // the Display impl on ExplainError flags here.
+    let stderr = capture_explain_failure_stderr(None, "no-such-lint-ever");
+    assert_matches_golden("explain_unknown_lint_stderr", &stderr);
 }
