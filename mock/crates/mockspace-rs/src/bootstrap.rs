@@ -25,6 +25,35 @@
 
 use std::path::Path;
 
+/// State of the builtin agent extraction under
+/// `<root>/mock/target/agent/`. Slice 4 of the install-surface work
+/// per `mock/research/202605221200_mockspace-builtin-install-surface-revised.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentExtractState {
+    /// `VERSION` sidecar matches the binary's `CARGO_PKG_VERSION`
+    /// and the `INDEX.md` sentinel is present. Extract is current.
+    Present,
+    /// `VERSION` sidecar exists but disagrees with the binary, or
+    /// the `INDEX.md` sentinel is missing. The next cold-start
+    /// subcommand (or `cargo mock refresh`) re-extracts.
+    Stale,
+    /// No `VERSION` sidecar (or no agent directory at all). The
+    /// extract has not run, or ran and was then wiped (e.g. by
+    /// `cargo clean`). The next cold-start subcommand extracts.
+    Missing,
+}
+
+impl AgentExtractState {
+    /// Short human-readable label for status reporting.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Present => "present",
+            Self::Stale => "stale",
+            Self::Missing => "missing",
+        }
+    }
+}
+
 /// Read-only summary of how thoroughly the v2 bootstrap has been
 /// applied in a consumer repo. Returned by [`status`]; consumed by
 /// the CLI's `cargo mock status` subcommand (#560) and by the
@@ -43,22 +72,33 @@ pub struct AdoptionStatus {
     /// under `mock/target/hooks/`? The bootstrap writes this so
     /// git's commit and push gates fire mockspace's hook scripts.
     pub has_hooks_path: bool,
+    /// State of the builtin agent extraction under
+    /// `mock/target/agent/`. See [`AgentExtractState`].
+    pub agent_extract: AgentExtractState,
 }
 
 impl AdoptionStatus {
-    /// All three signals present: the repo is fully opted in.
+    /// All bootstrap signals present and the agent extract is
+    /// current. The repo is fully opted in.
     pub fn is_fully_adopted(&self) -> bool {
-        self.has_mock_dir && self.has_cargo_alias && self.has_hooks_path
+        self.has_mock_dir
+            && self.has_cargo_alias
+            && self.has_hooks_path
+            && self.agent_extract == AgentExtractState::Present
     }
 
     /// None of the signals present: the repo has not opted in at
     /// all. Workspace gates treat this as silent allow rather than
-    /// drift.
+    /// drift. The agent extract is allowed to be missing (it is a
+    /// derived runtime artifact, not part of opt-in proper).
     pub fn is_uninstalled(&self) -> bool {
-        !self.has_mock_dir && !self.has_cargo_alias && !self.has_hooks_path
+        !self.has_mock_dir
+            && !self.has_cargo_alias
+            && !self.has_hooks_path
+            && self.agent_extract == AgentExtractState::Missing
     }
 
-    /// At least one signal but not all three: the repo's adoption
+    /// At least one signal but not all of them: the repo's adoption
     /// has drifted out of step. Workspace gates surface this as a
     /// structured deny so the user notices.
     pub fn is_partial(&self) -> bool {
@@ -67,8 +107,8 @@ impl AdoptionStatus {
 }
 
 /// Inspect `repo_root` and return the observed adoption signals.
-/// Pure read; never mutates the filesystem or git config. The three
-/// signals are derived independently so a partial-adoption state is
+/// Pure read; never mutates the filesystem or git config. Signals
+/// are derived independently so a partial-adoption state is
 /// detectable as such (rather than being silently rounded to "not
 /// installed" or "installed").
 pub fn status(repo_root: &Path) -> AdoptionStatus {
@@ -76,6 +116,39 @@ pub fn status(repo_root: &Path) -> AdoptionStatus {
         has_mock_dir: has_mock_dir(repo_root),
         has_cargo_alias: has_cargo_alias(repo_root),
         has_hooks_path: has_hooks_path(repo_root),
+        agent_extract: agent_extract_state(repo_root),
+    }
+}
+
+/// Probe `<repo_root>/mock/target/agent/` for the VERSION sidecar
+/// and INDEX.md sentinel. The two-probe shape mirrors
+/// [`ensure_agent_extracted`]: VERSION-only would miss the
+/// partial-delete drift mode, INDEX.md-only would miss a
+/// stale-version case.
+fn agent_extract_state(repo_root: &Path) -> AgentExtractState {
+    let agent_dir = repo_root.join(AGENT_DIR);
+    let version_path = agent_dir.join(AGENT_VERSION_FILE);
+    match std::fs::read_to_string(&version_path) {
+        Ok(contents) => {
+            let canonical = format!("{BINARY_VERSION}\n");
+            if contents != canonical {
+                AgentExtractState::Stale
+            } else if !agent_dir.join("INDEX.md").exists() {
+                AgentExtractState::Stale
+            } else {
+                AgentExtractState::Present
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => AgentExtractState::Missing,
+        // Any non-NotFound read failure (permission denied, IO error)
+        // maps to Stale rather than Missing. The status surface tells
+        // the consumer "run refresh" rather than "extract has not
+        // happened yet", which is the right narrative when the
+        // sidecar exists but can't be read. `ensure_agent_extracted`
+        // collapses the same case via `.ok()` and triggers re-extract;
+        // both paths converge on the same end state via different
+        // routes.
+        Err(_) => AgentExtractState::Stale,
     }
 }
 
@@ -881,16 +954,18 @@ mod tests {
     }
 
     #[test]
-    fn fully_adopted_repo_reports_all_three_signals() {
+    fn fully_adopted_repo_reports_all_signals() {
         let root = fixture_dir("full");
         write_mock_dir(&root);
         write_cargo_alias(&root);
         write_git_hooks_path(&root);
+        install_agent_builtin(&root).expect("install agent");
         let s = status(&root);
         cleanup(&root);
         assert!(s.has_mock_dir);
         assert!(s.has_cargo_alias);
         assert!(s.has_hooks_path);
+        assert_eq!(s.agent_extract, AgentExtractState::Present);
         assert!(s.is_fully_adopted());
         assert!(!s.is_uninstalled());
         assert!(!s.is_partial());
@@ -1736,24 +1811,82 @@ mod tests {
 
     #[test]
     fn is_fully_adopted_and_is_uninstalled_are_disjoint() {
-        // Exhaustive 2^3 = 8 combinations of the three signals.
+        // Exhaustive 2^3 * 3 = 24 combinations across the three
+        // bootstrap signals plus the agent-extract tri-state.
         for mock in [false, true] {
             for alias in [false, true] {
                 for hooks in [false, true] {
-                    let s = AdoptionStatus {
-                        has_mock_dir: mock,
-                        has_cargo_alias: alias,
-                        has_hooks_path: hooks,
-                    };
-                    let n = s.is_fully_adopted() as u8
-                        + s.is_uninstalled() as u8
-                        + s.is_partial() as u8;
-                    assert_eq!(
-                        n, 1,
-                        "exactly one of the three predicates should hold; mock={mock} alias={alias} hooks={hooks}"
-                    );
+                    for agent in [
+                        AgentExtractState::Present,
+                        AgentExtractState::Stale,
+                        AgentExtractState::Missing,
+                    ] {
+                        let s = AdoptionStatus {
+                            has_mock_dir: mock,
+                            has_cargo_alias: alias,
+                            has_hooks_path: hooks,
+                            agent_extract: agent,
+                        };
+                        let n = s.is_fully_adopted() as u8
+                            + s.is_uninstalled() as u8
+                            + s.is_partial() as u8;
+                        assert_eq!(
+                            n, 1,
+                            "exactly one of the three predicates should hold; \
+                             mock={mock} alias={alias} hooks={hooks} agent={agent:?}"
+                        );
+                    }
                 }
             }
         }
+    }
+
+    // ---- agent_extract_state probe ------------------------------------
+
+    #[test]
+    fn agent_extract_state_missing_when_no_agent_dir() {
+        let root = fixture_dir("agent-state-missing");
+        let state = agent_extract_state(&root);
+        cleanup(&root);
+        assert_eq!(state, AgentExtractState::Missing);
+    }
+
+    #[test]
+    fn agent_extract_state_present_after_install() {
+        let root = fixture_dir("agent-state-present");
+        install_agent_builtin(&root).expect("install");
+        let state = agent_extract_state(&root);
+        cleanup(&root);
+        assert_eq!(state, AgentExtractState::Present);
+    }
+
+    #[test]
+    fn agent_extract_state_stale_when_version_disagrees() {
+        let root = fixture_dir("agent-state-stale-version");
+        install_agent_builtin(&root).expect("install");
+        let version_path = root
+            .join("mock")
+            .join("target")
+            .join("agent")
+            .join("VERSION");
+        std::fs::write(&version_path, "0.0.0-stale\n").expect("write stale");
+        let state = agent_extract_state(&root);
+        cleanup(&root);
+        assert_eq!(state, AgentExtractState::Stale);
+    }
+
+    #[test]
+    fn agent_extract_state_stale_when_sentinel_missing() {
+        let root = fixture_dir("agent-state-stale-sentinel");
+        install_agent_builtin(&root).expect("install");
+        let index_path = root
+            .join("mock")
+            .join("target")
+            .join("agent")
+            .join("INDEX.md");
+        std::fs::remove_file(&index_path).expect("remove INDEX.md");
+        let state = agent_extract_state(&root);
+        cleanup(&root);
+        assert_eq!(state, AgentExtractState::Stale);
     }
 }
