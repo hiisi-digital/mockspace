@@ -20,9 +20,11 @@ use mockspace_rs::{
     config_loader::{find_and_read_lints_toml, LintsConfig, LintsTomlFile, OverrideCascade},
     design_rounds::discover_design_rounds,
     engine::MockspaceEngine,
-    explain, preset_source, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError,
-    ArchiveReport, DesignRound, FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError,
-    ObjectId, Phase, RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, Slug,
+    explain, preset_source, render_check, render_regenerate, scope_walk, AdvanceError,
+    AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport, DesignRound,
+    FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError, ObjectId, Phase,
+    RegenerateError, RegenerateReport, RepoError, RepoHandle, ReplanMode, RoundState, RunSurface,
+    Severity, Slug, WriteState,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -130,6 +132,27 @@ enum Command {
     /// behind an explicit `--auto` flag once the classification
     /// surface here is reviewed.
     Migrate,
+    /// Render the `mock/*.md.tmpl` templates into `docs/`. Walks
+    /// both the mock-root templates (DESIGN / PRINCIPLES / WORKFLOW)
+    /// and every per-crate template under `mock/crates/<name>/`
+    /// (DESIGN, BACKLOG, and any `deepdives/*.md.tmpl`). Per-crate
+    /// `SHAME.md.tmpl` is intentionally never rendered.
+    ///
+    /// With `--check`, prints a drift report and exits non-zero
+    /// when any rendered output diverges from disk or is missing.
+    /// CI consumers use `--check`; user-driven regen uses the
+    /// default write mode.
+    Regenerate {
+        /// Compare rendered output against `docs/` on disk and
+        /// exit non-zero on any drift instead of writing.
+        #[arg(long)]
+        check: bool,
+        /// Override the output directory. Defaults to
+        /// `<repo-root>/docs`. Useful for dry-runs into a scratch
+        /// location.
+        #[arg(long, value_name = "PATH")]
+        out_dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -308,6 +331,11 @@ fn main() -> std::process::ExitCode {
         Command::Migrate => {
             ensure_agent_ready(&repo_root);
             run_migrate(&repo_root)
+        }
+        Command::Regenerate { check, out_dir } => {
+            ensure_agent_ready(&repo_root);
+            let out = out_dir.unwrap_or_else(|| repo_root.join("docs"));
+            run_regenerate(&repo_root, &out, check)
         }
     }
 }
@@ -997,4 +1025,111 @@ fn run_check(
 
 fn yes_no(b: bool) -> &'static str {
     if b { "yes" } else { "no" }
+}
+
+/// Render the `mock/*.md.tmpl` templates into `out_dir`, or compare
+/// against on-disk output and exit non-zero on drift when `check` is
+/// set.
+///
+/// Walks the project via `scope_walk` to assemble the `MockspaceProject`
+/// the render module needs (crate graph, workspace members, design
+/// rounds, etc.). The walk reuses the same scope inference the lint
+/// engine uses, so behaviour stays consistent across CLI surfaces.
+fn run_regenerate(
+    repo_root: &std::path::Path,
+    out_dir: &std::path::Path,
+    check_only: bool,
+) -> std::process::ExitCode {
+    let project = match scope_walk(repo_root, RunSurface::Local) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "regenerate failed: could not walk project at `{}`: {e}",
+                repo_root.display()
+            );
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+
+    if check_only {
+        match render_check(&project, out_dir) {
+            Ok(report) => print_check_report(&report, out_dir),
+            Err(e) => {
+                eprintln!("regenerate --check failed: {}", format_render_error(&e));
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+    } else {
+        match render_regenerate(&project, out_dir) {
+            Ok(report) => print_regenerate_report(&report, out_dir),
+            Err(e) => {
+                eprintln!("regenerate failed: {}", format_render_error(&e));
+                return std::process::ExitCode::FAILURE;
+            }
+        }
+    }
+}
+
+fn print_regenerate_report(
+    report: &RegenerateReport,
+    out_dir: &std::path::Path,
+) -> std::process::ExitCode {
+    let (mut created, mut updated, mut unchanged) = (0usize, 0usize, 0usize);
+    for f in &report.files {
+        match f.state {
+            WriteState::Created => created += 1,
+            WriteState::Updated => updated += 1,
+            WriteState::Unchanged => unchanged += 1,
+        }
+    }
+    println!(
+        "rendered {} files into `{}`: {} created, {} updated, {} unchanged",
+        report.files.len(),
+        out_dir.display(),
+        created,
+        updated,
+        unchanged,
+    );
+    std::process::ExitCode::SUCCESS
+}
+
+fn print_check_report(
+    report: &CheckReport,
+    out_dir: &std::path::Path,
+) -> std::process::ExitCode {
+    if report.needs_regen() {
+        println!(
+            "drift detected against `{}`: {} drifted, {} missing, {} matched",
+            out_dir.display(),
+            report.drifted.len(),
+            report.missing.len(),
+            report.matched.len(),
+        );
+        for path in &report.drifted {
+            println!("  drifted: {}", path.display());
+        }
+        for path in &report.missing {
+            println!("  missing: {}", path.display());
+        }
+        std::process::ExitCode::FAILURE
+    } else {
+        println!(
+            "no drift against `{}`: {} matched",
+            out_dir.display(),
+            report.matched.len(),
+        );
+        std::process::ExitCode::SUCCESS
+    }
+}
+
+fn format_render_error(e: &RegenerateError) -> String {
+    match e {
+        RegenerateError::Io { path, source } => {
+            format!("io error on `{}`: {source}", path.display())
+        }
+        RegenerateError::TemplateMissing(p) => {
+            format!("template missing: `{}`", p.display())
+        }
+        RegenerateError::Render(r) => format!("template render error: {r}"),
+    }
 }

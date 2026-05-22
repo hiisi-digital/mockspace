@@ -84,6 +84,7 @@ pub use project::{
     CrateGraph, CrateInfo, DesignRound, DesignRoundsView, MockspaceProject, RoundState,
     WorkspaceMetadata,
 };
+pub use scope::scope_walk;
 pub use staging::{StagedSet, StagingFilter, StagingFilterError};
 
 // Re-export the lint-engine vocabulary from mockspace-core so

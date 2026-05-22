@@ -1,8 +1,12 @@
 /target
-# Unanchored: matches `<repo>/mock/target/` AND any nested
+# Matches `<repo>/mock/target/` AND any nested
 # `<crate>/mock/target/` produced by test fixtures that invoke
-# `cargo mock install` against a tempdir-shaped path.
-mock/target/
+# `cargo mock install` against a tempdir-shaped path. The `**/`
+# prefix is required: a bare `mock/target/` pattern with an
+# internal slash is anchored to the gitignore's own directory by
+# git's fnmatch FNM_PATHNAME semantics, so it would not match
+# nested copies under `mock/crates/<name>/mock/target/`.
+**/mock/target/
 /mock/Cargo.lock
 .DS_Store
 *.swp
