@@ -621,29 +621,15 @@ fn classify_v1_round(round: &DesignRound) -> (&'static str, String) {
 }
 
 fn print_migration_postscript() {
-    println!("Things you (the consumer) need to update by hand:");
+    println!("To fix by hand:");
     println!();
-    println!("  CI workflows (`.github/workflows/*.yml`, equivalent on other forges):");
-    println!("    If your CI invokes `cargo mock lock` or `cargo mock deprecate`,");
-    println!("    switch the calls to the v2 verb surface:");
-    println!("      `cargo mock lock <slug>`        -> `cargo mock phase apply <slug> --source-tip <hex>`");
-    println!("      `cargo mock deprecate <slug>`   -> `cargo mock phase replan <slug> [--mode ...]`");
-    println!("      `cargo mock close <slug>`       -> (unchanged in v2)");
+    println!("- CI workflows calling the old verbs:");
+    println!("    lock      -> cargo mock phase apply <slug> --source-tip <hex>");
+    println!("    deprecate -> cargo mock phase replan <slug> [--mode ...]");
+    println!("    close     -> (unchanged)");
     println!();
-    println!("  Tracked tasks / project memos that reference v1 verbs:");
-    println!("    Grep your repo for `mock lock` / `mock deprecate` in prose and");
-    println!("    update by hand. Mockspace does not edit your in-repo writing.");
-    println!();
-    println!("Things mockspace ships builtin (do NOT update by hand):");
-    println!();
-    println!("  Canonical agent rules describing mockspace itself (what the phases");
-    println!("  are, what the verbs do, the workflow shape) and the canonical hook");
-    println!("  scripts that drive `cargo mock check` at the commit/build/push gates");
-    println!("  are part of the mockspace install surface. Run `cargo mock refresh`");
-    println!("  to pull the current canonical state. Anything mockspace-internal in");
-    println!("  your repo's agent docs / hooks is overwritten by the refresh; only");
-    println!("  consumer-authored conventions (project lints, repo-specific");
-    println!("  workflows, the bits NOT about mockspace itself) are preserved.");
+    println!("- Tasks, memos, prose that mention `mock lock` or `mock deprecate`.");
+    println!("  Grep and update.");
 }
 
 fn run_status(repo_root: &std::path::Path) -> std::process::ExitCode {
