@@ -1,4 +1,4 @@
-crates/probe/src/lib.rs:1:1: [warning] no-public-raw-field: forbidden type `u64` in this position
 crates/probe/src/lib.rs:1:1: [warning] no-manual-id: `Bag` is a newtype over primitive `u64`; use an arvo alias or named typestate
+crates/probe/src/lib.rs:1:1: [warning] no-public-raw-field: forbidden type `u64` in this position
 crates/probe/src/lib.rs:1:1: [error] no-bare-numeric: forbidden type `usize` in this position
 crates/probe/src/lib.rs:1:1: [error] no-bare-numeric: forbidden type `u64` in this position

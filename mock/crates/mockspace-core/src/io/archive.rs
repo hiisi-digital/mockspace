@@ -142,7 +142,7 @@ impl RepoHandle {
             Ok(oid) => oid,
             Err(RefTreeReadError::RefNotFound { .. }) => {
                 return Err(ArchiveError::RoundRefMissing {
-                    slug: slug.as_str().to_owned(),
+                    slug: slug.as_ref().to_owned(),
                 });
             }
             Err(other) => return Err(other.into()),
@@ -173,7 +173,7 @@ impl RepoHandle {
             .iter()
             .map(|(k, v)| (k.to_owned(), v.to_vec()))
             .collect();
-        let slug_prefix = slug.as_str();
+        let slug_prefix = slug.as_ref();
         let mut contributed = 0usize;
         // Strip any prior `<slug>/...` entries before re-inserting
         // so idempotent retries do not stack stale + fresh views.

@@ -30,4 +30,7 @@ pub use ref_tree::{RefTreeReadError, RoundRefTree};
 pub use ref_write::RefTreeWriteError;
 pub use repo::{RepoError, RepoHandle};
 pub use seal::{SealError, SealReport};
-pub use task::{CreateTaskError, CreateTaskReport, ListTasksError, ShowTaskError};
+pub use task::{
+    CloseMetadata, CreateTaskError, CreateTaskReport, ListTasksError, ShowTaskError,
+    TaskTransitionError, TaskTransitionReport,
+};

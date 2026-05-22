@@ -200,7 +200,7 @@ impl RepoHandle {
             Ok(oid) => oid,
             Err(RefTreeReadError::RefNotFound { .. }) => {
                 return Err(SealError::RoundRefMissing {
-                    slug: slug.as_str().to_owned(),
+                    slug: slug.as_ref().to_owned(),
                 });
             }
             Err(other) => return Err(other.into()),
@@ -380,7 +380,7 @@ mod tests {
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
         entries.insert(
             "manifest.doc.toml".to_owned(),
-            doc_manifest_toml(slug.as_str()).into_bytes(),
+            doc_manifest_toml(slug.as_ref()).into_bytes(),
         );
         let tree = RoundRefTree::from_entries_pub(entries);
         handle
@@ -453,7 +453,7 @@ mod tests {
         entries.insert(".phase".to_owned(), b"apply_doc\n".to_vec());
         entries.insert(
             "manifest.doc.locked.toml".to_owned(),
-            doc_manifest_toml(slug.as_str()).into_bytes(),
+            doc_manifest_toml(slug.as_ref()).into_bytes(),
         );
         handle
             .write_round_ref(
@@ -496,11 +496,11 @@ mod tests {
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
         entries.insert(
             "manifest.doc.toml".to_owned(),
-            doc_manifest_toml(slug.as_str()).into_bytes(),
+            doc_manifest_toml(slug.as_ref()).into_bytes(),
         );
         entries.insert(
             "manifest.doc.locked.toml".to_owned(),
-            doc_manifest_toml(slug.as_str()).into_bytes(),
+            doc_manifest_toml(slug.as_ref()).into_bytes(),
         );
         handle
             .write_round_ref(

@@ -1,30 +1,57 @@
 //! Type-safe ref-path composition (spec §19).
 //!
-//! Centralises the literal strings that name git refs. The constructors here
-//! are the only path through which mockspace builds ref names; anything else
-//! risks drift from the canonical layout.
+//! [`RefPath`] plays the **human-readable name** role for the
+//! [`GitRef`] entity: a single-token validated string that names a
+//! fully-qualified git ref. Construction lives as inherent methods
+//! on `RefPath` (round_mock, round_source, task, etc.) because the
+//! layout (prefix family, segment shape) is impl-specific.
 
 use core::fmt;
 
+use crate::entity::GitRef;
+use crate::identity::{NamedRefTo, RefTo};
 use crate::namespace::Namespace;
 use crate::slug::Slug;
 
-/// A fully-qualified git ref path (e.g. `refs/mock/round/foo`).
+/// A fully-qualified git ref path. Implements [`NamedRefTo<GitRef>`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RefPath(String);
 
+/// Why a [`RefPath`] rejected at parse time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefPathError {
+    /// Empty input.
+    Empty,
+    /// Did not start with a recognised mockspace prefix
+    /// (`refs/mock/`, `refs/heads/round/`).
+    InvalidPrefix,
+}
+
+impl fmt::Display for RefPathError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("ref-path is empty"),
+            Self::InvalidPrefix => f.write_str(
+                "ref-path does not carry a recognised mockspace prefix (`refs/mock/` or `refs/heads/round/`)",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RefPathError {}
+
 impl RefPath {
-    /// `refs/mock/round/<slug>` — per-round orphan mock-side ref (spec §21).
+    /// `refs/mock/round/<slug>`, per-round orphan mock-side ref (spec §21).
     pub fn round_mock(slug: &Slug) -> Self {
         Self(format!("refs/mock/round/{slug}"))
     }
 
-    /// `refs/heads/round/<slug>` — per-round source-side feature branch (spec §21).
+    /// `refs/heads/round/<slug>`, per-round source-side feature branch (spec §21).
     pub fn round_source(slug: &Slug) -> Self {
         Self(format!("refs/heads/round/{slug}"))
     }
 
-    /// `refs/mock/round/<slug>-conflict-<host>-<ts>` — side branch
+    /// `refs/mock/round/<slug>-conflict-<host>-<ts>`, side branch
     /// preserving a lost-race commit (spec §19, §24).
     pub fn round_conflict(slug: &Slug, host: &str, timestamp: &str) -> Self {
         Self(format!(
@@ -32,32 +59,28 @@ impl RefPath {
         ))
     }
 
-    /// `refs/mock/harness` — the project's configuration ref (spec §22).
+    /// `refs/mock/harness`, the project's configuration ref (spec §22).
     pub fn harness() -> Self {
         Self("refs/mock/harness".to_owned())
     }
 
-    /// `refs/mock/task/<ns-path>/<slug>` — per-active-task orphan ref (spec §16).
+    /// `refs/mock/task/<ns-path>/<slug>`, per-active-task orphan ref (spec §16).
     pub fn task(ns: &Namespace, slug: &Slug) -> Self {
         Self(format!("refs/mock/task/{}/{}", ns.as_ref_path(), slug))
     }
 
     /// `refs/mock/task/<ns-path>/<slug>` constructor that accepts the
     /// full TaskId shape, including top-level (namespace-less) tasks.
-    /// A top-level task `migrate-to-codeberg` resolves to
-    /// `refs/mock/task/migrate-to-codeberg`. A namespaced task
-    /// `compiler::ir::lower-pass::define-grammar` resolves to
-    /// `refs/mock/task/compiler/ir/lower-pass/define-grammar`.
     pub fn task_from_id(id: &crate::task::TaskId) -> Self {
         Self(format!("refs/mock/task/{}", id.as_ref_path()))
     }
 
-    /// `refs/mock/task-archive` — unified closed-tasks archive (spec §26).
+    /// `refs/mock/task-archive`, unified closed-tasks archive (spec §26).
     pub fn task_archive() -> Self {
         Self("refs/mock/task-archive".to_owned())
     }
 
-    /// `refs/mock/round-archive` — unified closed-rounds archive (spec §26).
+    /// `refs/mock/round-archive`, unified closed-rounds archive (spec §26).
     pub fn round_archive() -> Self {
         Self("refs/mock/round-archive".to_owned())
     }
@@ -73,9 +96,32 @@ impl RefPath {
     }
 }
 
+impl AsRef<str> for RefPath {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 impl fmt::Display for RefPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl RefTo<GitRef> for RefPath {}
+
+impl NamedRefTo<GitRef> for RefPath {
+    type Error = RefPathError;
+
+    fn parse(s: &str) -> Result<Self, Self::Error> {
+        if s.is_empty() {
+            return Err(RefPathError::Empty);
+        }
+        if s.starts_with("refs/mock/") || s.starts_with("refs/heads/round/") {
+            Ok(Self(s.to_owned()))
+        } else {
+            Err(RefPathError::InvalidPrefix)
+        }
     }
 }
 
@@ -129,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn task_path_nested_namespace() {
+    fn task_path_three_segments() {
         assert_eq!(
             RefPath::task(&ns("compiler::ir::lower-pass"), &s("define-grammar")).as_str(),
             "refs/mock/task/compiler/ir/lower-pass/define-grammar"
@@ -153,11 +199,23 @@ mod tests {
 
     #[test]
     fn task_from_id_namespaced() {
-        let id =
-            crate::task::TaskId::parse("compiler::ir::lower-pass::define-grammar").expect("parse");
+        let id = crate::task::TaskId::parse("compiler::ir::lower-pass::define-grammar")
+            .expect("parse");
         assert_eq!(
             RefPath::task_from_id(&id).as_str(),
             "refs/mock/task/compiler/ir/lower-pass/define-grammar"
         );
+    }
+
+    #[test]
+    fn named_ref_to_gitref_parses() {
+        let p = <RefPath as NamedRefTo<GitRef>>::parse("refs/mock/round/foo").expect("parse");
+        assert_eq!(p.as_ref(), "refs/mock/round/foo");
+    }
+
+    #[test]
+    fn named_ref_to_gitref_rejects_unknown_prefix() {
+        let err = <RefPath as NamedRefTo<GitRef>>::parse("refs/heads/main").expect_err("reject");
+        assert!(matches!(err, RefPathError::InvalidPrefix));
     }
 }

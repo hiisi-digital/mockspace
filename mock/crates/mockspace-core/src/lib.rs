@@ -1,3 +1,5 @@
+#![feature(marker_trait_attr)]
+
 //! Ref-based storage foundation for mockspace v2.
 //!
 //! Implements the storage layer from Part III of the v2 spec at
@@ -21,7 +23,11 @@
 pub mod anchor;
 pub mod atomicity;
 pub mod bookkeeping;
+pub mod branch_name;
+pub mod entity;
+pub mod identity;
 pub mod io;
+pub mod iso8601;
 pub mod lint;
 pub mod manifest;
 pub mod namespace;
@@ -57,9 +63,13 @@ pub use manifest::{
     ChangeBlock, DeprecatedAccounting, Manifest, ScopeBlock, TaskUriError, ValidationError,
     SCHEMA_MAJOR, TASK_URI_PREFIX,
 };
+pub use branch_name::{BranchName, BranchNameError};
+pub use entity::{Branch, GitRef, Instant, Round, Task};
+pub use identity::{NamedRefTo, RefTo};
+pub use iso8601::{Iso8601Utc, Iso8601UtcError};
 pub use namespace::{Namespace, NamespaceError};
 pub use phase::{ManifestSide, Phase};
-pub use ref_path::RefPath;
+pub use ref_path::{RefPath, RefPathError};
 pub use round::{comment_filename, topic_filename, ClosedMeta, ManifestStage, PrMeta, RoundMeta};
 pub use slug::{Slug, SlugError};
 pub use task::{
