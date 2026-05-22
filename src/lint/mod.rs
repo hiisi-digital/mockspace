@@ -4,8 +4,8 @@
 //! re-exports and runs them against the mock workspace's CrateMap.
 //!
 //! Two passes:
-//! 1. Per-crate lints — each lint sees one crate at a time.
-//! 2. Cross-crate lints — each lint sees all crates simultaneously.
+//! 1. Per-crate lints: each lint sees one crate at a time.
+//! 2. Cross-crate lints: each lint sees all crates simultaneously.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -76,9 +76,9 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
 ///
 /// The `mode` determines which gate is active. Each lint violation declares
 /// its own per-gate severity; the mode selects the effective level:
-///   - `Commit` — most permissive (pre-commit hook)
-///   - `Build`  — middle strictness (default xtask run)
-///   - `Push`   — most strict (pre-push hook)
+///   - `Commit`: most permissive (pre-commit hook)
+///   - `Build`: middle strictness (default xtask run)
+///   - `Push`: most strict (pre-push hook)
 ///
 /// When `scope` is `Some`, only crates in the list are linted. This is used
 /// by the pre-commit hook to lint only crates with staged files. When `None`,
