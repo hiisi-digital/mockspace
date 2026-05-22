@@ -40,7 +40,7 @@ pub use atomicity::{
     TransitionLock,
 };
 pub use bookkeeping::{classify_root_entry, BookkeepingFile, RootEntry};
-pub use io::{RefTreeReadError, RepoError, RepoHandle, RoundRefTree};
+pub use io::{RefTreeReadError, RefTreeWriteError, RepoError, RepoHandle, RoundRefTree};
 pub use lint::{
     matches_pattern, Category, ContentHash, Directive, DirectiveRecord, Document, FileDisableEntry,
     FileDisableSet, FileOp, Finding, Fix, Gate, GateSeverity, HashAlgorithm, Impact, Language,
