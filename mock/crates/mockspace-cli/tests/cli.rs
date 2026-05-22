@@ -361,11 +361,11 @@ fn explain_warns_on_unparseable_user_toml_but_still_runs() {
 #[test]
 fn check_help_lists_all_flags() {
     // Help text smoke: catches drift if any of the flags added
-    // across PRs #97 (--gate, --repo-root) and #102 (--json) are
-    // renamed, removed, or accidentally hidden from clap output.
-    // The empty-fixture and explain tests already exercise the
-    // semantics; this just pins the surface a user sees on
-    // `mock check --help`.
+    // across PRs #97 (--gate, --repo-root), #102 (--json), and
+    // this slice (--surface) are renamed, removed, or accidentally
+    // hidden from clap output. The empty-fixture and explain tests
+    // already exercise the semantics; this just pins the surface a
+    // user sees on `mock check --help`.
     mock()
         .arg("check")
         .arg("--help")
@@ -376,7 +376,29 @@ fn check_help_lists_all_flags() {
         .stdout(predicate::str::contains("build"))
         .stdout(predicate::str::contains("push"))
         .stdout(predicate::str::contains("--json"))
-        .stdout(predicate::str::contains("--repo-root"));
+        .stdout(predicate::str::contains("--repo-root"))
+        .stdout(predicate::str::contains("--surface"))
+        .stdout(predicate::str::contains("local"))
+        .stdout(predicate::str::contains("ci"))
+        .stdout(predicate::str::contains("editor"));
+}
+
+#[test]
+fn check_accepts_surface_ci_flag() {
+    // Smoke: --surface ci passes through clap parsing and the
+    // engine accepts the resulting `RunSurface::Ci` value. Empty
+    // fixture means zero findings regardless of surface, so the
+    // assertion is just exit-zero with the "no findings" line.
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    mock()
+        .arg("check")
+        .arg("--surface")
+        .arg("ci")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("no findings"));
 }
 
 #[test]
