@@ -16,15 +16,15 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use mockspace_rs::{
-    bootstrap,
+    apply_plan, bootstrap,
     config_loader::{find_and_read_lints_toml, LintsConfig, LintsTomlFile, OverrideCascade},
     design_rounds::discover_design_rounds,
     engine::MockspaceEngine,
-    explain, preset_source, render_check, render_regenerate, scope_walk, AdvanceError,
-    AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport, DesignRound,
-    FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError, ObjectId, Phase,
-    RegenerateError, RegenerateReport, RepoError, RepoHandle, ReplanMode, RoundState, RunSurface,
-    Severity, Slug, WriteState,
+    explain, plan_fixes, preset_source, render_check, render_regenerate, render_unified_diff,
+    scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport,
+    DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore, LintEngine, LockError,
+    ObjectId, Phase, RegenerateError, RegenerateReport, RepoError, RepoHandle, ReplanMode,
+    RoundState, RunSurface, Severity, Slug, WriteState,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -104,6 +104,21 @@ enum Command {
         /// editor integrations.
         #[arg(long, value_enum, default_value_t = SurfaceArg::Local)]
         surface: SurfaceArg,
+        /// Apply suggested fixes inline to source files. Findings
+        /// without a `suggestion.fix` are skipped (advisory only).
+        /// Findings still print to stdout (or JSON) before the
+        /// fixes apply, so the user sees what was caught. Exit
+        /// code still reflects the gate evaluation; `--fix` does
+        /// not silence error-level findings, it just additionally
+        /// applies their fixes when the lint provides one.
+        #[arg(long)]
+        fix: bool,
+        /// With `--fix`, print the unified diff that would result
+        /// instead of writing the changes. Implies `--fix`. Useful
+        /// for previewing fixes in CI or for human review before
+        /// committing the changes.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Run a phase-transition verb against a round. The four
     /// verbs follow spec §14: `plan` opens TOPIC -> PLAN(doc),
@@ -316,9 +331,9 @@ fn main() -> std::process::ExitCode {
             ensure_agent_ready(&repo_root);
             run_explain(&repo_root, &name)
         }
-        Command::Check { gate, json, surface } => {
+        Command::Check { gate, json, surface, fix, dry_run } => {
             ensure_agent_ready(&repo_root);
-            run_check(&repo_root, gate.into(), json, surface.into())
+            run_check(&repo_root, gate.into(), json, surface.into(), fix, dry_run)
         }
         Command::Phase { verb } => {
             ensure_agent_ready(&repo_root);
@@ -865,6 +880,8 @@ fn run_check(
     gate: Gate,
     json: bool,
     surface: RunSurface,
+    fix: bool,
+    dry_run: bool,
 ) -> std::process::ExitCode {
     let cfg_obj = match LintsConfig::load(repo_root, OverrideCascade::default()) {
         Ok(cfg) => cfg,
@@ -967,6 +984,11 @@ fn run_check(
         };
         println!("{body}");
         let had_error = findings.iter().any(|f| matches!(f.severity, Severity::Error));
+        if fix || dry_run {
+            if let Some(code) = apply_fixes(repo_root, &findings, dry_run) {
+                return code;
+            }
+        }
         return if had_error {
             std::process::ExitCode::FAILURE
         } else {
@@ -986,7 +1008,6 @@ fn run_check(
     };
     if findings.is_empty() {
         println!("no findings at gate {gate_name}");
-        return std::process::ExitCode::SUCCESS;
     }
 
     let mut had_error = false;
@@ -1016,10 +1037,64 @@ fn run_check(
             had_error = true;
         }
     }
+    if fix || dry_run {
+        if let Some(code) = apply_fixes(repo_root, &findings, dry_run) {
+            return code;
+        }
+    }
     if had_error {
         std::process::ExitCode::FAILURE
     } else {
         std::process::ExitCode::SUCCESS
+    }
+}
+
+/// Apply (or preview) auto-fixes for any finding carrying a
+/// `suggestion.fix`. Returns `Some(exit)` when the fix path
+/// short-circuits with its own exit code (planning error, IO error
+/// during apply); returns `None` to let the caller's existing
+/// gate-evaluation logic decide the final exit code.
+///
+/// When `dry_run` is true, prints the unified diff that would result
+/// and never writes; otherwise calls `apply_plan` and prints a tally.
+fn apply_fixes(
+    repo_root: &std::path::Path,
+    findings: &[Finding],
+    dry_run: bool,
+) -> Option<std::process::ExitCode> {
+    let opts = FixOpts { dry_run, only_lints: None };
+    let plan = match plan_fixes(repo_root, findings, &opts) {
+        Ok(plan) => plan,
+        Err(e) => {
+            eprintln!("fix planning failed: {e}");
+            return Some(std::process::ExitCode::FAILURE);
+        }
+    };
+
+    if dry_run {
+        let diff = render_unified_diff(&plan);
+        if diff.is_empty() {
+            println!("no fixable findings");
+        } else {
+            print!("{diff}");
+        }
+        return None;
+    }
+
+    match apply_plan(&plan, &opts, repo_root) {
+        Ok(()) => {
+            println!(
+                "applied {applied} fix(es); {conflicts} conflict(s), {skipped} advisory finding(s) skipped",
+                applied = plan.fixes_applied,
+                conflicts = plan.conflicts.len(),
+                skipped = plan.skipped_advisory,
+            );
+            None
+        }
+        Err(e) => {
+            eprintln!("fix application failed: {e}");
+            Some(std::process::ExitCode::FAILURE)
+        }
     }
 }
 
