@@ -196,6 +196,7 @@ pub fn regenerate(
     regenerate_per_crate(project, out_dir, &mut files)?;
     write_dep_graph(&context.dep_graph, out_dir, &mut files)?;
     regenerate_benches(project, out_dir, &mut files)?;
+    regenerate_sketches(project, out_dir, &mut files)?;
 
     Ok(RegenerateReport { files })
 }
@@ -432,6 +433,117 @@ fn classify_bench_bundle(
         .collect())
 }
 
+/// Path under `<mock_root>/` that holds sketch round directories.
+/// Each direct subdirectory is one round-slug.
+const SKETCHES_PARENT: &str = "research/sketches";
+
+/// Subdirectory under `<out_dir>/` that receives rendered sketch
+/// indexes. One file per round-slug, named `<round-slug>.md`.
+const SKETCHES_OUT_DIR: &str = "sketches";
+
+/// Filename inside each `<round-slug>/` directory that describes the
+/// sketch group. The per-sketch `.rs` files are source artefacts and
+/// never render to docs; only the index README ships.
+const SKETCH_INDEX_FILE: &str = "README.md";
+
+/// Walk each sketch round under
+/// `<project.root()>/mock/research/sketches/<round-slug>/` and copy
+/// the round's `README.md` index into the rendered docs tree at
+/// `out_dir/sketches/<round-slug>.md`. Per the slice plan at
+/// `mock/research/202605221502_phase-3-bench-sketch-render-integration.md`,
+/// per-sketch `.rs` files are source artefacts and never render to
+/// docs.
+///
+/// Round directories without a `README.md` are silently skipped
+/// (the sketch group is mid-authoring). The `mock/research/sketches/`
+/// parent directory missing entirely is also silently skipped.
+fn regenerate_sketches(
+    project: &MockspaceProject,
+    out_dir: &Path,
+    out: &mut Vec<RenderedFile>,
+) -> Result<(), RegenerateError> {
+    let sketches_root = project.root().join("mock").join(SKETCHES_PARENT);
+    let indexes = match collect_sketch_indexes(&sketches_root)? {
+        Some(idxs) => idxs,
+        None => return Ok(()),
+    };
+
+    for index in indexes {
+        let dest = out_dir.join(SKETCHES_OUT_DIR).join(format!("{}.md", index.slug));
+        let body = fs::read_to_string(&index.source)
+            .map_err(|e| RegenerateError::io(index.source.clone(), e))?;
+        let state = write_raw_with_state(&body, &dest)?;
+        out.push(RenderedFile { path: dest, state });
+    }
+    Ok(())
+}
+
+/// Read-only counterpart to [`regenerate_sketches`]: classifies each
+/// round's index file against on-disk content.
+fn check_sketches(
+    project: &MockspaceProject,
+    out_dir: &Path,
+    report: &mut CheckReport,
+) -> Result<(), RegenerateError> {
+    let sketches_root = project.root().join("mock").join(SKETCHES_PARENT);
+    let indexes = match collect_sketch_indexes(&sketches_root)? {
+        Some(idxs) => idxs,
+        None => return Ok(()),
+    };
+
+    for index in indexes {
+        let dest = out_dir.join(SKETCHES_OUT_DIR).join(format!("{}.md", index.slug));
+        let body = fs::read_to_string(&index.source)
+            .map_err(|e| RegenerateError::io(index.source.clone(), e))?;
+        classify_against_disk(&dest, &body, report)?;
+    }
+    Ok(())
+}
+
+/// One sketch round's render input: the source `README.md` path on
+/// disk plus the round slug used to derive the destination filename.
+struct SketchIndex {
+    source: PathBuf,
+    slug: String,
+}
+
+/// Walk `sketches_root` and classify each direct subdirectory as a
+/// sketch round. Returns `None` when `sketches_root` itself does not
+/// exist (project has no sketches yet). Empty `Some(vec![])` means
+/// the directory exists but no round contains a `README.md`.
+///
+/// Round directories are sorted alphabetically by slug so the rendered
+/// output order is deterministic across runs.
+fn collect_sketch_indexes(
+    sketches_root: &Path,
+) -> Result<Option<Vec<SketchIndex>>, RegenerateError> {
+    let entries = match fs::read_dir(sketches_root) {
+        Ok(e) => e,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(RegenerateError::io(sketches_root, e)),
+    };
+
+    let mut round_paths: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    round_paths.sort();
+
+    let mut indexes = Vec::with_capacity(round_paths.len());
+    for round_dir in round_paths {
+        let slug = match round_dir.file_name().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let readme = round_dir.join(SKETCH_INDEX_FILE);
+        if readme.is_file() {
+            indexes.push(SketchIndex { source: readme, slug });
+        }
+    }
+    Ok(Some(indexes))
+}
+
 /// Atomic-write helper for raw (non-template-rendered) byte content.
 /// Mirrors [`write_with_state`] but skips the template render step;
 /// used for outputs like the dep-graph `.dot` and rendered SVG where
@@ -488,6 +600,7 @@ pub fn check(
     check_per_crate(project, out_dir, &mut report)?;
     check_dep_graph(&context.dep_graph, out_dir, &mut report)?;
     check_benches(project, out_dir, &mut report)?;
+    check_sketches(project, out_dir, &mut report)?;
 
     Ok(report)
 }
@@ -1414,5 +1527,157 @@ mod tests {
         let report = check(&proj, &out).expect("check after seed");
         assert!(!report.needs_regen());
         assert!(report.matched.iter().any(|p| p.ends_with("alpha/DESIGN.md")));
+    }
+
+    // -----------------------------------------------------------------
+    // Sketch-index render tests.
+
+    fn write_sketch_round(root: &Path, slug: &str, readme_body: Option<&str>) {
+        let dir = root.join("mock").join("research").join("sketches").join(slug);
+        fs::create_dir_all(&dir).unwrap();
+        if let Some(body) = readme_body {
+            fs::write(dir.join("README.md"), body).unwrap();
+        }
+    }
+
+    #[test]
+    fn regenerate_renders_sketch_round_index() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_sketch_round(tmp.path(), "202605221502_render-pipeline", Some("index body"));
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(
+            out.join("sketches").join("202605221502_render-pipeline.md"),
+        )
+        .unwrap();
+        assert_eq!(body, "index body");
+    }
+
+    #[test]
+    fn regenerate_skips_sketch_round_without_readme() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        // Round directory exists but the index README is missing
+        // (sketch group mid-authoring).
+        write_sketch_round(tmp.path(), "202605221502_no-readme", None);
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        assert!(
+            !out.join("sketches").exists(),
+            "no rendered output when no round carries a README.md"
+        );
+    }
+
+    #[test]
+    fn regenerate_skips_per_sketch_rs_files() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let round_slug = "202605221502_render-pipeline";
+        write_sketch_round(tmp.path(), round_slug, Some("index"));
+        // Per-sketch .rs files are source artefacts and must not
+        // appear in the rendered docs tree.
+        let round_dir = tmp
+            .path()
+            .join("mock")
+            .join("research")
+            .join("sketches")
+            .join(round_slug);
+        fs::write(round_dir.join("probe_a.rs"), "fn main() {}").unwrap();
+        fs::write(round_dir.join("probe_b.rs"), "fn main() {}").unwrap();
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let sketches_dir = out.join("sketches");
+        assert!(sketches_dir.join(format!("{round_slug}.md")).is_file());
+        assert!(!sketches_dir.join("probe_a.rs").exists());
+        assert!(!sketches_dir.join("probe_b.rs").exists());
+        assert!(!sketches_dir.join("probe_a.md").exists());
+    }
+
+    #[test]
+    fn regenerate_tolerates_missing_sketches_dir() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        // No mock/research/sketches/ created at all.
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        assert!(!out.join("sketches").exists());
+    }
+
+    #[test]
+    fn regenerate_renders_multiple_sketch_rounds_alphabetically() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_sketch_round(tmp.path(), "202605221502_zeta", Some("z"));
+        write_sketch_round(tmp.path(), "202605091700_alpha", Some("a"));
+        write_sketch_round(tmp.path(), "202605181400_mango", Some("m"));
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        let report = regenerate(&proj, &out).expect("regenerate");
+        let sketch_paths: Vec<&PathBuf> = report
+            .files
+            .iter()
+            .filter(|f| f.path.starts_with(out.join("sketches")))
+            .map(|f| &f.path)
+            .collect();
+        assert_eq!(sketch_paths.len(), 3);
+        assert!(sketch_paths[0].ends_with("202605091700_alpha.md"));
+        assert!(sketch_paths[1].ends_with("202605181400_mango.md"));
+        assert!(sketch_paths[2].ends_with("202605221502_zeta.md"));
+    }
+
+    #[test]
+    fn check_classifies_sketch_index_drift() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let slug = "202605221502_render-pipeline";
+        write_sketch_round(tmp.path(), slug, Some("original"));
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("seed");
+        let clean = check(&proj, &out).expect("check matches");
+        assert!(!clean.needs_regen());
+        assert!(clean
+            .matched
+            .iter()
+            .any(|p| p.ends_with(format!("sketches/{slug}.md"))));
+
+        // Hand-edit to simulate stale committed copy.
+        fs::write(out.join("sketches").join(format!("{slug}.md")), "stale").unwrap();
+        let drifted = check(&proj, &out).expect("check drift");
+        assert!(drifted.needs_regen());
+        assert!(drifted
+            .drifted
+            .iter()
+            .any(|p| p.ends_with(format!("sketches/{slug}.md"))));
+    }
+
+    #[test]
+    fn check_flags_missing_sketch_index_as_drift() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let slug = "202605221502_render-pipeline";
+        write_sketch_round(tmp.path(), slug, Some("index"));
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        // No regenerate first: rendered docs/sketches/<slug>.md is
+        // missing on disk; check must flag it.
+        let report = check(&proj, &out).expect("check");
+        assert!(report.needs_regen());
+        assert!(report
+            .missing
+            .iter()
+            .any(|p| p.ends_with(format!("sketches/{slug}.md"))));
     }
 }
