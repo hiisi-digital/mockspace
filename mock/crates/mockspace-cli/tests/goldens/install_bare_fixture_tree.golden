@@ -1,0 +1,26 @@
+.cargo/config.toml
++++ content +++
+[alias]
+mock = "run --manifest-path mock/Cargo.toml --bin mock --"
+--- end ---
+.git/config
++++ content +++
+[core]
+	hooksPath = mock/target/hooks
+--- end ---
+mock/target/hooks/pre-commit (executable)
++++ content +++
+#!/bin/sh
+# Installed by mockspace v2 bootstrap. Invokes the mockspace
+# commit gate; do not edit by hand. Re-run `cargo mock
+# install` to refresh.
+exec cargo mock check --gate commit
+--- end ---
+mock/target/hooks/pre-push (executable)
++++ content +++
+#!/bin/sh
+# Installed by mockspace v2 bootstrap. Invokes the mockspace
+# push gate; do not edit by hand. Re-run `cargo mock
+# install` to refresh.
+exec cargo mock check --gate push
+--- end ---
