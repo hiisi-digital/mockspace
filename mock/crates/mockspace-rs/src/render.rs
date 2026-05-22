@@ -1,16 +1,25 @@
-//! Render pipeline orchestrator for `mock/*.md.tmpl` documentation.
+//! Render pipeline for `mock/*.md.tmpl` documentation.
 //!
-//! Walks the three mock-root templates (`DESIGN.md.tmpl`,
-//! `PRINCIPLES.md.tmpl`, `WORKFLOW.md.tmpl`), renders each through
-//! [`mockspace_template`], and writes the output to `out_dir/<name>.md`
-//! via [`mockspace_template::render_atomic`].
+//! Walks two surfaces:
 //!
-//! The public surface is two functions ([`regenerate`] and [`check`])
-//! reused across the broader render-pipeline slice plan; new behaviour
-//! is added behind private helpers without breaking the consumer
-//! surface. Today this module covers the mock-root files only;
-//! per-crate output and dependency-graph rendering follow as additive
-//! extensions of the same two entry points.
+//! 1. The mock-root templates (`DESIGN.md.tmpl`, `PRINCIPLES.md.tmpl`,
+//!    `WORKFLOW.md.tmpl`), renders each with a workspace-wide context,
+//!    and writes to `out_dir/<name>.md`.
+//! 2. Per workspace-member crate: any of
+//!    `mock/crates/<name>/{DESIGN,BACKLOG}.md.tmpl` and every
+//!    `mock/crates/<name>/deepdives/*.md.tmpl` present on disk. Each
+//!    renders with a per-crate context (name, deps, `is_proc_macro`)
+//!    and writes to `out_dir/<name>/<file>.md`. Optional templates
+//!    silently skip when absent; `SHAME.md.tmpl` is never read.
+//!
+//! Both surfaces flow through [`mockspace_template::render_atomic`]
+//! for the write step.
+//!
+//! Public surface: two functions ([`regenerate`] and [`check`]) reused
+//! across the broader render-pipeline slice plan. New behaviour lands
+//! behind private helpers without breaking the consumer surface.
+//! Dependency-graph rendering will follow as an additive extension of
+//! the same entry points.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,15 +30,23 @@ use serde::Serialize;
 
 use mockspace_template::{render_atomic, RenderError, Template, TemplateEnv};
 
-use crate::project::MockspaceProject;
+use crate::project::{CrateInfo, MockspaceProject};
 
-/// Mock-root templates rendered by slice 2. Order is the on-disk write
-/// order; output filenames drop the trailing `.tmpl`.
+/// Mock-root templates. Order is the on-disk write order; output
+/// filenames drop the trailing `.tmpl`.
 const MOCK_ROOT_TEMPLATES: &[&str] = &[
     "DESIGN.md.tmpl",
     "PRINCIPLES.md.tmpl",
     "WORKFLOW.md.tmpl",
 ];
+
+/// Per-crate "leaf" templates that ship to public docs. Each is
+/// optional: a crate without one of these silently skips it.
+///
+/// `SHAME.md.tmpl` is intentionally absent. The lint engine reads it
+/// as workspace-internal accounting; it must not land in the rendered
+/// public docs tree.
+const CRATE_LEAF_TEMPLATES: &[&str] = &["DESIGN.md.tmpl", "BACKLOG.md.tmpl"];
 
 /// Outcome of a successful [`regenerate`] pass.
 #[derive(Debug, Default)]
@@ -81,7 +98,7 @@ impl CheckReport {
     }
 }
 
-/// Things that can go wrong during render orchestration.
+/// Things that can go wrong while rendering.
 #[derive(Debug)]
 pub enum RegenerateError {
     /// Filesystem operation failed. `path` is the file or directory the
@@ -131,13 +148,19 @@ impl std::error::Error for RegenerateError {
     }
 }
 
-/// Render the mock-root templates and write them to `out_dir`.
+/// Render the mock-root templates and the per-crate templates, writing
+/// the result tree to `out_dir`.
 ///
-/// Reads `<project.root()>/mock/{DESIGN,PRINCIPLES,WORKFLOW}.md.tmpl`,
-/// renders each with a context built from the project (workspace member
-/// summaries, plus a `dep_graph` placeholder that slice 4 will fill),
-/// and writes the result atomically to `out_dir/<name>.md`. The output
-/// directory is created if absent.
+/// Mock-root: `<project.root()>/mock/{DESIGN,PRINCIPLES,WORKFLOW}.md.tmpl`
+/// → `out_dir/<name>.md`.
+///
+/// Per workspace-member crate: any of `mock/crates/<name>/{DESIGN,BACKLOG}.md.tmpl`
+/// and every `mock/crates/<name>/deepdives/*.md.tmpl` that exists. Each
+/// renders to `out_dir/<name>/<file>.md`. Templates that are absent
+/// silently skip; `SHAME.md.tmpl` is never read.
+///
+/// The output root directory is created if absent; per-crate subdirs
+/// are auto-created by the atomic-write helper.
 pub fn regenerate(
     project: &MockspaceProject,
     out_dir: &Path,
@@ -159,14 +182,16 @@ pub fn regenerate(
         files.push(RenderedFile { path: dest, state });
     }
 
+    regenerate_per_crate(project, out_dir, &mut files)?;
+
     Ok(RegenerateReport { files })
 }
 
-/// Render the mock-root templates in memory and compare against the
-/// existing files in `out_dir`.
+/// Render the templates in memory and compare against the existing
+/// files in `out_dir`, covering both mock-root and per-crate output.
 ///
 /// Read-only; never writes. Suitable for CI gating: pair with
-/// [`CheckReport::has_drift`] to fail builds when the rendered output
+/// [`CheckReport::needs_regen`] to fail builds when the rendered output
 /// diverges from the committed copy.
 pub fn check(
     project: &MockspaceProject,
@@ -183,13 +208,11 @@ pub fn check(
         let output_name = strip_tmpl_suffix(tmpl_name);
         let dest = out_dir.join(output_name);
 
-        match fs::read_to_string(&dest) {
-            Ok(existing) if existing == rendered => report.matched.push(dest),
-            Ok(_) => report.drifted.push(dest),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => report.missing.push(dest),
-            Err(e) => return Err(RegenerateError::io(dest, e)),
-        }
+        classify_against_disk(&dest, &rendered, &mut report)?;
     }
+
+    check_per_crate(project, out_dir, &mut report)?;
+
     Ok(report)
 }
 
@@ -198,9 +221,9 @@ pub fn check(
 
 /// Context handed to mock-root templates.
 ///
-/// Slice 2 ships `crates` (per-workspace-member summaries from each
-/// crate's `README.md.tmpl`) and a `dep_graph` placeholder. Slice 4 will
-/// populate `dep_graph` with the rendered Graphviz output.
+/// `crates` carries per-workspace-member summaries from each crate's
+/// `README.md.tmpl`; `dep_graph` is a placeholder string today and will
+/// be populated by the dependency-graph rendering work.
 #[derive(Serialize, Default)]
 struct RenderContext {
     crates: Vec<CrateSummary>,
@@ -215,6 +238,171 @@ struct CrateSummary {
     /// the rendered first-paragraph summary; today the raw text is
     /// surfaced so the template can decide what to do with it.
     body: String,
+}
+
+/// Context handed to per-crate templates. One built per workspace
+/// member; surfaces the crate's identity and dep-graph position so
+/// templates can introspect their own relationship to the workspace.
+#[derive(Serialize)]
+struct PerCrateContext {
+    name: String,
+    deps: Vec<String>,
+    is_proc_macro: bool,
+}
+
+impl PerCrateContext {
+    fn from_info(info: &CrateInfo) -> Self {
+        Self {
+            name: info.name.clone(),
+            deps: info.deps.clone(),
+            is_proc_macro: info.is_proc_macro,
+        }
+    }
+}
+
+/// One per-crate render task. Captures the registered template-engine
+/// key (so [`TemplateEnv::get_template`] can look it up), the source
+/// path (for diagnostics), and the destination path under `out_dir`.
+struct PerCrateTask {
+    key: String,
+    dest: PathBuf,
+}
+
+/// Walks each workspace-member crate's `mock/crates/<name>/` directory,
+/// renders the leaf templates and any deepdives that exist, and
+/// appends each outcome to `out`.
+fn regenerate_per_crate(
+    project: &MockspaceProject,
+    out_dir: &Path,
+    out: &mut Vec<RenderedFile>,
+) -> Result<(), RegenerateError> {
+    let mock_root = project.root().join("mock");
+    for info in &project.crate_graph().crates {
+        if !info.is_workspace_member {
+            continue;
+        }
+        let crate_mock = mock_root.join("crates").join(&info.name);
+        let crate_out = out_dir.join(&info.name);
+        let context = PerCrateContext::from_info(info);
+
+        let (env, tasks) = build_per_crate_env(&crate_mock, &crate_out)?;
+        for task in tasks {
+            let template = env.get_template(&task.key)?;
+            let state = write_with_state(&template, &context, &task.dest)?;
+            out.push(RenderedFile { path: task.dest, state });
+        }
+    }
+    Ok(())
+}
+
+/// Read-only counterpart to [`regenerate_per_crate`]: walks the same
+/// templates, renders to memory, and classifies each destination on
+/// the supplied [`CheckReport`].
+fn check_per_crate(
+    project: &MockspaceProject,
+    out_dir: &Path,
+    report: &mut CheckReport,
+) -> Result<(), RegenerateError> {
+    let mock_root = project.root().join("mock");
+    for info in &project.crate_graph().crates {
+        if !info.is_workspace_member {
+            continue;
+        }
+        let crate_mock = mock_root.join("crates").join(&info.name);
+        let crate_out = out_dir.join(&info.name);
+        let context = PerCrateContext::from_info(info);
+
+        let (env, tasks) = build_per_crate_env(&crate_mock, &crate_out)?;
+        for task in tasks {
+            let template = env.get_template(&task.key)?;
+            let rendered = template.render(&context)?;
+            classify_against_disk(&task.dest, &rendered, report)?;
+        }
+    }
+    Ok(())
+}
+
+/// Build a per-crate template env: registers each present leaf template
+/// + every deepdive `*.md.tmpl`. Templates that don't exist on disk are
+/// silently skipped (per-crate templates are optional). Returns the env
+/// alongside the list of (registered-key, destination-path) pairs that
+/// the caller iterates.
+fn build_per_crate_env(
+    crate_mock: &Path,
+    crate_out: &Path,
+) -> Result<(TemplateEnv, Vec<PerCrateTask>), RegenerateError> {
+    let mut env = TemplateEnv::new();
+    let mut tasks = Vec::new();
+
+    for leaf in CRATE_LEAF_TEMPLATES {
+        let src = crate_mock.join(leaf);
+        let body = match fs::read_to_string(&src) {
+            Ok(s) => s,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(RegenerateError::io(src, e)),
+        };
+        env.add_template(leaf, &body)?;
+        tasks.push(PerCrateTask {
+            key: (*leaf).to_string(),
+            dest: crate_out.join(strip_tmpl_suffix(leaf)),
+        });
+    }
+
+    let deepdives_dir = crate_mock.join("deepdives");
+    match fs::read_dir(&deepdives_dir) {
+        Ok(entries) => {
+            // Collect into a Vec so we can sort for deterministic
+            // rendering order (matters for the test suite and any
+            // caller that walks the report sequentially).
+            let mut sorted: Vec<PathBuf> = entries
+                .filter_map(|res| res.ok())
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|n| n.ends_with(".md.tmpl"))
+                })
+                .collect();
+            sorted.sort();
+
+            for src in sorted {
+                let file_name = src
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .expect("deepdive template path filtered to .md.tmpl above")
+                    .to_string();
+                let body = fs::read_to_string(&src)
+                    .map_err(|e| RegenerateError::io(src.clone(), e))?;
+                let key = format!("deepdives/{file_name}");
+                env.add_template(&key, &body)?;
+                tasks.push(PerCrateTask {
+                    key,
+                    dest: crate_out.join("deepdives").join(strip_tmpl_suffix(&file_name)),
+                });
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(RegenerateError::io(deepdives_dir, e)),
+    }
+
+    Ok((env, tasks))
+}
+
+/// Compare a rendered string against `dest`'s on-disk content and
+/// classify the result into the report. Shared by mock-root and
+/// per-crate `check` paths.
+fn classify_against_disk(
+    dest: &Path,
+    rendered: &str,
+    report: &mut CheckReport,
+) -> Result<(), RegenerateError> {
+    match fs::read_to_string(dest) {
+        Ok(existing) if existing == rendered => report.matched.push(dest.to_path_buf()),
+        Ok(_) => report.drifted.push(dest.to_path_buf()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => report.missing.push(dest.to_path_buf()),
+        Err(e) => return Err(RegenerateError::io(dest, e)),
+    }
+    Ok(())
 }
 
 fn build_context(project: &MockspaceProject) -> Result<RenderContext, RegenerateError> {
@@ -552,5 +740,209 @@ mod tests {
         let ctx = build_context(&proj).unwrap();
         assert_eq!(ctx.crates.len(), 2);
         assert!(ctx.crates.iter().all(|c| c.body.is_empty()));
+    }
+
+    // -----------------------------------------------------------------
+    // Per-crate walk tests.
+
+    fn write_crate_template(root: &Path, crate_name: &str, leaf: &str, body: &str) {
+        let dir = root.join("mock").join("crates").join(crate_name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(leaf), body).unwrap();
+    }
+
+    fn write_crate_deepdive(root: &Path, crate_name: &str, topic: &str, body: &str) {
+        let dir = root.join("mock").join("crates").join(crate_name).join("deepdives");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{topic}.md.tmpl")), body).unwrap();
+    }
+
+    #[test]
+    fn regenerate_renders_per_crate_design_and_backlog() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_crate_template(tmp.path(), "alpha", "DESIGN.md.tmpl", "alpha design {{ name }}");
+        write_crate_template(tmp.path(), "alpha", "BACKLOG.md.tmpl", "alpha backlog");
+        let proj = project(tmp.path(), &["alpha"]);
+        let out = tmp.path().join("docs");
+
+        let report = regenerate(&proj, &out).expect("regenerate");
+
+        // 3 mock-root + 2 per-crate = 5
+        assert_eq!(report.files.len(), 5);
+        let design = fs::read_to_string(out.join("alpha").join("DESIGN.md")).unwrap();
+        assert_eq!(design, "alpha design alpha");
+        let backlog = fs::read_to_string(out.join("alpha").join("BACKLOG.md")).unwrap();
+        assert_eq!(backlog, "alpha backlog");
+    }
+
+    #[test]
+    fn regenerate_renders_deepdives_under_subdir() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_crate_deepdive(tmp.path(), "alpha", "memory-model", "deep dive on memory");
+        write_crate_deepdive(tmp.path(), "alpha", "thread-pool", "deep dive on threads");
+        let proj = project(tmp.path(), &["alpha"]);
+        let out = tmp.path().join("docs");
+
+        let report = regenerate(&proj, &out).expect("regenerate");
+        let deepdive_dir = out.join("alpha").join("deepdives");
+        assert!(deepdive_dir.join("memory-model.md").is_file());
+        assert!(deepdive_dir.join("thread-pool.md").is_file());
+
+        // Order is alphabetical thanks to the deepdive sort.
+        let per_crate: Vec<&PathBuf> = report
+            .files
+            .iter()
+            .filter_map(|f| {
+                if f.path.starts_with(&deepdive_dir) {
+                    Some(&f.path)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(per_crate.len(), 2);
+        assert!(per_crate[0].ends_with("memory-model.md"));
+        assert!(per_crate[1].ends_with("thread-pool.md"));
+    }
+
+    #[test]
+    fn regenerate_tolerates_crate_with_no_templates() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let proj = project(tmp.path(), &["alpha"]);
+        // Note: no per-crate templates written.
+        let out = tmp.path().join("docs");
+
+        let report = regenerate(&proj, &out).expect("regenerate");
+        // Only the 3 mock-root files; per-crate walk silently produces zero.
+        assert_eq!(report.files.len(), 3);
+        assert!(!out.join("alpha").exists());
+    }
+
+    #[test]
+    fn regenerate_skips_shame_template() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        // SHAME.md.tmpl present alongside DESIGN.md.tmpl.
+        write_crate_template(tmp.path(), "alpha", "DESIGN.md.tmpl", "alpha design");
+        write_crate_template(
+            tmp.path(),
+            "alpha",
+            "SHAME.md.tmpl",
+            "internal accounting, must not leak",
+        );
+        let proj = project(tmp.path(), &["alpha"]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        assert!(out.join("alpha").join("DESIGN.md").is_file());
+        assert!(
+            !out.join("alpha").join("SHAME.md").exists(),
+            "SHAME.md.tmpl must never reach the rendered docs tree"
+        );
+    }
+
+    #[test]
+    fn regenerate_per_crate_context_carries_deps() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_crate_template(
+            tmp.path(),
+            "beta",
+            "DESIGN.md.tmpl",
+            "beta deps: {% for d in deps %}{{ d }} {% endfor %}",
+        );
+        // Hand-build a project with a dep edge alpha → beta.
+        let alpha = CrateInfo {
+            name: "alpha".to_string(),
+            root_path: tmp.path().join("alpha"),
+            is_proc_macro: false,
+            is_workspace_member: true,
+            deps: Vec::new(),
+        };
+        let beta = CrateInfo {
+            name: "beta".to_string(),
+            root_path: tmp.path().join("beta"),
+            is_proc_macro: false,
+            is_workspace_member: true,
+            deps: vec!["alpha".to_string()],
+        };
+        let mut by_name = std::collections::HashMap::new();
+        by_name.insert("alpha".to_string(), 0);
+        by_name.insert("beta".to_string(), 1);
+        let graph = CrateGraph {
+            crates: vec![alpha, beta],
+            by_name,
+        };
+        let proj = ProjectBuilder::new(tmp.path().to_path_buf(), RunSurface::Ci, Gate::Commit)
+            .with_crate_graph(graph)
+            .build();
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("beta").join("DESIGN.md")).unwrap();
+        assert_eq!(body, "beta deps: alpha ");
+    }
+
+    #[test]
+    fn regenerate_per_crate_classifies_states() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_crate_template(tmp.path(), "alpha", "DESIGN.md.tmpl", "v1");
+        let proj = project(tmp.path(), &["alpha"]);
+        let out = tmp.path().join("docs");
+
+        let first = regenerate(&proj, &out).expect("first");
+        // Find the per-crate file in the first report.
+        let alpha_first = first
+            .files
+            .iter()
+            .find(|f| f.path.ends_with("alpha/DESIGN.md"))
+            .unwrap();
+        assert_eq!(alpha_first.state, WriteState::Created);
+
+        // Re-render same body: Unchanged.
+        let second = regenerate(&proj, &out).expect("second");
+        let alpha_second = second
+            .files
+            .iter()
+            .find(|f| f.path.ends_with("alpha/DESIGN.md"))
+            .unwrap();
+        assert_eq!(alpha_second.state, WriteState::Unchanged);
+
+        // Change body: Updated.
+        write_crate_template(tmp.path(), "alpha", "DESIGN.md.tmpl", "v2");
+        let third = regenerate(&proj, &out).expect("third");
+        let alpha_third = third
+            .files
+            .iter()
+            .find(|f| f.path.ends_with("alpha/DESIGN.md"))
+            .unwrap();
+        assert_eq!(alpha_third.state, WriteState::Updated);
+    }
+
+    #[test]
+    fn check_classifies_per_crate_output() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_crate_template(tmp.path(), "alpha", "DESIGN.md.tmpl", "alpha");
+        let proj = project(tmp.path(), &["alpha"]);
+        let out = tmp.path().join("docs");
+
+        // No regenerate first: per-crate file is missing on disk.
+        let report = check(&proj, &out).expect("check");
+        assert!(report.needs_regen());
+        assert!(report
+            .missing
+            .iter()
+            .any(|p| p.ends_with("alpha/DESIGN.md")));
+
+        // Seed, then check again: matched.
+        regenerate(&proj, &out).expect("seed");
+        let report = check(&proj, &out).expect("check after seed");
+        assert!(!report.needs_regen());
+        assert!(report.matched.iter().any(|p| p.ends_with("alpha/DESIGN.md")));
     }
 }
