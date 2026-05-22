@@ -40,6 +40,22 @@ pub const AI_NOTICE_FORM_A_MARKER: &str = "<!-- mockspace:ai-notice-form-a -->";
 /// [`AI_NOTICE_FORM_A_MARKER`] but for the PRINCIPLES.md form.
 pub const AI_NOTICE_FORM_B_MARKER: &str = "<!-- mockspace:ai-notice-form-b -->";
 
+/// Concise canonical reference for mockspace's own workflow,
+/// auto-injected into WORKFLOW.md when a template lacks the marker.
+/// Summarises the six-phase machine, the four transition verbs, the
+/// doc/src side split, and the `cargo mock` subcommand surface; points
+/// at `mock/target/agent/` for the per-topic deep dive that ships via
+/// `cargo mock install`. Carries the
+/// `<!-- mockspace:workflow-reference -->` marker.
+pub const WORKFLOW_REFERENCE: &str = include_str!("workflow_reference.md");
+
+/// Marker comment present in [`WORKFLOW_REFERENCE`]. Same role as the
+/// AI-notice markers: the render pipeline scans rendered WORKFLOW.md
+/// output for this string before injecting; presence suppresses
+/// injection so a template that authors its own workflow reference is
+/// not double-stamped.
+pub const WORKFLOW_REFERENCE_MARKER: &str = "<!-- mockspace:workflow-reference -->";
+
 /// Append `fragment` to `rendered` when `marker` is not already
 /// present. The marker presence check is a single `str::contains`;
 /// the fragment itself carries the marker on its first line so a
@@ -106,6 +122,14 @@ mod tests {
         assert!(
             AI_NOTICE_FORM_B.contains(AI_NOTICE_FORM_B_MARKER),
             "Form B fragment must carry its marker so auto-injection is idempotent"
+        );
+    }
+
+    #[test]
+    fn workflow_reference_const_carries_its_marker() {
+        assert!(
+            WORKFLOW_REFERENCE.contains(WORKFLOW_REFERENCE_MARKER),
+            "Workflow-reference fragment must carry its marker so auto-injection is idempotent"
         );
     }
 }
