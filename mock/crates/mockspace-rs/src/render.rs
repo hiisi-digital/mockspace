@@ -892,10 +892,14 @@ fn strip_tmpl_suffix(name: &str) -> &str {
 fn inject_mock_root_fragments(tmpl_name: &str, rendered: String) -> String {
     use crate::render_fragments::{
         inject_if_absent, AI_NOTICE_FORM_A, AI_NOTICE_FORM_A_MARKER, AI_NOTICE_FORM_B,
-        AI_NOTICE_FORM_B_MARKER,
+        AI_NOTICE_FORM_B_MARKER, WORKFLOW_REFERENCE, WORKFLOW_REFERENCE_MARKER,
     };
     match tmpl_name {
         "WORKFLOW.md.tmpl" => {
+            // Workflow reference appends first so it appears above
+            // the AI-tooling caveat in the rendered output.
+            let rendered =
+                inject_if_absent(rendered, WORKFLOW_REFERENCE_MARKER, WORKFLOW_REFERENCE);
             inject_if_absent(rendered, AI_NOTICE_FORM_A_MARKER, AI_NOTICE_FORM_A)
         }
         "PRINCIPLES.md.tmpl" => {
@@ -1831,6 +1835,97 @@ mod tests {
             "regenerate-then-check must converge; drifted: {:?}, missing: {:?}",
             report.drifted,
             report.missing
+        );
+    }
+
+    #[test]
+    fn regenerate_injects_workflow_reference_into_workflow() {
+        // Template lacks the workflow-reference marker; the renderer
+        // must inject the canonical workflow reference fragment.
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("WORKFLOW.md")).unwrap();
+        assert!(
+            body.contains("<!-- mockspace:workflow-reference -->"),
+            "Workflow-reference marker must appear in rendered WORKFLOW.md, got: {body}"
+        );
+        assert!(
+            body.contains("Mockspace workflow at a glance"),
+            "Workflow-reference heading must appear in rendered WORKFLOW.md, got: {body}"
+        );
+    }
+
+    #[test]
+    fn regenerate_orders_workflow_reference_above_ai_notice() {
+        // Workflow reference is substantive content; AI notice is a
+        // tooling caveat. The rendered ordering must put the
+        // workflow reference above the AI notice.
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("WORKFLOW.md")).unwrap();
+        let workflow_ref_idx = body
+            .find("<!-- mockspace:workflow-reference -->")
+            .expect("workflow reference marker present");
+        let ai_notice_idx = body
+            .find("<!-- mockspace:ai-notice-form-a -->")
+            .expect("AI notice marker present");
+        assert!(
+            workflow_ref_idx < ai_notice_idx,
+            "workflow reference must precede AI notice in rendered output; \
+             workflow_ref_idx={workflow_ref_idx}, ai_notice_idx={ai_notice_idx}"
+        );
+    }
+
+    #[test]
+    fn regenerate_skips_workflow_reference_when_template_authors_it() {
+        // Template carrying the canonical marker preempts injection
+        // so the same content does not double-stamp.
+        let tmp = TempDir::new().unwrap();
+        let mock = tmp.path().join("mock");
+        fs::create_dir_all(&mock).unwrap();
+        fs::write(
+            mock.join("WORKFLOW.md.tmpl"),
+            "custom prose\n<!-- mockspace:workflow-reference -->\nour own reference\n",
+        )
+        .unwrap();
+        fs::write(mock.join("PRINCIPLES.md.tmpl"), "principles only").unwrap();
+        fs::write(mock.join("DESIGN.md.tmpl"), "design only").unwrap();
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("WORKFLOW.md")).unwrap();
+        let marker_hits = body.matches("<!-- mockspace:workflow-reference -->").count();
+        assert_eq!(
+            marker_hits, 1,
+            "in-template marker must suppress auto-injection so only one copy lands; got {marker_hits} hits in: {body}"
+        );
+        assert!(body.contains("our own reference"));
+        assert!(!body.contains("Mockspace workflow at a glance"));
+    }
+
+    #[test]
+    fn regenerate_does_not_inject_workflow_reference_into_principles() {
+        // PRINCIPLES.md receives Form B but never the workflow
+        // reference. The fragment is WORKFLOW.md-specific.
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("PRINCIPLES.md")).unwrap();
+        assert!(
+            !body.contains("<!-- mockspace:workflow-reference -->"),
+            "PRINCIPLES.md must not receive workflow-reference injection"
         );
     }
 }
