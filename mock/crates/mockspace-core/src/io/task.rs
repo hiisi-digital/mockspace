@@ -33,7 +33,9 @@ use crate::branch_name::BranchName;
 use crate::io::ref_tree::{RefTreeReadError, RoundRefTree};
 use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
+use crate::phase::Phase;
 use crate::ref_path::RefPath;
+use crate::slug::Slug;
 use crate::task::{TaskClosure, TaskId, TaskIdError, TaskMeta, TaskResolution, TaskState};
 
 /// The task-ref namespace prefix shared by every task ref. Used by
@@ -298,22 +300,23 @@ pub struct TaskTransitionReport {
 /// `closed_at` timestamp is filled by the executor itself so
 /// concurrent callers cannot drift on it.
 ///
-/// The `closed_branch` field is typed as `Option<BranchName>`: `None`
-/// means "no branch named at close time" (e.g. closing a task from
-/// outside an active round). The two remaining `String` fields
-/// (`closing_phase`, `closing_round_slug`) stay as `String` here
-/// pending #595's IO carrier audit; they hold serde-shaped values
-/// that the executor collapses into the wire-format `TaskClosure`.
+/// `closed_branch` is `Option<BranchName>`: `None` means "no branch
+/// named at close time" (e.g. closing a task from outside an active
+/// round). `closing_phase` and `closing_round_slug` are likewise
+/// `Option<_>` over the typed identity values; the executor collapses
+/// both to the wire-format strings on `TaskClosure` at the persistence
+/// boundary so the in-memory shape stays typed while the on-disk
+/// `meta.toml` retains the established string form.
 #[derive(Debug, Clone)]
 pub struct CloseMetadata {
     /// Why the task closed.
     pub resolution: TaskResolution,
     /// Source-side branch that carried the closing work, or `None`.
     pub closed_branch: Option<BranchName>,
-    /// Phase marker at close time (e.g. `apply_src`), or empty.
-    pub closing_phase: String,
-    /// Round slug that closed this task, or empty.
-    pub closing_round_slug: String,
+    /// Phase marker at close time, or `None` when closing outside a round.
+    pub closing_phase: Option<Phase>,
+    /// Round slug that closed this task, or `None` when closing outside a round.
+    pub closing_round_slug: Option<Slug>,
 }
 
 /// Failure modes for the four lifecycle verbs.
@@ -725,15 +728,21 @@ impl RepoHandle {
             parsed.closure = Some(TaskClosure {
                 resolution: meta.resolution,
                 closed_at: format_iso8601(now),
-                // TaskClosure's wire-format field stays String per
-                // #595's pending IO carrier retyping. Collapse the
-                // typed input at the boundary.
+                // TaskClosure is the wire-format struct: every identity
+                // value collapses to its string form at this boundary
+                // while CloseMetadata holds the typed shape upstream.
                 closed_branch: meta
                     .closed_branch
                     .map(|b| b.to_string())
                     .unwrap_or_default(),
-                closing_phase: meta.closing_phase,
-                closing_round_slug: meta.closing_round_slug,
+                closing_phase: meta
+                    .closing_phase
+                    .map(|p| p.marker().to_owned())
+                    .unwrap_or_default(),
+                closing_round_slug: meta
+                    .closing_round_slug
+                    .map(|s| s.as_str().to_owned())
+                    .unwrap_or_default(),
             });
             let new_toml = parsed
                 .to_toml()
@@ -940,8 +949,8 @@ mod tests {
         CloseMetadata {
             resolution: TaskResolution::Completed,
             closed_branch: Some(BranchName::new("feat/test").expect("valid branch")),
-            closing_phase: "apply_src".to_owned(),
-            closing_round_slug: "test-round".to_owned(),
+            closing_phase: Some(Phase::ApplySrc),
+            closing_round_slug: Some(Slug::new("test-round").expect("valid slug")),
         }
     }
 
