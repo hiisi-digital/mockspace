@@ -1,19 +1,20 @@
 //! Hierarchical namespace for tasks (spec §16).
 //!
 //! Tasks live under `<ns-path>#<slug>` where `<ns-path>` is one or more
-//! [`Slug`]-shaped segments. Two render forms:
+//! [`Slug`]-shaped segments (the trait; [`DefaultSlug`] is the canonical
+//! impl carrying the mockspace charset). Two render forms:
 //!
 //! - URI form: segments joined with `::` (e.g. `compiler::ir::lower-pass`)
 //! - Ref form: segments joined with `/`  (e.g. `compiler/ir/lower-pass`)
 
 use core::fmt;
 
-use crate::slug::{Slug, SlugError};
+use crate::slug::{DefaultSlug, DefaultSlugError};
 
 /// A non-empty list of slug-shaped namespace segments.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Namespace {
-    segments: Vec<Slug>,
+    segments: Vec<DefaultSlug>,
 }
 
 /// Why a namespace string rejected at parse time.
@@ -24,7 +25,7 @@ pub enum NamespaceError {
     /// A `::` appears with no content on one side (leading, trailing, or doubled).
     EmptySegment { position: usize },
     /// A segment failed slug validation.
-    InvalidSegment { index: usize, error: SlugError },
+    InvalidSegment { index: usize, error: DefaultSlugError },
 }
 
 impl Namespace {
@@ -32,7 +33,7 @@ impl Namespace {
     ///
     /// Returns `None` if `segments` is empty (every namespace requires at
     /// least one segment per spec §16).
-    pub fn from_segments(segments: Vec<Slug>) -> Option<Self> {
+    pub fn from_segments(segments: Vec<DefaultSlug>) -> Option<Self> {
         if segments.is_empty() {
             None
         } else {
@@ -52,7 +53,7 @@ impl Namespace {
                 return Err(NamespaceError::EmptySegment { position: byte_pos });
             }
             let slug =
-                Slug::new(raw).map_err(|error| NamespaceError::InvalidSegment { index, error })?;
+                DefaultSlug::new(raw).map_err(|error| NamespaceError::InvalidSegment { index, error })?;
             segments.push(slug);
             byte_pos += raw.len() + 2; // segment + "::" separator
         }
@@ -60,7 +61,7 @@ impl Namespace {
     }
 
     /// Borrow the segments in declaration order.
-    pub fn segments(&self) -> &[Slug] {
+    pub fn segments(&self) -> &[DefaultSlug] {
         &self.segments
     }
 
@@ -173,7 +174,7 @@ mod tests {
     #[test]
     fn from_segments_requires_non_empty() {
         assert!(Namespace::from_segments(vec![]).is_none());
-        let one = Namespace::from_segments(vec![Slug::new("workspace").unwrap()]);
+        let one = Namespace::from_segments(vec![DefaultSlug::new("workspace").unwrap()]);
         assert!(one.is_some());
     }
 }

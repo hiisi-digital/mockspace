@@ -7,7 +7,7 @@
 use core::fmt;
 
 use crate::namespace::Namespace;
-use crate::slug::Slug;
+use crate::slug::DefaultSlug;
 
 /// A fully-qualified git ref path (e.g. `refs/mock/round/foo`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -15,18 +15,20 @@ pub struct RefPath(String);
 
 impl RefPath {
     /// `refs/mock/round/<slug>` — per-round orphan mock-side ref (spec §21).
-    pub fn round_mock(slug: &Slug) -> Self {
+    /// Generic over any [`Slug`] impl; the slug's [`fmt::Display`]
+    /// supertrait is the load-bearing contract here.
+    pub fn round_mock<S: crate::slug::Slug>(slug: &S) -> Self {
         Self(format!("refs/mock/round/{slug}"))
     }
 
     /// `refs/heads/round/<slug>` — per-round source-side feature branch (spec §21).
-    pub fn round_source(slug: &Slug) -> Self {
+    pub fn round_source<S: crate::slug::Slug>(slug: &S) -> Self {
         Self(format!("refs/heads/round/{slug}"))
     }
 
     /// `refs/mock/round/<slug>-conflict-<host>-<ts>` — side branch
     /// preserving a lost-race commit (spec §19, §24).
-    pub fn round_conflict(slug: &Slug, host: &str, timestamp: &str) -> Self {
+    pub fn round_conflict<S: crate::slug::Slug>(slug: &S, host: &str, timestamp: &str) -> Self {
         Self(format!(
             "refs/mock/round/{slug}-conflict-{host}-{timestamp}"
         ))
@@ -38,7 +40,7 @@ impl RefPath {
     }
 
     /// `refs/mock/task/<ns-path>/<slug>` — per-active-task orphan ref (spec §16).
-    pub fn task(ns: &Namespace, slug: &Slug) -> Self {
+    pub fn task<S: crate::slug::Slug>(ns: &Namespace, slug: &S) -> Self {
         Self(format!("refs/mock/task/{}/{}", ns.as_ref_path(), slug))
     }
 
@@ -83,8 +85,8 @@ impl fmt::Display for RefPath {
 mod tests {
     use super::*;
 
-    fn s(name: &str) -> Slug {
-        Slug::new(name).expect("test slug")
+    fn s(name: &str) -> DefaultSlug {
+        DefaultSlug::new(name).expect("test slug")
     }
 
     fn ns(s: &str) -> Namespace {

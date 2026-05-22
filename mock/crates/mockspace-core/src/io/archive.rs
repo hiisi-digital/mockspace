@@ -38,7 +38,7 @@ use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
 use crate::phase::Phase;
 use crate::ref_path::RefPath;
-use crate::slug::Slug;
+use crate::slug::DefaultSlug;
 
 /// Outcome of a successful [`RepoHandle::archive_round`] call.
 ///
@@ -129,10 +129,10 @@ impl RepoHandle {
     /// previous attempt's source-delete step failed) writes the
     /// same subtree contents atop the archive and retries the
     /// delete.
-    pub fn archive_round(
+    pub fn archive_round<S: crate::slug::Slug>(
         &self,
         _lock: &FlockTransitionLock,
-        slug: &Slug,
+        slug: &S,
     ) -> Result<ArchiveReport, ArchiveError> {
         let round_ref = RefPath::round_mock(slug);
         let archive_ref = RefPath::round_archive();
@@ -142,7 +142,7 @@ impl RepoHandle {
             Ok(oid) => oid,
             Err(RefTreeReadError::RefNotFound { .. }) => {
                 return Err(ArchiveError::RoundRefMissing {
-                    slug: slug.as_str().to_owned(),
+                    slug: slug.as_ref().to_owned(),
                 });
             }
             Err(other) => return Err(other.into()),
@@ -173,7 +173,7 @@ impl RepoHandle {
             .iter()
             .map(|(k, v)| (k.to_owned(), v.to_vec()))
             .collect();
-        let slug_prefix = slug.as_str();
+        let slug_prefix = slug.as_ref();
         let mut contributed = 0usize;
         // Strip any prior `<slug>/...` entries before re-inserting
         // so idempotent retries do not stack stale + fresh views.
@@ -292,7 +292,7 @@ mod tests {
 
     fn seed_done_round(
         repo_dir: &Path,
-        slug: &Slug,
+        slug: &DefaultSlug,
         extra: &[(&str, &[u8])],
     ) {
         let handle = RepoHandle::open(repo_dir).expect("open");
@@ -312,7 +312,7 @@ mod tests {
     fn archive_done_round_writes_archive_and_deletes_source() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        let slug = Slug::new("done-round-a").unwrap();
+        let slug = DefaultSlug::new("done-round-a").unwrap();
         seed_done_round(
             dir.path(),
             &slug,
@@ -353,7 +353,7 @@ mod tests {
     fn archive_round_errors_when_not_done() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        let slug = Slug::new("plan-doc-round").unwrap();
+        let slug = DefaultSlug::new("plan-doc-round").unwrap();
         let handle = RepoHandle::open(dir.path()).expect("open");
         let ref_path = RefPath::round_mock(&slug);
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
@@ -382,7 +382,7 @@ mod tests {
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
         let lock = FlockTransitionLock::acquire(dir.path()).expect("acquire");
-        let slug = Slug::new("nothing-there").unwrap();
+        let slug = DefaultSlug::new("nothing-there").unwrap();
         let err = handle.archive_round(&lock, &slug).unwrap_err();
         assert!(matches!(err, ArchiveError::RoundRefMissing { .. }), "got {err:?}");
     }
@@ -395,12 +395,12 @@ mod tests {
         let lock = FlockTransitionLock::acquire(dir.path()).expect("acquire");
 
         // First archive.
-        let slug_a = Slug::new("first-done").unwrap();
+        let slug_a = DefaultSlug::new("first-done").unwrap();
         seed_done_round(dir.path(), &slug_a, &[("manifest.doc.locked.toml", b"a-doc")]);
         handle.archive_round(&lock, &slug_a).expect("first archive");
 
         // Second archive must preserve the first.
-        let slug_b = Slug::new("second-done").unwrap();
+        let slug_b = DefaultSlug::new("second-done").unwrap();
         seed_done_round(dir.path(), &slug_b, &[("manifest.doc.locked.toml", b"b-doc")]);
         let report = handle.archive_round(&lock, &slug_b).expect("second archive");
         assert!(report.source_ref_deleted);
@@ -428,7 +428,7 @@ mod tests {
         let handle = RepoHandle::open(dir.path()).expect("open");
         let lock = FlockTransitionLock::acquire(dir.path()).expect("acquire");
 
-        let slug = Slug::new("idempotent-retry").unwrap();
+        let slug = DefaultSlug::new("idempotent-retry").unwrap();
         seed_done_round(dir.path(), &slug, &[("data.toml", b"v1")]);
         handle.archive_round(&lock, &slug).expect("first archive");
 

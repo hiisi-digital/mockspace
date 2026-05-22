@@ -44,7 +44,7 @@ use crate::manifest::{validate_structural, Manifest, ValidationError};
 use crate::phase::{ManifestSide, Phase};
 use crate::ref_path::RefPath;
 use crate::round::ManifestStage;
-use crate::slug::Slug;
+use crate::slug::DefaultSlug;
 
 /// Outcome of a successful [`RepoHandle::seal_manifest`] call.
 #[derive(Debug, Clone)]
@@ -185,10 +185,10 @@ impl RepoHandle {
     /// the lock outlives this call without being consumed.
     /// `source_branch_tip` is the source-side branch tip OID
     /// resolved by the caller per spec §24 step 5.
-    pub fn seal_manifest(
+    pub fn seal_manifest<S: crate::slug::Slug>(
         &self,
         _lock: &FlockTransitionLock,
-        slug: &Slug,
+        slug: &S,
         side: ManifestSide,
         source_branch_tip: gix::ObjectId,
     ) -> Result<SealReport, SealError> {
@@ -200,7 +200,7 @@ impl RepoHandle {
             Ok(oid) => oid,
             Err(RefTreeReadError::RefNotFound { .. }) => {
                 return Err(SealError::RoundRefMissing {
-                    slug: slug.as_str().to_owned(),
+                    slug: slug.as_ref().to_owned(),
                 });
             }
             Err(other) => return Err(other.into()),
@@ -369,7 +369,7 @@ mod tests {
         m.to_toml().unwrap()
     }
 
-    fn seed_plan_doc_round(repo_dir: &Path, slug: &Slug) {
+    fn seed_plan_doc_round(repo_dir: &Path, slug: &DefaultSlug) {
         // Write the PLAN(DOC) initial state directly as an orphan
         // mock ref: `.phase = plan_doc`, manifest.doc.toml present.
         // Use the slice E3 writer through RepoHandle since it is
@@ -380,7 +380,7 @@ mod tests {
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
         entries.insert(
             "manifest.doc.toml".to_owned(),
-            doc_manifest_toml(slug.as_str()).into_bytes(),
+            doc_manifest_toml(slug.as_ref()).into_bytes(),
         );
         let tree = RoundRefTree::from_entries_pub(entries);
         handle
@@ -393,7 +393,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let source_tip = init_source_tip(dir.path(), &[("README.md", "hello\n")]);
-        let slug = Slug::new("test-seal").unwrap();
+        let slug = DefaultSlug::new("test-seal").unwrap();
         seed_plan_doc_round(dir.path(), &slug);
 
         let handle = RepoHandle::open(dir.path()).expect("open");
@@ -431,7 +431,7 @@ mod tests {
         let source_tip = init_source_tip(dir.path(), &[("README.md", "x\n")]);
         let handle = RepoHandle::open(dir.path()).expect("open");
         let lock = FlockTransitionLock::acquire(dir.path()).expect("acquire");
-        let slug = Slug::new("nothing-there").unwrap();
+        let slug = DefaultSlug::new("nothing-there").unwrap();
         let err = handle
             .seal_manifest(&lock, &slug, ManifestSide::Doc, source_tip)
             .unwrap_err();
@@ -443,7 +443,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let source_tip = init_source_tip(dir.path(), &[("README.md", "x\n")]);
-        let slug = Slug::new("wrong-phase").unwrap();
+        let slug = DefaultSlug::new("wrong-phase").unwrap();
 
         // Seed with .phase = apply_doc (already sealed) instead of
         // plan_doc. seal_manifest should refuse.
@@ -453,7 +453,7 @@ mod tests {
         entries.insert(".phase".to_owned(), b"apply_doc\n".to_vec());
         entries.insert(
             "manifest.doc.locked.toml".to_owned(),
-            doc_manifest_toml(slug.as_str()).into_bytes(),
+            doc_manifest_toml(slug.as_ref()).into_bytes(),
         );
         handle
             .write_round_ref(
@@ -488,7 +488,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let source_tip = init_source_tip(dir.path(), &[("README.md", "x\n")]);
-        let slug = Slug::new("already-locked").unwrap();
+        let slug = DefaultSlug::new("already-locked").unwrap();
 
         let handle = RepoHandle::open(dir.path()).expect("open");
         let ref_path = RefPath::round_mock(&slug);
@@ -496,11 +496,11 @@ mod tests {
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
         entries.insert(
             "manifest.doc.toml".to_owned(),
-            doc_manifest_toml(slug.as_str()).into_bytes(),
+            doc_manifest_toml(slug.as_ref()).into_bytes(),
         );
         entries.insert(
             "manifest.doc.locked.toml".to_owned(),
-            doc_manifest_toml(slug.as_str()).into_bytes(),
+            doc_manifest_toml(slug.as_ref()).into_bytes(),
         );
         handle
             .write_round_ref(
@@ -523,7 +523,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let source_tip = init_source_tip(dir.path(), &[("README.md", "x\n")]);
-        let slug = Slug::new("no-manifest").unwrap();
+        let slug = DefaultSlug::new("no-manifest").unwrap();
 
         // Seed with .phase = plan_doc but no manifest.doc.toml.
         let handle = RepoHandle::open(dir.path()).expect("open");

@@ -61,7 +61,7 @@ pub use namespace::{Namespace, NamespaceError};
 pub use phase::{ManifestSide, Phase};
 pub use ref_path::RefPath;
 pub use round::{comment_filename, topic_filename, ClosedMeta, ManifestStage, PrMeta, RoundMeta};
-pub use slug::{Slug, SlugError};
+pub use slug::{DefaultSlug, DefaultSlugError, Slug};
 pub use task::{
     Step, StepPhase, StepRef, StepRefError, TaskClosure, TaskId, TaskIdError, TaskMeta, TaskRefs,
     TaskResolution, TaskState,

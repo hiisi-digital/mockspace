@@ -36,7 +36,7 @@ use crate::io::seal::{SealError, SealReport};
 use crate::phase::{ManifestSide, Phase};
 use crate::ref_path::RefPath;
 use crate::round::ManifestStage;
-use crate::slug::Slug;
+use crate::slug::DefaultSlug;
 use crate::transition::{ReplanMode, TransitionVerb};
 
 /// The four phase verbs packaged with the per-verb data needed to
@@ -191,10 +191,10 @@ impl RepoHandle {
     /// Execute one of the four phase verbs against the round
     /// `slug`. The caller must hold `lock`; the parameter is
     /// borrowed so the lock outlives this call.
-    pub fn advance_phase(
+    pub fn advance_phase<S: crate::slug::Slug>(
         &self,
         lock: &FlockTransitionLock,
-        slug: &Slug,
+        slug: &S,
         verb: AdvanceVerb,
     ) -> Result<AdvanceReport, AdvanceError> {
         let ref_path = RefPath::round_mock(slug);
@@ -202,7 +202,7 @@ impl RepoHandle {
             Ok(oid) => oid,
             Err(RefTreeReadError::RefNotFound { .. }) => {
                 return Err(AdvanceError::RoundRefMissing {
-                    slug: slug.as_str().to_owned(),
+                    slug: slug.as_ref().to_owned(),
                 });
             }
             Err(other) => return Err(other.into()),
@@ -267,10 +267,10 @@ fn read_phase(tree: &RoundRefTree) -> Result<Phase, AdvanceError> {
     })
 }
 
-fn exec_plan(
+fn exec_plan<S: crate::slug::Slug>(
     handle: &RepoHandle,
     _lock: &FlockTransitionLock,
-    _slug: &Slug,
+    _slug: &S,
     ref_path: &RefPath,
     current_oid: gix::ObjectId,
     current_tree: &RoundRefTree,
@@ -292,10 +292,10 @@ fn exec_plan(
     })
 }
 
-fn exec_apply(
+fn exec_apply<S: crate::slug::Slug>(
     handle: &RepoHandle,
     lock: &FlockTransitionLock,
-    slug: &Slug,
+    slug: &S,
     current_phase: Phase,
     source_branch_tip: gix::ObjectId,
 ) -> Result<AdvanceReport, AdvanceError> {
@@ -320,10 +320,10 @@ fn exec_apply(
     })
 }
 
-fn exec_finish(
+fn exec_finish<S: crate::slug::Slug>(
     handle: &RepoHandle,
     _lock: &FlockTransitionLock,
-    _slug: &Slug,
+    _slug: &S,
     ref_path: &RefPath,
     current_oid: gix::ObjectId,
     current_tree: &RoundRefTree,
@@ -351,10 +351,10 @@ fn exec_finish(
     })
 }
 
-fn exec_replan(
+fn exec_replan<S: crate::slug::Slug>(
     handle: &RepoHandle,
     _lock: &FlockTransitionLock,
-    _slug: &Slug,
+    _slug: &S,
     ref_path: &RefPath,
     current_oid: gix::ObjectId,
     current_tree: &RoundRefTree,
@@ -515,7 +515,7 @@ mod tests {
         m.to_toml().unwrap()
     }
 
-    fn seed_round(repo_dir: &Path, slug: &Slug, entries: BTreeMap<String, Vec<u8>>) {
+    fn seed_round(repo_dir: &Path, slug: &DefaultSlug, entries: BTreeMap<String, Vec<u8>>) {
         let handle = RepoHandle::open(repo_dir).expect("open");
         let ref_path = RefPath::round_mock(slug);
         let tree = RoundRefTree::from_entries_pub(entries);
@@ -528,7 +528,7 @@ mod tests {
     fn plan_verb_transitions_topic_to_plan_doc() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        let slug = Slug::new("plan-verb").unwrap();
+        let slug = DefaultSlug::new("plan-verb").unwrap();
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"topic\n".to_vec());
         seed_round(dir.path(), &slug, entries);
@@ -552,7 +552,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let source_tip = init_source_tip(dir.path(), &[("README.md", "hello\n")]);
-        let slug = Slug::new("apply-verb").unwrap();
+        let slug = DefaultSlug::new("apply-verb").unwrap();
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
         entries.insert(
@@ -585,7 +585,7 @@ mod tests {
     fn finish_verb_doc_to_plan_src() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        let slug = Slug::new("finish-doc").unwrap();
+        let slug = DefaultSlug::new("finish-doc").unwrap();
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"apply_doc\n".to_vec());
         entries.insert(
@@ -613,7 +613,7 @@ mod tests {
     fn finish_verb_src_to_done() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        let slug = Slug::new("finish-src").unwrap();
+        let slug = DefaultSlug::new("finish-src").unwrap();
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"apply_src\n".to_vec());
         seed_round(dir.path(), &slug, entries);
@@ -630,7 +630,7 @@ mod tests {
     fn replan_renames_locked_to_deprecated_one() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        let slug = Slug::new("replan-once").unwrap();
+        let slug = DefaultSlug::new("replan-once").unwrap();
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"apply_doc\n".to_vec());
         entries.insert(
@@ -659,7 +659,7 @@ mod tests {
     fn replan_picks_next_iteration_after_existing_deprecations() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        let slug = Slug::new("replan-iter").unwrap();
+        let slug = DefaultSlug::new("replan-iter").unwrap();
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"apply_doc\n".to_vec());
         entries.insert(
@@ -694,7 +694,7 @@ mod tests {
     fn advance_phase_errors_on_invalid_verb_from_phase() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        let slug = Slug::new("invalid-verb").unwrap();
+        let slug = DefaultSlug::new("invalid-verb").unwrap();
         // .phase = topic, but caller tries Finish.
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"topic\n".to_vec());
@@ -724,7 +724,7 @@ mod tests {
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
         let lock = FlockTransitionLock::acquire(dir.path()).expect("acquire");
-        let slug = Slug::new("nothing-there").unwrap();
+        let slug = DefaultSlug::new("nothing-there").unwrap();
         let err = handle
             .advance_phase(&lock, &slug, AdvanceVerb::Plan)
             .unwrap_err();

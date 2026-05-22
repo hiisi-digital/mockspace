@@ -259,7 +259,7 @@ fn walk_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::slug::Slug;
+    use crate::slug::DefaultSlug;
     use std::path::Path;
     use std::process::Command;
     use tempfile::TempDir;
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn read_ref_tree_round_trips_a_flat_orphan_ref() {
         let dir = TempDir::new().unwrap();
-        let slug = Slug::new("test-round").unwrap();
+        let slug = DefaultSlug::new("test-round").unwrap();
         let ref_path = RefPath::round_mock(&slug);
         author_orphan_ref(
             dir.path(),
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn read_ref_tree_walks_subtrees_for_anchor_blobs() {
         let dir = TempDir::new().unwrap();
-        let slug = Slug::new("anchor-round").unwrap();
+        let slug = DefaultSlug::new("anchor-round").unwrap();
         let ref_path = RefPath::round_mock(&slug);
         // Mimic spec §25 anchor blob path: .anchor.doc.blobs/<2-hex>/<rest>.
         author_orphan_ref(
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn read_ref_tree_iter_yields_lex_order() {
         let dir = TempDir::new().unwrap();
-        let slug = Slug::new("order-round").unwrap();
+        let slug = DefaultSlug::new("order-round").unwrap();
         let ref_path = RefPath::round_mock(&slug);
         author_orphan_ref(
             dir.path(),
@@ -413,7 +413,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         run(&["init", "--quiet"], dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open repo");
-        let slug = Slug::new("not-there").unwrap();
+        let slug = DefaultSlug::new("not-there").unwrap();
         let err = handle
             .read_ref_tree(&RefPath::round_mock(&slug))
             .unwrap_err();

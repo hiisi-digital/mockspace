@@ -107,7 +107,7 @@ pub use mockspace_core::io::{
     RepoHandle, SealError, SealReport, ShowTaskError, TaskTransitionError, TaskTransitionReport,
 };
 pub use mockspace_core::phase::{ManifestSide, Phase};
-pub use mockspace_core::slug::{Slug, SlugError};
+pub use mockspace_core::slug::{DefaultSlug, DefaultSlugError, Slug};
 pub use mockspace_core::task::{TaskId, TaskIdError, TaskMeta, TaskRefs, TaskResolution, TaskState};
 pub use mockspace_core::transition::ReplanMode;
 // Re-export gix's ObjectId so callers can parse user-supplied
