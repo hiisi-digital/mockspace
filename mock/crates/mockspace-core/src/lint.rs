@@ -331,8 +331,8 @@ pub struct Suggestion {
 ///   removed). A lint scanning a stripped view that wants to emit a `Fix`
 ///   must translate stripped-view offsets back to original-source offsets
 ///   before constructing the recipe. Until that translation is wired, such
-///   lints should emit `Suggestion { description, fix: None }` — advice
-///   only.
+///   lints should emit `Suggestion { description, fix: None }` (advice
+///   only).
 /// - The `Span` on the parent `Finding` is for human-readable display
 ///   (file, line, column, length). `Fix` byte ranges are the authoritative
 ///   coordinate system for mechanical application; they are not derived
@@ -1662,7 +1662,7 @@ mod tests {
 
     #[test]
     fn prop_value_serialises_as_untagged_primitive() {
-        // PropValue is #[serde(untagged)] — the wire form is the raw
+        // PropValue is #[serde(untagged)]; the wire form is the raw
         // value with no discriminator. TOML primitive type carries the
         // PropValue variant.
         let r = DirectiveRecord {

@@ -210,8 +210,8 @@ fn task_show_after_move_reflects_new_namespace() {
     );
 }
 
-/// Marker reference for the `fixture.path()` accessor used above —
-/// kept here so a future build that re-routes the fixture's home
+/// Marker reference for the `fixture.path()` accessor used above.
+/// Kept here so a future build that re-routes the fixture's home
 /// dir surfaces the dependency loudly.
 #[allow(dead_code)]
 fn _fixture_path_compiles(fixture: &MockspaceFixture) -> &Path {
