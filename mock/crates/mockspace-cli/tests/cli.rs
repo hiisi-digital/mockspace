@@ -355,3 +355,47 @@ fn explain_warns_on_unparseable_user_toml_but_still_runs() {
         .stderr(predicate::str::contains("warning"))
         .stdout(predicate::str::contains("lint: no-bare-numeric"));
 }
+
+// ---- check ---------------------------------------------------------------
+
+#[test]
+fn check_help_lists_gate_flag() {
+    mock()
+        .arg("check")
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--gate"))
+        .stdout(predicate::str::contains("commit"))
+        .stdout(predicate::str::contains("build"))
+        .stdout(predicate::str::contains("push"));
+}
+
+#[test]
+fn check_on_empty_fixture_reports_no_findings() {
+    // Empty fixture has no Rust source, so the engine scopes a
+    // zero-document project and produces zero findings. Exit code
+    // is success.
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    mock()
+        .arg("check")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("no findings"));
+}
+
+#[test]
+fn check_accepts_explicit_gate_flag() {
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    mock()
+        .arg("check")
+        .arg("--gate")
+        .arg("push")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("no findings"));
+}
