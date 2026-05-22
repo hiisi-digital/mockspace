@@ -402,6 +402,23 @@ fn check_accepts_surface_ci_flag() {
 }
 
 #[test]
+fn check_rejects_invalid_surface_value() {
+    // clap's value-enum validation should reject anything outside
+    // the three RunSurface variants. The error message should
+    // name the offending value and the allowed values; if a
+    // future clap version changes that contract, this test
+    // catches the surprise before it reaches users.
+    mock()
+        .arg("check")
+        .arg("--surface")
+        .arg("nonsense")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nonsense"))
+        .stderr(predicate::str::contains("possible values"));
+}
+
+#[test]
 fn check_on_empty_fixture_reports_no_findings() {
     // Empty fixture has no Rust source, so the engine scopes a
     // zero-document project and produces zero findings. Exit code
