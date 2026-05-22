@@ -236,3 +236,103 @@ fn check_human_on_rust_crate_with_violations_at_commit_gate() {
     assert_matches_golden("check_rust_crate_violations_commit_gate", &stdout);
 }
 
+// ---- check --fix and --dry-run plumbing ----------------------------------
+
+#[test]
+fn check_fix_on_empty_fixture_prints_zero_applied_summary() {
+    // Empty fixture: zero findings, zero fixable. `--fix` exits
+    // SUCCESS and prints the "applied 0 fix(es)..." summary line
+    // after the empty-findings notice. Verifies the fix-path
+    // plumbing reaches `apply_fixes` without short-circuiting and
+    // that the summary tally renders even when the plan is empty.
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("check")
+        .arg("--gate")
+        .arg("commit")
+        .arg("--fix")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .output()
+        .expect("invoke mock check --fix");
+    assert!(
+        output.status.success(),
+        "empty fixture with --fix must exit success; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("check --fix stdout is UTF-8");
+    assert!(
+        stdout.contains("applied 0 fix"),
+        "expected applied-tally line in stdout, got: {stdout}"
+    );
+}
+
+#[test]
+fn check_dry_run_on_empty_fixture_prints_no_fixable_findings() {
+    // Empty fixture + `--dry-run`. The fix path runs but does not
+    // write; the plan is empty so `render_unified_diff` returns an
+    // empty string and the helper prints "no fixable findings".
+    // Exit code still tracks the gate evaluation (success).
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("check")
+        .arg("--gate")
+        .arg("commit")
+        .arg("--dry-run")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .output()
+        .expect("invoke mock check --dry-run");
+    assert!(
+        output.status.success(),
+        "empty fixture with --dry-run must exit success; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("check --dry-run stdout is UTF-8");
+    assert!(
+        stdout.contains("no fixable findings"),
+        "expected dry-run summary in stdout, got: {stdout}"
+    );
+}
+
+#[test]
+fn check_fix_on_rust_crate_with_violations_keeps_findings_visible() {
+    // Findings with no `suggestion.fix` are advisory-only. The
+    // current probe-crate violations (no-bare-numeric, no-public-
+    // raw-field) do not carry auto-fix suggestions in the catalog,
+    // so `--fix` is a no-op on edits but the findings still print
+    // and the exit code still reflects the gate failure. Verifies
+    // that `--fix` does not silence Error-severity diagnostics.
+    let lib_rs = "pub fn count() -> usize { 42 }\npub struct Bag {\n    pub items: u64,\n}\n";
+    let fixture = MockspaceFixture::new()
+        .with_rust_crate("probe", lib_rs)
+        .build()
+        .expect("fixture");
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("check")
+        .arg("--gate")
+        .arg("commit")
+        .arg("--fix")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .output()
+        .expect("invoke mock check --fix");
+    assert!(
+        !output.status.success(),
+        "Error-severity findings must still fail the gate even with --fix; stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("check --fix stdout is UTF-8");
+    assert!(
+        stdout.contains("no-bare-numeric"),
+        "findings must still print before the fix summary; stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("applied"),
+        "fix-summary tally must appear after the diagnostics; stdout: {stdout}"
+    );
+}
+
