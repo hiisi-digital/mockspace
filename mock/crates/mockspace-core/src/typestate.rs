@@ -49,7 +49,7 @@ use core::marker::PhantomData;
 use crate::manifest::Manifest;
 use crate::phase::{ManifestSide, Phase};
 use crate::round::ManifestStage;
-use crate::slug::Slug;
+use crate::slug::DefaultSlug;
 use crate::task::TaskState;
 
 // =========================================================================
@@ -214,20 +214,20 @@ impl AdvanceVia<ReplanVerb> for ApplySrcState {
 
 /// A round handle parameterised by its compile-time phase.
 ///
-/// Construction is fallible (the slug is validated as a [`Slug`]); the
+/// Construction is fallible (the slug is validated as a [`DefaultSlug`]); the
 /// runtime phase from disk must match `P::PHASE` for the typed handle
 /// to be issued. Use [`TypedRound::new`] when the phase is fixed in
 /// source; use [`TypedRound::from_runtime`] when promoting a dynamic
 /// `Phase` to a specific state.
 #[derive(Debug, Clone)]
 pub struct TypedRound<P: PhaseMarker> {
-    slug: Slug,
+    slug: DefaultSlug,
     _phase: PhantomData<fn() -> P>,
 }
 
 impl<P: PhaseMarker> TypedRound<P> {
     /// Construct directly from a validated slug.
-    pub fn new(slug: Slug) -> Self {
+    pub fn new(slug: DefaultSlug) -> Self {
         Self {
             slug,
             _phase: PhantomData,
@@ -236,7 +236,7 @@ impl<P: PhaseMarker> TypedRound<P> {
 
     /// Promote a slug + runtime phase to a typed round. Returns `Ok`
     /// iff `phase == P::PHASE`.
-    pub fn from_runtime(slug: Slug, phase: Phase) -> Result<Self, PhaseMismatch> {
+    pub fn from_runtime(slug: DefaultSlug, phase: Phase) -> Result<Self, PhaseMismatch> {
         if phase == P::PHASE {
             Ok(Self::new(slug))
         } else {
@@ -253,7 +253,7 @@ impl<P: PhaseMarker> TypedRound<P> {
     }
 
     /// The round's slug.
-    pub fn slug(&self) -> &Slug {
+    pub fn slug(&self) -> &DefaultSlug {
         &self.slug
     }
 
@@ -276,7 +276,7 @@ impl<P: PhaseMarker> TypedRound<P> {
     /// Drop the typestate parameter and return the slug. Useful at
     /// the boundary where typestate-bound code hands off to a
     /// runtime-typed surface.
-    pub fn into_runtime(self) -> (Slug, Phase) {
+    pub fn into_runtime(self) -> (DefaultSlug, Phase) {
         (self.slug, P::PHASE)
     }
 }
@@ -700,7 +700,7 @@ mod tests {
     #[test]
     fn typed_round_advances_through_happy_path() {
         let lock = LockProof::witness_for_tests();
-        let slug = Slug::new("test-round").unwrap();
+        let slug = DefaultSlug::new("test-round").unwrap();
         let r = TypedRound::<TopicState>::new(slug);
         let r = r.advance::<PlanVerb>(&lock); // -> PlanDocState
         let r = r.advance::<ApplyVerb>(&lock); // -> ApplyDocState
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn typed_round_from_runtime_promotes_on_match() {
-        let slug = Slug::new("test").unwrap();
+        let slug = DefaultSlug::new("test").unwrap();
         let r = TypedRound::<PlanDocState>::from_runtime(slug, Phase::PlanDoc).unwrap();
         assert_eq!(TypedRound::<PlanDocState>::phase(), Phase::PlanDoc);
         assert_eq!(r.slug().as_str(), "test");
@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn typed_round_from_runtime_refuses_mismatch() {
-        let slug = Slug::new("test").unwrap();
+        let slug = DefaultSlug::new("test").unwrap();
         let err = TypedRound::<PlanDocState>::from_runtime(slug, Phase::Topic).unwrap_err();
         assert_eq!(
             err,
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn typed_round_replan_collapses_to_same_side_plan() {
         let lock = LockProof::witness_for_tests();
-        let slug = Slug::new("test").unwrap();
+        let slug = DefaultSlug::new("test").unwrap();
         // ApplyDoc + Replan -> PlanDoc
         let r = TypedRound::<ApplyDocState>::new(slug.clone());
         let after = r.advance::<ReplanVerb>(&lock);

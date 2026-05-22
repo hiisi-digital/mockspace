@@ -24,7 +24,7 @@ use mockspace_rs::{
     scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CheckReport,
     CloseMetadata, DesignRound, Finding, FixOpts, FlockTransitionLock, Gate, LintCfgStore,
     LintEngine, LockError, ObjectId, Phase, RegenerateError, RegenerateReport, RepoError,
-    RepoHandle, ReplanMode, RoundState, RunSurface, Severity, Slug, TaskId, TaskMeta,
+    RepoHandle, ReplanMode, RoundState, RunSurface, Severity, DefaultSlug, TaskId, TaskMeta,
     TaskResolution, WriteState,
 };
 
@@ -77,12 +77,12 @@ enum Command {
     /// workspace defaults, per-lint TOML, CLI overrides) plus the
     /// final per-field winners.
     Explain {
-        /// Lint name to explain. Lint names follow [`Slug`] shape
+        /// Lint name to explain. Lint names follow [`DefaultSlug`] shape
         /// (kebab-case, ASCII lowercase start). Misspellings that
         /// pass slug validation but do not match a catalog entry
         /// surface `LintNotFound` at lookup time.
         #[arg(value_parser = parse_slug)]
-        name: Slug,
+        name: DefaultSlug,
     },
     /// Run the lint engine against the repo. Prints findings to
     /// stdout in the `<file>:<line>:<col>: [<severity>] <name>:
@@ -139,7 +139,7 @@ enum Command {
     Close {
         /// Slug of the round to archive.
         #[arg(value_parser = parse_slug)]
-        slug: Slug,
+        slug: DefaultSlug,
     },
     /// Walk the v1 mockspace state under `mock/design_rounds/`
     /// and print a per-round migration report plus a checklist
@@ -192,7 +192,7 @@ enum PhaseVerb {
         /// Slug of the round to open PLAN(doc) on. Must currently
         /// be in TOPIC phase.
         #[arg(value_parser = parse_slug)]
-        slug: Slug,
+        slug: DefaultSlug,
     },
     /// Seal the authoring manifest and transition PLAN(side) ->
     /// APPLY(side). Requires the source-side branch tip OID as
@@ -201,7 +201,7 @@ enum PhaseVerb {
         /// Slug of the round to seal. Must currently be in
         /// PLAN(doc) or PLAN(src) phase.
         #[arg(value_parser = parse_slug)]
-        slug: Slug,
+        slug: DefaultSlug,
         /// Source-side branch tip OID at APPLY entry, in hex
         /// form (e.g. the output of `git rev-parse HEAD`). The
         /// anchor records this OID for provenance.
@@ -215,7 +215,7 @@ enum PhaseVerb {
         /// Slug of the round to advance. Must currently be in
         /// APPLY(doc) or APPLY(src) phase.
         #[arg(value_parser = parse_slug)]
-        slug: Slug,
+        slug: DefaultSlug,
     },
     /// Deprecate the locked manifest and return APPLY(side) to
     /// PLAN(side). The locked manifest is renamed to the next
@@ -224,7 +224,7 @@ enum PhaseVerb {
         /// Slug of the round to replan. Must currently be in
         /// APPLY(doc) or APPLY(src) phase.
         #[arg(value_parser = parse_slug)]
-        slug: Slug,
+        slug: DefaultSlug,
         /// Replan mode. Currently the local-ref portion does not
         /// branch on mode (rename plus phase flip is identical
         /// across modes); the parameter exists for API stability
@@ -312,7 +312,7 @@ enum TaskVerb {
         phase: Option<Phase>,
         /// Round slug that closed this task.
         #[arg(long = "round-slug", value_parser = parse_slug)]
-        round_slug: Option<Slug>,
+        round_slug: Option<DefaultSlug>,
     },
 }
 
@@ -475,14 +475,14 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-/// Parse a slug string into [`Slug`] with a CLI-friendly error
-/// message. The `Slug::new` validation rejects empty, too-long,
+/// Parse a slug string into [`DefaultSlug`] with a CLI-friendly error
+/// message. The `DefaultSlug::new` validation rejects empty, too-long,
 /// and out-of-charset inputs.
 ///
 /// Used as a clap `value_parser` so wrong-shape inputs fail at
 /// argument-parse time rather than inside a runner.
-fn parse_slug(raw: &str) -> Result<Slug, String> {
-    Slug::new(raw).map_err(|e| format!("invalid slug `{raw}`: {e}"))
+fn parse_slug(raw: &str) -> Result<DefaultSlug, String> {
+    DefaultSlug::new(raw).map_err(|e| format!("invalid slug `{raw}`: {e}"))
 }
 
 /// Parse a task identifier (URI form `<seg>::<seg>::...::<slug>`)
@@ -603,7 +603,7 @@ fn run_phase(
     }
 }
 
-fn print_advance_report(slug: &Slug, report: &AdvanceReport) {
+fn print_advance_report(slug: &DefaultSlug, report: &AdvanceReport) {
     println!(
         "round `{slug}` -> phase `{phase}` via verb `{verb:?}`",
         phase = phase_marker(report.landed_in),
@@ -696,7 +696,7 @@ fn run_task_new(
         .unwrap_or(0);
     let meta = TaskMeta {
         // TaskMeta's serde-derived String fields are the wire format
-        // (TOML); the in-memory shape should retype to Slug/Namespace
+        // (TOML); the in-memory shape should retype to DefaultSlug/Namespace
         // via #595's serde adapter pattern. Until that lands, the
         // CLI does the bottom-of-the-boundary conversion here.
         mockspace_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -802,7 +802,7 @@ fn run_task_close(
     resolution: TaskResolutionArg,
     branch: Option<&str>,
     phase: Option<Phase>,
-    round_slug: Option<&Slug>,
+    round_slug: Option<&DefaultSlug>,
 ) -> std::process::ExitCode {
     // CloseMetadata still carries String fields per #595's pending
     // retype. Collapse typed inputs to their wire form here at the
@@ -864,7 +864,7 @@ fn format_iso8601(unix_secs: u64) -> String {
     )
 }
 
-fn run_close(repo_root: &std::path::Path, slug: Slug) -> std::process::ExitCode {
+fn run_close(repo_root: &std::path::Path, slug: DefaultSlug) -> std::process::ExitCode {
     let handle = match open_repo(repo_root) {
         Ok(h) => h,
         Err(msg) => {
@@ -892,7 +892,7 @@ fn run_close(repo_root: &std::path::Path, slug: Slug) -> std::process::ExitCode 
     }
 }
 
-fn print_archive_report(slug: &Slug, report: &ArchiveReport) {
+fn print_archive_report(slug: &DefaultSlug, report: &ArchiveReport) {
     println!("round `{slug}` archived to refs/mock/round-archive");
     println!("  new archive commit: {}", report.archive_commit);
     println!("  entries archived: {}", report.entries_archived);
@@ -1125,7 +1125,7 @@ fn run_refresh(repo_root: &std::path::Path) -> std::process::ExitCode {
 /// the catalog defaults. CLI-side overrides (Layer 5) and the
 /// workspace-defaults intermediate layer (Layer 3) are still empty
 /// for this slice and land separately.
-fn run_explain(repo_root: &std::path::Path, lint_name: &Slug) -> std::process::ExitCode {
+fn run_explain(repo_root: &std::path::Path, lint_name: &DefaultSlug) -> std::process::ExitCode {
     let user_toml = match find_and_read_lints_toml(repo_root) {
         Ok(toml) => toml,
         Err(e) => {

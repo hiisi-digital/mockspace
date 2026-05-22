@@ -14,7 +14,7 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::namespace::Namespace;
-use crate::slug::{Slug, SlugError};
+use crate::slug::{DefaultSlug, DefaultSlugError};
 
 /// A task's lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -220,9 +220,9 @@ impl TaskMeta {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TaskId {
     /// Namespace segments. May be empty for top-level tasks.
-    namespace_segments: Vec<Slug>,
+    namespace_segments: Vec<DefaultSlug>,
     /// Leaf slug.
-    slug: Slug,
+    slug: DefaultSlug,
 }
 
 /// Why a task-identifier string rejected at parse time.
@@ -235,13 +235,13 @@ pub enum TaskIdError {
     /// A `::` appears with no content on one side (leading, trailing, or doubled).
     EmptySegment { position: usize },
     /// A segment failed slug validation; `index` counts from 0.
-    InvalidSegment { index: usize, error: SlugError },
+    InvalidSegment { index: usize, error: DefaultSlugError },
 }
 
 impl TaskId {
     /// Construct from validated parts: a possibly-empty list of namespace
     /// segments plus a leaf slug.
-    pub fn new(namespace_segments: Vec<Slug>, slug: Slug) -> Self {
+    pub fn new(namespace_segments: Vec<DefaultSlug>, slug: DefaultSlug) -> Self {
         Self {
             namespace_segments,
             slug,
@@ -250,7 +250,7 @@ impl TaskId {
 
     /// Construct from a namespace plus slug. Convenience for callers that
     /// already have a [`Namespace`] (which is non-empty by construction).
-    pub fn with_namespace(namespace: Namespace, slug: Slug) -> Self {
+    pub fn with_namespace(namespace: Namespace, slug: DefaultSlug) -> Self {
         Self {
             namespace_segments: namespace.segments().to_vec(),
             slug,
@@ -268,14 +268,14 @@ impl TaskId {
         if input.is_empty() {
             return Err(TaskIdError::Empty);
         }
-        let mut segments: Vec<Slug> = Vec::new();
+        let mut segments: Vec<DefaultSlug> = Vec::new();
         let mut byte_pos: usize = 0;
         for (index, raw) in input.split("::").enumerate() {
             if raw.is_empty() {
                 return Err(TaskIdError::EmptySegment { position: byte_pos });
             }
             let slug =
-                Slug::new(raw).map_err(|error| TaskIdError::InvalidSegment { index, error })?;
+                DefaultSlug::new(raw).map_err(|error| TaskIdError::InvalidSegment { index, error })?;
             segments.push(slug);
             byte_pos += raw.len() + 2;
         }
@@ -287,7 +287,7 @@ impl TaskId {
     }
 
     /// The namespace segments (possibly empty for top-level tasks).
-    pub fn namespace_segments(&self) -> &[Slug] {
+    pub fn namespace_segments(&self) -> &[DefaultSlug] {
         &self.namespace_segments
     }
 
@@ -298,7 +298,7 @@ impl TaskId {
     }
 
     /// The leaf slug.
-    pub fn slug(&self) -> &Slug {
+    pub fn slug(&self) -> &DefaultSlug {
         &self.slug
     }
 

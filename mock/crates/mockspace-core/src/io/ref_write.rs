@@ -290,7 +290,7 @@ fn sort_key(name: &[u8], is_tree: bool) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::slug::Slug;
+    use crate::slug::DefaultSlug;
     use std::path::Path;
     use std::process::Command;
     use tempfile::TempDir;
@@ -317,7 +317,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let slug = Slug::new("write-create").unwrap();
+        let slug = DefaultSlug::new("write-create").unwrap();
         let ref_path = RefPath::round_mock(&slug);
 
         let new_tree = tree_with(&[
@@ -342,7 +342,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let slug = Slug::new("write-subtree").unwrap();
+        let slug = DefaultSlug::new("write-subtree").unwrap();
         let ref_path = RefPath::round_mock(&slug);
 
         let new_tree = tree_with(&[
@@ -370,7 +370,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let slug = Slug::new("cas-match").unwrap();
+        let slug = DefaultSlug::new("cas-match").unwrap();
         let ref_path = RefPath::round_mock(&slug);
 
         let first = tree_with(&[(".phase", b"PLAN.DOC\n")]);
@@ -392,7 +392,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let slug = Slug::new("cas-stale").unwrap();
+        let slug = DefaultSlug::new("cas-stale").unwrap();
         let ref_path = RefPath::round_mock(&slug);
 
         let first = tree_with(&[(".phase", b"PLAN.DOC\n")]);
@@ -438,7 +438,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let slug = Slug::new("sort-key").unwrap();
+        let slug = DefaultSlug::new("sort-key").unwrap();
         let ref_path = RefPath::round_mock(&slug);
 
         let new_tree = tree_with(&[("foo-bar", b"blob-bytes"), ("foo/inner", b"sub-bytes")]);
@@ -457,7 +457,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let slug = Slug::new("must-not-exist").unwrap();
+        let slug = DefaultSlug::new("must-not-exist").unwrap();
         let ref_path = RefPath::round_mock(&slug);
 
         let first = tree_with(&[(".phase", b"PLAN.DOC\n")]);
