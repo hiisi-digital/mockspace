@@ -61,3 +61,38 @@ fn check_on_empty_fixture_at_push_gate() {
     assert_matches_golden("check_empty_fixture_push_gate", &stdout);
 }
 
+// ---- check --json output mode --------------------------------------------
+
+/// Run `cargo mock check --json --gate <gate>` against the fixture
+/// and capture stdout. The JSON branch short-circuits the
+/// human-readable path; empty findings serialise as `[]`. Same
+/// exit-zero assertion as the stdout helper.
+fn capture_check_json_stdout(fixture: &MockspaceFixture, gate: &str) -> String {
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("check")
+        .arg("--json")
+        .arg("--gate")
+        .arg(gate)
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .output()
+        .expect("invoke mock check --json");
+    assert!(
+        output.status.success(),
+        "mock check --json exited non-zero; stderr was: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("check --json stdout is UTF-8")
+}
+
+#[test]
+fn check_json_on_empty_fixture_at_commit_gate() {
+    // Empty fixture, JSON output. Golden is the canonical empty
+    // array. Catches drift in the JSON branch's empty-case
+    // handling and validates the --json flag plumbing.
+    let fixture = MockspaceFixture::new().build().expect("fixture");
+    let stdout = capture_check_json_stdout(&fixture, "commit");
+    assert_matches_golden("check_empty_fixture_commit_gate_json", &stdout);
+}
+
