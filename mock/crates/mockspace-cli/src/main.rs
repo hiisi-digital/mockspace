@@ -338,7 +338,19 @@ fn run_check(repo_root: &std::path::Path, gate: Gate) -> std::process::ExitCode 
         let path = f.span.file.display();
         let line = f.span.start_line;
         let col = f.span.start_column;
-        let sev = format!("{:?}", f.severity);
+        // Render severity as the lowercase rustc-conventional label
+        // (`error` / `warning` / `note` etc) rather than the Debug
+        // PascalCase variant name. Same rationale as the gate
+        // rendering: it's a CLI display preference, not a Severity
+        // identity property; keep the fix scoped to the CLI.
+        let sev = match f.severity {
+            Severity::Skip => "skip",
+            Severity::Off => "off",
+            Severity::Hint => "hint",
+            Severity::Info => "info",
+            Severity::Warn => "warning",
+            Severity::Error => "error",
+        };
         println!(
             "{path}:{line}:{col}: [{sev}] {name}: {msg}",
             name = f.lint_name,
