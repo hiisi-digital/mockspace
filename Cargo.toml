@@ -25,7 +25,7 @@ keywords = ["design-rounds", "lints", "workflow", "mockspace"]
 # `self-bench` workspace member, not to this crate. Without this flag
 # cargo's edition-2021 auto-discovery picks up `benches/src/main.rs`
 # as a bench target named "src" of the root mockspace crate and tries
-# to compile it against this crate's deps — which lack the
+# to compile it against this crate's deps: which lack the
 # mockspace-bench-core / mockspace-bench-harness imports the file
 # actually needs. Disabling auto-discovery is the targeted fix.
 autobenches = false

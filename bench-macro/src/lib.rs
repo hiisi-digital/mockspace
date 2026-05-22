@@ -64,8 +64,8 @@ use syn::{parse_macro_input, ExprLit, FnArg, Ident, ItemFn, Lit, LitStr, Pat, To
 /// Parsed `#[bench_variant(...)]` arguments.
 ///
 /// Two shapes:
-/// - Typed form: `("name", sizes = [...])` — `algo` is `None`.
-/// - Routine form: `(Algo, "name", sizes = [...])` — `algo` is `Some(Ident)`.
+/// - Typed form: `("name", sizes = [...])`: `algo` is `None`.
+/// - Routine form: `(Algo, "name", sizes = [...])`: `algo` is `Some(Ident)`.
 struct BenchVariantArgs {
     algo: Option<Ident>,
     name: LitStr,
