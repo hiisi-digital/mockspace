@@ -104,7 +104,7 @@ The current `mockspace` lint system has become an awkward hybrid of:
 
 This creates several problems.
 
-### P1 — `mockspace` is reinventing a lint runtime
+### P1: `mockspace` is reinventing a lint runtime
 
 The current system already approximates a convention-lint runtime, but in a fragmented way:
 
@@ -114,7 +114,7 @@ The current system already approximates a convention-lint runtime, but in a frag
 - duplicated git/path/phase inference
 - no clean, general issue model shared across all enforcement surfaces
 
-### P2 — the current lint layer is less sophisticated than the target abstraction
+### P2: the current lint layer is less sophisticated than the target abstraction
 
 The current Rust-based lint infrastructure should not be over-romanticized as "the serious parser" in contrast to Viola.
 
@@ -128,7 +128,7 @@ The reality is:
 
 This is not a mature unified lint engine. It is a partial in-house approximation.
 
-### P3 — lint concerns are bloating `mockspace.toml`
+### P3: lint concerns are bloating `mockspace.toml`
 
 As more lint power gets added to `mockspace`, `mockspace.toml` risks becoming a dumping ground for:
 
@@ -143,7 +143,7 @@ As more lint power gets added to `mockspace`, `mockspace.toml` risks becoming a 
 
 That is too much responsibility for one config surface.
 
-### P4 — native Rust lint packs are valuable and should not be discarded
+### P4: native Rust lint packs are valuable and should not be discarded
 
 Consumer repos already rely on Rust-native lint packs and `mock/lints/`-style extensibility.
 
@@ -154,7 +154,7 @@ Examples include:
 
 Those represent real accumulated value. A redesign that requires rewriting everything into TypeScript immediately would create avoidable migration pain.
 
-### P5 — diagnostics remain too fragmented
+### P5: diagnostics remain too fragmented
 
 Today the system has no single coherent architecture for:
 
@@ -171,11 +171,11 @@ That is why diagnostics feel inconsistent and why hook-side blocking is often bl
 
 ## Design goals
 
-### G1 — adopt Viola as the primary lint runtime
+### G1: adopt Viola as the primary lint runtime
 
 The redesign should make Viola the main engine for lint execution rather than growing a more bespoke `mockspace` lint engine.
 
-### G2 — keep `mockspace` as the orchestrator
+### G2: keep `mockspace` as the orchestrator
 
 `mockspace` must remain the owner of:
 
@@ -186,7 +186,7 @@ The redesign should make Viola the main engine for lint execution rather than gr
 - target artifact generation
 - context export to the lint engine
 
-### G3 — preserve Rust-native lint investment
+### G3: preserve Rust-native lint investment
 
 The redesign must provide a path to keep:
 
@@ -194,11 +194,11 @@ The redesign must provide a path to keep:
 - external Rust lint crates
 - Rust-native authoring for teams that want it
 
-### G4 — reduce config sprawl in `mockspace.toml`
+### G4: reduce config sprawl in `mockspace.toml`
 
 Lint rule and lint-pack configuration should move toward Viola-owned config, while `mockspace.toml` keeps workflow/project/bootstrap concerns.
 
-### G5 — support workflow-aware convention linting
+### G5: support workflow-aware convention linting
 
 The new system must support not only code conventions, but also workflow conventions such as:
 
@@ -207,11 +207,11 @@ The new system must support not only code conventions, but also workflow convent
 - source/doc window semantics
 - branch/workspace/process guardrails
 
-### G6 — improve diagnostics structurally, not cosmetically
+### G6: improve diagnostics structurally, not cosmetically
 
 The redesign should produce better messages because the runtime has a better issue model and better context handoff, not because strings were manually polished in many unrelated places.
 
-### G7 — keep the user-facing interface stable
+### G7: keep the user-facing interface stable
 
 Users should still primarily experience this through:
 
@@ -222,15 +222,15 @@ Users should still primarily experience this through:
 
 Not through needing to understand or invoke raw Viola components directly.
 
-### G8 — keep future Rust-core evolution possible
+### G8: keep future Rust-core evolution possible
 
 The redesign should not foreclose a later evolution where the Viola core itself becomes Rust-backed while preserving the existing TS/Deno ecosystem.
 
-### G9 — enforce one unified plugin ABI
+### G9: enforce one unified plugin ABI
 
 Runners and lints must use the same plugin contract and lifecycle (with role-specific capabilities), not separate per-kind ABIs.
 
-### G10 — enforce one normalized grammar output model
+### G10: enforce one normalized grammar output model
 
 Grammar plugins may differ internally, but they must emit one stable, versioned structural model that all lints consume.
 
@@ -436,7 +436,7 @@ Viola lints should consume that context rather than reproducing fragile git/path
 
 ### Context layers
 
-#### Layer 1 — environment facts
+#### Layer 1: environment facts
 
 Useful for simple conditional behavior:
 
@@ -447,7 +447,7 @@ Useful for simple conditional behavior:
 - scoped/doc-only mode
 - project name / crate prefix as needed
 
-#### Layer 2 — structured context sidecar
+#### Layer 2: structured context sidecar
 
 Needed for richer workflow-aware lints:
 
@@ -572,7 +572,7 @@ So the redesign should assume a modest Viola extension for native plugin support
 
 There should be two conceptual modes, with one preferred initially.
 
-### Mode A — out-of-process native lint binaries
+### Mode A: out-of-process native lint binaries
 
 This should be the preferred first mode.
 
@@ -586,7 +586,7 @@ A native Rust lint pack can be compiled as a standalone executable that:
 
 This is analogous in spirit to how `viola-script-lints` already proves the value of a process-boundary plugin protocol.
 
-### Mode B — in-process dynamic libraries
+### Mode B: in-process dynamic libraries
 
 This is desirable as a later optimization path.
 
@@ -943,7 +943,7 @@ The answer can still be:
 
 ## Alternatives considered
 
-### Alternative A — continue evolving the bespoke Rust lint engine
+### Alternative A: continue evolving the bespoke Rust lint engine
 
 Rejected as the primary direction.
 
@@ -955,7 +955,7 @@ Reasons:
 - does not improve ecosystem story
 - does not naturally solve native vs TS lint authoring concerns
 
-### Alternative B — use `viola-cli` as the integration boundary
+### Alternative B: use `viola-cli` as the integration boundary
 
 Rejected as the preferred direction.
 
@@ -966,7 +966,7 @@ Reasons:
 - weaker artifact/version ownership
 - wrong abstraction boundary
 
-### Alternative C — force all lints into TypeScript immediately
+### Alternative C: force all lints into TypeScript immediately
 
 Rejected.
 
@@ -977,7 +977,7 @@ Reasons:
 - alienates existing external lint-pack users
 - not required for Viola adoption
 
-### Alternative D — go WASM-first
+### Alternative D: go WASM-first
 
 Deferred.
 
@@ -987,7 +987,7 @@ Reasons:
 - greater integration complexity
 - not needed to realize most of the architecture win
 
-### Alternative E — rewrite Viola core in Rust first, then adopt it
+### Alternative E: rewrite Viola core in Rust first, then adopt it
 
 Deferred.
 
@@ -1003,48 +1003,48 @@ Reasons:
 
 A credible phased rollout should look something like this.
 
-### Phase 1 — architecture decision and context contract
+### Phase 1: architecture decision and context contract
 
 - decide the ownership split
 - specify the `mockspace` → Viola context bridge
 - define the bundled runner model
 - define native plugin strategy at the design level
 
-### Phase 2 — bundled Viola runner
+### Phase 2: bundled Viola runner
 
 - create the dedicated runner
 - bundle it into `target/`
 - let `mockspace` orchestrate it
 - avoid `viola-cli`
 
-### Phase 3 — Rust grammar package
+### Phase 3: Rust grammar package
 
 - implement the Rust grammar package for Viola
 - validate extraction quality against current needs
 
-### Phase 4 — `mockspace` Viola pack
+### Phase 4: `mockspace` Viola pack
 
 - port or re-express key `mockspace` workflow/convention lints in Viola-native form where appropriate
 - establish issue kinds and reporting model
 
-### Phase 5 — native Rust plugin bridge
+### Phase 5: native Rust plugin bridge
 
 - implement the stable native plugin contract
 - start with out-of-process binary plugins
 - provide Rust SDK
 
-### Phase 6 — migrate current Rust lint investment
+### Phase 6: migrate current Rust lint investment
 
 - migrate `mock/lints/`-style Rust extensions
 - migrate external lint crates
 - maintain compatibility shims as needed
 
-### Phase 7 — rationalize old Rust lint runtime
+### Phase 7: rationalize old Rust lint runtime
 
 - remove or minimize bespoke Rust lint runtime pieces that are no longer strategic
 - keep only the pieces necessary for orchestration, bootstrap, or migration compatibility
 
-### Phase 8 — optional deeper evolution
+### Phase 8: optional deeper evolution
 
 - consider dylib hosting
 - consider a Rust-backed Viola core
@@ -1054,7 +1054,7 @@ A credible phased rollout should look something like this.
 
 ## Risks and tradeoffs
 
-### R1 — split-brain period during migration
+### R1: split-brain period during migration
 
 There will likely be a period where:
 
@@ -1064,25 +1064,25 @@ There will likely be a period where:
 
 This is manageable, but should be acknowledged.
 
-### R2 — native plugin ABI design is easy to get wrong
+### R2: native plugin ABI design is easy to get wrong
 
 If the native bridge is underspecified or unstable, it will create more churn than it removes.
 
 This is why a versioned, data-oriented contract and SDK are important.
 
-### R3 — Rust grammar work is nontrivial
+### R3: Rust grammar work is nontrivial
 
 The Rust grammar package is a real deliverable and must not be hand-waved.
 
-### R4 — config split can become confusing if not curated
+### R4: config split can become confusing if not curated
 
 If both `mockspace.toml` and Viola config are allowed to grow freely without clear responsibility boundaries, the redesign will fail one of its main goals.
 
-### R5 — diagnostics can still feel fragmented if rendering ownership is unclear
+### R5: diagnostics can still feel fragmented if rendering ownership is unclear
 
 The split between issue generation and workflow-facing block rendering must be deliberate.
 
-### R6 — future Rust-core discussion can become a distraction
+### R6: future Rust-core discussion can become a distraction
 
 The Rust-core idea is strategically valuable, but it should not derail the near-term redesign into an oversized runtime rewrite program.
 
@@ -1092,71 +1092,71 @@ The Rust-core idea is strategically valuable, but it should not derail the near-
 
 These are the questions a domain review should focus on.
 
-### Q1 — Is bundled Viola the right primary architecture?
+### Q1: Is bundled Viola the right primary architecture?
 Not "is Viola interesting," but whether it should become the main lint runtime beneath `mockspace`.
 
-### Q2 — Is the proposed responsibility split sound?
+### Q2: Is the proposed responsibility split sound?
 Does the division between `mockspace` orchestration and Viola runtime ownership look right?
 
-### Q3 — Is out-of-process plugin hosting the right first bridge?
+### Q3: Is out-of-process plugin hosting the right first bridge?
 Should binary plugins be the preferred initial path, with dylibs later?
 
-### Q4 — What should the stable unified plugin contract look like?
+### Q4: What should the stable unified plugin contract look like?
 How small can it be while still supporting runner + lint roles and future-proof compatibility?
 
-### Q5 — How much workflow context should be provided to lints?
+### Q5: How much workflow context should be provided to lints?
 What belongs in env vars versus structured sidecars?
 
-### Q6 — What should remain in `mockspace.toml` versus move into Viola config?
+### Q6: What should remain in `mockspace.toml` versus move into Viola config?
 What is the cleanest long-term config responsibility split?
 
-### Q7 — What is the best migration strategy for existing Rust-native lint packs?
+### Q7: What is the best migration strategy for existing Rust-native lint packs?
 How should current `mock/lints/` and external crates evolve with minimal pain?
 
-### Q8 — Should native plugin support land in Viola core directly, or first as a companion package?
+### Q8: Should native plugin support land in Viola core directly, or first as a companion package?
 What rollout path best balances ecosystem cleanliness and implementation risk?
 
-### Q9 — Is the Rust-core-under-Viola direction strategically worthwhile?
+### Q9: Is the Rust-core-under-Viola direction strategically worthwhile?
 If yes, what should be designed now so that future move remains possible without redoing the architecture?
 
 ---
 
 ## Decisions captured here
 
-### D1 — `mockspace` should adopt bundled Viola as its primary lint engine
+### D1: `mockspace` should adopt bundled Viola as its primary lint engine
 This is the core direction of the redesign.
 
-### D2 — `mockspace` remains the orchestrator
+### D2: `mockspace` remains the orchestrator
 Workflow, bootstrap, hooks, and context gathering remain `mockspace` responsibilities.
 
-### D3 — integration should use a `mockspace`-owned runner, not `viola-cli`
+### D3: integration should use a `mockspace`-owned runner, not `viola-cli`
 The runner should call the Viola library directly.
 
-### D4 — the preferred packaging model is a self-contained bundled Deno binary in `target/`
+### D4: the preferred packaging model is a self-contained bundled Deno binary in `target/`
 This is the first implementation target.
 
-### D5 — grammar plugins must emit one normalized, versioned structure model
+### D5: grammar plugins must emit one normalized, versioned structure model
 Language-specific internals are allowed; output contract is shared.
 
-### D6 — plugins use one unified ABI across roles
+### D6: plugins use one unified ABI across roles
 Runner and lint roles share one contract/lifecycle with role-specific capabilities.
 
-### D7 — native Rust lints remain first-class
+### D7: native Rust lints remain first-class
 The redesign must support existing and future Rust-native lints rather than forcing immediate TS rewrites.
 
-### D8 — binary plugins are the preferred first mode
+### D8: binary plugins are the preferred first mode
 Dylib hosting is valuable later, but not the first requirement.
 
-### D9 — the unified plugin contract should be stable, versioned, and data-oriented
+### D9: the unified plugin contract should be stable, versioned, and data-oriented
 A serializable, transport-agnostic model is preferred.
 
-### D10 — `mockspace.toml` should stop absorbing every lint concern
+### D10: `mockspace.toml` should stop absorbing every lint concern
 Lint rule configuration should move toward Viola-owned configuration.
 
-### D11 — diagnostics should be structurally improved through the new issue/context model
+### D11: diagnostics should be structurally improved through the new issue/context model
 Not merely by rewriting strings in many places.
 
-### D12 — a future Rust-backed Viola core is worth discussing but must not block the redesign
+### D12: a future Rust-backed Viola core is worth discussing but must not block the redesign
 Near-term adoption should proceed without requiring that rewrite first.
 
 ---

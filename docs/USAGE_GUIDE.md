@@ -43,23 +43,23 @@ Everything outside `mock/` is yours. Mockspace owns:
 │   ├── STRUCTURE.md, STRUCTURE.GRAPH.{dot,png,svg}
 │   └── <per-crate overviews>
 └── mock/
-    ├── mockspace.toml                        [authored — config]
-    ├── Cargo.toml + Cargo.lock               [authored — mock workspace]
-    ├── DESIGN.md.tmpl                        [authored — top-level design template]
+    ├── mockspace.toml                        [authored: config]
+    ├── Cargo.toml + Cargo.lock               [authored: mock workspace]
+    ├── DESIGN.md.tmpl                        [authored: top-level design template]
     ├── PRINCIPLES.md.tmpl                    [optional authored invariants]
     ├── WORKFLOW.md.tmpl                      [optional authored workflow note]
-    ├── crates/<name>/                        [authored — real code, plus per-crate
+    ├── crates/<name>/                        [authored: real code, plus per-crate
     │                                          DESIGN.md.tmpl, optional BACKLOG.md.tmpl,
     │                                          optional SHAME.md.tmpl]
-    ├── design_rounds/                        [authored — round state machine]
+    ├── design_rounds/                        [authored: round state machine]
     │   ├── <timestamp>_topic.<name>.md
     │   ├── <timestamp>_research.<name>.md
     │   ├── <timestamp>_changelist.doc[.lock|.deprecated].md
     │   ├── <timestamp>_changelist.src[.lock|.deprecated].md
     │   └── <archived-round>/                 [after `cargo mock close`]
-    ├── research/                             [optional — round-independent material]
-    ├── agent/                                [optional — agent template files]
-    ├── lints/                                [optional — custom lint sources]
+    ├── research/                             [optional: round-independent material]
+    ├── agent/                                [optional: agent template files]
+    ├── lints/                                [optional: custom lint sources]
     └── target/                               [build artefact, gitignored]
 ```
 

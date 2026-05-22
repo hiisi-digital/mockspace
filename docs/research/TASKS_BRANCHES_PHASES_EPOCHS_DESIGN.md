@@ -1,4 +1,4 @@
-# Namespace Tasks, Branches, Phases, and Epochs — design for mockspace
+# Namespace Tasks, Branches, Phases, and Epochs: design for mockspace
 
 **Status:** proposed  
 **Scope:** mockspace framework design  
@@ -8,10 +8,10 @@
 
 This document proposes a tightened workflow model for mockspace centered on four first-class concepts:
 
-- **tasks** — canonical, namespace-owned work records
-- **phases** — the active planning/application cycle
-- **manifests** — sealed phase contracts
-- **epochs** — historical compaction boundaries
+- **tasks**: canonical, namespace-owned work records
+- **phases**: the active planning/application cycle
+- **manifests**: sealed phase contracts
+- **epochs**: historical compaction boundaries
 
 In this model, **git branch remains important but is no longer a first-class stored workflow object**. It is the ambient integration context in which the active phase workspace exists.
 
@@ -62,43 +62,43 @@ The corrected design should:
 
 ## Design goals
 
-### G1 — repo-native canonical task graph
+### G1: repo-native canonical task graph
 
 Tasks must live in the repo under `mock/tasks/`, versioned with the rest of the design and workflow artifacts.
 
-### G2 — no framework-imposed concern tree
+### G2: no framework-imposed concern tree
 
 Mockspace must not dictate how consumer repos categorize their work. It should operate on arbitrarily nested namespaces.
 
-### G3 — phase-first workflow
+### G3: phase-first workflow
 
 The active workflow should be modeled primarily in terms of **phase transitions**, not as a heavyweight branch object model.
 
-### G4 — manifest-centered execution contracts
+### G4: manifest-centered execution contracts
 
 Active work should be governed by manifests, not by a second redundant branch-owned tasklist or workspace identity layer.
 
-### G5 — use git for branch identity instead of re-modeling it
+### G5: use git for branch identity instead of re-modeling it
 
 Git branch remains the real integration context. Mockspace should not create a parallel durable branch identity system unless later implementation experience proves that absolutely necessary.
 
-### G6 — Markdown all the way through for tasks
+### G6: Markdown all the way through for tasks
 
 Open tasks and archived tasks should both be Markdown, not split across editable Markdown and JSONL archival formats.
 
-### G7 — strong historical preservation without workflow-database complexity
+### G7: strong historical preservation without workflow-database complexity
 
 History should remain clear, reviewable, grep-friendly, and versioned in git, without requiring complex hidden identity layers.
 
-### G8 — preserve deprecating replan semantics
+### G8: preserve deprecating replan semantics
 
 Once a phase has entered `APPLY(...)`, going backwards through mockspace should always preserve the historical fact that the earlier manifest proved insufficient.
 
-### G9 — epochs remain real but lightweight
+### G9: epochs remain real but lightweight
 
 Epoch should remain a real framework concept, but not start life as a huge release-governance system.
 
-### G10 — strict guards with better guidance
+### G10: strict guards with better guidance
 
 Simplifying artifact/storage complexity is not an argument for weaker enforcement. If anything, simpler storage should permit stronger, clearer guardrails.
 
@@ -1240,61 +1240,61 @@ This document does not prescribe exact migration order for every consumer repo.
 
 ## Decisions captured here
 
-### D1 — the conceptual core is task, phase, manifest, epoch
+### D1: the conceptual core is task, phase, manifest, epoch
 
 These are the actual first-class workflow concepts.
 
-### D2 — branch is demoted to contextual primitive
+### D2: branch is demoted to contextual primitive
 
 Git branch remains important as integration context, but is not modeled as a heavyweight first-class stored workflow object.
 
-### D3 — active workflow artifacts live in one active phase workspace
+### D3: active workflow artifacts live in one active phase workspace
 
 The current git branch determines which revision of that workspace you are seeing.
 
-### D4 — tasks are namespace-owned, not branch-owned
+### D4: tasks are namespace-owned, not branch-owned
 
 This prevents duplication and keeps long-lived work records stable.
 
-### D5 — tasks are Markdown all the way through
+### D5: tasks are Markdown all the way through
 
 Open tasks are Markdown files.
 Archived tasks are Markdown files.
 There is no JSONL archive model.
 
-### D6 — manifests are the active phase contracts
+### D6: manifests are the active phase contracts
 
 They reference task refs and remain distinct from task records.
 
-### D7 — phase transitions use `plan -> apply -> finish`
+### D7: phase transitions use `plan -> apply -> finish`
 
 This is the primary active workflow lifecycle.
 
-### D8 — once `APPLY(...)` is entered, going backwards through mockspace is always deprecating
+### D8: once `APPLY(...)` is entered, going backwards through mockspace is always deprecating
 
 There is no cheap workflow-level reopen path.
 
-### D9 — replan restores phase-owned managed surfaces to the apply-start snapshot
+### D9: replan restores phase-owned managed surfaces to the apply-start snapshot
 
 Mockspace should restore the precise phase-owned surface set rather than hard-resetting the whole branch.
 
-### D10 — deprecated manifests remain immutable
+### D10: deprecated manifests remain immutable
 
 They are historical artifacts, not editable live plans.
 
-### D11 — epochs are real but lightweight archival boundaries
+### D11: epochs are real but lightweight archival boundaries
 
 They compact historical material without becoming an overbuilt governance subsystem.
 
-### D12 — strict lints remain essential
+### D12: strict lints remain essential
 
 If the framework uses lighter artifact/storage machinery, it must rely on stronger, clearer guards and diagnostics.
 
-### D13 — the CLI center of gravity shifts toward status, phase, task, and epoch
+### D13: the CLI center of gravity shifts toward status, phase, task, and epoch
 
 Branch helpers may remain, but branch is no longer the primary conceptual command family.
 
-### D14 — git remains the underlying history engine
+### D14: git remains the underlying history engine
 
 Mockspace should use git, not duplicate it.
 
@@ -1304,43 +1304,43 @@ Mockspace should use git, not duplicate it.
 
 This document intentionally leaves some implementation details open.
 
-### Q1 — exact open task file format
+### Q1: exact open task file format
 
 Frontmatter plus body? Another parseable Markdown shape? The framework requirements are defined here; exact syntax is deferred.
 
-### Q2 — exact archived task filename convention
+### Q2: exact archived task filename convention
 
 Timestamp plus slug? Another namespace-local scheme? The governing principle is Markdown archival readability, not a particular spelling.
 
-### Q3 — exact active workflow directory layout
+### Q3: exact active workflow directory layout
 
 This document fixes the one-active-workspace model, not the final path schema.
 
-### Q4 — exact historical workflow archive layout inside epochs
+### Q4: exact historical workflow archive layout inside epochs
 
 This document requires branch-context readability and manifest/topic preservation, not one exact directory tree.
 
-### Q5 — exact command spelling for workflow archival/closure
+### Q5: exact command spelling for workflow archival/closure
 
 The design requires the capability, but the final command naming can be refined later.
 
-### Q6 — exact phase-owned managed-surface restoration mechanics
+### Q6: exact phase-owned managed-surface restoration mechanics
 
 The design requires precise restore-to-anchor semantics; implementation details are deferred.
 
-### Q7 — exact task move policy
+### Q7: exact task move policy
 
 The design requires identity-aware treatment; exact rewrite/supersession/tombstone mechanics are deferred.
 
-### Q8 — exact task concurrency policy across parallel branch contexts
+### Q8: exact task concurrency policy across parallel branch contexts
 
 The framework should eventually define ownership/closure behavior more explicitly if needed.
 
-### Q9 — exact epoch-close preconditions by default
+### Q9: exact epoch-close preconditions by default
 
 The design requires meaningful guards and documentation coverage; specific defaults can evolve.
 
-### Q10 — exact guidance and hook severity policy
+### Q10: exact guidance and hook severity policy
 
 The design requires strong enforcement and better messaging; exact severities remain an implementation concern.
 

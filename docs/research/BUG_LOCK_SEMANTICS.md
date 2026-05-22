@@ -33,7 +33,7 @@ Session tripping this exposed the surprise: a user and an agent both expected to
 
 Two reasonable directions. Pick one; don't do both.
 
-### Option A — rename the suffixes / phase labels to match the user model
+### Option A: rename the suffixes / phase labels to match the user model
 
 Keep the state machine shape, relabel:
 - `.src.md` (active, pre-plan) → `.src.plan.md` or similar
@@ -43,7 +43,7 @@ Keep the state machine shape, relabel:
 
 Lowest-invasive relabel: rename `SRC-PLAN`→`DRAFT`, `SRC`→`IMPL`, `DONE`→`CLOSED`. Users then intuit "lock" applies to the CL filename state, not to "freeze".
 
-### Option B — introduce an actually-frozen-during-impl state
+### Option B: introduce an actually-frozen-during-impl state
 
 Add a phase between `SRC-PLAN` and the implementation phase:
 
@@ -61,7 +61,7 @@ SRC-LOCKED-PLAN  (src CL .src.plan.lock.md, impl can start, CL is frozen)
 DONE  (src CL .src.done.md or similar; no more writes)
 ```
 
-Filename suffix now tracks three states per CL kind instead of two: active / plan-locked / closed. The "lock" verb in `cargo mock lock` means what users expect — freeze the plan before impl.
+Filename suffix now tracks three states per CL kind instead of two: active / plan-locked / closed. The "lock" verb in `cargo mock lock` means what users expect: freeze the plan before impl.
 
 Would require:
 - new file-suffix parsing in `lint-rules/src/changelist_helpers.rs`
