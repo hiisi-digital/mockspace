@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::process::Command as StdCommand;
 
 mod common;
-use common::assert_matches_golden;
+use common::{assert_matches_golden, scrub_oid_lines};
 
 /// `git init --quiet` inside the fixture so the close verb has a
 /// repo to read refs from.
@@ -64,25 +64,6 @@ fn run_close(fixture: &MockspaceFixture, slug: &str) -> String {
     String::from_utf8(output.stdout).expect("close stdout is UTF-8")
 }
 
-/// Replace lines whose `trim_start()` begins with
-/// `new archive commit:` with a stable placeholder. The committer
-/// signature carries a wall-clock timestamp so the OID varies per
-/// run.
-fn scrub_commit_oid(s: &str) -> String {
-    s.lines()
-        .map(|line| {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("new archive commit:") {
-                let indent = &line[..line.len() - trimmed.len()];
-                format!("{indent}new archive commit: <OID>")
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
-}
 
 #[test]
 fn close_archives_done_round_and_deletes_source() {
@@ -92,7 +73,7 @@ fn close_archives_done_round_and_deletes_source() {
     seed_done_round(&fixture, &slug);
 
     let stdout = run_close(&fixture, slug.as_str());
-    let scrubbed = scrub_commit_oid(&stdout);
+    let scrubbed = scrub_oid_lines(&stdout, "new archive commit:");
     assert_matches_golden("close_archives_done_round", &scrubbed);
 
     // Integrity 1: source ref gone.

@@ -20,6 +20,36 @@ pub fn golden_path(name: &str) -> PathBuf {
         .join(format!("{name}.golden"))
 }
 
+/// Replace lines whose `trim_start()` begins with `prefix` with a
+/// stable `<prefix> <OID>` placeholder. Used by e2e tests to scrub
+/// the per-verb OID output lines (whose values vary per run because
+/// the committer signature carries a wall-clock timestamp) before
+/// golden comparison.
+///
+/// The `prefix` must include the trailing colon and any leading
+/// space inside the line, e.g. `"commit:"`, `"new commit:"`,
+/// `"new archive commit:"`. The leading indentation is preserved
+/// verbatim from the input line.
+///
+/// Output always ends with a single trailing newline, matching the
+/// per-call-site idiom that existed before consolidation.
+#[allow(dead_code)]
+pub fn scrub_oid_lines(s: &str, prefix: &str) -> String {
+    s.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with(prefix) {
+                let indent = &line[..line.len() - trimmed.len()];
+                format!("{indent}{prefix} <OID>")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
 /// Compare `actual` against the checked-in golden at `<name>.golden`.
 /// On `MOCKSPACE_UPDATE_GOLDENS=1`, writes `actual` to the golden
 /// path (creating the parent directory if needed) and passes.

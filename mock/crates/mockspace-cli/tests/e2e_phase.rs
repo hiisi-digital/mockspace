@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::process::Command as StdCommand;
 
 mod common;
-use common::assert_matches_golden;
+use common::{assert_matches_golden, scrub_oid_lines};
 
 /// `git init --quiet` inside the fixture so phase verbs have a repo
 /// to write refs into.
@@ -67,24 +67,6 @@ fn run_phase(fixture: &MockspaceFixture, args: &[&str]) -> String {
     String::from_utf8(output.stdout).expect("phase stdout is UTF-8")
 }
 
-/// Replace lines whose `trim_start()` begins with `new commit:` with
-/// a stable placeholder. The commit signature carries a wall-clock
-/// timestamp so the OID varies per run.
-fn scrub_commit_oid(s: &str) -> String {
-    s.lines()
-        .map(|line| {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("new commit:") {
-                let indent = &line[..line.len() - trimmed.len()];
-                format!("{indent}new commit: <OID>")
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n"
-}
 
 #[test]
 fn plan_verb_advances_topic_to_plan_doc() {
@@ -102,7 +84,7 @@ fn plan_verb_advances_topic_to_plan_doc() {
     let stdout = run_phase(&fixture, &["plan", slug.as_str()]);
 
     // Assert: stdout shape matches golden after OID scrub.
-    let scrubbed = scrub_commit_oid(&stdout);
+    let scrubbed = scrub_oid_lines(&stdout, "new commit:");
     assert_matches_golden("phase_plan_advances_topic_to_plan_doc", &scrubbed);
 
     // Integrity: the on-disk `.phase` marker is now plan_doc.
