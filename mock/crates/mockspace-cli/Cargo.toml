@@ -12,7 +12,6 @@ name = "mock"
 path = "src/main.rs"
 
 [dependencies]
-mockspace-core = { path = "../mockspace-core" }
 mockspace-rs = { path = "../mockspace-rs" }
 clap = { version = "4", features = ["derive"] }
 toml = "0.8"
