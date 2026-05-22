@@ -58,6 +58,18 @@ pub struct MockspaceFixtureBuilder {
     install: bool,
     create_mock_dir: bool,
     lints_toml: Option<String>,
+    rust_crates: Vec<RustCrateSpec>,
+}
+
+/// One workspace member produced by [`MockspaceFixtureBuilder::with_rust_crate`].
+/// Holds the crate name and `src/lib.rs` body; the fixture's `build()`
+/// writes them into `crates/<name>/Cargo.toml` and
+/// `crates/<name>/src/lib.rs`, then patches the workspace `Cargo.toml`
+/// to include the crate.
+#[derive(Debug, Clone)]
+struct RustCrateSpec {
+    name: String,
+    src_lib_rs: String,
 }
 
 impl MockspaceFixtureBuilder {
@@ -91,6 +103,33 @@ impl MockspaceFixtureBuilder {
         self
     }
 
+    /// Add a Rust crate to the fixture as a workspace member. Writes
+    /// `crates/<name>/Cargo.toml` (a minimal `[package]` declaration)
+    /// and `crates/<name>/src/lib.rs` with the given source. The
+    /// fixture's `build()` materialises a root `Cargo.toml` carrying
+    /// `[workspace]` + `members = [...]` listing every crate added
+    /// via this method. The `mock check` engine recognises the
+    /// resulting tree as a cargo workspace and scopes each crate's
+    /// `src/` for linting.
+    ///
+    /// Multiple calls accumulate: each crate becomes its own
+    /// workspace member. Crate names are taken verbatim and become
+    /// both the `[package].name` and the directory under `crates/`.
+    ///
+    /// Useful for failing-fixture tests that need to surface real
+    /// lint findings against synthetic Rust source.
+    pub fn with_rust_crate(
+        mut self,
+        name: impl Into<String>,
+        src_lib_rs: impl Into<String>,
+    ) -> Self {
+        self.rust_crates.push(RustCrateSpec {
+            name: name.into(),
+            src_lib_rs: src_lib_rs.into(),
+        });
+        self
+    }
+
     /// Materialise the fixture. Allocates a fresh [`TempDir`],
     /// applies every builder option, and returns the
     /// [`MockspaceFixture`] handle.
@@ -111,6 +150,36 @@ impl MockspaceFixtureBuilder {
 
         if let Some(contents) = self.lints_toml {
             std::fs::write(root.join("lints.toml"), contents).map_err(FixtureError::Io)?;
+        }
+
+        if !self.rust_crates.is_empty() {
+            // Workspace root Cargo.toml. The `resolver = "2"` line
+            // suppresses cargo's resolver-version warning on edition
+            // 2021 workspaces; otherwise stderr from `cargo metadata`
+            // calls inside the engine would carry noise.
+            let members: Vec<String> = self
+                .rust_crates
+                .iter()
+                .map(|c| format!("\"crates/{}\"", c.name))
+                .collect();
+            let workspace_toml = format!(
+                "[workspace]\nmembers = [{}]\nresolver = \"2\"\n",
+                members.join(", ")
+            );
+            std::fs::write(root.join("Cargo.toml"), workspace_toml)
+                .map_err(FixtureError::Io)?;
+            for crate_spec in &self.rust_crates {
+                let crate_dir = root.join("crates").join(&crate_spec.name);
+                std::fs::create_dir_all(crate_dir.join("src")).map_err(FixtureError::Io)?;
+                let crate_toml = format!(
+                    "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+                    name = crate_spec.name
+                );
+                std::fs::write(crate_dir.join("Cargo.toml"), crate_toml)
+                    .map_err(FixtureError::Io)?;
+                std::fs::write(crate_dir.join("src").join("lib.rs"), &crate_spec.src_lib_rs)
+                    .map_err(FixtureError::Io)?;
+            }
         }
 
         if self.install {
@@ -251,6 +320,43 @@ mod tests {
         assert!(bootstrap::status(fixture.path()).has_cargo_alias);
         // User TOML written.
         assert!(fixture.path().join("lints.toml").is_file());
+    }
+
+    #[test]
+    fn with_rust_crate_creates_workspace_and_crate_files() {
+        let fixture = MockspaceFixture::new()
+            .with_rust_crate("probe", "pub fn count() -> usize { 42 }\n")
+            .build()
+            .expect("build");
+        let workspace_toml = std::fs::read_to_string(fixture.path().join("Cargo.toml"))
+            .expect("workspace Cargo.toml exists");
+        assert!(workspace_toml.contains("[workspace]"));
+        assert!(workspace_toml.contains("\"crates/probe\""));
+        assert!(workspace_toml.contains("resolver = \"2\""));
+        let crate_toml = std::fs::read_to_string(
+            fixture.path().join("crates").join("probe").join("Cargo.toml"),
+        )
+        .expect("crate Cargo.toml exists");
+        assert!(crate_toml.contains("name = \"probe\""));
+        let lib_rs = std::fs::read_to_string(
+            fixture.path().join("crates").join("probe").join("src").join("lib.rs"),
+        )
+        .expect("crate src/lib.rs exists");
+        assert_eq!(lib_rs, "pub fn count() -> usize { 42 }\n");
+    }
+
+    #[test]
+    fn with_rust_crate_supports_multiple_members() {
+        let fixture = MockspaceFixture::new()
+            .with_rust_crate("alpha", "pub fn a() {}\n")
+            .with_rust_crate("beta", "pub fn b() {}\n")
+            .build()
+            .expect("build");
+        let workspace_toml = std::fs::read_to_string(fixture.path().join("Cargo.toml")).unwrap();
+        assert!(workspace_toml.contains("\"crates/alpha\""));
+        assert!(workspace_toml.contains("\"crates/beta\""));
+        assert!(fixture.path().join("crates").join("alpha").join("src").join("lib.rs").is_file());
+        assert!(fixture.path().join("crates").join("beta").join("src").join("lib.rs").is_file());
     }
 
     #[test]
