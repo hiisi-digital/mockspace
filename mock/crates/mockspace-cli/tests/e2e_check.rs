@@ -158,6 +158,49 @@ fn check_json_on_rust_crate_with_violations_at_commit_gate() {
 }
 
 #[test]
+fn check_surfaces_config_errors_visibly_for_invalid_visibility_variant() {
+    // Issue #106: writing `visibility = "all"` in lints.toml (or any
+    // [defaults] / per-lint override) is not a valid `Visibility`
+    // enum variant (only `any` and `public` exist). Before the fix,
+    // the ConfigError was silently swallowed: the affected lint(s)
+    // dropped from the active set, `mock check` ran the remainder,
+    // and the user saw "no findings" with no clue why. After the
+    // fix, the CLI renders each ConfigError on its own line on
+    // stderr and exits FAILURE so the silent-vs-actual mismatch
+    // can never happen.
+    //
+    // The golden captures the stderr shape so any drift in the
+    // ConfigError Display impl, the file/line/col fallback, or
+    // the trailing summary line flags here.
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml("[defaults]\nvisibility = \"all\"\n")
+        .build()
+        .expect("fixture");
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("check")
+        .arg("--gate")
+        .arg("commit")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .output()
+        .expect("invoke mock check");
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit because config errors dropped lints; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Replace the tempdir-prefixed lints.toml path with a stable
+    // placeholder so the golden is reproducible across runs and
+    // machines. The fixture path lives under a random `/var/...`
+    // or `/tmp/...` directory created by the builder.
+    let stderr = String::from_utf8(output.stderr).expect("check stderr is UTF-8");
+    let fixture_path = fixture.path().display().to_string();
+    let stable = stderr.replace(&fixture_path, "<FIXTURE>");
+    assert_matches_golden("check_config_errors_visible_for_invalid_visibility", &stable);
+}
+
+#[test]
 fn check_human_on_rust_crate_with_violations_at_commit_gate() {
     // Parallel to the JSON failing-fixture test: same probe crate
     // shape, same engine output, but captures the human-readable

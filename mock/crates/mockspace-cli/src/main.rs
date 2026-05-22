@@ -336,6 +336,44 @@ fn run_check(
             return std::process::ExitCode::FAILURE;
         }
     };
+    // Per-lint cascade may have rejected entries (unknown TOML field,
+    // invalid value, unknown finding kind, etc.). Each such failure
+    // means a lint silently dropped from the active set; the user
+    // would see "no findings" without ever knowing why. Surface every
+    // ConfigError as a visible diagnostic and exit FAILURE so the
+    // intended-versus-actual lint set never silently diverges.
+    if !cfg_obj.config_errors.is_empty() {
+        let fallback = repo_root
+            .join("mock")
+            .join("lints.toml")
+            .display()
+            .to_string();
+        // Sort by lint name then field path so output is stable
+        // across runs. Catalog iteration order is build-dependent;
+        // golden tests cannot pin a build-dependent order.
+        let mut sorted: Vec<&_> = cfg_obj.config_errors.iter().collect();
+        sorted.sort_by(|a, b| {
+            a.lint_name
+                .cmp(&b.lint_name)
+                .then_with(|| a.field_path.cmp(&b.field_path))
+        });
+        for ce in sorted {
+            let (path, line, col) = match &ce.source_location {
+                Some(span) => (
+                    span.file.display().to_string(),
+                    span.start_line,
+                    span.start_column,
+                ),
+                None => (fallback.clone(), 0, 0),
+            };
+            eprintln!("{path}:{line}:{col}: [error] lint-config: {ce}");
+        }
+        eprintln!(
+            "check failed: {n} lint configuration error(s); affected lints were dropped from the active set",
+            n = cfg_obj.config_errors.len()
+        );
+        return std::process::ExitCode::FAILURE;
+    }
     // The cascade-resolved entries carry the merged severities and
     // configs; the engine reads them at instantiation time. The
     // `cfg` argument to `engine.run` covers per-lint runtime
