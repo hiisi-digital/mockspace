@@ -22,7 +22,7 @@ use gix::refs::Target;
 
 use crate::io::ref_tree::RoundRefTree;
 use crate::io::repo::RepoHandle;
-use crate::ref_path::RefPath;
+use crate::ref_path::DefaultRefPath;
 
 /// Failure modes for [`RepoHandle::write_round_ref`].
 #[derive(Debug)]
@@ -88,7 +88,7 @@ impl RepoHandle {
     /// authoring decoupled from local git config.
     pub fn write_round_ref(
         &self,
-        ref_path: &RefPath,
+        ref_path: &DefaultRefPath,
         new_tree: &RoundRefTree,
         message: &str,
         expected_current: Option<gix::ObjectId>,
@@ -318,7 +318,7 @@ mod tests {
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
         let slug = DefaultSlug::new("write-create").unwrap();
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
 
         let new_tree = tree_with(&[
             (".phase", b"PLAN.DOC\n"),
@@ -343,7 +343,7 @@ mod tests {
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
         let slug = DefaultSlug::new("write-subtree").unwrap();
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
 
         let new_tree = tree_with(&[
             (".phase", b"APPLY.DOC\n"),
@@ -371,7 +371,7 @@ mod tests {
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
         let slug = DefaultSlug::new("cas-match").unwrap();
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
 
         let first = tree_with(&[(".phase", b"PLAN.DOC\n")]);
         let first_oid = handle
@@ -393,7 +393,7 @@ mod tests {
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
         let slug = DefaultSlug::new("cas-stale").unwrap();
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
 
         let first = tree_with(&[(".phase", b"PLAN.DOC\n")]);
         let first_oid = handle
@@ -439,7 +439,7 @@ mod tests {
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
         let slug = DefaultSlug::new("sort-key").unwrap();
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
 
         let new_tree = tree_with(&[("foo-bar", b"blob-bytes"), ("foo/inner", b"sub-bytes")]);
         handle
@@ -458,7 +458,7 @@ mod tests {
         init_repo(dir.path());
         let handle = RepoHandle::open(dir.path()).expect("open");
         let slug = DefaultSlug::new("must-not-exist").unwrap();
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
 
         let first = tree_with(&[(".phase", b"PLAN.DOC\n")]);
         handle

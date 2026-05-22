@@ -34,7 +34,7 @@ use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
 use crate::io::seal::{SealError, SealReport};
 use crate::phase::{ManifestSide, Phase};
-use crate::ref_path::RefPath;
+use crate::ref_path::DefaultRefPath;
 use crate::round::ManifestStage;
 use crate::slug::DefaultSlug;
 use crate::transition::{ReplanMode, TransitionVerb};
@@ -197,7 +197,7 @@ impl RepoHandle {
         slug: &S,
         verb: AdvanceVerb,
     ) -> Result<AdvanceReport, AdvanceError> {
-        let ref_path = RefPath::round_mock(slug);
+        let ref_path = DefaultRefPath::round_mock(slug);
         let current_oid = match self.resolve_ref_oid(&ref_path) {
             Ok(oid) => oid,
             Err(RefTreeReadError::RefNotFound { .. }) => {
@@ -271,7 +271,7 @@ fn exec_plan<S: crate::slug::Slug>(
     handle: &RepoHandle,
     _lock: &FlockTransitionLock,
     _slug: &S,
-    ref_path: &RefPath,
+    ref_path: &DefaultRefPath,
     current_oid: gix::ObjectId,
     current_tree: &RoundRefTree,
 ) -> Result<AdvanceReport, AdvanceError> {
@@ -324,7 +324,7 @@ fn exec_finish<S: crate::slug::Slug>(
     handle: &RepoHandle,
     _lock: &FlockTransitionLock,
     _slug: &S,
-    ref_path: &RefPath,
+    ref_path: &DefaultRefPath,
     current_oid: gix::ObjectId,
     current_tree: &RoundRefTree,
     current_phase: Phase,
@@ -355,7 +355,7 @@ fn exec_replan<S: crate::slug::Slug>(
     handle: &RepoHandle,
     _lock: &FlockTransitionLock,
     _slug: &S,
-    ref_path: &RefPath,
+    ref_path: &DefaultRefPath,
     current_oid: gix::ObjectId,
     current_tree: &RoundRefTree,
     current_phase: Phase,
@@ -517,7 +517,7 @@ mod tests {
 
     fn seed_round(repo_dir: &Path, slug: &DefaultSlug, entries: BTreeMap<String, Vec<u8>>) {
         let handle = RepoHandle::open(repo_dir).expect("open");
-        let ref_path = RefPath::round_mock(slug);
+        let ref_path = DefaultRefPath::round_mock(slug);
         let tree = RoundRefTree::from_entries_pub(entries);
         handle
             .write_round_ref(&ref_path, &tree, "seed", None)
@@ -542,7 +542,7 @@ mod tests {
         assert_eq!(report.verb, TransitionVerb::Plan);
 
         let sealed = handle
-            .read_ref_tree(&RefPath::round_mock(&slug))
+            .read_ref_tree(&DefaultRefPath::round_mock(&slug))
             .expect("read");
         assert_eq!(sealed.get(".phase").unwrap(), b"plan_doc\n");
     }
@@ -602,7 +602,7 @@ mod tests {
         assert_eq!(report.landed_in, Phase::PlanSrc);
 
         let sealed = handle
-            .read_ref_tree(&RefPath::round_mock(&slug))
+            .read_ref_tree(&DefaultRefPath::round_mock(&slug))
             .expect("read");
         assert_eq!(sealed.get(".phase").unwrap(), b"plan_src\n");
         // Doc-side locked manifest is preserved across the finish.
@@ -648,7 +648,7 @@ mod tests {
         assert_eq!(report.deprecated_iteration, Some(1));
 
         let sealed = handle
-            .read_ref_tree(&RefPath::round_mock(&slug))
+            .read_ref_tree(&DefaultRefPath::round_mock(&slug))
             .expect("read");
         assert_eq!(sealed.get(".phase").unwrap(), b"plan_doc\n");
         assert!(sealed.get("manifest.doc.locked.toml").is_none());
@@ -685,7 +685,7 @@ mod tests {
         assert_eq!(report.deprecated_iteration, Some(3));
 
         let sealed = handle
-            .read_ref_tree(&RefPath::round_mock(&slug))
+            .read_ref_tree(&DefaultRefPath::round_mock(&slug))
             .expect("read");
         assert!(sealed.get("manifest.doc.deprecated.3.toml").is_some());
     }

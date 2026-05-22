@@ -37,7 +37,7 @@ use crate::io::ref_tree::{RefTreeReadError, RoundRefTree};
 use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
 use crate::phase::Phase;
-use crate::ref_path::RefPath;
+use crate::ref_path::DefaultRefPath;
 use crate::slug::DefaultSlug;
 
 /// Outcome of a successful [`RepoHandle::archive_round`] call.
@@ -134,8 +134,8 @@ impl RepoHandle {
         _lock: &FlockTransitionLock,
         slug: &S,
     ) -> Result<ArchiveReport, ArchiveError> {
-        let round_ref = RefPath::round_mock(slug);
-        let archive_ref = RefPath::round_archive();
+        let round_ref = DefaultRefPath::round_mock(slug);
+        let archive_ref = DefaultRefPath::round_archive();
 
         // 1. Read the round ref + verify it is in DONE phase.
         let round_oid = match self.resolve_ref_oid(&round_ref) {
@@ -227,7 +227,7 @@ impl RepoHandle {
     /// a CAS expectation on the current OID.
     fn delete_ref(
         &self,
-        ref_path: &RefPath,
+        ref_path: &DefaultRefPath,
         expected_oid: gix::ObjectId,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let repo = self.repo();
@@ -296,7 +296,7 @@ mod tests {
         extra: &[(&str, &[u8])],
     ) {
         let handle = RepoHandle::open(repo_dir).expect("open");
-        let ref_path = RefPath::round_mock(slug);
+        let ref_path = DefaultRefPath::round_mock(slug);
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"done\n".to_vec());
         for (k, v) in extra {
@@ -331,7 +331,7 @@ mod tests {
 
         // Archive ref carries the slug-prefixed entries.
         let archive_tree = handle
-            .read_ref_tree(&RefPath::round_archive())
+            .read_ref_tree(&DefaultRefPath::round_archive())
             .expect("read archive");
         assert_eq!(archive_tree.get("done-round-a/.phase").unwrap(), b"done\n");
         assert_eq!(
@@ -341,7 +341,7 @@ mod tests {
 
         // Source round ref is gone.
         let err = handle
-            .resolve_ref_oid(&RefPath::round_mock(&slug))
+            .resolve_ref_oid(&DefaultRefPath::round_mock(&slug))
             .unwrap_err();
         assert!(
             matches!(err, RefTreeReadError::RefNotFound { .. }),
@@ -355,7 +355,7 @@ mod tests {
         init_repo(dir.path());
         let slug = DefaultSlug::new("plan-doc-round").unwrap();
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let ref_path = RefPath::round_mock(&slug);
+        let ref_path = DefaultRefPath::round_mock(&slug);
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         entries.insert(".phase".to_owned(), b"plan_doc\n".to_vec());
         let tree = RoundRefTree::from_entries_pub(entries);
@@ -406,7 +406,7 @@ mod tests {
         assert!(report.source_ref_deleted);
 
         let archive_tree = handle
-            .read_ref_tree(&RefPath::round_archive())
+            .read_ref_tree(&DefaultRefPath::round_archive())
             .expect("read archive");
         // Both slugs present, each with their own entries.
         assert!(archive_tree.get("first-done/.phase").is_some());
@@ -441,7 +441,7 @@ mod tests {
         handle.archive_round(&lock, &slug).expect("retry archive");
 
         let archive_tree = handle
-            .read_ref_tree(&RefPath::round_archive())
+            .read_ref_tree(&DefaultRefPath::round_archive())
             .expect("read archive");
         // The archive carries the v2 contents, not v1.
         assert_eq!(

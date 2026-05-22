@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use crate::io::ref_tree::{RefTreeReadError, RoundRefTree};
 use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
-use crate::ref_path::RefPath;
+use crate::ref_path::DefaultRefPath;
 use crate::task::{TaskClosure, DefaultTaskId, DefaultTaskIdError, TaskMeta, TaskResolution, TaskState};
 
 /// The task-ref namespace prefix shared by every task ref. Used by
@@ -43,7 +43,7 @@ const TASK_REF_PREFIX: &str = "refs/mock/task/";
 #[derive(Debug, Clone)]
 pub struct CreateTaskReport {
     /// The ref that now points at the new orphan commit.
-    pub ref_path: RefPath,
+    pub ref_path: DefaultRefPath,
     /// The commit OID of the freshly-written ref.
     pub commit_oid: gix::ObjectId,
 }
@@ -174,7 +174,7 @@ impl RepoHandle {
         task_id: &(impl crate::task::TaskId),
         meta: &TaskMeta,
     ) -> Result<CreateTaskReport, CreateTaskError> {
-        let ref_path = RefPath::task_from_id(task_id);
+        let ref_path = DefaultRefPath::task_from_id(task_id);
 
         // Precondition: the ref must not already exist. Resolve and
         // refuse on success; map RefNotFound to "ok, proceed".
@@ -253,7 +253,7 @@ impl RepoHandle {
     /// exists but its tree lacks `meta.toml` (drift mode, treated as
     /// an error rather than a default-meta fallback).
     pub fn show_task(&self, task_id: &(impl crate::task::TaskId)) -> Result<TaskMeta, ShowTaskError> {
-        let ref_path = RefPath::task_from_id(task_id);
+        let ref_path = DefaultRefPath::task_from_id(task_id);
         let tree = match self.read_ref_tree(&ref_path) {
             Ok(t) => t,
             Err(RefTreeReadError::RefNotFound { .. }) => {
@@ -284,7 +284,7 @@ impl RepoHandle {
 #[derive(Debug, Clone)]
 pub struct TaskTransitionReport {
     /// The ref that now points at the new orphan commit.
-    pub ref_path: RefPath,
+    pub ref_path: DefaultRefPath,
     /// The commit OID of the freshly-written ref.
     pub commit_oid: gix::ObjectId,
     /// The state observed before the transition.
@@ -423,7 +423,7 @@ impl RepoHandle {
         new_state: TaskState,
         close_metadata: Option<CloseMetadata>,
     ) -> Result<TaskTransitionReport, TaskTransitionError> {
-        let ref_path = RefPath::task_from_id(task_id);
+        let ref_path = DefaultRefPath::task_from_id(task_id);
         let current_oid = match self.resolve_ref_oid(&ref_path) {
             Ok(oid) => oid,
             Err(RefTreeReadError::RefNotFound { .. }) => {
