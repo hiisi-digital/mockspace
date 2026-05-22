@@ -195,6 +195,7 @@ pub fn regenerate(
 
     regenerate_per_crate(project, out_dir, &mut files)?;
     write_dep_graph(&context.dep_graph, out_dir, &mut files)?;
+    regenerate_benches(project, out_dir, &mut files)?;
 
     Ok(RegenerateReport { files })
 }
@@ -246,6 +247,189 @@ fn check_dep_graph(
 ) -> Result<(), RegenerateError> {
     let dest = out_dir.join(DEP_GRAPH_DOT);
     classify_against_disk(&dest, dot_source, report)
+}
+
+/// Subdirectory under `<mock_root>/` that holds bench bundles.
+const BENCHES_DIR: &str = "benches";
+
+/// Suffix that identifies a multi-size bench-findings filename.
+/// A file `<size>_findings.md` strips this suffix to yield the
+/// `<size>` token used as the rendered filename.
+const SIZE_FINDINGS_SUFFIX: &str = "_findings.md";
+
+/// Walk each bench bundle under `<project.root()>/mock/benches/<bundle>/`
+/// and copy `findings.md` files into the rendered docs tree.
+///
+/// Per the slice plan at
+/// `mock/research/202605221502_phase-3-bench-sketch-render-integration.md`,
+/// two modes are recognised per bundle:
+///
+/// - **Single-size**: the bundle contains exactly one `findings.md`
+///   at its root. Rendered to `out_dir/benches/<bundle>.md`.
+/// - **Multi-size**: the bundle contains one or more
+///   `<size>_findings.md` files (no top-level `findings.md`).
+///   Each renders to `out_dir/benches/<bundle>/<size>.md`.
+///
+/// If a bundle has both shapes simultaneously, single-size wins;
+/// the per-size files are silently dropped. This is a deliberate
+/// precedence call rather than an error: the spec carries no
+/// invariant excluding the mixed case, and a warning channel
+/// does not exist on `RegenerateReport` today.
+///
+/// Bundles missing both shapes are silently skipped (mid-authoring
+/// bundles do not block render). The `mock/benches/` directory
+/// missing entirely is also silently skipped.
+fn regenerate_benches(
+    project: &MockspaceProject,
+    out_dir: &Path,
+    out: &mut Vec<RenderedFile>,
+) -> Result<(), RegenerateError> {
+    let benches_root = project.root().join("mock").join(BENCHES_DIR);
+    let bundles = match collect_bench_bundles(&benches_root)? {
+        Some(b) => b,
+        None => return Ok(()),
+    };
+
+    for bundle in bundles {
+        for output in bundle.outputs {
+            let dest = out_dir.join(BENCHES_DIR).join(&output.relative_dest);
+            let body = fs::read_to_string(&output.source)
+                .map_err(|e| RegenerateError::io(output.source.clone(), e))?;
+            let state = write_raw_with_state(&body, &dest)?;
+            out.push(RenderedFile { path: dest, state });
+        }
+    }
+    Ok(())
+}
+
+/// Read-only counterpart to [`regenerate_benches`]: classifies each
+/// bundle's findings file(s) against on-disk content.
+fn check_benches(
+    project: &MockspaceProject,
+    out_dir: &Path,
+    report: &mut CheckReport,
+) -> Result<(), RegenerateError> {
+    let benches_root = project.root().join("mock").join(BENCHES_DIR);
+    let bundles = match collect_bench_bundles(&benches_root)? {
+        Some(b) => b,
+        None => return Ok(()),
+    };
+
+    for bundle in bundles {
+        for output in bundle.outputs {
+            let dest = out_dir.join(BENCHES_DIR).join(&output.relative_dest);
+            let body = fs::read_to_string(&output.source)
+                .map_err(|e| RegenerateError::io(output.source.clone(), e))?;
+            classify_against_disk(&dest, &body, report)?;
+        }
+    }
+    Ok(())
+}
+
+/// One rendered output for a bench bundle: source path on disk
+/// plus the destination path relative to `out_dir/benches/`.
+struct BenchOutput {
+    source: PathBuf,
+    /// `<bundle>.md` for single-size, `<bundle>/<size>.md` for
+    /// multi-size. Caller joins onto `out_dir/benches/`.
+    relative_dest: PathBuf,
+}
+
+/// One bench bundle's render outputs.
+struct BenchBundle {
+    outputs: Vec<BenchOutput>,
+}
+
+/// Walk `benches_root` and classify each direct subdirectory as a
+/// bench bundle. Returns `None` when `benches_root` itself does not
+/// exist (project has no benches yet). Empty `Some(vec![])` means
+/// the directory exists but contains no readable bundles.
+fn collect_bench_bundles(
+    benches_root: &Path,
+) -> Result<Option<Vec<BenchBundle>>, RegenerateError> {
+    let entries = match fs::read_dir(benches_root) {
+        Ok(e) => e,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(RegenerateError::io(benches_root, e)),
+    };
+
+    // Sort bundle directories alphabetically so the rendered output
+    // order is deterministic across runs.
+    let mut bundle_paths: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    bundle_paths.sort();
+
+    let mut bundles = Vec::with_capacity(bundle_paths.len());
+    for bundle_dir in bundle_paths {
+        let bundle_name = match bundle_dir.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let outputs = classify_bench_bundle(&bundle_dir, &bundle_name)?;
+        if !outputs.is_empty() {
+            bundles.push(BenchBundle { outputs });
+        }
+    }
+    Ok(Some(bundles))
+}
+
+/// Inspect one bench bundle directory and return the render outputs.
+///
+/// Precedence rule (per the slice plan memo):
+///
+/// 1. If `<bundle>/findings.md` exists, return a single-size output
+///    regardless of any sibling `<size>_findings.md` files. The
+///    per-size files are dropped.
+/// 2. Otherwise, gather every `<size>_findings.md` and return one
+///    output per size. Sorted alphabetically by size token for
+///    deterministic render order.
+/// 3. If neither shape is present, return empty (the bundle is
+///    silently skipped).
+fn classify_bench_bundle(
+    bundle_dir: &Path,
+    bundle_name: &str,
+) -> Result<Vec<BenchOutput>, RegenerateError> {
+    let single = bundle_dir.join("findings.md");
+    if single.is_file() {
+        return Ok(vec![BenchOutput {
+            source: single,
+            relative_dest: PathBuf::from(format!("{bundle_name}.md")),
+        }]);
+    }
+
+    let entries = match fs::read_dir(bundle_dir) {
+        Ok(e) => e,
+        Err(e) => return Err(RegenerateError::io(bundle_dir, e)),
+    };
+
+    let mut size_files: Vec<(String, PathBuf)> = Vec::new();
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if let Some(size) = file_name.strip_suffix(SIZE_FINDINGS_SUFFIX) {
+            if !size.is_empty() {
+                size_files.push((size.to_string(), path));
+            }
+        }
+    }
+    size_files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    Ok(size_files
+        .into_iter()
+        .map(|(size, source)| BenchOutput {
+            source,
+            relative_dest: PathBuf::from(bundle_name).join(format!("{size}.md")),
+        })
+        .collect())
 }
 
 /// Atomic-write helper for raw (non-template-rendered) byte content.
@@ -303,6 +487,7 @@ pub fn check(
 
     check_per_crate(project, out_dir, &mut report)?;
     check_dep_graph(&context.dep_graph, out_dir, &mut report)?;
+    check_benches(project, out_dir, &mut report)?;
 
     Ok(report)
 }
@@ -1039,6 +1224,146 @@ mod tests {
         );
         assert!(dot.contains("\"alpha\""));
         assert!(dot.contains("\"beta\""));
+    }
+
+    // -----------------------------------------------------------------
+    // Bench-findings render tests.
+
+    fn write_bench_findings(root: &Path, bundle: &str, file_name: &str, body: &str) {
+        let dir = root.join("mock").join("benches").join(bundle);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(file_name), body).unwrap();
+    }
+
+    #[test]
+    fn regenerate_renders_single_size_bench() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_bench_findings(tmp.path(), "alpha", "findings.md", "alpha findings");
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let body = fs::read_to_string(out.join("benches").join("alpha.md")).unwrap();
+        assert_eq!(body, "alpha findings");
+        // No nested subdir for single-size.
+        assert!(!out.join("benches").join("alpha").exists());
+    }
+
+    #[test]
+    fn regenerate_renders_multi_size_bench() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_bench_findings(tmp.path(), "alpha", "64_findings.md", "n=64");
+        write_bench_findings(tmp.path(), "alpha", "256_findings.md", "n=256");
+        write_bench_findings(tmp.path(), "alpha", "1024_findings.md", "n=1024");
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        let dir = out.join("benches").join("alpha");
+        assert_eq!(fs::read_to_string(dir.join("64.md")).unwrap(), "n=64");
+        assert_eq!(fs::read_to_string(dir.join("256.md")).unwrap(), "n=256");
+        assert_eq!(fs::read_to_string(dir.join("1024.md")).unwrap(), "n=1024");
+        // No flat single-size file for multi-size.
+        assert!(!out.join("benches").join("alpha.md").exists());
+    }
+
+    #[test]
+    fn regenerate_prefers_single_size_when_both_shapes_present() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_bench_findings(tmp.path(), "alpha", "findings.md", "aggregate");
+        write_bench_findings(tmp.path(), "alpha", "64_findings.md", "n=64");
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        assert_eq!(
+            fs::read_to_string(out.join("benches").join("alpha.md")).unwrap(),
+            "aggregate"
+        );
+        assert!(
+            !out.join("benches").join("alpha").exists(),
+            "multi-size files must be dropped when single-size wins"
+        );
+    }
+
+    #[test]
+    fn regenerate_skips_bundle_with_no_findings() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        // Create the bundle directory but no findings files at all.
+        fs::create_dir_all(tmp.path().join("mock").join("benches").join("alpha")).unwrap();
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        assert!(
+            !out.join("benches").exists(),
+            "no findings means no docs/benches/ subdir at all"
+        );
+    }
+
+    #[test]
+    fn regenerate_tolerates_missing_benches_dir() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        // No mock/benches/ created at all.
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("regenerate");
+        assert!(!out.join("benches").exists());
+    }
+
+    #[test]
+    fn regenerate_renders_multiple_bundles_alphabetically() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_bench_findings(tmp.path(), "zeta", "findings.md", "z");
+        write_bench_findings(tmp.path(), "alpha", "findings.md", "a");
+        write_bench_findings(tmp.path(), "mango", "findings.md", "m");
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        let report = regenerate(&proj, &out).expect("regenerate");
+        let bench_paths: Vec<&PathBuf> = report
+            .files
+            .iter()
+            .filter(|f| f.path.starts_with(out.join("benches")))
+            .map(|f| &f.path)
+            .collect();
+        assert_eq!(bench_paths.len(), 3);
+        assert!(bench_paths[0].ends_with("alpha.md"));
+        assert!(bench_paths[1].ends_with("mango.md"));
+        assert!(bench_paths[2].ends_with("zeta.md"));
+    }
+
+    #[test]
+    fn check_classifies_bench_findings_drift() {
+        let tmp = TempDir::new().unwrap();
+        write_mock_root_templates(tmp.path());
+        write_bench_findings(tmp.path(), "alpha", "findings.md", "original");
+        let proj = project(tmp.path(), &[]);
+        let out = tmp.path().join("docs");
+
+        regenerate(&proj, &out).expect("seed");
+        let clean = check(&proj, &out).expect("check matches");
+        assert!(!clean.needs_regen());
+        assert!(clean
+            .matched
+            .iter()
+            .any(|p| p.ends_with("benches/alpha.md")));
+
+        // Hand-edit to simulate stale committed copy.
+        fs::write(out.join("benches").join("alpha.md"), "stale").unwrap();
+        let drifted = check(&proj, &out).expect("check drift");
+        assert!(drifted.needs_regen());
+        assert!(drifted
+            .drifted
+            .iter()
+            .any(|p| p.ends_with("benches/alpha.md")));
     }
 
     #[test]
