@@ -21,6 +21,7 @@
 pub mod anchor;
 pub mod atomicity;
 pub mod bookkeeping;
+pub mod io;
 pub mod lint;
 pub mod manifest;
 pub mod namespace;
@@ -39,6 +40,7 @@ pub use atomicity::{
     TransitionLock,
 };
 pub use bookkeeping::{classify_root_entry, BookkeepingFile, RootEntry};
+pub use io::{RepoError, RepoHandle};
 pub use lint::{
     matches_pattern, Category, ContentHash, Directive, DirectiveRecord, Document, FileDisableEntry,
     FileDisableSet, FileOp, Finding, Fix, Gate, GateSeverity, HashAlgorithm, Impact, Language,

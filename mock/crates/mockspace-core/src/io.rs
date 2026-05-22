@@ -1,0 +1,16 @@
+//! Phase 5 IO executors against the v2 orphan-ref storage substrate.
+//!
+//! The v2 design commits to git refs (orphan, flat per
+//! `refs/mock/round/<slug>`) per spec §19, §24, §25. This module
+//! ships the executors that read, write, and advance those refs.
+//!
+//! The slice plan lives at
+//! `mock/research/202605220843_phase-5-io-slice-plan.md`. Slice E1
+//! lands here: `RepoHandle::open` wrapping `gix::Repository`. Later
+//! slices add ref readers/writers, the flock-based `TransitionLock`
+//! impl, anchor capture, and the executors that compose them
+//! (`seal_manifest`, `advance_phase`, `archive_round`).
+
+mod repo;
+
+pub use repo::{RepoError, RepoHandle};
