@@ -73,6 +73,7 @@ impl RoundRefTree {
     /// not exposed to downstream consumers, who use the reader. If a
     /// downstream test fixture ever needs this, promote with a typed
     /// builder rather than re-publishing the raw map.
+    #[cfg(test)]
     pub(crate) fn from_entries(entries: BTreeMap<String, Vec<u8>>) -> Self {
         Self { entries }
     }

@@ -12,7 +12,9 @@
 //! (`seal_manifest`, `advance_phase`, `archive_round`).
 
 mod ref_tree;
+mod ref_write;
 mod repo;
 
 pub use ref_tree::{RefTreeReadError, RoundRefTree};
+pub use ref_write::RefTreeWriteError;
 pub use repo::{RepoError, RepoHandle};
