@@ -1,0 +1,52 @@
+=== task new (top-level) ===
+task `migrate-to-codeberg` created
+  ref: refs/mock/task/migrate-to-codeberg
+  commit: <OID>
+
+=== task new (namespaced) ===
+task `compiler::ir::lower-pass` created
+  ref: refs/mock/task/compiler/ir/lower-pass
+  commit: <OID>
+
+=== task list ===
+compiler::ir::lower-pass
+migrate-to-codeberg
+
+=== task show (top-level) ===
+mockspace_version = "0.1.0"
+slug = "migrate-to-codeberg"
+namespace = ""
+title = "Migrate to Codeberg"
+created = "<TIMESTAMP>"
+
+[steps]
+
+=== task start ===
+task `migrate-to-codeberg` transitioned: open -> in-progress
+  ref: refs/mock/task/migrate-to-codeberg
+  commit: <OID>
+
+=== task block ===
+task `migrate-to-codeberg` transitioned: in-progress -> blocked
+  ref: refs/mock/task/migrate-to-codeberg
+  commit: <OID>
+
+=== task defer ===
+task `migrate-to-codeberg` transitioned: blocked -> deferred
+  ref: refs/mock/task/migrate-to-codeberg
+  commit: <OID>
+
+=== task close ===
+task `migrate-to-codeberg` closed: deferred -> closed
+  ref: refs/mock/task/migrate-to-codeberg
+  commit: <OID>
+
+=== task move ===
+task `compiler::ir::lower-pass` moved to `compiler::backend::lower-pass`
+  from-ref: refs/mock/task/compiler/ir/lower-pass
+  to-ref:   refs/mock/task/compiler/backend/lower-pass
+  commit: <OID>
+
+=== task list (after move) ===
+compiler::backend::lower-pass
+migrate-to-codeberg
