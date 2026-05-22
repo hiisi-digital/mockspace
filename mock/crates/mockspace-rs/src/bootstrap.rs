@@ -399,11 +399,18 @@ const HOOKS_DIR: &str = "mock/target/hooks";
 
 /// The hook script bodies the bootstrap writes. Each entry is
 /// `(hook-name, body)`. The bodies invoke `cargo mock check --gate <g>`
-/// once the v2 CLI (#560) ships; until then the scripts will fail
-/// with "no such subcommand", which is the right transitional
-/// behaviour: hook fires, mockspace is not yet available, push or
-/// commit is rejected. The user fixes by completing the bootstrap
-/// (which includes installing the CLI binary).
+/// and `exec` the call so the gate's exit code propagates to git:
+/// non-zero blocks the commit (pre-commit) or push (pre-push).
+///
+/// If the consumer's `.cargo/config.toml` does not carry the
+/// canonical `mock` alias (i.e. bootstrap was uninstalled or never
+/// installed but a leftover hooks dir still fires), cargo prints
+/// "no such subcommand: `mock`" and exits non-zero. Git treats
+/// that as commit-blocking, which is the right safe-default
+/// behaviour: a half-installed state should refuse to ship
+/// changes rather than silently skip the gate. The user converges
+/// by running `cargo mock install` (or `cargo mock uninstall` to
+/// fully tear down).
 const HOOK_SCRIPTS: &[(&str, &str)] = &[
     (
         "pre-commit",
