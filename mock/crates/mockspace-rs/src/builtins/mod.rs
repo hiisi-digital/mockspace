@@ -38,6 +38,12 @@ pub mod registrable_completeness;
 // Catalog entry registrations (inventory::submit!).
 pub mod registry;
 
+// Primitive descriptor lookup for the preset-as-catalog resolver
+// (#611 foundation). Maps preset-file `primitive` field to the
+// constructor and execution-shape defaults a synthesised lint
+// inherits.
+pub mod primitives;
+
 // Bespoke primitives (6).
 // pub mod deprecation_comparison;
 // pub mod no_adhoc_framework;
