@@ -174,7 +174,7 @@ mod tests {
     use crate::finding_sink::VecFindingSink;
     use crate::project::ProjectBuilder;
     use mockspace_core::lint::{
-        ContentHash, Directive, DirectiveRecord, Gate, RunSurface, Severity, SourceForm, Span,
+        Directive, DirectiveRecord, Gate, RunSurface, Severity, SourceForm, Span,
     };
     use std::path::PathBuf;
 

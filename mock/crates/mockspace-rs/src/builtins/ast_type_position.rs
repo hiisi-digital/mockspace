@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-use mockspace_core::lint::{Finding, Fix, GateSeverity, LintContext, Severity, Span, Suggestion};
+use mockspace_core::lint::{Finding, GateSeverity, LintContext, Severity, Span, Suggestion};
 use serde::Deserialize;
 use syn::visit::Visit;
 

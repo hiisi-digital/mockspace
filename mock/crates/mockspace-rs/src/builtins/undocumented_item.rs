@@ -9,7 +9,7 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
-use mockspace_core::lint::{Finding, GateSeverity, LintContext, Severity, Span};
+use mockspace_core::lint::{Finding, GateSeverity, LintContext, Span};
 use serde::Deserialize;
 
 use crate::config_types::{ItemKind, Visibility};

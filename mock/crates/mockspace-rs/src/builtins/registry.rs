@@ -328,7 +328,6 @@ paths = ["mock/design_rounds/**/*.md"]
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::catalog::catalog_entries;
     use crate::config_loader::LintsConfig;
 
