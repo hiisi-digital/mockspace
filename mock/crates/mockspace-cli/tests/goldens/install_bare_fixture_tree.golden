@@ -491,8 +491,7 @@ seconds). The string form parses back via
 `<Iso8601Utc as NamedRefTo<Instant>>::parse(s)`. The 1970-9999 range
 is the supported domain. The civil-calendar conversion is Howard
 Hinnant's algorithm; mockspace ships its own implementation to avoid
-a chrono or time dependency for what is essentially a provenance
-record.
+a chrono or time dependency for a provenance record.
 
 ## ContentHash
 

@@ -232,6 +232,53 @@ names; consumer lint packs author their own names without prefix. The
 engine emits a `StartupWarning::PropNameConflict` if two unqualified
 lints declare the same prop name.
 
+## Lints relocated to preset opt-in (post #568)
+
+The following 15 lints were auto-registered catalog entries in v1 and
+through the early v2 phases. They are now first-party presets only;
+the catalog no longer registers them at engine startup.
+
+- `no-alloc`
+- `no-std`
+- `no-dyn-dispatch`
+- `no-runtime-spawn`
+- `no-runtime-registration`
+- `no-bare-numeric`
+- `no-bare-string`
+- `no-bare-option`
+- `no-bare-result`
+- `no-public-raw-field`
+- `no-vec-in-trait-sig`
+- `strategy-marker-required`
+- `trait-first-signatures`
+- `writing-style`
+- `lint-allow-requires-task-id`
+
+These lints' definitions still ship inside mockspace (under
+`mock/crates/mockspace-rs/src/builtins/`) and their preset files live
+at `mock/crates/mockspace-rs/presets/<name>.toml`. The `extends`
+mechanism currently only overlays config onto auto-registered
+catalog entries; instantiating a catalog entry from a preset file
+(so a consumer can opt back into one of these 15 lints via
+`[lints.<name>] extends = "mockspace::<name>"`) is tracked under
+#611. Until that lands, the 15 lints are temporarily unreachable from
+consumer `mockspace.toml`. After #611 lands, the opt-in path is one
+line per lint a consumer wants.
+
+The seven bespoke lints that remain auto-registered carry domain
+logic the preset surface does not capture today:
+
+- `directive-style-consistency`
+- `no-bare-vec`
+- `no-manual-id`
+- `no-manual-impl`
+- `no-adhoc-framework`
+- `registrable-completeness`
+- `deprecation-comparison`
+
+These keep their existing `[lints.<name>]` config shape in consumer
+TOML; nothing changes for them.
+
 ## Per-consumer checklist
 
 Walk this once per consumer repo (arvo, hilavitkutin, vehje, notko,

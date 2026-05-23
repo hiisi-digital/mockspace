@@ -70,21 +70,21 @@ fn capture_explain_failure_stderr(fixture: Option<&MockspaceFixture>, lint_name:
 // ---- explain catalog defaults --------------------------------------------
 
 #[test]
-fn explain_no_bare_numeric_against_catalog_defaults() {
+fn explain_no_bare_vec_against_catalog_defaults() {
     // No user TOML, no overrides; the cascade walk resolves entirely
     // from Layer 1 (catalog defaults). This is the most stable shape
     // to golden-test: the catalog defaults are pinned by the lint's
     // CatalogEntry, so any drift in this golden flags an unintended
     // change to either the entry or the renderer.
     let fixture = MockspaceFixture::new().build().expect("fixture");
-    let stdout = capture_explain_stdout(&fixture, "no-bare-numeric");
-    assert_matches_golden("explain_no_bare_numeric_catalog_defaults", &stdout);
+    let stdout = capture_explain_stdout(&fixture, "no-bare-vec");
+    assert_matches_golden("explain_no_bare_vec_catalog_defaults", &stdout);
 }
 
 // ---- explain Layer 4 (per-lint TOML override) ----------------------------
 
 #[test]
-fn explain_no_bare_numeric_with_per_lint_toml_override() {
+fn explain_no_bare_vec_with_per_lint_toml_override() {
     // A user-authored lints.toml drives Layer 4. The override changes
     // scope.exempt_paths; Final values for that key resolves to
     // Layer 4, while the unchanged config.* keys still resolve to
@@ -93,15 +93,15 @@ fn explain_no_bare_numeric_with_per_lint_toml_override() {
     let fixture = MockspaceFixture::new()
         .with_lints_toml(
             r#"
-[lints.no-bare-numeric.scope]
+[lints.no-bare-vec.scope]
 exempt_paths = ["**/golden_fixture/**"]
 "#,
         )
         .build()
         .expect("fixture");
-    let stdout = capture_explain_stdout(&fixture, "no-bare-numeric");
+    let stdout = capture_explain_stdout(&fixture, "no-bare-vec");
     assert_matches_golden(
-        "explain_no_bare_numeric_per_lint_toml_override",
+        "explain_no_bare_vec_per_lint_toml_override",
         &stdout,
     );
 }
@@ -109,7 +109,7 @@ exempt_paths = ["**/golden_fixture/**"]
 // ---- explain Layer 3 (workspace defaults) --------------------------------
 
 #[test]
-fn explain_no_bare_numeric_with_workspace_defaults() {
+fn explain_no_bare_vec_with_workspace_defaults() {
     // The `[defaults]` block populates Layer 3. By design the block
     // is flat and merges onto the config side; `[defaults] visibility
     // = "all"` overrides the catalog default Layer 1 value. The
@@ -124,8 +124,8 @@ visibility = "all"
         )
         .build()
         .expect("fixture");
-    let stdout = capture_explain_stdout(&fixture, "no-bare-numeric");
-    assert_matches_golden("explain_no_bare_numeric_workspace_defaults", &stdout);
+    let stdout = capture_explain_stdout(&fixture, "no-bare-vec");
+    assert_matches_golden("explain_no_bare_vec_workspace_defaults", &stdout);
 }
 
 // ---- explain unknown-lint error path -------------------------------------

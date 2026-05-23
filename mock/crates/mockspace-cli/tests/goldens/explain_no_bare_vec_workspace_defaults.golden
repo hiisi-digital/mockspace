@@ -1,0 +1,27 @@
+lint: no-bare-vec
+primitive: no-bare-vec
+catalog severity: commit=Error build=Error push=Error
+
+Cascade layers:
+  Layer 1: catalog defaults (catalog entry `no-bare-vec` (primitive `no-bare-vec`))
+    config.forbidden_types = ["Vec", "Box", "Rc", "Arc", "VecDeque"]
+    config.macro_body_tokens = []
+    config.macros = []
+    config.positions = ["fn-param", "fn-return", "struct-field"]
+    config.visibility = "public"
+    scope.exempt_paths = ["**/ffi/**"]
+    scope.paths = ["**/*.rs"]
+  Layer 2: preset chain
+  Layer 3: workspace defaults (`[defaults]` in lints.toml)
+    config.visibility = "all"
+  Layer 4: per-lint TOML
+  Layer 5: CLI overrides
+
+Final values:
+  config.forbidden_types = ["Vec", "Box", "Rc", "Arc", "VecDeque"] (Layer 1: catalog defaults)
+  config.macro_body_tokens = [] (Layer 1: catalog defaults)
+  config.macros = [] (Layer 1: catalog defaults)
+  config.positions = ["fn-param", "fn-return", "struct-field"] (Layer 1: catalog defaults)
+  config.visibility = "all" (Layer 3: workspace defaults)
+  scope.exempt_paths = ["**/ffi/**"] (Layer 1: catalog defaults)
+  scope.paths = ["**/*.rs"] (Layer 1: catalog defaults)

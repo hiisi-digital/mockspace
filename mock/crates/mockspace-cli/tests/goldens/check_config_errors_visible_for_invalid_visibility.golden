@@ -2,53 +2,15 @@
 
 <FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `directive-style-consistency` at ``: invalid value: directive-style-consistency config: unknown field `visibility`, expected `style`
 
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `lint-allow-requires-task-id` at ``: invalid value: suppression-meta config: unknown field `visibility`, expected one of `require_tracked`, `require_reason`, `require_reason_min_words`, `forbid_expired`, `overuse_threshold_per_crate`
-
 <FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-adhoc-framework` at ``: invalid value: no-adhoc-framework config: unknown field `visibility`, expected one of `detect_dispatch_tables`, `detect_lifecycle_triples`, `detect_callback_chains`, `min_signal_count`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-alloc` at ``: invalid value: token-scan config: unknown field `visibility`, expected one of `tokens`, `word_boundary`, `strip_strings`, `strip_comments`, `strip_doc_comments`, `severity_escalation`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-bare-numeric` at ``: invalid value: ast-type-position config: unknown variant `all`, expected `any` or `public`
-in `visibility`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-bare-option` at ``: invalid value: ast-type-position config: unknown variant `all`, expected `any` or `public`
-in `visibility`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-bare-result` at ``: invalid value: ast-type-position config: unknown variant `all`, expected `any` or `public`
-in `visibility`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-bare-string` at ``: invalid value: ast-type-position config: unknown variant `all`, expected `any` or `public`
-in `visibility`
 
 <FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-bare-vec` at ``: invalid value: no-bare-vec config: unknown variant `all`, expected `any` or `public`
 in `visibility`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-dyn-dispatch` at ``: invalid value: token-scan config: unknown field `visibility`, expected one of `tokens`, `word_boundary`, `strip_strings`, `strip_comments`, `strip_doc_comments`, `severity_escalation`
 
 <FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-manual-id` at ``: invalid value: no-manual-id config: unknown field `visibility`, expected `primitive_inner_types` or `check_aliases`
 
 <FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-manual-impl` at ``: invalid value: no-manual-impl config: unknown field `visibility`, expected `forbidden_traits`
 
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-public-raw-field` at ``: invalid value: ast-type-position config: unknown variant `all`, expected `any` or `public`
-in `visibility`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-runtime-registration` at ``: invalid value: token-scan config: unknown field `visibility`, expected one of `tokens`, `word_boundary`, `strip_strings`, `strip_comments`, `strip_doc_comments`, `severity_escalation`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-runtime-spawn` at ``: invalid value: token-scan config: unknown field `visibility`, expected one of `tokens`, `word_boundary`, `strip_strings`, `strip_comments`, `strip_doc_comments`, `severity_escalation`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-std` at ``: invalid value: token-scan config: unknown field `visibility`, expected one of `tokens`, `word_boundary`, `strip_strings`, `strip_comments`, `strip_doc_comments`, `severity_escalation`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `no-vec-in-trait-sig` at ``: invalid value: ast-type-position config: unknown variant `all`, expected `any` or `public`
-in `visibility`
-
 <FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `registrable-completeness` at ``: invalid value: registrable-completeness config: unknown field `visibility`, expected `trait_name` or `required_items`
 
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `strategy-marker-required` at ``: invalid value: ast-type-position config: unknown variant `all`, expected `any` or `public`
-in `visibility`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `trait-first-signatures` at ``: invalid value: ast-type-position config: unknown variant `all`, expected `any` or `public`
-in `visibility`
-
-<FIXTURE>/mock/lints.toml:0:0: [error] lint-config: config error in `writing-style` at ``: invalid value: content-regex config: unknown field `visibility`, expected `patterns`
-
-check failed: 22 lint configuration error(s); affected lints were dropped from the active set
+check failed: 7 lint configuration error(s); affected lints were dropped from the active set
