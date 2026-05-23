@@ -193,3 +193,46 @@ fn bench_result_dataset_helpers_compile() {
     let ds = result.dataset("warm");
     assert!(!ds.variants.is_empty());
 }
+
+#[test]
+fn report_from_csv_round_trip_emits_findings_md() {
+    // #604: CSV cache to findings.md generator. Round-trip
+    // synthetic samples through `write_csv` then
+    // `report_from_csv`; assert the resulting markdown is non-
+    // empty and carries the title from the call.
+    use mockspace_bench_harness::{report_from_csv, write_csv};
+    let tmp = std::env::temp_dir().join(format!(
+        "mockspace_bench_csv_to_findings_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).expect("create tempdir");
+    let csv_path = tmp.join("samples.csv");
+    let findings_path = tmp.join("findings.md");
+    let result = BenchResult {
+        title: "round-trip-demo".into(),
+        env: EnvMeta::default(),
+        samples: synthetic_samples(),
+        cache_path: String::new(),
+        report_path: String::new(),
+    };
+    write_csv(&result, csv_path.to_str().expect("utf-8 path"))
+        .expect("write csv from synthetic result");
+    report_from_csv(
+        &csv_path,
+        findings_path.to_str().expect("utf-8 path"),
+        "warm",
+        "round-trip-demo",
+    )
+    .expect("regenerate findings.md from csv");
+    let md = fs::read_to_string(&findings_path).expect("read regenerated findings.md");
+    assert!(
+        md.contains("round-trip-demo"),
+        "expected title in regenerated findings.md; got:\n{md}"
+    );
+    assert!(
+        md.contains("alpha") && md.contains("beta"),
+        "expected both variant names in tables; got:\n{md}"
+    );
+    let _ = fs::remove_dir_all(&tmp);
+}
