@@ -196,7 +196,10 @@ impl LintsConfig {
         // sub-table, applied at the engine merge step below).
         let workspace_defaults = user_toml.defaults.clone().unwrap_or_default();
 
+        let mut catalog_names: HashSet<&str> = HashSet::new();
+
         for entry in crate::catalog::catalog_entries() {
+            catalog_names.insert(entry.name);
             // Lint filter: skip lints not in the CLI --lint set.
             if let Some(filter) = &overrides.lint_filter {
                 if !filter.iter().any(|n| n == entry.name) {
@@ -215,6 +218,39 @@ impl LintsConfig {
                 Err(e) => config_errors.push(e),
             }
         }
+
+        // Synthesised path (#611): user [lints.<X>] blocks whose name
+        // is NOT in the registered catalog are resolved through the
+        // preset-as-catalog path. The block MUST carry `extends =
+        // "<host>::<name>"`; the resolver looks up the preset chain
+        // through `preset_source`, picks the anchor's primitive name,
+        // looks up the corresponding `PrimitiveDescriptor`, and
+        // synthesises an `InstantiatedLint` with the cascade math
+        // shared with the entry path via `compute_cascade`.
+        //
+        // A block with no `extends` for an unregistered lint name
+        // emits ConfigError::UnknownLint per the original v2 contract.
+        for (lint_name, user_block) in &user_toml.lints {
+            if catalog_names.contains(lint_name.as_str()) {
+                continue;
+            }
+            if let Some(filter) = &overrides.lint_filter {
+                if !filter.iter().any(|n| n == lint_name) {
+                    continue;
+                }
+            }
+            match synthesise_from_preset(
+                lint_name,
+                user_block,
+                &workspace_defaults,
+                &overrides,
+                preset_source,
+            ) {
+                Ok(lint) => entries.push(lint),
+                Err(e) => config_errors.push(e),
+            }
+        }
+
         let startup_warnings = detect_prop_name_conflicts(&entries);
         Self {
             entries,
@@ -465,6 +501,172 @@ pub(crate) fn compute_cascade(
         merged_config: layer1_config,
         merged_scope: layer1_scope,
         resolved_chain,
+        resolved_severity,
+    })
+}
+
+/// Synthesise an `InstantiatedLint` from a preset reference for a
+/// lint name that is not in the auto-registered catalog (#611).
+///
+/// Walks the cascade with layer-1 inputs drawn from the consumer's
+/// directly-referenced preset (the "anchor"): the anchor's `config`
+/// and `scope` populate the floor; the anchor's `severity` overlays
+/// onto a uniform-Warn default for any gates the preset leaves
+/// unspecified. compute_cascade then walks the rest of the chain,
+/// workspace defaults, user TOML, and CLI overrides on top.
+///
+/// Errors:
+/// - `extends` missing: `InvalidValue` with a message naming what
+///   the consumer must add. This is the v2 contract for "lint name X
+///   not in catalog and no preset reference exists".
+/// - chain primitive mismatch: `ContradictsCatalog`; one chain
+///   represents one lint's policy, so every preset in the chain
+///   must point at the same primitive.
+/// - unknown primitive (preset names a primitive not in
+///   `PRIMITIVE_DESCRIPTORS`): `UnknownKind`.
+fn synthesise_from_preset(
+    lint_name: &str,
+    user_block: &toml::Table,
+    workspace_defaults: &toml::Table,
+    overrides: &OverrideCascade,
+    preset_source: &dyn PresetSource,
+) -> Result<InstantiatedLint, ConfigError> {
+    // Parse `extends`. Missing means the consumer wrote a [lints.X]
+    // block for a name not in the catalog with no preset reference;
+    // emit a structured error that names the required field.
+    let extends_ref = match parse_extends(user_block.get("extends")) {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return Err(ConfigError {
+                lint_name: lint_name.to_string(),
+                field_path: "extends".to_string(),
+                kind: ConfigErrorKind::InvalidValue,
+                message: format!(
+                    "lint `{lint_name}` is not in the registered catalog; \
+                     add `extends = \"<host>::<preset-name>\"` to reference \
+                     a first-party or stack-lints preset"
+                ),
+                source_location: None,
+            });
+        }
+        Err(e) => return Err(preset_error_to_config_error(lint_name, "extends", e)),
+    };
+
+    let chain = resolve_preset_chain(&extends_ref, preset_source)
+        .map_err(|e| preset_error_to_config_error(lint_name, "extends", e))?;
+
+    // The chain's last entry is the consumer's direct reference (the
+    // "anchor"). Its primitive defines the synthesised lint's shape;
+    // every other preset in the chain MUST agree on that primitive.
+    let anchor = chain.last().ok_or_else(|| ConfigError {
+        lint_name: lint_name.to_string(),
+        field_path: "extends".to_string(),
+        kind: ConfigErrorKind::InvalidValue,
+        message: "preset chain resolved to an empty list".to_string(),
+        source_location: None,
+    })?;
+
+    for preset in &chain {
+        if preset.primitive != anchor.primitive {
+            return Err(ConfigError {
+                lint_name: lint_name.to_string(),
+                field_path: format!("extends.chain.{}", preset.name),
+                kind: ConfigErrorKind::ContradictsCatalog,
+                message: format!(
+                    "preset chain spans primitives: `{}` (anchor) vs `{}` (in chain via `{}`); \
+                     one chain represents one lint's policy",
+                    anchor.primitive, preset.primitive, preset.name
+                ),
+                source_location: None,
+            });
+        }
+    }
+
+    let descriptor = crate::builtins::primitives::find_descriptor(&anchor.primitive)
+        .ok_or_else(|| ConfigError {
+            lint_name: lint_name.to_string(),
+            field_path: "extends".to_string(),
+            kind: ConfigErrorKind::UnknownKind,
+            message: format!(
+                "preset `{}` names primitive `{}` which is not in the registered descriptor set",
+                anchor.name, anchor.primitive
+            ),
+            source_location: None,
+        })?;
+
+    // Layer-1 floor: empty tables and uniform-Warn severity.
+    // compute_cascade walks the full chain (which already includes the
+    // anchor) innermost-first via its own `apply_preset_chain` +
+    // `resolve_severity_cascade` calls. Passing the chain severities
+    // here too would double-apply the overlay; idempotent under the
+    // current per-axis `Some`-replace semantics but a correctness
+    // landmine if `overlay_gate_severities` ever becomes
+    // non-idempotent. The single source of truth is
+    // `compute_cascade`'s internal walk.
+    let layer1_config = toml::Table::new();
+    let layer1_scope = toml::Table::new();
+    let layer1_severity = mockspace_core::lint::GateSeverity::uniform(
+        mockspace_core::lint::Severity::Warn,
+    );
+
+    let CascadeOutput {
+        merged_config,
+        merged_scope,
+        resolved_chain: _,
+        resolved_severity,
+    } = compute_cascade(CascadeInputs {
+        lint_name,
+        layer1_config,
+        layer1_scope,
+        layer1_severity,
+        user_block: Some(user_block),
+        workspace_defaults,
+        overrides,
+        preset_source,
+    })?;
+
+    let only_staged = extract_only_staged(lint_name, descriptor.staging_aware, Some(user_block))?;
+
+    let scope_config: crate::config_types::ScopeConfig = toml::Value::Table(merged_scope.clone())
+        .try_into()
+        .map_err(|e: toml::de::Error| ConfigError {
+            lint_name: lint_name.to_string(),
+            field_path: "scope".to_string(),
+            kind: ConfigErrorKind::InvalidValue,
+            message: format!("scope config parse failed: {e}"),
+            source_location: None,
+        })?;
+    let scope_filter = crate::scope_filter::ScopeFilter::from_config(lint_name, &scope_config)?;
+
+    // The primitive constructor expects `&'static str` for name and
+    // description (carried into the resulting Lint impl's Finding
+    // records). Synthesised names come from runtime TOML; leak them
+    // into static storage. Bounded by the user's lints.toml at engine
+    // startup; lives for the whole engine run; deliberate trade.
+    let static_name: &'static str = Box::leak(lint_name.to_string().into_boxed_str());
+    let description_owned = anchor
+        .description
+        .clone()
+        .unwrap_or_else(|| format!("preset-resolved lint via `{}`", extends_ref.host));
+    let static_description: &'static str = Box::leak(description_owned.into_boxed_str());
+
+    let severity_for_instantiate = resolved_severity.unwrap_or(layer1_severity);
+
+    let lint = (descriptor.instantiate)(
+        static_name,
+        static_description,
+        severity_for_instantiate,
+        &merged_config,
+        &merged_scope,
+    )?;
+
+    Ok(InstantiatedLint {
+        lint,
+        mode: descriptor.mode,
+        staging_aware: descriptor.staging_aware,
+        editor_skip: descriptor.editor_skip,
+        only_staged,
+        scope_filter,
         resolved_severity,
     })
 }
@@ -1399,6 +1601,11 @@ mod tests {
 
     #[test]
     fn load_reads_lints_toml() {
+        // A user TOML block for a lint name that is not in the
+        // registered catalog and carries no `extends` shorthand emits
+        // a config error (per the #611 contract: the v2 engine
+        // surfaces the typo / missing reference rather than silently
+        // ignoring the block).
         let tmp = std::env::temp_dir().join("mockspace_test_lints_load_real");
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
@@ -1408,9 +1615,16 @@ mod tests {
         )
         .unwrap();
         let cfg = LintsConfig::load(&tmp, OverrideCascade::default()).unwrap();
-        // No registered entries means no instantiated lints from the file,
-        // but no parse errors either.
-        assert!(cfg.config_errors.is_empty());
+        let found = cfg
+            .config_errors
+            .iter()
+            .find(|e| e.lint_name == "no-such-lint");
+        assert!(
+            found.is_some(),
+            "expected a config error naming the missing extends reference"
+        );
+        let err = found.unwrap();
+        assert_eq!(err.field_path, "extends");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -1725,5 +1939,197 @@ mod tests {
         assert_eq!(config.get("level").unwrap().as_str(), Some("catalog"));
         assert_eq!(config.get("untouched").unwrap().as_bool(), Some(true));
         assert_eq!(scope.get("category").unwrap().as_str(), Some("catalog"));
+    }
+
+    // ---- preset-as-catalog synthesis path (#611 PR-3) -------------------
+
+    /// Build a PresetFile with an explicit primitive name. Used for
+    /// the synthesised path; the regular `preset(...)` helper hardcodes
+    /// the test-captured primitive which is not in PRIMITIVE_DESCRIPTORS.
+    fn preset_with_primitive(
+        name: &str,
+        primitive: &str,
+        extends: Option<&str>,
+        config_toml: &str,
+    ) -> PresetFile {
+        let config: BTreeMap<String, toml::Value> = config_toml
+            .parse::<toml::Table>()
+            .unwrap()
+            .into_iter()
+            .collect();
+        PresetFile {
+            schema_version: "1.0".to_string(),
+            name: name.to_string(),
+            primitive: primitive.to_string(),
+            description: Some(format!("test preset {name}")),
+            extends: extends.map(String::from),
+            config,
+            severity: Default::default(),
+            scope: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn synthesise_extends_to_first_party_preset_produces_lint() {
+        // A consumer references `mockspace::regex-probe` for a lint
+        // name (`probe-lint`) that is NOT in the auto-registered
+        // catalog. The synthesis path resolves the preset, looks up
+        // `content-regex` in PRIMITIVE_DESCRIPTORS, and constructs an
+        // InstantiatedLint. End state: `probe-lint` is in the
+        // resulting entries set.
+        let source = InMemorySource::new().insert(
+            "mockspace",
+            preset_with_primitive(
+                "regex-probe",
+                "content-regex",
+                None,
+                r#"
+[[patterns]]
+regex = "TODO"
+message = "TODO marker"
+finding_kind = "todo"
+"#,
+            ),
+        );
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table = "extends = \"mockspace::regex-probe\"\n".parse().unwrap();
+        user_lints.insert("probe-lint".to_string(), user_block);
+        let user_toml = LintsTomlFile {
+            lints: user_lints,
+            defaults: None,
+        };
+        let cfg = LintsConfig::from_inputs_with_source(
+            user_toml,
+            OverrideCascade::default(),
+            &source,
+        );
+        assert!(
+            cfg.config_errors.is_empty(),
+            "expected no config errors, got: {:?}",
+            cfg.config_errors
+        );
+        // The synthesised lint should be present in entries by name.
+        // Catalog-registered PerDocument lints (no-bare-vec, no-manual-id,
+        // etc.) would satisfy a count-only check; the name probe pins
+        // that the synthesis path actually constructed `probe-lint`.
+        let synthesised_present = cfg
+            .entries
+            .iter()
+            .any(|e| e.lint.name() == "probe-lint");
+        assert!(
+            synthesised_present,
+            "expected synthesised `probe-lint` in entries; got: {:?}",
+            cfg.entries.iter().map(|e| e.lint.name()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn unregistered_lint_without_extends_emits_config_error() {
+        // [lints.zzz-no-such-thing] with no `extends` and no catalog
+        // entry surfaces as ConfigError::InvalidValue with a message
+        // naming the required field.
+        let source = InMemorySource::new();
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table = "[config]\nfoo = 1\n".parse().unwrap();
+        user_lints.insert("zzz-no-such-thing".to_string(), user_block);
+        let user_toml = LintsTomlFile {
+            lints: user_lints,
+            defaults: None,
+        };
+        let cfg = LintsConfig::from_inputs_with_source(
+            user_toml,
+            OverrideCascade::default(),
+            &source,
+        );
+        let found = cfg
+            .config_errors
+            .iter()
+            .find(|e| e.lint_name == "zzz-no-such-thing");
+        assert!(
+            found.is_some(),
+            "expected a config error for unregistered lint without extends"
+        );
+        let err = found.unwrap();
+        assert_eq!(err.field_path, "extends");
+        assert!(matches!(err.kind, ConfigErrorKind::InvalidValue));
+    }
+
+    #[test]
+    fn synthesise_extends_to_unknown_preset_emits_config_error() {
+        let source = InMemorySource::new();
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table = "extends = \"mockspace::not-shipped\"\n".parse().unwrap();
+        user_lints.insert("probe-lint".to_string(), user_block);
+        let user_toml = LintsTomlFile {
+            lints: user_lints,
+            defaults: None,
+        };
+        let cfg = LintsConfig::from_inputs_with_source(
+            user_toml,
+            OverrideCascade::default(),
+            &source,
+        );
+        let found = cfg
+            .config_errors
+            .iter()
+            .find(|e| e.lint_name == "probe-lint");
+        assert!(
+            found.is_some(),
+            "expected a config error for extends pointing at unknown preset"
+        );
+    }
+
+    #[test]
+    fn synthesise_chain_with_mismatched_primitive_emits_error() {
+        // chain: probe-lint -> regex-probe -> token-probe, where
+        // regex-probe.primitive = "content-regex" and
+        // token-probe.primitive = "token-scan". Resolver should reject
+        // the cross-primitive chain.
+        let source = InMemorySource::new()
+            .insert(
+                "mockspace",
+                preset_with_primitive(
+                    "token-probe",
+                    "token-scan",
+                    None,
+                    "tokens = [\"FOO\"]\n",
+                ),
+            )
+            .insert(
+                "mockspace",
+                preset_with_primitive(
+                    "regex-probe",
+                    "content-regex",
+                    Some("mockspace::token-probe"),
+                    r#"
+[[patterns]]
+regex = "BAR"
+message = "BAR marker"
+finding_kind = "bar"
+"#,
+                ),
+            );
+        let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
+        let user_block: toml::Table = "extends = \"mockspace::regex-probe\"\n".parse().unwrap();
+        user_lints.insert("probe-lint".to_string(), user_block);
+        let user_toml = LintsTomlFile {
+            lints: user_lints,
+            defaults: None,
+        };
+        let cfg = LintsConfig::from_inputs_with_source(
+            user_toml,
+            OverrideCascade::default(),
+            &source,
+        );
+        let found = cfg
+            .config_errors
+            .iter()
+            .find(|e| e.lint_name == "probe-lint");
+        assert!(
+            found.is_some(),
+            "expected a config error for mixed-primitive chain"
+        );
+        let err = found.unwrap();
+        assert!(matches!(err.kind, ConfigErrorKind::ContradictsCatalog));
     }
 }
