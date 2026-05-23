@@ -128,3 +128,59 @@ pub fn write_report_for_routine(
     std::fs::write(path, md).map_err(|e| BenchError::io("writing findings.md", e))?;
     Ok(())
 }
+
+/// Generate `findings.md` from a CSV cache file without re-running
+/// the orchestrator (#604: v1-parity bench findings markdown
+/// generator).
+///
+/// Loads samples from `csv_path` via [`load_samples_csv`], wraps
+/// them in a synthetic [`BenchResult`] carrying the given `title`,
+/// and renders the markdown report for `mode` (typically `"warm"`
+/// or `"cold"`) to `output_path`.
+///
+/// The synthetic result carries the CSV path as its `cache_path`
+/// and an empty [`EnvMeta`] (the original environment metadata is
+/// not preserved through the CSV cache today; reports generated
+/// from this path show "(env metadata unavailable)" in the
+/// methodology section). For full environment metadata, run the
+/// orchestrator via [`run`] and feed the [`BenchResult`] through
+/// [`write_report`] directly.
+///
+/// Equivalent throughput-aware variant: [`report_from_csv_for_routine`].
+pub fn report_from_csv(
+    csv_path: &std::path::Path,
+    output_path: &str,
+    mode: &str,
+    title: &str,
+) -> Result<(), BenchError> {
+    let samples = sample::load_samples_csv(csv_path)?;
+    let result = BenchResult {
+        title: title.to_string(),
+        env: env::EnvMeta::default(),
+        samples,
+        cache_path: csv_path.display().to_string(),
+        report_path: output_path.to_string(),
+    };
+    write_report(&result, mode, output_path)
+}
+
+/// Routine-aware [`report_from_csv`]: includes throughput / Gops/s
+/// tables when the routine declares ops via its
+/// [`mockspace_bench_core::RoutineBridge`].
+pub fn report_from_csv_for_routine(
+    csv_path: &std::path::Path,
+    output_path: &str,
+    mode: &str,
+    title: &str,
+    routine: &RoutineSpec,
+) -> Result<(), BenchError> {
+    let samples = sample::load_samples_csv(csv_path)?;
+    let result = BenchResult {
+        title: title.to_string(),
+        env: env::EnvMeta::default(),
+        samples,
+        cache_path: csv_path.display().to_string(),
+        report_path: output_path.to_string(),
+    };
+    write_report_for_routine(&result, routine, mode, output_path)
+}
