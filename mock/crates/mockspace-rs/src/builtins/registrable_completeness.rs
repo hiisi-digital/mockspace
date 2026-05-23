@@ -7,11 +7,10 @@
 
 use std::borrow::Cow;
 
-use mockspace_core::lint::{Finding, GateSeverity, LintContext, Severity, Span};
+use mockspace_core::lint::{Finding, GateSeverity, LintContext, Span};
 use serde::Deserialize;
 
 use crate::config_types::ItemKind;
-use crate::document::MockspaceDocument;
 use crate::errors::{ConfigError, ConfigErrorKind, LintError};
 use crate::finding_sink::FindingSink;
 use crate::lint::Lint;

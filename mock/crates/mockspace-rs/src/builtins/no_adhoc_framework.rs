@@ -8,10 +8,9 @@
 
 use std::borrow::Cow;
 
-use mockspace_core::lint::{Finding, GateSeverity, LintContext, Severity, Span};
+use mockspace_core::lint::{Finding, GateSeverity, LintContext, Span};
 use serde::Deserialize;
 
-use crate::document::MockspaceDocument;
 use crate::errors::{ConfigError, ConfigErrorKind, LintError};
 use crate::finding_sink::FindingSink;
 use crate::lint::Lint;
@@ -223,9 +222,10 @@ pub fn instantiate_with(
 mod tests {
     use super::*;
     use crate::config_types::Language;
+    use crate::document::MockspaceDocument;
     use crate::finding_sink::VecFindingSink;
     use crate::project::ProjectBuilder;
-    use mockspace_core::lint::{Gate, RunSurface};
+    use mockspace_core::lint::{Gate, RunSurface, Severity};
     use std::path::PathBuf;
 
     struct EmptyCfg;

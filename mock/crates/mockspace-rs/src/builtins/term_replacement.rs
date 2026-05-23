@@ -15,7 +15,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use mockspace_core::lint::{Finding, Fix, GateSeverity, LintContext, Span, Suggestion};
+use mockspace_core::lint::{Finding, GateSeverity, LintContext, Span, Suggestion};
 use serde::Deserialize;
 
 use crate::document::MockspaceDocument;

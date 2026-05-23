@@ -17,15 +17,14 @@
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use globset::Glob;
-use mockspace_core::lint::{Finding, GateSeverity, Language, LintContext, Severity, Span};
+use mockspace_core::lint::{Finding, GateSeverity, Language, LintContext, Span};
 use regex::Regex;
 use serde::Deserialize;
 
 use crate::config_types::Visibility;
-use crate::document::MockspaceDocument;
 use crate::errors::{ConfigError, ConfigErrorKind, LintError};
 use crate::finding_sink::FindingSink;
 use crate::lint::Lint;
@@ -487,6 +486,7 @@ pub fn instantiate_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::MockspaceDocument;
     use crate::finding_sink::VecFindingSink;
     use crate::project::ProjectBuilder;
     use mockspace_core::lint::{Gate, RunSurface, Severity};
