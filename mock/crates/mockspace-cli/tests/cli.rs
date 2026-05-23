@@ -244,10 +244,10 @@ fn refresh_repairs_drifted_hook_body() {
 fn explain_known_lint_prints_cascade_report() {
     mock()
         .arg("explain")
-        .arg("no-bare-numeric")
+        .arg("no-bare-vec")
         .assert()
         .success()
-        .stdout(predicate::str::contains("lint: no-bare-numeric"))
+        .stdout(predicate::str::contains("lint: no-bare-vec"))
         .stdout(predicate::str::contains("Cascade layers:"))
         .stdout(predicate::str::contains("Layer 1: catalog defaults"))
         .stdout(predicate::str::contains("Final values:"));
@@ -268,7 +268,7 @@ fn explain_picks_up_per_lint_toml_override() {
     let fixture = MockspaceFixture::new()
         .with_lints_toml(
             r#"
-[lints.no-bare-numeric.scope]
+[lints.no-bare-vec.scope]
 exempt_paths = ["**/cli_fixture/**"]
 "#,
         )
@@ -276,7 +276,7 @@ exempt_paths = ["**/cli_fixture/**"]
         .expect("fixture");
     mock()
         .arg("explain")
-        .arg("no-bare-numeric")
+        .arg("no-bare-vec")
         .arg("--repo-root")
         .arg(fixture.path())
         .assert()
@@ -303,7 +303,7 @@ visibility = "all"
         .expect("fixture");
     mock()
         .arg("explain")
-        .arg("no-bare-numeric")
+        .arg("no-bare-vec")
         .arg("--repo-root")
         .arg(fixture.path())
         .assert()
@@ -328,7 +328,7 @@ fn explain_per_lint_toml_wins_over_workspace_defaults() {
 [defaults]
 visibility = "all"
 
-[lints.no-bare-numeric.config]
+[lints.no-bare-vec.config]
 visibility = "crate"
 "#,
         )
@@ -336,7 +336,7 @@ visibility = "crate"
         .expect("fixture");
     mock()
         .arg("explain")
-        .arg("no-bare-numeric")
+        .arg("no-bare-vec")
         .arg("--repo-root")
         .arg(fixture.path())
         .assert()
@@ -357,13 +357,13 @@ fn explain_warns_on_unparseable_user_toml_but_still_runs() {
         .expect("fixture");
     mock()
         .arg("explain")
-        .arg("no-bare-numeric")
+        .arg("no-bare-vec")
         .arg("--repo-root")
         .arg(fixture.path())
         .assert()
         .success()
         .stderr(predicate::str::contains("warning"))
-        .stdout(predicate::str::contains("lint: no-bare-numeric"));
+        .stdout(predicate::str::contains("lint: no-bare-vec"));
 }
 
 // ---- check ---------------------------------------------------------------

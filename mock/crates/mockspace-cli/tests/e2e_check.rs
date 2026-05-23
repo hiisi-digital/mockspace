@@ -117,17 +117,16 @@ fn check_json_on_rust_crate_with_violations_at_commit_gate() {
     // landing on a future drift should read this comment first.
     //
     // KNOWN ORDER: findings emit in `engine.run`'s dispatch order,
-    // not alphabetical-by-lint-name. The golden currently shows
-    // `no-public-raw-field`, then `no-bare-numeric` x2, then
-    // `no-manual-id` because that is the order the engine emits
-    // (catalog instantiation order applied to each document). Any
-    // reordering of catalog registrations or dispatch will reorder
-    // the golden.
+    // not alphabetical-by-lint-name. After #568, the preset-replaced
+    // lints (no-bare-numeric, no-public-raw-field) are no longer
+    // auto-registered; this fixture triggers only the bespoke
+    // `no-bare-vec` and `no-manual-id` lints that ship as catalog
+    // entries today.
     //
     // The golden is otherwise the point of the test: any wire-shape
     // drift visible to JSON consumers (editor integrations, CI
     // dashboards) flags here.
-    let lib_rs = "pub fn count() -> usize { 42 }\npub struct Bag {\n    pub items: u64,\n}\n";
+    let lib_rs = "pub fn handle(items: Vec<u8>) {}\npub struct Bag {\n    pub items: Vec<u32>,\n}\n";
     let fixture = MockspaceFixture::new()
         .with_rust_crate("probe", lib_rs)
         .build()
@@ -213,7 +212,7 @@ fn check_human_on_rust_crate_with_violations_at_commit_gate() {
     // actual line in the source. Future engine work refining span
     // precision will regenerate this golden. The order is also
     // engine emission order, not alphabetical.
-    let lib_rs = "pub fn count() -> usize { 42 }\npub struct Bag {\n    pub items: u64,\n}\n";
+    let lib_rs = "pub fn handle(items: Vec<u8>) {}\npub struct Bag {\n    pub items: Vec<u32>,\n}\n";
     let fixture = MockspaceFixture::new()
         .with_rust_crate("probe", lib_rs)
         .build()
@@ -299,13 +298,14 @@ fn check_dry_run_on_empty_fixture_prints_no_fixable_findings() {
 
 #[test]
 fn check_fix_on_rust_crate_with_violations_keeps_findings_visible() {
-    // Findings with no `suggestion.fix` are advisory-only. The
-    // current probe-crate violations (no-bare-numeric, no-public-
-    // raw-field) do not carry auto-fix suggestions in the catalog,
-    // so `--fix` is a no-op on edits but the findings still print
-    // and the exit code still reflects the gate failure. Verifies
-    // that `--fix` does not silence Error-severity diagnostics.
-    let lib_rs = "pub fn count() -> usize { 42 }\npub struct Bag {\n    pub items: u64,\n}\n";
+    // Findings with no `suggestion.fix` are advisory-only. After
+    // #568 the probe crate triggers `no-bare-vec` (bespoke, still
+    // auto-registered). The lint does not carry an auto-fix
+    // suggestion, so `--fix` is a no-op on edits but the findings
+    // still print and the exit code still reflects the gate
+    // failure. Verifies `--fix` does not silence Error-severity
+    // diagnostics.
+    let lib_rs = "pub fn handle(items: Vec<u8>) {}\npub struct Bag {\n    pub items: Vec<u32>,\n}\n";
     let fixture = MockspaceFixture::new()
         .with_rust_crate("probe", lib_rs)
         .build()
@@ -327,7 +327,7 @@ fn check_fix_on_rust_crate_with_violations_keeps_findings_visible() {
     );
     let stdout = String::from_utf8(output.stdout).expect("check --fix stdout is UTF-8");
     assert!(
-        stdout.contains("no-bare-numeric"),
+        stdout.contains("no-bare-vec"),
         "findings must still print before the fix summary; stdout: {stdout}"
     );
     assert!(
