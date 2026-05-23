@@ -290,12 +290,22 @@ impl LintEngine for MockspaceEngine {
                     // never sees them.
                     //
                     // Sequential today. The schema design memo §15 calls
-                    // for rayon parallelism here, but MockspaceDocument's
-                    // lazy syn / tree-sitter AST caches don't propagate
-                    // Sync (the inner crates' types aren't Sync). Wiring
-                    // rayon requires either Mutex-wrapping the caches or
-                    // an `unsafe impl Sync` with a documented post-init
-                    // read-only invariant. Tracked as a follow-up.
+                    // for rayon parallelism here (#534), but
+                    // `MockspaceDocument: !Sync` because the `syn::File`
+                    // it caches transitively contains `Rc<()>` and
+                    // `proc_macro::Span` / `proc_macro::TokenStream`,
+                    // none of which are Sync. Wiring rayon requires
+                    // either Mutex-wrapping the OnceCells (heavy lock
+                    // contention on AST-hot lints) or an
+                    // `unsafe impl Sync for MockspaceDocument` justified
+                    // by the post-init read-only invariant of the
+                    // cached File. Design path captured in
+                    // `mock/research/202605231914_rayon-per-document-dispatch.md`.
+                    // Differential e2e tests from #564
+                    // (check_is_byte_deterministic_run_to_run +
+                    // check_findings_are_path_order_independent) cover
+                    // the determinism regression surface once rayon
+                    // lands.
                     //
                     // Branches duplicate the inner closure rather than
                     // boxing the iterator: `Box<dyn Iterator<...>>` heap-
