@@ -171,9 +171,13 @@ gated on the bench numbers; no impl PR should land before that.
    on its thread before invoking `lint.check_document`. The
    existing OnceCell caches remain single-threaded inside each
    worker.
-3. The findings sink (`DiagnosticSink`) needs to be Sync-safe
-   under concurrent push regardless of path. Check the current
-   impl: if it's not Sync, that becomes the gating refactor.
+3. The findings sink is already rayon-ready: the `FindingSink`
+   trait declares `Send + Sync` and the default
+   `VecFindingSink` impl uses `Mutex<Vec<Finding>>` for
+   concurrent push (see
+   `mock/crates/mockspace-rs/src/finding_sink.rs`). One fewer
+   blocker; the dispatch loop's task closures can capture
+   `&sink: &dyn FindingSink` directly. No sink refactor needed.
 4. Test plan: the #564 differential e2e tests
    (`check_is_byte_deterministic_run_to_run` +
    `check_findings_are_path_order_independent`) cover the
