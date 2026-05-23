@@ -291,15 +291,15 @@ impl LintEngine for MockspaceEngine {
                     //
                     // Sequential today. The schema design memo §15 calls
                     // for rayon parallelism here (#534), but
-                    // `MockspaceDocument: !Sync` because the `syn::File`
-                    // it caches transitively contains `Rc<()>` and
-                    // `proc_macro::Span` / `proc_macro::TokenStream`,
-                    // none of which are Sync. Wiring rayon requires
-                    // either Mutex-wrapping the OnceCells (heavy lock
-                    // contention on AST-hot lints) or an
-                    // `unsafe impl Sync for MockspaceDocument` justified
-                    // by the post-init read-only invariant of the
-                    // cached File. Design path captured in
+                    // `MockspaceDocument: !Send + !Sync` because the
+                    // cached `syn::File` transitively contains `Rc<()>`
+                    // plus a Span / TokenStream pair carrying non-
+                    // thread-safe identity (exact type names depend on
+                    // proc-macro2's build configuration). The !Send half
+                    // means even Mutex-wrapping does not help; the
+                    // recommended path is "reparse per rayon worker"
+                    // (Path C in the memo) gated on a benchmark showing
+                    // the reparse cost is bounded. Design at
                     // `mock/research/202605231914_rayon-per-document-dispatch.md`.
                     // Differential e2e tests from #564
                     // (check_is_byte_deterministic_run_to_run +

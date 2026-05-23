@@ -19,12 +19,26 @@ surfaces the cost on realistic workloads.
 
 ## Why it cannot land as a one-line change
 
-`MockspaceDocument: !Sync` today. The compiler reports three
-specific non-Sync members inside `syn::File`:
+`MockspaceDocument: !Sync` AND `!Send` today. An
+`assert_sync::<MockspaceDocument>()` probe inside the test suite
+fails to compile; the rustc error names a handful of inner types
+that don't satisfy the marker:
 
-- `proc_macro::Span` (not Sync)
-- `proc_macro::TokenStream` (not Sync)
-- `Rc<()>` (single-threaded reference count)
+- `Rc<()>` (single-threaded reference count, not Send and not Sync)
+- a Span type carrying a non-thread-safe identity
+- a TokenStream type with the same constraint
+
+The exact type names depend on the proc-macro2 build configuration:
+in the nightly-bridge path syn re-exports the compiler-internal
+`proc_macro::Span` / `proc_macro::TokenStream`, in the stable
+fallback it uses `proc_macro2::fallback::Span` etc. The names vary;
+the soundness argument is independent of which.
+
+The `!Send` half of this is load-bearing and changes the unblock
+analysis below. The original draft of this memo proposed `Mutex`-
+wrapping the AST caches as the safe-by-default fallback. That is
+wrong: `Mutex<T>: Send + Sync` requires `T: Send`, and the inner
+`syn::File` is `!Send`. The Mutex path does not work.
 
 The cached `Option<syn::File>` lives inside
 `OnceCell<Option<syn::File>>` from `once_cell::sync` (NOT
@@ -38,25 +52,17 @@ separate axis. tree-sitter::Tree was historically not Sync; modern
 versions may be. The `RwLock<HashMap<StripOpts, Arc<str>>>` for
 stripped source IS Sync.
 
-## Two unblock paths
+## Unblock paths after the !Send realisation
 
-### Path A: Mutex-wrap the AST caches
+### Path A (rejected): Mutex-wrap the AST caches
 
-Change `OnceCell<Option<syn::File>>` to
-`Mutex<Option<OnceCell<Option<syn::File>>>>` (or a custom dual-state
-lock pattern). Every cache hit pays a Mutex lock + unlock pair.
+Does not work. `Mutex<T>: Send + Sync` requires `T: Send`. The
+inner `syn::File` is `!Send` because of `Rc<()>` and
+`proc_macro::Span`. The Mutex wrapper inherits the same constraint
+the bare cell had. Documented here for completeness; do not
+attempt.
 
-Cost: AST-hot lints (no-bare-numeric, ast-type-position-based,
-suppression-meta) call `doc.ast()` once per document. Under rayon
-that single call per document also serialises through the Mutex if
-multiple threads land on the same document. The latter does not
-happen in the natural lint dispatch shape (each lint+document pair
-runs once), so contention is low in practice.
-
-Benefit: zero unsafe, mechanically safe, surfaces the cost cleanly
-in a profiler.
-
-### Path B: `unsafe impl Sync for MockspaceDocument`
+### Path B (still possible): `unsafe impl Send + Sync for MockspaceDocument`
 
 The naive framing "read-only after init is sound" is **wrong** at
 the type level. `&T: Send` requires `T: Sync`. If `proc_macro::Span`
@@ -105,46 +111,79 @@ document the audit, gate new lint primitives' read-path changes
 behind a re-audit, and consider a miri-based concurrent-read test
 that exercises the dispatch loop.
 
+### Path C: reparse-per-worker (Send-free)
+
+The rayon worker receives the document by reference, owns its own
+copy of the parsed AST for the duration of its task, drops it
+before returning. No sharing across threads at any point. Cost: N
+reparses per document where N is the number of lints that touch
+the AST.
+
+For a workload of ~50 documents and ~7 AST-hot lints, that is
+~350 syn parses per `mock check` vs ~50 today. syn is fast (single
+files measured at sub-millisecond on modern hardware for typical
+sizes), so the cost may be tolerable; benchmark needed.
+
+This is the only path that does not require `unsafe`. The
+implementation reshapes the engine's per-document dispatch loop:
+each rayon worker takes a `(lint, document)` pair, parses the
+document on its own thread, runs the lint, drops the AST.
+
+### Path D: replace syn with a Send+Sync parser
+
+`tree-sitter::Tree` is already cached in `MockspaceDocument`. If
+the lints can be ported off syn entirely (or onto a wrapper that
+re-emits a Send+Sync IR), the rayon path opens up.
+
+Out of scope for #534; tracked as a longer-term direction.
+
 ## Recommendation
 
-Path A or Path B depending on the syn-read-path audit. Path A
-(Mutex-wrap) is the safe default if the audit work is deferred or
-turns up any `Rc::clone` call on a Span or TokenStream from the
-lints' read paths. Path B (unsafe impl Sync) is the right choice
-**only** if the audit confirms no such clone happens, paired with
-a syn version pin and a `// SAFETY:` block enumerating the
-audited read paths.
+The original Path A is dead. Live options:
 
-Default to Path A. Escalate to Path B with the audit when a
-benchmark actually shows the Mutex contention costing real time.
+- **Path B** (unsafe impl Send + Sync) with the full audit:
+  potential best perf, irreducible unsafe debt.
+- **Path C** (reparse per worker): no unsafe, real but bounded
+  perf cost from re-parsing. Benchmark to validate.
+- **Path D** (replace syn): largest scope; tracks as follow-up.
+
+For #534, default to **Path C unless a benchmark shows the reparse
+cost dominates**. The benchmark uses bench-harness (#604's
+`report_from_csv` chain) on a synthetic 500-document fixture
+comparing sequential, Path C, and (if audit clears it) Path B.
+
+This memo's first iteration was wrong about the safety axis (`&T:
+Send` requires `T: Sync`) and the send axis (Mutex requires Send).
+Both got tightened in this revision. Implementation work remains
+gated on the bench numbers; no impl PR should land before that.
 
 ## Implementation steps
 
-1. Default to Path A. Wrap the AST caches in
-   `Mutex<OnceCell<...>>` or equivalent. The Mutex path is sound
-   by construction and the audit becomes a follow-up optimisation.
-2. Wire rayon. Change the per-document loop in
-   `engine.rs::Engine::run` to use
-   `documents.par_iter().try_for_each(|doc| dispatch(doc))` or
-   equivalent.
-3. The findings sink (`DiagnosticSink`) needs to be Sync-safe under
-   concurrent push. Check the current impl: if it's a Mutex
-   already, rayon dispatch composes; if it's not, that becomes the
-   next blocker.
+1. Benchmark first. Bench-harness infrastructure (#604's
+   `report_from_csv` chain) compares sequential vs Path C
+   (reparse-per-worker) variants on a synthetic 500-document
+   fixture. If Path C's reparse cost is bounded (say within 2x of
+   the sequential baseline), Path C wins by avoiding unsafe
+   entirely.
+2. If Path C clears the bench, ship the impl. Reshape the per-
+   document loop in `engine.rs::Engine::run` to dispatch
+   (lint, doc) pairs in parallel; each worker re-parses the doc
+   on its thread before invoking `lint.check_document`. The
+   existing OnceCell caches remain single-threaded inside each
+   worker.
+3. The findings sink (`DiagnosticSink`) needs to be Sync-safe
+   under concurrent push regardless of path. Check the current
+   impl: if it's not Sync, that becomes the gating refactor.
 4. Test plan: the #564 differential e2e tests
    (`check_is_byte_deterministic_run_to_run` +
    `check_findings_are_path_order_independent`) cover the
-   regression surface. Run them in a loop (e.g. 100 iterations) on
-   the rayon-enabled branch; any nondeterminism surfaces.
-5. Benchmark: bench-harness has the infrastructure (#604's
-   `report_from_csv` chain). Wire a variant cdylib that runs
-   `Engine::run` against a 500-document synthetic fixture; compare
-   sequential vs Path A vs Path B (if the audit clears it). Numbers
-   drive the Path A to Path B promotion decision.
-6. If benchmarks justify Path B: run the syn-read-path audit
-   described above, lock the syn version, swap the Mutex for
-   `unsafe impl Sync` with a `// SAFETY:` block enumerating the
-   audit results.
+   regression surface. Run them in a loop (e.g. 100 iterations)
+   on the rayon-enabled branch; any nondeterminism surfaces.
+5. If the benchmark shows Path C's reparse cost dominating,
+   escalate to Path B: run the syn-read-path audit, lock the syn
+   version, write the `unsafe impl Send + Sync` with a
+   `// SAFETY:` block enumerating the audit results, gate behind
+   a miri-aware concurrent-read test.
 
 ## Out-of-scope follow-ups
 
