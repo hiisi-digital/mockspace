@@ -336,6 +336,147 @@ fn check_fix_on_rust_crate_with_violations_keeps_findings_visible() {
     );
 }
 
+// ---- differential / determinism (#564) -----------------------------------
+
+#[test]
+fn check_is_byte_deterministic_run_to_run() {
+    // #564: differential testing on the run-to-run axis. The
+    // simplest differential property is "same fixture, same input,
+    // same output across invocations". Each `Command::cargo_bin`
+    // call spawns a fresh `mock` subprocess, so HashMap hasher
+    // seeds (Rust's default Hasher randomises per-process) differ
+    // across the three invocations; if any HashMap iteration order
+    // leaks into the rendered output, the byte-compare fails
+    // here. Three markdown files with em-dashes plus a Rust crate
+    // that triggers no-bare-vec; both lints exercise their
+    // dispatch paths.
+    let lints_toml = r#"
+[lints.writing-style]
+extends = "mockspace::writing-style"
+"#;
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml(lints_toml)
+        .with_rust_crate("probe", "pub fn handle(items: Vec<u8>) {}\n")
+        .build()
+        .expect("fixture");
+    for (name, body) in &[
+        ("a.md", "First doc \u{2014} marker.\n"),
+        ("b.md", "Second doc \u{2014} marker.\n"),
+        ("c.md", "Third doc \u{2014} marker.\n"),
+    ] {
+        std::fs::write(fixture.path().join(name), body)
+            .expect("write fixture markdown");
+    }
+    let invoke = || {
+        let out = Command::cargo_bin("mock")
+            .expect("cargo build provides the mock binary")
+            .arg("check")
+            .arg("--gate")
+            .arg("commit")
+            .arg("--repo-root")
+            .arg(fixture.path())
+            .output()
+            .expect("invoke mock check");
+        String::from_utf8(out.stdout).expect("check stdout is UTF-8")
+    };
+    let first = invoke();
+    let second = invoke();
+    let third = invoke();
+    assert_eq!(
+        first, second,
+        "mock check output drifted between runs 1 and 2; nondeterminism in the engine output path"
+    );
+    assert_eq!(
+        second, third,
+        "mock check output drifted between runs 2 and 3; nondeterminism in the engine output path"
+    );
+    // Sanity: outputs are non-empty so the determinism check is not
+    // trivially passing on empty stdout.
+    assert!(
+        first.contains("em-dash") || first.contains("no-bare-vec"),
+        "expected at least one finding to surface; got: {first}"
+    );
+}
+
+#[test]
+fn check_findings_are_path_order_independent() {
+    // #564: differential testing on the input-name axis. Two
+    // fixtures carry identical markdown content under different
+    // file names. The engine's walkdir traversal sorts
+    // lexicographically on common filesystems, so both fixtures
+    // get walked in ascending order independent of the order the
+    // test wrote the files in. What this test actually validates
+    // is path-content independence: identical lint behaviour under
+    // different filename sets. Findings differ in their `<path>`
+    // prefix but the kinds + counts match because the lint is
+    // path-agnostic.
+    //
+    // A stricter traversal-order permutation would require either
+    // a custom walkdir sort callback at the engine level or
+    // subdirectory shuffling; tracked as a follow-up under #564.
+    let lints_toml = r#"
+[lints.writing-style]
+extends = "mockspace::writing-style"
+"#;
+    let content = "Doc with \u{2014} marker.\n";
+    // Counts every occurrence of the literal substring `em-dash`
+    // in stdout. That substring appears in finding lines and may
+    // also surface in headers / summary lines; the `>= 3` floor
+    // below is therefore loose-but-fine. The load-bearing
+    // assertion is the equality across both fixtures: whatever
+    // the substring count is, it has to match. Do not tighten the
+    // floor to `== 3`; that would couple the test to renderer
+    // output shape rather than the path-content-independence
+    // property the test exists to pin.
+    let count_em_dash_findings = |fixture: &MockspaceFixture| -> usize {
+        let out = Command::cargo_bin("mock")
+            .expect("cargo build provides the mock binary")
+            .arg("check")
+            .arg("--gate")
+            .arg("commit")
+            .arg("--repo-root")
+            .arg(fixture.path())
+            .output()
+            .expect("invoke mock check");
+        let stdout = String::from_utf8(out.stdout).expect("check stdout is UTF-8");
+        stdout.matches("em-dash").count()
+    };
+    // Fixture A: files named a/b/c.
+    let fixture_a = MockspaceFixture::new()
+        .with_lints_toml(lints_toml)
+        .build()
+        .expect("fixture A");
+    for name in &["a.md", "b.md", "c.md"] {
+        std::fs::write(fixture_a.path().join(name), content)
+            .expect("write fixture A markdown");
+    }
+    // Fixture B: same content but file names that sort in reverse
+    // dictionary order against the fixture-A names (`zzz` > `c`,
+    // etc.). walkdir's default ordering walks the tree in the
+    // platform's directory-iteration order; reversing the names
+    // forces a different traversal sequence on filesystems that
+    // sort lexicographically.
+    let fixture_b = MockspaceFixture::new()
+        .with_lints_toml(lints_toml)
+        .build()
+        .expect("fixture B");
+    for name in &["zzz.md", "yyy.md", "xxx.md"] {
+        std::fs::write(fixture_b.path().join(name), content)
+            .expect("write fixture B markdown");
+    }
+    let count_a = count_em_dash_findings(&fixture_a);
+    let count_b = count_em_dash_findings(&fixture_b);
+    assert_eq!(
+        count_a, count_b,
+        "em-dash finding count differed under permuted file names; \
+         engine output depends on input path ordering"
+    );
+    assert!(
+        count_a >= 3,
+        "expected at least 3 em-dash findings (one per .md file); got {count_a}"
+    );
+}
+
 // ---- preset-as-catalog opt-in via extends (#611) -------------------------
 
 #[test]
