@@ -339,6 +339,63 @@ fn check_fix_on_rust_crate_with_violations_keeps_findings_visible() {
 // ---- preset-as-catalog opt-in via extends (#611) -------------------------
 
 #[test]
+fn check_opts_into_writing_style_preset_catches_em_dash() {
+    // Closes #608: the writing-style preset ships em-dash detection
+    // out of the box; once a consumer opts in via
+    // `extends = "mockspace::writing-style"`, the post-#611 synthesis
+    // path makes the lint reachable. This e2e drops a markdown file
+    // with a single em-dash, opts in, and confirms the finding
+    // surfaces.
+    //
+    // The writing-style preset scopes to `**/*.md` and
+    // `**/*.md.tmpl`; the .rs source sites named in the Track D
+    // memo (no_bare_vec.rs:starts_with, content_regex.rs test
+    // fixtures, etc.) are out of scope and require no allow
+    // annotations.
+    let lints_toml = r#"
+[lints.writing-style]
+extends = "mockspace::writing-style"
+"#;
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml(lints_toml)
+        .build()
+        .expect("fixture");
+    // Drop a markdown file at the fixture root with an em-dash.
+    std::fs::write(
+        fixture.path().join("readme.md"),
+        "# Probe\n\nAn em-dash \u{2014} here for the lint to catch.\n",
+    )
+    .expect("write probe markdown");
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("check")
+        .arg("--gate")
+        .arg("commit")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .output()
+        .expect("invoke mock check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("writing-style"),
+        "expected `writing-style` finding in stdout; got:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    // Tighter pin: the preset's em-dash pattern carries
+    // `finding_kind = "em-dash"`. Asserting on the kind token locks
+    // the detection path (rather than just the lint name, which a
+    // future config-echo could trivially produce).
+    assert!(
+        stdout.contains("em-dash"),
+        "expected `em-dash` finding kind in stdout; got:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("config error"),
+        "expected no config errors when opting into the writing-style preset; stderr: {stderr}"
+    );
+}
+
+#[test]
 fn check_opts_into_preset_replaced_lint_via_extends() {
     // Closes the loop on #568 + #611: post #189 removal, the 15
     // preset-replaced lints are unreachable from consumer TOML unless
