@@ -256,14 +256,26 @@ the catalog no longer registers them at engine startup.
 
 These lints' definitions still ship inside mockspace (under
 `mock/crates/mockspace-rs/src/builtins/`) and their preset files live
-at `mock/crates/mockspace-rs/presets/<name>.toml`. The `extends`
-mechanism currently only overlays config onto auto-registered
-catalog entries; instantiating a catalog entry from a preset file
-(so a consumer can opt back into one of these 15 lints via
-`[lints.<name>] extends = "mockspace::<name>"`) is tracked under
-#611. Until that lands, the 15 lints are temporarily unreachable from
-consumer `mockspace.toml`. After #611 lands, the opt-in path is one
-line per lint a consumer wants.
+at `mock/crates/mockspace-rs/presets/<name>.toml`. As of #611, the
+`extends` mechanism resolves the preset into a synthesised catalog
+entry at engine startup. Opt-in is one line per lint:
+
+```toml
+[lints.no-bare-numeric]
+extends = "mockspace::no-bare-numeric"
+
+[lints.writing-style]
+extends = "mockspace::writing-style"
+```
+
+Additional `[lints.<name>.config]` or `[lints.<name>.scope]` blocks
+overlay onto the preset's defaults, same shape as for any
+catalog-registered lint. Per-gate `[lints.<name>.gate.commit]` and
+similar overlays apply on top of the preset's severity floor. Chain
+references (`extends` pointing at another preset that itself extends
+a deeper one) compose innermost-first; every preset in the chain
+must point at the same primitive (cross-primitive chains fail at
+load time with a structured config error).
 
 The seven bespoke lints that remain auto-registered carry domain
 logic the preset surface does not capture today:

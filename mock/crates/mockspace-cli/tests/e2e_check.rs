@@ -336,3 +336,47 @@ fn check_fix_on_rust_crate_with_violations_keeps_findings_visible() {
     );
 }
 
+// ---- preset-as-catalog opt-in via extends (#611) -------------------------
+
+#[test]
+fn check_opts_into_preset_replaced_lint_via_extends() {
+    // Closes the loop on #568 + #611: post #189 removal, the 15
+    // preset-replaced lints are unreachable from consumer TOML unless
+    // the consumer adds `extends = "mockspace::<name>"`. This e2e
+    // verifies the opt-in works end-to-end through the CLI: a probe
+    // crate triggers `no-bare-numeric` (a preset-replaced lint), the
+    // user's lints.toml carries the `extends` shorthand, and the
+    // engine surfaces a finding under the synthesised name.
+    let lib_rs = "pub fn count() -> u64 { 42 }\n";
+    let lints_toml = r#"
+[lints.no-bare-numeric]
+extends = "mockspace::no-bare-numeric"
+"#;
+    let fixture = MockspaceFixture::new()
+        .with_lints_toml(lints_toml)
+        .with_rust_crate("probe", lib_rs)
+        .build()
+        .expect("fixture");
+    let output = Command::cargo_bin("mock")
+        .expect("cargo build provides the mock binary")
+        .arg("check")
+        .arg("--gate")
+        .arg("commit")
+        .arg("--repo-root")
+        .arg(fixture.path())
+        .output()
+        .expect("invoke mock check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The synthesised lint should surface a finding by name.
+    assert!(
+        stdout.contains("no-bare-numeric"),
+        "expected `no-bare-numeric` finding in stdout; got:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    // No config errors expected: the extends path resolves cleanly.
+    assert!(
+        !stderr.contains("config error"),
+        "expected no config errors when opting into a first-party preset; \
+         stderr: {stderr}"
+    );
+}
