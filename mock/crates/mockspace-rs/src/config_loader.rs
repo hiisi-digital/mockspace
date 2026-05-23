@@ -276,7 +276,8 @@ pub fn detect_prop_name_conflicts(entries: &[InstantiatedLint]) -> Vec<StartupWa
 // =========================================================================
 
 fn extract_only_staged(
-    entry: &CatalogEntry,
+    lint_name: &str,
+    staging_aware: bool,
     user_block: Option<&toml::Table>,
 ) -> Result<OnlyStaged, ConfigError> {
     let mut out = OnlyStaged::default();
@@ -293,14 +294,13 @@ fn extract_only_staged(
         let Some(toml::Value::Boolean(only_staged)) = g.get("only_staged") else {
             continue;
         };
-        if *only_staged && !entry.staging_aware {
+        if *only_staged && !staging_aware {
             return Err(ConfigError {
-                lint_name: entry.name.to_string(),
+                lint_name: lint_name.to_string(),
                 field_path: format!("gate.{gate_name}.only_staged"),
                 kind: crate::errors::ConfigErrorKind::ContradictsCatalog,
                 message: format!(
-                    "lint `{}` is not staging_aware; `only_staged = true` is invalid here",
-                    entry.name
+                    "lint `{lint_name}` is not staging_aware; `only_staged = true` is invalid here"
                 ),
                 source_location: None,
             });
@@ -311,7 +311,7 @@ fn extract_only_staged(
             "push" => out.push = *only_staged,
             other => {
                 return Err(ConfigError {
-                    lint_name: entry.name.to_string(),
+                    lint_name: lint_name.to_string(),
                     field_path: format!("gate.{other}"),
                     kind: crate::errors::ConfigErrorKind::UnknownField,
                     message: format!("unknown gate `{other}` (expected commit / build / push)"),
@@ -323,6 +323,152 @@ fn extract_only_staged(
     Ok(out)
 }
 
+/// Inputs to the cascade-math pass, abstracted so both the catalog
+/// entry path and the upcoming preset-as-catalog synthesis path
+/// (#611 PR-3) can share the layer composition.
+///
+/// `layer1_*` come from whichever source establishes the cascade
+/// floor: a `CatalogEntry::default_*` for the entry path, or a
+/// preset file's own `config` / `scope` / `severity` for the
+/// synthesised path. Higher cascade layers (preset chain, workspace
+/// defaults, per-lint TOML, CLI overrides) are independent of which
+/// floor the caller picked.
+///
+/// The floor tables are passed by value: `compute_cascade` consumes
+/// them and applies higher-layer overlays in place. Callers parse or
+/// clone the floor before calling; the struct's `&'a` lifetime
+/// covers only the borrowed context (user_block, workspace_defaults,
+/// overrides, preset_source).
+pub(crate) struct CascadeInputs<'a> {
+    pub lint_name: &'a str,
+    pub layer1_config: toml::Table,
+    pub layer1_scope: toml::Table,
+    pub layer1_severity: mockspace_core::lint::GateSeverity,
+    /// Optional per-lint user TOML block (`[lints.<name>]`). Carries
+    /// `extends`, `config`, `scope`, `gate`.
+    pub user_block: Option<&'a toml::Table>,
+    pub workspace_defaults: &'a toml::Table,
+    pub overrides: &'a OverrideCascade,
+    pub preset_source: &'a dyn PresetSource,
+}
+
+/// Outputs of the cascade-math pass. The merged tables feed the
+/// primitive's `instantiate_with`; the resolved chain feeds the
+/// severity cascade and (PR-3) the synthesis path's primitive
+/// mismatch check; `resolved_severity` is the final
+/// post-cascade severity or `None` when no layer touched it.
+pub(crate) struct CascadeOutput {
+    pub merged_config: toml::Table,
+    pub merged_scope: toml::Table,
+    pub resolved_chain: Vec<PresetFile>,
+    pub resolved_severity: Option<mockspace_core::lint::GateSeverity>,
+}
+
+/// Walk the five-layer cascade producing merged TOML tables + the
+/// resolved severity + the preset chain. Pure function over the
+/// inputs; no entry-specific assumptions beyond what
+/// `CascadeInputs` carries.
+///
+/// Layers, deepest-first:
+/// 1. `layer1_config` / `layer1_scope` (caller-provided floor).
+/// 2. Preset chain resolved through `preset_source`, walked
+///    innermost-first.
+/// 3. `workspace_defaults`.
+/// 4. `user_block.config` / `user_block.scope`.
+/// 5. CLI `scope_intersection` (against `merged_scope.crates`) and
+///    `severity_overrides`.
+///
+/// The severity cascade is composed from `layer1_severity` plus the
+/// resolved preset chain plus `user_block.gate.*.severity` plus
+/// `overrides.severity_overrides`. Unset axes inherit from the
+/// deeper layer.
+pub(crate) fn compute_cascade(
+    inputs: CascadeInputs<'_>,
+) -> Result<CascadeOutput, ConfigError> {
+    let CascadeInputs {
+        lint_name,
+        mut layer1_config,
+        mut layer1_scope,
+        layer1_severity,
+        user_block,
+        workspace_defaults,
+        overrides,
+        preset_source,
+    } = inputs;
+
+    // Level 2: preset chain.
+    let resolved_chain: Vec<PresetFile> = if let Some(block) = user_block {
+        if let Some(extends_ref) = parse_extends(block.get("extends"))
+            .map_err(|e| preset_error_to_config_error(lint_name, "extends", e))?
+        {
+            let chain = resolve_preset_chain(&extends_ref, preset_source)
+                .map_err(|e| preset_error_to_config_error(lint_name, "extends", e))?;
+            apply_preset_chain(&chain, &mut layer1_config, &mut layer1_scope);
+            chain
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Level 3: workspace defaults (overlay where present).
+    overlay(&mut layer1_config, workspace_defaults);
+
+    // Level 4: per-lint user TOML config / scope. (Other user-block
+    // keys like `gate` consult the resolved severity cascade or
+    // get validated by the caller against entry-specific
+    // metadata.)
+    if let Some(block) = user_block {
+        if let Some(toml::Value::Table(t)) = block.get("config") {
+            overlay(&mut layer1_config, t);
+        }
+        if let Some(toml::Value::Table(t)) = block.get("scope") {
+            overlay(&mut layer1_scope, t);
+        }
+    }
+
+    // Level 5: CLI scope intersection.
+    if !overrides.scope_intersection.is_empty() {
+        let existing = layer1_scope
+            .get("crates")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let existing_set: HashSet<String> = existing
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        let cli_set: HashSet<String> = overrides.scope_intersection.iter().cloned().collect();
+        let intersected: Vec<toml::Value> =
+            if existing_set.is_empty() || existing.iter().any(|v| v.as_str() == Some("*")) {
+                cli_set.iter().cloned().map(toml::Value::String).collect()
+            } else {
+                existing_set
+                    .intersection(&cli_set)
+                    .cloned()
+                    .map(toml::Value::String)
+                    .collect()
+            };
+        layer1_scope.insert("crates".to_string(), toml::Value::Array(intersected));
+    }
+
+    let resolved_severity = resolve_severity_cascade(
+        layer1_severity,
+        &resolved_chain,
+        user_block,
+        &overrides.severity_overrides,
+        lint_name,
+    );
+
+    Ok(CascadeOutput {
+        merged_config: layer1_config,
+        merged_scope: layer1_scope,
+        resolved_chain,
+        resolved_severity,
+    })
+}
+
 fn instantiate_with_cascade(
     entry: &CatalogEntry,
     user_lints: &HashMap<String, toml::Table>,
@@ -330,8 +476,8 @@ fn instantiate_with_cascade(
     overrides: &OverrideCascade,
     preset_source: &dyn PresetSource,
 ) -> Result<InstantiatedLint, ConfigError> {
-    // Level 1: catalog defaults.
-    let mut merged_config: toml::Table =
+    // Parse catalog-default tables from their `&'static str` form.
+    let layer1_config: toml::Table =
         entry
             .default_config
             .parse()
@@ -342,7 +488,7 @@ fn instantiate_with_cascade(
                 message: format!("default_config did not parse: {e}"),
                 source_location: None,
             })?;
-    let mut merged_scope: toml::Table =
+    let layer1_scope: toml::Table =
         entry
             .default_scope
             .parse()
@@ -356,49 +502,10 @@ fn instantiate_with_cascade(
 
     let user_block = user_lints.get(entry.name);
 
-    // Level 2: preset chain (between catalog defaults and workspace
-    // defaults, per the cascade ordering documented at
-    // `mock/research/202605220500_lint-preset-infrastructure.md`).
-    //
-    // Reads `extends = "<host>::<name>"` from the per-lint block top
-    // level, resolves the chain through `preset_source`, applies each
-    // preset's `config` and `scope` BTreeMap as a toml::Table overlay
-    // in innermost-first order. The chain is captured into
-    // `resolved_chain` so the severity-cascade pass at the bottom of
-    // this function (#566) can walk the same preset list without
-    // re-resolving.
-    let resolved_chain: Vec<PresetFile> = if let Some(block) = user_block {
-        if let Some(extends_ref) = parse_extends(block.get("extends")).map_err(|e| {
-            preset_error_to_config_error(entry.name, "extends", e)
-        })? {
-            let chain = resolve_preset_chain(&extends_ref, preset_source).map_err(|e| {
-                preset_error_to_config_error(entry.name, "extends", e)
-            })?;
-            apply_preset_chain(&chain, &mut merged_config, &mut merged_scope);
-            chain
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    // Level 3: workspace defaults (overlay where present).
-    overlay(&mut merged_config, workspace_defaults);
-
-    // Level 4: per-lint user TOML.
+    // finding_kinds validation runs against the entry-declared set
+    // before the cascade computes (an unknown gate.finding_kinds key
+    // is a contract violation regardless of what overlays would do).
     if let Some(block) = user_block {
-        // The `extends` key was consumed at Level 2 above; skip it
-        // here so the unknown-field guards downstream do not flag
-        // it as a typo.
-        if let Some(toml::Value::Table(t)) = block.get("config") {
-            overlay(&mut merged_config, t);
-        }
-        if let Some(toml::Value::Table(t)) = block.get("scope") {
-            overlay(&mut merged_scope, t);
-        }
-        // Per-finding-kind severity overrides validate against the
-        // catalog's declared finding_kinds set.
         if let Some(toml::Value::Table(gate_root)) = block.get("gate") {
             for (gate_name, gate_value) in gate_root {
                 if let toml::Value::Table(gate_block) = gate_value {
@@ -427,40 +534,30 @@ fn instantiate_with_cascade(
         }
     }
 
-    // only_staged extraction. staging_aware-consistency + unknown-gate
-    // validation lives in extract_only_staged.
-    let only_staged = extract_only_staged(entry, user_block)?;
+    // Cascade math (Layers 1 through 5) lives in `compute_cascade`.
+    // The output carries merged tables, the resolved preset chain,
+    // and the resolved severity.
+    let CascadeOutput {
+        merged_config,
+        merged_scope,
+        resolved_chain: _resolved_chain,
+        resolved_severity,
+    } = compute_cascade(CascadeInputs {
+        lint_name: entry.name,
+        layer1_config,
+        layer1_scope,
+        layer1_severity: entry.default_severity,
+        user_block,
+        workspace_defaults,
+        overrides,
+        preset_source,
+    })?;
 
-    // Level 5: CLI scope intersection. The catalog entry's `scope.crates`
-    // (or merged_scope.crates) is intersected with `overrides.scope_intersection`.
-    if !overrides.scope_intersection.is_empty() {
-        let existing = merged_scope
-            .get("crates")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let existing_set: HashSet<String> = existing
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
-        let cli_set: HashSet<String> = overrides.scope_intersection.iter().cloned().collect();
-        let intersected: Vec<toml::Value> =
-            if existing_set.is_empty() || existing.iter().any(|v| v.as_str() == Some("*")) {
-                cli_set.iter().cloned().map(toml::Value::String).collect()
-            } else {
-                existing_set
-                    .intersection(&cli_set)
-                    .cloned()
-                    .map(toml::Value::String)
-                    .collect()
-            };
-        merged_scope.insert("crates".to_string(), toml::Value::Array(intersected));
-    }
+    // only_staged extraction validates staging_aware-consistency +
+    // unknown-gate names. Independent of the cascade output.
+    let only_staged = extract_only_staged(entry.name, entry.staging_aware, user_block)?;
 
-    // Parse merged_scope as ScopeConfig and compile the per-document
-    // filter. The ScopeConfig::deserialize path validates field shapes;
-    // ScopeFilter::from_config compiles glob sets and surfaces glob-parse
-    // errors as ConfigError.
+    // Compile per-document scope filter from the merged_scope table.
     let scope_config: crate::config_types::ScopeConfig = toml::Value::Table(merged_scope.clone())
         .try_into()
         .map_err(|e: toml::de::Error| ConfigError {
@@ -471,21 +568,6 @@ fn instantiate_with_cascade(
             source_location: None,
         })?;
     let scope_filter = crate::scope_filter::ScopeFilter::from_config(entry.name, &scope_config)?;
-
-    // Severity cascade (#566). Walk the resolved preset chain in the
-    // same innermost-first order that `apply_preset_chain` uses for
-    // config and scope. The starting preset (consumer's direct
-    // reference) overlays whatever the deeper extends-targets
-    // established. Then user TOML and CLI overrides layer on top.
-    // Untouched axes inherit from the catalog default so a consumer
-    // touching only one gate does not silently downgrade the others.
-    let resolved_severity = resolve_severity_cascade(
-        entry.default_severity,
-        &resolved_chain,
-        user_block,
-        &overrides.severity_overrides,
-        entry.name,
-    );
 
     // Construct the lint.
     let lint = (entry.instantiate)(&merged_config, &merged_scope)?;
