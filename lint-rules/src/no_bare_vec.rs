@@ -268,7 +268,6 @@ fn is_item_node(node: Node) -> bool {
 /// preceding-sibling lint:allow comment. Does NOT stop at the first container;
 /// continues up so that a comment on an enum_variant covers fields inside it.
 fn field_level_allow_explanation(node: Node, source: &str) -> Option<String> {
-    let target = "lint:allow(bare_collection)";
     let mut current = node.parent();
     while let Some(parent) = current {
         match parent.kind() {
@@ -287,8 +286,8 @@ fn field_level_allow_explanation(node: Node, source: &str) -> Option<String> {
                 let start_row = parent.start_position().row;
                 if start_row > 0 {
                     if let Some(prev_line) = source.lines().nth(start_row - 1) {
-                        if prev_line.contains(target) {
-                            return Some(extract_explanation(prev_line, target));
+                        if crate::line_lint_allowed(prev_line, "bare_collection") {
+                            return Some(extract_explanation(prev_line, "bare_collection"));
                         }
                     }
                 }
@@ -322,8 +321,6 @@ const MIN_EXPLANATION_WORDS: usize = 8;
 /// Uses comment-based markers (not Rust attributes) to avoid rustc unknown-lint warnings.
 /// Checks preceding sibling comments and inline comments within the item.
 fn has_allow_bare_collection(node: Node, source: &str) -> Option<String> {
-    let target = "lint:allow(bare_collection)";
-
     // Check preceding sibling comments
     if let Some(parent) = node.parent() {
         let mut sibling_cursor = parent.walk();
@@ -334,8 +331,8 @@ fn has_allow_bare_collection(node: Node, source: &str) -> Option<String> {
             }
             if child.kind() == "line_comment" || child.kind() == "block_comment" {
                 let comment_text = txt(child, source);
-                if comment_text.contains(target) {
-                    found_explanation = Some(extract_explanation(comment_text, target));
+                if crate::line_lint_allowed(comment_text, "bare_collection") {
+                    found_explanation = Some(extract_explanation(comment_text, "bare_collection"));
                 }
             } else if child.kind() != "attribute_item" {
                 found_explanation = None;
@@ -351,8 +348,8 @@ fn has_allow_bare_collection(node: Node, source: &str) -> Option<String> {
     for child in node.children(&mut cursor) {
         if child.kind() == "line_comment" || child.kind() == "block_comment" {
             let comment_text = txt(child, source);
-            if comment_text.contains(target) {
-                return Some(extract_explanation(comment_text, target));
+            if crate::line_lint_allowed(comment_text, "bare_collection") {
+                return Some(extract_explanation(comment_text, "bare_collection"));
             }
         }
     }
@@ -360,26 +357,38 @@ fn has_allow_bare_collection(node: Node, source: &str) -> Option<String> {
     None
 }
 
-/// Extract explanation text after a `lint:allow(bare_collection)` marker.
-/// Accepts separators: ` — `, ` - `, `: `, or just whitespace after the closing `)`.
-fn extract_explanation(comment: &str, target: &str) -> String {
-    if let Some(pos) = comment.find(target) {
-        let after = &comment[pos + target.len()..];
-        let trimmed = after.trim();
-        // Strip leading separator: " — ", " - ", ": "
-        let explanation = if trimmed.starts_with("—") || trimmed.starts_with("–") {
-            trimmed[trimmed.char_indices().nth(1).map(|(i, _)| i).unwrap_or(1)..].trim()
-        } else if trimmed.starts_with('-') {
-            trimmed[1..].trim()
-        } else if trimmed.starts_with(':') {
-            trimmed[1..].trim()
+/// Extract explanation text following a `lint:allow(...)` marker whose
+/// parenthesised name list includes `rule_name`. Honors both the single-
+/// name form `lint:allow(bare_collection)` and the comma-separated form
+/// `lint:allow(bare_collection, no_box)`. Accepts separators after the
+/// marker's closing paren: ` — `, ` - `, `: `, or whitespace.
+fn extract_explanation(comment: &str, rule_name: &str) -> String {
+    let needle = "lint:allow(";
+    let mut search = comment;
+    while let Some(start) = search.find(needle) {
+        let after_open = &search[start + needle.len()..];
+        if let Some(close) = after_open.find(')') {
+            let names = &after_open[..close];
+            if names.split(',').any(|n| n.trim() == rule_name) {
+                let after = &after_open[close + 1..];
+                let trimmed = after.trim();
+                let explanation = if trimmed.starts_with("—") || trimmed.starts_with("–") {
+                    trimmed[trimmed.char_indices().nth(1).map(|(i, _)| i).unwrap_or(1)..].trim()
+                } else if trimmed.starts_with('-') {
+                    trimmed[1..].trim()
+                } else if trimmed.starts_with(':') {
+                    trimmed[1..].trim()
+                } else {
+                    trimmed
+                };
+                return explanation.to_string();
+            }
+            search = &after_open[close + 1..];
         } else {
-            trimmed
-        };
-        explanation.to_string()
-    } else {
-        String::new()
+            break;
+        }
     }
+    String::new()
 }
 
 /// Check if an explanation has enough words to be considered sufficient.
@@ -388,11 +397,11 @@ fn explanation_is_sufficient(explanation: &str) -> bool {
 }
 
 /// Check if a source line has a lint:allow(bare_collection) comment (trailing or otherwise).
-/// Returns Some(explanation) if found, None otherwise.
+/// Returns Some(explanation) if found, None otherwise. Honors the comma-
+/// list form `lint:allow(bare_collection, no_box)`.
 fn line_allow_explanation(line: &str) -> Option<String> {
-    let target = "lint:allow(bare_collection)";
-    if line.contains(target) {
-        Some(extract_explanation(line, target))
+    if crate::line_lint_allowed(line, "bare_collection") {
+        Some(extract_explanation(line, "bare_collection"))
     } else {
         None
     }
@@ -451,16 +460,15 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
     let mut cfg_test_depth: i32 = 0;
     let mut prev_line_allow = false;
     let mut prev_line_explanation = String::new();
-    let allow_target = "lint:allow(bare_collection)";
 
     for (line_num, line) in ctx.source.lines().enumerate() {
         let trimmed = line.trim();
 
         // Skip comments but track lint:allow on comment-only lines
         if trimmed.starts_with("//") {
-            if trimmed.contains(allow_target) {
+            if crate::line_lint_allowed(trimmed, "bare_collection") {
                 prev_line_allow = true;
-                prev_line_explanation = extract_explanation(trimmed, allow_target);
+                prev_line_explanation = extract_explanation(trimmed, "bare_collection");
             }
             continue;
         }
@@ -494,10 +502,11 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                 // fall through to brace-depth tracking
             } else {
                 // Check for same-line or preceding-line lint:allow
-                let has_allow = line.contains(allow_target) || prev_line_allow;
+                let line_has_allow = crate::line_lint_allowed(line, "bare_collection");
+                let has_allow = line_has_allow || prev_line_allow;
                 if has_allow {
-                    let explanation = if line.contains(allow_target) {
-                        extract_explanation(line, allow_target)
+                    let explanation = if line_has_allow {
+                        extract_explanation(line, "bare_collection")
                     } else {
                         prev_line_explanation.clone()
                     };

@@ -165,7 +165,7 @@ fn collect_defs(node: Node, source: &str, out: &mut Vec<(String, usize)>) {
 
                     // Check for lint:allow suppression.
                     let line_text = source.lines().nth(child.start_position().row).unwrap_or("");
-                    if !line_text.contains("lint:allow(undocumented_type)") {
+                    if !crate::line_lint_allowed(line_text, "undocumented_type") {
                         out.push((name, line));
                     }
                 }

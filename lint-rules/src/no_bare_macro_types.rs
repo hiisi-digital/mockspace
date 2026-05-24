@@ -91,7 +91,7 @@ fn check_call(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         if text == pattern || text.ends_with(&format!("::{}", pattern)) {
             let line_idx = node.start_position().row;
             let line = ctx.source.lines().nth(line_idx).unwrap_or("");
-            if line.contains("lint:allow(no_bare_macro_types)") {
+            if crate::line_lint_allowed(line, "no_bare_macro_types") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),
                     line_idx + 1,
@@ -139,7 +139,7 @@ fn check_struct_literal(node: Node, ctx: &LintContext, errors: &mut Vec<LintErro
         if !pattern.contains("::") && bare_name == pattern {
             let line_idx = node.start_position().row;
             let line = ctx.source.lines().nth(line_idx).unwrap_or("");
-            if line.contains("lint:allow(no_bare_macro_types)") {
+            if crate::line_lint_allowed(line, "no_bare_macro_types") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),
                     line_idx + 1,

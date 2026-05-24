@@ -71,7 +71,7 @@ fn name(&self) -> &'static str {
             }
 
             // lint:allow(no_box) suppresses the violation but emits a warning
-            if line.contains("lint:allow(no_box)") {
+            if crate::line_lint_allowed(line, "no_box") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),
                     line_num,

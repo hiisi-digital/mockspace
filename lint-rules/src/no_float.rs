@@ -69,7 +69,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
             // Check for lint:allow(no_float) on the line
             let line_idx = node.start_position().row;
             let line = ctx.source.lines().nth(line_idx).unwrap_or("");
-            if line.contains("lint:allow(no_float)") {
+            if crate::line_lint_allowed(line, "no_float") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),
                     line_idx + 1,
@@ -97,7 +97,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         let text = txt(node, ctx.source);
         let line_idx = node.start_position().row;
         let line = ctx.source.lines().nth(line_idx).unwrap_or("");
-        if line.contains("lint:allow(no_float)") {
+        if crate::line_lint_allowed(line, "no_float") {
             errors.push(LintError::warning(
                 ctx.crate_name.to_string(),
                 line_idx + 1,
@@ -219,7 +219,7 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                 // fall through to brace-depth tracking but don't check patterns
             } else {
                 // lint:allow(no_float) suppresses but warns
-                if line.contains("lint:allow(no_float)") {
+                if crate::line_lint_allowed(line, "no_float") {
                     // still check if there's actually a float to suppress
                     for pattern in MACRO_FLOAT_PATTERNS {
                         if trimmed.contains(pattern) {

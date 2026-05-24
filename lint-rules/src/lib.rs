@@ -323,6 +323,116 @@ impl Severity {
     }
 }
 
+/// Whether a source line carries `lint:allow(<rule_name>)`, including
+/// the case where one marker silences multiple lints at once via the
+/// comma-separated form `lint:allow(rule_a, rule_b, rule_c)`. Whitespace
+/// inside the parens is tolerated. Multiple `lint:allow(...)` markers on
+/// the same line each get scanned.
+///
+/// This is the canonical allow-detection helper for every lint in this
+/// crate (and downstream packs). The historical naive substring check
+/// (`line.contains("lint:allow(<rule>)")`) did not handle comma-separated
+/// lists; multi-lint allow comments became useless because the substring
+/// never matched. Migrating every lint to this function fixes that.
+#[must_use]
+pub fn line_lint_allowed(line: &str, rule_name: &str) -> bool {
+    let mut search = line;
+    let needle = "lint:allow(";
+    while let Some(start) = search.find(needle) {
+        let after_open = &search[start + needle.len()..];
+        if let Some(close) = after_open.find(')') {
+            let names = &after_open[..close];
+            for name in names.split(',') {
+                if name.trim() == rule_name {
+                    return true;
+                }
+            }
+            search = &after_open[close..];
+        } else {
+            break;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod line_lint_allowed_tests {
+    use super::line_lint_allowed;
+
+    #[test]
+    fn single_name_matches() {
+        assert!(line_lint_allowed(
+            "use std::env; // lint:allow(no_std)",
+            "no_std",
+        ));
+    }
+
+    #[test]
+    fn comma_list_matches_first() {
+        assert!(line_lint_allowed(
+            "x // lint:allow(no_std, forbidden_imports)",
+            "no_std",
+        ));
+    }
+
+    #[test]
+    fn comma_list_matches_second() {
+        assert!(line_lint_allowed(
+            "x // lint:allow(forbidden_imports, no_std)",
+            "no_std",
+        ));
+    }
+
+    #[test]
+    fn comma_list_matches_third() {
+        assert!(line_lint_allowed("x // lint:allow(a, b, c)", "c"));
+    }
+
+    #[test]
+    fn whitespace_tolerated() {
+        assert!(line_lint_allowed("x // lint:allow(  a  ,  b  )", "a"));
+        assert!(line_lint_allowed("x // lint:allow(  a  ,  b  )", "b"));
+    }
+
+    #[test]
+    fn non_match_returns_false() {
+        assert!(!line_lint_allowed("x // lint:allow(other)", "no_std"));
+        assert!(!line_lint_allowed("x // lint:allow(a, b)", "c"));
+        assert!(!line_lint_allowed("no lint marker here", "no_std"));
+    }
+
+    #[test]
+    fn malformed_unclosed_returns_false() {
+        assert!(!line_lint_allowed("x // lint:allow(no_std", "no_std"));
+    }
+
+    #[test]
+    fn similar_name_does_not_match_partial() {
+        assert!(!line_lint_allowed(
+            "x // lint:allow(no_std_extra)",
+            "no_std",
+        ));
+        assert!(!line_lint_allowed(
+            "x // lint:allow(extra_no_std)",
+            "no_std",
+        ));
+    }
+
+    #[test]
+    fn multiple_markers_on_line() {
+        let line = "x // lint:allow(a) further text lint:allow(b, c)";
+        assert!(line_lint_allowed(line, "a"));
+        assert!(line_lint_allowed(line, "b"));
+        assert!(line_lint_allowed(line, "c"));
+        assert!(!line_lint_allowed(line, "d"));
+    }
+
+    #[test]
+    fn empty_parens_matches_nothing() {
+        assert!(!line_lint_allowed("x // lint:allow()", "anything"));
+    }
+}
+
 /// Parse a severity preset from a string name.
 ///
 /// Supports: "off", "error"/"hard-error", "build-gate", "push-gate",
