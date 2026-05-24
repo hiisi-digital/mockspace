@@ -126,9 +126,15 @@ impl CrossCrateLint for ChangelistDocGate {
     }
 }
 
-/// A doc template is a `.md.tmpl` or `.md` file inside `crates/`.
+/// A doc template is a `.md.tmpl` or `.md` file inside `crates/`,
+/// excluding `SHAME.md.tmpl`. SHAME is the explicit escape valve for
+/// gaps discovered during execution; the doc-gate error messages
+/// themselves direct users there, so it must be writable in any phase.
 fn is_doc_template(file: &str) -> bool {
     if file.is_empty() || !file.starts_with("crates/") {
+        return false;
+    }
+    if file.ends_with("SHAME.md.tmpl") {
         return false;
     }
     file.ends_with(".md.tmpl") || file.ends_with(".md")
@@ -154,4 +160,31 @@ fn extract_crate_name(path: &str) -> Option<String> {
     let after_crates = path.strip_prefix("crates/")?;
     let end = after_crates.find('/')?;
     Some(after_crates[..end].to_string())
+}
+
+#[cfg(test)]
+mod is_doc_template_tests {
+    use super::is_doc_template;
+
+    #[test]
+    fn shame_md_tmpl_is_exempt() {
+        assert!(!is_doc_template("crates/foo/SHAME.md.tmpl"));
+        assert!(!is_doc_template("crates/foo-bar/SHAME.md.tmpl"));
+    }
+
+    #[test]
+    fn design_md_tmpl_is_gated() {
+        assert!(is_doc_template("crates/foo/DESIGN.md.tmpl"));
+    }
+
+    #[test]
+    fn plain_md_inside_crates_is_gated() {
+        assert!(is_doc_template("crates/foo/notes.md"));
+    }
+
+    #[test]
+    fn files_outside_crates_are_not_gated() {
+        assert!(!is_doc_template("design_rounds/x.md"));
+        assert!(!is_doc_template("README.md"));
+    }
 }
