@@ -122,40 +122,142 @@ fn check_changelist_edit(cl: &ParsedChangelist, phase: Phase) -> Option<String> 
     }
 }
 
-/// Get modified files in design_rounds/ (staged + unstaged).
+/// Get modified files in design_rounds/ (staged + unstaged), excluding
+/// pure additions. A pure addition is the legitimate introduction of a
+/// new changelist file: the file did not exist before the working
+/// change, so there is nothing to protect against modification. The
+/// immutability lint exists to block edits to ALREADY-LOCKED CLs, not
+/// to block their initial creation.
+///
+/// Uses `git diff --name-status` to distinguish:
+/// - `A` (added): skip; first appearance of the file
+/// - `M` (modified), `R*` (renamed), `D` (deleted): include; an edit
+///   to an existing CL file
 fn get_modified_in_design_rounds(workspace_root: &Path) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = Vec::new();
 
     // Staged changes
     if let Some(output) = run_git(workspace_root, &[
-        "diff", "--cached", "--name-only", "--relative", "--", "design_rounds/",
+        "diff", "--cached", "--name-status", "--relative", "--", "design_rounds/",
     ]) {
-        for line in output.lines() {
-            let file = line.trim();
-            if !file.is_empty() {
-                add_unique(&mut files, file, "staged");
-            }
-        }
+        collect_non_additions(&output, "staged", &mut files);
     }
 
     // Unstaged tracked changes
     if let Some(output) = run_git(workspace_root, &[
-        "diff", "--name-only", "--relative", "--", "design_rounds/",
+        "diff", "--name-status", "--relative", "--", "design_rounds/",
     ]) {
-        for line in output.lines() {
-            let file = line.trim();
-            if !file.is_empty() {
-                add_unique(&mut files, file, "unstaged");
-            }
-        }
+        collect_non_additions(&output, "unstaged", &mut files);
     }
 
     files
 }
 
+/// Parse `git diff --name-status` output and append non-A entries.
+/// Each input line is `<STATUS>\t<PATH>` (or `<R100>\t<OLD>\t<NEW>`
+/// for renames). We treat `A` (and the unlikely `A100`) as pure
+/// additions to skip. Renames are kept (the post-rename path).
+fn collect_non_additions(output: &str, source: &str, files: &mut Vec<(String, String)>) {
+    for line in output.lines() {
+        let mut parts = line.splitn(3, '\t');
+        let status = match parts.next() {
+            Some(s) => s,
+            None => continue,
+        };
+        if status.is_empty() {
+            continue;
+        }
+        if status.starts_with('A') {
+            // Pure addition: first appearance, nothing to protect.
+            continue;
+        }
+        // For modifications, take the first path field. For renames
+        // (`R100\t<old>\t<new>`), git lists both; take the new path.
+        let path = if status.starts_with('R') || status.starts_with('C') {
+            match parts.nth(1) {
+                Some(p) => p,
+                None => continue,
+            }
+        } else {
+            match parts.next() {
+                Some(p) => p,
+                None => continue,
+            }
+        };
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            add_unique(files, trimmed, source);
+        }
+    }
+}
+
 fn add_unique(list: &mut Vec<(String, String)>, file: &str, source: &str) {
     if !list.iter().any(|(f, _)| f == file) {
         list.push((file.to_string(), source.to_string()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_non_additions;
+
+    #[test]
+    fn pure_addition_skipped() {
+        let mut out = Vec::new();
+        collect_non_additions(
+            "A\tdesign_rounds/202605241200_changelist.doc.lock.md\n",
+            "staged",
+            &mut out,
+        );
+        assert!(out.is_empty(), "added file should not appear in modified-list");
+    }
+
+    #[test]
+    fn modification_included() {
+        let mut out = Vec::new();
+        collect_non_additions(
+            "M\tdesign_rounds/foo.doc.lock.md\n",
+            "staged",
+            &mut out,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "design_rounds/foo.doc.lock.md");
+    }
+
+    #[test]
+    fn rename_uses_new_path() {
+        let mut out = Vec::new();
+        collect_non_additions(
+            "R100\tdesign_rounds/foo.doc.md\tdesign_rounds/foo.doc.lock.md\n",
+            "staged",
+            &mut out,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "design_rounds/foo.doc.lock.md");
+    }
+
+    #[test]
+    fn deletion_included() {
+        let mut out = Vec::new();
+        collect_non_additions(
+            "D\tdesign_rounds/foo.doc.md\n",
+            "staged",
+            &mut out,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "design_rounds/foo.doc.md");
+    }
+
+    #[test]
+    fn mixed_input_filters_only_additions() {
+        let mut out = Vec::new();
+        collect_non_additions(
+            "A\tdesign_rounds/new.doc.lock.md\nM\tdesign_rounds/existing.doc.md\n",
+            "staged",
+            &mut out,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "design_rounds/existing.doc.md");
     }
 }
 
