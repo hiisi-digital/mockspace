@@ -36,6 +36,13 @@ impl CrossCrateLint for NoDuplicateFn {
             by_name.entry(sig.name.as_str()).or_default().push(sig);
         }
 
+        // Build a quick crate-name to context map so the suppression
+        // check below can look up the duplicate's source line.
+        let ctx_by_crate: HashMap<&str, &LintContext> = crates
+            .iter()
+            .map(|(name, ctx)| (*name, *ctx))
+            .collect();
+
         for (name, sigs) in &by_name {
             if sigs.len() < 2 {
                 continue;
@@ -52,6 +59,9 @@ impl CrossCrateLint for NoDuplicateFn {
             let first = sigs[0];
             for dup in &sigs[1..] {
                 if dup.crate_name != first.crate_name {
+                    if is_suppressed(dup, &ctx_by_crate) {
+                        continue;
+                    }
                     errors.push(LintError {
                         crate_name: dup.crate_name.clone(),
                         line: dup.line,
@@ -91,6 +101,9 @@ impl CrossCrateLint for NoDuplicateFn {
             let first = sigs[0];
             for dup in &sigs[1..] {
                 if dup.crate_name != first.crate_name && dup.name != first.name {
+                    if is_suppressed(dup, &ctx_by_crate) {
+                        continue;
+                    }
                     errors.push(LintError {
                         crate_name: dup.crate_name.clone(),
                         line: dup.line,
@@ -107,6 +120,80 @@ impl CrossCrateLint for NoDuplicateFn {
         }
 
         errors
+    }
+}
+
+/// Return true if the duplicate's source line is `lint:allow`-marked.
+///
+/// Used to suppress cross-crate-fn-duplicate findings at sites where
+/// the symbol is genuinely required to live in both crates. Typical
+/// example: the linker-bound `rust_eh_personality` stub in every
+/// `no_std` cdylib that does not unwind. The symbol name is fixed by
+/// the Rust ABI and the function body cannot be shared via reuse.
+fn is_suppressed(
+    sig: &FnSig,
+    ctx_by_crate: &HashMap<&str, &LintContext>,
+) -> bool {
+    let ctx = match ctx_by_crate.get(sig.crate_name.as_str()) {
+        Some(c) => c,
+        None => return false,
+    };
+    is_line_suppressed(ctx.source, sig.line)
+}
+
+/// 1-indexed line lookup; returns true if the line carries a
+/// `lint:allow(no-duplicate-fn)` marker (single or comma-list).
+/// Out-of-range or zero line returns false.
+fn is_line_suppressed(source: &str, line_number: usize) -> bool {
+    if line_number == 0 {
+        return false;
+    }
+    let line = match source.lines().nth(line_number - 1) {
+        Some(l) => l,
+        None => return false,
+    };
+    crate::line_lint_allowed(line, "no-duplicate-fn")
+}
+
+#[cfg(test)]
+mod is_line_suppressed_tests {
+    use super::is_line_suppressed;
+
+    const SAMPLE: &str = "\
+pub extern \"C\" fn rust_eh_personality() {}  // lint:allow(no-duplicate-fn) -- linker contract
+pub fn plain() {}
+pub fn other_marker() {}  // lint:allow(no-bare-numeric)
+pub fn comma_list_match() {}  // lint:allow(no-bare-result, no-duplicate-fn)
+";
+
+    #[test]
+    fn suppresses_when_marker_present() {
+        assert!(is_line_suppressed(SAMPLE, 1));
+    }
+
+    #[test]
+    fn does_not_suppress_unmarked_line() {
+        assert!(!is_line_suppressed(SAMPLE, 2));
+    }
+
+    #[test]
+    fn does_not_suppress_marker_for_other_rule() {
+        assert!(!is_line_suppressed(SAMPLE, 3));
+    }
+
+    #[test]
+    fn suppresses_comma_list_with_no_duplicate_fn() {
+        assert!(is_line_suppressed(SAMPLE, 4));
+    }
+
+    #[test]
+    fn handles_line_zero_safely() {
+        assert!(!is_line_suppressed(SAMPLE, 0));
+    }
+
+    #[test]
+    fn handles_out_of_range_line_safely() {
+        assert!(!is_line_suppressed(SAMPLE, 9999));
     }
 }
 
