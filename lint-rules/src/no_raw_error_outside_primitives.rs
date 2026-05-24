@@ -28,7 +28,7 @@ fn name(&self) -> &'static str {
             }
 
             if trimmed.contains("define_raw_error!") {
-                if line.contains("lint:allow(no_raw_error)") {
+                if crate::line_lint_allowed(line, "no_raw_error") {
                     errors.push(LintError::warning(
                         ctx.crate_name.to_string(),
                         line_num + 1,

@@ -88,7 +88,7 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     let line_idx = node.start_position().row;
     if line_idx > 0 {
         if let Some(prev_line) = ctx.source.lines().nth(line_idx - 1) {
-            if prev_line.contains("lint:allow(registrable_completeness)") {
+            if crate::line_lint_allowed(prev_line, "registrable_completeness") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),
                     line_idx + 1,

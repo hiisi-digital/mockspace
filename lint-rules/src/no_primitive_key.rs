@@ -52,7 +52,7 @@ fn name(&self) -> &'static str {
 
                     for prim in PRIMITIVE_KEY_TYPES {
                         if key_type == *prim {
-                            if line.contains("lint:allow(no_primitive_key)") {
+                            if crate::line_lint_allowed(line, "no_primitive_key") {
                                 errors.push(LintError::warning(
                                     ctx.crate_name.to_string(),
                                     line_num + 1,

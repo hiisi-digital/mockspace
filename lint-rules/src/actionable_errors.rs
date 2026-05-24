@@ -86,7 +86,7 @@ impl Lint for ActionableErrors {
                     if !found_hint {
                         // Check the macro start line for lint:allow
                         let start_line = ctx.source.lines().nth(macro_start_line.saturating_sub(1)).unwrap_or("");
-                        if start_line.contains("lint:allow(actionable_errors)") {
+                        if crate::line_lint_allowed(start_line, "actionable_errors") {
                             errors.push(LintError::warning(
                                 ctx.crate_name.to_string(),
                                 macro_start_line,

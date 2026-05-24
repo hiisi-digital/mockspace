@@ -220,7 +220,7 @@ fn check_module_path(
         }
 
         // Skip lint:allow
-        if line.contains(&format!("lint:allow({})", rule.name)) {
+        if crate::line_lint_allowed(line, &rule.name) {
             continue;
         }
 
@@ -262,7 +262,7 @@ fn check_keyword_pattern(
         }
 
         // Skip lint:allow
-        if line.contains(&format!("lint:allow({})", rule.name)) {
+        if crate::line_lint_allowed(line, &rule.name) {
             continue;
         }
 
@@ -305,7 +305,7 @@ fn check_type_name(
         }
 
         // Skip lint:allow
-        if line.contains(&format!("lint:allow({})", rule.name)) {
+        if crate::line_lint_allowed(line, &rule.name) {
             continue;
         }
 

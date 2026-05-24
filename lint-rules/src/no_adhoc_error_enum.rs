@@ -55,7 +55,7 @@ fn check_enum(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     if name.ends_with("Error") {
         let line_idx = node.start_position().row;
         let line = ctx.source.lines().nth(line_idx).unwrap_or("");
-        if line.contains("lint:allow(no_adhoc_error_enum)") {
+        if crate::line_lint_allowed(line, "no_adhoc_error_enum") {
             errors.push(LintError::warning(
                 ctx.crate_name.to_string(),
                 line_idx + 1,
