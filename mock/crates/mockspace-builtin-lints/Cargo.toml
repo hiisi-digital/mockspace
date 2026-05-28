@@ -1,0 +1,46 @@
+[package]
+name = "mockspace-builtin-lints"
+version = "0.0.0"
+edition = "2021"
+description = "Cdylib hosting mockspace built-in lints as viola plugins."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+# Own workspace root. The stack deps below are a dependency universe
+# disjoint from the mockspace tool workspace (which pins tree-sitter and
+# runs on std); isolating them here keeps the two graphs from conflicting
+# and keeps `cargo mock check` from compiling the stack.
+[workspace]
+
+# A no_std cdylib cannot link the unwinding runtime; abort on panic so the
+# stable-toolchain build does not require -Zbuild-std. Mirrors viola's
+# workspace profiles.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+# Source specs MUST match viola's `[workspace.dependencies]` exactly
+# (ssh scheme, branch, default-features). viola-plugin-abi pulls arvo /
+# notko / hilavitkutin-extensions through those same specs; matching them
+# byte-for-byte lets cargo deduplicate to a single copy of each crate.
+# An https-vs-ssh mismatch is two distinct sources to cargo and yields two
+# incompatible `arvo` crates whose `arvo::USize` will not unify at the
+# vtable boundary.
+[dependencies]
+hilavitkutin-extensions = { git = "ssh://git@github.com/orgrinrt/hilavitkutin.git", branch = "dev", default-features = false }
+hilavitkutin-extensions-macros = { git = "ssh://git@github.com/orgrinrt/hilavitkutin.git", branch = "dev", default-features = false }
+viola-plugin-abi = { git = "ssh://git@github.com/hiisi-digital/viola.git", branch = "dev", default-features = false }
+arvo = { git = "ssh://git@github.com/orgrinrt/arvo.git", branch = "dev", default-features = false }
+notko = { git = "ssh://git@github.com/orgrinrt/notko.git", branch = "dev", default-features = false }
+
+# libc link gives libSystem on darwin (resolves dyld_stub_binder) and the
+# unwind / system glue on linux. The crate is no_std and calls no libc
+# symbols; the dep only makes the system lib visible to the linker.
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", default-features = false }

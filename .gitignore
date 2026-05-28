@@ -8,6 +8,10 @@
 # nested copies under `mock/crates/<name>/mock/target/`.
 **/mock/target/
 /mock/Cargo.lock
+# The lint cdylib pack is its own workspace root (excluded from the tool
+# workspace); its build dir and lock live beside its manifest.
+/mock/crates/mockspace-builtin-lints/target/
+/mock/crates/mockspace-builtin-lints/Cargo.lock
 .DS_Store
 *.swp
 *.swo
