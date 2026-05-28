@@ -48,9 +48,9 @@ use core::ffi::c_void;
 use hilavitkutin_extensions::{ProviderExport, ProviderId};
 use hilavitkutin_extensions_macros::export_extension;
 use viola_plugin_abi::{
-    AbiStatus, BytesRef, Diagnostic, DiagnosticSeverity, LintEvaluateVtable,
-    NamFileEntry, NamNode, NamPayload, SourceLocation, SourceRange, nam_file_entries,
-    nam_file_nodes, node_kind,
+    AbiStatus, BytesRef, Diagnostic, DiagnosticSeverity, IndexBatch, LintEvaluateProjectIndexVtable,
+    LintEvaluateVtable, NamFileEntry, NamNode, NamPayload, PROVIDER_LINT_EVALUATE_PROJECT,
+    SourceLocation, SourceRange, nam_file_entries, nam_file_nodes, node_kind,
 };
 
 // ---------------------------------------------------------------------------
@@ -1325,6 +1325,450 @@ fn make_token_diagnostic(
 }
 
 // ---------------------------------------------------------------------------
+// no-duplicate-fn (project-scope, two-phase)
+// ---------------------------------------------------------------------------
+
+/// Provider id for the no-duplicate-fn lint.
+///
+/// This is the first project-scoped (cross-file) cdylib lint, so it binds
+/// the two-phase `viola.lint.evaluate-project.v1` vtable rather than the
+/// per-file `viola.lint.evaluate.v2` one. The two-phase machinery uses the
+/// generic project provider id; the host distinguishes project lints from
+/// per-file lints by which vtable a provider entry carries, not by a
+/// per-lint id (the ABI ships one canonical project id, and a descriptor
+/// carries one provider entry per project lint pointing at its own
+/// vtable). The lint identity travels in the emitted diagnostic's
+/// `rule_id`, not in the provider id.
+pub const PROVIDER_NO_DUPLICATE_FN: ProviderId = PROVIDER_LINT_EVALUATE_PROJECT;
+
+const NO_DUPLICATE_FN_RULE_ID: &[u8] = b"no-duplicate-fn";
+const NO_DUPLICATE_FN_MESSAGE: &[u8] =
+    b"public function also defined in another file, consider reusing";
+
+/// One entry of the cross-file public-function index, written by
+/// `index_phase` into the host-owned `IndexBatch::entries` buffer and read
+/// back per file by `evaluate_phase`.
+///
+/// `#[repr(C)]` because the buffer crosses the C ABI as opaque bytes the
+/// host shuttles between phases. The record stores a locator
+/// (`file_idx` + `node_idx`) so `evaluate_phase` can re-read the function
+/// name from the NAM source span to byte-confirm a hash match, plus the
+/// `name_hash` it groups by and a `sig_hash` for parity with the in-process
+/// rule's signature axis (the firing path groups by name; the signature
+/// hash is carried for a future signature-duplicate axis and to break
+/// hash-collision ties cheaply before the byte confirm).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct IndexRecord {
+    /// Index of the file (its position in the NAM entry slice) that
+    /// defines the function.
+    pub file_idx: u32,
+    /// Index of the FUNCTION_ITEM node within that file's node array.
+    pub node_idx: arvo::USize,
+    /// FNV-1a hash of the function name bytes.
+    pub name_hash: u64,
+    /// FNV-1a hash of the parameter type-leaf spans, joined by `0x1f`.
+    pub sig_hash: u64,
+}
+
+/// FNV-1a over a byte slice. Used to group function names cheaply in the
+/// index without storing the name bytes; a positive hash match is always
+/// confirmed by a byte comparison in `evaluate_phase`, so a collision can
+/// only cost work, never a false positive.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// Find the name of a FUNCTION_ITEM node: the source bytes of its child
+/// IDENTIFIER node (the name token), located by parent-index scan. Returns
+/// an empty slice when no IDENTIFIER child exists or its span is out of
+/// range (a malformed tree), which the caller treats as "no name" and
+/// skips.
+fn fn_name<'a>(nodes: &[NamNode], fn_idx: usize, source: &'a [u8]) -> &'a [u8] {
+    for nd in nodes {
+        if nd.parent.0 == fn_idx && nd.kind.0 == node_kind::IDENTIFIER.0 {
+            let start = nd.start_byte.0;
+            let end = nd.end_byte.0;
+            if start <= end && end <= source.len() {
+                return &source[start..end];
+            }
+            return &[];
+        }
+    }
+    &[]
+}
+
+/// Compute a signature hash for a FUNCTION_ITEM: FNV-1a over each child
+/// PARAMETER's descendant type-leaf spans (TYPE_IDENTIFIER / PRIMITIVE_TYPE),
+/// joined by a `0x1f` unit separator. Parameter order is the node order in
+/// the flat array. A function with no parameters hashes the empty input.
+///
+/// This approximates the in-process rule's param-type signature (which
+/// joins the textual param types). The return type is not folded in: the
+/// v1.3.0 node_kind table has no return-position container kind (see the
+/// ast-type-position scoping note), so a return type cannot be reliably
+/// isolated here. The firing path groups by name regardless, so the
+/// signature hash being param-only does not affect which duplicates fire;
+/// it is the carried-forward axis for a future signature-duplicate variant.
+fn sig_hash_of(nodes: &[NamNode], fn_idx: usize, source: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mul: u64 = 0x0000_0100_0000_01b3;
+    for (param_idx, param) in nodes.iter().enumerate() {
+        if param.parent.0 != fn_idx || param.kind.0 != node_kind::PARAMETER.0 {
+            continue;
+        }
+        // each type leaf whose nearest position container is this parameter
+        // contributes its source bytes; a 0x1f separator delimits leaves so
+        // adjacent leaves cannot alias.
+        for (leaf_idx, leaf) in nodes.iter().enumerate() {
+            if leaf.kind.0 != node_kind::TYPE_IDENTIFIER.0
+                && leaf.kind.0 != node_kind::PRIMITIVE_TYPE.0
+            {
+                continue;
+            }
+            if nearest_container(nodes, leaf_idx) != Some(param_idx) {
+                continue;
+            }
+            let start = leaf.start_byte.0;
+            let end = leaf.end_byte.0;
+            if !(start <= end && end <= source.len()) {
+                continue;
+            }
+            for &b in &source[start..end] {
+                hash ^= b as u64;
+                hash = hash.wrapping_mul(mul);
+            }
+            hash ^= 0x1f;
+            hash = hash.wrapping_mul(mul);
+        }
+    }
+    hash
+}
+
+/// `index_phase` for no-duplicate-fn. Walks every file's NAM node array and
+/// writes one [`IndexRecord`] per public top-level function into the
+/// host-owned index buffer.
+///
+/// Top-level means a direct child of the file's SOURCE_FILE root (the same
+/// rule `item_metric` uses), so a nested fn under a mod or impl is not
+/// indexed; the in-process rule likewise walks only the crate root's direct
+/// `function_item` children. Visibility is the same exact-`pub` check
+/// [`node_is_public`] applies.
+///
+/// Overflow follows the `IndexBatch` contract: write up to `capacity`
+/// records, set `len` to the written count, set `needed` to the total the
+/// index would hold, and return [`AbiStatus::Internal`] when the total
+/// exceeds capacity; otherwise [`AbiStatus::Ok`]. A null `out_index`
+/// returns [`AbiStatus::InvalidArg`].
+///
+/// SAFETY: the host upholds the `LintEvaluateProjectIndexVtable` contract.
+/// `nam` is a valid full-project v1.x payload or null; `out_index` is a
+/// valid writable pointer whose `entries` field addresses `capacity`
+/// writable [`IndexRecord`] slots.
+unsafe extern "C" fn no_duplicate_fn_index_phase(
+    _host_ctx: *mut c_void,
+    nam: *const NamPayload,
+    _lint_config_bytes: *const u8,
+    _lint_config_len: arvo::USize,
+    out_index: *mut IndexBatch,
+) -> AbiStatus {
+    if out_index.is_null() {
+        return AbiStatus::InvalidArg;
+    }
+    // SAFETY: out_index non-null and host-owned for the call.
+    let batch = unsafe { &mut *out_index };
+    let capacity = batch.capacity.0;
+    let records = batch.entries as *mut IndexRecord;
+    // a non-null entries buffer is required whenever capacity is non-zero.
+    if records.is_null() && capacity != 0 {
+        return AbiStatus::InvalidArg;
+    }
+
+    // SAFETY: host upholds nam validity; None for a non-v1.x carrier.
+    let entries = match unsafe { nam_file_entries(nam) } {
+        Some(slice) => slice,
+        None => return AbiStatus::InvalidArg,
+    };
+
+    let mut written: usize = 0;
+    let mut total: usize = 0;
+
+    for (file_idx, entry) in entries.iter().enumerate() {
+        let nodes = match nam_file_nodes(entry) {
+            Some(n) if !n.is_empty() => n,
+            _ => continue,
+        };
+        let source: &[u8] = if entry.source.is_empty() {
+            &[]
+        } else {
+            // SAFETY: non-empty source addresses host-owned bytes valid for
+            // the call; its length is entry.source.len.
+            unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) }
+        };
+        let root = match nodes.iter().position(|nd| nd.kind.0 == node_kind::SOURCE_FILE.0) {
+            Some(i) => i,
+            None => continue,
+        };
+        for (node_idx, nd) in nodes.iter().enumerate() {
+            if nd.parent.0 != root || nd.kind.0 != node_kind::FUNCTION_ITEM.0 {
+                continue;
+            }
+            if !node_is_public(nodes, node_idx, source) {
+                continue;
+            }
+            let name = fn_name(nodes, node_idx, source);
+            if name.is_empty() {
+                continue;
+            }
+            total += 1;
+            if written < capacity {
+                let rec = IndexRecord {
+                    file_idx: file_idx as u32,
+                    node_idx: arvo::USize(node_idx),
+                    name_hash: fnv1a(name),
+                    sig_hash: sig_hash_of(nodes, node_idx, source),
+                };
+                // SAFETY: written < capacity, so the slot is inside the
+                // host buffer; records is non-null (checked above for any
+                // non-zero capacity).
+                unsafe {
+                    records.add(written).write(rec);
+                }
+                written += 1;
+            }
+        }
+    }
+
+    batch.len = arvo::USize(written);
+    batch.needed = arvo::USize(total);
+    if total > capacity {
+        AbiStatus::Internal
+    } else {
+        AbiStatus::Ok
+    }
+}
+
+/// `evaluate_phase` for no-duplicate-fn. For each public top-level function
+/// in the file at `file_idx`, emits one diagnostic when the index holds a
+/// function with the same name defined in a DIFFERENT file (the cross-file
+/// duplicate). A same-name function in the SAME file does not fire (a
+/// genuine cross-file reuse opportunity is what the rule flags; same-file
+/// overloads are not the cross-crate concern).
+///
+/// A name-hash match is byte-confirmed: the other record's name is re-read
+/// from the NAM source span via its `(file_idx, node_idx)` locator and
+/// compared for byte equality, so a hash collision cannot raise a false
+/// positive. The diagnostic span covers the duplicate function's name in
+/// the evaluated file.
+///
+/// Overflow follows the per-file host-owned-buffer contract identical to
+/// [`no_todo_evaluate`]. Null `out_entries` / `out_len`, or a null `index`
+/// with a non-zero index length, return [`AbiStatus::InvalidArg`].
+///
+/// SAFETY: the host upholds the `LintEvaluateProjectIndexVtable` contract.
+/// `nam` is the full-project payload `index_phase` saw; `file_idx` selects
+/// the file to evaluate; `index` is the [`IndexBatch`] `index_phase` filled.
+unsafe extern "C" fn no_duplicate_fn_evaluate_phase(
+    _host_ctx: *mut c_void,
+    nam: *const NamPayload,
+    file_idx: arvo::USize,
+    index: *const IndexBatch,
+    out_entries: *mut Diagnostic,
+    out_capacity: arvo::USize,
+    out_len: *mut arvo::USize,
+) -> AbiStatus {
+    if out_entries.is_null() || out_len.is_null() {
+        return AbiStatus::InvalidArg;
+    }
+    if index.is_null() {
+        return AbiStatus::InvalidArg;
+    }
+    // SAFETY: index non-null, host-owned for the call.
+    let batch = unsafe { &*index };
+    let index_len = batch.len.0;
+    let records_ptr = batch.entries as *const IndexRecord;
+    if records_ptr.is_null() && index_len != 0 {
+        return AbiStatus::InvalidArg;
+    }
+    // SAFETY: index_phase wrote `len` IndexRecords into this buffer; the
+    // host shuttles the same pointer unchanged. The slice is read-only.
+    let records: &[IndexRecord] = if index_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(records_ptr, index_len) }
+    };
+
+    // SAFETY: host upholds nam validity; None for a non-v1.x carrier.
+    let entries = match unsafe { nam_file_entries(nam) } {
+        Some(slice) => slice,
+        None => return AbiStatus::InvalidArg,
+    };
+    let this_idx = file_idx.0;
+    if this_idx >= entries.len() {
+        // a file index past the project is empty work, not an error: report
+        // zero findings.
+        // SAFETY: out_len non-null (checked above).
+        unsafe {
+            *out_len = arvo::USize(0);
+        }
+        return AbiStatus::Ok;
+    }
+    let entry = &entries[this_idx];
+    let nodes = match nam_file_nodes(entry) {
+        Some(n) if !n.is_empty() => n,
+        _ => {
+            // SAFETY: out_len non-null.
+            unsafe {
+                *out_len = arvo::USize(0);
+            }
+            return AbiStatus::Ok;
+        }
+    };
+    let source: &[u8] = if entry.source.is_empty() {
+        &[]
+    } else {
+        // SAFETY: non-empty source addresses host-owned bytes valid for the
+        // call; its length is entry.source.len.
+        unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) }
+    };
+    let root = match nodes.iter().position(|nd| nd.kind.0 == node_kind::SOURCE_FILE.0) {
+        Some(i) => i,
+        None => {
+            // SAFETY: out_len non-null.
+            unsafe {
+                *out_len = arvo::USize(0);
+            }
+            return AbiStatus::Ok;
+        }
+    };
+
+    let capacity = out_capacity.0;
+    let mut written: usize = 0;
+    let mut would_emit: usize = 0;
+
+    for (node_idx, nd) in nodes.iter().enumerate() {
+        if nd.parent.0 != root || nd.kind.0 != node_kind::FUNCTION_ITEM.0 {
+            continue;
+        }
+        if !node_is_public(nodes, node_idx, source) {
+            continue;
+        }
+        let name = fn_name(nodes, node_idx, source);
+        if name.is_empty() {
+            continue;
+        }
+        let name_hash = fnv1a(name);
+        // a cross-file duplicate exists when some index record from another
+        // file has the same name hash AND the same name bytes (byte-confirm
+        // against hash collision).
+        let mut is_dup = false;
+        for rec in records {
+            if rec.file_idx as usize == this_idx || rec.name_hash != name_hash {
+                continue;
+            }
+            if other_record_name_eq(entries, rec, name) {
+                is_dup = true;
+                break;
+            }
+        }
+        if !is_dup {
+            continue;
+        }
+        if would_emit < capacity {
+            let start = nd_name_start(nodes, node_idx, source);
+            let (line, column) = byte_offset_to_line_col(source, start);
+            // path aliases host-owned, call-scoped NAM memory; see the note
+            // on make_diagnostic.
+            let diag =
+                make_no_duplicate_fn_diagnostic(entry.path, line, column, name.len() as u32);
+            // SAFETY: written == would_emit < capacity -> in-bounds.
+            unsafe {
+                out_entries.add(written).write(diag);
+            }
+            written += 1;
+        }
+        would_emit += 1;
+    }
+
+    // SAFETY: out_len non-null.
+    unsafe {
+        *out_len = arvo::USize(would_emit);
+    }
+    if would_emit > capacity {
+        AbiStatus::Internal
+    } else {
+        AbiStatus::Ok
+    }
+}
+
+/// Re-read the name an index record points at and compare it to `name` for
+/// byte equality. Returns false when the record's locator is out of range
+/// (a malformed index), which the caller treats as "not a confirmed match".
+fn other_record_name_eq(entries: &[NamFileEntry], rec: &IndexRecord, name: &[u8]) -> bool {
+    let other_file = rec.file_idx as usize;
+    if other_file >= entries.len() {
+        return false;
+    }
+    let entry = &entries[other_file];
+    let nodes = match nam_file_nodes(entry) {
+        Some(n) if !n.is_empty() => n,
+        _ => return false,
+    };
+    let node_idx = rec.node_idx.0;
+    if node_idx >= nodes.len() {
+        return false;
+    }
+    let source: &[u8] = if entry.source.is_empty() {
+        &[]
+    } else {
+        // SAFETY: non-empty source addresses host-owned bytes valid for the
+        // call; its length is entry.source.len.
+        unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) }
+    };
+    fn_name(nodes, node_idx, source) == name
+}
+
+/// Start byte of a function's name token, for spanning the diagnostic. Falls
+/// back to the function node's own start when no IDENTIFIER child is found.
+fn nd_name_start(nodes: &[NamNode], fn_idx: usize, _source: &[u8]) -> usize {
+    for nd in nodes {
+        if nd.parent.0 == fn_idx && nd.kind.0 == node_kind::IDENTIFIER.0 {
+            return nd.start_byte.0;
+        }
+    }
+    nodes[fn_idx].start_byte.0
+}
+
+fn make_no_duplicate_fn_diagnostic(
+    path: BytesRef,
+    line: u32,
+    column: u32,
+    length: u32,
+) -> Diagnostic {
+    Diagnostic {
+        plugin_id: bytes_ref_static(PLUGIN_ID),
+        rule_id: bytes_ref_static(NO_DUPLICATE_FN_RULE_ID),
+        severity: DiagnosticSeverity::Error,
+        message: bytes_ref_static(NO_DUPLICATE_FN_MESSAGE),
+        path,
+        // the name token is single-line; the span covers it.
+        range: SourceRange {
+            start: SourceLocation { line, column },
+            end: SourceLocation { line, column: column + length },
+        },
+        suggestion: BytesRef::EMPTY,
+        metadata_schema: ProviderId(0),
+        metadata_ptr: core::ptr::null(),
+        metadata_len: arvo::USize(0),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // descriptor export
 // ---------------------------------------------------------------------------
 
@@ -1461,6 +1905,22 @@ token_scan_lint!(
     b"no-runtime-spawn"
 );
 
+static NO_DUPLICATE_FN_VTABLE: LintEvaluateProjectIndexVtable = LintEvaluateProjectIndexVtable {
+    index_phase: no_duplicate_fn_index_phase,
+    evaluate_phase: no_duplicate_fn_evaluate_phase,
+};
+
+/// Provider-export marker for the no-duplicate-fn lint. Unlike the per-file
+/// lints, its vtable pointer addresses a [`LintEvaluateProjectIndexVtable`]
+/// behind the canonical project provider id.
+pub struct NoDuplicateFnProvider;
+
+impl ProviderExport for NoDuplicateFnProvider {
+    const ID: ProviderId = PROVIDER_NO_DUPLICATE_FN;
+    const VTABLE_PTR: *const c_void =
+        &NO_DUPLICATE_FN_VTABLE as *const LintEvaluateProjectIndexVtable as *const c_void;
+}
+
 #[export_extension(
     name = "mockspace-builtin-lints",
     version = "0.0.0",
@@ -1473,6 +1933,7 @@ token_scan_lint!(
         NoDynDispatchProvider,
         NoRuntimeRegistrationProvider,
         NoRuntimeSpawnProvider,
+        NoDuplicateFnProvider,
     ],
 )]
 #[allow(dead_code)]
@@ -2436,5 +2897,392 @@ mod tests {
             };
             assert_eq!(rid, expected_rule);
         }
+    }
+
+    // -- no-duplicate-fn (project-scope, two-phase) --
+
+    // Build a one-file synthetic tree for `pub fn <name>() {}` with the
+    // IDENTIFIER name node, no parameters. Layout:
+    //   "pub fn NAME() {}\n"
+    //   "pub" 0..3, fn item 0..(len-1), IDENTIFIER "NAME" at 7..(7+name_len).
+    fn pub_fn_nodes(name: &str) -> ([NamNode; 4], std::string::String) {
+        let src = std::format!("pub fn {name}() {{}}\n");
+        let name_start = 7usize;
+        let name_end = name_start + name.len();
+        let item_end = src.len() - 1; // before trailing newline
+        let nodes = [
+            nn(node_kind::SOURCE_FILE.0, 4, 0, src.len()), // 0 root (parent=sentinel)
+            nn(node_kind::FUNCTION_ITEM.0, 0, 0, item_end), // 1 fn item
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3),  // 2 "pub"
+            nn(node_kind::IDENTIFIER.0, 1, name_start, name_end), // 3 name token
+        ];
+        (nodes, src)
+    }
+
+    // private variant: same shape minus the visibility node.
+    fn priv_fn_nodes(name: &str) -> ([NamNode; 3], std::string::String) {
+        let src = std::format!("fn {name}() {{}}\n");
+        let name_start = 3usize;
+        let name_end = name_start + name.len();
+        let item_end = src.len() - 1;
+        let nodes = [
+            nn(node_kind::SOURCE_FILE.0, 3, 0, src.len()),  // 0 root
+            nn(node_kind::FUNCTION_ITEM.0, 0, 0, item_end), // 1 fn item (no vis)
+            nn(node_kind::IDENTIFIER.0, 1, name_start, name_end), // 2 name token
+        ];
+        (nodes, src)
+    }
+
+    // A NamFileEntry plus the owned buffers it borrows, kept alive together
+    // so the entry's raw pointers stay valid for the call.
+    struct OwnedEntry {
+        path: std::vec::Vec<u8>,
+        source: std::string::String,
+        nodes: std::vec::Vec<NamNode>,
+    }
+
+    impl OwnedEntry {
+        fn entry(&self) -> NamFileEntry {
+            NamFileEntry {
+                path: bytes_ref_static_runtime(&self.path),
+                language: arvo::USize(0),
+                source: bytes_ref_static_runtime(self.source.as_bytes()),
+                nodes: BytesRef {
+                    data: self.nodes.as_ptr() as *const u8,
+                    len: arvo::USize(self.nodes.len() * core::mem::size_of::<NamNode>()),
+                },
+            }
+        }
+    }
+
+    fn owned_pub_fn(path: &str, name: &str) -> OwnedEntry {
+        let (nodes, src) = pub_fn_nodes(name);
+        OwnedEntry {
+            path: path.as_bytes().to_vec(),
+            source: src,
+            nodes: nodes.to_vec(),
+        }
+    }
+
+    fn owned_priv_fn(path: &str, name: &str) -> OwnedEntry {
+        let (nodes, src) = priv_fn_nodes(name);
+        OwnedEntry {
+            path: path.as_bytes().to_vec(),
+            source: src,
+            nodes: nodes.to_vec(),
+        }
+    }
+
+    // Run index_phase into a host-allocated IndexRecord buffer of `cap`
+    // slots, returning (status, len, needed, the written records).
+    fn run_index_phase(
+        entries: &[NamFileEntry],
+        cap: usize,
+    ) -> (AbiStatus, usize, usize, Vec<IndexRecord>) {
+        let nam = payload(entries);
+        let mut buf: Vec<IndexRecord> = std::vec![
+            IndexRecord { file_idx: 0, node_idx: arvo::USize(0), name_hash: 0, sig_hash: 0 };
+            cap
+        ];
+        let mut batch = IndexBatch {
+            entries: if cap == 0 {
+                core::ptr::null_mut()
+            } else {
+                buf.as_mut_ptr() as *mut c_void
+            },
+            capacity: arvo::USize(cap),
+            len: arvo::USize(0),
+            needed: arvo::USize(0),
+        };
+        // SAFETY: nam valid full-project payload; out_index addresses a live
+        // IndexBatch whose entries buffer holds `cap` IndexRecord slots.
+        let status = unsafe {
+            no_duplicate_fn_index_phase(
+                core::ptr::null_mut(),
+                &nam,
+                core::ptr::null(),
+                arvo::USize(0),
+                &mut batch,
+            )
+        };
+        let written = batch.len.0.min(cap);
+        buf.truncate(written);
+        (status, batch.len.0, batch.needed.0, buf)
+    }
+
+    // Run evaluate_phase for one file against an index, returning
+    // (status, would_emit, written diagnostics).
+    fn run_evaluate_phase(
+        entries: &[NamFileEntry],
+        file_idx: usize,
+        index_records: &mut [IndexRecord],
+        cap: usize,
+    ) -> (AbiStatus, usize, Vec<Diagnostic>) {
+        let nam = payload(entries);
+        let batch = IndexBatch {
+            entries: if index_records.is_empty() {
+                core::ptr::null_mut()
+            } else {
+                index_records.as_mut_ptr() as *mut c_void
+            },
+            capacity: arvo::USize(index_records.len()),
+            len: arvo::USize(index_records.len()),
+            needed: arvo::USize(index_records.len()),
+        };
+        let mut out_buf: [MaybeUninit<Diagnostic>; 16] =
+            [const { MaybeUninit::uninit() }; 16];
+        let mut out_len = arvo::USize(0);
+        // SAFETY: nam valid; index addresses live IndexRecords; out_buf has
+        // 16 slots (cap <= 16); out_len valid.
+        let status = unsafe {
+            no_duplicate_fn_evaluate_phase(
+                core::ptr::null_mut(),
+                &nam,
+                arvo::USize(file_idx),
+                &batch,
+                out_buf.as_mut_ptr() as *mut Diagnostic,
+                arvo::USize(cap),
+                &mut out_len,
+            )
+        };
+        let written = out_len.0.min(cap);
+        let mut diags = Vec::new();
+        for k in 0..written {
+            // SAFETY: slots 0..written were initialised by the evaluator.
+            diags.push(unsafe { out_buf[k].assume_init() });
+        }
+        (status, out_len.0, diags)
+    }
+
+    #[test]
+    fn no_duplicate_fn_cross_file_dup_fires_with_span() {
+        // `pub fn run` in two files: evaluating either file fires once,
+        // spanned on that file's name token.
+        let a = owned_pub_fn("a.rs", "run");
+        let b = owned_pub_fn("b.rs", "run");
+        let entries = [a.entry(), b.entry()];
+
+        let (s_idx, len, needed, mut records) = run_index_phase(&entries, 8);
+        assert!(matches!(s_idx, AbiStatus::Ok));
+        assert_eq!(len, 2);
+        assert_eq!(needed, 2);
+        assert_eq!(records.len(), 2);
+
+        // evaluate file 0: one cross-file dup (the `run` in file 1).
+        let (s, n, diags) = run_evaluate_phase(&entries, 0, &mut records, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+        assert_eq!(diags.len(), 1);
+        // "pub fn run" -> name "run" starts at byte 7, line 1 col 7, 3 bytes.
+        assert_eq!(diags[0].range.start.line, 1);
+        assert_eq!(diags[0].range.start.column, 7);
+        assert_eq!(diags[0].range.end.column, 7 + 3);
+        // SAFETY: rule_id points at the static b"no-duplicate-fn".
+        let rid = unsafe {
+            core::slice::from_raw_parts(diags[0].rule_id.data, diags[0].rule_id.len.0)
+        };
+        assert_eq!(rid, b"no-duplicate-fn");
+        assert_eq!(diags[0].severity, DiagnosticSeverity::Error);
+
+        // evaluating file 1 also fires once (symmetric).
+        let (_, n1, _) = run_evaluate_phase(&entries, 1, &mut records, 16);
+        assert_eq!(n1, 1);
+    }
+
+    #[test]
+    fn no_duplicate_fn_same_file_dup_does_not_fire() {
+        // two `pub fn run` in the SAME file: index holds two records both
+        // with file_idx 0, so the cross-file check (different file_idx)
+        // never matches. No fire.
+        let src = "pub fn run() {}\npub fn run() {}\n";
+        let nodes = std::vec![
+            nn(node_kind::SOURCE_FILE.0, 7, 0, src.len()),  // 0 root
+            nn(node_kind::FUNCTION_ITEM.0, 0, 0, 15),        // 1 fn run #1
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3),   // 2 pub
+            nn(node_kind::IDENTIFIER.0, 1, 7, 10),           // 3 "run"
+            nn(node_kind::FUNCTION_ITEM.0, 0, 16, 31),       // 4 fn run #2
+            nn(node_kind::VISIBILITY_MODIFIER.0, 4, 16, 19), // 5 pub
+            nn(node_kind::IDENTIFIER.0, 4, 23, 26),          // 6 "run"
+        ];
+        let owned = OwnedEntry {
+            path: b"a.rs".to_vec(),
+            source: src.into(),
+            nodes,
+        };
+        let entries = [owned.entry()];
+
+        let (_, len, _, mut records) = run_index_phase(&entries, 8);
+        // both functions indexed, both file_idx 0.
+        assert_eq!(len, 2);
+        let (s, n, _) = run_evaluate_phase(&entries, 0, &mut records, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn no_duplicate_fn_unique_name_does_not_fire() {
+        let a = owned_pub_fn("a.rs", "alpha");
+        let b = owned_pub_fn("b.rs", "beta");
+        let entries = [a.entry(), b.entry()];
+        let (_, _, _, mut records) = run_index_phase(&entries, 8);
+        let (s, n, _) = run_evaluate_phase(&entries, 0, &mut records, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn no_duplicate_fn_private_excluded() {
+        // a private `fn run` in file 0 and a public `fn run` in file 1: the
+        // private one is never indexed, and evaluating file 0 finds no
+        // public function to flag. Evaluating file 1 finds no OTHER-file
+        // record (the private was excluded), so neither file fires.
+        let a = owned_priv_fn("a.rs", "run");
+        let b = owned_pub_fn("b.rs", "run");
+        let entries = [a.entry(), b.entry()];
+
+        let (_, len, _, mut records) = run_index_phase(&entries, 8);
+        // only the public `run` in file 1 is indexed.
+        assert_eq!(len, 1);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].file_idx, 1);
+
+        // file 0 has only a private fn: nothing to evaluate.
+        let (_, n0, _) = run_evaluate_phase(&entries, 0, &mut records, 16);
+        assert_eq!(n0, 0);
+        // file 1's public `run` has no cross-file public twin.
+        let (_, n1, _) = run_evaluate_phase(&entries, 1, &mut records, 16);
+        assert_eq!(n1, 0);
+    }
+
+    #[test]
+    fn no_duplicate_fn_index_overflow_sets_needed() {
+        // three public fns across files; capacity 2 truncates and reports
+        // the full total in `needed`.
+        let a = owned_pub_fn("a.rs", "one");
+        let b = owned_pub_fn("b.rs", "two");
+        let c = owned_pub_fn("c.rs", "three");
+        let entries = [a.entry(), b.entry(), c.entry()];
+
+        let (s, len, needed, records) = run_index_phase(&entries, 2);
+        assert!(matches!(s, AbiStatus::Internal));
+        assert_eq!(len, 2); // only 2 written
+        assert_eq!(needed, 3); // would-have total
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn no_duplicate_fn_evaluate_overflow_reports_would_have() {
+        // file 0 has TWO public fns each duplicated in file 1; evaluating
+        // file 0 with out_capacity 0 fires zero written but reports 2.
+        let src0 = "pub fn run() {}\npub fn go() {}\n";
+        let nodes0 = std::vec![
+            nn(node_kind::SOURCE_FILE.0, 7, 0, src0.len()), // 0 root
+            nn(node_kind::FUNCTION_ITEM.0, 0, 0, 15),        // 1 fn run
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3),   // 2 pub
+            nn(node_kind::IDENTIFIER.0, 1, 7, 10),           // 3 "run"
+            nn(node_kind::FUNCTION_ITEM.0, 0, 16, 30),       // 4 fn go
+            nn(node_kind::VISIBILITY_MODIFIER.0, 4, 16, 19), // 5 pub
+            nn(node_kind::IDENTIFIER.0, 4, 23, 25),          // 6 "go"
+        ];
+        let f0 = OwnedEntry { path: b"a.rs".to_vec(), source: src0.into(), nodes: nodes0 };
+        let r = owned_pub_fn("b.rs", "run");
+        let g = owned_pub_fn("c.rs", "go");
+        let entries = [f0.entry(), r.entry(), g.entry()];
+
+        let (_, _, _, mut records) = run_index_phase(&entries, 16);
+        let (s, n, diags) = run_evaluate_phase(&entries, 0, &mut records, 0);
+        assert!(matches!(s, AbiStatus::Internal));
+        assert_eq!(n, 2);
+        assert_eq!(diags.len(), 0);
+    }
+
+    #[test]
+    fn no_duplicate_fn_rejects_null_args() {
+        let a = owned_pub_fn("a.rs", "run");
+        let entries = [a.entry()];
+        let nam = payload(&entries);
+
+        // index_phase null out_index -> InvalidArg.
+        // SAFETY: null out_index is the case under test.
+        let s_idx_null = unsafe {
+            no_duplicate_fn_index_phase(
+                core::ptr::null_mut(),
+                &nam,
+                core::ptr::null(),
+                arvo::USize(0),
+                core::ptr::null_mut(),
+            )
+        };
+        assert!(matches!(s_idx_null, AbiStatus::InvalidArg));
+
+        // evaluate_phase null out_entries -> InvalidArg.
+        let mut records: [IndexRecord; 0] = [];
+        let batch = IndexBatch {
+            entries: core::ptr::null_mut(),
+            capacity: arvo::USize(0),
+            len: arvo::USize(0),
+            needed: arvo::USize(0),
+        };
+        let mut out_len = arvo::USize(0);
+        let _ = &mut records;
+        // SAFETY: null out_entries is the case under test; fn returns before
+        // any write.
+        let s_eval_null = unsafe {
+            no_duplicate_fn_evaluate_phase(
+                core::ptr::null_mut(),
+                &nam,
+                arvo::USize(0),
+                &batch,
+                core::ptr::null_mut(),
+                arvo::USize(4),
+                &mut out_len,
+            )
+        };
+        assert!(matches!(s_eval_null, AbiStatus::InvalidArg));
+
+        // evaluate_phase null index -> InvalidArg.
+        let mut out_buf: [MaybeUninit<Diagnostic>; 4] =
+            [const { MaybeUninit::uninit() }; 4];
+        // SAFETY: null index is the case under test; fn returns before any
+        // index read.
+        let s_eval_no_index = unsafe {
+            no_duplicate_fn_evaluate_phase(
+                core::ptr::null_mut(),
+                &nam,
+                arvo::USize(0),
+                core::ptr::null(),
+                out_buf.as_mut_ptr() as *mut Diagnostic,
+                arvo::USize(4),
+                &mut out_len,
+            )
+        };
+        assert!(matches!(s_eval_no_index, AbiStatus::InvalidArg));
+    }
+
+    #[test]
+    fn index_record_layout_is_pinned() {
+        use core::mem::{offset_of, size_of};
+        // IndexRecord crosses the C ABI as the opaque IndexBatch content;
+        // pin its field offsets with literals so a reorder, type change, or
+        // padding drift that the host and plugin would disagree on is caught
+        // at build time. The cdylib builds 64-bit (arm64 / x86-64); the
+        // literal layout is asserted there. On a 64-bit target IndexRecord is
+        // { file_idx: u32 @0, pad, node_idx: USize @8, name_hash: u64 @16,
+        // sig_hash: u64 @24 }, size 32. Deriving the offsets from align_of
+        // (the prior form) was a tautology against the same alignment the
+        // compiler used, so a layout change tracked by align_of would slip
+        // past; literals do not.
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert_eq!(offset_of!(IndexRecord, file_idx), 0);
+            assert_eq!(offset_of!(IndexRecord, node_idx), 8);
+            assert_eq!(offset_of!(IndexRecord, name_hash), 16);
+            assert_eq!(offset_of!(IndexRecord, sig_hash), 24);
+            assert_eq!(size_of::<IndexRecord>(), 32);
+        }
+        // On any width, file_idx leads and the record is a multiple of its
+        // alignment (no trailing-pad ambiguity for the host record stride).
+        assert_eq!(offset_of!(IndexRecord, file_idx), 0);
+        assert_eq!(size_of::<IndexRecord>() % core::mem::align_of::<IndexRecord>(), 0);
     }
 }
