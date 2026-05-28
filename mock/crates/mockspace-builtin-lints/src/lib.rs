@@ -49,7 +49,8 @@ use hilavitkutin_extensions::{ProviderExport, ProviderId};
 use hilavitkutin_extensions_macros::export_extension;
 use viola_plugin_abi::{
     AbiStatus, BytesRef, Diagnostic, DiagnosticSeverity, LintEvaluateVtable,
-    NamPayload, SourceLocation, SourceRange, nam_file_entries,
+    NamFileEntry, NamNode, NamPayload, SourceLocation, SourceRange, nam_file_entries,
+    nam_file_nodes, node_kind,
 };
 
 // ---------------------------------------------------------------------------
@@ -255,13 +256,16 @@ pub const PROVIDER_FILE_SIZE: ProviderId =
 const FILE_SIZE_RULE_ID: &[u8] = b"file-size";
 const FILE_SIZE_MESSAGE: &[u8] = b"file line count exceeds the configured threshold";
 
-/// Line-count metric discriminants, the pure-source-bytes subset of
-/// `mockspace_rs::builtins::file_metric::Metric`. The item-count variants
-/// need a parsed AST and ship with the bucket-2 ports; the host must not
-/// route them here, and an out-of-range discriminant is rejected.
+/// Metric discriminants matching `mockspace_rs::builtins::file_metric::Metric`
+/// in order. The line-count metrics (0..=2) scan source bytes; the item-count
+/// metrics (3..=5) walk the NAM v1.1.0 `NamNode` array. An out-of-range
+/// discriminant is rejected.
 pub const METRIC_LINE_COUNT: u32 = 0;
 pub const METRIC_NON_BLANK_LINE_COUNT: u32 = 1;
 pub const METRIC_NON_BLANK_NON_COMMENT_LINE_COUNT: u32 = 2;
+pub const METRIC_PUB_ITEM_COUNT: u32 = 3;
+pub const METRIC_PRIVATE_ITEM_COUNT: u32 = 4;
+pub const METRIC_TOTAL_ITEM_COUNT: u32 = 5;
 
 /// Fixed-layout config the host passes via `lint_config_bytes`.
 ///
@@ -281,9 +285,10 @@ pub struct FileSizeConfig {
     pub threshold: arvo::USize,
 }
 
-/// Evaluator for the file-size lint. Counts lines per the configured
-/// metric and emits one diagnostic per file whose count crosses the
-/// threshold.
+/// Evaluator for the file-size lint. Counts lines (metrics 0..=2, over
+/// source bytes) or top-level items (metrics 3..=5, over the NAM v1.1.0
+/// node array) per the configured metric, and emits one diagnostic per file
+/// whose count crosses the threshold.
 ///
 /// Config handling: empty config (`config_len == 0`) is a no-op (the lint
 /// is present but not configured). A `config_len` that is neither 0 nor
@@ -322,7 +327,7 @@ unsafe extern "C" fn file_size_evaluate(
     // the host encoded a FileSizeConfig. read_unaligned makes no alignment
     // assumption about the host buffer.
     let config = unsafe { (lint_config_bytes as *const FileSizeConfig).read_unaligned() };
-    if config.metric > METRIC_NON_BLANK_NON_COMMENT_LINE_COUNT {
+    if config.metric > METRIC_TOTAL_ITEM_COUNT {
         return AbiStatus::InvalidArg;
     }
 
@@ -337,15 +342,20 @@ unsafe extern "C" fn file_size_evaluate(
     let mut would_emit: usize = 0;
 
     for entry in entries {
-        let count = if entry.source.is_empty() {
-            0
+        let count = if config.metric <= METRIC_NON_BLANK_NON_COMMENT_LINE_COUNT {
+            if entry.source.is_empty() {
+                0
+            } else {
+                // SAFETY: a non-empty NamFileEntry.source addresses host-owned
+                // bytes valid for the call; its byte length is entry.source.len.
+                let source: &[u8] = unsafe {
+                    core::slice::from_raw_parts(entry.source.data, entry.source.len.0)
+                };
+                line_metric(source, config.metric)
+            }
         } else {
-            // SAFETY: a non-empty NamFileEntry.source addresses host-owned
-            // bytes valid for the call; its byte length is entry.source.len.
-            let source: &[u8] = unsafe {
-                core::slice::from_raw_parts(entry.source.data, entry.source.len.0)
-            };
-            line_metric(source, config.metric)
+            // item-count metrics walk the NAM node array.
+            item_metric(entry, config.metric)
         };
         let triggered = if config.inclusive != 0 {
             count >= config.threshold.0
@@ -455,6 +465,107 @@ impl<'a> Iterator for Lines<'a> {
             }
         }
     }
+}
+
+/// Count top-level items per the item-count metric, walking the NAM v1.1.0
+/// `NamNode` array. Returns 0 when the entry carries no serialised tree (a
+/// v1.0.0 producer, or before the rust-native runner serialises nodes).
+///
+/// Top-level items are the direct children of the SOURCE_FILE root (a node's
+/// `parent` index equals the root's index). The flat array has no sibling
+/// pointer, so children are found by scanning for a matching `parent`. `pub`
+/// visibility is read from the source byte span of a child VISIBILITY_MODIFIER
+/// node, exactly `pub` (matching syn `Visibility::Public`; `pub(crate)` and
+/// friends are not public). PrivateItemCount is total minus public, matching
+/// `file_metric`'s `!is_pub_item` count.
+///
+/// The item-kind set ([`is_item_kind`]) APPROXIMATES syn `File::items`: it
+/// counts only the item kinds present in the canonical `node_kind` table.
+/// Item forms with no table kind yet (`extern crate`, trait alias) are not
+/// counted until the table gains them (a viola-side append; see round
+/// 202605282400 DOC CL D4). For the realistic max-item-count workloads this
+/// metric serves, that gap is immaterial; exact parity arrives with the
+/// table additions.
+fn item_metric(entry: &NamFileEntry, metric: u32) -> usize {
+    let nodes = match nam_file_nodes(entry) {
+        Some(n) if !n.is_empty() => n,
+        _ => return 0,
+    };
+    let source: &[u8] = if entry.source.is_empty() {
+        &[]
+    } else {
+        // SAFETY: non-empty source addresses host-owned bytes valid for the call.
+        unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) }
+    };
+    let root = match nodes.iter().position(|nd| nd.kind.0 == node_kind::SOURCE_FILE.0) {
+        Some(i) => i,
+        None => return 0,
+    };
+
+    let mut total: usize = 0;
+    let mut public: usize = 0;
+    for (i, nd) in nodes.iter().enumerate() {
+        if nd.parent.0 != root || !is_item_kind(nd.kind.0) {
+            continue;
+        }
+        total += 1;
+        if is_pub_item_kind(nd.kind.0) && node_is_public(nodes, i, source) {
+            public += 1;
+        }
+    }
+
+    match metric {
+        METRIC_PUB_ITEM_COUNT => public,
+        METRIC_PRIVATE_ITEM_COUNT => total - public,
+        // METRIC_TOTAL_ITEM_COUNT.
+        _ => total,
+    }
+}
+
+/// Top-level item node kinds (the breadth of syn `File::items`).
+fn is_item_kind(kind: usize) -> bool {
+    kind == node_kind::FUNCTION_ITEM.0
+        || kind == node_kind::STRUCT_ITEM.0
+        || kind == node_kind::ENUM_ITEM.0
+        || kind == node_kind::UNION_ITEM.0
+        || kind == node_kind::TRAIT_ITEM.0
+        || kind == node_kind::IMPL_ITEM.0
+        || kind == node_kind::MOD_ITEM.0
+        || kind == node_kind::TYPE_ITEM.0
+        || kind == node_kind::CONST_ITEM.0
+        || kind == node_kind::STATIC_ITEM.0
+        || kind == node_kind::USE_DECLARATION.0
+        || kind == node_kind::MACRO_DEFINITION.0
+        || kind == node_kind::MACRO_INVOCATION.0
+        || kind == node_kind::FOREIGN_MOD_ITEM.0
+}
+
+/// Item kinds eligible for the public count (matches `file_metric::is_pub_item`:
+/// fn, struct, enum, trait, type, const, static, mod).
+fn is_pub_item_kind(kind: usize) -> bool {
+    kind == node_kind::FUNCTION_ITEM.0
+        || kind == node_kind::STRUCT_ITEM.0
+        || kind == node_kind::ENUM_ITEM.0
+        || kind == node_kind::TRAIT_ITEM.0
+        || kind == node_kind::TYPE_ITEM.0
+        || kind == node_kind::CONST_ITEM.0
+        || kind == node_kind::STATIC_ITEM.0
+        || kind == node_kind::MOD_ITEM.0
+}
+
+/// True when `item_idx` has a child VISIBILITY_MODIFIER node whose source text
+/// is exactly `pub`. Children are found by parent-index scan.
+fn node_is_public(nodes: &[NamNode], item_idx: usize, source: &[u8]) -> bool {
+    for nd in nodes {
+        if nd.parent.0 == item_idx && nd.kind.0 == node_kind::VISIBILITY_MODIFIER.0 {
+            let start = nd.start_byte.0;
+            let end = nd.end_byte.0;
+            if start <= end && end <= source.len() && &source[start..end] == b"pub" {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -1268,10 +1379,117 @@ mod tests {
     #[test]
     fn file_size_rejects_unknown_metric() {
         let entries = [entry(b"a.rs", b"x\ny")];
-        // metric 3 = PubItemCount (AST) -> out of range for this provider.
-        let cfg = FileSizeConfig { metric: 3, inclusive: 1, threshold: arvo::USize(1) };
+        // metric 6 is past the last metric (TotalItemCount = 5).
+        let cfg = FileSizeConfig { metric: 6, inclusive: 1, threshold: arvo::USize(1) };
         let (s, _) = run_file_size(&entries, Some(cfg), 8);
         assert!(matches!(s, AbiStatus::InvalidArg));
+    }
+
+    // -- file-size AST item-count metrics (bucket-2) --
+
+    fn nn(
+        kind: usize,
+        parent: usize,
+        start: usize,
+        end: usize,
+    ) -> NamNode {
+        NamNode {
+            kind: arvo::USize(kind),
+            parent: arvo::USize(parent),
+            // first_child is unused by item_metric (it navigates by parent).
+            first_child: arvo::USize(0),
+            start_byte: arvo::USize(start),
+            end_byte: arvo::USize(end),
+            start_row: arvo::USize(0),
+            end_row: arvo::USize(0),
+        }
+    }
+
+    fn entry_with_nodes<'a>(
+        path: &'a [u8],
+        source: &'a [u8],
+        nodes: &'a [NamNode],
+    ) -> NamFileEntry {
+        NamFileEntry {
+            path: bytes_ref_static_runtime(path),
+            language: arvo::USize(0),
+            source: bytes_ref_static_runtime(source),
+            nodes: BytesRef {
+                data: nodes.as_ptr() as *const u8,
+                len: arvo::USize(nodes.len() * core::mem::size_of::<NamNode>()),
+            },
+        }
+    }
+
+    // shared synthetic tree for the item-count tests:
+    //   pub fn a(){}   fn b(){}   pub struct C;
+    // root + 3 top-level items (2 pub, 1 private) + 2 visibility nodes.
+    fn item_nodes() -> [NamNode; 6] {
+        let src_len = b"pub fn a(){}\nfn b(){}\npub struct C;\n".len();
+        [
+            nn(node_kind::SOURCE_FILE.0, 6, 0, src_len), // 0 root (parent = sentinel)
+            nn(node_kind::FUNCTION_ITEM.0, 0, 0, 12),    // 1 pub fn a
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3), // 2 "pub"
+            nn(node_kind::FUNCTION_ITEM.0, 0, 13, 21),   // 3 fn b (private)
+            nn(node_kind::STRUCT_ITEM.0, 0, 22, 35),     // 4 pub struct C
+            nn(node_kind::VISIBILITY_MODIFIER.0, 4, 22, 25), // 5 "pub"
+        ]
+    }
+
+    #[test]
+    fn item_metric_counts_total_pub_private() {
+        let src = b"pub fn a(){}\nfn b(){}\npub struct C;\n";
+        let nodes = item_nodes();
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        assert_eq!(item_metric(&e, METRIC_TOTAL_ITEM_COUNT), 3);
+        assert_eq!(item_metric(&e, METRIC_PUB_ITEM_COUNT), 2);
+        assert_eq!(item_metric(&e, METRIC_PRIVATE_ITEM_COUNT), 1);
+    }
+
+    #[test]
+    fn item_metric_no_nodes_is_zero() {
+        // a v1.0.0-style entry with no serialised tree counts nothing.
+        let e = entry(b"a.rs", b"pub fn a(){}\n");
+        assert_eq!(item_metric(&e, METRIC_TOTAL_ITEM_COUNT), 0);
+    }
+
+    #[test]
+    fn item_metric_excludes_nested_items() {
+        // a fn nested under a mod is not a top-level item.
+        let src = b"mod m { fn inner(){} }\n";
+        let nodes = [
+            nn(node_kind::SOURCE_FILE.0, 3, 0, src.len()), // 0 root
+            nn(node_kind::MOD_ITEM.0, 0, 0, 22),           // 1 mod m (top-level)
+            nn(node_kind::FUNCTION_ITEM.0, 1, 8, 20),      // 2 fn inner (under mod, parent=1)
+        ];
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        // only the mod counts; the nested fn does not.
+        assert_eq!(item_metric(&e, METRIC_TOTAL_ITEM_COUNT), 1);
+    }
+
+    #[test]
+    fn file_size_item_metric_fires_via_evaluate() {
+        let src = b"pub fn a(){}\nfn b(){}\npub struct C;\n";
+        let nodes = item_nodes();
+        let entries = [entry_with_nodes(b"a.rs", src, &nodes)];
+        // PubItemCount is 2; exclusive threshold 1 fires.
+        let cfg = FileSizeConfig {
+            metric: METRIC_PUB_ITEM_COUNT,
+            inclusive: 0,
+            threshold: arvo::USize(1),
+        };
+        let (s, n) = run_file_size(&entries, Some(cfg), 8);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+        // exclusive threshold 2 does not fire (2 is not > 2).
+        let cfg = FileSizeConfig {
+            metric: METRIC_PUB_ITEM_COUNT,
+            inclusive: 0,
+            threshold: arvo::USize(2),
+        };
+        let (s, n) = run_file_size(&entries, Some(cfg), 8);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
     }
 
     #[test]
