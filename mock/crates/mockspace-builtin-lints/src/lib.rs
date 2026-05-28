@@ -244,6 +244,220 @@ const fn bytes_ref_static(b: &'static [u8]) -> BytesRef {
 }
 
 // ---------------------------------------------------------------------------
+// file-size
+// ---------------------------------------------------------------------------
+
+/// Provider id for the file-size lint (the `file-metric` primitive,
+/// line-count metrics only).
+pub const PROVIDER_FILE_SIZE: ProviderId =
+    ProviderId::from_name("mockspace-builtin.lint.file-size.v2");
+
+const FILE_SIZE_RULE_ID: &[u8] = b"file-size";
+const FILE_SIZE_MESSAGE: &[u8] = b"file line count exceeds the configured threshold";
+
+/// Line-count metric discriminants, the pure-source-bytes subset of
+/// `mockspace_rs::builtins::file_metric::Metric`. The item-count variants
+/// need a parsed AST and ship with the bucket-2 ports; the host must not
+/// route them here, and an out-of-range discriminant is rejected.
+pub const METRIC_LINE_COUNT: u32 = 0;
+pub const METRIC_NON_BLANK_LINE_COUNT: u32 = 1;
+pub const METRIC_NON_BLANK_NON_COMMENT_LINE_COUNT: u32 = 2;
+
+/// Fixed-layout config the host passes via `lint_config_bytes`.
+///
+/// This is the FIXED-config arm of the config-bytes contract: the host
+/// encodes the per-lint TOML into this `#[repr(C)]` struct and the cdylib
+/// reads it back by a pointer cast when `config_len` equals its size. A
+/// no_std cdylib cannot parse TOML, so config crosses pre-encoded.
+/// Variable-length configs (e.g. a token list) use a length-prefixed blob
+/// instead, decoded by hand; that arm lands with the token-scan port.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct FileSizeConfig {
+    /// One of the `METRIC_*` line-count discriminants.
+    pub metric: u32,
+    /// Non-zero fires when count >= threshold; zero when count > threshold.
+    pub inclusive: u32,
+    pub threshold: arvo::USize,
+}
+
+/// Evaluator for the file-size lint. Counts lines per the configured
+/// metric and emits one diagnostic per file whose count crosses the
+/// threshold.
+///
+/// Config handling: empty config (`config_len == 0`) is a no-op (the lint
+/// is present but not configured). A `config_len` that is neither 0 nor
+/// `size_of::<FileSizeConfig>()`, a null config pointer alongside a
+/// non-zero length, or an out-of-range metric discriminant all return
+/// [`AbiStatus::InvalidArg`]. The overflow + null-arg contract is
+/// identical to [`no_todo_evaluate`].
+///
+/// SAFETY: the host upholds the `LintEvaluateVtable` contract.
+unsafe extern "C" fn file_size_evaluate(
+    _host_ctx: *mut c_void,
+    nam: *const NamPayload,
+    lint_config_bytes: *const u8,
+    lint_config_len: arvo::USize,
+    out_entries: *mut Diagnostic,
+    out_capacity: arvo::USize,
+    out_len: *mut arvo::USize,
+) -> AbiStatus {
+    if out_entries.is_null() || out_len.is_null() {
+        return AbiStatus::InvalidArg;
+    }
+    if lint_config_len.0 == 0 {
+        // present but not configured: no findings.
+        // SAFETY: out_len is non-null (checked above).
+        unsafe {
+            *out_len = arvo::USize(0);
+        }
+        return AbiStatus::Ok;
+    }
+    if lint_config_bytes.is_null()
+        || lint_config_len.0 != core::mem::size_of::<FileSizeConfig>()
+    {
+        return AbiStatus::InvalidArg;
+    }
+    // SAFETY: config_bytes is non-null and exactly FileSizeConfig-sized;
+    // the host encoded a FileSizeConfig. read_unaligned makes no alignment
+    // assumption about the host buffer.
+    let config = unsafe { (lint_config_bytes as *const FileSizeConfig).read_unaligned() };
+    if config.metric > METRIC_NON_BLANK_NON_COMMENT_LINE_COUNT {
+        return AbiStatus::InvalidArg;
+    }
+
+    // SAFETY: host upholds nam validity; None for a non-v1.x carrier.
+    let entries = match unsafe { nam_file_entries(nam) } {
+        Some(slice) => slice,
+        None => return AbiStatus::InvalidArg,
+    };
+
+    let capacity = out_capacity.0;
+    let mut written: usize = 0;
+    let mut would_emit: usize = 0;
+
+    for entry in entries {
+        let count = if entry.source.is_empty() {
+            0
+        } else {
+            // SAFETY: a non-empty NamFileEntry.source addresses host-owned
+            // bytes valid for the call; its byte length is entry.source.len.
+            let source: &[u8] = unsafe {
+                core::slice::from_raw_parts(entry.source.data, entry.source.len.0)
+            };
+            line_metric(source, config.metric)
+        };
+        let triggered = if config.inclusive != 0 {
+            count >= config.threshold.0
+        } else {
+            count > config.threshold.0
+        };
+        if !triggered {
+            continue;
+        }
+        if would_emit < capacity {
+            // path aliases host-owned, call-scoped NAM memory; see the note
+            // on make_diagnostic.
+            let diag = make_file_diagnostic(entry.path);
+            // SAFETY: written == would_emit < capacity, so the slot is
+            // inside the host buffer.
+            unsafe {
+                out_entries.add(written).write(diag);
+            }
+            written += 1;
+        }
+        would_emit += 1;
+    }
+
+    // SAFETY: out_len is non-null (checked above).
+    unsafe {
+        *out_len = arvo::USize(would_emit);
+    }
+    if would_emit > capacity {
+        AbiStatus::Internal
+    } else {
+        AbiStatus::Ok
+    }
+}
+
+fn make_file_diagnostic(path: BytesRef) -> Diagnostic {
+    Diagnostic {
+        plugin_id: bytes_ref_static(PLUGIN_ID),
+        rule_id: bytes_ref_static(FILE_SIZE_RULE_ID),
+        severity: DiagnosticSeverity::Warn,
+        message: bytes_ref_static(FILE_SIZE_MESSAGE),
+        path,
+        // whole-file finding: a zero-width point at the file start.
+        range: SourceRange {
+            start: SourceLocation { line: 1, column: 0 },
+            end: SourceLocation { line: 1, column: 0 },
+        },
+        suggestion: BytesRef::EMPTY,
+        metadata_schema: ProviderId(0),
+        metadata_ptr: core::ptr::null(),
+        metadata_len: arvo::USize(0),
+    }
+}
+
+/// Count lines per the metric discriminant. Line splitting matches
+/// `str::lines()`: lines split on `\n`, a trailing `\r` is trimmed, and a
+/// final trailing newline does not add an empty line.
+fn line_metric(source: &[u8], metric: u32) -> usize {
+    let mut count: usize = 0;
+    for line in Lines::new(source) {
+        let trimmed = line.trim_ascii();
+        let included = match metric {
+            METRIC_NON_BLANK_LINE_COUNT => !trimmed.is_empty(),
+            METRIC_NON_BLANK_NON_COMMENT_LINE_COUNT => {
+                !trimmed.is_empty() && !trimmed.starts_with(b"//")
+            }
+            // METRIC_LINE_COUNT and any already-validated discriminant.
+            _ => true,
+        };
+        if included {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Iterator over the lines of a byte slice with `str::lines()` semantics.
+struct Lines<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> Lines<'a> {
+    fn new(source: &'a [u8]) -> Self {
+        Self { rest: source }
+    }
+}
+
+impl<'a> Iterator for Lines<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        if self.rest.is_empty() {
+            return None;
+        }
+        match self.rest.iter().position(|&b| b == b'\n') {
+            Some(idx) => {
+                let mut line = &self.rest[..idx];
+                if line.last() == Some(&b'\r') {
+                    line = &line[..line.len() - 1];
+                }
+                self.rest = &self.rest[idx + 1..];
+                Some(line)
+            }
+            None => {
+                let line = self.rest;
+                self.rest = &[];
+                Some(line)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // descriptor export
 // ---------------------------------------------------------------------------
 
@@ -261,10 +475,23 @@ impl ProviderExport for NoTodoProvider {
         &NO_TODO_VTABLE as *const LintEvaluateVtable as *const c_void;
 }
 
+static FILE_SIZE_VTABLE: LintEvaluateVtable = LintEvaluateVtable {
+    evaluate: file_size_evaluate,
+};
+
+/// Provider-export marker for the file-size lint.
+pub struct FileSizeProvider;
+
+impl ProviderExport for FileSizeProvider {
+    const ID: ProviderId = PROVIDER_FILE_SIZE;
+    const VTABLE_PTR: *const c_void =
+        &FILE_SIZE_VTABLE as *const LintEvaluateVtable as *const c_void;
+}
+
 #[export_extension(
     name = "mockspace-builtin-lints",
     version = "0.0.0",
-    providers = [NoTodoProvider],
+    providers = [NoTodoProvider, FileSizeProvider],
 )]
 #[allow(dead_code)]
 pub struct MockspaceBuiltinLints;
@@ -451,5 +678,160 @@ mod tests {
             )
         };
         assert!(matches!(status, AbiStatus::InvalidArg));
+    }
+
+    // -- file-size --
+
+    #[test]
+    fn line_metric_matches_str_lines() {
+        // parity with str::lines() for the plain line-count metric.
+        for s in [
+            "",
+            "a",
+            "a\n",
+            "a\nb",
+            "a\nb\n",
+            "a\n\nb\n",
+            "\n",
+            "a\r\nb\r\n",
+        ] {
+            assert_eq!(
+                line_metric(s.as_bytes(), METRIC_LINE_COUNT),
+                s.lines().count(),
+                "line count mismatch for {s:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn line_metric_non_blank_and_non_comment() {
+        let src = b"code\n   \n// comment\n  // indented comment\nmore code\n";
+        // lines: "code", "   "(blank), "// comment", "  // indented comment", "more code"
+        assert_eq!(line_metric(src, METRIC_LINE_COUNT), 5);
+        // non-blank drops the whitespace-only line.
+        assert_eq!(line_metric(src, METRIC_NON_BLANK_LINE_COUNT), 4);
+        // non-blank-non-comment also drops the two comment lines.
+        assert_eq!(line_metric(src, METRIC_NON_BLANK_NON_COMMENT_LINE_COUNT), 2);
+    }
+
+    fn run_file_size(
+        entries: &[viola_plugin_abi::NamFileEntry],
+        cfg: Option<FileSizeConfig>,
+        cap: usize,
+    ) -> (AbiStatus, usize) {
+        let nam = payload(entries);
+        let mut buf: [MaybeUninit<Diagnostic>; 8] =
+            [const { MaybeUninit::uninit() }; 8];
+        let mut out_len = arvo::USize(0);
+        let (cptr, clen): (*const u8, arvo::USize) = match &cfg {
+            Some(c) => (
+                c as *const FileSizeConfig as *const u8,
+                arvo::USize(core::mem::size_of::<FileSizeConfig>()),
+            ),
+            None => (core::ptr::null(), arvo::USize(0)),
+        };
+        // SAFETY: nam valid; buf has 8 slots (cap <= 8); out_len valid; cfg
+        // pointer (when Some) addresses a live FileSizeConfig for the call.
+        let status = unsafe {
+            file_size_evaluate(
+                core::ptr::null_mut(),
+                &nam,
+                cptr,
+                clen,
+                buf.as_mut_ptr() as *mut Diagnostic,
+                arvo::USize(cap),
+                &mut out_len,
+            )
+        };
+        (status, out_len.0)
+    }
+
+    #[test]
+    fn file_size_threshold_inclusive_and_exclusive() {
+        // 3-line file.
+        let entries = [entry(b"a.rs", b"one\ntwo\nthree")];
+        // exclusive, threshold 3: count 3 is NOT > 3 -> no fire.
+        let cfg = FileSizeConfig { metric: METRIC_LINE_COUNT, inclusive: 0, threshold: arvo::USize(3) };
+        let (s, n) = run_file_size(&entries, Some(cfg), 8);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
+        // inclusive, threshold 3: count 3 IS >= 3 -> fire.
+        let cfg = FileSizeConfig { metric: METRIC_LINE_COUNT, inclusive: 1, threshold: arvo::USize(3) };
+        let (s, n) = run_file_size(&entries, Some(cfg), 8);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+        // exclusive, threshold 2: count 3 > 2 -> fire.
+        let cfg = FileSizeConfig { metric: METRIC_LINE_COUNT, inclusive: 0, threshold: arvo::USize(2) };
+        let (s, n) = run_file_size(&entries, Some(cfg), 8);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn file_size_empty_config_is_noop() {
+        let entries = [entry(b"a.rs", b"one\ntwo\nthree\nfour\nfive")];
+        let (s, n) = run_file_size(&entries, None, 8);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn file_size_rejects_unknown_metric() {
+        let entries = [entry(b"a.rs", b"x\ny")];
+        // metric 3 = PubItemCount (AST) -> out of range for this provider.
+        let cfg = FileSizeConfig { metric: 3, inclusive: 1, threshold: arvo::USize(1) };
+        let (s, _) = run_file_size(&entries, Some(cfg), 8);
+        assert!(matches!(s, AbiStatus::InvalidArg));
+    }
+
+    #[test]
+    fn file_size_rejects_wrong_config_len() {
+        let entries = [entry(b"a.rs", b"x\ny")];
+        let nam = payload(&entries);
+        let mut buf: [MaybeUninit<Diagnostic>; 4] =
+            [const { MaybeUninit::uninit() }; 4];
+        let mut out_len = arvo::USize(0);
+        let stray: [u8; 3] = [1, 2, 3];
+        // SAFETY: non-zero, non-FileSizeConfig-sized config -> InvalidArg
+        // before any deref of the bytes as a config.
+        let status = unsafe {
+            file_size_evaluate(
+                core::ptr::null_mut(),
+                &nam,
+                stray.as_ptr(),
+                arvo::USize(3),
+                buf.as_mut_ptr() as *mut Diagnostic,
+                arvo::USize(4),
+                &mut out_len,
+            )
+        };
+        assert!(matches!(status, AbiStatus::InvalidArg));
+    }
+
+    #[test]
+    fn file_size_config_layout_is_pinned() {
+        use core::mem::{offset_of, size_of};
+        // FileSizeConfig is the #[repr(C)] wire contract between the host
+        // encoder and this decoder. Pin the field offsets: the runtime
+        // size_of guard catches a length mismatch, but a reorder or padding
+        // drift that preserves size (e.g. swapping the two u32 fields) would
+        // otherwise read garbage silently.
+        assert_eq!(offset_of!(FileSizeConfig, metric), 0);
+        assert_eq!(offset_of!(FileSizeConfig, inclusive), 4);
+        assert_eq!(offset_of!(FileSizeConfig, threshold), 8);
+        assert_eq!(size_of::<FileSizeConfig>(), 8 + size_of::<arvo::USize>());
+    }
+
+    #[test]
+    fn file_size_counts_per_file_across_entries() {
+        // first file 2 lines (under), second 4 lines (over threshold 3 excl).
+        let entries = [
+            entry(b"small.rs", b"a\nb"),
+            entry(b"big.rs", b"a\nb\nc\nd"),
+        ];
+        let cfg = FileSizeConfig { metric: METRIC_LINE_COUNT, inclusive: 0, threshold: arvo::USize(3) };
+        let (s, n) = run_file_size(&entries, Some(cfg), 8);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
     }
 }
