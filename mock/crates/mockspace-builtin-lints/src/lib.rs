@@ -458,6 +458,395 @@ impl<'a> Iterator for Lines<'a> {
 }
 
 // ---------------------------------------------------------------------------
+// token-scan (no-std lint)
+// ---------------------------------------------------------------------------
+
+/// Provider id for the no-std lint (the `token-scan` primitive).
+pub const PROVIDER_NO_STD: ProviderId =
+    ProviderId::from_name("mockspace-builtin.lint.no-std.v2");
+
+const NO_STD_RULE_ID: &[u8] = b"no-std";
+const TOKEN_SCAN_MESSAGE: &[u8] = b"forbidden token matched outside strings and comments";
+
+/// Upper bound on the token count a single token-scan config may carry.
+/// The largest catalogue preset lists eight tokens; 32 leaves headroom
+/// without an allocation.
+const MAX_TOKENS: usize = 32;
+
+/// Decoded strip flags from the variable-config blob.
+#[derive(Copy, Clone)]
+struct TokenScanFlags {
+    word_boundary: bool,
+    strip_strings: bool,
+    strip_comments: bool,
+    strip_doc_comments: bool,
+}
+
+/// Evaluator for the no-std lint. Thin wrapper that bakes the rule id and
+/// delegates to the shared token-scan core; future token-scan lints add
+/// their own wrapper + provider and reuse the core.
+///
+/// SAFETY: the host upholds the `LintEvaluateVtable` contract.
+unsafe extern "C" fn no_std_evaluate(
+    _host_ctx: *mut c_void,
+    nam: *const NamPayload,
+    lint_config_bytes: *const u8,
+    lint_config_len: arvo::USize,
+    out_entries: *mut Diagnostic,
+    out_capacity: arvo::USize,
+    out_len: *mut arvo::USize,
+) -> AbiStatus {
+    // SAFETY: forwards the host-upheld pointers unchanged.
+    unsafe {
+        token_scan_core(
+            nam,
+            lint_config_bytes,
+            lint_config_len,
+            out_entries,
+            out_capacity,
+            out_len,
+            NO_STD_RULE_ID,
+        )
+    }
+}
+
+/// Shared token-scan logic. Decodes the variable-config blob (the VARIABLE
+/// arm of the config-bytes contract), scans each NAM file for each literal
+/// token outside strings and comments (per the strip flags), and emits one
+/// diagnostic per match carrying `rule_id`.
+///
+/// Config blob (little-endian): `[word_boundary: u8][strip_strings: u8]
+/// [strip_comments: u8][strip_doc_comments: u8][token_count: u32]` then
+/// `token_count` entries of `[len: u32][bytes...]`. Empty config
+/// (`config_len == 0`) is a no-op (lint present but not configured).
+/// Malformed config (short header, `token_count > MAX_TOKENS`, a token
+/// length running past the buffer) returns `AbiStatus::InvalidArg`. The
+/// overflow + null-arg contract matches the other evaluators.
+///
+/// SAFETY: the host upholds the `LintEvaluateVtable` contract; `rule_id`
+/// is a static byte slice.
+unsafe fn token_scan_core(
+    nam: *const NamPayload,
+    lint_config_bytes: *const u8,
+    lint_config_len: arvo::USize,
+    out_entries: *mut Diagnostic,
+    out_capacity: arvo::USize,
+    out_len: *mut arvo::USize,
+    rule_id: &'static [u8],
+) -> AbiStatus {
+    if out_entries.is_null() || out_len.is_null() {
+        return AbiStatus::InvalidArg;
+    }
+    if lint_config_len.0 == 0 {
+        // SAFETY: out_len non-null.
+        unsafe {
+            *out_len = arvo::USize(0);
+        }
+        return AbiStatus::Ok;
+    }
+    if lint_config_bytes.is_null() {
+        return AbiStatus::InvalidArg;
+    }
+    // SAFETY: config_bytes non-null with config_len bytes, host-owned for
+    // the call.
+    let config: &[u8] =
+        unsafe { core::slice::from_raw_parts(lint_config_bytes, lint_config_len.0) };
+
+    let (flags, tokens, token_count) = match decode_token_config(config) {
+        Some(decoded) => decoded,
+        None => return AbiStatus::InvalidArg,
+    };
+
+    let entries = match unsafe { nam_file_entries(nam) } {
+        Some(slice) => slice,
+        None => return AbiStatus::InvalidArg,
+    };
+
+    let capacity = out_capacity.0;
+    let mut written: usize = 0;
+    let mut would_emit: usize = 0;
+
+    for entry in entries {
+        if entry.source.is_empty() {
+            continue;
+        }
+        // SAFETY: non-empty source addresses host-owned bytes valid for the
+        // call; its length is entry.source.len.
+        let source: &[u8] = unsafe {
+            core::slice::from_raw_parts(entry.source.data, entry.source.len.0)
+        };
+        for &(off, len) in &tokens[..token_count] {
+            let token = &config[off..off + len];
+            scan_one_token(source, token, flags, |match_off| {
+                if would_emit < capacity {
+                    let (line, column) = byte_offset_to_line_col(source, match_off);
+                    // path aliases host-owned, call-scoped NAM memory; see
+                    // the note on make_diagnostic.
+                    let diag =
+                        make_token_diagnostic(entry.path, rule_id, line, column, len as u32);
+                    // SAFETY: written == would_emit < capacity -> in-bounds.
+                    unsafe {
+                        out_entries.add(written).write(diag);
+                    }
+                    written += 1;
+                }
+                would_emit += 1;
+            });
+        }
+    }
+
+    // SAFETY: out_len non-null.
+    unsafe {
+        *out_len = arvo::USize(would_emit);
+    }
+    if would_emit > capacity {
+        AbiStatus::Internal
+    } else {
+        AbiStatus::Ok
+    }
+}
+
+/// Decode the config blob into flags plus a fixed table of `(offset, len)`
+/// token spans into `config`. Returns `None` on any malformation.
+fn decode_token_config(
+    config: &[u8],
+) -> Option<(TokenScanFlags, [(usize, usize); MAX_TOKENS], usize)> {
+    if config.len() < 8 {
+        return None;
+    }
+    let flags = TokenScanFlags {
+        word_boundary: config[0] != 0,
+        strip_strings: config[1] != 0,
+        strip_comments: config[2] != 0,
+        strip_doc_comments: config[3] != 0,
+    };
+    let token_count = u32::from_le_bytes([config[4], config[5], config[6], config[7]]) as usize;
+    if token_count > MAX_TOKENS {
+        return None;
+    }
+    let mut tokens: [(usize, usize); MAX_TOKENS] = [(0, 0); MAX_TOKENS];
+    let mut p = 8;
+    for slot in tokens.iter_mut().take(token_count) {
+        if p + 4 > config.len() {
+            return None;
+        }
+        let len =
+            u32::from_le_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]) as usize;
+        p += 4;
+        if len == 0 || p + len > config.len() {
+            return None;
+        }
+        // The whole-span-skip strip is faithful only for tokens with no
+        // comment / string delimiter byte (`/` or `"`); a token containing
+        // one could match across a span boundary. Enforce the invariant
+        // rather than assume it: reject such a config.
+        let tok = &config[p..p + len];
+        if tok.contains(&b'/') || tok.contains(&b'"') {
+            return None;
+        }
+        *slot = (p, len);
+        p += len;
+    }
+    Some((flags, tokens, token_count))
+}
+
+/// Scan `source` for `token`, skipping strings and comments per `flags`,
+/// invoking `emit(byte_offset)` for each non-overlapping match. Mirrors the
+/// in-process `scan_token` over a stripped view: a token can only match in
+/// a live run between strip-spans, so whole spans are skipped (the
+/// catalogue's tokens never contain comment or string delimiter bytes, so a
+/// byte-equality match cannot straddle a span boundary).
+fn scan_one_token(source: &[u8], token: &[u8], flags: TokenScanFlags, mut emit: impl FnMut(usize)) {
+    let tlen = token.len();
+    if tlen == 0 {
+        return;
+    }
+    let mut i: usize = 0;
+    while i + tlen <= source.len() {
+        if let Some(end) = strip_span_at(source, i, flags) {
+            i = end;
+            continue;
+        }
+        if &source[i..i + tlen] == token && token_boundary_ok(source, i, tlen, flags.word_boundary)
+        {
+            emit(i);
+            i += tlen;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// If a stripped span (comment or string, per `flags`) starts at `i`, return
+/// its end offset; otherwise `None`. Ports the span detection of
+/// `mockspace_rs::strip`. A non-stripped comment / string (its flag off)
+/// returns `None`, so its bytes stay live and matchable.
+fn strip_span_at(source: &[u8], i: usize, flags: TokenScanFlags) -> Option<usize> {
+    let len = source.len();
+    let b = source[i];
+    // line comment, possibly a doc comment.
+    if b == b'/' && i + 1 < len && source[i + 1] == b'/' {
+        let is_doc = i + 2 < len && (source[i + 2] == b'/' || source[i + 2] == b'!');
+        let strip_this =
+            (is_doc && flags.strip_doc_comments) || (!is_doc && flags.strip_comments);
+        if strip_this {
+            return Some(find_line_end(source, i));
+        }
+        return None;
+    }
+    // block comment, possibly a doc block.
+    if b == b'/' && i + 1 < len && source[i + 1] == b'*' {
+        let is_doc = i + 2 < len && (source[i + 2] == b'*' || source[i + 2] == b'!');
+        let strip_this =
+            (is_doc && flags.strip_doc_comments) || (!is_doc && flags.strip_comments);
+        if strip_this {
+            return Some(find_block_comment_end(source, i));
+        }
+        return None;
+    }
+    // raw string: r#"..."# or br#"..."#. The whole literal is skipped
+    // (slightly wider than the in-process strip, which keeps the sigils
+    // live; no catalogue token contains a raw-string sigil).
+    if flags.strip_strings && (b == b'r' || (b == b'b' && i + 1 < len && source[i + 1] == b'r')) {
+        if let Some(end) = match_raw_string_end(source, i) {
+            return Some(end);
+        }
+    }
+    // plain string literal.
+    if flags.strip_strings && b == b'"' {
+        return Some(find_string_end(source, i));
+    }
+    None
+}
+
+fn find_line_end(source: &[u8], from: usize) -> usize {
+    let mut i = from;
+    while i < source.len() && source[i] != b'\n' {
+        i += 1;
+    }
+    if i < source.len() {
+        i + 1
+    } else {
+        i
+    }
+}
+
+fn find_block_comment_end(source: &[u8], from: usize) -> usize {
+    let mut i = from + 2;
+    let mut depth: usize = 1;
+    while i + 1 < source.len() && depth > 0 {
+        if source[i] == b'/' && source[i + 1] == b'*' {
+            depth += 1;
+            i += 2;
+        } else if source[i] == b'*' && source[i + 1] == b'/' {
+            depth -= 1;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    if depth == 0 { i } else { source.len() }
+}
+
+fn find_string_end(source: &[u8], from: usize) -> usize {
+    let mut i = from + 1;
+    while i < source.len() {
+        match source[i] {
+            b'\\' if i + 1 < source.len() => i += 2,
+            b'"' => return i + 1,
+            _ => i += 1,
+        }
+    }
+    source.len()
+}
+
+/// Match a raw string starting at `from`; return its end offset, or `None`
+/// if `from` does not open a raw string.
+fn match_raw_string_end(source: &[u8], from: usize) -> Option<usize> {
+    let len = source.len();
+    let mut i = from;
+    if source[i] == b'b' {
+        i += 1;
+    }
+    if i >= len || source[i] != b'r' {
+        return None;
+    }
+    i += 1;
+    let mut hashes: usize = 0;
+    while i < len && source[i] == b'#' {
+        hashes += 1;
+        i += 1;
+    }
+    if i >= len || source[i] != b'"' {
+        return None;
+    }
+    let mut j = i + 1;
+    while j < len {
+        if source[j] == b'"' {
+            let mut closing = 0;
+            let mut k = j + 1;
+            while k < len && source[k] == b'#' && closing < hashes {
+                closing += 1;
+                k += 1;
+            }
+            if closing == hashes {
+                return Some(k);
+            }
+        }
+        j += 1;
+    }
+    Some(len)
+}
+
+/// Word-boundary check mirroring the in-process `scan_token`: a boundary is
+/// required only on the side whose adjacent token byte is itself a word
+/// byte, and only when `word_boundary` is set.
+fn token_boundary_ok(source: &[u8], start: usize, tlen: usize, word_boundary: bool) -> bool {
+    if !word_boundary {
+        return true;
+    }
+    let token = &source[start..start + tlen];
+    let lhs_ok = if is_word_byte(token[0]) {
+        start == 0 || !is_word_byte(source[start - 1])
+    } else {
+        true
+    };
+    let after = start + tlen;
+    let rhs_ok = if is_word_byte(token[tlen - 1]) {
+        after >= source.len() || !is_word_byte(source[after])
+    } else {
+        true
+    };
+    lhs_ok && rhs_ok
+}
+
+fn make_token_diagnostic(
+    path: BytesRef,
+    rule_id: &'static [u8],
+    line: u32,
+    column: u32,
+    length: u32,
+) -> Diagnostic {
+    Diagnostic {
+        plugin_id: bytes_ref_static(PLUGIN_ID),
+        rule_id: bytes_ref_static(rule_id),
+        severity: DiagnosticSeverity::Warn,
+        message: bytes_ref_static(TOKEN_SCAN_MESSAGE),
+        path,
+        // tokens are single-line, so the span stays on one line; this
+        // matches scan_token reporting length = token byte length.
+        range: SourceRange {
+            start: SourceLocation { line, column },
+            end: SourceLocation { line, column: column + length },
+        },
+        suggestion: BytesRef::EMPTY,
+        metadata_schema: ProviderId(0),
+        metadata_ptr: core::ptr::null(),
+        metadata_len: arvo::USize(0),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // descriptor export
 // ---------------------------------------------------------------------------
 
@@ -488,10 +877,23 @@ impl ProviderExport for FileSizeProvider {
         &FILE_SIZE_VTABLE as *const LintEvaluateVtable as *const c_void;
 }
 
+static NO_STD_VTABLE: LintEvaluateVtable = LintEvaluateVtable {
+    evaluate: no_std_evaluate,
+};
+
+/// Provider-export marker for the no-std lint.
+pub struct NoStdProvider;
+
+impl ProviderExport for NoStdProvider {
+    const ID: ProviderId = PROVIDER_NO_STD;
+    const VTABLE_PTR: *const c_void =
+        &NO_STD_VTABLE as *const LintEvaluateVtable as *const c_void;
+}
+
 #[export_extension(
     name = "mockspace-builtin-lints",
     version = "0.0.0",
-    providers = [NoTodoProvider, FileSizeProvider],
+    providers = [NoTodoProvider, FileSizeProvider, NoStdProvider],
 )]
 #[allow(dead_code)]
 pub struct MockspaceBuiltinLints;
@@ -833,5 +1235,177 @@ mod tests {
         let (s, n) = run_file_size(&entries, Some(cfg), 8);
         assert!(matches!(s, AbiStatus::Ok));
         assert_eq!(n, 1);
+    }
+
+    // -- token-scan (no-std) --
+
+    fn token_blob(
+        word_boundary: bool,
+        strip: (bool, bool, bool),
+        tokens: &[&[u8]],
+    ) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.push(word_boundary as u8);
+        b.push(strip.0 as u8); // strings
+        b.push(strip.1 as u8); // comments
+        b.push(strip.2 as u8); // doc comments
+        b.extend_from_slice(&(tokens.len() as u32).to_le_bytes());
+        for t in tokens {
+            b.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            b.extend_from_slice(t);
+        }
+        b
+    }
+
+    fn run_token_scan(
+        entries: &[viola_plugin_abi::NamFileEntry],
+        blob: &[u8],
+        cap: usize,
+    ) -> (AbiStatus, usize, Vec<Diagnostic>) {
+        let nam = payload(entries);
+        let mut buf: [MaybeUninit<Diagnostic>; 16] =
+            [const { MaybeUninit::uninit() }; 16];
+        let mut out_len = arvo::USize(0);
+        // SAFETY: nam valid; buf has 16 slots (cap <= 16); out_len valid;
+        // blob addresses live config bytes for the call.
+        let status = unsafe {
+            no_std_evaluate(
+                core::ptr::null_mut(),
+                &nam,
+                blob.as_ptr(),
+                arvo::USize(blob.len()),
+                buf.as_mut_ptr() as *mut Diagnostic,
+                arvo::USize(cap),
+                &mut out_len,
+            )
+        };
+        let written = out_len.0.min(cap);
+        let mut diags = Vec::new();
+        for k in 0..written {
+            // SAFETY: slots 0..written were initialised by the evaluator.
+            diags.push(unsafe { buf[k].assume_init() });
+        }
+        (status, out_len.0, diags)
+    }
+
+    #[test]
+    fn token_scan_matches_live_code_with_line_col() {
+        let entries = [entry(b"a.rs", b"  use std::io;\n")];
+        let blob = token_blob(false, (true, true, true), &[b"use std::"]);
+        let (s, n, diags) = run_token_scan(&entries, &blob, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+        assert_eq!(diags[0].range.start.line, 1);
+        assert_eq!(diags[0].range.start.column, 2);
+        // span covers the matched token: "use std::" is 9 bytes.
+        assert_eq!(diags[0].range.end.column, 2 + 9);
+        // SAFETY: rule_id points at the static b"no-std".
+        let rid = unsafe {
+            core::slice::from_raw_parts(diags[0].rule_id.data, diags[0].rule_id.len.0)
+        };
+        assert_eq!(rid, b"no-std");
+    }
+
+    #[test]
+    fn token_scan_skips_strings_and_comments() {
+        // token appears in a string, a line comment, and a block comment
+        // (all stripped) and once in live code; only the live one fires.
+        let src = b"let s = \"use std::io\";\n// use std::fmt\n/* use std::x */\nuse std::real;\n";
+        let entries = [entry(b"a.rs", src)];
+        let blob = token_blob(false, (true, true, true), &[b"use std::"]);
+        let (s, n, _) = run_token_scan(&entries, &blob, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn token_scan_skips_raw_string() {
+        let src = b"let s = r#\"use std::io\"#;\nuse std::real;\n";
+        let entries = [entry(b"a.rs", src)];
+        let blob = token_blob(false, (true, true, true), &[b"use std::"]);
+        let (_, n, _) = run_token_scan(&entries, &blob, 16);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn token_scan_strip_flag_off_matches_in_comment() {
+        // strip_comments off: the token in the comment now fires too.
+        let src = b"// use std::fmt\nuse std::real;\n";
+        let entries = [entry(b"a.rs", src)];
+        let blob = token_blob(false, (true, false, false), &[b"use std::"]);
+        let (_, n, _) = run_token_scan(&entries, &blob, 16);
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn token_scan_multiple_tokens() {
+        let src = b"use std::io;\nextern crate std;\n";
+        let entries = [entry(b"a.rs", src)];
+        let blob = token_blob(false, (true, true, true), &[b"use std::", b"extern crate std"]);
+        let (_, n, _) = run_token_scan(&entries, &blob, 16);
+        assert_eq!(n, 2);
+    }
+
+    #[test]
+    fn token_scan_word_boundary() {
+        // word_boundary on: "std" matches as a whole word but not inside
+        // "stdio".
+        let src = b"a std b\nstdio\n";
+        let entries = [entry(b"a.rs", src)];
+        let blob = token_blob(true, (true, true, true), &[b"std"]);
+        let (_, n, _) = run_token_scan(&entries, &blob, 16);
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn token_scan_empty_config_is_noop() {
+        let entries = [entry(b"a.rs", b"use std::io;\n")];
+        let (s, n, _) = run_token_scan(&entries, &[], 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn token_scan_rejects_malformed_config() {
+        let entries = [entry(b"a.rs", b"use std::io;\n")];
+        // short header (< 8 bytes).
+        let (s1, _, _) = run_token_scan(&entries, &[1, 1, 1], 16);
+        assert!(matches!(s1, AbiStatus::InvalidArg));
+        // token_count beyond MAX_TOKENS.
+        let mut huge = std::vec![0u8, 1, 1, 1];
+        huge.extend_from_slice(&(u32::MAX).to_le_bytes());
+        let (s2, _, _) = run_token_scan(&entries, &huge, 16);
+        assert!(matches!(s2, AbiStatus::InvalidArg));
+        // token length runs past the buffer.
+        let mut overrun = std::vec![0u8, 1, 1, 1];
+        overrun.extend_from_slice(&(1u32).to_le_bytes()); // count 1
+        overrun.extend_from_slice(&(99u32).to_le_bytes()); // len 99, no bytes
+        let (s3, _, _) = run_token_scan(&entries, &overrun, 16);
+        assert!(matches!(s3, AbiStatus::InvalidArg));
+    }
+
+    #[test]
+    fn token_scan_rejects_delimiter_token() {
+        // a token containing a comment/string delimiter would break the
+        // whole-span-skip invariant; the decoder rejects it.
+        let entries = [entry(b"a.rs", b"a/b\n")];
+        let slash = token_blob(false, (true, true, true), &[b"a/b"]);
+        let (s1, _, _) = run_token_scan(&entries, &slash, 16);
+        assert!(matches!(s1, AbiStatus::InvalidArg));
+        let quote = token_blob(false, (true, true, true), &[b"a\"b"]);
+        let (s2, _, _) = run_token_scan(&entries, &quote, 16);
+        assert!(matches!(s2, AbiStatus::InvalidArg));
+    }
+
+    #[test]
+    fn token_scan_overflow_reports_would_have_count() {
+        let src = b"use std::a;\nuse std::b;\nuse std::c;\n";
+        let entries = [entry(b"a.rs", src)];
+        let blob = token_blob(false, (true, true, true), &[b"use std::"]);
+        // capacity 1, three matches.
+        let (s, n, diags) = run_token_scan(&entries, &blob, 1);
+        assert!(matches!(s, AbiStatus::Internal));
+        assert_eq!(n, 3);
+        assert_eq!(diags.len(), 1);
     }
 }
