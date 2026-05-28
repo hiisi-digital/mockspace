@@ -890,10 +890,98 @@ impl ProviderExport for NoStdProvider {
         &NO_STD_VTABLE as *const LintEvaluateVtable as *const c_void;
 }
 
+// The remaining token-scan lints differ from no-std only by provider id and
+// baked rule id; the tokens arrive at runtime in the config blob. Generate
+// each (provider const, evaluate wrapper, vtable, ProviderExport marker)
+// from one macro so the rule id cannot drift by copy-paste.
+macro_rules! token_scan_lint {
+    ($provider:ident, $eval:ident, $vtable:ident, $marker:ident, $id:literal, $rule:literal) => {
+        #[doc = concat!("Provider id for the ", $id, " lint.")]
+        pub const $provider: ProviderId = ProviderId::from_name($id);
+
+        /// SAFETY: the host upholds the `LintEvaluateVtable` contract;
+        /// delegates to the shared token-scan core with this lint's rule id.
+        unsafe extern "C" fn $eval(
+            _host_ctx: *mut c_void,
+            nam: *const NamPayload,
+            lint_config_bytes: *const u8,
+            lint_config_len: arvo::USize,
+            out_entries: *mut Diagnostic,
+            out_capacity: arvo::USize,
+            out_len: *mut arvo::USize,
+        ) -> AbiStatus {
+            // SAFETY: forwards the host-upheld pointers unchanged.
+            unsafe {
+                token_scan_core(
+                    nam,
+                    lint_config_bytes,
+                    lint_config_len,
+                    out_entries,
+                    out_capacity,
+                    out_len,
+                    $rule,
+                )
+            }
+        }
+
+        static $vtable: LintEvaluateVtable = LintEvaluateVtable { evaluate: $eval };
+
+        #[doc = concat!("Provider-export marker for the ", $id, " lint.")]
+        pub struct $marker;
+
+        impl ProviderExport for $marker {
+            const ID: ProviderId = $provider;
+            const VTABLE_PTR: *const c_void =
+                &$vtable as *const LintEvaluateVtable as *const c_void;
+        }
+    };
+}
+
+token_scan_lint!(
+    PROVIDER_NO_ALLOC,
+    no_alloc_evaluate,
+    NO_ALLOC_VTABLE,
+    NoAllocProvider,
+    "mockspace-builtin.lint.no-alloc.v2",
+    b"no-alloc"
+);
+token_scan_lint!(
+    PROVIDER_NO_DYN_DISPATCH,
+    no_dyn_dispatch_evaluate,
+    NO_DYN_DISPATCH_VTABLE,
+    NoDynDispatchProvider,
+    "mockspace-builtin.lint.no-dyn-dispatch.v2",
+    b"no-dyn-dispatch"
+);
+token_scan_lint!(
+    PROVIDER_NO_RUNTIME_REGISTRATION,
+    no_runtime_registration_evaluate,
+    NO_RUNTIME_REGISTRATION_VTABLE,
+    NoRuntimeRegistrationProvider,
+    "mockspace-builtin.lint.no-runtime-registration.v2",
+    b"no-runtime-registration"
+);
+token_scan_lint!(
+    PROVIDER_NO_RUNTIME_SPAWN,
+    no_runtime_spawn_evaluate,
+    NO_RUNTIME_SPAWN_VTABLE,
+    NoRuntimeSpawnProvider,
+    "mockspace-builtin.lint.no-runtime-spawn.v2",
+    b"no-runtime-spawn"
+);
+
 #[export_extension(
     name = "mockspace-builtin-lints",
     version = "0.0.0",
-    providers = [NoTodoProvider, FileSizeProvider, NoStdProvider],
+    providers = [
+        NoTodoProvider,
+        FileSizeProvider,
+        NoStdProvider,
+        NoAllocProvider,
+        NoDynDispatchProvider,
+        NoRuntimeRegistrationProvider,
+        NoRuntimeSpawnProvider,
+    ],
 )]
 #[allow(dead_code)]
 pub struct MockspaceBuiltinLints;
@@ -1407,5 +1495,55 @@ mod tests {
         assert!(matches!(s, AbiStatus::Internal));
         assert_eq!(n, 3);
         assert_eq!(diags.len(), 1);
+    }
+
+    #[test]
+    fn token_scan_family_bakes_distinct_rule_ids() {
+        // the four remaining token-scan wrappers differ only by baked rule
+        // id; verify each emits its own, sharing the same core + config.
+        type Eval = unsafe extern "C" fn(
+            *mut c_void,
+            *const NamPayload,
+            *const u8,
+            arvo::USize,
+            *mut Diagnostic,
+            arvo::USize,
+            *mut arvo::USize,
+        ) -> AbiStatus;
+        let cases: [(Eval, &[u8]); 4] = [
+            (no_alloc_evaluate, b"no-alloc"),
+            (no_dyn_dispatch_evaluate, b"no-dyn-dispatch"),
+            (no_runtime_registration_evaluate, b"no-runtime-registration"),
+            (no_runtime_spawn_evaluate, b"no-runtime-spawn"),
+        ];
+        let entries = [entry(b"a.rs", b"x marker y\n")];
+        let blob = token_blob(false, (true, true, true), &[b"marker"]);
+        for (eval, expected_rule) in cases {
+            let nam = payload(&entries);
+            let mut buf: [MaybeUninit<Diagnostic>; 4] =
+                [const { MaybeUninit::uninit() }; 4];
+            let mut out_len = arvo::USize(0);
+            // SAFETY: nam valid; buf has 4 slots; out_len valid; blob live.
+            let status = unsafe {
+                eval(
+                    core::ptr::null_mut(),
+                    &nam,
+                    blob.as_ptr(),
+                    arvo::USize(blob.len()),
+                    buf.as_mut_ptr() as *mut Diagnostic,
+                    arvo::USize(4),
+                    &mut out_len,
+                )
+            };
+            assert!(matches!(status, AbiStatus::Ok));
+            assert_eq!(out_len.0, 1);
+            // SAFETY: one entry written.
+            let d = unsafe { buf[0].assume_init() };
+            // SAFETY: rule_id points at the macro-baked static byte slice.
+            let rid = unsafe {
+                core::slice::from_raw_parts(d.rule_id.data, d.rule_id.len.0)
+            };
+            assert_eq!(rid, expected_rule);
+        }
     }
 }
