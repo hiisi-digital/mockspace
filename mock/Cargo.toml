@@ -9,6 +9,12 @@ members = [
     "crates/mockspace-cli",
     "crates/mockspace-test-fixtures",
 ]
+# The lint cdylib pack is its own workspace root: it links the stack
+# (arvo / hilavitkutin / viola-plugin-abi), a dependency universe disjoint
+# from the tool crates above (which pin tree-sitter and run on std). Keeping
+# it out of this workspace means `cargo mock check` never compiles the stack,
+# and the two graphs cannot conflict.
+exclude = ["crates/mockspace-builtin-lints"]
 
 # Release profile mirrors the parent workspace.
 [profile.release]
