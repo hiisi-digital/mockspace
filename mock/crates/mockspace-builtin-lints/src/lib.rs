@@ -569,6 +569,373 @@ fn node_is_public(nodes: &[NamNode], item_idx: usize, source: &[u8]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// ast-type-position
+// ---------------------------------------------------------------------------
+
+/// Provider id for the ast-type-position lint (the `ast-type-position`
+/// primitive). Backs the bare-primitive family of catalogue presets
+/// (no-public-raw-field, no-bare-numeric, no-bare-option, no-bare-result,
+/// no-bare-string, no-vec-in-trait-sig, strategy-marker-required,
+/// trait-first-signatures): each ships a forbidden-type list plus a
+/// position selection, and this evaluator fires once per forbidden type
+/// name found at a selected position when the enclosing item's visibility
+/// matches.
+pub const PROVIDER_AST_TYPE_POSITION: ProviderId =
+    ProviderId::from_name("mockspace-builtin.lint.ast-type-position.v2");
+
+const AST_TYPE_POSITION_RULE_ID: &[u8] = b"ast-type-position";
+const AST_TYPE_POSITION_MESSAGE: &[u8] = b"forbidden type in this position";
+
+/// Position-selection bits in the config blob's `positions` byte. They
+/// mirror `mockspace_rs::config_types::TypePosition`, narrowed to the
+/// position kinds the v1.2.0 `node_kind` table can express via a container
+/// node plus its descendant type leaves.
+///
+/// StructField and EnumVariantField both bottom out at FIELD_DECLARATION
+/// in the tree (a struct-style enum-variant field is a FIELD_DECLARATION
+/// under an ENUM_VARIANT), so they share the container kind but are
+/// distinguished by whether an ENUM_VARIANT sits on the parent chain.
+pub const POSITION_STRUCT_FIELD: u8 = 1 << 0;
+pub const POSITION_ENUM_VARIANT_FIELD: u8 = 1 << 1;
+pub const POSITION_FN_PARAM: u8 = 1 << 2;
+
+// SCOPING NOTE: FnReturn and TypeAliasBody (two further TypePosition
+// variants the in-process lint inspects) are NOT expressible against the
+// v1.2.0 node_kind table. A return type has no dedicated position-container
+// kind (it is a bare TYPE_IDENTIFIER / PRIMITIVE_TYPE child of a function
+// signature with no return-position marker), and a type-alias body
+// likewise has no body-position kind. Both await a return-type-position
+// and a type-alias-body-position kind in a later NAM bump; this slice
+// scopes to the three positions kinds 22..=24 can express. The bare
+// TYPE_ITEM walk for TypeAliasBody and the FnReturn walk are intentionally
+// absent, not forgotten.
+
+/// Visibility filter, mirroring `config_types::Visibility`. `0` is Any
+/// (no gate); non-zero is Public (the enclosing item must be `pub`).
+const VISIBILITY_ANY: u8 = 0;
+
+/// Decoded ast-type-position config: the visibility gate, the selected
+/// position bitset, and a fixed table of `(offset, len)` spans of the
+/// forbidden type names into the config blob.
+#[derive(Copy, Clone)]
+struct AstTypePositionFlags {
+    visibility: u8,
+    positions: u8,
+}
+
+/// Upper bound on the forbidden-type count a single config may carry. The
+/// largest bare-primitive preset lists well under this; 32 leaves headroom
+/// without an allocation (matching the token-scan bound).
+const MAX_FORBIDDEN: usize = 32;
+
+/// Evaluator for the ast-type-position lint. Walks the NAM v1.2.0 node
+/// array; for each position-container node selected by the config (a
+/// FIELD_DECLARATION, PARAMETER, or ENUM_VARIANT-hosted FIELD_DECLARATION),
+/// collects its descendant TYPE_IDENTIFIER / PRIMITIVE_TYPE leaves and
+/// compares each leaf's source text against the forbidden-type list. On a
+/// match, when the enclosing item passes the visibility gate, emits one
+/// diagnostic spanned to the leaf's byte range.
+///
+/// Config handling matches the other evaluators: empty config
+/// (`config_len == 0`) is a no-op; a null config pointer alongside a
+/// non-zero length, or a malformed blob, returns [`AbiStatus::InvalidArg`].
+/// An entry with no serialised node tree (a pre-v1.1.0 producer) is
+/// skipped. The overflow + null-arg contract is identical to
+/// [`no_todo_evaluate`].
+///
+/// SAFETY: the host upholds the `LintEvaluateVtable` contract.
+unsafe extern "C" fn ast_type_position_evaluate(
+    _host_ctx: *mut c_void,
+    nam: *const NamPayload,
+    lint_config_bytes: *const u8,
+    lint_config_len: arvo::USize,
+    out_entries: *mut Diagnostic,
+    out_capacity: arvo::USize,
+    out_len: *mut arvo::USize,
+) -> AbiStatus {
+    if out_entries.is_null() || out_len.is_null() {
+        return AbiStatus::InvalidArg;
+    }
+    if lint_config_len.0 == 0 {
+        // SAFETY: out_len non-null (checked above).
+        unsafe {
+            *out_len = arvo::USize(0);
+        }
+        return AbiStatus::Ok;
+    }
+    if lint_config_bytes.is_null() {
+        return AbiStatus::InvalidArg;
+    }
+    // SAFETY: config_bytes non-null with config_len bytes, host-owned for
+    // the call.
+    let config: &[u8] =
+        unsafe { core::slice::from_raw_parts(lint_config_bytes, lint_config_len.0) };
+    let (flags, forbidden, forbidden_count) = match decode_ast_type_position_config(config) {
+        Some(decoded) => decoded,
+        None => return AbiStatus::InvalidArg,
+    };
+
+    // SAFETY: host upholds nam validity; None for a non-v1.x carrier.
+    let entries = match unsafe { nam_file_entries(nam) } {
+        Some(slice) => slice,
+        None => return AbiStatus::InvalidArg,
+    };
+
+    let capacity = out_capacity.0;
+    let mut written: usize = 0;
+    let mut would_emit: usize = 0;
+
+    for entry in entries {
+        let nodes = match nam_file_nodes(entry) {
+            Some(n) if !n.is_empty() => n,
+            _ => continue,
+        };
+        let source: &[u8] = if entry.source.is_empty() {
+            &[]
+        } else {
+            // SAFETY: non-empty source addresses host-owned bytes valid for
+            // the call; its length is entry.source.len.
+            unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) }
+        };
+
+        // Each type leaf belongs to its nearest enclosing position
+        // container; classifying by that nearest container avoids
+        // double-counting when containers nest (a FIELD_DECLARATION inside
+        // an ENUM_VARIANT). The leaf is emitted once, attributed to the
+        // closest container, and only when that container's position bit is
+        // selected.
+        for (leaf_idx, leaf) in nodes.iter().enumerate() {
+            if leaf.kind.0 != node_kind::TYPE_IDENTIFIER.0
+                && leaf.kind.0 != node_kind::PRIMITIVE_TYPE.0
+            {
+                continue;
+            }
+            let Some(container) = nearest_container(nodes, leaf_idx) else {
+                continue;
+            };
+            let Some(position) =
+                position_for_container(nodes, container, nodes[container].kind.0)
+            else {
+                continue;
+            };
+            if flags.positions & position == 0 {
+                continue;
+            }
+            if flags.visibility != VISIBILITY_ANY
+                && !enclosing_item_is_public(nodes, container, source)
+            {
+                continue;
+            }
+            let start = leaf.start_byte.0;
+            let end = leaf.end_byte.0;
+            if !(start <= end && end <= source.len()) {
+                continue;
+            }
+            let leaf_text = &source[start..end];
+            let mut matched = false;
+            for &(off, len) in &forbidden[..forbidden_count] {
+                if leaf_text == &config[off..off + len] {
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                continue;
+            }
+            if would_emit < capacity {
+                let (line, column) = byte_offset_to_line_col(source, start);
+                // path aliases host-owned, call-scoped NAM memory; see the
+                // note on make_diagnostic.
+                let diag = make_type_position_diagnostic(
+                    entry.path,
+                    line,
+                    column,
+                    (end - start) as u32,
+                );
+                // SAFETY: written == would_emit < capacity -> in-bounds.
+                unsafe {
+                    out_entries.add(written).write(diag);
+                }
+                written += 1;
+            }
+            would_emit += 1;
+        }
+    }
+
+    // SAFETY: out_len non-null.
+    unsafe {
+        *out_len = arvo::USize(would_emit);
+    }
+    if would_emit > capacity {
+        AbiStatus::Internal
+    } else {
+        AbiStatus::Ok
+    }
+}
+
+/// Decode the ast-type-position config blob.
+///
+/// Layout (little-endian): `[visibility: u8][positions: u8]
+/// [forbidden_count: u32]` then `forbidden_count` entries of
+/// `[len: u32][bytes...]`. Returns `None` on any malformation (short
+/// header, `forbidden_count > MAX_FORBIDDEN`, a type-name length running
+/// past the buffer, or a zero-length type name).
+fn decode_ast_type_position_config(
+    config: &[u8],
+) -> Option<(AstTypePositionFlags, [(usize, usize); MAX_FORBIDDEN], usize)> {
+    if config.len() < 6 {
+        return None;
+    }
+    let flags = AstTypePositionFlags {
+        visibility: config[0],
+        positions: config[1],
+    };
+    let forbidden_count =
+        u32::from_le_bytes([config[2], config[3], config[4], config[5]]) as usize;
+    if forbidden_count > MAX_FORBIDDEN {
+        return None;
+    }
+    let mut forbidden: [(usize, usize); MAX_FORBIDDEN] = [(0, 0); MAX_FORBIDDEN];
+    let mut p = 6;
+    for slot in forbidden.iter_mut().take(forbidden_count) {
+        if p + 4 > config.len() {
+            return None;
+        }
+        let len =
+            u32::from_le_bytes([config[p], config[p + 1], config[p + 2], config[p + 3]]) as usize;
+        p += 4;
+        if len == 0 || p + len > config.len() {
+            return None;
+        }
+        *slot = (p, len);
+        p += len;
+    }
+    Some((flags, forbidden, forbidden_count))
+}
+
+/// Classify a node as a selectable position container. Returns the position
+/// bit it satisfies, or `None` when the node is not a position container.
+///
+/// A PARAMETER is FnParam. A FIELD_DECLARATION is EnumVariantField when an
+/// ENUM_VARIANT sits on its parent chain (a struct-style enum variant
+/// field), otherwise StructField. ENUM_VARIANT itself is not a leaf
+/// container; its struct-style fields are FIELD_DECLARATION children, and
+/// tuple-style variant types are TYPE_IDENTIFIER / PRIMITIVE_TYPE children
+/// of the ENUM_VARIANT, so the ENUM_VARIANT node is itself treated as an
+/// EnumVariantField container to catch the tuple-style case.
+fn position_for_container(nodes: &[NamNode], idx: usize, kind: usize) -> Option<u8> {
+    if kind == node_kind::PARAMETER.0 {
+        return Some(POSITION_FN_PARAM);
+    }
+    if kind == node_kind::ENUM_VARIANT.0 {
+        return Some(POSITION_ENUM_VARIANT_FIELD);
+    }
+    if kind == node_kind::FIELD_DECLARATION.0 {
+        if ancestor_has_kind(nodes, idx, node_kind::ENUM_VARIANT.0) {
+            return Some(POSITION_ENUM_VARIANT_FIELD);
+        }
+        return Some(POSITION_STRUCT_FIELD);
+    }
+    None
+}
+
+/// True when any ancestor of `idx` (its parent, grandparent, ...) has the
+/// given kind. The flat array encodes the parent index; a node whose parent
+/// is itself, or whose parent index is out of range (the slice-length root
+/// sentinel), terminates the walk.
+fn ancestor_has_kind(nodes: &[NamNode], idx: usize, kind: usize) -> bool {
+    let mut cur = idx;
+    let mut guard = 0;
+    while guard < nodes.len() {
+        let parent = nodes[cur].parent.0;
+        if parent >= nodes.len() || parent == cur {
+            return false;
+        }
+        if nodes[parent].kind.0 == kind {
+            return true;
+        }
+        cur = parent;
+        guard += 1;
+    }
+    false
+}
+
+/// Find the nearest position-container ancestor of `idx` (its closest
+/// FIELD_DECLARATION / PARAMETER / ENUM_VARIANT ancestor), walking the
+/// parent chain up. Returns `None` when no container ancestor exists (a
+/// type leaf in a non-position context, e.g. a let binding's type). The
+/// "nearest" rule is what de-duplicates nested containers: a field type
+/// leaf inside an enum variant resolves to the FIELD_DECLARATION, not the
+/// ENUM_VARIANT, so it is counted once.
+fn nearest_container(nodes: &[NamNode], idx: usize) -> Option<usize> {
+    let mut cur = idx;
+    let mut guard = 0;
+    while guard < nodes.len() {
+        let parent = nodes[cur].parent.0;
+        if parent >= nodes.len() || parent == cur {
+            return None;
+        }
+        let k = nodes[parent].kind.0;
+        if k == node_kind::FIELD_DECLARATION.0
+            || k == node_kind::PARAMETER.0
+            || k == node_kind::ENUM_VARIANT.0
+        {
+            return Some(parent);
+        }
+        cur = parent;
+        guard += 1;
+    }
+    None
+}
+
+/// True when the enclosing item of the position container at `idx` is
+/// public. Walks up the parent chain to the nearest item-kind node (the
+/// struct / enum / fn / trait / impl that encloses the position), then
+/// reads its visibility via [`node_is_public`]. When no item ancestor is
+/// found (a malformed tree), the position is treated as non-public so the
+/// Public filter excludes it.
+fn enclosing_item_is_public(nodes: &[NamNode], idx: usize, source: &[u8]) -> bool {
+    let mut cur = idx;
+    let mut guard = 0;
+    while guard < nodes.len() {
+        let parent = nodes[cur].parent.0;
+        if parent >= nodes.len() || parent == cur {
+            return false;
+        }
+        if is_item_kind(nodes[parent].kind.0) {
+            return node_is_public(nodes, parent, source);
+        }
+        cur = parent;
+        guard += 1;
+    }
+    false
+}
+
+fn make_type_position_diagnostic(
+    path: BytesRef,
+    line: u32,
+    column: u32,
+    length: u32,
+) -> Diagnostic {
+    Diagnostic {
+        plugin_id: bytes_ref_static(PLUGIN_ID),
+        rule_id: bytes_ref_static(AST_TYPE_POSITION_RULE_ID),
+        severity: DiagnosticSeverity::Warn,
+        message: bytes_ref_static(AST_TYPE_POSITION_MESSAGE),
+        path,
+        // type leaves are single-line; the span covers the matched leaf.
+        range: SourceRange {
+            start: SourceLocation { line, column },
+            end: SourceLocation { line, column: column + length },
+        },
+        suggestion: BytesRef::EMPTY,
+        metadata_schema: ProviderId(0),
+        metadata_ptr: core::ptr::null(),
+        metadata_len: arvo::USize(0),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // token-scan (no-std lint)
 // ---------------------------------------------------------------------------
 
@@ -988,6 +1355,19 @@ impl ProviderExport for FileSizeProvider {
         &FILE_SIZE_VTABLE as *const LintEvaluateVtable as *const c_void;
 }
 
+static AST_TYPE_POSITION_VTABLE: LintEvaluateVtable = LintEvaluateVtable {
+    evaluate: ast_type_position_evaluate,
+};
+
+/// Provider-export marker for the ast-type-position lint.
+pub struct AstTypePositionProvider;
+
+impl ProviderExport for AstTypePositionProvider {
+    const ID: ProviderId = PROVIDER_AST_TYPE_POSITION;
+    const VTABLE_PTR: *const c_void =
+        &AST_TYPE_POSITION_VTABLE as *const LintEvaluateVtable as *const c_void;
+}
+
 static NO_STD_VTABLE: LintEvaluateVtable = LintEvaluateVtable {
     evaluate: no_std_evaluate,
 };
@@ -1087,6 +1467,7 @@ token_scan_lint!(
     providers = [
         NoTodoProvider,
         FileSizeProvider,
+        AstTypePositionProvider,
         NoStdProvider,
         NoAllocProvider,
         NoDynDispatchProvider,
@@ -1541,6 +1922,298 @@ mod tests {
         let (s, n) = run_file_size(&entries, Some(cfg), 8);
         assert!(matches!(s, AbiStatus::Ok));
         assert_eq!(n, 1);
+    }
+
+    // -- ast-type-position --
+
+    fn ast_type_position_blob(
+        visibility: u8,
+        positions: u8,
+        forbidden: &[&[u8]],
+    ) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.push(visibility);
+        b.push(positions);
+        b.extend_from_slice(&(forbidden.len() as u32).to_le_bytes());
+        for t in forbidden {
+            b.extend_from_slice(&(t.len() as u32).to_le_bytes());
+            b.extend_from_slice(t);
+        }
+        b
+    }
+
+    fn run_ast_type_position(
+        entries: &[NamFileEntry],
+        blob: &[u8],
+        cap: usize,
+    ) -> (AbiStatus, usize, Vec<Diagnostic>) {
+        let nam = payload(entries);
+        let mut buf: [MaybeUninit<Diagnostic>; 16] =
+            [const { MaybeUninit::uninit() }; 16];
+        let mut out_len = arvo::USize(0);
+        // SAFETY: nam valid; buf has 16 slots (cap <= 16); out_len valid;
+        // blob addresses live config bytes for the call.
+        let status = unsafe {
+            ast_type_position_evaluate(
+                core::ptr::null_mut(),
+                &nam,
+                blob.as_ptr(),
+                arvo::USize(blob.len()),
+                buf.as_mut_ptr() as *mut Diagnostic,
+                arvo::USize(cap),
+                &mut out_len,
+            )
+        };
+        let written = out_len.0.min(cap);
+        let mut diags = Vec::new();
+        for k in 0..written {
+            // SAFETY: slots 0..written were initialised by the evaluator.
+            diags.push(unsafe { buf[k].assume_init() });
+        }
+        (status, out_len.0, diags)
+    }
+
+    // synthetic tree for `pub struct S { f: String }`:
+    //   the FIELD_DECLARATION (3) wraps a TYPE_IDENTIFIER (4) "String".
+    // byte layout: "pub struct S { f: String }\n"
+    //                012345678901234567890123456
+    //                          1111111111222222
+    // "pub" at 0..3, "String" at 18..24.
+    fn pub_struct_string_field() -> ([NamNode; 5], &'static [u8]) {
+        let src: &[u8] = b"pub struct S { f: String }\n";
+        let nodes = [
+            nn(node_kind::SOURCE_FILE.0, 5, 0, src.len()), // 0 root
+            nn(node_kind::STRUCT_ITEM.0, 0, 0, 26),        // 1 pub struct S
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3), // 2 "pub"
+            nn(node_kind::FIELD_DECLARATION.0, 1, 15, 24), // 3 field f
+            nn(node_kind::TYPE_IDENTIFIER.0, 3, 18, 24),   // 4 "String"
+        ];
+        (nodes, src)
+    }
+
+    #[test]
+    fn ast_type_position_fires_on_struct_field() {
+        let (nodes, src) = pub_struct_string_field();
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        let blob = ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"String"]);
+        let (s, n, diags) = run_ast_type_position(&[e], &blob, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+        // span covers the "String" leaf at byte 18 (line 1, col 18), 6 bytes.
+        assert_eq!(diags[0].range.start.line, 1);
+        assert_eq!(diags[0].range.start.column, 18);
+        assert_eq!(diags[0].range.end.column, 18 + 6);
+        // SAFETY: rule_id points at the static b"ast-type-position".
+        let rid = unsafe {
+            core::slice::from_raw_parts(diags[0].rule_id.data, diags[0].rule_id.len.0)
+        };
+        assert_eq!(rid, b"ast-type-position");
+    }
+
+    #[test]
+    fn ast_type_position_fires_on_fn_param() {
+        // "pub fn x(s: String) {}\n"
+        //  0123456789...        12: "pub" 0..3, "String" at 12..18.
+        let src: &[u8] = b"pub fn x(s: String) {}\n";
+        let nodes = [
+            nn(node_kind::SOURCE_FILE.0, 5, 0, src.len()), // 0 root
+            nn(node_kind::FUNCTION_ITEM.0, 0, 0, 22),      // 1 pub fn x
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3), // 2 "pub"
+            nn(node_kind::PARAMETER.0, 1, 9, 18),          // 3 param s: String
+            nn(node_kind::TYPE_IDENTIFIER.0, 3, 12, 18),   // 4 "String"
+        ];
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        let blob = ast_type_position_blob(VISIBILITY_ANY, POSITION_FN_PARAM, &[b"String"]);
+        let (s, n, _) = run_ast_type_position(&[e], &blob, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn ast_type_position_fires_on_enum_variant_field() {
+        // a struct-style enum variant field: the FIELD_DECLARATION sits
+        // under an ENUM_VARIANT, so it classifies as EnumVariantField.
+        // "pub enum E { V { f: String } }\n"
+        //  "String" at 20..26.
+        let src: &[u8] = b"pub enum E { V { f: String } }\n";
+        let nodes = [
+            nn(node_kind::SOURCE_FILE.0, 6, 0, src.len()), // 0 root
+            nn(node_kind::ENUM_ITEM.0, 0, 0, 30),          // 1 pub enum E
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3), // 2 "pub"
+            nn(node_kind::ENUM_VARIANT.0, 1, 13, 28),      // 3 variant V
+            nn(node_kind::FIELD_DECLARATION.0, 3, 17, 26), // 4 field f (under variant)
+            nn(node_kind::TYPE_IDENTIFIER.0, 4, 20, 26),   // 5 "String"
+        ];
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        // selecting only EnumVariantField fires; selecting only StructField
+        // does not (the field is under a variant, not a plain struct).
+        let blob_evf =
+            ast_type_position_blob(VISIBILITY_ANY, POSITION_ENUM_VARIANT_FIELD, &[b"String"]);
+        let (s, n, _) = run_ast_type_position(&[e], &blob_evf, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+
+        let e2 = entry_with_nodes(b"a.rs", src, &nodes);
+        let blob_sf =
+            ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"String"]);
+        let (_, n2, _) = run_ast_type_position(&[e2], &blob_sf, 16);
+        assert_eq!(n2, 0);
+    }
+
+    #[test]
+    fn ast_type_position_visibility_gates_private_enclosing_item() {
+        // a private struct field: Public filter excludes it, Any includes.
+        // "struct S { f: String }\n"  "String" at 14..20, no "pub" node.
+        let src: &[u8] = b"struct S { f: String }\n";
+        let nodes = [
+            nn(node_kind::SOURCE_FILE.0, 4, 0, src.len()), // 0 root
+            nn(node_kind::STRUCT_ITEM.0, 0, 0, 22),        // 1 struct S (private)
+            nn(node_kind::FIELD_DECLARATION.0, 1, 11, 20), // 2 field f
+            nn(node_kind::TYPE_IDENTIFIER.0, 2, 14, 20),   // 3 "String"
+        ];
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        // Public filter (visibility byte 1) excludes the private struct.
+        let blob_pub = ast_type_position_blob(1, POSITION_STRUCT_FIELD, &[b"String"]);
+        let (s, n, _) = run_ast_type_position(&[e], &blob_pub, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
+
+        let e2 = entry_with_nodes(b"a.rs", src, &nodes);
+        // Any filter includes it.
+        let blob_any =
+            ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"String"]);
+        let (_, n2, _) = run_ast_type_position(&[e2], &blob_any, 16);
+        assert_eq!(n2, 1);
+    }
+
+    #[test]
+    fn ast_type_position_does_not_fire_on_allowed_type() {
+        // a type NOT in the forbidden list must not fire.
+        let (nodes, src) = pub_struct_string_field();
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        // the field type is "String"; forbid only "Vec".
+        let blob = ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"Vec"]);
+        let (s, n, _) = run_ast_type_position(&[e], &blob, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn ast_type_position_position_bitset_narrows() {
+        // the forbidden type sits in a struct field, but only FnParam is
+        // selected; the lint stays silent (mirrors the in-process negative
+        // case for unlisted positions).
+        let (nodes, src) = pub_struct_string_field();
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        let blob = ast_type_position_blob(VISIBILITY_ANY, POSITION_FN_PARAM, &[b"String"]);
+        let (s, n, _) = run_ast_type_position(&[e], &blob, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn ast_type_position_matches_primitive_type_leaf() {
+        // PRIMITIVE_TYPE leaves are tested too: "pub fn x(n: u32) {}".
+        //  "u32" at 12..15.
+        let src: &[u8] = b"pub fn x(n: u32) {}\n";
+        let nodes = [
+            nn(node_kind::SOURCE_FILE.0, 5, 0, src.len()), // 0 root
+            nn(node_kind::FUNCTION_ITEM.0, 0, 0, 19),      // 1 pub fn x
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3), // 2 "pub"
+            nn(node_kind::PARAMETER.0, 1, 9, 15),          // 3 param n: u32
+            nn(node_kind::PRIMITIVE_TYPE.0, 3, 12, 15),    // 4 "u32"
+        ];
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        let blob = ast_type_position_blob(VISIBILITY_ANY, POSITION_FN_PARAM, &[b"u32"]);
+        let (s, n, diags) = run_ast_type_position(&[e], &blob, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 1);
+        assert_eq!(diags[0].range.start.column, 12);
+        assert_eq!(diags[0].range.end.column, 12 + 3);
+    }
+
+    #[test]
+    fn ast_type_position_overflow_reports_would_have_count() {
+        // two fields with a forbidden type; capacity 1 truncates and the
+        // would-have count is the full match total.
+        // "pub struct S { a: Vec, b: Vec }\n"  "Vec" at 18..21 and 26..29.
+        let src: &[u8] = b"pub struct S { a: Vec, b: Vec }\n";
+        let nodes = [
+            nn(node_kind::SOURCE_FILE.0, 7, 0, src.len()), // 0 root
+            nn(node_kind::STRUCT_ITEM.0, 0, 0, 31),        // 1 pub struct S
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3), // 2 "pub"
+            nn(node_kind::FIELD_DECLARATION.0, 1, 15, 21), // 3 field a
+            nn(node_kind::TYPE_IDENTIFIER.0, 3, 18, 21),   // 4 "Vec"
+            nn(node_kind::FIELD_DECLARATION.0, 1, 23, 29), // 5 field b
+            nn(node_kind::TYPE_IDENTIFIER.0, 5, 26, 29),   // 6 "Vec"
+        ];
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        let blob = ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"Vec"]);
+        let (s, n, diags) = run_ast_type_position(&[e], &blob, 1);
+        assert!(matches!(s, AbiStatus::Internal));
+        assert_eq!(n, 2);
+        assert_eq!(diags.len(), 1);
+    }
+
+    #[test]
+    fn ast_type_position_rejects_null_out_args_and_empty_config() {
+        // null out_entries -> InvalidArg.
+        let (nodes, src) = pub_struct_string_field();
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        let entries = [e];
+        let nam = payload(&entries);
+        let blob = ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"String"]);
+        let mut out_len = arvo::USize(0);
+        // SAFETY: null out_entries is the case under test; the fn returns
+        // before any write.
+        let s_null = unsafe {
+            ast_type_position_evaluate(
+                core::ptr::null_mut(),
+                &nam,
+                blob.as_ptr(),
+                arvo::USize(blob.len()),
+                core::ptr::null_mut(),
+                arvo::USize(4),
+                &mut out_len,
+            )
+        };
+        assert!(matches!(s_null, AbiStatus::InvalidArg));
+
+        // empty config (len 0) is a no-op, not an error.
+        let (s_empty, n_empty, _) = run_ast_type_position(&entries, &[], 16);
+        assert!(matches!(s_empty, AbiStatus::Ok));
+        assert_eq!(n_empty, 0);
+    }
+
+    #[test]
+    fn ast_type_position_rejects_malformed_config() {
+        let (nodes, src) = pub_struct_string_field();
+        let e = entry_with_nodes(b"a.rs", src, &nodes);
+        let entries = [e];
+        // short header (< 6 bytes).
+        let (s1, _, _) = run_ast_type_position(&entries, &[0, 1, 0], 16);
+        assert!(matches!(s1, AbiStatus::InvalidArg));
+        // forbidden_count beyond MAX_FORBIDDEN.
+        let mut huge = std::vec![0u8, POSITION_STRUCT_FIELD];
+        huge.extend_from_slice(&(u32::MAX).to_le_bytes());
+        let (s2, _, _) = run_ast_type_position(&entries, &huge, 16);
+        assert!(matches!(s2, AbiStatus::InvalidArg));
+        // a type-name length running past the buffer.
+        let mut overrun = std::vec![0u8, POSITION_STRUCT_FIELD];
+        overrun.extend_from_slice(&(1u32).to_le_bytes()); // count 1
+        overrun.extend_from_slice(&(99u32).to_le_bytes()); // len 99, no bytes
+        let (s3, _, _) = run_ast_type_position(&entries, &overrun, 16);
+        assert!(matches!(s3, AbiStatus::InvalidArg));
+    }
+
+    #[test]
+    fn ast_type_position_no_nodes_entry_is_skipped() {
+        // a v1.0.0-style entry with no serialised tree emits nothing.
+        let e = entry(b"a.rs", b"pub struct S { f: String }\n");
+        let blob = ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"String"]);
+        let (s, n, _) = run_ast_type_position(&[e], &blob, 16);
+        assert!(matches!(s, AbiStatus::Ok));
+        assert_eq!(n, 0);
     }
 
     // -- token-scan (no-std) --
