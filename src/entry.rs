@@ -126,6 +126,9 @@ fn run_inner(
             "check" => {
                 return cmd_check(&cfg);
             }
+            "clean" => {
+                return cmd_clean(&cfg);
+            }
             "pdf" => {
                 // Forward all args that follow "pdf", dropping --dir <val>
                 // (already consumed above to determine cfg).
@@ -927,5 +930,190 @@ fn cmd_check(cfg: &Config) -> ExitCode {
     } else {
         eprintln!("  verdict: ready to proceed (see `advance` row for next step)");
         ExitCode::SUCCESS
+    }
+}
+
+/// Remove nested cargo build dirs under `benches/`, `tests/`, and research
+/// `sketches/`. The repo-root `target/` and the mockspace install at
+/// `mock/target/` are spared: the former is the active build dir, the latter
+/// holds the proxy crate + git hooks (removing it uninstalls mockspace).
+fn cmd_clean(cfg: &Config) -> ExitCode {
+    let targets = nested_artifact_targets(&cfg.repo_root);
+    if targets.is_empty() {
+        eprintln!("clean: no nested build dirs under benches/, tests/, or sketches/");
+        return ExitCode::SUCCESS;
+    }
+    let mut removed = 0usize;
+    for t in &targets {
+        match fs::remove_dir_all(t) {
+            Ok(()) => {
+                eprintln!("  removed {}", t.display());
+                removed += 1;
+            }
+            Err(e) => eprintln!("  failed to remove {}: {e}", t.display()),
+        }
+    }
+    eprintln!("clean: removed {removed} build dir(s) (root target/ and mock/target/ left intact)");
+    ExitCode::SUCCESS
+}
+
+/// Collect `target` directories nested under a `benches`, `tests`, `sketches`,
+/// or `research` path segment. Does not descend into a `target` dir once
+/// found, and skips dotfiles (e.g. `.git`).
+fn nested_artifact_targets(repo_root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_artifact_targets(repo_root, repo_root, &mut out);
+    out
+}
+
+fn collect_artifact_targets(dir: &Path, repo_root: &Path, out: &mut Vec<PathBuf>) {
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        if name == "target" {
+            if is_cleanable_target(&path, repo_root) {
+                out.push(path);
+            }
+            // Never descend into a build dir.
+            continue;
+        }
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        collect_artifact_targets(&path, repo_root, out);
+    }
+}
+
+/// A `target` dir is cleanable when both hold: a `Cargo.toml` sits beside it
+/// (so it is a real cargo build dir, not a coincidentally-named directory), and
+/// its path below the repo root passes through a `benches`, `tests`, or
+/// `sketches` segment. This excludes the repo-root `target/` and `mock/target/`
+/// (neither has such a segment) and spares research memos that are not under
+/// `sketches/` (audit-trail artifacts, not disposable sketches).
+fn is_cleanable_target(target_dir: &Path, repo_root: &Path) -> bool {
+    let has_manifest = target_dir
+        .parent()
+        .map(|p| p.join("Cargo.toml").is_file())
+        .unwrap_or(false);
+    if !has_manifest {
+        return false;
+    }
+    let rel = match target_dir.strip_prefix(repo_root) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    rel.components().any(|c| {
+        matches!(
+            c.as_os_str().to_str(),
+            Some("benches") | Some("tests") | Some("sketches")
+        )
+    })
+}
+
+#[cfg(test)]
+mod clean_tests {
+    use super::*;
+
+    fn mkdir(root: &Path, rel: &str) {
+        fs::create_dir_all(root.join(rel)).unwrap();
+    }
+
+    /// Create a standalone crate at `rel` with a `Cargo.toml` and a `target/`.
+    fn mkcrate_with_target(root: &Path, rel: &str) {
+        let crate_dir = root.join(rel);
+        fs::create_dir_all(crate_dir.join("target")).unwrap();
+        fs::write(crate_dir.join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+    }
+
+    #[test]
+    fn collects_nested_bench_and_sketch_targets_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // cleanable: real cargo crates (Cargo.toml beside target) nested under
+        // benches / tests / sketches
+        mkcrate_with_target(root, "mock/benches/variants/foo");
+        mkcrate_with_target(root, "mock/benches/engine_vs_std");
+        mkcrate_with_target(root, "mock/research/sketches/202601010000_x");
+        mkcrate_with_target(root, "crates/bar/tests/fixture_crate");
+        // NOT cleanable: the active build dirs (have a manifest beside them but
+        // no benches/tests/sketches segment).
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        mkdir(root, "target");
+        fs::write(root.join("mock/Cargo.toml"), "[workspace]\n").unwrap();
+        mkdir(root, "mock/target");
+        // NOT a target dir at all
+        mkdir(root, "crates/bar/src");
+
+        let mut found = nested_artifact_targets(root);
+        found.sort();
+        let rels: Vec<String> = found
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"))
+            .collect();
+
+        assert!(rels.contains(&"mock/benches/variants/foo/target".to_string()), "got: {rels:?}");
+        assert!(rels.contains(&"mock/benches/engine_vs_std/target".to_string()), "got: {rels:?}");
+        assert!(rels.contains(&"mock/research/sketches/202601010000_x/target".to_string()), "got: {rels:?}");
+        assert!(rels.contains(&"crates/bar/tests/fixture_crate/target".to_string()), "got: {rels:?}");
+        assert!(!rels.contains(&"target".to_string()), "must not collect repo-root target: {rels:?}");
+        assert!(!rels.contains(&"mock/target".to_string()), "must not collect mockspace install: {rels:?}");
+        assert_eq!(found.len(), 4, "got: {rels:?}");
+    }
+
+    #[test]
+    fn spares_research_targets_outside_sketches() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // A research memo crate NOT under sketches/ is audit-trail, not a
+        // disposable sketch. It must be spared even with a manifest present.
+        mkcrate_with_target(root, "mock/research/202601010000_memo");
+        // A sketch under research/sketches/ is disposable.
+        mkcrate_with_target(root, "mock/research/sketches/202601010000_x");
+        let found = nested_artifact_targets(root);
+        let rels: Vec<String> = found
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(rels, vec!["mock/research/sketches/202601010000_x/target".to_string()], "got: {rels:?}");
+    }
+
+    #[test]
+    fn requires_sibling_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // A `target` dir under benches/ with NO Cargo.toml beside it is not a
+        // cargo build dir; do not delete it.
+        mkdir(root, "mock/benches/not_a_crate/target");
+        assert!(nested_artifact_targets(root).is_empty());
+    }
+
+    #[test]
+    fn does_not_descend_into_target_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // a real crate whose target nests an inner target (cargo nesting)
+        mkcrate_with_target(root, "mock/benches/foo");
+        mkdir(root, "mock/benches/foo/target/debug/target");
+        let found = nested_artifact_targets(root);
+        // exactly one: the outer target; the walk must not recurse into it.
+        assert_eq!(found.len(), 1, "should stop at first target dir, got: {found:?}");
+        assert!(found[0].ends_with("mock/benches/foo/target"));
+    }
+
+    #[test]
+    fn empty_when_no_nested_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        mkdir(root, "target");
+        mkdir(root, "mock/target");
+        mkdir(root, "src");
+        assert!(nested_artifact_targets(root).is_empty());
     }
 }
