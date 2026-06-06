@@ -151,9 +151,50 @@ pub fn run(
 
     ensure_cargo_alias(repo_root, mock_dir, mockspace_manifest_dir, &mut actions);
     ensure_generated_hooks(repo_root, mock_dir, &mut actions);
+    ensure_gitignore(repo_root, &mut actions);
     check_activation(repo_root, mock_dir, &mut actions);
 
     actions
+}
+
+/// Ensure the repo-root `.gitignore` ignores every cargo `target/` build dir.
+///
+/// Cargo build dirs appear not only at the repo root but nested under any
+/// standalone crate inside `benches/`, `tests/`, and `mock/research/sketches/`.
+/// A root-anchored `/target` ignore misses those nested ones, so they show up
+/// as untracked noise and can be committed by accident. A catch-all `target/`
+/// line (no leading slash, so git matches a directory named `target` at any
+/// depth) covers all of them at once.
+///
+/// Idempotent: if any line already reads exactly `target/`, this is a no-op.
+/// Otherwise a small marked block is appended; existing entries are left
+/// untouched.
+fn ensure_gitignore(repo_root: &Path, actions: &mut Vec<String>) {
+    let path = repo_root.join(".gitignore");
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+
+    if existing.lines().any(|l| l.trim() == "target/") {
+        return;
+    }
+
+    let block = "\
+# === mockspace-managed build artifacts (do not edit) ===
+# Catch-all: every cargo build dir, including nested ones under benches/,
+# tests/, and research sketches. A leading-slash /target would miss those.
+target/
+# === end mockspace-managed build artifacts ===
+";
+
+    let new_content = if existing.is_empty() {
+        block.to_string()
+    } else {
+        let sep = if existing.ends_with('\n') { "\n" } else { "\n\n" };
+        format!("{existing}{sep}{block}")
+    };
+
+    if fs::write(&path, new_content).is_ok() {
+        actions.push("added catch-all target/ to .gitignore".into());
+    }
 }
 
 /// Set `core.hooksPath` to mockspace's generated hooks directory.
@@ -1087,5 +1128,51 @@ version = "0.1"
         assert!(spec.starts_with('{'), "got: {spec}");
         assert!(spec.contains("path"), "got: {spec}");
         assert!(spec.contains("version"), "got: {spec}");
+    }
+}
+
+#[cfg(test)]
+mod gitignore_tests {
+    use super::*;
+
+    #[test]
+    fn adds_catch_all_target_to_empty_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut actions = Vec::new();
+        ensure_gitignore(dir.path(), &mut actions);
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(
+            content.lines().any(|l| l.trim() == "target/"),
+            "expected a catch-all `target/` line, got:\n{content}"
+        );
+        assert_eq!(actions.len(), 1, "expected one action recorded");
+    }
+
+    #[test]
+    fn preserves_existing_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "/target\n.DS_Store\n*.swp\n").unwrap();
+        let mut actions = Vec::new();
+        ensure_gitignore(dir.path(), &mut actions);
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert!(content.contains(".DS_Store"), "clobbered existing entries:\n{content}");
+        assert!(content.contains("*.swp"), "clobbered existing entries:\n{content}");
+        assert!(
+            content.lines().any(|l| l.trim() == "target/"),
+            "did not add catch-all target/:\n{content}"
+        );
+    }
+
+    #[test]
+    fn idempotent_when_catch_all_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut actions = Vec::new();
+        ensure_gitignore(dir.path(), &mut actions);
+        let after_first = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        let mut actions2 = Vec::new();
+        ensure_gitignore(dir.path(), &mut actions2);
+        let after_second = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert_eq!(after_first, after_second, "second run mutated the file");
+        assert!(actions2.is_empty(), "second run recorded an action: {actions2:?}");
     }
 }
