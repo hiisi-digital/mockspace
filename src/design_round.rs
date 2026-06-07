@@ -373,6 +373,24 @@ impl ArchiveKind {
     }
 }
 
+/// Pick a non-colliding archive directory name. Returns `base` when it is free
+/// (per the `exists` predicate); otherwise appends `-2`, `-3`, ... until a free
+/// name is found. Pure over the predicate so the collision walk is unit-testable
+/// without touching the filesystem.
+fn disambiguate_archive_name(base: &str, exists: impl Fn(&str) -> bool) -> String {
+    if !exists(base) {
+        return base.to_string();
+    }
+    let mut suffix = 2u32;
+    loop {
+        let candidate = format!("{base}-{suffix}");
+        if !exists(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
 /// Move every non-README file under `dr` into a `<archive_dir_name>/`
 /// subdirectory and emit `.meta` + `.history` metadata. Stages the moves
 /// for commit (or prints the manual command if `auto_commit` is unset)
@@ -384,11 +402,22 @@ fn perform_archive(
     archive_dir_name: &str,
     kind: ArchiveKind,
 ) -> ExitCode {
-    let archive_dir = dr.join(archive_dir_name);
-    if archive_dir.exists() {
-        eprintln!("error: archive directory already exists: {}", archive_dir.display());
-        return ExitCode::FAILURE;
+    // Disambiguate a colliding archive dir. The round-id is the earliest
+    // changelist's minute-resolution timestamp (determine_round_name), so two
+    // rounds whose first changelist landed in the same minute (across sessions)
+    // would compute the same name and the second close would otherwise hard-error
+    // with a complete-but-unarchivable round. Append `-2`, `-3`, ... until the
+    // name is free so a finished round always archives; the disambiguated name
+    // flows into the dir, `.meta` round id, commit subject, and tag uniformly.
+    let final_name = disambiguate_archive_name(archive_dir_name, |n| dr.join(n).exists());
+    if final_name != archive_dir_name {
+        eprintln!(
+            "note: archive dir {archive_dir_name}/ already exists (round-id collision); \
+             archiving as {final_name}/ instead"
+        );
     }
+    let archive_dir_name: &str = &final_name;
+    let archive_dir = dr.join(archive_dir_name);
 
     fs::create_dir_all(&archive_dir)
         .expect("failed to create archive directory");
@@ -884,6 +913,27 @@ fn chrono_date() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disambiguate_returns_base_when_free() {
+        let got = disambiguate_archive_name("202606072000", |_| false);
+        assert_eq!(got, "202606072000", "a free name is used as-is");
+    }
+
+    #[test]
+    fn disambiguate_appends_suffix_on_collision() {
+        // Only the base name collides; `-2` is free.
+        let got = disambiguate_archive_name("202606072000", |n| n == "202606072000");
+        assert_eq!(got, "202606072000-2", "first collision bumps to -2");
+    }
+
+    #[test]
+    fn disambiguate_walks_past_multiple_collisions() {
+        // base, -2, and -3 all taken; -4 is the first free name.
+        let taken = ["202606072000", "202606072000-2", "202606072000-3"];
+        let got = disambiguate_archive_name("202606072000", |n| taken.contains(&n));
+        assert_eq!(got, "202606072000-4", "walks past every taken name");
+    }
 
     #[test]
     fn rewrite_new_format_doc_to_locked() {
