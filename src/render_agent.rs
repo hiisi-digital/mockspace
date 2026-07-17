@@ -1539,7 +1539,7 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
 /// Reads templates from `mock_dir/agent/`, substitutes template variables,
 /// and writes dual outputs:
 /// - Claude: CLAUDE.md, .claude/rules/*.md, .claude/skills/*/SKILL.md,
-///           .claude/hooks/*.sh, .claude/settings.json
+///           .claude/agents/*.md, .claude/hooks/*.sh, .claude/settings.json
 /// - Copilot: .github/copilot-instructions.md, .github/instructions/*.instructions.md,
 ///            .github/skills/*/SKILL.md, .github/hooks/*.sh, .github/hooks/hooks.json
 pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
@@ -1811,6 +1811,82 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         }
     }
 
+    // --- Consumer agents/*.md.tmpl -> .claude/agents/*.md ---
+    //
+    // Claude-only by design. There is no Copilot equivalent of a sub-agent
+    // persona, so unlike rules and skills this phase writes a single target.
+    //
+    // The frontmatter passes through VERBATIM, which is deliberate and differs
+    // from the skills phase above. Skills re-encode (`skill_name` ->  `name`)
+    // because one skill is emitted to two targets and needs identical
+    // frontmatter in both, so normalising through mockspace's own field names
+    // is what keeps them in step. An agent has one target and its frontmatter
+    // schema (`name` / `description` / `tools` / `model`, and whatever Claude
+    // Code adds next) is owned by Claude Code, not by mockspace. Re-encoding a
+    // schema we do not own would silently drop every field we did not think to
+    // enumerate. Passing it through means a new upstream field works the day it
+    // ships, with no mockspace release in the path.
+    //
+    // Templates still get variable substitution throughout, frontmatter
+    // included, so a persona can reference {{PROJECT_NAME}} and friends like any
+    // other template.
+    let agents_dir = agent_dir.join("agents");
+    if agents_dir.is_dir() {
+        let claude_agents_dir = repo_root.join(".claude").join("agents");
+        let _ = fs::create_dir_all(&claude_agents_dir);
+
+        let mut entries: Vec<_> = fs::read_dir(&agents_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path().is_file()
+                    && e.path()
+                        .to_str()
+                        .map(|p| p.ends_with(".md.tmpl"))
+                        .unwrap_or(false)
+            })
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in entries {
+            let path = entry.path();
+            let stem = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".md.tmpl"))
+                .unwrap_or_default()
+                .to_string();
+
+            // Substitute across the WHOLE template before splitting, matching
+            // the rules phase. Frontmatter is as entitled to {{PROJECT_NAME}} as
+            // the body is, and a persona's `description` is a natural place to
+            // want it. This does not weaken the pass-through: passing through
+            // means mockspace does not rename or drop fields, not that it
+            // refuses to expand variables inside them.
+            let raw = fs::read_to_string(&path).expect("failed to read agent template");
+            let raw = substitute_vars(&raw, &vars);
+            let (frontmatter, body) = split_frontmatter(&raw);
+
+            // An agent with no frontmatter has no `name`/`description`, so
+            // Claude Code cannot register it. Skipping silently would present
+            // as "the persona just isn't there" with nothing to grep for, so
+            // say it plainly and carry on with the rest.
+            if frontmatter.trim().is_empty() {
+                eprintln!(
+                    "  {} SKIPPED: no frontmatter; an agent needs at least `name:` and `description:`",
+                    path.display()
+                );
+                continue;
+            }
+
+            let content = render_agent_content(&frontmatter, &body);
+            let out_path = claude_agents_dir.join(format!("{stem}.md"));
+            fs::write(&out_path, &content).expect("failed to write claude agent");
+            eprintln!("  {}", out_path.display());
+            count += 1;
+        }
+    }
+
     // --- Phase 6: Builtin hooks (generated BEFORE consumer hooks) ---
     let claude_hooks_dir = repo_root.join(".claude").join("hooks");
     let copilot_hooks_dir = repo_root.join(".github").join("hooks");
@@ -2060,6 +2136,24 @@ fn substitute_vars(text: &str, vars: &[(String, String)]) -> String {
     result
 }
 
+/// Assemble one `.claude/agents/<name>.md` from an already-substituted
+/// template's frontmatter and body.
+///
+/// The frontmatter is emitted verbatim. Claude Code owns that schema, so
+/// mockspace re-encoding it would drop any field it does not enumerate; passing
+/// it through means an upstream addition works without a mockspace change.
+///
+/// Bookends are deliberately not applied. A persona is a character definition
+/// read as a whole, and wrapping it in the workspace preamble and postamble
+/// would dilute the thing that makes it worth having.
+fn render_agent_content(frontmatter: &str, body: &str) -> String {
+    // `split_frontmatter` returns the body starting AT the newline that ends the
+    // closing `---` line, so the separator is already present. Adding another
+    // would insert a blank line into every persona on every regeneration.
+    let sep = if body.starts_with('\n') { "" } else { "\n" };
+    format!("---\n{}\n---{sep}{body}", frontmatter.trim())
+}
+
 /// Split YAML frontmatter from body content.
 fn split_frontmatter(text: &str) -> (String, String) {
     let trimmed = text.trim_start();
@@ -2258,6 +2352,97 @@ fn format_with_bookends(header: &str, preamble: &str, body: &str, postamble: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The agent frontmatter schema belongs to Claude Code. These tests exist to
+    // fail if someone later "normalises" it into a fixed field list the way the
+    // skills phase does, which would silently drop whatever upstream adds next.
+
+    #[test]
+    fn agent_frontmatter_passes_through_verbatim() {
+        let fm = "name: fabian-giesen\ndescription: A persona.\ntools: Read, Grep\nmodel: fable";
+        let out = render_agent_content(fm, "\n# You are Fabian Giesen\n");
+        assert_eq!(
+            out,
+            "---\nname: fabian-giesen\ndescription: A persona.\ntools: Read, Grep\nmodel: fable\n---\n# You are Fabian Giesen\n"
+        );
+    }
+
+    #[test]
+    fn agent_frontmatter_keeps_fields_mockspace_does_not_know() {
+        // The whole reason this phase passes frontmatter through instead of
+        // re-encoding it: a field mockspace has never heard of must survive.
+        let fm = "name: x\ndescription: d\ntools: Read\nmodel: opus\nsome_future_field: value";
+        let out = render_agent_content(fm, "body");
+        assert!(
+            out.contains("some_future_field: value"),
+            "unknown frontmatter field was dropped; the agent schema is Claude Code's, \
+             not mockspace's, so it must pass through untouched:\n{out}"
+        );
+    }
+
+    #[test]
+    fn agent_body_is_not_wrapped_in_bookends() {
+        // A persona is read as a whole character definition. If bookends ever
+        // start being applied here, this catches it.
+        let out = render_agent_content("name: x\ndescription: d", "\n# You are X\n");
+        assert!(out.ends_with("---\n# You are X\n"), "body was altered: {out}");
+    }
+
+    #[test]
+    fn agent_render_adds_separator_when_body_lacks_one() {
+        // Defensive: a hand-written template whose body does not start with a
+        // newline must not weld itself onto the closing `---`.
+        let out = render_agent_content("name: x\ndescription: d", "# You are X\n");
+        assert!(out.ends_with("---\n# You are X\n"), "separator missing: {out}");
+    }
+
+    #[test]
+    fn agent_frontmatter_gets_variable_substitution() {
+        // Substitution runs over the whole template before the split, matching
+        // the rules phase, so frontmatter expands too. Pass-through is about not
+        // renaming or dropping fields, not about refusing to expand them.
+        let vars = vec![("PROJECT_NAME".to_string(), "ikiuni-renderer".to_string())];
+        let raw = "---\nname: p\ndescription: Reviews {{PROJECT_NAME}} code\n---\n\nBody.\n";
+        let raw = substitute_vars(raw, &vars);
+        let (fm, body) = split_frontmatter(&raw);
+        let out = render_agent_content(&fm, &body);
+        assert!(
+            out.contains("description: Reviews ikiuni-renderer code"),
+            "frontmatter did not get substitution:\n{out}"
+        );
+        assert!(!out.contains("{{"), "a placeholder survived:\n{out}");
+    }
+
+    #[test]
+    fn agent_template_without_frontmatter_yields_none_to_skip_on() {
+        // The phase skips these with a message rather than emitting an agent
+        // Claude Code cannot register. `split_frontmatter` reporting an empty
+        // frontmatter is what that skip keys off.
+        let (fm, _body) = split_frontmatter("# Just a heading, no frontmatter\n");
+        assert!(fm.trim().is_empty(), "expected no frontmatter to be detected");
+    }
+
+    #[test]
+    fn agent_template_with_unterminated_frontmatter_is_treated_as_none() {
+        // An opening `---` with no closing one is malformed. It lands in the
+        // same skip path as "no frontmatter at all", which is the safe read:
+        // better a named skip than shipping the whole file as frontmatter.
+        let (fm, _body) = split_frontmatter("---\nname: p\ndescription: d\n");
+        assert!(
+            fm.trim().is_empty(),
+            "unterminated frontmatter should not parse as frontmatter"
+        );
+    }
+
+    #[test]
+    fn agent_render_round_trips_a_real_persona_shape() {
+        // Exercises the actual path: split_frontmatter then render, the way the
+        // agents phase runs it.
+        let raw = "---\nname: p\ndescription: d\ntools: Read\nmodel: sonnet\n---\n\n# You are P\n\nBody.\n";
+        let (fm, body) = split_frontmatter(raw);
+        let out = render_agent_content(&fm, &body);
+        assert_eq!(out, raw, "round trip changed a well-formed persona");
+    }
 
     #[test]
     fn builtin_preamble_within_budget() {
