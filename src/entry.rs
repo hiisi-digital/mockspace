@@ -180,6 +180,24 @@ fn run_inner(
         LintMode::Build
     };
 
+    // Keep the locked mockspace current with its branch's remote head, but only
+    // in an interactive `cargo mock` (not a git hook, where it must not mutate
+    // Cargo.lock mid-commit, and not a build script). `--lint-only` marks the
+    // hook invocations. Runs before the health check so a freshly-advanced lock
+    // is what the proxy pin then tracks.
+    let mut remote_actions = Vec::new();
+    if !lint_only {
+        bootstrap::ensure_mockspace_current(
+            &cfg.repo_root,
+            &cfg.mock_dir,
+            true,
+            &mut remote_actions,
+        );
+    }
+    for action in &remote_actions {
+        eprintln!("--- bootstrap: {action} ---");
+    }
+
     // Health check: ensure alias and hooks are present and current.
     let mockspace_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bootstrap_actions = bootstrap::run(&cfg.repo_root, &cfg.mock_dir, &mockspace_dir);

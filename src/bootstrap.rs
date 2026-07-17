@@ -541,6 +541,70 @@ fn mockspace_rev_from_lock(lock_path: &Path) -> Option<String> {
     None
 }
 
+/// A git dependency as the lock resolved it: the remote URL, the tracked
+/// branch (if the source pins one), and the locked revision.
+#[derive(Debug, PartialEq)]
+struct MockspaceGitSource {
+    url: String,
+    branch: Option<String>,
+    rev: String,
+}
+
+/// Parse mockspace's git source from the mock-workspace lock.
+///
+/// The lock `source` has the shape `git+<url>[?<query>]#<full-rev>`, where the
+/// query may carry `branch=<b>`, `tag=<t>`, or `rev=<r>`. Returns `None` for a
+/// path or registry source, or when the lock is absent or unparseable.
+fn mockspace_git_source_from_lock(lock_path: &Path) -> Option<MockspaceGitSource> {
+    let content = fs::read_to_string(lock_path).ok()?;
+    let doc = content.parse::<toml_edit::DocumentMut>().ok()?;
+    let packages = doc.get("package")?.as_array_of_tables()?;
+    for pkg in packages.iter() {
+        if pkg.get("name").and_then(|n| n.as_str()) != Some("mockspace") {
+            continue;
+        }
+        let source = pkg.get("source").and_then(|s| s.as_str())?;
+        return parse_git_source(source);
+    }
+    None
+}
+
+/// Split a `git+<url>[?<query>]#<rev>` source into url, branch, and rev.
+fn parse_git_source(source: &str) -> Option<MockspaceGitSource> {
+    let body = source.strip_prefix("git+")?;
+    let (locator, rev) = body.rsplit_once('#')?;
+    let (url, query) = match locator.split_once('?') {
+        Some((u, q)) => (u, Some(q)),
+        None => (locator, None),
+    };
+    let branch = query.and_then(|q| {
+        q.split('&').find_map(|kv| kv.strip_prefix("branch=").map(str::to_string))
+    });
+    Some(MockspaceGitSource {
+        url: url.to_string(),
+        branch,
+        rev: rev.to_string(),
+    })
+}
+
+/// Whether `cargo mock` may auto-advance a behind mockspace with `cargo update`.
+///
+/// Read from `[proxy] auto_update` in mockspace.toml. Defaults to `true`: when
+/// the locked mockspace is behind its branch's remote head, an interactive
+/// `cargo mock` advances it. Set to `false` to only warn.
+fn proxy_auto_update(mockspace_toml: &Path) -> bool {
+    let Ok(content) = fs::read_to_string(mockspace_toml) else {
+        return true;
+    };
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return true;
+    };
+    doc.get("proxy")
+        .and_then(|p| p.get("auto_update"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
 /// Locate the cargo git checkout for `name` whose directory matches `rev`.
 ///
 /// Cargo checks a git dependency out to
@@ -591,6 +655,179 @@ fn find_git_checkout_in(checkouts: &Path, name: &str, rev: &str) -> Option<PathB
         }
     }
     None
+}
+
+/// How long between remote-head checks. The check runs at most once per this
+/// interval, so a routine `cargo mock` almost never touches the network.
+const REMOTE_CHECK_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Keep the consumer's locked mockspace current with its branch's remote head.
+///
+/// When the mock-workspace lock tracks a mockspace git BRANCH and the locked
+/// revision is behind that branch's remote head, this advances the lock with
+/// `cargo update` (when `allow_update` and `[proxy] auto_update` both permit) or
+/// records a warning naming the exact command.
+///
+/// Called only from an interactive `cargo mock` (never a git hook or a
+/// build script), so it never mutates `Cargo.lock` mid-commit and never runs
+/// the network in the commit path. Throttled to once per `REMOTE_CHECK_TTL` and
+/// offline-safe: a recent prior check, a non-branch source, or any network
+/// failure is a silent skip.
+pub fn ensure_mockspace_current(
+    repo_root: &Path,
+    mock_dir: &Path,
+    allow_update: bool,
+    actions: &mut Vec<String>,
+) {
+    let source = match mockspace_git_source_from_lock(&mock_dir.join("Cargo.lock")) {
+        Some(s) => s,
+        None => return, // path/registry mockspace, or unreadable lock: nothing to track.
+    };
+    let branch = match &source.branch {
+        Some(b) => b.clone(),
+        None => return, // pinned to a tag or exact rev: not a moving target.
+    };
+
+    let marker = repo_root.join("target/mockspace-proxy/.remote-check");
+    if !remote_check_due(&marker, REMOTE_CHECK_TTL) {
+        return;
+    }
+    // Consume the window before the network call, on purpose: a persistently
+    // offline machine then pays the ls-remote timeout at most once per TTL
+    // rather than on every `cargo mock`. The cost is that recovery after a
+    // transient failure waits until the next window, which is acceptable for a
+    // freshness convenience the user can always force with `cargo update`.
+    touch(&marker);
+
+    let remote = match git_ls_remote_head(&source.url, &branch) {
+        Some(r) => r,
+        None => return, // offline, auth-less, or the ref is gone: skip quietly.
+    };
+    if remote == source.rev {
+        return; // current.
+    }
+
+    let (locked_short, remote_short) = (short_rev(&source.rev), short_rev(&remote));
+    // Auto-advancing mutates the consumer's tracked Cargo.lock. That is a
+    // deliberate default (`[proxy] auto_update` defaults to true): the workspace
+    // chose auto-freshness over the usual "lock bumps are their own PR"
+    // discipline for this one dependency. The mutation is throttled,
+    // interactive-only, reversible, and reported below with the opt-out.
+    let auto = allow_update && proxy_auto_update(&mock_dir.join("mockspace.toml"));
+    if auto {
+        match cargo_update_mockspace(mock_dir) {
+            Ok(()) => actions.push(format!(
+                "mockspace was behind origin/{branch} ({locked_short} -> {remote_short}); ran cargo update (set [proxy] auto_update = false to only warn)"
+            )),
+            Err(e) => actions.push(format!(
+                "mockspace is behind origin/{branch} ({locked_short} -> {remote_short}); cargo update failed: {e}; run `cargo update -p mockspace` manually"
+            )),
+        }
+    } else {
+        actions.push(format!(
+            "mockspace is behind origin/{branch} (locked {locked_short}, remote {remote_short}); run `cargo update -p mockspace`"
+        ));
+    }
+}
+
+/// First seven characters of a git revision, for readable log lines.
+fn short_rev(rev: &str) -> String {
+    rev.chars().take(7).collect()
+}
+
+/// True when no check has run within `ttl` (marker missing or older than `ttl`).
+fn remote_check_due(marker: &Path, ttl: std::time::Duration) -> bool {
+    match fs::metadata(marker).and_then(|m| m.modified()) {
+        Ok(t) => t.elapsed().map(|e| e > ttl).unwrap_or(true),
+        Err(_) => true,
+    }
+}
+
+/// Record that a check ran now, by writing the marker (creating its dir).
+fn touch(marker: &Path) {
+    if let Some(parent) = marker.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(marker, b"");
+}
+
+/// The maximum time a remote-head query may take before it is abandoned.
+const LS_REMOTE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The remote head revision of `branch` at `url`, or `None` on any failure.
+///
+/// Never prompts and never hangs: `GIT_TERMINAL_PROMPT=0` suppresses credential
+/// prompts, the SSH command runs in batch mode with a short connect timeout,
+/// and the whole invocation is bounded by [`LS_REMOTE_TIMEOUT`] so a slow or
+/// black-holed remote over any transport (including HTTP, which the SSH connect
+/// timeout does not cover) returns `None` rather than blocking.
+fn git_ls_remote_head(url: &str, branch: &str) -> Option<String> {
+    // Defence in depth against argv flag smuggling. The url and branch come from
+    // Cargo.lock, normally cargo-generated and trusted, but a crafted lock must
+    // not be able to pass a leading-dash value that git parses as an option. The
+    // `--` separator ends option parsing; the explicit reject refuses the
+    // pathological case outright rather than relying on the separator alone.
+    if url.starts_with('-') || branch.starts_with('-') {
+        return None;
+    }
+    let mut cmd = std::process::Command::new("git");
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=5")
+        // Bound an HTTP transfer that stalls below 1 byte/s for 5s; the overall
+        // timeout below is the real backstop for any transport.
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1")
+        .env("GIT_HTTP_LOW_SPEED_TIME", "5")
+        .args(["ls-remote", "--", url, &format!("refs/heads/{branch}")]);
+    let output = output_with_timeout(cmd, LS_REMOTE_TIMEOUT)?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Each line is "<sha>\t<ref>"; take the first field of the first line.
+    stdout.split_whitespace().next().map(str::to_string)
+}
+
+/// Run `cmd` and return its output, or `None` if it fails to spawn or exceeds
+/// `timeout` (in which case the child is killed).
+///
+/// The child's output is expected to be small (a ref line), so its pipes are
+/// drained only after exit; a command that floods stdout is not a use here.
+fn output_with_timeout(
+    mut cmd: std::process::Command,
+    timeout: std::time::Duration,
+) -> Option<std::process::Output> {
+    use std::process::Stdio;
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().ok()?;
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// Run `cargo update -p mockspace` in the mock workspace.
+fn cargo_update_mockspace(mock_dir: &Path) -> Result<(), String> {
+    let output = std::process::Command::new("cargo")
+        .args(["update", "-p", "mockspace"])
+        .current_dir(mock_dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
 }
 
 /// Parse the `[lint-crates]` section from mockspace.toml.
@@ -1462,5 +1699,111 @@ source = "git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#d50b59
             Some("/some/where/mockspace")
         );
         assert_eq!(pinned_mockspace_path("no pin here"), None);
+    }
+}
+
+#[cfg(test)]
+mod remote_head_tests {
+    use super::*;
+
+    #[test]
+    fn parses_branch_source() {
+        let s = parse_git_source(
+            "git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#d50b59cd461f12958ebfcc3a6a19a7c62d1a472b",
+        )
+        .unwrap();
+        assert_eq!(s.url, "ssh://git@github.com/hiisi-digital/mockspace.git");
+        assert_eq!(s.branch.as_deref(), Some("dev"));
+        assert_eq!(s.rev, "d50b59cd461f12958ebfcc3a6a19a7c62d1a472b");
+    }
+
+    #[test]
+    fn parses_source_without_branch() {
+        // A bare git dep (default branch) has no `branch=` query, so there is
+        // no moving target to track.
+        let s = parse_git_source("git+https://example.com/mockspace.git#abcdef0").unwrap();
+        assert_eq!(s.url, "https://example.com/mockspace.git");
+        assert_eq!(s.branch, None);
+        assert_eq!(s.rev, "abcdef0");
+    }
+
+    #[test]
+    fn rejects_non_git_source() {
+        assert_eq!(parse_git_source("registry+https://crates.io/#1.0.0"), None);
+        assert_eq!(parse_git_source("git+https://example.com/no-rev.git"), None);
+    }
+
+    #[test]
+    fn tag_and_rev_pins_have_no_branch() {
+        // A tag or exact-rev pin is not a moving target, so branch is None and
+        // ensure_mockspace_current early-returns on it.
+        let tag = parse_git_source("git+https://e.com/m.git?tag=v1.2.3#abcdef0").unwrap();
+        assert_eq!(tag.branch, None);
+        assert_eq!(tag.rev, "abcdef0");
+        let rev = parse_git_source("git+https://e.com/m.git?rev=abcdef0#abcdef0").unwrap();
+        assert_eq!(rev.branch, None);
+    }
+
+    #[test]
+    fn multi_param_query_extracts_branch() {
+        // A query may carry several &-separated params in any order; the branch
+        // is found among them.
+        let s = parse_git_source("git+https://e.com/m.git?rev=x&branch=main#deadbee").unwrap();
+        assert_eq!(s.branch.as_deref(), Some("main"));
+        assert_eq!(s.rev, "deadbee");
+    }
+
+    #[test]
+    fn git_source_from_lock_finds_mockspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("Cargo.lock");
+        fs::write(
+            &lock,
+            "version = 4\n\n[[package]]\nname = \"mockspace\"\nversion = \"0.1.0\"\nsource = \"git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#d50b59cd461f12958ebfcc3a6a19a7c62d1a472b\"\n",
+        )
+        .unwrap();
+        let s = mockspace_git_source_from_lock(&lock).unwrap();
+        assert_eq!(s.branch.as_deref(), Some("dev"));
+        assert_eq!(s.rev, "d50b59cd461f12958ebfcc3a6a19a7c62d1a472b");
+    }
+
+    #[test]
+    fn auto_update_defaults_to_true() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml = dir.path().join("mockspace.toml");
+        // No [proxy] section: the default is auto.
+        fs::write(&toml, "project_name = \"x\"\n").unwrap();
+        assert!(proxy_auto_update(&toml));
+        // Missing file: also the default.
+        assert!(proxy_auto_update(&dir.path().join("nope.toml")));
+    }
+
+    #[test]
+    fn auto_update_reads_explicit_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml = dir.path().join("mockspace.toml");
+        fs::write(&toml, "[proxy]\nauto_update = false\n").unwrap();
+        assert!(!proxy_auto_update(&toml));
+    }
+
+    #[test]
+    fn ls_remote_rejects_flag_smuggling_url() {
+        // A leading-dash url or branch could be parsed by git as an option.
+        // The guard refuses it before spawning, so no subprocess runs.
+        assert_eq!(git_ls_remote_head("--upload-pack=touch pwned", "dev"), None);
+        assert_eq!(git_ls_remote_head("ssh://ok.example/x.git", "-x"), None);
+    }
+
+    #[test]
+    fn remote_check_due_respects_ttl() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("target/mockspace-proxy/.remote-check");
+        // No marker yet: a check is due.
+        assert!(remote_check_due(&marker, REMOTE_CHECK_TTL));
+        touch(&marker);
+        // Just touched: not due under a real TTL.
+        assert!(!remote_check_due(&marker, REMOTE_CHECK_TTL));
+        // Due under a zero TTL (any elapsed time exceeds it).
+        assert!(remote_check_due(&marker, std::time::Duration::ZERO));
     }
 }
