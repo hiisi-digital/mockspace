@@ -394,12 +394,16 @@ fn run_inner(
     let dot = format!("{dot_header}{dot_body}");
 
     let dot_path = cfg.docs_dir.join("STRUCTURE.GRAPH.dot");
-    fs::write(&dot_path, &dot).expect("failed to write dot file");
+    render_design::write_generated(&dot_path, &dot);
     eprintln!("  {}", dot_path.display());
 
     // Generate PNG and SVG from DOT
     for (ext, extra) in [("png", vec!["-Gdpi=150"]), ("svg", vec![])] {
         let out = cfg.docs_dir.join(format!("STRUCTURE.GRAPH.{ext}"));
+        // `dot -o` renders straight to the final path, so snapshot the previous
+        // version before it is clobbered; otherwise the regeneration has nothing
+        // to be compared against and every run rewrites the timestamp.
+        let previous = fs::read_to_string(&out).ok();
         let mut cmd = Command::new("dot");
         cmd.arg(format!("-T{ext}"))
             .arg(&dot_path)
@@ -415,7 +419,7 @@ fn run_inner(
                     if let Ok(svg_content) = fs::read_to_string(&out) {
                         let svg_header = render_design::generation_header_svg(&cfg);
                         let commented = format!("{svg_header}\n{svg_content}");
-                        let _ = fs::write(&out, commented);
+                        render_design::write_generated_vs(&out, &commented, previous.as_deref());
                     }
                 }
             }
@@ -435,7 +439,7 @@ fn run_inner(
     let structure_body = render_md::generate_structure_md(&crates, &cfg);
     let structure_md = format!("{structure_header}\n{structure_body}");
     let structure_path = cfg.docs_dir.join("STRUCTURE.md");
-    fs::write(&structure_path, &structure_md).expect("failed to write STRUCTURE.md");
+    render_design::write_generated(&structure_path, &structure_md);
     eprintln!("  {}", structure_path.display());
 
     // --- DESIGN.md ---
@@ -443,7 +447,7 @@ fn run_inner(
     match render_design::generate_design_md(&crates, &cfg) {
         Some(design_md) => {
             let design_path = cfg.docs_dir.join("DESIGN.md");
-            fs::write(&design_path, &design_md).expect("failed to write DESIGN.md");
+            render_design::write_generated(&design_path, &design_md);
             eprintln!("  {}", design_path.display());
         }
         None => {
@@ -456,7 +460,7 @@ fn run_inner(
     let deep_dives = render_design::generate_deep_dives_md(&cfg);
     if !deep_dives.is_empty() {
         let dd_path = cfg.docs_dir.join("DESIGN-DEEP-DIVES.md");
-        fs::write(&dd_path, &deep_dives).expect("failed to write DESIGN-DEEP-DIVES.md");
+        render_design::write_generated(&dd_path, &deep_dives);
         eprintln!("  {}", dd_path.display());
     }
 
@@ -476,7 +480,7 @@ fn run_inner(
                 let body = fs::read_to_string(&path).expect("failed to read template");
                 let content = format!("{header}\n{body}");
                 let out_path = cfg.docs_dir.join(out_name);
-                fs::write(&out_path, &content).expect("failed to write passthrough doc");
+                render_design::write_generated(&out_path, &content);
                 eprintln!("  {}", out_path.display());
             }
         }

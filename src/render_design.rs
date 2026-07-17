@@ -7,6 +7,100 @@ use crate::config::Config;
 use crate::graph;
 use crate::model::*;
 
+/// Write a generated file, skipping the write when the only difference is the
+/// generation timestamp.
+///
+/// Every generated file carries a `Generated at:` line, so a regeneration that
+/// produces otherwise identical content still rewrites the file and leaves it
+/// modified in the consumer's working tree. That noise is worse than untidy: a
+/// timestamp-only diff is indistinguishable at a glance from a real one, so it
+/// trains readers to skip generated-file diffs, and it dirties a tree that the
+/// run should have left alone. Running `cargo mock` must be safe on a clean
+/// tree.
+///
+/// Skipping leaves the previous timestamp in place, which makes the field mean
+/// "when this content last changed" rather than "when a generator last ran".
+/// That is the more useful of the two readings and the only one a reader can
+/// act on.
+///
+/// Returns true when the file was written.
+pub fn write_generated(path: &Path, content: &str) -> bool {
+    let previous = fs::read_to_string(path).ok();
+    write_generated_vs(path, content, previous.as_deref())
+}
+
+/// [`write_generated`] against a caller-supplied previous version.
+///
+/// Needed when something else writes the target before the header goes on:
+/// graphviz renders the SVG straight to its final path, so by the time the
+/// header is prepended the previous version is already gone and there is
+/// nothing left on disk to compare against. The caller snapshots it first and
+/// passes it here.
+///
+/// Returns true when the file was written.
+pub fn write_generated_vs(path: &Path, content: &str, previous: Option<&str>) -> bool {
+    if let Some(prev) = previous {
+        if same_modulo_timestamp(prev, content) {
+            // Put the previous bytes back. For a file this module owns end to
+            // end that is a no-op and is skipped; for one an external tool has
+            // already clobbered, it is what actually undoes the churn.
+            if fs::read_to_string(path).ok().as_deref() != Some(prev) {
+                fs::write(path, prev)
+                    .unwrap_or_else(|e| panic!("failed to restore {}: {e}", path.display()));
+            }
+            return false;
+        }
+    }
+    fs::write(path, content)
+        .unwrap_or_else(|e| panic!("failed to write {}: {e}", path.display()));
+    true
+}
+
+/// Best-effort [`write_generated`]: same timestamp-skip, but a write
+/// failure is ignored rather than a panic.
+///
+/// For generated files a caller deliberately writes with `.ok()` (a
+/// failure there is tolerated, not fatal). Returns true when written.
+pub fn write_generated_ok(path: &Path, content: &str) -> bool {
+    if let Ok(existing) = fs::read_to_string(path) {
+        if same_modulo_timestamp(&existing, content) {
+            return false;
+        }
+    }
+    fs::write(path, content).is_ok()
+}
+
+/// Compare two generated files ignoring the header `Generated at:` line.
+///
+/// Only the FIRST timestamp line in each file is dropped, which is the
+/// header the generator emits. A body line that happens to start with
+/// `Generated at:` is a real content line and stays in the comparison,
+/// so a change touching only such a line is not false-skipped.
+fn same_modulo_timestamp(a: &str, b: &str) -> bool {
+    without_header_timestamp(a).eq(without_header_timestamp(b))
+}
+
+/// The file's lines with the first `Generated at:` line removed.
+fn without_header_timestamp(s: &str) -> impl Iterator<Item = &str> {
+    let mut dropped = false;
+    s.lines().filter(move |l| {
+        if !dropped && is_timestamp_line(l) {
+            dropped = true;
+            return false;
+        }
+        true
+    })
+}
+
+/// True for the `Generated at:` line in any header form this module emits
+/// (markdown and SVG indent it inside a comment; DOT prefixes it with `//`).
+fn is_timestamp_line(line: &str) -> bool {
+    line.trim_start()
+        .trim_start_matches("//")
+        .trim_start()
+        .starts_with("Generated at:")
+}
+
 /// Generate a markdown generation header with timestamp.
 pub fn generation_header_md(cfg: &Config) -> String {
     let mock_rel = cfg.mock_dir.strip_prefix(&cfg.repo_root)
@@ -378,7 +472,7 @@ pub fn generate_per_crate_docs(cfg: &Config) {
             let out_name = format!("{crate_upper}_OVERVIEW.md");
             let out_path = cfg.docs_dir.join(&out_name);
             let full = format!("{header}\n{content}");
-            fs::write(&out_path, &full).expect("failed to write overview");
+            write_generated(&out_path, &full);
             count += 1;
         }
 
@@ -388,11 +482,79 @@ pub fn generate_per_crate_docs(cfg: &Config) {
                 let out_name = format!("{crate_upper}_{subject_upper}.md");
                 let out_path = cfg.docs_dir.join(&out_name);
                 let full = format!("{header}\n{content}");
-                fs::write(&out_path, &full).expect("failed to write deep dive");
+                write_generated(&out_path, &full);
                 count += 1;
             }
         }
     }
 
     eprintln!("  generated {count} per-crate doc files");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HDR_A: &str = "<!--\n  Generated at: 2026-07-16T10:30:43Z\n  Source: mock/\n-->\nbody line one\nbody line two\n";
+    const HDR_B: &str = "<!--\n  Generated at: 2026-07-17T13:34:56Z\n  Source: mock/\n-->\nbody line one\nbody line two\n";
+
+    #[test]
+    fn timestamp_only_change_is_equal() {
+        assert!(same_modulo_timestamp(HDR_A, HDR_B));
+    }
+
+    #[test]
+    fn body_change_is_not_equal() {
+        let changed = HDR_B.replace("body line two", "body line TWO");
+        assert!(!same_modulo_timestamp(HDR_A, &changed));
+    }
+
+    #[test]
+    fn non_timestamp_header_change_is_not_equal() {
+        let changed = HDR_B.replace("Source: mock/", "Source: elsewhere/");
+        assert!(!same_modulo_timestamp(HDR_A, &changed));
+    }
+
+    #[test]
+    fn a_body_line_starting_with_generated_at_is_not_false_skipped() {
+        // The header timestamp is the FIRST such line; a body line that
+        // happens to start with "Generated at:" is real content and must
+        // stay in the comparison. Change only the body occurrence.
+        let a = "<!--\n  Generated at: 2026-01-01T00:00:00Z\n-->\nprose\nGenerated at: build 7\n";
+        let b = "<!--\n  Generated at: 2026-09-09T00:00:00Z\n-->\nprose\nGenerated at: build 8\n";
+        assert!(
+            !same_modulo_timestamp(a, b),
+            "a real change on a second Generated-at line must not be skipped"
+        );
+    }
+
+    #[test]
+    fn dot_comment_timestamp_line_is_recognised() {
+        assert!(is_timestamp_line("// Generated at: 2026-07-17T13:34:56Z"));
+        assert!(is_timestamp_line("  Generated at: 2026-07-17T13:34:56Z"));
+        assert!(!is_timestamp_line("  Source: mock/"));
+        assert!(!is_timestamp_line("body Generated at: not a header line"));
+    }
+
+    #[test]
+    fn write_generated_skips_timestamp_only_and_restores_previous() {
+        let dir = std::env::temp_dir().join(format!("mockspace_wg_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gen.md");
+
+        assert!(write_generated(&path, HDR_A), "first write must land");
+        // Simulate an external clobber (graphviz) plus a timestamp-only regen:
+        // the previous is HDR_A, the target on disk is headerless junk, the new
+        // content is HDR_B. Must skip AND restore HDR_A, not leave the junk.
+        std::fs::write(&path, "clobbered by an external tool").unwrap();
+        assert!(!write_generated_vs(&path, HDR_B, Some(HDR_A)), "timestamp-only must skip");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), HDR_A, "previous must be restored");
+
+        // A real body change writes.
+        let changed = HDR_B.replace("body line two", "body line THREE");
+        assert!(write_generated(&path, &changed), "body change must write");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), changed);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
