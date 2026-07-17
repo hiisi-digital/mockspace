@@ -258,7 +258,7 @@ mock/agent/
 Personas under `agents/` render to `.claude/agents/<name>.md`. They are the one output with no cross-platform counterpart, because no other supported integration has an equivalent concept. Two properties are specific to them:
 
 - **Their frontmatter passes through untouched.** Rules and skills declare mockspace's own field names and get their frontmatter rebuilt on the way out, which is what keeps one source emitting matching output to several platforms. A persona's frontmatter is already the target's own schema, and that schema is not mockspace's to define, so it is copied verbatim. A field mockspace has never heard of survives and works.
-- **Bookends are not applied.** A persona is a character definition read whole; wrapping it in the project preamble and postamble would dilute it. Variable substitution still runs across the whole template, frontmatter included, so a persona can reference `{{PROJECT_NAME}}` like any other template. Pass-through means mockspace does not rename or drop fields, not that it refuses to expand variables inside them.
+- **Bookends are not applied.** A persona is a character definition read whole; wrapping it in the project preamble and postamble would dilute it. Variable substitution still runs across the whole template, frontmatter included, so a persona can reference `{{project_name}}` like any other template. Pass-through means mockspace does not rename or drop fields, not that it refuses to expand variables inside them.
 
 A template with no frontmatter is skipped with a message, since a persona needs at least `name:` and `description:` to be registered at all.
 
