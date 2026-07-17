@@ -360,6 +360,16 @@ fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, a
     let proxy_src = proxy_dir.join("src");
     let proxy_main = proxy_src.join("main.rs");
 
+    // The mockspace source the proxy should pin. The passed `mockspace_dir` is
+    // the RUNNING binary's baked path, which self-perpetuates: a proxy built
+    // against an old mockspace re-pins itself to that same old checkout every
+    // run, so `cargo mock` can never advance past whatever the proxy was last
+    // built with. The consumer's own resolved lock is the authority instead, so
+    // the pin tracks what the consumer actually depends on. Network-free: only
+    // an already-present git checkout is used, and anything unresolvable falls
+    // back to the baked path (the original behaviour).
+    let mockspace_dir = &resolve_mockspace_pin(mock_dir, mockspace_dir, actions);
+
     // In-tree lint files from {mock_dir}/lints/
     let lints_dir = mock_dir.join("lints");
     let custom_lint_files = discover_custom_lint_files(&lints_dir);
@@ -447,10 +457,140 @@ fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, a
         return; // Healthy.
     }
 
+    // Name a mockspace pin change explicitly, since a silent re-pin was the
+    // whole confusion this resolver exists to remove.
+    let old_pin = fs::read_to_string(&proxy_cargo)
+        .ok()
+        .and_then(|c| pinned_mockspace_path(&c));
+    let new_pin = mockspace_dir.display().to_string();
+    if let Some(old) = old_pin {
+        if old != new_pin {
+            actions.push(format!("re-pinned proxy mockspace: {old} -> {new_pin}"));
+        }
+    }
+
     let _ = fs::create_dir_all(&proxy_src);
     let _ = fs::write(&proxy_cargo, &cargo_content);
     let _ = fs::write(&proxy_main, &main_content);
     actions.push("generated target/mockspace-proxy/".into());
+}
+
+/// The `mockspace = { path = "..." }` value from a proxy Cargo.toml, if present.
+fn pinned_mockspace_path(cargo_toml: &str) -> Option<String> {
+    for line in cargo_toml.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("mockspace = { path = \"") {
+            if let Some(end) = rest.find('"') {
+                return Some(rest[..end].to_string());
+            }
+        }
+    }
+    None
+}
+
+/// The mockspace source path the proxy should pin.
+///
+/// Reads the consumer's mock-workspace `Cargo.lock` for the `mockspace`
+/// package's resolved git revision, then locates the matching checkout in
+/// cargo's git cache. This makes the proxy track what the consumer actually
+/// resolved, rather than the running binary's own (possibly stale) baked path.
+///
+/// Falls back to `fallback` (the baked path) when the consumer uses a path or
+/// registry dependency (no git revision to track), when the lock cannot be
+/// read, or when the resolved checkout is not present on disk. Never fetches.
+fn resolve_mockspace_pin(mock_dir: &Path, fallback: &Path, actions: &mut Vec<String>) -> PathBuf {
+    let rev = match mockspace_rev_from_lock(&mock_dir.join("Cargo.lock")) {
+        Some(r) => r,
+        None => return fallback.to_path_buf(),
+    };
+    match find_git_checkout("mockspace", &rev) {
+        Some(dir) => dir,
+        // The lock names a git revision but its checkout is not present (cargo
+        // GC, or a fresh clone before the first build). Falling back to the
+        // baked path is the exact self-perpetuation this resolver removes, so
+        // make the degraded case visible rather than silent.
+        None => {
+            let short: String = rev.chars().take(7).collect();
+            actions.push(format!(
+                "re-pin skipped: mockspace {short} checkout absent; keeping baked path"
+            ));
+            fallback.to_path_buf()
+        }
+    }
+}
+
+/// The full git revision the mock-workspace lock resolved for `mockspace`.
+///
+/// Returns `None` for a path or registry source (no git revision), or when the
+/// lock is absent or unparseable.
+fn mockspace_rev_from_lock(lock_path: &Path) -> Option<String> {
+    let content = fs::read_to_string(lock_path).ok()?;
+    let doc = content.parse::<toml_edit::DocumentMut>().ok()?;
+    let packages = doc.get("package")?.as_array_of_tables()?;
+    for pkg in packages.iter() {
+        let name = pkg.get("name").and_then(|n| n.as_str());
+        if name != Some("mockspace") {
+            continue;
+        }
+        let source = pkg.get("source").and_then(|s| s.as_str())?;
+        // Shape: "git+<url>?<query>#<full-rev>". No '#' means a path/registry
+        // source, which this resolver does not track.
+        let rev = source.rsplit_once('#').map(|(_, r)| r.to_string());
+        return rev.filter(|_| source.starts_with("git+"));
+    }
+    None
+}
+
+/// Locate the cargo git checkout for `name` whose directory matches `rev`.
+///
+/// Cargo checks a git dependency out to
+/// `$CARGO_HOME/git/checkouts/<name>-<hash>/<short-rev>/`, where `<short-rev>`
+/// is a prefix of the full revision. Globs those directories (via `read_dir`,
+/// no glob crate) and returns the first whose subdirectory name is a prefix of
+/// `rev`. Returns `None` when no matching checkout is present. Never fetches.
+fn find_git_checkout(name: &str, rev: &str) -> Option<PathBuf> {
+    let cargo_home = env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))?;
+    find_git_checkout_in(&cargo_home.join("git").join("checkouts"), name, rev)
+}
+
+/// [`find_git_checkout`] against an explicit `checkouts` root, so it is
+/// testable without mutating the process environment.
+fn find_git_checkout_in(checkouts: &Path, name: &str, rev: &str) -> Option<PathBuf> {
+    let prefix = format!("{name}-");
+    for source_entry in fs::read_dir(checkouts).ok()?.flatten() {
+        let source_name = source_entry.file_name();
+        let source_name = source_name.to_string_lossy();
+        // Cargo names a checkout `<repo>-<16-hex-source-hash>`. Require the
+        // suffix to be exactly that hash, so `mockspace-<hash>` does not also
+        // match a differently-named repo like `mockspace-stack-lints-<hash>`.
+        let is_this_source = source_name
+            .strip_prefix(&prefix)
+            .is_some_and(|h| h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        if !is_this_source {
+            continue;
+        }
+        let Ok(revs) = fs::read_dir(source_entry.path()) else {
+            continue;
+        };
+        for rev_entry in revs.flatten() {
+            if !rev_entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            let short = rev_entry.file_name();
+            let short = short.to_string_lossy();
+            // The checkout dir name is a prefix of the full revision. The first
+            // match wins: a within-source short-rev collision needs a 7-hex
+            // clash (astronomically unlikely), and two sources containing the
+            // same rev are checkouts of the same commit, so either is
+            // content-identical.
+            if !short.is_empty() && rev.starts_with(short.as_ref()) {
+                return Some(rev_entry.path());
+            }
+        }
+    }
+    None
 }
 
 /// Parse the `[lint-crates]` section from mockspace.toml.
@@ -1174,5 +1314,153 @@ mod gitignore_tests {
         let after_second = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
         assert_eq!(after_first, after_second, "second run mutated the file");
         assert!(actions2.is_empty(), "second run recorded an action: {actions2:?}");
+    }
+}
+
+#[cfg(test)]
+mod proxy_pin_tests {
+    use super::*;
+
+    const LOCK_GIT: &str = r#"
+version = 4
+
+[[package]]
+name = "arvo"
+version = "0.1.0"
+source = "git+ssh://git@github.com/orgrinrt/arvo.git?branch=dev#f5cf3063aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+[[package]]
+name = "mockspace"
+version = "0.1.0"
+source = "git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#d50b59cd461f12958ebfcc3a6a19a7c62d1a472b"
+"#;
+
+    #[test]
+    fn extracts_git_rev_for_mockspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("Cargo.lock");
+        fs::write(&lock, LOCK_GIT).unwrap();
+        assert_eq!(
+            mockspace_rev_from_lock(&lock).as_deref(),
+            Some("d50b59cd461f12958ebfcc3a6a19a7c62d1a472b")
+        );
+    }
+
+    #[test]
+    fn path_source_yields_no_rev() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("Cargo.lock");
+        // A path/workspace dependency has no `source` line at all.
+        fs::write(
+            &lock,
+            "version = 4\n\n[[package]]\nname = \"mockspace\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        assert_eq!(mockspace_rev_from_lock(&lock), None);
+    }
+
+    #[test]
+    fn missing_lock_yields_no_rev() {
+        assert_eq!(mockspace_rev_from_lock(Path::new("/no/such/Cargo.lock")), None);
+    }
+
+    #[test]
+    fn find_git_checkout_matches_by_rev_prefix() {
+        // Fake a git/checkouts/mockspace-<hash>/<short-rev>/ tree.
+        let checkouts = tempfile::tempdir().unwrap();
+        let checkout = checkouts.path().join("mockspace-abc123def4560789/d50b59c");
+        fs::create_dir_all(&checkout).unwrap();
+        // A sibling source that must not match.
+        fs::create_dir_all(checkouts.path().join("arvo-999/f5cf306")).unwrap();
+
+        let found = find_git_checkout_in(
+            checkouts.path(),
+            "mockspace",
+            "d50b59cd461f12958ebfcc3a6a19a7c62d1a472b",
+        );
+        assert_eq!(found.as_deref(), Some(checkout.as_path()));
+    }
+
+    #[test]
+    fn find_git_checkout_none_when_absent() {
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            find_git_checkout_in(empty.path(), "mockspace", "d50b59cd461f"),
+            None
+        );
+    }
+
+    #[test]
+    fn find_git_checkout_does_not_match_a_differently_named_repo() {
+        // `mockspace-hilavitkutin-stack-lints-<hash>` shares the `mockspace-`
+        // prefix but is a different repo; it must not match.
+        let checkouts = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            checkouts
+                .path()
+                .join("mockspace-hilavitkutin-stack-lints-e5dc0929ff6a2451/d50b59c"),
+        )
+        .unwrap();
+        assert_eq!(
+            find_git_checkout_in(
+                checkouts.path(),
+                "mockspace",
+                "d50b59cd461f12958ebfcc3a6a19a7c62d1a472b"
+            ),
+            None,
+            "a sibling repo sharing the name prefix must not match"
+        );
+    }
+
+    #[test]
+    fn resolve_falls_back_on_path_source() {
+        // A path/workspace mockspace has no git rev, so the resolver returns
+        // the fallback (the baked path) unchanged, with no environment access.
+        let mock = tempfile::tempdir().unwrap();
+        fs::write(
+            mock.path().join("Cargo.lock"),
+            "version = 4\n\n[[package]]\nname = \"mockspace\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let fallback = tempfile::tempdir().unwrap();
+        let mut actions = Vec::new();
+        assert_eq!(
+            resolve_mockspace_pin(mock.path(), fallback.path(), &mut actions),
+            fallback.path()
+        );
+        // No git rev, so no "checkout absent" action: this is a clean fallback.
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn resolve_reports_absent_checkout_for_a_git_rev() {
+        // The lock names a git rev whose checkout does not exist, so the
+        // resolver falls back AND records the degraded case rather than hiding
+        // it. The rev is all-f so it cannot collide with a real checkout under
+        // the machine's CARGO_HOME (find_git_checkout reads the real cache).
+        let mock = tempfile::tempdir().unwrap();
+        fs::write(
+            mock.path().join("Cargo.lock"),
+            "version = 4\n\n[[package]]\nname = \"mockspace\"\nversion = \"0.1.0\"\nsource = \"git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#ffffffffffffffffffffffffffffffffffffffff\"\n",
+        )
+        .unwrap();
+        let fallback = tempfile::tempdir().unwrap();
+        let mut actions = Vec::new();
+        let resolved = resolve_mockspace_pin(mock.path(), fallback.path(), &mut actions);
+        assert_eq!(resolved, fallback.path());
+        assert!(
+            actions.iter().any(|a| a.contains("checkout absent")),
+            "the absent-checkout case must be reported, got {actions:?}"
+        );
+    }
+
+    #[test]
+    fn pinned_path_is_extracted_from_proxy_cargo() {
+        let cargo = "[package]\nname = \"mockspace-proxy\"\n\n[dependencies]\nmockspace = { path = \"/some/where/mockspace\" }\n";
+        assert_eq!(
+            pinned_mockspace_path(cargo).as_deref(),
+            Some("/some/where/mockspace")
+        );
+        assert_eq!(pinned_mockspace_path("no pin here"), None);
     }
 }
