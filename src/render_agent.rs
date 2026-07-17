@@ -1828,7 +1828,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
     // ships, with no mockspace release in the path.
     //
     // Templates still get variable substitution throughout, frontmatter
-    // included, so a persona can reference {{PROJECT_NAME}} and friends like any
+    // included, so a persona can reference {{project_name}} and friends like any
     // other template.
     let agents_dir = agent_dir.join("agents");
     if agents_dir.is_dir() {
@@ -1858,7 +1858,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
                 .to_string();
 
             // Substitute across the WHOLE template before splitting, matching
-            // the rules phase. Frontmatter is as entitled to {{PROJECT_NAME}} as
+            // the rules phase. Frontmatter is as entitled to {{project_name}} as
             // the body is, and a persona's `description` is a natural place to
             // want it. This does not weaken the pass-through: passing through
             // means mockspace does not rename or drop fields, not that it
@@ -2401,8 +2401,8 @@ mod tests {
         // Substitution runs over the whole template before the split, matching
         // the rules phase, so frontmatter expands too. Pass-through is about not
         // renaming or dropping fields, not about refusing to expand them.
-        let vars = vec![("PROJECT_NAME".to_string(), "ikiuni-renderer".to_string())];
-        let raw = "---\nname: p\ndescription: Reviews {{PROJECT_NAME}} code\n---\n\nBody.\n";
+        let vars = vec![("project_name".to_string(), "ikiuni-renderer".to_string())];
+        let raw = "---\nname: p\ndescription: Reviews {{project_name}} code\n---\n\nBody.\n";
         let raw = substitute_vars(raw, &vars);
         let (fm, body) = split_frontmatter(&raw);
         let out = render_agent_content(&fm, &body);
