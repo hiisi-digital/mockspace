@@ -846,12 +846,12 @@ fn generate_lint_derived_content(
         let copilot_content = format!("{copilot_fm}{header_md}\n{preamble}\n\n{body}\n{postamble}");
 
         let claude_path = claude_rules_dir.join(format!("{rule_name}.md"));
-        fs::write(&claude_path, &claude_content).ok();
+        render_design::write_generated_ok(&claude_path, &claude_content);
         eprintln!("  {} (lint-derived)", claude_path.display());
         count += 1;
 
         let copilot_path = copilot_instructions_dir.join(format!("{rule_name}.instructions.md"));
-        fs::write(&copilot_path, &copilot_content).ok();
+        render_design::write_generated_ok(&copilot_path, &copilot_content);
         count += 1;
 
         // --- Agent Hook ---
@@ -1588,7 +1588,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         let _ = fs::create_dir_all(&claude_dir);
         let claude_content = format_with_bookends(&header_md, &preamble, &body, &postamble);
         let claude_path = claude_dir.join("CLAUDE.md");
-        fs::write(&claude_path, &claude_content).expect("failed to write CLAUDE.md");
+        render_design::write_generated(&claude_path, &claude_content);
         eprintln!("  {}", claude_path.display());
         count += 1;
 
@@ -1604,7 +1604,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         let _ = fs::create_dir_all(&copilot_dir);
         let copilot_content = format_with_bookends(&header_md, &preamble, &body, &postamble);
         let copilot_path = copilot_dir.join("copilot-instructions.md");
-        fs::write(&copilot_path, copilot_content).expect("failed to write copilot-instructions.md");
+        render_design::write_generated(&copilot_path, &copilot_content);
         eprintln!("  {}", copilot_path.display());
         count += 1;
     }
@@ -1629,7 +1629,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             format_with_bookends(&header_md, &preamble, &builtin_rule.body, &postamble)
         );
         let claude_path = claude_rules_dir.join(format!("{}.md", builtin_rule.name));
-        fs::write(&claude_path, &claude_content).expect("failed to write builtin claude rule");
+        render_design::write_generated(&claude_path, &claude_content);
         eprintln!("  {} (builtin)", claude_path.display());
         count += 1;
 
@@ -1640,8 +1640,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             format_with_bookends(&header_md, &preamble, &builtin_rule.body, &postamble)
         );
         let copilot_path = copilot_instructions_dir.join(format!("{}.instructions.md", builtin_rule.name));
-        fs::write(&copilot_path, &copilot_content)
-            .expect("failed to write builtin copilot instruction");
+        render_design::write_generated(&copilot_path, &copilot_content);
         eprintln!("  {} (builtin)", copilot_path.display());
         count += 1;
     }
@@ -1696,7 +1695,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
                 format_with_bookends(&header_md, &preamble, &body, &postamble)
             );
             let claude_path = claude_rules_dir.join(format!("{stem}.md"));
-            fs::write(&claude_path, &claude_content).expect("failed to write claude rule");
+            render_design::write_generated(&claude_path, &claude_content);
             eprintln!("  {}", claude_path.display());
             count += 1;
 
@@ -1707,8 +1706,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
                 format_with_bookends(&header_md, &preamble, &body, &postamble)
             );
             let copilot_path = copilot_instructions_dir.join(format!("{stem}.instructions.md"));
-            fs::write(&copilot_path, &copilot_content)
-                .expect("failed to write copilot instruction");
+            render_design::write_generated(&copilot_path, &copilot_content);
             eprintln!("  {}", copilot_path.display());
             count += 1;
         }
@@ -1738,7 +1736,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             format_with_bookends(&header_md, &preamble, &builtin_skill.body, &postamble)
         );
         let claude_path = claude_skill_dir.join("SKILL.md");
-        fs::write(&claude_path, &claude_content).expect("failed to write builtin claude skill");
+        render_design::write_generated(&claude_path, &claude_content);
         eprintln!("  {} (builtin)", claude_path.display());
         count += 1;
 
@@ -1750,7 +1748,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             format_with_bookends(&header_md, &preamble, &builtin_skill.body, &postamble)
         );
         let copilot_path = copilot_skill_dir.join("SKILL.md");
-        fs::write(&copilot_path, &copilot_content).expect("failed to write builtin copilot skill");
+        render_design::write_generated(&copilot_path, &copilot_content);
         eprintln!("  {} (builtin)", copilot_path.display());
         count += 1;
     }
@@ -1793,7 +1791,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
                 format_with_bookends(&header_md, &preamble, &body, &postamble)
             );
             let claude_path = claude_skill_dir.join("SKILL.md");
-            fs::write(&claude_path, &claude_content).expect("failed to write claude skill");
+            render_design::write_generated(&claude_path, &claude_content);
             eprintln!("  {}", claude_path.display());
             count += 1;
 
@@ -1805,7 +1803,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
                 format_with_bookends(&header_md, &preamble, &body, &postamble)
             );
             let copilot_path = copilot_skill_dir.join("SKILL.md");
-            fs::write(&copilot_path, &copilot_content).expect("failed to write copilot skill");
+            render_design::write_generated(&copilot_path, &copilot_content);
             eprintln!("  {}", copilot_path.display());
             count += 1;
         }
