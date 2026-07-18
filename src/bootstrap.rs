@@ -573,33 +573,56 @@ fn mockspace_rev_from_lock(lock_path: &Path) -> Option<String> {
 /// A git dependency as the lock resolved it: the remote URL, the tracked
 /// branch (if the source pins one), and the locked revision.
 #[derive(Debug, PartialEq)]
-struct MockspaceGitSource {
+struct GitSource {
     url: String,
     branch: Option<String>,
     rev: String,
 }
 
-/// Parse mockspace's git source from the mock-workspace lock.
+/// Every package in the lock pinned to a git BRANCH, by name.
 ///
-/// The lock `source` has the shape `git+<url>[?<query>]#<full-rev>`, where the
-/// query may carry `branch=<b>`, `tag=<t>`, or `rev=<r>`. Returns `None` for a
-/// path or registry source, or when the lock is absent or unparseable.
-fn mockspace_git_source_from_lock(lock_path: &Path) -> Option<MockspaceGitSource> {
-    let content = fs::read_to_string(lock_path).ok()?;
-    let doc = content.parse::<toml_edit::DocumentMut>().ok()?;
-    let packages = doc.get("package")?.as_array_of_tables()?;
+/// A branch pin is a moving target by construction: the whole point of tracking
+/// `dev` rather than a tag is that the dependency advances. What makes that
+/// dangerous rather than useful is that nothing advances the lock, so a project
+/// tracking a branch silently runs whatever revision it first resolved, for
+/// however long, while reading as though it follows the branch.
+///
+/// Tags and exact revisions are excluded deliberately: those are pins someone
+/// chose, and advancing them would be overriding a decision rather than
+/// honouring one.
+///
+/// Duplicates by name are kept apart: a lock can hold two entries for one
+/// package tracking different branches, and collapsing them would advance the
+/// wrong one.
+fn branch_tracked_git_deps(lock_path: &Path) -> Vec<(String, GitSource)> {
+    let Ok(content) = fs::read_to_string(lock_path) else {
+        return Vec::new();
+    };
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return Vec::new();
+    };
+    let Some(packages) = doc.get("package").and_then(|p| p.as_array_of_tables()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
     for pkg in packages.iter() {
-        if pkg.get("name").and_then(|n| n.as_str()) != Some("mockspace") {
+        let Some(name) = pkg.get("name").and_then(|n| n.as_str()) else {
             continue;
+        };
+        let Some(source) = pkg.get("source").and_then(|s| s.as_str()) else {
+            continue;
+        };
+        if let Some(src) = parse_git_source(source) {
+            if src.branch.is_some() {
+                out.push((name.to_string(), src));
+            }
         }
-        let source = pkg.get("source").and_then(|s| s.as_str())?;
-        return parse_git_source(source);
     }
-    None
+    out
 }
 
 /// Split a `git+<url>[?<query>]#<rev>` source into url, branch, and rev.
-fn parse_git_source(source: &str) -> Option<MockspaceGitSource> {
+fn parse_git_source(source: &str) -> Option<GitSource> {
     let body = source.strip_prefix("git+")?;
     let (locator, rev) = body.rsplit_once('#')?;
     let (url, query) = match locator.split_once('?') {
@@ -609,7 +632,7 @@ fn parse_git_source(source: &str) -> Option<MockspaceGitSource> {
     let branch = query.and_then(|q| {
         q.split('&').find_map(|kv| kv.strip_prefix("branch=").map(str::to_string))
     });
-    Some(MockspaceGitSource {
+    Some(GitSource {
         url: url.to_string(),
         branch,
         rev: rev.to_string(),
@@ -708,54 +731,55 @@ pub fn ensure_mockspace_current(
     allow_update: bool,
     actions: &mut Vec<String>,
 ) {
-    let source = match mockspace_git_source_from_lock(&mock_dir.join("Cargo.lock")) {
-        Some(s) => s,
-        None => return, // path/registry mockspace, or unreadable lock: nothing to track.
-    };
-    let branch = match &source.branch {
-        Some(b) => b.clone(),
-        None => return, // pinned to a tag or exact rev: not a moving target.
-    };
+    let deps = branch_tracked_git_deps(&mock_dir.join("Cargo.lock"));
+    if deps.is_empty() {
+        return; // every dependency is a path, a registry, a tag, or an exact rev.
+    }
 
     let marker = repo_root.join("target/mockspace-proxy/.remote-check");
     if !remote_check_due(&marker, REMOTE_CHECK_TTL) {
         return;
     }
-    // Consume the window before the network call, on purpose: a persistently
+    // Consume the window before the network calls, on purpose: a persistently
     // offline machine then pays the ls-remote timeout at most once per TTL
     // rather than on every `cargo mock`. The cost is that recovery after a
     // transient failure waits until the next window, which is acceptable for a
     // freshness convenience the user can always force with `cargo update`.
     touch(&marker);
 
-    let remote = match git_ls_remote_head(&source.url, &branch) {
-        Some(r) => r,
-        None => return, // offline, auth-less, or the ref is gone: skip quietly.
-    };
-    if remote == source.rev {
-        return; // current.
-    }
-
-    let (locked_short, remote_short) = (short_rev(&source.rev), short_rev(&remote));
     // Auto-advancing mutates the consumer's tracked Cargo.lock. That is a
-    // deliberate default (`[proxy] auto_update` defaults to true): the workspace
-    // chose auto-freshness over the usual "lock bumps are their own PR"
-    // discipline for this one dependency. The mutation is throttled,
-    // interactive-only, reversible, and reported below with the opt-out.
+    // deliberate default (`[proxy] auto_update` defaults to true): tracking a
+    // branch is a statement that the dependency should follow it, and a lock
+    // that never advances turns that statement into a lie. The mutation is
+    // throttled, interactive-only, reversible, and reported with its opt-out.
     let auto = allow_update && proxy_auto_update(&mock_dir.join("mockspace.toml"));
-    if auto {
-        match cargo_update_mockspace(mock_dir, &source) {
-            Ok(()) => actions.push(format!(
-                "mockspace was behind origin/{branch} ({locked_short} -> {remote_short}); ran cargo update (set [proxy] auto_update = false to only warn)"
-            )),
-            Err(e) => actions.push(format!(
-                "mockspace is behind origin/{branch} ({locked_short} -> {remote_short}); cargo update failed: {e}; run cargo update with the full source spec manually"
-            )),
+
+    for (name, source) in deps {
+        let Some(branch) = source.branch.clone() else {
+            continue;
+        };
+        let Some(remote) = git_ls_remote_head(&source.url, &branch) else {
+            continue; // offline, auth-less, or the ref is gone: skip quietly.
+        };
+        if remote == source.rev {
+            continue; // current.
         }
-    } else {
-        actions.push(format!(
-            "mockspace is behind origin/{branch} (locked {locked_short}, remote {remote_short}); run `cargo update -p mockspace`"
-        ));
+
+        let (locked_short, remote_short) = (short_rev(&source.rev), short_rev(&remote));
+        if auto {
+            match cargo_update_dep(mock_dir, &name, &source) {
+                Ok(()) => actions.push(format!(
+                    "{name} was behind origin/{branch} ({locked_short} -> {remote_short}); ran cargo update (set [proxy] auto_update = false to only warn)"
+                )),
+                Err(e) => actions.push(format!(
+                    "{name} is behind origin/{branch} ({locked_short} -> {remote_short}); cargo update failed: {e}; run cargo update with the full source spec manually"
+                )),
+            }
+        } else {
+            actions.push(format!(
+                "{name} is behind origin/{branch} (locked {locked_short}, remote {remote_short})"
+            ));
+        }
     }
 }
 
@@ -852,10 +876,10 @@ fn output_with_timeout(
 /// ambiguous. The auto-advance then reported being behind on every run and
 /// never advanced, which reads as the feature not working rather than as one
 /// stale lock entry.
-fn cargo_update_mockspace(mock_dir: &Path, source: &MockspaceGitSource) -> Result<(), String> {
+fn cargo_update_dep(mock_dir: &Path, name: &str, source: &GitSource) -> Result<(), String> {
     let spec = match &source.branch {
-        Some(b) => format!("{}?branch={}#mockspace", source.url, b),
-        None => format!("{}#mockspace", source.url),
+        Some(b) => format!("{}?branch={}#{name}", source.url, b),
+        None => format!("{}#{name}", source.url),
     };
     let output = std::process::Command::new("cargo")
         .args(["update", "-p", &spec])
@@ -1794,17 +1818,38 @@ mod remote_head_tests {
     }
 
     #[test]
-    fn git_source_from_lock_finds_mockspace() {
+    fn every_branch_tracked_dep_is_found_not_only_mockspace() {
+        // The freshness problem is not mockspace's. Any dependency tracking a
+        // branch is a moving target whose lock nothing advances.
         let dir = tempfile::tempdir().unwrap();
         let lock = dir.path().join("Cargo.lock");
         fs::write(
             &lock,
-            "version = 4\n\n[[package]]\nname = \"mockspace\"\nversion = \"0.1.0\"\nsource = \"git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#d50b59cd461f12958ebfcc3a6a19a7c62d1a472b\"\n",
+            "version = 4\n\n             [[package]]\nname = \"mockspace\"\nversion = \"0.1.0\"\n             source = \"git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#d50b59cd461f12958ebfcc3a6a19a7c62d1a472b\"\n\n             [[package]]\nname = \"arvo\"\nversion = \"0.1.0\"\n             source = \"git+ssh://git@github.com/orgrinrt/arvo.git?branch=dev#aaaa59cd461f12958ebfcc3a6a19a7c62d1a472b\"\n\n             [[package]]\nname = \"pinned\"\nversion = \"0.1.0\"\n             source = \"git+ssh://git@example.com/pinned.git?tag=v1#bbbb59cd461f12958ebfcc3a6a19a7c62d1a472b\"\n\n             [[package]]\nname = \"local\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
-        let s = mockspace_git_source_from_lock(&lock).unwrap();
-        assert_eq!(s.branch.as_deref(), Some("dev"));
-        assert_eq!(s.rev, "d50b59cd461f12958ebfcc3a6a19a7c62d1a472b");
+
+        let deps = branch_tracked_git_deps(&lock);
+        let names: Vec<&str> = deps.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["mockspace", "arvo"], "{names:?}");
+
+        // A tag and a path are pins someone chose. Advancing either would be
+        // overriding a decision rather than honouring one.
+        assert!(!names.contains(&"pinned"));
+        assert!(!names.contains(&"local"));
+
+        assert_eq!(deps[0].1.branch.as_deref(), Some("dev"));
+        assert_eq!(deps[0].1.rev, "d50b59cd461f12958ebfcc3a6a19a7c62d1a472b");
+    }
+
+    #[test]
+    fn a_lock_with_no_git_deps_yields_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("Cargo.lock");
+        fs::write(&lock, "version = 4\n\n[[package]]\nname = \"local\"\nversion = \"0.1.0\"\n").unwrap();
+        assert!(branch_tracked_git_deps(&lock).is_empty());
+        // A missing lock is a skip, not a panic.
+        assert!(branch_tracked_git_deps(&dir.path().join("nope.lock")).is_empty());
     }
 
     #[test]
