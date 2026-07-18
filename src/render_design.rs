@@ -360,6 +360,7 @@ pub fn render_passthrough_templates(
             &cfg.registry_roots,
             &cfg.repo_root,
             &cfg.docs_dir,
+            cfg,
         );
         let content = format!("{header}\n{body}");
         let out_path = cfg.docs_dir.join(&out_name);

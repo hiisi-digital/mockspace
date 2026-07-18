@@ -511,6 +511,7 @@ fn run_inner(
         &cfg.registry_roots,
         &cfg.repo_root,
         &cfg.docs_dir,
+        &cfg,
     );
     if !cfg.registry_namespaces.is_empty() {
         eprintln!("--- registry ---");
