@@ -488,19 +488,6 @@ fn run_inner(
     render_design::write_generated(&structure_path, &structure_md);
     eprintln!("  {}", structure_path.display());
 
-    // --- DESIGN.md ---
-    eprintln!("--- generating DESIGN.md ---");
-    match render_design::generate_design_md(&placeholders, &cfg) {
-        Some(design_md) => {
-            let design_path = cfg.docs_dir.join(render_design::ordered_doc_name("DESIGN.md", &cfg));
-            render_design::write_generated(&design_path, &design_md);
-            eprintln!("  {}", design_path.display());
-        }
-        None => {
-            eprintln!("  skipped (no DESIGN.md.tmpl found)");
-        }
-    }
-
     // --- Combined deep-dive document (opt in) ---
     // Each deep dive already renders beside its crate's overview below, which
     // is where a reader looks for it. The combined file repeats that content
@@ -536,6 +523,21 @@ fn run_inner(
     // references live and they are resolved against it.
     eprintln!("--- generating per-crate docs ---");
     render_design::generate_per_crate_docs(&placeholders, &cfg, &crates, &registry);
+
+    // --- DESIGN.md ---
+    // After the registry, like every other document: it composes the per-crate
+    // summaries, and those carry references of their own.
+    eprintln!("--- generating DESIGN.md ---");
+    match render_design::generate_design_md(&placeholders, &cfg, &registry) {
+        Some(design_md) => {
+            let design_path = cfg.docs_dir.join(render_design::ordered_doc_name("DESIGN.md", &cfg));
+            render_design::write_generated(&design_path, &design_md);
+            eprintln!("  {}", design_path.display());
+        }
+        None => {
+            eprintln!("  skipped (no DESIGN.md.tmpl found)");
+        }
+    }
     if !cfg.registry_namespaces.is_empty() {
         eprintln!("--- registry ---");
         let schemas = registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
@@ -577,6 +579,47 @@ fn run_inner(
     eprintln!("--- copying passthrough templates ---");
     for out_path in render_design::render_passthrough_templates(&placeholders, &cfg, &registry) {
         eprintln!("  {}", out_path.display());
+    }
+
+    // --- Unresolved references in what was just written ---
+    // Scanned from the output rather than checked per path. Several paths
+    // generate documents and each resolves references itself; two silently did
+    // not, and the symptom was a literal reference in a finished document with
+    // nothing saying so. Checking the result catches a path added later that
+    // forgets the same thing.
+    {
+        let mut unresolved: Vec<(String, Vec<String>)> = Vec::new();
+        if let Ok(entries) = fs::read_dir(&cfg.docs_dir) {
+            let mut files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file())
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".md"))
+                .collect();
+            files.sort_by_key(|e| e.file_name());
+            for entry in files {
+                let Ok(text) = fs::read_to_string(entry.path()) else {
+                    continue;
+                };
+                let found = registry::unresolved_in_generated(&text);
+                if !found.is_empty() {
+                    unresolved.push((entry.file_name().to_string_lossy().to_string(), found));
+                }
+            }
+        }
+        if !unresolved.is_empty() {
+            let total: usize = unresolved.iter().map(|(_, v)| v.len()).sum();
+            eprintln!(
+                "  warning: {total} unresolved reference(s) rendered literally in {} document(s):",
+                unresolved.len()
+            );
+            for (file, found) in &unresolved {
+                let mut shown: Vec<&str> = found.iter().map(String::as_str).collect();
+                shown.sort_unstable();
+                shown.dedup();
+                shown.truncate(4);
+                eprintln!("    {file}: {}", shown.join(", "));
+            }
+        }
     }
 
     // --- Agent rules and skills ---
