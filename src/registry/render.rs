@@ -55,10 +55,25 @@ pub fn generate_schemas(
                 }
                 _ => "\"type\": \"string\"".to_string(),
             };
+            // An internal field stays in the schema: it is valid data, checked
+            // like any other, and only its rendering differs. Saying so in the
+            // description is what an author sees on hover, which is where the
+            // question "will this reach the docs" actually gets asked.
+            let internal_note = match f.visibility {
+                FieldVisibility::Internal => {
+                    " (internal: recorded and checked, never rendered into the generated documents)"
+                }
+                FieldVisibility::Public => "",
+            };
             let desc = f
                 .description
                 .as_ref()
-                .map(|d| format!(",\n          \"description\": {}", json_string(d)))
+                .map(|d| {
+                    format!(
+                        ",\n          \"description\": {}",
+                        json_string(&format!("{d}{internal_note}"))
+                    )
+                })
                 .unwrap_or_default();
             props.push_str(&format!(
                 ",\n        {}: {{\n          {ty}{desc}\n        }}",
@@ -166,7 +181,11 @@ fn write_if_changed(path: &Path, content: &str) -> bool {
 /// Column order follows the namespace's declared field order rather than the
 /// rows' own key order, so the table reads the way the project described the
 /// namespace and stays stable when a row happens to omit an optional field.
-pub fn render_table(ns: &RegistryNamespace, reg: &Registry) -> String {
+pub fn render_table(
+    ns: &RegistryNamespace,
+    reg: &Registry,
+    cfg: &crate::config::Config,
+) -> String {
     let Some(ids) = reg.by_namespace.get(&ns.key) else {
         return String::new();
     };
@@ -190,25 +209,62 @@ pub fn render_table(ns: &RegistryNamespace, reg: &Registry) -> String {
         for key in order {
             let members = &buckets[&key];
             out.push_str(&format!("\n### {key}\n\n"));
-            out.push_str(&render_rows(ns, reg, members));
+            out.push_str(&render_rows(ns, reg, members, cfg));
         }
         return out;
     }
 
-    render_rows(ns, reg, ids)
+    render_rows(ns, reg, ids, cfg)
+}
+
+/// A field's value with citations into internal roots removed.
+///
+/// Filtering is per item, not per cell. A provenance field routinely carries
+/// several citations, and a row whose sources are one internal corpus and one
+/// public document should keep the public one. Dropping the whole cell would
+/// lose a citation the reader can actually follow, to hide one they cannot.
+///
+/// Only items that parse as citations are considered. A field holding ordinary
+/// prose is returned unchanged, so this cannot quietly eat text that happens to
+/// contain a `::`.
+fn visible_value(raw: &str, cfg: &crate::config::Config) -> String {
+    if cfg.internal_roots.is_empty() || raw.is_empty() {
+        return raw.to_string();
+    }
+    let kept: Vec<&str> = raw
+        .split(", ")
+        .filter(|item| match FileRef::parse(item.trim()) {
+            Some(r) => !cfg.internal_roots.contains(&r.root),
+            None => true,
+        })
+        .collect();
+    kept.join(", ")
 }
 
 /// One table over the given rows.
-fn render_rows(ns: &RegistryNamespace, reg: &Registry, ids: &[String]) -> String {
+fn render_rows(
+    ns: &RegistryNamespace,
+    reg: &Registry,
+    ids: &[String],
+    cfg: &crate::config::Config,
+) -> String {
 
     // `id` first, then declared fields in declaration order. A field that no
     // row actually carries is dropped: an always-empty column is noise.
+    //
+    // The test is what the column would RENDER, not what the rows carry, so a
+    // column emptied by internal-root filtering drops by the same rule rather
+    // than needing one of its own.
     let mut columns: Vec<String> = vec!["id".to_string()];
     for f in &ns.fields {
+        if f.visibility == FieldVisibility::Internal {
+            continue;
+        }
         if ids
             .iter()
             .filter_map(|id| reg.get(id))
-            .any(|r| r.fields.contains_key(&f.name))
+            .filter_map(|r| r.fields.get(&f.name))
+            .any(|v| !visible_value(v, cfg).is_empty())
         {
             columns.push(f.name.clone());
         }
@@ -240,11 +296,7 @@ fn render_rows(ns: &RegistryNamespace, reg: &Registry, ids: &[String]) -> String
                     // duplicates every row to say nothing new.
                     return format!("<a id=\"{}\"></a>{}", row.anchor(), row.slug);
                 }
-                let raw = if false {
-                    row.slug.as_str()
-                } else {
-                    row.fields.get(c).map(String::as_str).unwrap_or("")
-                };
+                let raw = visible_value(row.fields.get(c).map(String::as_str).unwrap_or(""), cfg);
                 // A pipe inside a cell would end the column early, and a
                 // newline would end the row. Both are realistic in prose
                 // fields, which is exactly why the source is TOML.
@@ -299,7 +351,7 @@ pub fn render_pages(
             "{} rows. Identifiers are permanent: assigned once, never reused, never renumbered.\n\n",
             ids.len()
         ));
-        body.push_str(&render_table(ns, reg));
+        body.push_str(&render_table(ns, reg, cfg));
 
         // A registry page is a document like any other, so references inside
         // its rows resolve here too. Without this a row could reference another
@@ -327,12 +379,17 @@ pub fn render_pages(
 /// This is what makes `embed` mode useful: a project drops the placeholder in
 /// whatever document the table belongs in, rather than accepting a generated
 /// page it then has to link to from somewhere.
-pub fn expand_embeds(text: &str, namespaces: &[RegistryNamespace], reg: &Registry) -> String {
+pub fn expand_embeds(
+    text: &str,
+    namespaces: &[RegistryNamespace],
+    reg: &Registry,
+    cfg: &crate::config::Config,
+) -> String {
     let mut out = text.to_string();
     for ns in namespaces {
         let token = format!("{{{{registry:{}}}}}", ns.key);
         if out.contains(&token) {
-            out = out.replace(&token, &render_table(ns, reg));
+            out = out.replace(&token, &render_table(ns, reg, cfg));
         }
     }
     out

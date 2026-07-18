@@ -27,6 +27,29 @@ pub struct RegistryField {
     pub required: bool,
     #[serde(default)]
     pub description: Option<String>,
+    /// Whether this field reaches the generated documentation at all.
+    #[serde(default)]
+    pub visibility: FieldVisibility,
+}
+
+/// Whether a field's values are for readers or only for the project itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FieldVisibility {
+    /// Rendered as a column, like any other field.
+    #[default]
+    Public,
+    /// Never rendered, and a reference to it is an error rather than a leak.
+    ///
+    /// Some fields exist to tie a row back to something the reader cannot
+    /// open: an identifier from a superseded corpus, a note addressed to the
+    /// project rather than to anyone reading the result. Rendering those is
+    /// noise at best. Marking the field internal keeps it validated, keeps it
+    /// greppable in the source, and keeps it out of the document.
+    ///
+    /// A reference to an internal field is reported rather than resolved,
+    /// because a guarantee with a documented way around it is not one.
+    Internal,
 }
 
 fn default_field_type() -> String {
@@ -178,6 +201,7 @@ pub fn builtin_vocab() -> RegistryNamespace {
         r#type: "string".to_string(),
         required,
         description: Some(description.to_string()),
+        visibility: FieldVisibility::Public,
     };
     RegistryNamespace {
         key: "vocab".to_string(),
@@ -204,6 +228,7 @@ pub fn builtin_vocab() -> RegistryNamespace {
                     "Where the term is defined, when it comes from somewhere rather than being defined by the design itself."
                         .to_string(),
                 ),
+                visibility: FieldVisibility::Public,
             },
         ],
     }
@@ -222,6 +247,7 @@ pub fn builtin_reference() -> RegistryNamespace {
         r#type: "string".to_string(),
         required,
         description: Some(description.to_string()),
+        visibility: FieldVisibility::Public,
     };
     RegistryNamespace {
         key: "reference".to_string(),

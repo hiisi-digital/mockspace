@@ -252,6 +252,87 @@ mod tests {
         );
     }
 
+    fn field(name: &str, vis: FieldVisibility) -> RegistryField {
+        RegistryField {
+            name: name.into(),
+            r#type: "string".into(),
+            required: false,
+            description: None,
+            visibility: vis,
+        }
+    }
+
+    #[test]
+    fn an_internal_field_never_becomes_a_column() {
+        // The field stays validated and greppable in the source; what it does
+        // not do is reach a reader who cannot act on it.
+        let mut ns = ns("law", None);
+        ns.fields = vec![
+            field("what", FieldVisibility::Public),
+            field("seed_id", FieldVisibility::Internal),
+        ];
+        let reg = reg_with("keys", "law", &[("what", "a key is closed"), ("seed_id", "[24B]")]);
+        let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        let table = render_table(&ns, &reg, &cfg);
+        assert!(table.contains("what"), "{table}");
+        assert!(!table.contains("seed_id"), "internal column rendered: {table}");
+        assert!(!table.contains("[24B]"), "internal value rendered: {table}");
+    }
+
+    #[test]
+    fn an_internal_field_does_not_resolve_by_reference() {
+        // Otherwise the guarantee has a documented way around it, which is
+        // the same as not having it.
+        let mut ns = ns("law", None);
+        ns.fields = vec![field("seed_id", FieldVisibility::Internal)];
+        let reg = reg_with("keys", "law", &[("seed_id", "[24B]")]);
+        let text = "{{ reg::law::keys::seed_id }}";
+        assert_eq!(r_all(text, &[ns], &reg), text);
+    }
+
+    #[test]
+    fn an_internal_root_is_filtered_per_item_not_per_cell() {
+        // A row sourced from both an internal corpus and a public document
+        // keeps the citation a reader can follow. Dropping the whole cell
+        // would lose the useful one in order to hide the useless one.
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.internal_roots = ["seed".to_string()].into_iter().collect();
+        let mut ns = ns("law", None);
+        ns.fields = vec![field("provenance", FieldVisibility::Public)];
+        let reg = reg_with(
+            "keys",
+            "law",
+            &[("provenance", "seed::DESIGN::844, mock::DESIGN::12")],
+        );
+        let table = render_table(&ns, &reg, &cfg);
+        assert!(!table.contains("seed::DESIGN"), "internal root survived: {table}");
+        assert!(table.contains("mock::DESIGN::12"), "public citation lost: {table}");
+    }
+
+    #[test]
+    fn a_column_emptied_by_filtering_drops_like_any_empty_column() {
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.internal_roots = ["seed".to_string()].into_iter().collect();
+        let mut ns = ns("law", None);
+        ns.fields = vec![field("provenance", FieldVisibility::Public)];
+        let reg = reg_with("keys", "law", &[("provenance", "seed::DESIGN::844")]);
+        let table = render_table(&ns, &reg, &cfg);
+        assert!(!table.contains("provenance"), "empty column kept: {table}");
+    }
+
+    #[test]
+    fn prose_is_not_mistaken_for_a_citation_and_eaten() {
+        // A field holding ordinary text that happens to contain `::` must
+        // survive filtering intact.
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.internal_roots = ["seed".to_string()].into_iter().collect();
+        let mut ns = ns("law", None);
+        ns.fields = vec![field("what", FieldVisibility::Public)];
+        let reg = reg_with("keys", "law", &[("what", "std::mem::swap is not a citation")]);
+        let table = render_table(&ns, &reg, &cfg);
+        assert!(table.contains("std::mem::swap is not a citation"), "{table}");
+    }
+
     #[test]
     fn slugs_are_snake_case() {
         assert!(is_valid_slug("xpbd") && is_valid_slug("waist_a") && is_valid_slug("lane_2"));
