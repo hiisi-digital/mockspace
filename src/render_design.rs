@@ -286,7 +286,11 @@ pub fn crate_doc_file(crate_upper: &str, subject: &str, depth: usize, cfg: &Conf
 }
 
 /// Generate DESIGN.md from DESIGN.md.tmpl + parsed crate data.
-pub fn generate_design_md(ph: &Placeholders, cfg: &Config) -> Option<String> {
+pub fn generate_design_md(
+    ph: &Placeholders,
+    cfg: &Config,
+    registry: &crate::registry::Registry,
+) -> Option<String> {
     let tmpl_path = cfg.mock_dir.join("DESIGN.md.tmpl");
     let template = match fs::read_to_string(&tmpl_path) {
         Ok(t) => t,
@@ -297,7 +301,18 @@ pub fn generate_design_md(ph: &Placeholders, cfg: &Config) -> Option<String> {
     };
 
     let header = generation_header_md(cfg);
-    let result = ph.apply(&template);
+    // Placeholders first, then references. `{{crate_summaries}}` expands into
+    // the per-crate summaries, which carry references of their own, so
+    // resolving before the expansion would leave every one of those literal.
+    let result = crate::registry::resolve_all(
+        &ph.apply(&template),
+        &cfg.registry_namespaces,
+        registry,
+        &cfg.registry_roots,
+        &cfg.repo_root,
+        &cfg.docs_dir,
+        cfg,
+    );
 
     Some(format!("{header}\n{result}"))
 }

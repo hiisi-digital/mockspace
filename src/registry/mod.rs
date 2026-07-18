@@ -384,6 +384,21 @@ mod tests {
     }
 
     #[test]
+    fn an_unresolved_token_in_a_generated_document_is_reported() {
+        // The net that catches a generation path forgetting to resolve. Two
+        // did, and the symptom was a literal reference in a finished document
+        // with nothing saying so.
+        let doc = "# T\n\nBound by {{ reg::law::keys }}.\n\n```\nwrite {{ reg::law::x }}\n```\n\nDone.\n";
+        let found = unresolved_in_generated(doc);
+        assert_eq!(found, vec!["{{ reg::law::keys }}"], "{found:?}");
+    }
+
+    #[test]
+    fn a_resolved_document_reports_nothing() {
+        assert!(unresolved_in_generated("# T\n\nAll [good](LAW.md#keys).\n").is_empty());
+    }
+
+    #[test]
     fn a_crate_reference_resolves_before_its_document_is_written() {
         // The docs directory is cleaned at the start of a run and refilled
         // during it. Globbing for the file therefore answered "has this been
