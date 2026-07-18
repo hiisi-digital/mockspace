@@ -978,22 +978,6 @@ pub fn render_pages(
         ));
         body.push_str(&render_table(ns, reg));
 
-        // Per-row anchors, so a link from prose lands on the row rather than
-        // on the top of a table with several hundred entries.
-        body.push_str("\n");
-        for id in ids {
-            let Some(row) = reg.get(id) else { continue };
-            let name = row
-                .fields
-                .get("name")
-                .or_else(|| row.fields.get("question"))
-                .or_else(|| row.fields.get("rule"))
-                .map(String::as_str)
-                .unwrap_or("");
-            body.push_str(&format!("\n<a id=\"{}\"></a>\n", id.to_lowercase()));
-            body.push_str(&format!("**{id}**{}\n", if name.is_empty() { String::new() } else { format!(": {name}") }));
-        }
-
         // A registry page is a document like any other, so references inside
         // its rows resolve here too. Without this a row could reference another
         // row and the reference would render literally on the one page most
