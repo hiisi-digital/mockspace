@@ -56,11 +56,28 @@ pub fn discover_crates(crates_dir: &Path, crate_prefix: &str) -> CrateMap {
     result
 }
 
+/// Sibling crates this crate depends on, by directory name.
+///
+/// Recognises every form a dependency is written in, not only workspace
+/// inheritance: `dep.workspace = true`, `dep = { path = "..." }`,
+/// `dep = { version = "..." }`, and a bare version string all count.
+///
+/// Matching only the workspace form meant a project using path dependencies
+/// had every dependency ignored, which is not a partial graph but an empty
+/// one: every crate computed to depth zero, the layer numbering said unbuilt
+/// for everything, and the structure graph showed nodes with no edges. Nothing
+/// reported it, because an empty graph looks exactly like a flat project.
 fn extract_deps(cargo_toml: &str, self_name: &str, crate_prefix: &str) -> Vec<String> {
     let mut deps = Vec::new();
+    let mut in_deps = false;
     for line in cargo_toml.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with(crate_prefix) && trimmed.contains("workspace") {
+        if trimmed.starts_with('[') {
+            // Any dependency table counts, including target-specific ones.
+            in_deps = trimmed.contains("dependencies");
+            continue;
+        }
+        if in_deps && trimmed.starts_with(crate_prefix) && trimmed.contains('=') {
             let dep: String = trimmed
                 .chars()
                 .take_while(|c| *c != '.' && *c != ' ' && *c != '=')
