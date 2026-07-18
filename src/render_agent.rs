@@ -1069,7 +1069,67 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
 
     // --- Builtin Rules ---
 
+    // The reference syntax, with this project's own roots filled in. Generated
+    // rather than written as prose so a project reads its actual roots and
+    // their actual behaviour, instead of a generic example it has to translate.
+    let mut roots_doc = String::new();
+    // The reserved roots first. They are constants rather than entries in the
+    // roots map, so a project never declares them and they would otherwise be
+    // missing from the one document meant to list what is available.
+    roots_doc.push_str(&format!(
+        "- `{}::` -> the registry itself; see the namespaces below\n",
+        crate::registry::REGISTRY_ROOT
+    ));
+    roots_doc.push_str(&format!(
+        "- `{}::<crate>` -> a crate in this workspace, rendered as a link to its generated document. The short name and the full directory name both resolve, since the prefix is stable\n",
+        crate::registry::CRATE_ROOT
+    ));
+    for ns in crate::registry::BUILTIN_NAMESPACES {
+        roots_doc.push_str(&format!(
+            "- `{ns}::<slug>` -> the builtin `{ns}` namespace, addressed directly rather than through `reg::`\n"
+        ));
+    }
+    let mut names: Vec<&String> = cfg.registry_roots.keys().collect();
+    names.sort();
+    for name in names {
+        let path = &cfg.registry_roots[name];
+        let mut notes = Vec::new();
+        if cfg.frozen_roots.contains(name) {
+            notes.push("frozen, so line citations into it are honest".to_string());
+        }
+        if let Some(label) = cfg.prose_roots.get(name) {
+            notes.push(format!("renders as prose (\"{label}\"), never a link, so its path stays internal"));
+        }
+        let suffix = if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) };
+        roots_doc.push_str(&format!("- `{name}::` -> `{path}`{suffix}\n"));
+    }
+
+    let mut ns_doc = String::new();
+    for ns in &cfg.registry_namespaces {
+        let value = ns
+            .value_field
+            .as_ref()
+            .map(|f| format!(", and a bare reference renders its `{f}`"))
+            .unwrap_or_default();
+        ns_doc.push_str(&format!(
+            "- `reg::{}::<slug>`: {}{}\n",
+            ns.key,
+            ns.description.clone().unwrap_or_else(|| ns.title()),
+            value
+        ));
+    }
+    if ns_doc.is_empty() {
+        ns_doc.push_str("- none declared\n");
+    }
+
     let rules = vec![
+        BuiltinRule {
+            name: "reference-syntax".to_string(),
+            apply_to: vec!["**/*.md".to_string(), "**/*.md.tmpl".to_string(), "**/*.toml".to_string()],
+            body: format!(
+                "## Reference syntax\n\n                 Write a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry\n                 field declared to hold one. It resolves when documents are generated, and it is checked:\n                 a reference that points nowhere is reported rather than rendered as something that looks\n                 fine.\n\n                 The braces are required. They make a reference something you state rather than something\n                 the renderer guesses from a pattern, so prose about code is never rewritten by accident.\n                 References inside code fences are left alone.\n\n                 ### Roots in this project\n\n{roots_doc}\n                 A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`) or a line\n                 number. **Prefer the heading.** A line number fails silently: an edit above it shifts the\n                 target, the citation still resolves, and it now points at different content. A heading\n                 fails loudly when renamed, which is a report rather than a lie. Line numbers are honest\n                 only in a root declared frozen.\n\n                 A path may have any depth and the extension may be omitted, so `mock::DESIGN::12` finds\n                 `DESIGN.md.tmpl` without you tracking which form exists where. Two matches is an error\n                 rather than a guess.\n\n                 ### Registry namespaces in this project\n\n{ns_doc}\n                 A namespace every project has is addressed directly: `vocab::xpbd`, not\n                 `reg::vocab::xpbd`. A namespace this project declared stays behind `reg::`, so a\n                 reference reads as what it is, a lookup into this project's own tables rather than\n                 into vocabulary everyone shares.\n\n                 `{{{{ reg::<ns> }}}}` renders that namespace's whole table inline. `{{{{ reg::<ns>::<slug>::<field> }}}}`\n                 renders one field, which is how a document states a value once and every mention of it\n                 stays current instead of drifting into a copy.\n\n                 Registry rows are identified by a snake_case slug, never a number. A number carries no\n                 meaning and so has to be managed: never reused, never renumbered, never reordered, since\n                 any of those silently repoints every reference to it.\n"
+            ),
+        },
         BuiltinRule {
             name: "generated-agent-rules".to_string(),
             apply_to: vec![
