@@ -168,14 +168,12 @@ fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -
     Some(format!("[{short}]({file})"))
 }
 
-/// Where the named thing comes from.
+/// Where the named thing is declared: the file to open to change it.
 fn resolve_pathof(
     expr: &str,
     by_key: &BTreeMap<&str, &RegistryNamespace>,
     reg: &Registry,
-    roots: &BTreeMap<String, String>,
     repo_root: &Path,
-    docs_dir: &Path,
     cfg: &crate::config::Config,
 ) -> Option<String> {
     let parts: Vec<&str> = expr.split("::").map(str::trim).collect();
@@ -185,45 +183,69 @@ fn resolve_pathof(
         for name in [parts[1].to_string(), prefixed] {
             let dir = cfg.crates_dir.join(&name);
             if dir.is_dir() {
-                let rel = dir.strip_prefix(repo_root).unwrap_or(&dir);
-                return Some(rel.to_string_lossy().replace('\\', "/"));
+                return Some(rel_to_repo(&dir, repo_root));
             }
         }
         return None;
     }
 
-    // A registry row: its provenance, each entry resolved like any citation, so
-    // an internal root drops here too rather than leaking through a second door.
     let mut segs = parts.clone();
     if segs.first() == Some(&REGISTRY_ROOT) {
         segs.remove(0);
     }
     if segs.len() == 2 && by_key.contains_key(segs[0]) {
         let row = reg.get(&format!("{}::{}", segs[0], segs[1]))?;
-        let raw = row.fields.get("provenance")?;
-        let rendered: Vec<String> = raw
-            .split(", ")
-            .filter_map(|c| {
-                resolve_expr(c.trim(), by_key, reg, roots, repo_root, docs_dir, cfg)
-            })
-            .filter(|r| !r.is_empty())
-            .collect();
-        return Some(rendered.join(", "));
+        return Some(rel_to_repo(&row.source, repo_root));
     }
 
-    // A cited file: the path it names, relative to the repository.
+    // A citation names a file, and that file is where the thing is.
     let r = FileRef::parse(expr)?;
     if cfg.internal_roots.contains(&r.root) {
         return Some(String::new());
     }
-    let rel = roots.get(&r.root)?;
+    let rel = cfg.registry_roots.get(&r.root)?;
     match resolve_cited_path(&repo_root.join(rel), &r.path) {
-        PathResolution::Found(target) => {
-            let out = target.strip_prefix(repo_root).unwrap_or(&target);
-            Some(out.to_string_lossy().replace('\\', "/"))
-        }
+        PathResolution::Found(target) => Some(rel_to_repo(&target, repo_root)),
         _ => None,
     }
+}
+
+/// What the named thing rests on: its provenance, resolved as citations.
+///
+/// Each entry goes through ordinary citation resolution, so an internal root
+/// drops here too rather than leaking through a second door.
+fn resolve_sourcesof(
+    expr: &str,
+    by_key: &BTreeMap<&str, &RegistryNamespace>,
+    reg: &Registry,
+    roots: &BTreeMap<String, String>,
+    repo_root: &Path,
+    docs_dir: &Path,
+    cfg: &crate::config::Config,
+) -> Option<String> {
+    let mut segs: Vec<&str> = expr.split("::").map(str::trim).collect();
+    if segs.first() == Some(&REGISTRY_ROOT) {
+        segs.remove(0);
+    }
+    if segs.len() != 2 || !by_key.contains_key(segs[0]) {
+        return None;
+    }
+    let row = reg.get(&format!("{}::{}", segs[0], segs[1]))?;
+    let raw = row.fields.get("provenance")?;
+    let rendered: Vec<String> = raw
+        .split(", ")
+        .filter_map(|c| resolve_expr(c.trim(), by_key, reg, roots, repo_root, docs_dir, cfg))
+        .filter(|r| !r.is_empty())
+        .collect();
+    Some(rendered.join(", "))
+}
+
+/// A path as the repository sees it, which is how a document should name one.
+fn rel_to_repo(path: &Path, repo_root: &Path) -> String {
+    path.strip_prefix(repo_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn resolve_expr(
@@ -235,14 +257,19 @@ fn resolve_expr(
     docs_dir: &Path,
     cfg: &crate::config::Config,
 ) -> Option<String> {
-    // `pathof(x)` answers where x comes from, as opposed to what x says.
+    // Two questions that are not the same one.
     //
-    // For a crate or a cited file that is a path. For a registry row it is the
-    // row's provenance, because the TOML file a row happens to sit in is a fact
-    // about how the registry is filed rather than about where the claim came
-    // from, and the provenance is the answer anyone asking the question wants.
+    // `pathof(x)` is where x is DECLARED: the file to open to change it. For a
+    // registry row that is the TOML it sits in, which is what a rule telling an
+    // agent where to edit actually needs.
+    //
+    // `sourcesof(x)` is what x RESTS ON: its provenance. Plural, because
+    // provenance is an array and a claim usually has several sources.
     if let Some(inner) = expr.strip_prefix("pathof(").and_then(|r| r.strip_suffix(')')) {
-        return resolve_pathof(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg);
+        return resolve_pathof(inner.trim(), by_key, reg, repo_root, cfg);
+    }
+    if let Some(inner) = expr.strip_prefix("sourcesof(").and_then(|r| r.strip_suffix(')')) {
+        return resolve_sourcesof(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg);
     }
 
     let parts: Vec<&str> = expr.split("::").map(str::trim).collect();
