@@ -125,6 +125,17 @@ fn run_inner(
                 }
                 return ExitCode::SUCCESS;
             }
+            "query" => {
+                // The argument after the subcommand, not a fixed position:
+                // `--dir` and friends may precede it.
+                let expr = args
+                    .iter()
+                    .skip_while(|a| a.as_str() != "query")
+                    .nth(1)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                return registry::cmd_query(&cfg, expr);
+            }
             "check" => {
                 return cmd_check(&cfg);
             }

@@ -52,6 +52,7 @@ mod model;
 mod refs;
 mod render;
 mod resolve;
+mod resolved;
 mod validate;
 
 pub use load::*;
@@ -59,6 +60,7 @@ pub use model::*;
 pub use refs::*;
 pub use render::*;
 pub use resolve::*;
+pub use resolved::*;
 pub use validate::*;
 
 
@@ -742,6 +744,96 @@ mod tests {
         assert_eq!(files_examined("something else entirely"), None);
     }
 
+    fn three_laws() -> (Registry, Vec<RegistryNamespace>) {
+        let mut reg = Registry::default();
+        let mut n = ns("law", None);
+        n.fields = vec![
+            RegistryField { name: "name".into(), r#type: "string".into(), required: false, description: None, visibility: FieldVisibility::Public },
+            RegistryField { name: "crates".into(), r#type: "string[]".into(), required: false, description: None, visibility: FieldVisibility::Public },
+        ];
+        for (slug, name, crates) in [
+            ("keys", "the key law", "store, bake"),
+            ("seam", "the seam", "seam"),
+            ("rank", "the rank law", "store"),
+        ] {
+            let row = RegistryRow {
+                slug: slug.into(),
+                namespace: "law".into(),
+                source: PathBuf::from("t.toml"),
+                fields: [("name".to_string(), name.to_string()), ("crates".to_string(), crates.to_string())]
+                    .into_iter()
+                    .collect(),
+            };
+            let q = row.qualified();
+            reg.by_namespace.entry("law".into()).or_default().push(q.clone());
+            reg.rows.insert(q, row);
+        }
+        (reg, vec![n])
+    }
+
+    fn q(expr: &str) -> Resolved {
+        let (reg, nss) = three_laws();
+        let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        let by_key: BTreeMap<&str, &RegistryNamespace> =
+            nss.iter().map(|n| (n.key.as_str(), n)).collect();
+        resolve_typed(expr, &by_key, &reg, &BTreeMap::new(), Path::new("/r"), Path::new("/r/docs"), &cfg)
+            .expect("did not resolve")
+    }
+
+    #[test]
+    fn where_filters_a_table_by_substring_or_exactly() {
+        // Both questions are common: which rows name exactly this crate, and
+        // which rows mention it at all.
+        let Resolved::Table { rows, .. } = q("law.where(crates~store)") else { panic!() };
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        let Resolved::Table { rows, .. } = q("law.where(crates=store)") else { panic!() };
+        assert_eq!(rows.len(), 1, "exact match matched a substring: {rows:?}");
+    }
+
+    #[test]
+    fn select_narrows_the_columns_and_count_ends_a_chain() {
+        let Resolved::Table { columns, .. } = q("law.select(id,name)") else { panic!() };
+        assert_eq!(columns, vec!["id", "name"]);
+        assert_eq!(q("law.where(crates~store).count()"), Resolved::Count(2));
+    }
+
+    #[test]
+    fn a_query_renders_one_way_for_a_document_and_another_for_a_terminal() {
+        // The identity that makes the subcommand worth having: one lookup, and
+        // the shape decides the presentation rather than the caller.
+        let table = q("law.select(id,name)");
+        assert!(table.to_markdown().contains('|'), "markdown lost its pipes");
+        assert!(!table.to_terminal().contains('|'), "terminal kept markdown pipes");
+        assert!(table.to_terminal().contains("3 rows in law"));
+    }
+
+    #[test]
+    fn a_terminal_shows_link_text_without_its_target() {
+        // Row data holds resolved references, so a field can carry a markdown
+        // link. At a prompt the target is unclickable and the brackets are
+        // noise around the only part worth reading.
+        let r = Resolved::Row {
+            namespace: "law".into(),
+            slug: "keys".into(),
+            target: "902_LAW.md#keys".into(),
+            fields: vec![("crates".into(), "[world](120_WORLD.md), [store](130_STORE.md)".into())],
+        };
+        let t = r.to_terminal();
+        assert!(t.contains("world, store"), "{t}");
+        assert!(!t.contains("120_WORLD.md"), "target survived into the terminal: {t}");
+    }
+
+    #[test]
+    fn an_unknown_verb_does_not_resolve() {
+        let (reg, nss) = three_laws();
+        let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        let by_key: BTreeMap<&str, &RegistryNamespace> =
+            nss.iter().map(|n| (n.key.as_str(), n)).collect();
+        assert!(resolve_typed("law.nope(x)", &by_key, &reg, &BTreeMap::new(), Path::new("/r"), Path::new("/r/docs"), &cfg).is_none());
+        // A column that does not exist is the same kind of nothing.
+        assert!(resolve_typed("law.where(nope~x)", &by_key, &reg, &BTreeMap::new(), Path::new("/r"), Path::new("/r/docs"), &cfg).is_none());
+    }
+
     #[test]
     fn slugs_are_snake_case() {
         assert!(is_valid_slug("xpbd") && is_valid_slug("waist_a") && is_valid_slug("lane_2"));
@@ -760,5 +852,86 @@ mod tests {
         // Project-specific roots stay the project's: not every project indexes
         // a corpus, so nothing named `seed` is baked in.
         assert!(!roots.contains_key("seed"));
+    }
+}
+
+/// Answer one reference expression from the command line.
+///
+/// The same syntax documents use, resolved by the same code, shown for a
+/// terminal instead of for a markdown parser. That identity is the point: an
+/// expression worked out at a prompt while thinking about a design pastes into
+/// a document unchanged, and a reference in a document can be run to see what
+/// it will say.
+///
+/// The alternative, a query path with a syntax of its own, would be two
+/// languages to learn and two resolvers to keep in agreement.
+pub fn cmd_query(cfg: &crate::config::Config, expr: &str) -> std::process::ExitCode {
+    use std::process::ExitCode;
+
+    if expr.trim().is_empty() {
+        eprintln!("usage: cargo mock query '<expression>'");
+        eprintln!();
+        eprintln!("  law                              a namespace, as a table");
+        eprintln!("  law::keys                        one row");
+        eprintln!("  law::keys::statement             one field");
+        eprintln!("  law.where(crates~store)          rows whose field contains a value");
+        eprintln!("  law.where(status=settled)        rows whose field is exactly a value");
+        eprintln!("  law.select(id,statement)         only these columns");
+        eprintln!("  law.where(...).count()           how many");
+        eprintln!("  pathof(law::keys)                where it is declared");
+        eprintln!("  sourcesof(law::keys)             what it rests on");
+        eprintln!();
+        eprintln!("Every one of these is valid in a document template too.");
+        return ExitCode::FAILURE;
+    }
+
+    let namespaces = &cfg.registry_namespaces;
+    let registry = load_registry(&cfg.mock_dir, namespaces);
+    let (registry, _) = resolve_data(
+        namespaces,
+        &registry,
+        &cfg.registry_roots,
+        &cfg.repo_root,
+        &cfg.docs_dir,
+        cfg,
+    );
+    let by_key: std::collections::BTreeMap<&str, &RegistryNamespace> =
+        namespaces.iter().map(|n| (n.key.as_str(), n)).collect();
+
+    match resolve_typed(
+        expr.trim(),
+        &by_key,
+        &registry,
+        &cfg.registry_roots,
+        &cfg.repo_root,
+        &cfg.docs_dir,
+        cfg,
+    ) {
+        Some(found) => {
+            print!("{}", found.to_terminal());
+            ExitCode::SUCCESS
+        }
+        None => {
+            // The same answer a document gets, said out loud. A reference that
+            // resolves to nothing is reported rather than rendered as something
+            // plausible, and that holds here too.
+            eprintln!("no result: `{}` does not resolve", expr.trim());
+
+            // Say what was available rather than only that something was not.
+            // A query naming a column that does not exist is the common
+            // mistake, and the columns are right there to list.
+            let base = expr.trim().split(['.', ':']).next().unwrap_or("").trim();
+            if let Some(ns) = namespaces.iter().find(|n| n.key == base) {
+                let (columns, rows) = table_cells(ns, &registry);
+                eprintln!("`{base}` has {} rows and these columns:", rows.len());
+                eprintln!("  {}", columns.join(", "));
+            } else {
+                let known: Vec<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
+                if !known.is_empty() {
+                    eprintln!("namespaces: {}", known.join(", "));
+                }
+            }
+            ExitCode::FAILURE
+        }
     }
 }

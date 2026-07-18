@@ -1,4 +1,5 @@
 use super::*;
+use super::resolved::{row_fields, table_cells, Resolved};
 
 /// Resolve every `{{ ... }}` reference in a rendered document.
 ///
@@ -168,76 +169,182 @@ fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -
     Some(format!("[{short}]({file})"))
 }
 
-/// Split `<expr>.method().method()` into the expression and its methods.
+/// Split `<expr>.verb(arg).verb()` into the expression and its verbs.
 ///
 /// Returns `None` when there is no chain, which is the common case, so the
-/// ordinary path is untouched. The scan respects parentheses, since the
-/// expression itself may be a call: `pathof(crates::store).dir()` splits after
-/// the call rather than at the first dot inside it.
+/// ordinary path is untouched.
+///
+/// The scan respects parentheses, so a call in the base expression is not cut
+/// at the first dot inside it: `pathof(crates::store).dir()` splits after the
+/// call. And a chain only starts where a dot is followed by an identifier and
+/// an opening parenthesis, so a field holding `seam.toml` is left alone. That
+/// second rule is what keeps this from eating ordinary values.
 fn split_methods(expr: &str) -> Option<(String, Vec<String>)> {
-    let bytes = expr.as_bytes();
+    let chars: Vec<char> = expr.chars().collect();
     let mut depth = 0usize;
     let mut split_at = None;
-    for (i, b) in bytes.iter().enumerate() {
-        match b {
-            b'(' => depth += 1,
-            b')' => depth = depth.saturating_sub(1),
-            b'.' if depth == 0 => {
-                // A dot at depth zero starts the chain, but only if what
-                // follows looks like a call. Anything else is prose or a
-                // filename and is left alone.
-                if expr[i + 1..].contains("()") {
-                    split_at = Some(i);
-                    break;
-                }
+    for (i, c) in chars.iter().enumerate() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            '.' if depth == 0 && looks_like_call(&chars[i + 1..]) => {
+                split_at = Some(i);
+                break;
             }
             _ => {}
         }
     }
     let at = split_at?;
-    let base = expr[..at].trim().to_string();
+    let base = expr[..chars[..at].iter().map(|c| c.len_utf8()).sum::<usize>()]
+        .trim()
+        .to_string();
     if base.is_empty() {
         return None;
     }
-    let methods: Vec<String> = expr[at + 1..]
-        .split("()")
-        .map(|m| m.trim_matches('.').trim().to_string())
-        .filter(|m| !m.is_empty())
-        .collect();
-    if methods.is_empty() {
+    let rest: String = chars[at + 1..].iter().collect();
+    let verbs = split_calls(&rest)?;
+    if verbs.is_empty() {
         return None;
     }
-    Some((base, methods))
+    Some((base, verbs))
 }
 
-/// Narrow a resolved value.
+/// Whether what follows a dot is `identifier(`.
+fn looks_like_call(rest: &[char]) -> bool {
+    let mut i = 0;
+    while i < rest.len() && (rest[i].is_ascii_alphanumeric() || rest[i] == '_') {
+        i += 1;
+    }
+    i > 0 && rest.get(i) == Some(&'(')
+}
+
+/// Split `verb(arg).verb()` into its calls, respecting nesting in arguments.
+fn split_calls(s: &str) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut cur = String::new();
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                cur.push(c);
+                if depth == 0 {
+                    out.push(cur.trim().to_string());
+                    cur.clear();
+                }
+            }
+            '.' if depth == 0 => {}
+            _ => cur.push(c),
+        }
+    }
+    // Trailing text outside any call means the chain was malformed, and a
+    // malformed chain is reported rather than half-applied.
+    if !cur.trim().is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+
+/// Narrow what an expression resolved to.
 ///
-/// Four accessors read a path and three read a list, because those are the two
-/// shapes an expression resolves to: `pathof` yields a path, `sourcesof` yields
-/// a list, and a field yields whatever the row holds.
+/// The methods are the query language, and every one of them is valid in a
+/// template too: a filtered table renders as a markdown table exactly as the
+/// unfiltered one does. That is the point of resolving to a value rather than
+/// to a string. A query worked out at a prompt pastes into a document.
 ///
 /// An unknown method is an error rather than a pass-through: a silently ignored
-/// method reads as working, and the reference syntax's whole contract is that a
-/// reference pointing nowhere is reported.
-fn apply_methods(value: &str, methods: &[String]) -> Option<String> {
-    let mut v = value.to_string();
+/// method reads as working, and the contract is that a reference which does not
+/// resolve is reported.
+fn apply_methods(value: Resolved, methods: &[String]) -> Option<Resolved> {
+    let mut v = value;
     for m in methods {
-        v = match m.as_str() {
-            "dir" => v.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default(),
-            "filename" => v.rsplit_once('/').map(|(_, f)| f.to_string()).unwrap_or(v),
-            "stem" => {
-                let f = v.rsplit_once('/').map(|(_, f)| f.to_string()).unwrap_or(v);
-                f.rsplit_once('.').map(|(st, _)| st.to_string()).unwrap_or(f)
+        let (name, arg) = match m.split_once('(') {
+            Some((n, a)) => (n.trim(), a.trim_end_matches(')').trim()),
+            None => (m.trim(), ""),
+        };
+        v = match (name, &v) {
+            // Table verbs.
+            ("where", Resolved::Table { namespace, columns, rows }) => {
+                let (field, want, exact) = parse_predicate(arg)?;
+                let col = columns.iter().position(|c| *c == field)?;
+                let kept: Vec<Vec<String>> = rows
+                    .iter()
+                    .filter(|r| {
+                        let cell = r.get(col).map(String::as_str).unwrap_or("");
+                        if exact { cell == want } else { cell.contains(&want) }
+                    })
+                    .cloned()
+                    .collect();
+                Resolved::Table { namespace: namespace.clone(), columns: columns.clone(), rows: kept }
             }
-            "ext" => v.rsplit_once('.').map(|(_, e)| e.to_string()).unwrap_or_default(),
-            "first" => v.split(", ").next().unwrap_or("").to_string(),
-            "last" => v.split(", ").last().unwrap_or("").to_string(),
-            "count" => v.split(", ").filter(|s| !s.trim().is_empty()).count().to_string(),
+            ("select", Resolved::Table { namespace, columns, rows }) => {
+                let wanted: Vec<&str> = arg.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+                let idx: Vec<usize> = wanted
+                    .iter()
+                    .map(|w| columns.iter().position(|c| c == w))
+                    .collect::<Option<Vec<_>>>()?;
+                Resolved::Table {
+                    namespace: namespace.clone(),
+                    columns: wanted.iter().map(|w| w.to_string()).collect(),
+                    rows: rows.iter().map(|r| idx.iter().map(|i| r[*i].clone()).collect()).collect(),
+                }
+            }
+            ("count", Resolved::Table { rows, .. }) => Resolved::Count(rows.len()),
+            // A single row of a table stays a table, so it keeps its column
+            // headings and composes with the same verbs the whole table takes.
+            ("first", Resolved::Table { namespace, columns, rows }) => Resolved::Table {
+                namespace: namespace.clone(),
+                columns: columns.clone(),
+                rows: rows.first().cloned().into_iter().collect(),
+            },
+            ("last", Resolved::Table { namespace, columns, rows }) => Resolved::Table {
+                namespace: namespace.clone(),
+                columns: columns.clone(),
+                rows: rows.last().cloned().into_iter().collect(),
+            },
+
+            // Path verbs, on whatever the value reads as.
+            ("dir", _) => Resolved::Path(v.as_scalar().rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default()),
+            ("filename", _) => {
+                let s = v.as_scalar();
+                Resolved::Path(s.rsplit_once('/').map(|(_, f)| f.to_string()).unwrap_or(s))
+            }
+            ("stem", _) => {
+                let s = v.as_scalar();
+                let f = s.rsplit_once('/').map(|(_, f)| f.to_string()).unwrap_or(s);
+                Resolved::Path(f.rsplit_once('.').map(|(st, _)| st.to_string()).unwrap_or(f))
+            }
+            ("ext", _) => Resolved::Path(v.as_scalar().rsplit_once('.').map(|(_, e)| e.to_string()).unwrap_or_default()),
+
+            // List verbs.
+            ("first", _) => Resolved::Field(v.as_scalar().split(", ").next().unwrap_or("").to_string()),
+            ("last", _) => Resolved::Field(v.as_scalar().split(", ").last().unwrap_or("").to_string()),
+            ("count", _) => Resolved::Count(
+                v.as_scalar().split(", ").filter(|s| !s.trim().is_empty()).count(),
+            ),
             _ => return None,
         };
     }
     Some(v)
 }
+
+/// `field=value` for an exact match, `field~value` for a substring.
+///
+/// Two operators rather than one because both questions are common: which rows
+/// name exactly this crate, and which rows mention it at all.
+fn parse_predicate(arg: &str) -> Option<(String, String, bool)> {
+    if let Some((f, v)) = arg.split_once('~') {
+        return Some((f.trim().to_string(), v.trim().to_string(), false));
+    }
+    let (f, v) = arg.split_once('=')?;
+    Some((f.trim().to_string(), v.trim().to_string(), true))
+}
+
 
 /// Where the named thing is declared: the file to open to change it.
 fn resolve_pathof(
@@ -328,12 +435,39 @@ fn resolve_expr(
     docs_dir: &Path,
     cfg: &crate::config::Config,
 ) -> Option<String> {
+    resolve_typed(expr, by_key, reg, roots, repo_root, docs_dir, cfg).map(|r| r.to_markdown())
+}
+
+/// A namespace's whole table, as a value.
+fn table_of(ns: &RegistryNamespace, reg: &Registry) -> Resolved {
+    let (columns, rows) = table_cells(ns, reg);
+    Resolved::Table {
+        namespace: ns.key.clone(),
+        columns,
+        rows,
+    }
+}
+
+/// What an expression resolves to, before anything decides how to show it.
+///
+/// The markdown wrapper below is what documents use. `cargo mock query` uses
+/// this directly, so a table can be aligned for a terminal instead of piped for
+/// a parser, and both are answering the identical lookup.
+pub fn resolve_typed(
+    expr: &str,
+    by_key: &BTreeMap<&str, &RegistryNamespace>,
+    reg: &Registry,
+    roots: &BTreeMap<String, String>,
+    repo_root: &Path,
+    docs_dir: &Path,
+    cfg: &crate::config::Config,
+) -> Option<Resolved> {
     // A postfix chain narrows whatever the expression resolved to:
     // `pathof(crates::store).dir()`. Split off first, so the base expression is
     // resolved by the ordinary path and the methods only ever see a string.
     if let Some((base, methods)) = split_methods(expr) {
-        let value = resolve_expr(&base, by_key, reg, roots, repo_root, docs_dir, cfg)?;
-        return apply_methods(&value, &methods);
+        let value = resolve_typed(&base, by_key, reg, roots, repo_root, docs_dir, cfg)?;
+        return apply_methods(value, &methods);
     }
 
     // Two questions that are not the same one.
@@ -345,10 +479,13 @@ fn resolve_expr(
     // `sourcesof(x)` is what x RESTS ON: its provenance. Plural, because
     // provenance is an array and a claim usually has several sources.
     if let Some(inner) = expr.strip_prefix("pathof(").and_then(|r| r.strip_suffix(')')) {
-        return resolve_pathof(inner.trim(), by_key, reg, repo_root, cfg);
+        return resolve_pathof(inner.trim(), by_key, reg, repo_root, cfg).map(Resolved::Path);
     }
     if let Some(inner) = expr.strip_prefix("sourcesof(").and_then(|r| r.strip_suffix(')')) {
-        return resolve_sourcesof(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg);
+        return resolve_sourcesof(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg)
+            .map(|joined| Resolved::List(
+                joined.split(", ").filter(|s| !s.is_empty()).map(str::to_string).collect(),
+            ));
     }
 
     let parts: Vec<&str> = expr.split("::").map(str::trim).collect();
@@ -358,7 +495,13 @@ fn resolve_expr(
         // exist is reported rather than linked into nothing, which is what
         // turns a crate mention in prose from a string into something the
         // build verifies.
-        return resolve_crate_ref(parts[1], cfg, docs_dir);
+        return resolve_crate_ref(parts[1], cfg, docs_dir).map(|link| Resolved::Citation {
+            text: parts[1].to_string(),
+            link: link
+                .rsplit_once('(')
+                .and_then(|(_, l)| l.strip_suffix(')'))
+                .map(str::to_string),
+        });
     }
 
     // A namespace addressed directly: `law::keys` rather than `reg::law::keys`.
@@ -375,18 +518,18 @@ fn resolve_expr(
     // have already been substituted by the time this runs, so a single segment
     // that names a namespace can only mean the namespace.
     if parts.len() == 1 {
-        return by_key.get(parts[0]).map(|ns| render_table(ns, reg, cfg));
+        return by_key.get(parts[0]).map(|ns| table_of(ns, reg));
     }
 
     if by_key.contains_key(parts[0]) && parts.len() >= 2 {
         let rewritten = format!("{}::{}", REGISTRY_ROOT, parts.join("::"));
-        return resolve_expr(&rewritten, by_key, reg, roots, repo_root, docs_dir, cfg);
+        return resolve_typed(&rewritten, by_key, reg, roots, repo_root, docs_dir, cfg);
     }
 
     if parts[0] == REGISTRY_ROOT {
         return match parts.len() {
             // A whole namespace: its table, inline.
-            2 => by_key.get(parts[1]).map(|ns| render_table(ns, reg, cfg)),
+            2 => by_key.get(parts[1]).map(|ns| table_of(ns, reg)),
             // A row, or a field on it.
             3 | 4 if parts[1] == "reference" => {
                 let qualified = format!("{}::{}", parts[1], parts[2]);
@@ -397,7 +540,7 @@ fn resolve_expr(
                 // `::citation` is a computed field, not one the row declares:
                 // the full form, linked. Everything else is a real field.
                 if parts.len() == 4 && parts[3] != "citation" {
-                    return row.fields.get(parts[3]).cloned();
+                    return row.fields.get(parts[3]).cloned().map(Resolved::Field);
                 }
 
                 // A short linked form by default, the full one on request.
@@ -413,7 +556,10 @@ fn resolve_expr(
                 } else {
                     short_citation(row)
                 };
-                Some(format!("[{text}]({target})"))
+                Some(Resolved::Citation {
+                    text,
+                    link: Some(target),
+                })
             }
             3 | 4 => {
                 let qualified = format!("{}::{}", parts[1], parts[2]);
@@ -421,7 +567,7 @@ fn resolve_expr(
                 let ns = by_key.get(row.namespace.as_str())?;
                 if parts.len() == 4 {
                     if parts[3] == "id" {
-                        return Some(row.slug.clone());
+                        return Some(Resolved::Field(row.slug.clone()));
                     }
                     // An internal field does not resolve. Returning None leaves
                     // the reference visibly unresolved and reports it, which is
@@ -436,12 +582,18 @@ fn resolve_expr(
                     {
                         return None;
                     }
-                    return row.fields.get(parts[3]).cloned();
+                    return row.fields.get(parts[3]).cloned().map(Resolved::Field);
                 }
-                Some(match ns.value_field.as_ref().and_then(|f| row.fields.get(f)) {
-                    Some(v) => v.clone(),
-                    None if !ns.render.has_page() => row.slug.clone(),
-                    None => format!("[{}]({})", row.slug, doc_target(ns, row, cfg)),
+                // A namespace declaring a value field renders that instead of a
+                // link, so a constant states its number wherever it is named.
+                if let Some(v) = ns.value_field.as_ref().and_then(|f| row.fields.get(f)) {
+                    return Some(Resolved::Field(v.clone()));
+                }
+                Some(Resolved::Row {
+                    namespace: row.namespace.clone(),
+                    slug: row.slug.clone(),
+                    target: doc_target(ns, row, cfg),
+                    fields: row_fields(ns, row),
                 })
             }
             _ => None,
@@ -459,7 +611,7 @@ fn resolve_expr(
     // `resolve_all` to tidy: a citation that was the only thing in its
     // parentheses would otherwise leave `()` behind.
     if cfg.internal_roots.contains(&r.root) {
-        return Some(String::new());
+        return Some(Resolved::Hidden);
     }
 
     // A root that does not render as a link becomes prose. The citation still
@@ -467,9 +619,12 @@ fn resolve_expr(
     // provenance is the point; what does not appear is the path, which is the
     // only part that leaks.
     if let Some(label) = cfg.prose_roots.get(&r.root) {
-        return Some(match &r.anchor {
-            Anchor::Heading(h) => format!("{label}, {} ({h})", r.path),
-            Anchor::Line(n) => format!("{label}, {} line {n}", r.path),
+        return Some(Resolved::Citation {
+            text: match &r.anchor {
+                Anchor::Heading(h) => format!("{label}, {} ({h})", r.path),
+                Anchor::Line(n) => format!("{label}, {} line {n}", r.path),
+            },
+            link: None,
         });
     }
 
@@ -478,8 +633,14 @@ fn resolve_expr(
         PathResolution::Found(target) => {
             let link = relative_from(docs_dir, &target);
             Some(match &r.anchor {
-                Anchor::Heading(h) => format!("[{}/{}#{h}]({}#{h})", r.root, r.path, link),
-                Anchor::Line(n) => format!("[{}/{}:{n}]({}#L{n})", r.root, r.path, link),
+                Anchor::Heading(h) => Resolved::Citation {
+                    text: format!("{}/{}#{h}", r.root, r.path),
+                    link: Some(format!("{link}#{h}")),
+                },
+                Anchor::Line(n) => Resolved::Citation {
+                    text: format!("{}/{}:{n}", r.root, r.path),
+                    link: Some(format!("{link}#L{n}")),
+                },
             })
         }
         _ => None,
