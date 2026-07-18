@@ -1127,11 +1127,15 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             .filter(|f| f.visibility == crate::registry::FieldVisibility::Internal)
             .map(|f| f.name.as_str())
             .collect();
+        // Terse, and repeated per namespace only as a list. The sentence
+        // explaining what internal means is stated once in the prose below;
+        // repeating it on every line would bury the field names it exists to
+        // surface.
         let internal_note = if internal.is_empty() {
             String::new()
         } else {
             format!(
-                ". Internal, so recorded and checked but never rendered and not referenceable: {}",
+                " (internal: {})",
                 internal
                     .iter()
                     .map(|n| format!("`{n}`"))
@@ -1142,7 +1146,11 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
         ns_doc.push_str(&format!(
             "- `reg::{}::<slug>`: {}{}{}\n",
             ns.key,
-            ns.description.clone().unwrap_or_else(|| ns.title()),
+            ns.description
+                .clone()
+                .unwrap_or_else(|| ns.title())
+                .trim_end_matches('.')
+                .to_string(),
             value,
             internal_note
         ));
