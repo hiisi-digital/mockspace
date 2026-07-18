@@ -168,6 +168,77 @@ fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -
     Some(format!("[{short}]({file})"))
 }
 
+/// Split `<expr>.method().method()` into the expression and its methods.
+///
+/// Returns `None` when there is no chain, which is the common case, so the
+/// ordinary path is untouched. The scan respects parentheses, since the
+/// expression itself may be a call: `pathof(crates::store).dir()` splits after
+/// the call rather than at the first dot inside it.
+fn split_methods(expr: &str) -> Option<(String, Vec<String>)> {
+    let bytes = expr.as_bytes();
+    let mut depth = 0usize;
+    let mut split_at = None;
+    for (i, b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            b'.' if depth == 0 => {
+                // A dot at depth zero starts the chain, but only if what
+                // follows looks like a call. Anything else is prose or a
+                // filename and is left alone.
+                if expr[i + 1..].contains("()") {
+                    split_at = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let at = split_at?;
+    let base = expr[..at].trim().to_string();
+    if base.is_empty() {
+        return None;
+    }
+    let methods: Vec<String> = expr[at + 1..]
+        .split("()")
+        .map(|m| m.trim_matches('.').trim().to_string())
+        .filter(|m| !m.is_empty())
+        .collect();
+    if methods.is_empty() {
+        return None;
+    }
+    Some((base, methods))
+}
+
+/// Narrow a resolved value.
+///
+/// Four accessors read a path and three read a list, because those are the two
+/// shapes an expression resolves to: `pathof` yields a path, `sourcesof` yields
+/// a list, and a field yields whatever the row holds.
+///
+/// An unknown method is an error rather than a pass-through: a silently ignored
+/// method reads as working, and the reference syntax's whole contract is that a
+/// reference pointing nowhere is reported.
+fn apply_methods(value: &str, methods: &[String]) -> Option<String> {
+    let mut v = value.to_string();
+    for m in methods {
+        v = match m.as_str() {
+            "dir" => v.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default(),
+            "filename" => v.rsplit_once('/').map(|(_, f)| f.to_string()).unwrap_or(v),
+            "stem" => {
+                let f = v.rsplit_once('/').map(|(_, f)| f.to_string()).unwrap_or(v);
+                f.rsplit_once('.').map(|(st, _)| st.to_string()).unwrap_or(f)
+            }
+            "ext" => v.rsplit_once('.').map(|(_, e)| e.to_string()).unwrap_or_default(),
+            "first" => v.split(", ").next().unwrap_or("").to_string(),
+            "last" => v.split(", ").last().unwrap_or("").to_string(),
+            "count" => v.split(", ").filter(|s| !s.trim().is_empty()).count().to_string(),
+            _ => return None,
+        };
+    }
+    Some(v)
+}
+
 /// Where the named thing is declared: the file to open to change it.
 fn resolve_pathof(
     expr: &str,
@@ -257,6 +328,14 @@ fn resolve_expr(
     docs_dir: &Path,
     cfg: &crate::config::Config,
 ) -> Option<String> {
+    // A postfix chain narrows whatever the expression resolved to:
+    // `pathof(crates::store).dir()`. Split off first, so the base expression is
+    // resolved by the ordinary path and the methods only ever see a string.
+    if let Some((base, methods)) = split_methods(expr) {
+        let value = resolve_expr(&base, by_key, reg, roots, repo_root, docs_dir, cfg)?;
+        return apply_methods(&value, &methods);
+    }
+
     // Two questions that are not the same one.
     //
     // `pathof(x)` is where x is DECLARED: the file to open to change it. For a
