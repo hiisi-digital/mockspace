@@ -316,6 +316,22 @@ fn run_inner(
     eprintln!("--- parsing crates ---");
     let crates = parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
 
+    // Several crates and not one edge between them is far more often a parse
+    // failure than a real architecture. It reads as neither, because nothing
+    // errors: layering, document ordering and the structure graph all keep
+    // working and agree on the same wrong answer, that every crate sits at one
+    // level. Saying so costs a line and turns a silent wrong answer into a
+    // question.
+    if crates.len() > 1 && crates.values().all(|c| c.deps.is_empty()) {
+        eprintln!(
+            "  note: {} crates, no dependency edges between any of them. If they do depend on \
+             each other, their manifests are not being read: check that the dependency lines sit \
+             under a [dependencies] table and start with the crate prefix `{}`.",
+            crates.len(),
+            cfg.crate_prefix
+        );
+    }
+
     // --- Lints ---
     eprintln!("--- running lints ---");
 
