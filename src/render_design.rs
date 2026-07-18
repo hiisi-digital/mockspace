@@ -214,20 +214,6 @@ fn crate_doc_prefix(depth: usize) -> String {
     format!("{:03}", 100 + depth * 10)
 }
 
-/// The sort prefix for a document not generated from a crate.
-///
-/// `00` for the documents a reader should start with, `99` for everything
-/// else. The distinction is the point: a docs directory does not otherwise say
-/// which of thirty files is the one to read first, and a reader meeting it
-/// alphabetically starts wherever the alphabet happens to put them.
-fn standalone_doc_prefix(stem: &str, primary: &[String]) -> &'static str {
-    if primary.iter().any(|p| p.eq_ignore_ascii_case(stem)) {
-        "00"
-    } else {
-        "99"
-    }
-}
-
 /// Apply the standalone prefix to a document name, or leave it alone when the
 /// project has not opted into ordering.
 ///
