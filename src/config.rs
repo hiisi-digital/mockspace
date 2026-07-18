@@ -33,7 +33,7 @@ impl InstallMode {
 }
 
 /// Mockspace workspace configuration.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Config {
     // --- Core fields ---
     pub mock_dir: PathBuf,
@@ -42,16 +42,20 @@ pub struct Config {
     pub docs_dir: PathBuf,
     pub project_name: String,
     pub crate_prefix: String,
-    /// Each crate's short name mapped to its generated document filename.
+    /// Prepended to every document link a reference renders.
     ///
-    /// Computed once before anything renders, rather than found by globbing the
-    /// docs directory at each reference. The directory is cleaned at the start
-    /// of a run and refilled during it, so a glob answers "has this been
-    /// written yet" rather than "what is this crate's document", and a
-    /// reference from a crate rendered early to one rendered later resolved to
-    /// nothing. Computing the name makes resolution independent of the order
-    /// documents happen to be written in.
-    pub crate_doc_names: std::collections::BTreeMap<String, String>,
+    /// Empty for a document written into the docs directory, where a bare
+    /// filename is the correct relative target. Set for output written
+    /// elsewhere, such as the agent rules under `.claude/`, whose links would
+    /// otherwise point at siblings that are not there.
+    pub doc_link_prefix: String,
+    /// What every generated document will be called, keyed by what a
+    /// reference calls it.
+    ///
+    /// Built from the planned set before anything renders, so a reference from
+    /// a document written early to one written later is ordinary rather than a
+    /// special case, and so nothing computes a filename a second time.
+    pub doc_index: crate::document::DocIndex,
     pub proc_macro_crates: Vec<String>,
     /// Whether source-scanning lints should run against proc-macro crate source.
     /// Default false: proc-macro crates run in the compiler host context and
@@ -521,7 +525,8 @@ impl Config {
         Config {
             mock_dir, crates_dir, repo_root, docs_dir,
             project_name, crate_prefix,
-            crate_doc_names: std::collections::BTreeMap::new(),
+            doc_link_prefix: String::new(),
+            doc_index: crate::document::DocIndex::default(),
             proc_macro_crates: raw.proc_macro_crates,
             lint_proc_macro_source: raw.lint_proc_macro_source.unwrap_or(false),
             module_crates: raw.module_crates,

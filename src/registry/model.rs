@@ -278,6 +278,12 @@ pub fn builtin_reference() -> RegistryNamespace {
 /// form is safe everywhere. A project's own namespace stays behind `reg::`, so
 /// a reference reads as what it is: a lookup into this project's tables rather
 /// than into vocabulary every project shares.
+/// Names slot zero already means, which a namespace therefore cannot take.
+///
+/// `mock` and `live` are the builtin file roots; a project's own roots are
+/// checked separately, since those it can rename.
+pub const RESERVED_ROOTS: &[&str] = &["reg", "crates", "mock", "live"];
+
 pub const BUILTIN_NAMESPACES: &[&str] = &["vocab", "reference"];
 
 /// The project's namespaces plus any builtin it did not override.

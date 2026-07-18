@@ -310,69 +310,29 @@ fn render_rows(
     out
 }
 
-/// Generate one page per namespace that asked for one.
+/// One registry page's body, without the generation header.
 ///
-/// Anchors are the lowercased identifier, matching what `resolve_all`
-/// links to. The two must agree, so they are stated once each and tested
-/// together rather than being left to coincide.
-pub fn render_pages(
-    mock_dir: &Path,
-    docs_dir: &Path,
-    namespaces: &[RegistryNamespace],
+/// Separated from writing so the page goes through the same render as every
+/// other document: the header, the placeholders, the references, and the write
+/// all happen in one place rather than once per generation path.
+pub fn registry_page_body(
+    ns: &RegistryNamespace,
     reg: &Registry,
-    header: &str,
     cfg: &crate::config::Config,
-) -> Vec<PathBuf> {
-    let mut written = Vec::new();
-    for (idx, ns) in namespaces.iter().filter(|n| n.render.has_page()).enumerate() {
-        let Some(ids) = reg.by_namespace.get(&ns.key) else {
-            continue;
-        };
-        // A namespace named `catalogue` would otherwise generate `CATALOGUE.md`
-        // over a hand-authored document's rendered output, silently. The
-        // template is what claims the name, so its presence is the collision.
-        let page_file = crate::render_design::registry_doc_name(&ns.page_name(), cfg, idx);
-        let claimed = mock_dir.join(format!("{}.tmpl", ns.page_name()));
-        if claimed.is_file() {
-            eprintln!(
-                "  ERROR: namespace `{}` would generate {} over the document rendered from {}. Rename the namespace or the template.",
-                ns.key,
-                ns.page_name(),
-                claimed.display()
-            );
-            continue;
-        }
-        let mut body = format!("{header}\n# {}\n\n", ns.title());
-        if let Some(d) = &ns.description {
-            body.push_str(d);
-            body.push_str("\n\n");
-        }
-        body.push_str(&format!(
-            "{} rows. Identifiers are permanent: assigned once, never reused, never renumbered.\n\n",
-            ids.len()
-        ));
-        body.push_str(&render_table(ns, reg, cfg));
-
-        // A registry page is a document like any other, so references inside
-        // its rows resolve here too. Without this a row could reference another
-        // row and the reference would render literally on the one page most
-        // likely to carry it.
-        let body = resolve_all(
-            &body,
-            namespaces,
-            reg,
-            &cfg.registry_roots,
-            &cfg.repo_root,
-            &cfg.docs_dir,
-            cfg,
-        );
-        let path = docs_dir.join(page_file);
-        if write_if_changed(&path, &body) {
-            written.push(path);
-        }
+) -> String {
+    let count = reg.by_namespace.get(&ns.key).map(Vec::len).unwrap_or(0);
+    let mut body = format!("# {}\n\n", ns.title());
+    if let Some(d) = &ns.description {
+        body.push_str(d);
+        body.push_str("\n\n");
     }
-    written
+    body.push_str(&format!(
+        "{count} rows. Identifiers are permanent: assigned once, never reused, never renumbered.\n\n"
+    ));
+    body.push_str(&render_table(ns, reg, cfg));
+    body
 }
+
 
 /// Expand `{{registry:<key>}}` placeholders into that namespace's table.
 ///

@@ -36,8 +36,7 @@ pub fn placeholder_exprs(line: &str) -> Vec<(String, String)> {
 /// looked like an identifier, which meant guessing whether a token was a
 /// reference at all. Requiring `reg::` makes a reference something the author
 /// states.
-pub fn find_registry_refs(text: &str) -> Vec<(String, Option<String>)> {
-    let prefix = format!("{REGISTRY_ROOT}::");
+pub fn find_registry_refs(text: &str, namespaces: &BTreeSet<String>) -> Vec<(String, Option<String>)> {
     let mut found = Vec::new();
     let mut in_fence = false;
     for line in text.lines() {
@@ -48,40 +47,29 @@ pub fn find_registry_refs(text: &str) -> Vec<(String, Option<String>)> {
         if in_fence {
             continue;
         }
-        // Only inside a placeholder. A bare `reg::ns::slug` in prose is not a
+        // Only inside a placeholder. A bare `law::keys` in prose is not a
         // reference the renderer touches, so reporting it as dangling would
         // flag documentation that merely describes the syntax. The document
         // defining this syntax was the first thing to trip it.
         for (_, expr) in placeholder_exprs(line) {
-            let line = expr.as_str();
-        let mut rest = line;
-        while let Some(pos) = rest.find(&prefix) {
-            let before_ok = pos == 0
-                || !rest[..pos]
-                    .chars()
-                    .next_back()
-                    .map(|c| c.is_alphanumeric() || c == '_' || c == ':')
-                    .unwrap_or(false);
-            let after = &rest[pos + prefix.len()..];
-            if before_ok {
-                let seg = |s: &str| -> String {
-                    s.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_').collect()
-                };
-                let ns = seg(after);
-                if !ns.is_empty() {
-                    let t1 = &after[ns.len()..];
-                    if let Some(t1) = t1.strip_prefix("::") {
-                        let slug = seg(t1);
-                        if !slug.is_empty() {
-                            let t2 = &t1[slug.len()..];
-                            let field = t2.strip_prefix("::").map(seg).filter(|f| !f.is_empty());
-                            found.push((format!("{ns}::{slug}"), field));
-                        }
-                    }
-                }
+            let mut parts: Vec<&str> = expr.split("::").map(str::trim).collect();
+            // The prefix is optional and carries nothing, so drop it and treat
+            // both spellings as the one reference they are.
+            if parts.first() == Some(&REGISTRY_ROOT) {
+                parts.remove(0);
             }
-            rest = &rest[pos + prefix.len()..];
-        }
+            // Slot zero decides what this is. A declared namespace makes it a
+            // row reference; anything else is a citation root or a crate, which
+            // are checked elsewhere and by different rules.
+            let Some(ns) = parts.first() else { continue };
+            if !namespaces.contains(*ns) {
+                continue;
+            }
+            match parts.len() {
+                3 => found.push((format!("{}::{}", parts[0], parts[1]), Some(parts[2].to_string()))),
+                2 => found.push((format!("{}::{}", parts[0], parts[1]), None)),
+                _ => {}
+            }
         }
     }
     found
@@ -90,17 +78,21 @@ pub fn find_registry_refs(text: &str) -> Vec<(String, Option<String>)> {
 /// References naming a row that does not exist, or a field that row does not
 /// carry. Both are silent without a check: the first renders as nothing
 /// useful, the second renders as empty.
-pub fn dangling_references(text: &str, reg: &Registry) -> BTreeSet<String> {
+pub fn dangling_references(
+    text: &str,
+    reg: &Registry,
+    namespaces: &BTreeSet<String>,
+) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    for (qualified, field) in find_registry_refs(text) {
+    for (qualified, field) in find_registry_refs(text, namespaces) {
         match reg.get(&qualified) {
             None => {
-                out.insert(format!("{REGISTRY_ROOT}::{qualified}"));
+                out.insert(qualified.clone());
             }
             Some(row) => {
                 if let Some(f) = &field {
                     if f != "id" && !row.fields.contains_key(f) {
-                        out.insert(format!("{REGISTRY_ROOT}::{qualified}::{f}"));
+                        out.insert(format!("{qualified}::{f}"));
                     }
                 }
             }

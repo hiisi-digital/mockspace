@@ -72,6 +72,20 @@ fn resolve_once(
 ///
 /// Accepts the short name or the full directory name, since the prefix is
 /// stable and repeating it at every reference buys nothing.
+/// The link target for a row: its namespace's document, plus the row's anchor.
+///
+/// Asks the index what the document is called rather than reconstructing it.
+/// Reconstructing it is what put `LAW.md` in a link while the file was written
+/// as `902_LAW.md`.
+fn doc_target(ns: &RegistryNamespace, row: &RegistryRow, cfg: &crate::config::Config) -> String {
+    let file = cfg
+        .doc_index
+        .registry_doc(&ns.key)
+        .map(str::to_string)
+        .unwrap_or_else(|| ns.page_name());
+    format!("{}{file}#{}", cfg.doc_link_prefix, row.anchor())
+}
+
 fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -> Option<String> {
     let prefixed = format!("{}-{name}", cfg.crate_prefix);
     let dir = if cfg.crates_dir.join(name).is_dir() {
@@ -90,8 +104,8 @@ fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -
     // been written yet" rather than "what is this crate's document", and a
     // reference from a crate rendered early to one rendered later resolved to
     // nothing at all.
-    if let Some(file) = cfg.crate_doc_names.get(&short) {
-        return Some(format!("[{short}]({file})"));
+    if let Some(file) = cfg.doc_index.crate_doc(&short) {
+        return Some(format!("[{short}]({}{file})", cfg.doc_link_prefix));
     }
     // Fall back to the glob for a caller that has not computed the map, which
     // is every test and any path that resolves before generation.
@@ -123,10 +137,17 @@ fn resolve_expr(
         return resolve_crate_ref(parts[1], cfg, docs_dir);
     }
 
-    // A builtin namespace addressed directly: `vocab::xpbd` rather than
-    // `reg::vocab::xpbd`. Rewritten into the registry form so there is one
-    // resolution path and the two cannot diverge.
-    if BUILTIN_NAMESPACES.contains(&parts[0]) && parts.len() >= 2 {
+    // A namespace addressed directly: `law::keys` rather than `reg::law::keys`.
+    //
+    // The `reg::` prefix carried no information. Slot zero is either a declared
+    // root or a declared namespace, and the two cannot collide (a collision is
+    // reported as a configuration error), so the prefix only made every
+    // reference four characters longer and read as ceremony. It still resolves,
+    // because thousands of references were written with it.
+    //
+    // Rewritten into the prefixed form rather than handled separately, so there
+    // is one resolution path and the two spellings cannot diverge.
+    if by_key.contains_key(parts[0]) && parts.len() >= 2 {
         let rewritten = format!("{}::{}", REGISTRY_ROOT, parts.join("::"));
         return resolve_expr(&rewritten, by_key, reg, roots, repo_root, docs_dir, cfg);
     }
@@ -140,7 +161,7 @@ fn resolve_expr(
                 let qualified = format!("{}::{}", parts[1], parts[2]);
                 let row = reg.get(&qualified)?;
                 let ns = by_key.get("reference")?;
-                let target = format!("{}#{}", ns.page_name(), row.anchor());
+                let target = doc_target(ns, row, cfg);
 
                 // `::citation` is a computed field, not one the row declares:
                 // the full form, linked. Everything else is a real field.
@@ -189,7 +210,7 @@ fn resolve_expr(
                 Some(match ns.value_field.as_ref().and_then(|f| row.fields.get(f)) {
                     Some(v) => v.clone(),
                     None if !ns.render.has_page() => row.slug.clone(),
-                    None => format!("[{}]({}#{})", row.slug, ns.page_name(), row.anchor()),
+                    None => format!("[{}]({})", row.slug, doc_target(ns, row, cfg)),
                 })
             }
             _ => None,
@@ -300,13 +321,14 @@ fn resolve_row(
         });
         return;
     }
+    let ns_keys: BTreeSet<String> = by_key.keys().map(|k| k.to_string()).collect();
     let Some(row) = reg.get(id) else { return };
 
     // Resolve everything this row depends on first, so by the time its own
     // fields are rewritten the values they cite are final.
     path.push(id.to_string());
     for value in row.fields.values() {
-        for (dep, _) in find_registry_refs(value) {
+        for (dep, _) in find_registry_refs(value, &ns_keys) {
             resolve_row(&dep, reg, by_key, roots, repo_root, docs_dir, cfg, done, path, findings);
         }
     }
@@ -321,7 +343,7 @@ fn resolve_row(
         duplicates: BTreeMap::new(),
     };
     for value in row.fields.values() {
-        for (dep, _) in find_registry_refs(value) {
+        for (dep, _) in find_registry_refs(value, &ns_keys) {
             if settled.rows.contains_key(&dep) {
                 continue;
             }
