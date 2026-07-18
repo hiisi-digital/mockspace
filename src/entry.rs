@@ -394,6 +394,14 @@ fn run_inner(
     }
 
     // --- Clean docs/ top-level files ---
+    // A repo generating for the first time has no docs/ yet, and every write
+    // below targets it. Create it up front rather than panicking on the first
+    // one.
+    render_design::ensure_docs_dir(&cfg);
+
+    // The placeholder vocabulary is identical for every template in a run and
+    // some of it scans the mock tree, so compute it once here.
+    let placeholders = render_design::Placeholders::compute(&crates, &cfg);
     eprintln!("--- cleaning docs/ ---");
     if let Ok(entries) = fs::read_dir(&cfg.docs_dir) {
         for entry in entries.flatten() {
@@ -462,7 +470,7 @@ fn run_inner(
 
     // --- DESIGN.md ---
     eprintln!("--- generating DESIGN.md ---");
-    match render_design::generate_design_md(&crates, &cfg) {
+    match render_design::generate_design_md(&placeholders, &cfg) {
         Some(design_md) => {
             let design_path = cfg.docs_dir.join("DESIGN.md");
             render_design::write_generated(&design_path, &design_md);
@@ -484,24 +492,12 @@ fn run_inner(
 
     // --- Per-crate overview and deep dive files ---
     eprintln!("--- generating per-crate docs ---");
-    render_design::generate_per_crate_docs(&cfg);
+    render_design::generate_per_crate_docs(&placeholders, &cfg);
 
     // --- Passthrough templates ---
     eprintln!("--- copying passthrough templates ---");
-    if let Ok(entries) = fs::read_dir(&cfg.mock_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".md.tmpl") && name != "DESIGN.md.tmpl" {
-                let out_name = name.trim_end_matches(".tmpl");
-                let header = render_design::generation_header_md(&cfg);
-                let body = fs::read_to_string(&path).expect("failed to read template");
-                let content = format!("{header}\n{body}");
-                let out_path = cfg.docs_dir.join(out_name);
-                render_design::write_generated(&out_path, &content);
-                eprintln!("  {}", out_path.display());
-            }
-        }
+    for out_path in render_design::render_passthrough_templates(&placeholders, &cfg) {
+        eprintln!("  {}", out_path.display());
     }
 
     // --- Agent rules and skills ---
