@@ -466,6 +466,17 @@ fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, a
     if let Some(old) = old_pin {
         if old != new_pin {
             actions.push(format!("re-pinned proxy mockspace: {old} -> {new_pin}"));
+            // Discard the built binary, so the next invocation cannot run code
+            // from the revision just re-pinned away from.
+            //
+            // A stale lock is visible; a binary built from a revision the
+            // manifest no longer names is not, and it means a landed fix is
+            // silently not running. That happened: a dependency-parser fix was
+            // on the branch, the lock advanced to it, and the cached binary
+            // kept producing the old answer, which looked like the fix not
+            // working. Removing the artifact makes the rebuild unconditional
+            // rather than left to fingerprinting to notice.
+            discard_proxy_binary(&proxy_dir, actions);
         }
     }
 
@@ -473,6 +484,24 @@ fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, a
     let _ = fs::write(&proxy_cargo, &cargo_content);
     let _ = fs::write(&proxy_main, &main_content);
     actions.push("generated target/mockspace-proxy/".into());
+}
+
+/// Remove the built proxy binary so the next run must rebuild it.
+///
+/// Only the executable, never the whole target directory: the rest is
+/// dependency compilation that is still valid and expensive to redo. Both
+/// profiles are removed, since which one a project builds is its own choice.
+fn discard_proxy_binary(proxy_dir: &Path, actions: &mut Vec<String>) {
+    let mut removed = false;
+    for profile in ["debug", "release"] {
+        let bin = proxy_dir.join("target").join(profile).join("mockspace-proxy");
+        if bin.exists() && fs::remove_file(&bin).is_ok() {
+            removed = true;
+        }
+    }
+    if removed {
+        actions.push("discarded the built proxy so the new revision is what runs".into());
+    }
 }
 
 /// The `mockspace = { path = "..." }` value from a proxy Cargo.toml, if present.
@@ -1816,5 +1845,44 @@ mod remote_head_tests {
         assert!(!remote_check_due(&marker, REMOTE_CHECK_TTL));
         // Due under a zero TTL (any elapsed time exceeds it).
         assert!(remote_check_due(&marker, std::time::Duration::ZERO));
+    }
+}
+
+#[cfg(test)]
+mod proxy_freshness_tests {
+    use super::*;
+
+    #[test]
+    fn re_pinning_discards_the_built_binary() {
+        // The stale binary is the invisible half of a stale pin: the manifest
+        // names one revision and the running code comes from another, so a
+        // landed fix appears not to work.
+        let tmp = tempfile::tempdir().unwrap();
+        let proxy = tmp.path().join("mockspace-proxy");
+        let debug = proxy.join("target").join("debug");
+        fs::create_dir_all(&debug).unwrap();
+        let bin = debug.join("mockspace-proxy");
+        fs::write(&bin, b"stale").unwrap();
+        // A sibling artifact stands in for the dependency compilation that is
+        // still valid: removing it would make every re-pin a full rebuild.
+        let dep = debug.join("libmockspace.rlib");
+        fs::write(&dep, b"deps").unwrap();
+
+        let mut actions = Vec::new();
+        discard_proxy_binary(&proxy, &mut actions);
+
+        assert!(!bin.exists(), "the built proxy survived a re-pin");
+        assert!(dep.exists(), "unrelated build output was removed");
+        assert_eq!(actions.len(), 1, "{actions:?}");
+    }
+
+    #[test]
+    fn discarding_is_quiet_when_there_is_nothing_built() {
+        // A first run has no binary. Reporting a discard that did not happen
+        // would make the common case look like a recovery.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut actions = Vec::new();
+        discard_proxy_binary(&tmp.path().join("mockspace-proxy"), &mut actions);
+        assert!(actions.is_empty(), "{actions:?}");
     }
 }
