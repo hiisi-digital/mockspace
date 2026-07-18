@@ -43,6 +43,16 @@ pub enum DocId {
         subject: String,
         depth: usize,
     },
+    /// A subject that crosses crates. Sorts after the crates it spans and
+    /// before the registry tables.
+    ///
+    /// The tier that was missing. A workspace has documents about itself and
+    /// documents about one crate, and some subjects are neither: a domain that
+    /// several crates each implement part of, a concern that cuts across a
+    /// layer. Those were going to the root, where they read as workspace-level
+    /// claims, or into whichever crate held the largest share, where most of
+    /// the document described crates it was not filed under.
+    Topic { stem: String },
     /// A registry namespace's table. Sorts by declaration order, which is the
     /// order the project chose to present its own vocabulary in.
     Registry { page: String, index: usize },
@@ -100,6 +110,13 @@ impl DocId {
                     // renumbering the ones above it. Crates at one depth share
                     // a prefix, because nothing orders them against each other.
                     format!("{:03}_{stem}.md", 100 + depth * 10)
+                } else {
+                    format!("{stem}.md")
+                }
+            }
+            DocId::Topic { stem } => {
+                if cfg.ordered_docs {
+                    format!("500_{stem}.md")
                 } else {
                     format!("{stem}.md")
                 }
@@ -401,6 +418,24 @@ mod tests {
     }
 
     #[test]
+    fn a_topic_sorts_between_the_crates_and_the_registry() {
+        // A subject crossing crates belongs after the crates that implement it
+        // and before the tables it draws on.
+        let cfg = cfg_ordered();
+        let topic = DocId::Topic { stem: "water".into() }.file_name(&cfg);
+        let crate_doc = DocId::Crate {
+            upper: "STORE".into(),
+            subject: "OVERVIEW".into(),
+            depth: 9,
+        }
+        .file_name(&cfg);
+        let registry = DocId::Registry { page: "LAW.md".into(), index: 0 }.file_name(&cfg);
+        assert_eq!(topic, "500_water.md");
+        assert!(crate_doc < topic, "{crate_doc} !< {topic}");
+        assert!(topic < registry, "{topic} !< {registry}");
+    }
+
+    #[test]
     fn the_bands_read_in_order() {
         let cfg = cfg_ordered();
         let primary = DocId::root("DESIGN.md", &cfg).file_name(&cfg);
@@ -492,6 +527,23 @@ pub fn plan(cfg: &Config, crates: &crate::model::CrateMap) -> Vec<Planned> {
             let name = entry.file_name().to_string_lossy().to_string();
             let out_name = name.trim_end_matches(".tmpl").to_string();
             out.push(Planned::template(DocId::root(&out_name, cfg), entry.path()));
+        }
+    }
+
+    // Cross-crate subject documents.
+    let topics_dir = cfg.mock_dir.join("topics");
+    if topics_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&topics_dir) {
+            let mut topics: Vec<_> = entries
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".md.tmpl"))
+                .collect();
+            topics.sort_by_key(|e| e.file_name());
+            for entry in topics {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let stem = name.trim_end_matches(".md.tmpl").to_string();
+                out.push(Planned::template(DocId::Topic { stem }, entry.path()));
+            }
         }
     }
 
