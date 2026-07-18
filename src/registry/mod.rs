@@ -291,6 +291,30 @@ mod tests {
     }
 
     #[test]
+    fn a_citation_into_an_internal_root_leaves_no_trace_in_prose() {
+        // The reference stays in the source, where it is checked and is the
+        // provenance record. It does not reach a reader who cannot open what it
+        // names, and it does not leave the punctuation that framed it behind.
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.internal_roots = ["seed".to_string()].into_iter().collect();
+        cfg.registry_roots = [("seed".to_string(), "corpus".to_string())]
+            .into_iter()
+            .collect();
+        let reg = Registry::default();
+        let r = |s: &str| {
+            resolve_all(s, &[], &reg, &cfg.registry_roots.clone(), Path::new("/r"), Path::new("/r/docs"), &cfg)
+        };
+        assert_eq!(
+            r("The split becomes structural ({{ seed::DESIGN::189 }})."),
+            "The split becomes structural."
+        );
+        assert_eq!(
+            r("Bounded ({{ seed::DESIGN::618 }} {{ seed::IDENTITY::61 }})."),
+            "Bounded."
+        );
+    }
+
+    #[test]
     fn an_internal_root_is_filtered_per_item_not_per_cell() {
         // A row sourced from both an internal corpus and a public document
         // keeps the citation a reader can follow. Dropping the whole cell

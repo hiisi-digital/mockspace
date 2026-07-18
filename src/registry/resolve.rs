@@ -53,17 +53,62 @@ fn resolve_once(
             continue;
         }
         let mut rewritten = line.to_string();
+        let mut dropped_any = false;
         for (token, expr) in placeholder_exprs(line) {
             if let Some(rep) =
                 resolve_expr(&expr, &by_key, reg, roots, repo_root, docs_dir, cfg)
             {
+                if rep.is_empty() {
+                    dropped_any = true;
+                }
                 rewritten = rewritten.replace(&token, &rep);
             }
+        }
+        if dropped_any {
+            rewritten = tidy_after_drop(&rewritten);
         }
         out.push_str(&rewritten);
     }
     if text.ends_with('\n') {
         out.push('\n');
+    }
+    out
+}
+
+/// Clean up what dropping a reference left behind.
+///
+/// A citation is usually the whole of a parenthetical, or the tail of one. When
+/// it renders as nothing, the punctuation that framed it is still there, and a
+/// document reading "the split becomes structural ()." is worse than one that
+/// never carried the citation. Only lines that actually dropped something are
+/// touched, so ordinary prose containing empty parentheses is left alone.
+fn tidy_after_drop(line: &str) -> String {
+    let mut s = line.to_string();
+    // Collapse first, so a parenthetical left holding only the whitespace
+    // between several dropped citations reads as empty.
+    while s.contains("  ") {
+        s = s.replace("  ", " ");
+    }
+    s = regex_lite_replace(&s, "( )", "()");
+    // A parenthetical emptied entirely, including one holding only separators
+    // left by several dropped citations.
+    s = regex_lite_replace(&s, " ()", "");
+    s = regex_lite_replace(&s, "()", "");
+    // Separators orphaned by a drop inside a parenthetical that kept something.
+    s = regex_lite_replace(&s, "(, ", "(");
+    s = regex_lite_replace(&s, ", )", ")");
+    s = regex_lite_replace(&s, " ,", ",");
+    while s.contains("  ") {
+        s = s.replace("  ", " ");
+    }
+    s.trim_end().to_string()
+}
+
+/// Replace every occurrence, without a regex dependency.
+fn regex_lite_replace(s: &str, from: &str, to: &str) -> String {
+    let mut out = s.to_string();
+    while out.contains(from) {
+        out = out.replace(from, to);
     }
     out
 }
@@ -226,6 +271,17 @@ fn resolve_expr(
 
     // Otherwise a file citation.
     let r = FileRef::parse(expr)?;
+
+    // A citation into an internal root renders as nothing. The reference stays
+    // in the source, where it is checked and greppable and is the provenance
+    // record; it does not reach a reader who cannot open what it names.
+    //
+    // Empty rather than absent, so the parenthetical it may sit in is left for
+    // `resolve_all` to tidy: a citation that was the only thing in its
+    // parentheses would otherwise leave `()` behind.
+    if cfg.internal_roots.contains(&r.root) {
+        return Some(String::new());
+    }
 
     // A root that does not render as a link becomes prose. The citation still
     // appears, because a generated document is also read internally and the
