@@ -409,3 +409,53 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
 
     results
 }
+
+#[cfg(test)]
+mod deps_tests {
+    use super::*;
+
+    /// The failure this guards was silent: the old form required the line to
+    /// contain `workspace`, so a manifest using path deps yielded no edges at
+    /// all. An empty dependency graph is indistinguishable from a flat
+    /// architecture, so document ordering kept working and put every crate at
+    /// one level, confidently.
+    #[test]
+    fn a_path_dep_on_a_sibling_is_a_dependency_edge() {
+        let toml = r#"[package]
+name = "ikiuni-renderer-store"
+version.workspace = true
+
+[dependencies]
+ikiuni-renderer-contract = { path = "../ikiuni-renderer-contract" }
+ikiuni-renderer-world = { path = "../ikiuni-renderer-world" }
+"#;
+        let deps = extract_deps(toml, "ikiuni-renderer-store", "ikiuni-renderer");
+        assert_eq!(
+            deps,
+            vec!["ikiuni-renderer-contract", "ikiuni-renderer-world"]
+        );
+    }
+
+    #[test]
+    fn a_dep_outside_a_dependency_table_is_not_an_edge() {
+        // `[package]` carries a `name` that starts with the prefix. Reading it
+        // as a dependency would make every crate depend on itself.
+        let toml = r#"[package]
+name = "ikiuni-renderer-store"
+
+[dependencies]
+ikiuni-renderer-contract = { path = "../ikiuni-renderer-contract" }
+"#;
+        let deps = extract_deps(toml, "ikiuni-renderer-store", "ikiuni-renderer");
+        assert_eq!(deps, vec!["ikiuni-renderer-contract"]);
+    }
+
+    #[test]
+    fn the_workspace_form_still_reads() {
+        let toml = r#"[dependencies]
+ikiuni-renderer-contract = { workspace = true }
+"#;
+        let deps = extract_deps(toml, "ikiuni-renderer-store", "ikiuni-renderer");
+        assert_eq!(deps, vec!["ikiuni-renderer-contract"]);
+    }
+}

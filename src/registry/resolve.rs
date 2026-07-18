@@ -126,7 +126,7 @@ fn resolve_expr(
     if parts[0] == REGISTRY_ROOT {
         return match parts.len() {
             // A whole namespace: its table, inline.
-            2 => by_key.get(parts[1]).map(|ns| render_table(ns, reg)),
+            2 => by_key.get(parts[1]).map(|ns| render_table(ns, reg, cfg)),
             // A row, or a field on it.
             3 | 4 if parts[1] == "reference" => {
                 let qualified = format!("{}::{}", parts[1], parts[2]);
@@ -162,6 +162,19 @@ fn resolve_expr(
                 if parts.len() == 4 {
                     if parts[3] == "id" {
                         return Some(row.slug.clone());
+                    }
+                    // An internal field does not resolve. Returning None leaves
+                    // the reference visibly unresolved and reports it, which is
+                    // the same treatment a field that does not exist gets. A
+                    // field declared as never reaching the documentation, with
+                    // a documented way to put it there anyway, would not be
+                    // one.
+                    if ns
+                        .fields
+                        .iter()
+                        .any(|f| f.name == parts[3] && f.visibility == FieldVisibility::Internal)
+                    {
+                        return None;
                     }
                     return row.fields.get(parts[3]).cloned();
                 }

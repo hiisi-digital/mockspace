@@ -1100,6 +1100,14 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
         if let Some(label) = cfg.prose_roots.get(name) {
             notes.push(format!("renders as prose (\"{label}\"), never a link, so its path stays internal"));
         }
+        if cfg.internal_roots.contains(name) {
+            notes.push(
+                "internal, so citations into it are dropped from generated documents. Still worth \
+                 recording: the citation stays in the source, it is checked, and a row citing this \
+                 root alongside a public one keeps the public citation"
+                    .to_string(),
+            );
+        }
         let suffix = if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) };
         roots_doc.push_str(&format!("- `{name}::` -> `{path}`{suffix}\n"));
     }
@@ -1111,11 +1119,32 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             .as_ref()
             .map(|f| format!(", and a bare reference renders its `{f}`"))
             .unwrap_or_default();
+        // Named rather than left to be discovered, because the surprising
+        // direction is authoring a field and finding it absent from the table.
+        let internal: Vec<&str> = ns
+            .fields
+            .iter()
+            .filter(|f| f.visibility == crate::registry::FieldVisibility::Internal)
+            .map(|f| f.name.as_str())
+            .collect();
+        let internal_note = if internal.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ". Internal, so recorded and checked but never rendered and not referenceable: {}",
+                internal
+                    .iter()
+                    .map(|n| format!("`{n}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
         ns_doc.push_str(&format!(
-            "- `reg::{}::<slug>`: {}{}\n",
+            "- `reg::{}::<slug>`: {}{}{}\n",
             ns.key,
             ns.description.clone().unwrap_or_else(|| ns.title()),
-            value
+            value,
+            internal_note
         ));
     }
     if ns_doc.is_empty() {

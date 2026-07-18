@@ -90,6 +90,8 @@ pub struct Config {
     /// Roots whose citations render as prose rather than links, with the name
     /// each goes by.
     pub prose_roots: BTreeMap<String, String>,
+    /// Roots whose citations are dropped from generated documents entirely.
+    pub internal_roots: std::collections::BTreeSet<String>,
     pub install_git_hooks: InstallMode,
     pub install_cargo_config: InstallMode,
     pub install_agent_files: InstallMode,
@@ -278,6 +280,21 @@ struct RawRefRoot {
     /// `seed` is an internal handle that means nothing to a reader; "Prior
     /// research" is what it actually is.
     label: Option<String>,
+
+    /// Whether citations into this root are dropped from generated documents.
+    ///
+    /// Stronger than `links = false`, which keeps the citation and renders it
+    /// as prose. Some roots are worth citing in the source and worth nothing
+    /// in the result: a reader who cannot open the corpus gains nothing from
+    /// being told a row came from it, and a provenance column that says
+    /// "Prior research" on every row says nothing on any of them.
+    ///
+    /// Filtering is per item rather than per cell, so a row citing both this
+    /// root and a public one keeps the public citation. A cell left empty by
+    /// filtering renders empty, and a column left empty across every row drops
+    /// entirely, which is the existing rule for a column no row carries.
+    #[serde(default)]
+    internal: bool,
 }
 
 fn default_root_links() -> bool {
@@ -518,6 +535,17 @@ impl Config {
                         .map(|(k, v)| {
                             (k.clone(), v.label.clone().unwrap_or_else(|| k.clone()))
                         })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            internal_roots: raw
+                .ref_cfg
+                .as_ref()
+                .map(|r| {
+                    r.roots
+                        .iter()
+                        .filter(|(_, v)| v.internal)
+                        .map(|(k, _)| k.clone())
                         .collect()
                 })
                 .unwrap_or_default(),
