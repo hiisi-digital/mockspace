@@ -926,19 +926,22 @@ fn generate_lint_derived_content(
     // lint-forbidden-<oldslug>.* files persist on disk because the render
     // pipeline is additive. Walk the four target directories, detect
     // files whose slug is no longer in active_slugs, delete them.
-    sweep_orphan_lint_files(claude_rules_dir, ".md", &active_slugs);
-    sweep_orphan_lint_files(copilot_instructions_dir, ".instructions.md", &active_slugs);
-    sweep_orphan_lint_files(claude_hooks_dir, ".sh", &active_slugs);
-    sweep_orphan_lint_files(copilot_hooks_dir, ".sh", &active_slugs);
+    const P: &str = "lint-forbidden-";
+    sweep_orphan_generated_files(claude_rules_dir, P, ".md", &active_slugs);
+    sweep_orphan_generated_files(copilot_instructions_dir, P, ".instructions.md", &active_slugs);
+    sweep_orphan_generated_files(claude_hooks_dir, P, ".sh", &active_slugs);
+    sweep_orphan_generated_files(copilot_hooks_dir, P, ".sh", &active_slugs);
 
     count
 }
 
-/// Delete any file in `dir` whose name matches `lint-forbidden-<slug><suffix>`
-/// where the slug is not in `active`. Conservative: only touches files with
-/// the exact `lint-forbidden-` prefix and the given suffix.
-fn sweep_orphan_lint_files(
+/// Delete any file in `dir` whose name matches `<prefix><slug><suffix>` where
+/// the slug is not in `active`. Conservative: only touches files carrying the
+/// exact generated prefix and the given suffix, so a consumer-authored rule
+/// that happens to sit in the same directory is never a candidate.
+fn sweep_orphan_generated_files(
     dir: &Path,
+    prefix: &str,
     suffix: &str,
     active: &std::collections::BTreeSet<String>,
 ) {
@@ -951,12 +954,103 @@ fn sweep_orphan_lint_files(
             Ok(n) => n,
             Err(_) => continue,
         };
-        let Some(rest) = name.strip_prefix("lint-forbidden-") else { continue };
+        let Some(rest) = name.strip_prefix(prefix) else { continue };
         let Some(slug) = rest.strip_suffix(suffix) else { continue };
         if active.contains(slug) { continue; }
         let _ = fs::remove_file(entry.path());
         eprintln!("  removed orphan: {}", entry.path().display());
     }
+}
+
+/// Generate one path-scoped agent rule per crate, carrying that crate's
+/// `README.md.tmpl`.
+///
+/// The per-crate doc set splits by depth on purpose: `README.md.tmpl` is the
+/// short summary of what the crate is, `DESIGN.md.tmpl` is the long form, and
+/// `DEEPDIVE_*.md.tmpl` are the internals. The README is therefore already
+/// exactly the right size and shape for an always-loaded rule, so anyone
+/// working inside `crates/<name>/` picks up that crate's own summary
+/// implicitly, without a second hand-written copy that would drift from it.
+///
+/// Deriving it means the README stays the single source: edit the README and
+/// the rule follows on the next render. A crate with no README simply gets no
+/// rule.
+fn generate_crate_readme_rules(
+    cfg: &Config,
+    claude_rules_dir: &Path,
+    copilot_instructions_dir: &Path,
+    vars: &[(String, String)],
+    header_md: &str,
+    preamble: &str,
+    postamble: &str,
+) -> usize {
+    use std::collections::BTreeSet as Set;
+
+    let crates_dir = cfg.mock_dir.join("crates");
+
+    let mock_rel = cfg
+        .mock_dir
+        .strip_prefix(&cfg.repo_root)
+        .unwrap_or(&cfg.mock_dir)
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    // An unreadable or absent crates/ yields no crates, and therefore an empty
+    // active set. It must NOT return early: the sweep below still has to run,
+    // or removing the last crate would strand every rule it had written.
+    let mut entries: Vec<_> = fs::read_dir(&crates_dir)
+        .map(|e| e.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).collect())
+        .unwrap_or_default();
+    entries.sort_by_key(|e| e.file_name());
+
+    let mut count = 0;
+    let mut active: Set<String> = Set::new();
+
+    for entry in entries {
+        let crate_name = entry.file_name().to_string_lossy().to_string();
+        let readme = entry.path().join("README.md.tmpl");
+        let Ok(raw) = fs::read_to_string(&readme) else { continue };
+        if raw.trim().is_empty() {
+            continue;
+        }
+
+        // The README is a consumer template, so it carries the same `{{...}}`
+        // placeholders every other consumer template does.
+        let body = substitute_vars(&raw, vars);
+        let apply_to = vec![format!("{mock_rel}/crates/{crate_name}/**")];
+
+        active.insert(crate_name.clone());
+        let rule_name = format!("crate-readme-{crate_name}");
+
+        let claude_content = format!(
+            "{}\n{}",
+            format_claude_paths(&apply_to),
+            format_with_bookends(header_md, preamble, &body, postamble)
+        );
+        let claude_path = claude_rules_dir.join(format!("{rule_name}.md"));
+        render_design::write_generated(&claude_path, &claude_content);
+        eprintln!("  {} (crate readme)", claude_path.display());
+        count += 1;
+
+        let copilot_content = format!(
+            "{}\n{}",
+            format_copilot_apply_to(&apply_to),
+            format_with_bookends(header_md, preamble, &body, postamble)
+        );
+        let copilot_path =
+            copilot_instructions_dir.join(format!("{rule_name}.instructions.md"));
+        render_design::write_generated(&copilot_path, &copilot_content);
+        eprintln!("  {} (crate readme)", copilot_path.display());
+        count += 1;
+    }
+
+    // A renamed or deleted crate leaves its rule behind otherwise: the render
+    // pipeline is additive.
+    const P: &str = "crate-readme-";
+    sweep_orphan_generated_files(claude_rules_dir, P, ".md", &active);
+    sweep_orphan_generated_files(copilot_instructions_dir, P, ".instructions.md", &active);
+
+    count
 }
 
 /// Generate all builtin agent templates (rules, skills, preamble, postamble).
@@ -1654,6 +1748,17 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         &copilot_instructions_dir,
         &claude_hooks_dir,
         &copilot_hooks_dir,
+        &header_md,
+        &preamble,
+        &postamble,
+    );
+
+    // --- Per-crate README-derived rules (scoped to that crate's directory) ---
+    count += generate_crate_readme_rules(
+        cfg,
+        &claude_rules_dir,
+        &copilot_instructions_dir,
+        &vars,
         &header_md,
         &preamble,
         &postamble,
