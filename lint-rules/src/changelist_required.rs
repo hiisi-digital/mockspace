@@ -46,14 +46,28 @@ impl CrossCrateLint for ChangelistRequired {
 
         modified
             .into_iter()
-            .filter(|(file, _)| {
+            .filter(|(file, source)| {
                 // Skip nuked crates — intentionally wiped source is not a
                 // phase violation. Check the crate's lib.rs for the nuke marker.
                 let crate_name = extract_crate_name(file).unwrap_or_default();
                 let librs = workspace_root.join("crates").join(&crate_name).join("src/lib.rs");
-                !std::fs::read_to_string(&librs)
+                let nuked = std::fs::read_to_string(&librs)
                     .map(|s| s.contains("Nuked by"))
-                    .unwrap_or(false)
+                    .unwrap_or(false);
+                if nuked {
+                    return false;
+                }
+                // Skip scaffolding. A file declaring nothing is not the source
+                // this gate protects: it wires a crate into the workspace so
+                // the dependency graph, the layer numbering, and the structure
+                // documents have real edges to read.
+                //
+                // Read the STAGED blob, not the working tree. What gets
+                // committed is the staged content, so judging the worktree
+                // would let someone stage real source, overwrite the worktree
+                // copy with comments, and commit past the gate.
+                let content = staged_or_worktree(workspace_root, file, source);
+                !content.map(|s| declares_nothing(&s)).unwrap_or(false)
             })
             .map(|(file, source)| {
                 let crate_name = extract_crate_name(&file)
@@ -158,6 +172,64 @@ fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// Extract crate name from a path like `crates/<crate-name>/src/lib.rs`.
+/// The content that would actually be committed.
+///
+/// For a staged entry that is the blob in the index, which is what a commit
+/// writes. Reading the working tree instead would judge content the commit
+/// does not contain, and the difference is exactly where a gate gets walked
+/// past.
+fn staged_or_worktree(workspace_root: &Path, file: &str, source: &str) -> Option<String> {
+    if source == "staged" {
+        let out = Command::new("git")
+            .args(["show", &format!(":{file}")])
+            .current_dir(workspace_root)
+            .output()
+            .ok()?;
+        if out.status.success() {
+            return String::from_utf8(out.stdout).ok();
+        }
+    }
+    std::fs::read_to_string(workspace_root.join(file)).ok()
+}
+
+/// Whether a Rust file declares nothing at all.
+///
+/// Conservative by construction: everything except comments, inner attributes,
+/// and blank lines counts as a declaration, so any real item trips it. This is
+/// a scaffold test, not a parser, and it errs toward calling a file source.
+fn declares_nothing(src: &str) -> bool {
+    let mut in_block = false;
+    for raw in src.lines() {
+        let l = raw.trim();
+        if in_block {
+            // Only a line that ends the block and carries nothing after it is
+            // still comment. `*/ pub fn real() {}` is code.
+            if let Some(rest) = l.split_once("*/") {
+                if !rest.1.trim().is_empty() {
+                    return false;
+                }
+                in_block = false;
+            }
+            continue;
+        }
+        if l.is_empty() || l.starts_with("//") || l.starts_with("#![") {
+            continue;
+        }
+        if l.starts_with("/*") {
+            match l.split_once("*/") {
+                Some((_, rest)) if rest.trim().is_empty() => continue,
+                Some(_) => return false,
+                None => {
+                    in_block = true;
+                    continue;
+                }
+            }
+        }
+        return false;
+    }
+    true
+}
+
 fn extract_crate_name(path: &str) -> Option<String> {
     let after_crates = path.strip_prefix("crates/")?;
     let end = after_crates.find('/')?;

@@ -8,6 +8,7 @@ use crate::bench;
 use crate::bootstrap;
 use crate::config::Config;
 use crate::design_round;
+use crate::registry;
 use crate::pdf;
 use crate::dylib_check;
 use crate::lint;
@@ -419,13 +420,15 @@ fn run_inner(
     let dot_body = render::generate_dot(&crates, &cfg);
     let dot = format!("{dot_header}{dot_body}");
 
-    let dot_path = cfg.docs_dir.join("STRUCTURE.GRAPH.dot");
+    let dot_path = cfg.docs_dir.join(render_design::ordered_doc_name("STRUCTURE.GRAPH.dot", &cfg));
     render_design::write_generated(&dot_path, &dot);
     eprintln!("  {}", dot_path.display());
 
     // Generate PNG and SVG from DOT
     for (ext, extra) in [("png", vec!["-Gdpi=150"]), ("svg", vec![])] {
-        let out = cfg.docs_dir.join(format!("STRUCTURE.GRAPH.{ext}"));
+        let out = cfg
+            .docs_dir
+            .join(render_design::ordered_doc_name(&format!("STRUCTURE.GRAPH.{ext}"), &cfg));
         // `dot -o` renders straight to the final path, so snapshot the previous
         // version before it is clobbered; otherwise the regeneration has nothing
         // to be compared against and every run rewrites the timestamp.
@@ -454,17 +457,13 @@ fn run_inner(
         }
     }
 
-    // Backward compat copies
-    let _ = fs::copy(cfg.docs_dir.join("STRUCTURE.GRAPH.dot"), cfg.docs_dir.join("mock_crate_deps.dot"));
-    let _ = fs::copy(cfg.docs_dir.join("STRUCTURE.GRAPH.png"), cfg.docs_dir.join("mock_crate_deps.png"));
-    let _ = fs::copy(cfg.docs_dir.join("STRUCTURE.GRAPH.svg"), cfg.docs_dir.join("mock_crate_deps.svg"));
 
     // --- STRUCTURE.md ---
     eprintln!("--- generating STRUCTURE.md ---");
     let structure_header = render_design::generation_header_md(&cfg);
     let structure_body = render_md::generate_structure_md(&crates, &cfg);
     let structure_md = format!("{structure_header}\n{structure_body}");
-    let structure_path = cfg.docs_dir.join("STRUCTURE.md");
+    let structure_path = cfg.docs_dir.join(render_design::ordered_doc_name("STRUCTURE.md", &cfg));
     render_design::write_generated(&structure_path, &structure_md);
     eprintln!("  {}", structure_path.display());
 
@@ -472,7 +471,7 @@ fn run_inner(
     eprintln!("--- generating DESIGN.md ---");
     match render_design::generate_design_md(&placeholders, &cfg) {
         Some(design_md) => {
-            let design_path = cfg.docs_dir.join("DESIGN.md");
+            let design_path = cfg.docs_dir.join(render_design::ordered_doc_name("DESIGN.md", &cfg));
             render_design::write_generated(&design_path, &design_md);
             eprintln!("  {}", design_path.display());
         }
@@ -481,22 +480,78 @@ fn run_inner(
         }
     }
 
-    // --- DESIGN-DEEP-DIVES.md ---
-    eprintln!("--- generating DESIGN-DEEP-DIVES.md ---");
-    let deep_dives = render_design::generate_deep_dives_md(&cfg);
-    if !deep_dives.is_empty() {
-        let dd_path = cfg.docs_dir.join("DESIGN-DEEP-DIVES.md");
-        render_design::write_generated(&dd_path, &deep_dives);
-        eprintln!("  {}", dd_path.display());
+    // --- Combined deep-dive document (opt in) ---
+    // Each deep dive already renders beside its crate's overview below, which
+    // is where a reader looks for it. The combined file repeats that content
+    // and grows without bound, so a project asks for it rather than gets it.
+    if cfg.deep_dive_index {
+        eprintln!("--- generating DESIGN-DEEP-DIVES.md ---");
+        let deep_dives = render_design::generate_deep_dives_md(&cfg);
+        if !deep_dives.is_empty() {
+            let dd_path = cfg.docs_dir.join("DESIGN-DEEP-DIVES.md");
+            render_design::write_generated(&dd_path, &deep_dives);
+            eprintln!("  {}", dd_path.display());
+        }
     }
 
     // --- Per-crate overview and deep dive files ---
     eprintln!("--- generating per-crate docs ---");
-    render_design::generate_per_crate_docs(&placeholders, &cfg);
+    render_design::generate_per_crate_docs(&placeholders, &cfg, &crates);
+
+    // --- Registry ---
+    // Loaded before the passthrough templates because they resolve references
+    // against it. A project declaring no namespaces gets an empty registry and
+    // every step below is a no-op.
+    let registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    // Settle references held inside the data before any document renders, so
+    // every consumer of a row sees final values rather than templates.
+    let (registry, cycle_findings) = registry::resolve_data(
+        &cfg.registry_namespaces,
+        &registry,
+        &cfg.registry_roots,
+        &cfg.repo_root,
+        &cfg.docs_dir,
+    );
+    if !cfg.registry_namespaces.is_empty() {
+        eprintln!("--- registry ---");
+        let schemas = registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+        if schemas > 0 {
+            eprintln!("  generated {schemas} schema files");
+        }
+        eprintln!("  {} rows across {} namespaces", registry.rows.len(), registry.by_namespace.len());
+        let header = render_design::generation_header_md(&cfg);
+        for page in registry::render_pages(&cfg.mock_dir, &cfg.docs_dir, &cfg.registry_namespaces, &registry, &header, &cfg) {
+            eprintln!("  {}", page.display());
+        }
+        for f in &cycle_findings {
+            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+        }
+        for f in registry::validate_provenance(&cfg.repo_root, &cfg.registry_roots, &cfg.frozen_roots, &registry) {
+            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+        }
+        for f in registry::validate(&cfg.registry_namespaces, &registry) {
+            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+        }
+        match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
+            registry::SchemaCheck::Ran { failures } if failures.is_empty() => {
+                eprintln!("  schema check passed");
+            }
+            registry::SchemaCheck::Ran { failures } => {
+                for f in failures {
+                    eprintln!("  ERROR [schema]: {f}");
+                }
+            }
+            registry::SchemaCheck::Unavailable => {
+                eprintln!(
+                    "  schema check SKIPPED: taplo is not installed. Row shape is unverified; install taplo to close this gap."
+                );
+            }
+        }
+    }
 
     // --- Passthrough templates ---
     eprintln!("--- copying passthrough templates ---");
-    for out_path in render_design::render_passthrough_templates(&placeholders, &cfg) {
+    for out_path in render_design::render_passthrough_templates(&placeholders, &cfg, &registry) {
         eprintln!("  {}", out_path.display());
     }
 

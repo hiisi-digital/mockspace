@@ -12,6 +12,27 @@ fn esc(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Crate directories carrying a design document but no `src/lib.rs`.
+///
+/// Returned sorted, so the graph is stable between runs.
+pub fn designed_but_unbuilt(crates: &CrateMap, cfg: &Config) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(&cfg.crates_dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| {
+            let dir = cfg.crates_dir.join(name);
+            dir.join("DESIGN.md.tmpl").is_file() && !dir.join("src/lib.rs").is_file()
+        })
+        .filter(|name| !crates.contains_key(name.as_str()))
+        .collect();
+    out.sort();
+    out
+}
+
 pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
     let mut dot = String::new();
     let reduced = graph::transitive_reduction(crates);
@@ -25,7 +46,11 @@ pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
     }
     let max_depth = depths.values().copied().max().unwrap_or(0);
 
-    writeln!(dot, "digraph {project_name} {{").unwrap();
+    // Quoted, because a DOT identifier may not contain a hyphen unquoted and a
+    // project name commonly does. Unquoted, graphviz fails on the graph line
+    // and the only symptom is a missing PNG and SVG, which reads as the render
+    // step being absent rather than broken.
+    writeln!(dot, "digraph \"{project_name}\" {{").unwrap();
     writeln!(dot, "    rankdir=BT;").unwrap();
     writeln!(dot, "    newrank=true;").unwrap();
     writeln!(dot, "    bgcolor=\"#FAFAFA\";").unwrap();
@@ -39,6 +64,35 @@ pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
     writeln!(dot, "    labeljust=l;").unwrap();
     writeln!(dot, "    label=<<TABLE BORDER=\"0\" CELLBORDER=\"0\" CELLSPACING=\"0\"><TR><TD ALIGN=\"LEFT\"><FONT POINT-SIZE=\"18\" COLOR=\"#37474F\"><B>{project_name}</B></FONT></TD></TR><TR><TD ALIGN=\"LEFT\"><FONT POINT-SIZE=\"9\" COLOR=\"#999999\">crate architecture</FONT></TD></TR></TABLE>>;").unwrap();
     writeln!(dot).unwrap();
+
+    // Crates that have a design document but no source yet.
+    //
+    // mockspace discovers crates from `src/lib.rs`, which is the right source
+    // of truth for lints and for parsing. It is the wrong one for the
+    // architecture picture: this tool's premise is that docs are the design and
+    // source is what catches up, so a project whose source is deliberately
+    // gated would otherwise see its architecture document describe the small
+    // scaffolded subset and stay silent about the rest.
+    //
+    // These appear as nodes with no edges, because a crate with no manifest has
+    // declared no dependencies. Dashed and grey says designed-but-unbuilt
+    // without claiming to know where it will sit.
+    let designed_only = designed_but_unbuilt(crates, cfg);
+    if !designed_only.is_empty() {
+        writeln!(dot, "    // designed, not yet built").unwrap();
+        for dir_name in &designed_only {
+            let cid = dir_name.replace('-', "_");
+            let short = dir_name
+                .strip_prefix(&format!("{crate_prefix}-"))
+                .unwrap_or(dir_name);
+            writeln!(
+                dot,
+                "    {cid} [shape=box, style=\"dashed,rounded\", color=\"#BBBBBB\", fontcolor=\"#999999\", label=\"{short}\"];"
+            )
+            .unwrap();
+        }
+        writeln!(dot).unwrap();
+    }
 
     // Crate nodes
     for (dir_name, info) in crates {

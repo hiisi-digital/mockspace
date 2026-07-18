@@ -25,6 +25,7 @@ pub mod render_md;
 pub mod render_design;
 pub mod render_agent;
 pub mod dylib_check;
+pub mod registry;
 mod entry;
 
 /// Path to the mockspace source directory, captured at compile time.

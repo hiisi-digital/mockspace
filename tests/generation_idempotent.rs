@@ -42,10 +42,10 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
     let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
     let ph = render_design::Placeholders::compute(&crates, &cfg);
     render_design::ensure_docs_dir(&cfg);
-    let out = cfg.docs_dir.join("FIXTURE_ONE_OVERVIEW.md");
+    let out = cfg.docs_dir.join("ONE.md");
 
     // First generation creates the file.
-    render_design::generate_per_crate_docs(&ph, &cfg);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
     assert!(out.exists(), "first run must create the overview file");
     let after_first = fs::read_to_string(&out).unwrap();
     assert!(
@@ -69,7 +69,7 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
     // Second generation: identical body, new real timestamp. It must skip
     // the write and leave the staled timestamp in place, proving the
     // timestamp alone never triggers a rewrite.
-    render_design::generate_per_crate_docs(&ph, &cfg);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
     let after_second = fs::read_to_string(&out).unwrap();
     assert_eq!(
         after_second, staled,
@@ -81,7 +81,7 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
         &mock.join("crates/fixture-one/DESIGN.md.tmpl"),
         "# fixture-one\n\nBody text that HAS changed.\n",
     );
-    render_design::generate_per_crate_docs(&ph, &cfg);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
     let after_change = fs::read_to_string(&out).unwrap();
     assert!(
         after_change.contains("HAS changed"),
@@ -132,7 +132,8 @@ fn passthrough_templates_expand_placeholders() {
         "fixture must start with no docs/ so the render path owns creating it"
     );
 
-    let written = render_design::render_passthrough_templates(&ph, &cfg);
+    let registry = mockspace::registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let written = render_design::render_passthrough_templates(&ph, &cfg, &registry);
     assert_eq!(written.len(), 1, "the one passthrough template renders");
 
     let out = fs::read_to_string(cfg.docs_dir.join("WORKFLOW.md")).unwrap();
@@ -179,12 +180,58 @@ fn per_crate_docs_expand_placeholders() {
     let ph = render_design::Placeholders::compute(&crates, &cfg);
     render_design::ensure_docs_dir(&cfg);
 
-    render_design::generate_per_crate_docs(&ph, &cfg);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
 
-    let out = fs::read_to_string(cfg.docs_dir.join("FIXTURE_ONE_OVERVIEW.md")).unwrap();
+    let out = fs::read_to_string(cfg.docs_dir.join("ONE.md")).unwrap();
     assert!(
         out.contains("Part of fixture-proj, sources under `mock/`."),
         "a crate template must expand the vocabulary, got:\n{out}"
     );
     assert!(!out.contains("{{"), "no placeholder may survive, got:\n{out}");
+}
+
+
+/// The link a summary emits must be the file the writer wrote.
+///
+/// These were built independently and drifted the moment the naming changed:
+/// every Overview link in every consumer repository pointed at a file that no
+/// longer existed, and the repo used for hand-testing did not use crate
+/// summaries at all, so nothing surfaced it.
+#[test]
+fn summary_links_match_the_files_written() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let mock = root.join("mock");
+    write(
+        &mock.join("mockspace.toml"),
+        "project_name = \"fixture-proj\"\ncrate_prefix = \"fixture\"\nordered_docs = true\n",
+    );
+    write(&mock.join("crates/fixture-one/src/lib.rs"), "//! one.\npub struct Thing;\n");
+    write(&mock.join("crates/fixture-one/README.md.tmpl"), "one.\n");
+    write(&mock.join("crates/fixture-one/DESIGN.md.tmpl"), "# one\n");
+    write(&mock.join("crates/fixture-one/DEEPDIVE_topic.md.tmpl"), "# deep\n");
+
+    let cfg = Config::from_dir(&mock);
+    let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+    let ph = render_design::Placeholders::compute(&crates, &cfg);
+    render_design::ensure_docs_dir(&cfg);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
+
+    let summaries = ph.apply("{{crate_summaries}}");
+    let mut checked = 0;
+    for line in summaries.lines() {
+        let Some(open) = line.find("](") else { continue };
+        let Some(close) = line[open..].find(')') else { continue };
+        let target = &line[open + 2..open + close];
+        assert!(
+            cfg.docs_dir.join(target).exists(),
+            "summary links {target}, which was never written. Files: {:?}",
+            std::fs::read_dir(&cfg.docs_dir)
+                .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name()).collect::<Vec<_>>())
+                .unwrap_or_default()
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no links in the summaries, so this proved nothing");
 }

@@ -153,6 +153,18 @@ fn get_modified_in_design_rounds(workspace_root: &Path) -> Vec<(String, String)>
     files
 }
 
+/// Whether `new` is `old` with a lifecycle status suffix added.
+///
+/// `202607180723_changelist.doc.md` to `202607180723_changelist.doc.lock.md`
+/// is the lock transition; the same shape with `.deprecated` is the deprecate
+/// transition. Both rename without touching content.
+fn is_status_suffix_rename(old: &str, new: &str) -> bool {
+    let Some(stem) = old.strip_suffix(".md") else {
+        return false;
+    };
+    new == format!("{stem}.lock.md") || new == format!("{stem}.deprecated.md")
+}
+
 /// Parse `git diff --name-status` output and append non-A entries.
 /// Each input line is `<STATUS>\t<PATH>` (or `<R100>\t<OLD>\t<NEW>`
 /// for renames). We treat `A` (and the unlikely `A100`) as pure
@@ -174,10 +186,24 @@ fn collect_non_additions(output: &str, source: &str, files: &mut Vec<(String, St
         // For modifications, take the first path field. For renames
         // (`R100\t<old>\t<new>`), git lists both; take the new path.
         let path = if status.starts_with('R') || status.starts_with('C') {
-            match parts.nth(1) {
+            let old = match parts.next() {
                 Some(p) => p,
                 None => continue,
+            };
+            let new = match parts.next() {
+                Some(p) => p,
+                None => continue,
+            };
+            // The lock and deprecate transitions ARE renames: `cargo mock lock`
+            // moves `<cl>.md` to `<cl>.lock.md` with the content untouched. So
+            // running the command produced a state this lint rejected, which
+            // made the documented flow unusable. A status-suffix rename at full
+            // similarity is that transition and is allowed; any other rename of
+            // a frozen changelist is still a modification.
+            if status == "R100" && is_status_suffix_rename(old, new) {
+                continue;
             }
+            new
         } else {
             match parts.next() {
                 Some(p) => p,

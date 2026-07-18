@@ -160,6 +160,145 @@ pub fn generation_header_svg(cfg: &Config) -> String {
     hdr
 }
 
+
+/// The document-name stem for a crate, with the project's own crate prefix
+/// stripped.
+///
+/// A document already lives in one project's docs directory, so repeating the
+/// project name in every filename says nothing: `NUMERIC.md` carries exactly
+/// the information `IKIUNI_RENDERER_NUMERIC_OVERVIEW.md` did, and a
+/// directory listing of thirty crates becomes readable.
+///
+/// A crate that does not carry the prefix keeps its whole name, which is the
+/// only case where two crates could produce one stem. That collision is
+/// reported by the caller rather than silently resolved.
+fn crate_doc_stem(crate_name: &str, crate_prefix: &str) -> String {
+    let stripped = if crate_prefix.is_empty() {
+        crate_name
+    } else {
+        crate_name
+            .strip_prefix(&format!("{crate_prefix}-"))
+            .unwrap_or(crate_name)
+    };
+    stripped.to_uppercase().replace('-', "_")
+}
+
+/// The sort prefix for a document generated from a crate.
+///
+/// Dependency depth is the number, so the listing reads bottom-up: the
+/// contract layer before the store, the store before the planner, the planner
+/// before the lanes. Crates sharing a depth share a prefix and fall
+/// alphabetically among themselves, which keeps a crate's own documents
+/// adjacent.
+///
+/// Depths start at 10 rather than 0 so project-level documents can sort ahead
+/// of every crate without negative numbers, and supplementary material can
+/// sort behind everything without colliding with a deep tree.
+fn crate_doc_prefix(depth: usize) -> String {
+    // Depth only, shared by every crate at that depth.
+    //
+    // Siblings with no inherent order between them share a prefix rather than
+    // taking a running index, because a running index renumbers every sibling
+    // after the one you add. Alphabetical order sorts them among themselves,
+    // which is as much order as actually exists.
+    //
+    // Overview-before-deep-dives is handled by naming rather than numbering:
+    // a crate's overview is named for the crate alone, so `NUMERIC.md` sorts
+    // ahead of `NUMERIC_STRATEGY.md` because `.` precedes `_`. Nothing has to
+    // be renumbered when a deep dive appears.
+    //
+    // Steps of ten, not a hundred. A level is a real and fairly stable axis, so
+    // it deserves visible granularity: 100, 110, 120 reads as successive layers
+    // where 100, 200, 300 reads as unrelated bands. The units digit is left
+    // free for an ordering within a level, should one ever turn out to exist.
+    format!("{:03}", 100 + depth * 10)
+}
+
+/// The sort prefix for a document not generated from a crate.
+///
+/// `00` for the documents a reader should start with, `99` for everything
+/// else. The distinction is the point: a docs directory does not otherwise say
+/// which of thirty files is the one to read first, and a reader meeting it
+/// alphabetically starts wherever the alphabet happens to put them.
+fn standalone_doc_prefix(stem: &str, primary: &[String]) -> &'static str {
+    if primary.iter().any(|p| p.eq_ignore_ascii_case(stem)) {
+        "00"
+    } else {
+        "99"
+    }
+}
+
+/// Apply the standalone prefix to a document name, or leave it alone when the
+/// project has not opted into ordering.
+///
+/// Four bands, in reading order: `00` the documents to start with, `10` upward
+/// the crates by dependency depth, `90` the registry tables, and `99`
+/// everything else. Registries get their own band because a lookup table is a
+/// different kind of thing from a document read start to finish, and burying
+/// one among the other supplementary documents loses that.
+pub fn ordered_doc_name(base: &str, cfg: &Config) -> String {
+    ordered_doc_name_banded(base, cfg, false)
+}
+
+/// The name for a registry table's page, ordered within the registry band by
+/// the namespace's declaration order.
+///
+/// Alphabetical is the wrong order for these. Benches assume the constants,
+/// laws, and vocabulary they measure against, so sorting them first hands a
+/// reader the tables in reverse dependency order. Declaration order in the
+/// project's config is the reading order, which means reordering the
+/// declarations reorders the documents and no second list has to be kept in
+/// step.
+pub fn registry_doc_name(base: &str, cfg: &Config, index: usize) -> String {
+    if !cfg.ordered_docs {
+        return base.to_string();
+    }
+    let stem = base.split('.').next().unwrap_or(base);
+    if cfg.primary_docs.iter().any(|p| p.eq_ignore_ascii_case(stem)) {
+        return format!("000_{base}");
+    }
+    // Three digits leave the registry band room for as many namespaces as a
+    // project cares to declare, without spilling into the supplementary one.
+    format!("{}_{base}", 900 + index.min(98))
+}
+
+/// As [`ordered_doc_name`], naming whether this document is a registry table.
+pub fn ordered_doc_name_banded(base: &str, cfg: &Config, is_registry: bool) -> String {
+    if !cfg.ordered_docs {
+        return base.to_string();
+    }
+    let stem = base.split('.').next().unwrap_or(base);
+    // A project may still promote a registry into the primary band: a glossary
+    // is sometimes the first thing to read.
+    let band = if cfg.primary_docs.iter().any(|p| p.eq_ignore_ascii_case(stem)) {
+        "000"
+    } else if is_registry {
+        "900"
+    } else {
+        "999"
+    };
+    format!("{band}_{base}")
+}
+
+/// The filename for a crate's generated document.
+///
+/// The single place this is constructed. It previously existed twice, once in
+/// the writer and once in the link builder, and the two drifted the moment the
+/// naming changed: every Overview link in every repo pointed at a file that no
+/// longer existed.
+pub fn crate_doc_file(crate_upper: &str, subject: &str, depth: usize, cfg: &Config) -> String {
+    let stem = if subject == "OVERVIEW" {
+        crate_upper.to_string()
+    } else {
+        format!("{crate_upper}_{subject}")
+    };
+    if cfg.ordered_docs {
+        format!("{}_{stem}.md", crate_doc_prefix(depth))
+    } else {
+        format!("{stem}.md")
+    }
+}
+
 /// Generate DESIGN.md from DESIGN.md.tmpl + parsed crate data.
 pub fn generate_design_md(ph: &Placeholders, cfg: &Config) -> Option<String> {
     let tmpl_path = cfg.mock_dir.join("DESIGN.md.tmpl");
@@ -182,7 +321,11 @@ pub fn generate_design_md(ph: &Placeholders, cfg: &Config) -> Option<String> {
 ///
 /// These carry the generation header and the same placeholder vocabulary
 /// every other template gets. Returns the paths written or left in place.
-pub fn render_passthrough_templates(ph: &Placeholders, cfg: &Config) -> Vec<PathBuf> {
+pub fn render_passthrough_templates(
+    ph: &Placeholders,
+    cfg: &Config,
+    registry: &crate::registry::Registry,
+) -> Vec<PathBuf> {
     let mut written = Vec::new();
     let Ok(entries) = fs::read_dir(&cfg.mock_dir) else {
         return written;
@@ -204,12 +347,22 @@ pub fn render_passthrough_templates(ph: &Placeholders, cfg: &Config) -> Vec<Path
     for entry in templates {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        let out_name = name.trim_end_matches(".tmpl");
+        let out_name = ordered_doc_name(name.trim_end_matches(".tmpl"), cfg);
         let header = generation_header_md(cfg);
         let body = fs::read_to_string(&path).expect("failed to read template");
         let body = ph.apply(&body);
+        // Registry references resolve after placeholder substitution, so a
+        // placeholder may expand into a reference and still be linked.
+        let body = crate::registry::resolve_all(
+            &body,
+            &cfg.registry_namespaces,
+            registry,
+            &cfg.registry_roots,
+            &cfg.repo_root,
+            &cfg.docs_dir,
+        );
         let content = format!("{header}\n{body}");
-        let out_path = cfg.docs_dir.join(out_name);
+        let out_path = cfg.docs_dir.join(&out_name);
         write_generated(&out_path, &content);
         written.push(out_path);
     }
@@ -269,7 +422,7 @@ impl Placeholders {
             primary_items: compute_primary_items_per_crate(crates, cfg),
             crate_layers: compute_crate_layers(crates, cfg),
             deep_dives: collect_deep_dives(&cfg.mock_dir),
-            crate_summaries: compute_crate_summaries(&cfg.mock_dir),
+            crate_summaries: compute_crate_summaries(&cfg.mock_dir, &cfg.crate_prefix, cfg, crates),
         }
     }
 
@@ -471,7 +624,8 @@ pub fn generate_deep_dives_md(cfg: &Config) -> String {
 }
 
 /// Compute crate summaries from per-crate README.md.tmpl files.
-fn compute_crate_summaries(mock_dir: &Path) -> String {
+fn compute_crate_summaries(mock_dir: &Path, crate_prefix: &str, cfg: &Config, crates: &CrateMap) -> String {
+    let mut depth_cache = BTreeMap::new();
     let crates_dir = mock_dir.join("crates");
     if !crates_dir.is_dir() {
         return String::new();
@@ -499,13 +653,18 @@ fn compute_crate_summaries(mock_dir: &Path) -> String {
 
             if has_design || !deep_dives.is_empty() {
                 writeln!(summaries).unwrap();
-                let crate_upper = crate_name.to_uppercase().replace('-', "_");
+                let crate_upper = crate_doc_stem(&crate_name, crate_prefix);
+                // Built the same way the writer builds them. These links were
+                // constructed independently and silently went dead the moment
+                // the naming changed, in every repo at once.
+                let depth = graph::compute_depth(&crate_name, crates, &mut depth_cache);
                 if has_design {
-                    writeln!(summaries, "- [Overview]({crate_upper}_OVERVIEW.md)").unwrap();
+                    let f = crate_doc_file(&crate_upper, "OVERVIEW", depth, cfg);
+                    writeln!(summaries, "- [Overview]({f})").unwrap();
                 }
                 for (subject, _) in &deep_dives {
-                    let subject_upper = subject.to_uppercase();
-                    writeln!(summaries, "- [{subject} deep dive]({crate_upper}_{subject_upper}.md)").unwrap();
+                    let f = crate_doc_file(&crate_upper, &subject.to_uppercase(), depth, cfg);
+                    writeln!(summaries, "- [{subject} deep dive]({f})").unwrap();
                 }
             }
 
@@ -536,10 +695,11 @@ fn find_deep_dives(crate_path: &Path) -> Vec<(String, std::path::PathBuf)> {
 }
 
 /// Generate per-crate overview and deep dive files in docs/.
-pub fn generate_per_crate_docs(ph: &Placeholders, cfg: &Config) {
+pub fn generate_per_crate_docs(ph: &Placeholders, cfg: &Config, crates: &CrateMap) {
     if !cfg.crates_dir.is_dir() {
         return;
     }
+    let mut depth_cache = BTreeMap::new();
 
     let header = generation_header_md(cfg);
 
@@ -552,30 +712,39 @@ pub fn generate_per_crate_docs(ph: &Placeholders, cfg: &Config) {
 
     let mut count = 0;
 
+    // Collected first so each depth band can be numbered as one sequence. The
+    // order within a band is crate name, then the overview, then that crate's
+    // deep dives alphabetically.
+    let mut planned: Vec<(usize, String, String, std::path::PathBuf)> = Vec::new();
     for crate_entry in crate_dirs {
         let crate_path = crate_entry.path();
         let crate_name = crate_entry.file_name().to_string_lossy().to_string();
-        let crate_upper = crate_name.to_uppercase().replace('-', "_");
+        let crate_upper = crate_doc_stem(&crate_name, &cfg.crate_prefix);
+        let depth = graph::compute_depth(&crate_name, crates, &mut depth_cache);
 
         let design_path = crate_path.join("DESIGN.md.tmpl");
-        if let Ok(content) = fs::read_to_string(&design_path) {
-            let out_name = format!("{crate_upper}_OVERVIEW.md");
-            let out_path = cfg.docs_dir.join(&out_name);
-            let full = format!("{header}\n{}", ph.apply(&content));
-            write_generated(&out_path, &full);
-            count += 1;
+        if design_path.is_file() {
+            planned.push((depth, crate_upper.clone(), "OVERVIEW".to_string(), design_path));
         }
-
         for (subject, dd_path) in find_deep_dives(&crate_path) {
-            if let Ok(content) = fs::read_to_string(&dd_path) {
-                let subject_upper = subject.to_uppercase();
-                let out_name = format!("{crate_upper}_{subject_upper}.md");
-                let out_path = cfg.docs_dir.join(&out_name);
-                let full = format!("{header}\n{}", ph.apply(&content));
-                write_generated(&out_path, &full);
-                count += 1;
-            }
+            planned.push((depth, crate_upper.clone(), subject.to_uppercase(), dd_path));
         }
+    }
+    planned.sort_by(|a, b| {
+        // OVERVIEW first within a crate, then deep dives by subject.
+        let key = |x: &(usize, String, String, std::path::PathBuf)| {
+            (x.0, x.1.clone(), x.2 != "OVERVIEW", x.2.clone())
+        };
+        key(a).cmp(&key(b))
+    });
+
+    for (depth, crate_upper, subject, src) in planned {
+        let Ok(content) = fs::read_to_string(&src) else { continue };
+        let out_name = crate_doc_file(&crate_upper, &subject, depth, cfg);
+        let out_path = cfg.docs_dir.join(&out_name);
+        let full = format!("{header}\n{}", ph.apply(&content));
+        write_generated(&out_path, &full);
+        count += 1;
     }
 
     eprintln!("  generated {count} per-crate doc files");
