@@ -384,6 +384,73 @@ mod tests {
     }
 
     #[test]
+    fn a_crate_reference_resolves_before_its_document_is_written() {
+        // The docs directory is cleaned at the start of a run and refilled
+        // during it. Globbing for the file therefore answered "has this been
+        // written yet" rather than "what is this crate's document", so a
+        // reference from a crate rendered early to one rendered later resolved
+        // to nothing, silently, in the finished document.
+        let tmp = tempfile::tempdir().unwrap();
+        let crates_dir = tmp.path().join("mock").join("crates");
+        std::fs::create_dir_all(crates_dir.join("proj-plan-validate")).unwrap();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        // Deliberately empty: the referenced document does not exist yet.
+
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.crates_dir = crates_dir;
+        cfg.docs_dir = docs.clone();
+        cfg.repo_root = tmp.path().to_path_buf();
+        cfg.crate_prefix = "proj".into();
+        cfg.crate_doc_names =
+            [("plan-validate".to_string(), "140_PLAN_VALIDATE.md".to_string())]
+                .into_iter()
+                .collect();
+
+        let reg = Registry::default();
+        let out = resolve_all(
+            "see {{ crates::plan-validate }} now",
+            &[],
+            &reg,
+            &BTreeMap::new(),
+            tmp.path(),
+            &docs,
+            &cfg,
+        );
+        assert_eq!(out, "see [plan-validate](140_PLAN_VALIDATE.md) now", "{out}");
+    }
+
+    #[test]
+    fn a_hyphenated_crate_short_name_resolves() {
+        // `crates::plan-validate` is the common shape: most crate names in a
+        // prefixed family have a hyphen in the part after the prefix.
+        let tmp = tempfile::tempdir().unwrap();
+        let crates_dir = tmp.path().join("mock").join("crates");
+        std::fs::create_dir_all(crates_dir.join("proj-plan-validate")).unwrap();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("140_PLAN_VALIDATE.md"), "x").unwrap();
+
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.crates_dir = crates_dir;
+        cfg.docs_dir = docs.clone();
+        cfg.repo_root = tmp.path().to_path_buf();
+        cfg.crate_prefix = "proj".into();
+
+        let reg = Registry::default();
+        let out = resolve_all(
+            "see {{ crates::plan-validate }} now",
+            &[],
+            &reg,
+            &BTreeMap::new(),
+            tmp.path(),
+            &docs,
+            &cfg,
+        );
+        assert_eq!(out, "see [plan-validate](140_PLAN_VALIDATE.md) now", "{out}");
+    }
+
+    #[test]
     fn slugs_are_snake_case() {
         assert!(is_valid_slug("xpbd") && is_valid_slug("waist_a") && is_valid_slug("lane_2"));
         assert!(!is_valid_slug("Waist-A"));

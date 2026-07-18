@@ -315,6 +315,11 @@ fn run_inner(
 
     eprintln!("--- parsing crates ---");
     let crates = parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+    // Before anything renders, so a reference to a crate resolves regardless of
+    // which document is written first.
+    let mut cfg = cfg;
+    cfg.crate_doc_names = render_design::crate_doc_name_map(&cfg, &crates);
+    let cfg = cfg;
 
     // Several crates and not one edge between them is far more often a parse
     // failure than a real architecture. It reads as neither, because nothing

@@ -85,8 +85,16 @@ fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -
         .strip_prefix(&format!("{}-", cfg.crate_prefix))
         .unwrap_or(&dir)
         .to_string();
-    // Glob the docs directory rather than reconstruct the name: the sort
-    // prefix depends on dependency depth, which this does not need to know.
+    // Look the name up rather than glob for it. The docs directory is cleaned
+    // at the start of a run and refilled during it, so a glob answers "has this
+    // been written yet" rather than "what is this crate's document", and a
+    // reference from a crate rendered early to one rendered later resolved to
+    // nothing at all.
+    if let Some(file) = cfg.crate_doc_names.get(&short) {
+        return Some(format!("[{short}]({file})"));
+    }
+    // Fall back to the glob for a caller that has not computed the map, which
+    // is every test and any path that resolves before generation.
     let stem = short.to_uppercase().replace('-', "_");
     let file = fs::read_dir(docs_dir)
         .ok()?
