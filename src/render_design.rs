@@ -406,6 +406,24 @@ pub struct Placeholders {
     crate_summaries: String,
 }
 
+#[cfg(test)]
+impl Placeholders {
+    /// An all-empty set, for tests that exercise substitution rather than the
+    /// vocabulary computation.
+    fn empty_for_test() -> Self {
+        Self {
+            project_name: String::new(),
+            mock_dir: String::new(),
+            crate_count: String::new(),
+            macros_table: String::new(),
+            primary_items: String::new(),
+            crate_layers: String::new(),
+            deep_dives: String::new(),
+            crate_summaries: String::new(),
+        }
+    }
+}
+
 /// Substitute one placeholder, with or without spaces inside the braces.
 ///
 /// `{{project_name}}` and `{{ project_name }}` are the same placeholder. They
@@ -442,6 +460,29 @@ impl Placeholders {
 
     /// Expand every placeholder in a template body.
     pub fn apply(&self, template: &str) -> String {
+        // Repeated to a fixed point rather than once, because composition
+        // nests: `{{crate_summaries}}` expands into the per-crate summaries,
+        // and a summary may itself name a placeholder. A single pass inserts
+        // that text after substitution has already run over it, so it survives
+        // into the finished document literally.
+        //
+        // Bounded by construction. Each pass either changes the text or stops,
+        // and the values are fixed strings rather than a graph, so nesting is
+        // one level deep in practice. The cap is a guard against a value that
+        // contains its own placeholder, which would otherwise never settle.
+        let mut result = template.to_string();
+        for _ in 0..4 {
+            let next = self.apply_once(&result);
+            if next == result {
+                break;
+            }
+            result = next;
+        }
+        result
+    }
+
+    /// One substitution pass over every placeholder.
+    fn apply_once(&self, template: &str) -> String {
         let mut result = template.to_string();
         for (name, value) in [
             ("project_name", &self.project_name),
@@ -904,6 +945,19 @@ mod placeholder_spacing_tests {
         // spaced placeholder is what gets written next.
         assert_eq!(replace_placeholder("a {{name}} b", "name", "X"), "a X b");
         assert_eq!(replace_placeholder("a {{ name }} b", "name", "X"), "a X b");
+    }
+
+    #[test]
+    fn a_placeholder_inside_an_expansion_still_substitutes() {
+        // Composition nests: the summaries expand into a document and a summary
+        // may name a placeholder of its own. One pass inserts that text after
+        // substitution has already run over it.
+        let mut ph = Placeholders::empty_for_test();
+        ph.project_name = "proj".into();
+        ph.crate_summaries = "# a\n\n{{ project_name }} does not invent its own.\n".into();
+        let out = ph.apply("{{crate_summaries}}");
+        assert!(!out.contains("{{"), "nested placeholder survived: {out}");
+        assert!(out.contains("proj does not invent"), "{out}");
     }
 
     #[test]
