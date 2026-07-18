@@ -293,12 +293,60 @@ pub fn builtin_vocab() -> RegistryNamespace {
     }
 }
 
+/// The `reference` namespace, provided without the project declaring it.
+///
+/// Every project rests on work it did not write: papers, talks, specifications,
+/// books. Holding them as rows rather than as citation strings scattered
+/// through prose means one work cited in twenty places renders identically in
+/// all twenty, and "what does this design rest on" becomes a question with an
+/// answer rather than a grep.
+pub fn builtin_reference() -> RegistryNamespace {
+    let f = |name: &str, required: bool, description: &str| RegistryField {
+        name: name.to_string(),
+        r#type: "string".to_string(),
+        required,
+        description: Some(description.to_string()),
+    };
+    RegistryNamespace {
+        key: "reference".to_string(),
+        title: Some("External references".to_string()),
+        description: Some(
+            "Work this project rests on: papers, talks, specifications, books. One row per work, cited by however many things use it."
+                .to_string(),
+        ),
+        value_field: None,
+        render: RenderMode::Page,
+        group_by: Some("kind".to_string()),
+        fields: vec![
+            f("title", true, "The work's own title, as published."),
+            f("authors", false, "Authors as published. Omitted where the venue is the author."),
+            f("venue", false, "Journal, conference, publisher, or standards body."),
+            f("year", false, "Year of publication."),
+            f("kind", false, "paper, talk, specification, book, article, or thesis."),
+            f("url", false, "Where it can be reached, when it has a stable address."),
+            f("note", false, "Which part of the work is adopted, or which part deliberately is not."),
+        ],
+    }
+}
+
+/// Namespaces every project gets, and which therefore earn a root of their own.
+///
+/// A builtin namespace is addressed directly (`vocab::xpbd`) rather than
+/// through the registry root, because it exists in every project and the short
+/// form is safe everywhere. A project's own namespace stays behind `reg::`, so
+/// a reference reads as what it is: a lookup into this project's tables rather
+/// than into vocabulary every project shares.
+pub const BUILTIN_NAMESPACES: &[&str] = &["vocab", "reference"];
+
 /// The project's namespaces plus any builtin it did not override.
 pub fn with_builtins(declared: &[RegistryNamespace]) -> Vec<RegistryNamespace> {
     let mut out = declared.to_vec();
+    // Prepended, not appended. Declaration order is reading order, and these
+    // are what the other tables assume you have already read.
+    if !out.iter().any(|n| n.key == "reference") {
+        out.insert(0, builtin_reference());
+    }
     if !out.iter().any(|n| n.key == "vocab") {
-        // Prepended, not appended. Declaration order is reading order, and a
-        // glossary is what the other tables assume you have already read.
         out.insert(0, builtin_vocab());
     }
     out
@@ -1473,6 +1521,44 @@ mod tests {
     }
 
     #[test]
+    fn a_builtin_namespace_is_addressed_directly() {
+        // vocab::xpbd, not reg::vocab::xpbd. Builtins exist in every project so
+        // the short form is safe everywhere; a project's own namespace stays
+        // behind reg:: to read as what it is.
+        let reg = reg_with("xpbd", "vocab", &[("what", "constraint projection")]);
+        let nss = with_builtins(&[]);
+        assert_eq!(
+            r_all("{{ vocab::xpbd::what }}", &nss, &reg),
+            "constraint projection"
+        );
+    }
+
+    #[test]
+    fn reference_is_builtin_and_renders_as_a_citation() {
+        let mut reg = Registry::default();
+        let row = RegistryRow {
+            slug: "burns_hunt".into(),
+            namespace: "reference".into(),
+            source: PathBuf::from("t.toml"),
+            fields: [
+                ("title", "The Visibility Buffer"),
+                ("authors", "Burns and Hunt"),
+                ("venue", "JCGT"),
+                ("year", "2013"),
+            ]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        };
+        reg.by_namespace.insert("reference".into(), vec![row.qualified()]);
+        reg.rows.insert(row.qualified(), row);
+        assert_eq!(
+            r_all("{{ reference::burns_hunt }}", &with_builtins(&[]), &reg),
+            "Burns and Hunt, The Visibility Buffer (JCGT 2013)"
+        );
+    }
+
+    #[test]
     fn slugs_are_snake_case() {
         assert!(is_valid_slug("xpbd") && is_valid_slug("waist_a") && is_valid_slug("lane_2"));
         assert!(!is_valid_slug("Waist-A"));
@@ -1608,11 +1694,27 @@ fn resolve_expr(
         return resolve_crate_ref(parts[1], cfg, docs_dir);
     }
 
+    // A builtin namespace addressed directly: `vocab::xpbd` rather than
+    // `reg::vocab::xpbd`. Rewritten into the registry form so there is one
+    // resolution path and the two cannot diverge.
+    if BUILTIN_NAMESPACES.contains(&parts[0]) && parts.len() >= 2 {
+        let rewritten = format!("{}::{}", REGISTRY_ROOT, parts.join("::"));
+        return resolve_expr(&rewritten, by_key, reg, roots, repo_root, docs_dir, cfg);
+    }
+
     if parts[0] == REGISTRY_ROOT {
         return match parts.len() {
             // A whole namespace: its table, inline.
             2 => by_key.get(parts[1]).map(|ns| render_table(ns, reg)),
             // A row, or a field on it.
+            3 | 4 if parts[1] == "reference" && parts.len() == 3 => {
+                // A bare reference renders as a citation rather than a link.
+                // That is what a bibliography entry is for, and it is the form
+                // a reader recognises whether or not they can reach the work.
+                let qualified = format!("{}::{}", parts[1], parts[2]);
+                let row = reg.get(&qualified)?;
+                Some(format_citation(row))
+            }
             3 | 4 => {
                 let qualified = format!("{}::{}", parts[1], parts[2]);
                 let row = reg.get(&qualified)?;
@@ -1635,6 +1737,18 @@ fn resolve_expr(
 
     // Otherwise a file citation.
     let r = FileRef::parse(expr)?;
+
+    // A root that does not render as a link becomes prose. The citation still
+    // appears, because a generated document is also read internally and the
+    // provenance is the point; what does not appear is the path, which is the
+    // only part that leaks.
+    if let Some(label) = cfg.prose_roots.get(&r.root) {
+        return Some(match &r.anchor {
+            Anchor::Heading(h) => format!("{label}, {} ({h})", r.path),
+            Anchor::Line(n) => format!("{label}, {} line {n}", r.path),
+        });
+    }
+
     let rel = roots.get(&r.root)?;
     match resolve_cited_path(&repo_root.join(rel), &r.path) {
         PathResolution::Found(target) => {
@@ -1815,4 +1929,28 @@ fn resolve_row(
         })
         .collect();
     done.insert(id.to_string(), fields);
+}
+
+/// Render a reference row as a citation.
+///
+/// Assembled from the fields the row declares, skipping what it does not, so a
+/// specification with an institutional author and no page reads as cleanly as
+/// a journal paper. The format is deliberately plain: the value is that one
+/// work cited in twenty places renders identically in all twenty, not that it
+/// matches any particular house style.
+pub fn format_citation(row: &RegistryRow) -> String {
+    let f = |k: &str| row.fields.get(k).filter(|v| !v.is_empty()).cloned();
+    let mut out = String::new();
+    if let Some(a) = f("authors") {
+        out.push_str(&a);
+        out.push_str(", ");
+    }
+    out.push_str(&f("title").unwrap_or_else(|| row.slug.clone()));
+    if let Some(v) = f("venue") {
+        let year = f("year").map(|y| format!(" {y}")).unwrap_or_default();
+        out.push_str(&format!(" ({v}{year})"));
+    } else if let Some(y) = f("year") {
+        out.push_str(&format!(" ({y})"));
+    }
+    out
 }

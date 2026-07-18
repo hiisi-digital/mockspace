@@ -86,6 +86,10 @@ pub struct Config {
     /// Roots declared frozen. Line citations into any other root are reported
     /// as fragile.
     pub frozen_roots: std::collections::BTreeSet<String>,
+
+    /// Roots whose citations render as prose rather than links, with the name
+    /// each goes by.
+    pub prose_roots: BTreeMap<String, String>,
     pub install_git_hooks: InstallMode,
     pub install_cargo_config: InstallMode,
     pub install_agent_files: InstallMode,
@@ -257,6 +261,27 @@ struct RawRefRoot {
     /// Declaring a root frozen is a claim that its files do not move, and it
     /// is what turns a line citation from a hazard into a fact.
     frozen: bool,
+
+    /// Whether a citation into this root renders as a link.
+    ///
+    /// Defaults to true. The question is never whether a root lives under the
+    /// design workspace, since a crate and a bibliography entry both do and
+    /// both render perfectly well for a reader who has only the published
+    /// tree. The question is whether the rendered form leaks an internal path.
+    /// A research corpus does; setting this false renders the citation as
+    /// prose under `label`, so the provenance survives in the document without
+    /// the path doing so.
+    #[serde(default = "default_root_links")]
+    links: bool,
+
+    /// What this root is called in prose when it does not render as a link.
+    /// `seed` is an internal handle that means nothing to a reader; "Prior
+    /// research" is what it actually is.
+    label: Option<String>,
+}
+
+fn default_root_links() -> bool {
+    true
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -483,6 +508,19 @@ impl Config {
             ordered_docs: raw.ordered_docs.unwrap_or(false),
             primary_docs: raw.primary_docs,
             registry_roots: registry_roots_raw,
+            prose_roots: raw
+                .ref_cfg
+                .as_ref()
+                .map(|r| {
+                    r.roots
+                        .iter()
+                        .filter(|(_, v)| !v.links)
+                        .map(|(k, v)| {
+                            (k.clone(), v.label.clone().unwrap_or_else(|| k.clone()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             frozen_roots: raw
                 .ref_cfg
                 .as_ref()
