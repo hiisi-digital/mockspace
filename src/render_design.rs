@@ -681,6 +681,39 @@ fn find_deep_dives(crate_path: &Path) -> Vec<(String, std::path::PathBuf)> {
     dives
 }
 
+/// Each crate's short name mapped to the document it generates.
+///
+/// The same `crate_doc_file` the writer uses, so the two cannot drift. That
+/// drift already happened once, when a link builder and a writer each
+/// constructed the filename their own way and the overview links went dead.
+pub fn crate_doc_name_map(cfg: &Config, crates: &CrateMap) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    if !cfg.crates_dir.is_dir() {
+        return out;
+    }
+    let mut depth_cache = BTreeMap::new();
+    let Ok(entries) = fs::read_dir(&cfg.crates_dir) else {
+        return out;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let crate_name = entry.file_name().to_string_lossy().to_string();
+        if !entry.path().join("DESIGN.md.tmpl").is_file() {
+            continue;
+        }
+        let crate_upper = crate_doc_stem(&crate_name, &cfg.crate_prefix);
+        let depth = graph::compute_depth(&crate_name, crates, &mut depth_cache);
+        let short = crate_name
+            .strip_prefix(&format!("{}-", cfg.crate_prefix))
+            .unwrap_or(&crate_name)
+            .to_string();
+        out.insert(short, crate_doc_file(&crate_upper, "OVERVIEW", depth, cfg));
+    }
+    out
+}
+
 /// Generate per-crate overview and deep dive files in docs/.
 ///
 /// Registry references resolve here exactly as they do for a root document. A

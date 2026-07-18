@@ -42,6 +42,16 @@ pub struct Config {
     pub docs_dir: PathBuf,
     pub project_name: String,
     pub crate_prefix: String,
+    /// Each crate's short name mapped to its generated document filename.
+    ///
+    /// Computed once before anything renders, rather than found by globbing the
+    /// docs directory at each reference. The directory is cleaned at the start
+    /// of a run and refilled during it, so a glob answers "has this been
+    /// written yet" rather than "what is this crate's document", and a
+    /// reference from a crate rendered early to one rendered later resolved to
+    /// nothing. Computing the name makes resolution independent of the order
+    /// documents happen to be written in.
+    pub crate_doc_names: std::collections::BTreeMap<String, String>,
     pub proc_macro_crates: Vec<String>,
     /// Whether source-scanning lints should run against proc-macro crate source.
     /// Default false: proc-macro crates run in the compiler host context and
@@ -511,6 +521,7 @@ impl Config {
         Config {
             mock_dir, crates_dir, repo_root, docs_dir,
             project_name, crate_prefix,
+            crate_doc_names: std::collections::BTreeMap::new(),
             proc_macro_crates: raw.proc_macro_crates,
             lint_proc_macro_source: raw.lint_proc_macro_source.unwrap_or(false),
             module_crates: raw.module_crates,
