@@ -510,10 +510,6 @@ fn run_inner(
         }
     }
 
-    // --- Per-crate overview and deep dive files ---
-    eprintln!("--- generating per-crate docs ---");
-    render_design::generate_per_crate_docs(&placeholders, &cfg, &crates);
-
     // --- Registry ---
     // Loaded before the passthrough templates because they resolve references
     // against it. A project declaring no namespaces gets an empty registry and
@@ -529,6 +525,12 @@ fn run_inner(
         &cfg.docs_dir,
         &cfg,
     );
+
+    // --- Per-crate overview and deep dive files ---
+    // After the registry resolves, because a crate document is where most
+    // references live and they are resolved against it.
+    eprintln!("--- generating per-crate docs ---");
+    render_design::generate_per_crate_docs(&placeholders, &cfg, &crates, &registry);
     if !cfg.registry_namespaces.is_empty() {
         eprintln!("--- registry ---");
         let schemas = registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);

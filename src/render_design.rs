@@ -682,7 +682,19 @@ fn find_deep_dives(crate_path: &Path) -> Vec<(String, std::path::PathBuf)> {
 }
 
 /// Generate per-crate overview and deep dive files in docs/.
-pub fn generate_per_crate_docs(ph: &Placeholders, cfg: &Config, crates: &CrateMap) {
+///
+/// Registry references resolve here exactly as they do for a root document. A
+/// crate document is where most references naturally live, since it is where a
+/// crate states which laws bind it and which constants it depends on, so
+/// leaving them unresolved would have made the reference syntax useless in the
+/// place it is most wanted, and silently: a literal `{{ reg::law::x }}` in a
+/// rendered document reads as a templating bug rather than as a missing check.
+pub fn generate_per_crate_docs(
+    ph: &Placeholders,
+    cfg: &Config,
+    crates: &CrateMap,
+    registry: &crate::registry::Registry,
+) {
     if !cfg.crates_dir.is_dir() {
         return;
     }
@@ -729,7 +741,18 @@ pub fn generate_per_crate_docs(ph: &Placeholders, cfg: &Config, crates: &CrateMa
         let Ok(content) = fs::read_to_string(&src) else { continue };
         let out_name = crate_doc_file(&crate_upper, &subject, depth, cfg);
         let out_path = cfg.docs_dir.join(&out_name);
-        let full = format!("{header}\n{}", ph.apply(&content));
+        // Placeholders first, then references, so a placeholder may expand
+        // into a reference and still be linked. Same order as the root path.
+        let body = crate::registry::resolve_all(
+            &ph.apply(&content),
+            &cfg.registry_namespaces,
+            registry,
+            &cfg.registry_roots,
+            &cfg.repo_root,
+            &cfg.docs_dir,
+            cfg,
+        );
+        let full = format!("{header}\n{body}");
         write_generated(&out_path, &full);
         count += 1;
     }

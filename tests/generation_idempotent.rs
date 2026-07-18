@@ -45,7 +45,7 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
     let out = cfg.docs_dir.join("ONE.md");
 
     // First generation creates the file.
-    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates, &Default::default());
     assert!(out.exists(), "first run must create the overview file");
     let after_first = fs::read_to_string(&out).unwrap();
     assert!(
@@ -69,7 +69,7 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
     // Second generation: identical body, new real timestamp. It must skip
     // the write and leave the staled timestamp in place, proving the
     // timestamp alone never triggers a rewrite.
-    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates, &Default::default());
     let after_second = fs::read_to_string(&out).unwrap();
     assert_eq!(
         after_second, staled,
@@ -81,7 +81,7 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
         &mock.join("crates/fixture-one/DESIGN.md.tmpl"),
         "# fixture-one\n\nBody text that HAS changed.\n",
     );
-    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates, &Default::default());
     let after_change = fs::read_to_string(&out).unwrap();
     assert!(
         after_change.contains("HAS changed"),
@@ -180,7 +180,7 @@ fn per_crate_docs_expand_placeholders() {
     let ph = render_design::Placeholders::compute(&crates, &cfg);
     render_design::ensure_docs_dir(&cfg);
 
-    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates, &Default::default());
 
     let out = fs::read_to_string(cfg.docs_dir.join("ONE.md")).unwrap();
     assert!(
@@ -216,7 +216,7 @@ fn summary_links_match_the_files_written() {
     let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
     let ph = render_design::Placeholders::compute(&crates, &cfg);
     render_design::ensure_docs_dir(&cfg);
-    render_design::generate_per_crate_docs(&ph, &cfg, &crates);
+    render_design::generate_per_crate_docs(&ph, &cfg, &crates, &Default::default());
 
     let summaries = ph.apply("{{crate_summaries}}");
     let mut checked = 0;
