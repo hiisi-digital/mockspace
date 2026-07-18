@@ -715,12 +715,12 @@ pub fn ensure_mockspace_current(
     // interactive-only, reversible, and reported below with the opt-out.
     let auto = allow_update && proxy_auto_update(&mock_dir.join("mockspace.toml"));
     if auto {
-        match cargo_update_mockspace(mock_dir) {
+        match cargo_update_mockspace(mock_dir, &source) {
             Ok(()) => actions.push(format!(
                 "mockspace was behind origin/{branch} ({locked_short} -> {remote_short}); ran cargo update (set [proxy] auto_update = false to only warn)"
             )),
             Err(e) => actions.push(format!(
-                "mockspace is behind origin/{branch} ({locked_short} -> {remote_short}); cargo update failed: {e}; run `cargo update -p mockspace` manually"
+                "mockspace is behind origin/{branch} ({locked_short} -> {remote_short}); cargo update failed: {e}; run cargo update with the full source spec manually"
             )),
         }
     } else {
@@ -815,10 +815,21 @@ fn output_with_timeout(
     }
 }
 
-/// Run `cargo update -p mockspace` in the mock workspace.
-fn cargo_update_mockspace(mock_dir: &Path) -> Result<(), String> {
+/// Advance the locked mockspace to its branch head.
+///
+/// Addressed by the full source spec rather than the bare package name. A lock
+/// can hold more than one `mockspace` (a project that once tracked `main` and
+/// now tracks `dev` keeps both entries), and cargo rejects the bare name as
+/// ambiguous. The auto-advance then reported being behind on every run and
+/// never advanced, which reads as the feature not working rather than as one
+/// stale lock entry.
+fn cargo_update_mockspace(mock_dir: &Path, source: &MockspaceGitSource) -> Result<(), String> {
+    let spec = match &source.branch {
+        Some(b) => format!("{}?branch={}#mockspace", source.url, b),
+        None => format!("{}#mockspace", source.url),
+    };
     let output = std::process::Command::new("cargo")
-        .args(["update", "-p", "mockspace"])
+        .args(["update", "-p", &spec])
         .current_dir(mock_dir)
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
