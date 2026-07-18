@@ -594,6 +594,59 @@ mod tests {
     }
 
     #[test]
+    fn a_method_chain_narrows_what_an_expression_resolved_to() {
+        let mut reg = Registry::default();
+        let row = RegistryRow {
+            slug: "keys".into(),
+            namespace: "law".into(),
+            source: PathBuf::from("/r/mock/registry/law/seam.toml"),
+            fields: BTreeMap::new(),
+        };
+        let q = row.qualified();
+        reg.by_namespace.insert("law".into(), vec![q.clone()]);
+        reg.rows.insert(q, row);
+        let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        let nss = vec![ns("law", None)];
+        let r = |e: &str| {
+            resolve_all(e, &nss, &reg, &BTreeMap::new(), Path::new("/r"), Path::new("/r/docs"), &cfg)
+        };
+        assert_eq!(r("{{ pathof(law::keys).dir() }}"), "mock/registry/law");
+        assert_eq!(r("{{ pathof(law::keys).filename() }}"), "seam.toml");
+        assert_eq!(r("{{ pathof(law::keys).stem() }}"), "seam");
+        assert_eq!(r("{{ pathof(law::keys).ext() }}"), "toml");
+        // Chained, applied left to right.
+        assert_eq!(r("{{ pathof(law::keys).dir().filename() }}"), "law");
+    }
+
+    #[test]
+    fn a_list_method_reads_a_multi_valued_result() {
+        let reg = reg_with("keys", "law", &[("crates", "store, world, bake")]);
+        let nss = vec![ns("law", None)];
+        assert_eq!(r_all("{{ law::keys::crates.first() }}", &nss, &reg), "store");
+        assert_eq!(r_all("{{ law::keys::crates.last() }}", &nss, &reg), "bake");
+        assert_eq!(r_all("{{ law::keys::crates.count() }}", &nss, &reg), "3");
+    }
+
+    #[test]
+    fn an_unknown_method_is_reported_rather_than_ignored() {
+        // A silently ignored method reads as working. The whole contract is
+        // that a reference pointing nowhere is reported.
+        let reg = reg_with("keys", "law", &[("crates", "store")]);
+        let nss = vec![ns("law", None)];
+        let text = "{{ law::keys::crates.nope() }}";
+        assert_eq!(r_all(text, &nss, &reg), text);
+    }
+
+    #[test]
+    fn a_dot_that_is_not_a_method_is_left_alone() {
+        // `seed::DESIGN::12` has no chain; neither does a field holding a
+        // filename. Only a dot followed by a call starts one.
+        let reg = reg_with("keys", "law", &[("file", "seam.toml")]);
+        let nss = vec![ns("law", None)];
+        assert_eq!(r_all("{{ law::keys::file }}", &nss, &reg), "seam.toml");
+    }
+
+    #[test]
     fn sourcesof_a_row_is_what_it_rests_on() {
         // A different question from where it is declared, so a different
         // function. Conflating them makes one of the two unaskable.
