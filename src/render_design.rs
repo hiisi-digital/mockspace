@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::graph;
@@ -161,7 +161,7 @@ pub fn generation_header_svg(cfg: &Config) -> String {
 }
 
 /// Generate DESIGN.md from DESIGN.md.tmpl + parsed crate data.
-pub fn generate_design_md(crates: &CrateMap, cfg: &Config) -> Option<String> {
+pub fn generate_design_md(ph: &Placeholders, cfg: &Config) -> Option<String> {
     let tmpl_path = cfg.mock_dir.join("DESIGN.md.tmpl");
     let template = match fs::read_to_string(&tmpl_path) {
         Ok(t) => t,
@@ -172,32 +172,122 @@ pub fn generate_design_md(crates: &CrateMap, cfg: &Config) -> Option<String> {
     };
 
     let header = generation_header_md(cfg);
-    let crate_count = crates.len().to_string();
-    let macros_table = compute_macros_table(crates, cfg);
-    let primary_items = compute_primary_items_per_crate(crates, cfg);
-    let crate_layers = compute_crate_layers(crates, cfg);
-    let deep_dives = collect_deep_dives(&cfg.mock_dir);
-    let crate_summaries = compute_crate_summaries(&cfg.mock_dir);
-
-    let mock_rel = cfg.mock_dir
-        .strip_prefix(&cfg.repo_root)
-        .unwrap_or(&cfg.mock_dir)
-        .to_string_lossy()
-        .to_string();
-
-    let mut result = template.clone();
-    result = result.replace("{{project_name}}", &cfg.project_name);
-    result = result.replace("{{mock_dir}}", &mock_rel);
-    result = result.replace("{{crate_count}}", &crate_count);
-    result = result.replace("{{macros_table}}", &macros_table);
-    // Provide both generic and legacy variable names
-    result = result.replace("{{signals_per_crate}}", &primary_items);
-    result = result.replace("{{primary_items_per_crate}}", &primary_items);
-    result = result.replace("{{crate_layers}}", &crate_layers);
-    result = result.replace("{{deep_dives}}", &deep_dives);
-    result = result.replace("{{crate_summaries}}", &crate_summaries);
+    let result = ph.apply(&template);
 
     Some(format!("{header}\n{result}"))
+}
+
+/// Render every `*.md.tmpl` in the mock dir except `DESIGN.md.tmpl`, which
+/// has its own richer path.
+///
+/// These carry the generation header and the same placeholder vocabulary
+/// every other template gets. Returns the paths written or left in place.
+pub fn render_passthrough_templates(ph: &Placeholders, cfg: &Config) -> Vec<PathBuf> {
+    let mut written = Vec::new();
+    let Ok(entries) = fs::read_dir(&cfg.mock_dir) else {
+        return written;
+    };
+    // This function owns its output directory rather than assuming a caller
+    // made it: a repo generating for the first time has no docs/ yet.
+    ensure_docs_dir(cfg);
+
+    let mut templates: Vec<_> = entries
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.ends_with(".md.tmpl") && name != "DESIGN.md.tmpl"
+        })
+        .collect();
+    // Deterministic order, matching the per-crate docs path.
+    templates.sort_by_key(|e| e.file_name());
+
+    for entry in templates {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let out_name = name.trim_end_matches(".tmpl");
+        let header = generation_header_md(cfg);
+        let body = fs::read_to_string(&path).expect("failed to read template");
+        let body = ph.apply(&body);
+        let content = format!("{header}\n{body}");
+        let out_path = cfg.docs_dir.join(out_name);
+        write_generated(&out_path, &content);
+        written.push(out_path);
+    }
+    written
+}
+
+/// Create the docs output directory if it is not there yet.
+///
+/// Every generated file lands in it, and a repo generating for the first time
+/// has none.
+pub fn ensure_docs_dir(cfg: &Config) {
+    if let Err(e) = fs::create_dir_all(&cfg.docs_dir) {
+        panic!("failed to create {}: {e}", cfg.docs_dir.display());
+    }
+}
+
+/// The `{{...}}` placeholder vocabulary, computed once per run.
+///
+/// One vocabulary for every template: a placeholder means the same thing
+/// wherever it appears, so `{{project_name}}` in `WORKFLOW.md.tmpl` or in a
+/// crate's own `DESIGN.md.tmpl` expands exactly as it does in the top-level
+/// `DESIGN.md.tmpl`. Templates that use no placeholder pass through unchanged.
+///
+/// Computed once because several members scan the mock tree (the deep-dive
+/// list and the crate summaries read directories and files), and the values
+/// are identical for every template in a run.
+///
+/// There is deliberately no escape for a literal `{{name}}`: no template needs
+/// to write one today. Add an escape when one does, rather than carrying an
+/// unused mechanism.
+pub struct Placeholders {
+    project_name: String,
+    mock_dir: String,
+    crate_count: String,
+    macros_table: String,
+    primary_items: String,
+    crate_layers: String,
+    deep_dives: String,
+    crate_summaries: String,
+}
+
+impl Placeholders {
+    /// Compute the vocabulary for one generation run.
+    pub fn compute(crates: &CrateMap, cfg: &Config) -> Self {
+        let mock_dir = cfg
+            .mock_dir
+            .strip_prefix(&cfg.repo_root)
+            .unwrap_or(&cfg.mock_dir)
+            .to_string_lossy()
+            .to_string();
+
+        Self {
+            project_name: cfg.project_name.clone(),
+            mock_dir,
+            crate_count: crates.len().to_string(),
+            macros_table: compute_macros_table(crates, cfg),
+            primary_items: compute_primary_items_per_crate(crates, cfg),
+            crate_layers: compute_crate_layers(crates, cfg),
+            deep_dives: collect_deep_dives(&cfg.mock_dir),
+            crate_summaries: compute_crate_summaries(&cfg.mock_dir),
+        }
+    }
+
+    /// Expand every placeholder in a template body.
+    pub fn apply(&self, template: &str) -> String {
+        let mut result = template.to_string();
+        result = result.replace("{{project_name}}", &self.project_name);
+        result = result.replace("{{mock_dir}}", &self.mock_dir);
+        result = result.replace("{{crate_count}}", &self.crate_count);
+        result = result.replace("{{macros_table}}", &self.macros_table);
+        // Provide both generic and legacy variable names
+        result = result.replace("{{signals_per_crate}}", &self.primary_items);
+        result = result.replace("{{primary_items_per_crate}}", &self.primary_items);
+        result = result.replace("{{crate_layers}}", &self.crate_layers);
+        result = result.replace("{{deep_dives}}", &self.deep_dives);
+        result = result.replace("{{crate_summaries}}", &self.crate_summaries);
+        result
+    }
 }
 
 /// Compute the macros table from config + crate scan.
@@ -446,7 +536,7 @@ fn find_deep_dives(crate_path: &Path) -> Vec<(String, std::path::PathBuf)> {
 }
 
 /// Generate per-crate overview and deep dive files in docs/.
-pub fn generate_per_crate_docs(cfg: &Config) {
+pub fn generate_per_crate_docs(ph: &Placeholders, cfg: &Config) {
     if !cfg.crates_dir.is_dir() {
         return;
     }
@@ -471,7 +561,7 @@ pub fn generate_per_crate_docs(cfg: &Config) {
         if let Ok(content) = fs::read_to_string(&design_path) {
             let out_name = format!("{crate_upper}_OVERVIEW.md");
             let out_path = cfg.docs_dir.join(&out_name);
-            let full = format!("{header}\n{content}");
+            let full = format!("{header}\n{}", ph.apply(&content));
             write_generated(&out_path, &full);
             count += 1;
         }
@@ -481,7 +571,7 @@ pub fn generate_per_crate_docs(cfg: &Config) {
                 let subject_upper = subject.to_uppercase();
                 let out_name = format!("{crate_upper}_{subject_upper}.md");
                 let out_path = cfg.docs_dir.join(&out_name);
-                let full = format!("{header}\n{content}");
+                let full = format!("{header}\n{}", ph.apply(&content));
                 write_generated(&out_path, &full);
                 count += 1;
             }

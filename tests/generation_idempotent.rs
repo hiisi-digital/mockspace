@@ -39,12 +39,13 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
     );
 
     let cfg = Config::from_dir(&mock);
-    // The entry flow creates docs/ before generating into it; mirror that.
-    fs::create_dir_all(&cfg.docs_dir).unwrap();
+    let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+    let ph = render_design::Placeholders::compute(&crates, &cfg);
+    render_design::ensure_docs_dir(&cfg);
     let out = cfg.docs_dir.join("FIXTURE_ONE_OVERVIEW.md");
 
     // First generation creates the file.
-    render_design::generate_per_crate_docs(&cfg);
+    render_design::generate_per_crate_docs(&ph, &cfg);
     assert!(out.exists(), "first run must create the overview file");
     let after_first = fs::read_to_string(&out).unwrap();
     assert!(
@@ -68,7 +69,7 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
     // Second generation: identical body, new real timestamp. It must skip
     // the write and leave the staled timestamp in place, proving the
     // timestamp alone never triggers a rewrite.
-    render_design::generate_per_crate_docs(&cfg);
+    render_design::generate_per_crate_docs(&ph, &cfg);
     let after_second = fs::read_to_string(&out).unwrap();
     assert_eq!(
         after_second, staled,
@@ -80,11 +81,110 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
         &mock.join("crates/fixture-one/DESIGN.md.tmpl"),
         "# fixture-one\n\nBody text that HAS changed.\n",
     );
-    render_design::generate_per_crate_docs(&cfg);
+    render_design::generate_per_crate_docs(&ph, &cfg);
     let after_change = fs::read_to_string(&out).unwrap();
     assert!(
         after_change.contains("HAS changed"),
         "a real content change must be written"
     );
     assert_ne!(after_change, staled, "the changed body must land on disk");
+}
+
+/// A passthrough template must get the same placeholder vocabulary the
+/// design template gets.
+///
+/// The substitution used to run only for `DESIGN.md.tmpl`; every other
+/// `*.md.tmpl` was copied verbatim, so a `{{project_name}}` in
+/// `WORKFLOW.md.tmpl` reached the published doc literally.
+///
+/// Deliberately does NOT create `docs/`: the render path owns its output
+/// directory, because a repo generating for the first time has none.
+#[test]
+fn passthrough_templates_expand_placeholders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let mock = root.join("mock");
+    write(
+        &mock.join("mockspace.toml"),
+        "project_name = \"fixture-proj\"\ncrate_prefix = \"fixture\"\n",
+    );
+    write(
+        &mock.join("crates/fixture-one/src/lib.rs"),
+        "//! fixture-one.\npub struct Thing;\n",
+    );
+    // Exercise the computed members too, not only the two scalar ones.
+    write(
+        &mock.join("WORKFLOW.md.tmpl"),
+        "# {{project_name}}. Workflow\n\n\
+         Rounds live in `{{mock_dir}}/design_rounds/`.\n\n\
+         Crates: {{crate_count}}\n\n\
+         {{crate_layers}}\n{{deep_dives}}\n{{crate_summaries}}\n{{macros_table}}\n",
+    );
+
+    let cfg = Config::from_dir(&mock);
+    let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+    let ph = render_design::Placeholders::compute(&crates, &cfg);
+
+    assert!(
+        !cfg.docs_dir.exists(),
+        "fixture must start with no docs/ so the render path owns creating it"
+    );
+
+    let written = render_design::render_passthrough_templates(&ph, &cfg);
+    assert_eq!(written.len(), 1, "the one passthrough template renders");
+
+    let out = fs::read_to_string(cfg.docs_dir.join("WORKFLOW.md")).unwrap();
+    assert!(
+        out.contains("# fixture-proj. Workflow"),
+        "project_name must expand, got:\n{out}"
+    );
+    assert!(
+        out.contains("`mock/design_rounds/`"),
+        "mock_dir must expand, got:\n{out}"
+    );
+    assert!(
+        !out.contains("{{"),
+        "no placeholder may survive into a published doc, got:\n{out}"
+    );
+}
+
+/// A crate's own DESIGN.md.tmpl gets the vocabulary too.
+///
+/// Per-crate overviews were rendered verbatim, so the same literal-placeholder
+/// leak applied to every crate doc.
+#[test]
+fn per_crate_docs_expand_placeholders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let mock = root.join("mock");
+    write(
+        &mock.join("mockspace.toml"),
+        "project_name = \"fixture-proj\"\ncrate_prefix = \"fixture\"\n",
+    );
+    write(
+        &mock.join("crates/fixture-one/src/lib.rs"),
+        "//! fixture-one.\npub struct Thing;\n",
+    );
+    write(
+        &mock.join("crates/fixture-one/DESIGN.md.tmpl"),
+        "# fixture-one\n\nPart of {{project_name}}, sources under `{{mock_dir}}/`.\n",
+    );
+
+    let cfg = Config::from_dir(&mock);
+    let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+    let ph = render_design::Placeholders::compute(&crates, &cfg);
+    render_design::ensure_docs_dir(&cfg);
+
+    render_design::generate_per_crate_docs(&ph, &cfg);
+
+    let out = fs::read_to_string(cfg.docs_dir.join("FIXTURE_ONE_OVERVIEW.md")).unwrap();
+    assert!(
+        out.contains("Part of fixture-proj, sources under `mock/`."),
+        "a crate template must expand the vocabulary, got:\n{out}"
+    );
+    assert!(!out.contains("{{"), "no placeholder may survive, got:\n{out}");
 }
