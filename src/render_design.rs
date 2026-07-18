@@ -406,6 +406,18 @@ pub struct Placeholders {
     crate_summaries: String,
 }
 
+/// Substitute one placeholder, with or without spaces inside the braces.
+///
+/// `{{project_name}}` and `{{ project_name }}` are the same placeholder. They
+/// were not: substitution matched the exact unspaced form while reference
+/// resolution trimmed, so the two syntaxes that look identical behaved
+/// differently, and a spaced placeholder rendered literally with nothing saying
+/// why. Anyone writing references all day writes the spaced form by habit.
+fn replace_placeholder(text: &str, name: &str, value: &str) -> String {
+    text.replace(&format!("{{{{{name}}}}}"), value)
+        .replace(&format!("{{{{ {name} }}}}"), value)
+}
+
 impl Placeholders {
     /// Compute the vocabulary for one generation run.
     pub fn compute(crates: &CrateMap, cfg: &Config) -> Self {
@@ -431,16 +443,20 @@ impl Placeholders {
     /// Expand every placeholder in a template body.
     pub fn apply(&self, template: &str) -> String {
         let mut result = template.to_string();
-        result = result.replace("{{project_name}}", &self.project_name);
-        result = result.replace("{{mock_dir}}", &self.mock_dir);
-        result = result.replace("{{crate_count}}", &self.crate_count);
-        result = result.replace("{{macros_table}}", &self.macros_table);
-        // Provide both generic and legacy variable names
-        result = result.replace("{{signals_per_crate}}", &self.primary_items);
-        result = result.replace("{{primary_items_per_crate}}", &self.primary_items);
-        result = result.replace("{{crate_layers}}", &self.crate_layers);
-        result = result.replace("{{deep_dives}}", &self.deep_dives);
-        result = result.replace("{{crate_summaries}}", &self.crate_summaries);
+        for (name, value) in [
+            ("project_name", &self.project_name),
+            ("mock_dir", &self.mock_dir),
+            ("crate_count", &self.crate_count),
+            ("macros_table", &self.macros_table),
+            // Both the generic and the legacy name for the same value.
+            ("signals_per_crate", &self.primary_items),
+            ("primary_items_per_crate", &self.primary_items),
+            ("crate_layers", &self.crate_layers),
+            ("deep_dives", &self.deep_dives),
+            ("crate_summaries", &self.crate_summaries),
+        ] {
+            result = replace_placeholder(&result, name, value);
+        }
         result
     }
 }
@@ -873,5 +889,25 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), changed);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+
+#[cfg(test)]
+mod placeholder_spacing_tests {
+    use super::*;
+
+    #[test]
+    fn a_placeholder_substitutes_with_or_without_spaces() {
+        // The two syntaxes look identical and one silently did nothing. A
+        // document full of `{{ reg::law::x }}` teaches the spaced form, so the
+        // spaced placeholder is what gets written next.
+        assert_eq!(replace_placeholder("a {{name}} b", "name", "X"), "a X b");
+        assert_eq!(replace_placeholder("a {{ name }} b", "name", "X"), "a X b");
+    }
+
+    #[test]
+    fn a_different_placeholder_is_left_alone() {
+        assert_eq!(replace_placeholder("{{ other }}", "name", "X"), "{{ other }}");
     }
 }
