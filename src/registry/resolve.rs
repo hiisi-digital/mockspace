@@ -98,6 +98,11 @@ fn tidy_after_drop(line: &str) -> String {
     s = regex_lite_replace(&s, "(, ", "(");
     s = regex_lite_replace(&s, ", )", ")");
     s = regex_lite_replace(&s, " ,", ",");
+    // A drop that was not inside parentheses leaves the space before the
+    // sentence's own punctuation.
+    for mark in [".", ";", ":"] {
+        s = regex_lite_replace(&s, &format!(" {mark}"), mark);
+    }
     while s.contains("  ") {
         s = s.replace("  ", " ");
     }
@@ -163,6 +168,64 @@ fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -
     Some(format!("[{short}]({file})"))
 }
 
+/// Where the named thing comes from.
+fn resolve_pathof(
+    expr: &str,
+    by_key: &BTreeMap<&str, &RegistryNamespace>,
+    reg: &Registry,
+    roots: &BTreeMap<String, String>,
+    repo_root: &Path,
+    docs_dir: &Path,
+    cfg: &crate::config::Config,
+) -> Option<String> {
+    let parts: Vec<&str> = expr.split("::").map(str::trim).collect();
+
+    if parts[0] == CRATE_ROOT && parts.len() == 2 {
+        let prefixed = format!("{}-{}", cfg.crate_prefix, parts[1]);
+        for name in [parts[1].to_string(), prefixed] {
+            let dir = cfg.crates_dir.join(&name);
+            if dir.is_dir() {
+                let rel = dir.strip_prefix(repo_root).unwrap_or(&dir);
+                return Some(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+        return None;
+    }
+
+    // A registry row: its provenance, each entry resolved like any citation, so
+    // an internal root drops here too rather than leaking through a second door.
+    let mut segs = parts.clone();
+    if segs.first() == Some(&REGISTRY_ROOT) {
+        segs.remove(0);
+    }
+    if segs.len() == 2 && by_key.contains_key(segs[0]) {
+        let row = reg.get(&format!("{}::{}", segs[0], segs[1]))?;
+        let raw = row.fields.get("provenance")?;
+        let rendered: Vec<String> = raw
+            .split(", ")
+            .filter_map(|c| {
+                resolve_expr(c.trim(), by_key, reg, roots, repo_root, docs_dir, cfg)
+            })
+            .filter(|r| !r.is_empty())
+            .collect();
+        return Some(rendered.join(", "));
+    }
+
+    // A cited file: the path it names, relative to the repository.
+    let r = FileRef::parse(expr)?;
+    if cfg.internal_roots.contains(&r.root) {
+        return Some(String::new());
+    }
+    let rel = roots.get(&r.root)?;
+    match resolve_cited_path(&repo_root.join(rel), &r.path) {
+        PathResolution::Found(target) => {
+            let out = target.strip_prefix(repo_root).unwrap_or(&target);
+            Some(out.to_string_lossy().replace('\\', "/"))
+        }
+        _ => None,
+    }
+}
+
 fn resolve_expr(
     expr: &str,
     by_key: &BTreeMap<&str, &RegistryNamespace>,
@@ -172,6 +235,16 @@ fn resolve_expr(
     docs_dir: &Path,
     cfg: &crate::config::Config,
 ) -> Option<String> {
+    // `pathof(x)` answers where x comes from, as opposed to what x says.
+    //
+    // For a crate or a cited file that is a path. For a registry row it is the
+    // row's provenance, because the TOML file a row happens to sit in is a fact
+    // about how the registry is filed rather than about where the claim came
+    // from, and the provenance is the answer anyone asking the question wants.
+    if let Some(inner) = expr.strip_prefix("pathof(").and_then(|r| r.strip_suffix(')')) {
+        return resolve_pathof(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg);
+    }
+
     let parts: Vec<&str> = expr.split("::").map(str::trim).collect();
 
     if parts[0] == CRATE_ROOT && parts.len() == 2 {
