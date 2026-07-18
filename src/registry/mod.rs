@@ -729,6 +729,20 @@ mod tests {
     }
 
     #[test]
+    fn a_schema_check_that_examined_nothing_is_not_a_pass() {
+        // The failure this catches was real and it was mine: a literal path
+        // where a glob was needed matched one entry, excluded it, checked zero
+        // files, and exited zero. Every clean report it gave was vacuous.
+        let zero = " INFO taplo:lint_files:collect_files: found files total=1 excluded=1 files=[]";
+        assert_eq!(files_examined(zero), Some(0));
+        let many = " INFO taplo:lint_files:collect_files: found files total=207 excluded=0";
+        assert_eq!(files_examined(many), Some(207));
+        // Unknown rather than zero when taplo does not say, so a version that
+        // stops logging it does not start failing every run.
+        assert_eq!(files_examined("something else entirely"), None);
+    }
+
+    #[test]
     fn slugs_are_snake_case() {
         assert!(is_valid_slug("xpbd") && is_valid_slug("waist_a") && is_valid_slug("lane_2"));
         assert!(!is_valid_slug("Waist-A"));

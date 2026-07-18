@@ -236,7 +236,22 @@ pub fn check_schemas(repo_root: &Path, namespaces: &[RegistryNamespace]) -> Sche
         .output();
 
     match out {
-        Ok(o) if o.status.success() => SchemaCheck::Ran { failures: Vec::new() },
+        Ok(o) if o.status.success() => {
+            // A check that examined nothing succeeded, which is not the same as
+            // a check that passed. taplo reports zero files when its `include`
+            // does not match, so a wrong pattern reads exactly like a clean
+            // registry. Reported rather than trusted.
+            let text = String::from_utf8_lossy(&o.stderr);
+            if let Some(0) = files_examined(&text) {
+                return SchemaCheck::Ran {
+                    failures: vec![
+                        "taplo examined no files. Check `include` in .taplo.toml: a pattern that matches nothing passes without checking anything."
+                            .to_string(),
+                    ],
+                };
+            }
+            SchemaCheck::Ran { failures: Vec::new() }
+        }
         Ok(o) => {
             let text = String::from_utf8_lossy(&o.stderr);
             let failures = text
@@ -248,6 +263,27 @@ pub fn check_schemas(repo_root: &Path, namespaces: &[RegistryNamespace]) -> Sche
         }
         Err(_) => SchemaCheck::Unavailable,
     }
+}
+
+/// How many files taplo reported examining, if it said.
+///
+/// It logs `found files total=N excluded=M`, and what was checked is the
+/// difference. Absent from the output, the count is unknown rather than zero,
+/// so a taplo that stops logging it does not start failing every run.
+pub(crate) fn files_examined(stderr: &str) -> Option<usize> {
+    let line = stderr.lines().find(|l| l.contains("found files total="))?;
+    let get = |key: &str| -> Option<usize> {
+        let at = line.find(key)? + key.len();
+        line[at..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .ok()
+    };
+    let total = get("total=")?;
+    let excluded = get("excluded=").unwrap_or(0);
+    Some(total.saturating_sub(excluded))
 }
 
 /// Placeholder-shaped tokens still present in a generated document.
