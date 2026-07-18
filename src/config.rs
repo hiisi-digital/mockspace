@@ -58,6 +58,34 @@ pub struct Config {
     pub abi_version: u32,
     pub nuke_marker: String,
     pub commit_style: CommitStyle,
+    /// Declared registry namespaces. Empty when the project declares none, and
+    /// every registry code path is a no-op in that case.
+    pub registry_namespaces: Vec<crate::registry::RegistryNamespace>,
+    /// Whether to also emit a single document containing every deep dive.
+    ///
+    /// Off by default. Each deep dive already renders as a sibling of its
+    /// crate's overview, which is where a reader looks for it, and the
+    /// combined document repeats all of that content in one file that grows
+    /// without bound as crates gain deep dives. A project that genuinely wants
+    /// one long read can turn it back on.
+    pub deep_dive_index: bool,
+    /// Whether generated documents carry a sort prefix.
+    ///
+    /// A docs directory of thirty crates plus project documents has no
+    /// inherent order, so a reader meets it alphabetically, which puts a
+    /// leaf crate's deep dive above the document explaining what any of it
+    /// is. Prefixing by dependency depth makes the listing read in the order
+    /// the architecture is built.
+    pub ordered_docs: bool,
+    /// Documents a reader should start with, by output name without extension
+    /// (`DESIGN`, `IDENTITY`). These sort first. Everything else that is not
+    /// generated from a crate sorts last, as supplementary material.
+    pub primary_docs: Vec<String>,
+    /// Named roots for registry provenance references. See `RawRegistry::roots`.
+    pub registry_roots: BTreeMap<String, String>,
+    /// Roots declared frozen. Line citations into any other root are reported
+    /// as fragile.
+    pub frozen_roots: std::collections::BTreeSet<String>,
     pub install_git_hooks: InstallMode,
     pub install_cargo_config: InstallMode,
     pub install_agent_files: InstallMode,
@@ -215,6 +243,39 @@ struct RawAttribution {
     autonomous: Option<String>,
 }
 
+/// One declared reference root. A table rather than a bare string so a root
+/// can gain options without breaking every project that declared one.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct RawRefRoot {
+    path: String,
+    /// Whether this root's contents are settled and will not shift.
+    ///
+    /// Line citations are only honest into a frozen root. Everywhere else an
+    /// edit above a cited line silently repoints it, which is the failure this
+    /// project treats as worst: the check passes and the answer is wrong.
+    /// Declaring a root frozen is a claim that its files do not move, and it
+    /// is what turns a line citation from a hazard into a fact.
+    frozen: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawRef {
+    /// Named roots a citation may use, relative to the repository root. The
+    /// root name is what disambiguates a project's own document from a corpus
+    /// it indexes when both are called the same thing.
+    roots: BTreeMap<String, RawRefRoot>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawRegistry {
+    #[serde(rename = "namespace")]
+    namespace: Vec<crate::registry::RegistryNamespace>,
+
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct RawConfig {
@@ -247,6 +308,28 @@ struct RawConfig {
     // by bare-primitive lints to skip per-primitive per-crate.
     #[serde(rename = "primitive-introductions", alias = "primitive_introductions")]
     primitive_introductions: Option<BTreeMap<String, Vec<String>>>,
+
+    /// Registry namespaces: the kinds of thing this project's documents refer
+    /// to by identifier. Absent means the project does not use the registry,
+    /// which must stay a no-cost default.
+    #[serde(default)]
+    registry: Option<RawRegistry>,
+
+    /// Opt in to the combined deep-dive document. See `Config::deep_dive_index`.
+    #[serde(default)]
+    deep_dive_index: Option<bool>,
+
+    /// Reference roots. See `RawRef`.
+    #[serde(default, rename = "ref")]
+    ref_cfg: Option<RawRef>,
+
+    /// Opt in to sort prefixes on generated documents.
+    #[serde(default)]
+    ordered_docs: Option<bool>,
+
+    /// Documents a reader should start with. See `Config::primary_docs`.
+    #[serde(default)]
+    primary_docs: Vec<String>,
 
     // Lints section is handled separately via toml_edit document API
     // because it contains heterogeneous values (strings and tables).
@@ -370,6 +453,19 @@ impl Config {
             })
             .unwrap_or_default();
 
+        // Builtins first, then the project's own, so a project may repoint a
+        // builtin root but never has to declare one to get started.
+        let mock_rel = mock_dir
+            .strip_prefix(&repo_root)
+            .unwrap_or(&mock_dir)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let mut registry_roots_raw = crate::registry::builtin_roots(&mock_rel);
+        if let Some(r) = raw.ref_cfg.as_ref() {
+            for (name, root) in &r.roots {
+                registry_roots_raw.insert(name.clone(), root.path.clone());
+            }
+        }
         Config {
             mock_dir, crates_dir, repo_root, docs_dir,
             project_name, crate_prefix,
@@ -380,6 +476,24 @@ impl Config {
             abi_version: raw.abi_version.unwrap_or(1),
             nuke_marker: "Nuked by `cargo mock --nuke`".to_string(),
             commit_style: CommitStyle::default(),
+            registry_namespaces: crate::registry::with_builtins(
+                &raw.registry.map(|r| r.namespace).unwrap_or_default(),
+            ),
+            deep_dive_index: raw.deep_dive_index.unwrap_or(false),
+            ordered_docs: raw.ordered_docs.unwrap_or(false),
+            primary_docs: raw.primary_docs,
+            registry_roots: registry_roots_raw,
+            frozen_roots: raw
+                .ref_cfg
+                .as_ref()
+                .map(|r| {
+                    r.roots
+                        .iter()
+                        .filter(|(_, v)| v.frozen)
+                        .map(|(k, _)| k.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
             install_git_hooks, install_cargo_config, install_agent_files,
             attribution,
             lint_overrides,

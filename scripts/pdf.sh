@@ -124,7 +124,11 @@ files=()
 # Overview file first, then remaining deep-dive files alphabetically.
 for crate_node in "${ordered_crates[@]}"; do
     prefix="${crate_node^^}"  # bash uppercase expansion
-    overview="$DOCS_DIR/${prefix}_OVERVIEW.md"
+    # The overview is named for the crate alone, and carries a sort prefix when
+    # the project orders its documents. Glob rather than construct, so this does
+    # not need to know either rule.
+    overview="$(ls "$DOCS_DIR"/*"${prefix}".md 2>/dev/null | head -1)"
+    [ -n "$overview" ] || overview="$DOCS_DIR/${prefix}.md"
     [[ -f "$overview" ]] && files+=("$overview")
     for f in "$DOCS_DIR/${prefix}_"*.md; do
         [[ "$f" == "$overview" ]] && continue

@@ -26,8 +26,30 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
     writeln!(md, "> Auto-generated from the mock workspace. This document is the canonical").unwrap();
     writeln!(md, "> description of every crate, type, and macro in the framework.").unwrap();
     writeln!(md).unwrap();
-    writeln!(md, "See also: [STRUCTURE.GRAPH.svg](STRUCTURE.GRAPH.svg) for the visual dependency graph.").unwrap();
+    let graph_svg = crate::render_design::ordered_doc_name("STRUCTURE.GRAPH.svg", cfg);
+    writeln!(md, "See also: [{graph_svg}]({graph_svg}) for the visual dependency graph.").unwrap();
     writeln!(md).unwrap();
+
+    let designed_only = crate::render::designed_but_unbuilt(crates, cfg);
+    if !designed_only.is_empty() {
+        writeln!(md, "## Designed, not yet built").unwrap();
+        writeln!(md).unwrap();
+        writeln!(
+            md,
+            "{} crates carry a design document and no source yet. They are listed here rather than",
+            designed_only.len()
+        )
+        .unwrap();
+        writeln!(md, "omitted, because this document describes the architecture and the architecture").unwrap();
+        writeln!(md, "includes them. Their dependencies are undeclared until a manifest exists, so they").unwrap();
+        writeln!(md, "carry no edges in the graph.").unwrap();
+        writeln!(md).unwrap();
+        for name in &designed_only {
+            let short = name.strip_prefix(&format!("{}-", cfg.crate_prefix)).unwrap_or(name);
+            writeln!(md, "- `{short}`").unwrap();
+        }
+        writeln!(md).unwrap();
+    }
 
     // Table of contents
     writeln!(md, "## Table of Contents").unwrap();
