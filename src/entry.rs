@@ -6,6 +6,7 @@ use mockspace_lint_rules::{Lint, CrossCrateLint};
 
 use crate::bench;
 use crate::bootstrap;
+use crate::document;
 use crate::config::Config;
 use crate::design_round;
 use crate::registry;
@@ -315,11 +316,6 @@ fn run_inner(
 
     eprintln!("--- parsing crates ---");
     let crates = parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
-    // Before anything renders, so a reference to a crate resolves regardless of
-    // which document is written first.
-    let mut cfg = cfg;
-    cfg.crate_doc_names = render_design::crate_doc_name_map(&cfg, &crates);
-    let cfg = cfg;
 
     // Several crates and not one edge between them is far more often a parse
     // failure than a real architecture. It reads as neither, because nothing
@@ -479,26 +475,23 @@ fn run_inner(
     }
 
 
-    // --- STRUCTURE.md ---
-    eprintln!("--- generating STRUCTURE.md ---");
-    let structure_header = render_design::generation_header_md(&cfg);
-    let structure_body = render_md::generate_structure_md(&crates, &cfg);
-    let structure_md = format!("{structure_header}\n{structure_body}");
-    let structure_path = cfg.docs_dir.join(render_design::ordered_doc_name("STRUCTURE.md", &cfg));
-    render_design::write_generated(&structure_path, &structure_md);
-    eprintln!("  {}", structure_path.display());
+    // STRUCTURE.md is markdown, so it goes through the same pipeline as every
+    // other document rather than being written here. Computed now because it
+    // reads the crate graph; rendered below with the rest.
+    let structure_md = render_md::generate_structure_md(&crates, &cfg);
 
     // --- Combined deep-dive document (opt in) ---
     // Each deep dive already renders beside its crate's overview below, which
     // is where a reader looks for it. The combined file repeats that content
     // and grows without bound, so a project asks for it rather than gets it.
+    let mut deep_dive_index: Option<String> = None;
     if cfg.deep_dive_index {
         eprintln!("--- generating DESIGN-DEEP-DIVES.md ---");
+        // Planned like every other document rather than written here, so it
+        // gets the placeholders, the references, and the naming the rest get.
         let deep_dives = render_design::generate_deep_dives_md(&cfg);
         if !deep_dives.is_empty() {
-            let dd_path = cfg.docs_dir.join("DESIGN-DEEP-DIVES.md");
-            render_design::write_generated(&dd_path, &deep_dives);
-            eprintln!("  {}", dd_path.display());
+            deep_dive_index = Some(deep_dives);
         }
     }
 
@@ -507,6 +500,37 @@ fn run_inner(
     // against it. A project declaring no namespaces gets an empty registry and
     // every step below is a no-op.
     let registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+
+    // The index is built before ANY reference resolves, including the ones
+    // held inside row data. Resolving data against an empty index was the
+    // original bug wearing a different hat: a row referencing a crate or
+    // another row got a link built by the fallbacks, which name `LAW.md` where
+    // the file is `902_LAW.md`.
+    //
+    // Nothing here needs resolved data: planning reads filenames and namespace
+    // keys, so the order has no cycle in it.
+    let mut plan = document::plan(&cfg, &crates);
+    plan.push(document::Planned::computed(
+        document::DocId::root("STRUCTURE.md", &cfg),
+        structure_md,
+    ));
+    if let Some(body) = deep_dive_index {
+        plan.push(document::Planned::computed(
+            document::DocId::root("DESIGN-DEEP-DIVES.md", &cfg),
+            body,
+        ));
+    }
+    document::plan_registry_pages(
+        &mut plan,
+        &cfg.registry_namespaces,
+        &registry,
+        &cfg.mock_dir,
+        &cfg,
+    );
+    let mut cfg = cfg;
+    cfg.doc_index = document::DocIndex::build(&plan, &cfg);
+    let cfg = cfg;
+
     // Settle references held inside the data before any document renders, so
     // every consumer of a row sees final values rather than templates.
     let (registry, cycle_findings) = registry::resolve_data(
@@ -518,26 +542,6 @@ fn run_inner(
         &cfg,
     );
 
-    // --- Per-crate overview and deep dive files ---
-    // After the registry resolves, because a crate document is where most
-    // references live and they are resolved against it.
-    eprintln!("--- generating per-crate docs ---");
-    render_design::generate_per_crate_docs(&placeholders, &cfg, &crates, &registry);
-
-    // --- DESIGN.md ---
-    // After the registry, like every other document: it composes the per-crate
-    // summaries, and those carry references of their own.
-    eprintln!("--- generating DESIGN.md ---");
-    match render_design::generate_design_md(&placeholders, &cfg, &registry) {
-        Some(design_md) => {
-            let design_path = cfg.docs_dir.join(render_design::ordered_doc_name("DESIGN.md", &cfg));
-            render_design::write_generated(&design_path, &design_md);
-            eprintln!("  {}", design_path.display());
-        }
-        None => {
-            eprintln!("  skipped (no DESIGN.md.tmpl found)");
-        }
-    }
     if !cfg.registry_namespaces.is_empty() {
         eprintln!("--- registry ---");
         let schemas = registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
@@ -545,14 +549,13 @@ fn run_inner(
             eprintln!("  generated {schemas} schema files");
         }
         eprintln!("  {} rows across {} namespaces", registry.rows.len(), registry.by_namespace.len());
-        let header = render_design::generation_header_md(&cfg);
-        for page in registry::render_pages(&cfg.mock_dir, &cfg.docs_dir, &cfg.registry_namespaces, &registry, &header, &cfg) {
-            eprintln!("  {}", page.display());
-        }
         for f in &cycle_findings {
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         for f in registry::validate_provenance(&cfg.repo_root, &cfg.registry_roots, &cfg.frozen_roots, &registry) {
+            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+        }
+        for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots) {
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         for f in registry::validate(&cfg.registry_namespaces, &registry) {
@@ -575,11 +578,16 @@ fn run_inner(
         }
     }
 
-    // --- Passthrough templates ---
-    eprintln!("--- copying passthrough templates ---");
-    for out_path in render_design::render_passthrough_templates(&placeholders, &cfg, &registry) {
-        eprintln!("  {}", out_path.display());
-    }
+    // --- Every markdown document, through one pipeline ---
+    //
+    // Planned first, so the index of what will exist is complete before the
+    // first reference resolves: a reference from a document written early to
+    // one written later is ordinary rather than a special case. Then rendered,
+    // in one loop, so a document cannot reach the output having skipped a step
+    // because its path forgot one. Both were real, repeatedly.
+    eprintln!("--- generating documents ---");
+    let written = document::render_all(&plan, &placeholders, &registry, &cfg);
+    eprintln!("  generated {} documents", written.len());
 
     // --- Unresolved references in what was just written ---
     // Scanned from the output rather than checked per path. Several paths
@@ -624,7 +632,7 @@ fn run_inner(
 
     // --- Agent rules and skills ---
     eprintln!("--- generating agent rules ---");
-    let agent_count = render_agent::generate_agent_rules(&crates, &cfg);
+    let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry);
     eprintln!("  generated {agent_count} agent files");
 
     ExitCode::SUCCESS

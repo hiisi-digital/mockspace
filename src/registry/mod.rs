@@ -137,9 +137,9 @@ mod tests {
         let reg = reg_with("xpbd", "vocab", &[("what", "w")]);
         let text = "{{ reg::vocab::nope }} and {{ reg::vocab::xpbd::missing }}";
         assert_eq!(r_all(text, &[ns("vocab", None)], &reg), text);
-        let d = dangling_references(text, &reg);
-        assert!(d.contains("reg::vocab::nope"), "{d:?}");
-        assert!(d.contains("reg::vocab::xpbd::missing"), "{d:?}");
+        let d = dangling_references(text, &reg, &["vocab".to_string()].into_iter().collect());
+        assert!(d.contains("vocab::nope"), "{d:?}");
+        assert!(d.contains("vocab::xpbd::missing"), "{d:?}");
     }
 
     #[test]
@@ -368,7 +368,8 @@ mod tests {
         let reg = reg_with("keys", "law", &[("statement", "a key is closed")]);
         let crates = crate::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
         let ph = crate::render_design::Placeholders::compute(&crates, &cfg);
-        crate::render_design::generate_per_crate_docs(&ph, &cfg, &crates, &reg);
+        let plan = crate::document::plan(&cfg, &crates);
+        crate::document::render_all(&plan, &ph, &reg, &cfg);
 
         let out: String = std::fs::read_dir(&docs)
             .unwrap()
@@ -417,10 +418,17 @@ mod tests {
         cfg.docs_dir = docs.clone();
         cfg.repo_root = tmp.path().to_path_buf();
         cfg.crate_prefix = "proj".into();
-        cfg.crate_doc_names =
-            [("plan-validate".to_string(), "140_PLAN_VALIDATE.md".to_string())]
-                .into_iter()
-                .collect();
+        cfg.ordered_docs = true;
+        // Built from what will exist, not from what has been written.
+        let plan = vec![crate::document::Planned::computed(
+            crate::document::DocId::Crate {
+                upper: "PLAN_VALIDATE".into(),
+                subject: "OVERVIEW".into(),
+                depth: 4,
+            },
+            String::new(),
+        )];
+        cfg.doc_index = crate::document::DocIndex::build(&plan, &cfg);
 
         let reg = Registry::default();
         let out = resolve_all(
@@ -463,6 +471,97 @@ mod tests {
             &cfg,
         );
         assert_eq!(out, "see [plan-validate](140_PLAN_VALIDATE.md) now", "{out}");
+    }
+
+    #[test]
+    fn row_data_resolves_against_the_same_index_documents_do() {
+        // The wiring, not the unit. Every other test builds the index by hand,
+        // so none of them notices when the index is built after the data has
+        // already resolved against an empty one. That ordering shipped once and
+        // is exactly the bug the index exists to prevent: the fallbacks name
+        // `LAW.md` where the file is written as `902_LAW.md`.
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.ordered_docs = true;
+        let nss = vec![ns("law", None)];
+        cfg.registry_namespaces = nss.clone();
+
+        let plan = vec![crate::document::Planned::computed(
+            crate::document::DocId::Registry {
+                page: "LAW.md".into(),
+                index: 2,
+            },
+            String::new(),
+        )];
+        cfg.doc_index = crate::document::DocIndex::build(&plan, &cfg);
+
+        // A row whose field references another row, which is what resolve_data
+        // settles before any document reads it.
+        let mut reg = reg_with("keys", "law", &[("statement", "closed")]);
+        let row = RegistryRow {
+            slug: "derived".into(),
+            namespace: "law".into(),
+            source: PathBuf::from("t.toml"),
+            fields: [("statement".to_string(), "see {{ law::keys }}".to_string())]
+                .into_iter()
+                .collect(),
+        };
+        let q = row.qualified();
+        reg.by_namespace.get_mut("law").unwrap().push(q.clone());
+        reg.rows.insert(q, row);
+
+        let (resolved, findings) = resolve_data(
+            &nss,
+            &reg,
+            &BTreeMap::new(),
+            Path::new("/r"),
+            Path::new("/r/docs"),
+            &cfg,
+        );
+        assert!(findings.is_empty(), "{findings:?}");
+        let got = resolved
+            .get("law::derived")
+            .and_then(|r| r.fields.get("statement"))
+            .unwrap();
+        assert!(
+            got.contains("902_LAW.md#keys"),
+            "row data resolved against an empty index: {got}"
+        );
+    }
+
+    #[test]
+    fn a_namespace_resolves_without_the_reg_prefix() {
+        // `reg::` carried no information: slot zero is either a declared root
+        // or a declared namespace. It cost four characters on every reference
+        // and read as ceremony.
+        let reg = reg_with("keys", "law", &[("statement", "a key is closed")]);
+        let nss = vec![ns("law", None)];
+        assert_eq!(
+            r_all("{{ law::keys::statement }}", &nss, &reg),
+            "a key is closed"
+        );
+    }
+
+    #[test]
+    fn the_reg_prefix_still_resolves() {
+        // Thousands of references were written with it.
+        let reg = reg_with("keys", "law", &[("statement", "a key is closed")]);
+        let nss = vec![ns("law", None)];
+        assert_eq!(
+            r_all("{{ reg::law::keys::statement }}", &nss, &reg),
+            "a key is closed"
+        );
+    }
+
+    #[test]
+    fn a_namespace_that_is_also_a_root_is_reported() {
+        // Otherwise `law::x` is ambiguous and the answer is a precedence rule
+        // nobody can remember.
+        let roots = [("law".to_string(), "docs/law".to_string())]
+            .into_iter()
+            .collect();
+        let found = namespace_root_collisions(&[ns("law", None)], &roots);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].message.contains("ambiguous"), "{found:?}");
     }
 
     #[test]

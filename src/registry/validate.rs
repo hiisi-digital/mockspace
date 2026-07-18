@@ -182,8 +182,15 @@ pub fn validate(_namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<Regist
 /// Findings for references made by a rendered document to rows that do not
 /// exist. Separate from `validate` because it needs the document set, which
 /// only the render pass has.
-pub fn validate_references(text: &str, reg: &Registry, origin: &Path) -> Vec<RegistryFinding> {
-    dangling_references(text, reg)
+pub fn validate_references(
+    text: &str,
+    reg: &Registry,
+    origin: &Path,
+    namespaces: &[RegistryNamespace],
+) -> Vec<RegistryFinding> {
+    let ns_keys: std::collections::BTreeSet<String> =
+        namespaces.iter().map(|n| n.key.clone()).collect();
+    dangling_references(text, reg, &ns_keys)
         .into_iter()
         .map(|id| RegistryFinding {
             kind: "dangling-reference",
@@ -271,6 +278,48 @@ pub fn unresolved_in_generated(text: &str) -> Vec<String> {
         }
         for (raw, _) in crate::registry::placeholder_exprs(line) {
             out.push(raw);
+        }
+    }
+    out
+}
+
+/// A namespace whose name is also a citation root, which makes a bare
+/// reference ambiguous.
+///
+/// `law::keys` means the `law` namespace. It would also mean a citation into a
+/// root named `law`, and nothing in the reference says which. The prefixed form
+/// disambiguates, but a project should not have to reach for it, so the
+/// collision is a configuration error rather than a precedence rule nobody can
+/// remember.
+pub fn namespace_root_collisions(
+    namespaces: &[RegistryNamespace],
+    roots: &std::collections::BTreeMap<String, String>,
+) -> Vec<RegistryFinding> {
+    let mut out = Vec::new();
+    for ns in namespaces {
+        if roots.contains_key(&ns.key) {
+            out.push(RegistryFinding {
+                kind: "namespace-root-collision",
+                message: format!(
+                    "`{}` is both a registry namespace and a citation root, so `{}::x` is ambiguous. Rename one of them.",
+                    ns.key, ns.key
+                ),
+                source: None,
+            });
+        }
+        // The reserved words are the other occupants of slot zero, and they
+        // fail worse than a root collision does. A namespace named `crates` is
+        // shadowed silently. One named `reg` rewrites `reg::x` into
+        // `reg::reg::x` on every pass and never terminates.
+        if crate::registry::RESERVED_ROOTS.contains(&ns.key.as_str()) {
+            out.push(RegistryFinding {
+                kind: "namespace-reserved-name",
+                message: format!(
+                    "`{}` is a reserved reference root, so a namespace cannot take the name. Rename the namespace.",
+                    ns.key
+                ),
+                source: None,
+            });
         }
     }
     out

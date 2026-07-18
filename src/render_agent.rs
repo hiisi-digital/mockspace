@@ -975,6 +975,50 @@ fn sweep_orphan_generated_files(
 /// Deriving it means the README stays the single source: edit the README and
 /// the rule follows on the next render. A crate with no README simply gets no
 /// rule.
+/// How a rule under `.claude/rules/` reaches the docs directory.
+///
+/// Two levels up to the repository root, then down. Computed rather than
+/// hardcoded so a project that puts its docs elsewhere still gets working
+/// links.
+fn docs_link_prefix(cfg: &Config) -> String {
+    // A docs directory outside the repository has no relative path from a rule
+    // inside it. Producing `../../Users/...` would be a link that resolves on
+    // one machine, so the prefix is dropped and the link points at a bare
+    // filename, which is at least honestly wrong rather than convincingly so.
+    let Ok(rel) = cfg.docs_dir.strip_prefix(&cfg.repo_root) else {
+        return String::new();
+    };
+    format!("../../{}/", rel.to_string_lossy().replace('\\', "/"))
+}
+
+/// Resolve a consumer template's references for output that lands outside the
+/// docs directory.
+///
+/// Every agent-facing template is a consumer template: it carries the same
+/// placeholders and the same registry references the documents do. Five of the
+/// six paths that render one resolved placeholders and not references, so a rule
+/// an agent reads carried a literal reference where the document it mirrors
+/// carried the law. Routing them all through here is what stops the sixth from
+/// being written the same way.
+fn render_agent_body(
+    raw: &str,
+    vars: &[(String, String)],
+    cfg: &Config,
+    registry: &crate::registry::Registry,
+) -> String {
+    let mut link_cfg: Config = cfg.clone();
+    link_cfg.doc_link_prefix = docs_link_prefix(cfg);
+    crate::registry::resolve_all(
+        &substitute_vars(raw, vars),
+        &cfg.registry_namespaces,
+        registry,
+        &cfg.registry_roots,
+        &cfg.repo_root,
+        &cfg.docs_dir,
+        &link_cfg,
+    )
+}
+
 fn generate_crate_readme_rules(
     cfg: &Config,
     claude_rules_dir: &Path,
@@ -983,6 +1027,7 @@ fn generate_crate_readme_rules(
     header_md: &str,
     preamble: &str,
     postamble: &str,
+    registry: &crate::registry::Registry,
 ) -> usize {
     use std::collections::BTreeSet as Set;
 
@@ -1015,8 +1060,15 @@ fn generate_crate_readme_rules(
         }
 
         // The README is a consumer template, so it carries the same `{{...}}`
-        // placeholders every other consumer template does.
-        let body = substitute_vars(&raw, vars);
+        // placeholders every other consumer template does, and the same
+        // registry references. Resolving them here is what stops a rule an
+        // agent reads from carrying a literal `{{ law::keys }}` where the
+        // document it mirrors carries the law.
+        //
+        // Links are prefixed, because a rule lives under `.claude/` while the
+        // documents it links to live under `docs/`, so a bare filename would
+        // point at a sibling that is not there.
+        let body = render_agent_body(&raw, vars, cfg, registry);
         let apply_to = vec![format!("{mock_rel}/crates/{crate_name}/**")];
 
         active.insert(crate_name.clone());
@@ -1144,7 +1196,7 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             )
         };
         ns_doc.push_str(&format!(
-            "- `reg::{}::<slug>`: {}{}{}\n",
+            "- `{}::<slug>`: {}{}{}\n",
             ns.key,
             ns.description
                 .clone()
@@ -1164,7 +1216,7 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             name: "reference-syntax".to_string(),
             apply_to: vec!["**/*.md".to_string(), "**/*.md.tmpl".to_string(), "**/*.toml".to_string()],
             body: format!(
-                "## Reference syntax\n\n                 Write a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry\n                 field declared to hold one. It resolves when documents are generated, and it is checked:\n                 a reference that points nowhere is reported rather than rendered as something that looks\n                 fine.\n\n                 The braces are required. They make a reference something you state rather than something\n                 the renderer guesses from a pattern, so prose about code is never rewritten by accident.\n                 References inside code fences are left alone.\n\n                 ### Roots in this project\n\n{roots_doc}\n                 A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`) or a line\n                 number. **Prefer the heading.** A line number fails silently: an edit above it shifts the\n                 target, the citation still resolves, and it now points at different content. A heading\n                 fails loudly when renamed, which is a report rather than a lie. Line numbers are honest\n                 only in a root declared frozen.\n\n                 A path may have any depth and the extension may be omitted, so `mock::DESIGN::12` finds\n                 `DESIGN.md.tmpl` without you tracking which form exists where. Two matches is an error\n                 rather than a guess.\n\n                 ### Registry namespaces in this project\n\n{ns_doc}\n                 A namespace every project has is addressed directly: `vocab::xpbd`, not\n                 `reg::vocab::xpbd`. A namespace this project declared stays behind `reg::`, so a\n                 reference reads as what it is, a lookup into this project's own tables rather than\n                 into vocabulary everyone shares.\n\n                 `{{{{ reg::<ns> }}}}` renders that namespace's whole table inline. `{{{{ reg::<ns>::<slug>::<field> }}}}`\n                 renders one field, which is how a document states a value once and every mention of it\n                 stays current instead of drifting into a copy.\n\n                 Registry rows are identified by a snake_case slug, never a number. A number carries no\n                 meaning and so has to be managed: never reused, never renumbered, never reordered, since\n                 any of those silently repoints every reference to it.\n"
+                "## Reference syntax\n\n                 Write a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry\n                 field declared to hold one. It resolves when documents are generated, and it is checked:\n                 a reference that points nowhere is reported rather than rendered as something that looks\n                 fine.\n\n                 The braces are required. They make a reference something you state rather than something\n                 the renderer guesses from a pattern, so prose about code is never rewritten by accident.\n                 References inside code fences are left alone.\n\n                 ### Roots in this project\n\n{roots_doc}\n                 A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`) or a line\n                 number. **Prefer the heading.** A line number fails silently: an edit above it shifts the\n                 target, the citation still resolves, and it now points at different content. A heading\n                 fails loudly when renamed, which is a report rather than a lie. Line numbers are honest\n                 only in a root declared frozen.\n\n                 A path may have any depth and the extension may be omitted, so `mock::DESIGN::12` finds\n                 `DESIGN.md.tmpl` without you tracking which form exists where. Two matches is an error\n                 rather than a guess.\n\n                 ### Registry namespaces in this project\n\n{ns_doc}\n                 A namespace is addressed by its own name: `law::keys`, `vocab::xpbd`. There is no\n                 prefix, because slot zero is either a declared root or a declared namespace and the\n                 two cannot collide. The older `reg::law::keys` still resolves.\n\n                 `{{{{ <ns> }}}}` renders that namespace's whole table inline. `{{{{ <ns>::<slug>::<field> }}}}`\n                 renders one field, which is how a document states a value once and every mention of it\n                 stays current instead of drifting into a copy.\n\n                 Registry rows are identified by a snake_case slug, never a number. A number carries no\n                 meaning and so has to be managed: never reused, never renumbered, never reordered, since\n                 any of those silently repoints every reference to it.\n"
             ),
         },
         BuiltinRule {
@@ -1742,7 +1794,11 @@ fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
 ///           .claude/agents/*.md, .claude/hooks/*.sh, .claude/settings.json
 /// - Copilot: .github/copilot-instructions.md, .github/instructions/*.instructions.md,
 ///            .github/skills/*/SKILL.md, .github/hooks/*.sh, .github/hooks/hooks.json
-pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
+pub fn generate_agent_rules(
+    crates: &CrateMap,
+    cfg: &Config,
+    registry: &crate::registry::Registry,
+) -> usize {
     let repo_root = &cfg.repo_root;
     let agent_dir = cfg.mock_dir.join("agent");
 
@@ -1868,6 +1924,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         &header_md,
         &preamble,
         &postamble,
+        registry,
     );
 
     // --- Consumer rules/*.md.tmpl -> .claude/rules/*.md + .github/instructions/*.instructions.md ---
@@ -1888,7 +1945,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
         for entry in entries {
             let path = entry.path();
             let raw = fs::read_to_string(&path).expect("failed to read rule template");
-            let raw = substitute_vars(&raw, &vars);
+            let raw = render_agent_body(&raw, &vars, cfg, registry);
             let (frontmatter, body) = split_frontmatter(&raw);
             let apply_to = parse_apply_to(&frontmatter);
 
@@ -1987,7 +2044,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
 
             let raw = fs::read_to_string(&skill_path).expect("failed to read skill template");
             let (frontmatter, body) = split_frontmatter(&raw);
-            let body = substitute_vars(&body, &vars);
+            let body = render_agent_body(&body, &vars, cfg, registry);
             let name = parse_field(&frontmatter, "skill_name").unwrap_or(skill_name.clone());
             let desc = parse_field(&frontmatter, "skill_description").unwrap_or_default();
 
@@ -2073,7 +2130,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
             // means mockspace does not rename or drop fields, not that it
             // refuses to expand variables inside them.
             let raw = fs::read_to_string(&path).expect("failed to read agent template");
-            let raw = substitute_vars(&raw, &vars);
+            let raw = render_agent_body(&raw, &vars, cfg, registry);
             let (frontmatter, body) = split_frontmatter(&raw);
 
             // An agent with no frontmatter has no `name`/`description`, so
@@ -2131,7 +2188,7 @@ pub fn generate_agent_rules(crates: &CrateMap, cfg: &Config) -> usize {
                 .unwrap_or_else(|| matchers_from_name(out_name));
 
             // substitute general template variables first
-            let template = substitute_vars(&template, &vars);
+            let template = render_agent_body(&template, &vars, cfg, registry);
 
             let repo_root_str = cfg.repo_root.to_string_lossy();
 
