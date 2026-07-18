@@ -334,6 +334,56 @@ mod tests {
     }
 
     #[test]
+    fn a_crate_document_resolves_references_like_any_other() {
+        // A crate document is where most references naturally live: it is where
+        // a crate states which laws bind it and which constants it depends on.
+        // Per-crate generation applied placeholders but never resolved
+        // references, so every one rendered literally and nothing reported it,
+        // which reads as a templating bug rather than as a missing check.
+        let tmp = tempfile::tempdir().unwrap();
+        let mock = tmp.path().join("mock");
+        let crate_dir = mock.join("crates").join("proj-store");
+        std::fs::create_dir_all(&crate_dir).unwrap();
+        std::fs::write(
+            crate_dir.join("DESIGN.md.tmpl"),
+            "# store\n\nBound by {{ reg::law::keys }}.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            crate_dir.join("Cargo.toml"),
+            "[package]\nname = \"proj-store\"\n",
+        )
+        .unwrap();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.mock_dir = mock.clone();
+        cfg.crates_dir = mock.join("crates");
+        cfg.docs_dir = docs.clone();
+        cfg.repo_root = tmp.path().to_path_buf();
+        cfg.crate_prefix = "proj".into();
+        cfg.registry_namespaces = vec![ns("law", None)];
+
+        let reg = reg_with("keys", "law", &[("statement", "a key is closed")]);
+        let crates = crate::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+        let ph = crate::render_design::Placeholders::compute(&crates, &cfg);
+        crate::render_design::generate_per_crate_docs(&ph, &cfg, &crates, &reg);
+
+        let out: String = std::fs::read_dir(&docs)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
+            .collect();
+        assert!(!out.is_empty(), "no per-crate document was generated");
+        assert!(
+            !out.contains("{{ reg::law::keys }}"),
+            "the reference rendered literally: {out}"
+        );
+        assert!(out.contains("LAW.md#keys"), "no link to the row: {out}");
+    }
+
+    #[test]
     fn slugs_are_snake_case() {
         assert!(is_valid_slug("xpbd") && is_valid_slug("waist_a") && is_valid_slug("lane_2"));
         assert!(!is_valid_slug("Waist-A"));
