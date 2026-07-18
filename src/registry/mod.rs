@@ -542,6 +542,21 @@ mod tests {
     }
 
     #[test]
+    fn a_namespace_alone_renders_its_table() {
+        let reg = reg_with("xpbd", "vocab", &[]);
+        let out = r_all("{{ vocab }}", &[ns("vocab", None)], &reg);
+        assert!(out.contains("xpbd"), "{out}");
+        assert!(out.contains('|'), "not a table: {out}");
+    }
+
+    #[test]
+    fn an_unknown_single_word_is_left_alone() {
+        // Otherwise a stray word in prose would be eaten as a namespace.
+        let reg = reg_with("xpbd", "vocab", &[]);
+        assert_eq!(r_all("{{ nope }}", &[ns("vocab", None)], &reg), "{{ nope }}");
+    }
+
+    #[test]
     fn the_reg_prefix_still_resolves() {
         // Thousands of references were written with it.
         let reg = reg_with("keys", "law", &[("statement", "a key is closed")]);

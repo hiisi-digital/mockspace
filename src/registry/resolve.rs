@@ -147,6 +147,13 @@ fn resolve_expr(
     //
     // Rewritten into the prefixed form rather than handled separately, so there
     // is one resolution path and the two spellings cannot diverge.
+    // A namespace alone renders its whole table: `{{ task }}`. Placeholders
+    // have already been substituted by the time this runs, so a single segment
+    // that names a namespace can only mean the namespace.
+    if parts.len() == 1 {
+        return by_key.get(parts[0]).map(|ns| render_table(ns, reg, cfg));
+    }
+
     if by_key.contains_key(parts[0]) && parts.len() >= 2 {
         let rewritten = format!("{}::{}", REGISTRY_ROOT, parts.join("::"));
         return resolve_expr(&rewritten, by_key, reg, roots, repo_root, docs_dir, cfg);
