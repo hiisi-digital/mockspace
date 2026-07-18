@@ -1552,9 +1552,21 @@ mod tests {
         };
         reg.by_namespace.insert("reference".into(), vec![row.qualified()]);
         reg.rows.insert(row.qualified(), row);
+        // Short by default: it has to fit a table cell beside hundreds of
+        // others, and the full form is one click away.
         assert_eq!(
             r_all("{{ reference::burns_hunt }}", &with_builtins(&[]), &reg),
-            "Burns and Hunt, The Visibility Buffer (JCGT 2013)"
+            "[Burns and Hunt 2013](REFERENCE.md#burns-hunt)"
+        );
+        // The full form on request, for prose that wants the title.
+        assert_eq!(
+            r_all("{{ reference::burns_hunt::citation }}", &with_builtins(&[]), &reg),
+            "[Burns and Hunt, The Visibility Buffer (JCGT 2013)](REFERENCE.md#burns-hunt)"
+        );
+        // A real field is still a real field.
+        assert_eq!(
+            r_all("{{ reference::burns_hunt::year }}", &with_builtins(&[]), &reg),
+            "2013"
         );
     }
 
@@ -1707,13 +1719,32 @@ fn resolve_expr(
             // A whole namespace: its table, inline.
             2 => by_key.get(parts[1]).map(|ns| render_table(ns, reg)),
             // A row, or a field on it.
-            3 | 4 if parts[1] == "reference" && parts.len() == 3 => {
-                // A bare reference renders as a citation rather than a link.
-                // That is what a bibliography entry is for, and it is the form
-                // a reader recognises whether or not they can reach the work.
+            3 | 4 if parts[1] == "reference" => {
                 let qualified = format!("{}::{}", parts[1], parts[2]);
                 let row = reg.get(&qualified)?;
-                Some(format_citation(row))
+                let ns = by_key.get("reference")?;
+                let target = format!("{}#{}", ns.page_name(), row.anchor());
+
+                // `::citation` is a computed field, not one the row declares:
+                // the full form, linked. Everything else is a real field.
+                if parts.len() == 4 && parts[3] != "citation" {
+                    return row.fields.get(parts[3]).cloned();
+                }
+
+                // A short linked form by default, the full one on request.
+                //
+                // Both are hyperlinks, because a citation a reader cannot
+                // follow is worth less than one they can, and markdown costs
+                // nothing to make it clickable. They differ in width: a
+                // sources column carrying four hundred full citations is
+                // unreadable, while the same citation in prose wants its
+                // title. Default to the form that fits everywhere.
+                let text = if parts.len() == 4 {
+                    format_citation(row)
+                } else {
+                    short_citation(row)
+                };
+                Some(format!("[{text}]({target})"))
             }
             3 | 4 => {
                 let qualified = format!("{}::{}", parts[1], parts[2]);
@@ -1929,6 +1960,21 @@ fn resolve_row(
         })
         .collect();
     done.insert(id.to_string(), fields);
+}
+
+/// The short form: who and when, enough to recognise the work.
+///
+/// What a reader needs at a glance, and what fits in a table cell beside four
+/// hundred others. The full citation is one click away, which is the whole
+/// reason the short form is safe.
+pub fn short_citation(row: &RegistryRow) -> String {
+    let f = |k: &str| row.fields.get(k).filter(|v| !v.is_empty()).cloned();
+    match (f("authors"), f("year")) {
+        (Some(a), Some(y)) => format!("{a} {y}"),
+        (Some(a), None) => a,
+        (None, Some(y)) => format!("{}, {y}", f("title").unwrap_or_else(|| row.slug.clone())),
+        (None, None) => f("title").unwrap_or_else(|| row.slug.clone()),
+    }
 }
 
 /// Render a reference row as a citation.
