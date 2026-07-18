@@ -566,6 +566,52 @@ mod tests {
     }
 
     #[test]
+    fn pathof_a_row_renders_its_provenance() {
+        // "Where does this come from" is a different question from "what does
+        // this say", and the answer for a row is the sources it rests on. The
+        // TOML file it happens to sit in is a fact about filing.
+        let reg = reg_with(
+            "keys",
+            "law",
+            &[("provenance", "mock::DESIGN::12, mock::DESIGN::30")],
+        );
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.registry_namespaces = vec![ns("law", None)];
+        let out = resolve_all(
+            "{{ pathof(law::keys) }}",
+            &cfg.registry_namespaces.clone(),
+            &reg,
+            &BTreeMap::new(),
+            Path::new("/r"),
+            Path::new("/r/docs"),
+            &cfg,
+        );
+        // Unresolvable roots yield nothing rather than a broken path, so the
+        // shape is what matters here: it asked provenance, not the row.
+        assert!(!out.contains("keys"), "rendered the row, not its sources: {out}");
+    }
+
+    #[test]
+    fn pathof_an_internal_citation_renders_nothing() {
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        cfg.internal_roots = ["seed".to_string()].into_iter().collect();
+        cfg.registry_roots = [("seed".to_string(), "corpus".to_string())]
+            .into_iter()
+            .collect();
+        let reg = Registry::default();
+        let out = resolve_all(
+            "from {{ pathof(seed::DESIGN::844) }}.",
+            &[],
+            &reg,
+            &cfg.registry_roots.clone(),
+            Path::new("/r"),
+            Path::new("/r/docs"),
+            &cfg,
+        );
+        assert_eq!(out, "from.", "internal path leaked: {out}");
+    }
+
+    #[test]
     fn a_namespace_alone_renders_its_table() {
         let reg = reg_with("xpbd", "vocab", &[]);
         let out = r_all("{{ vocab }}", &[ns("vocab", None)], &reg);
