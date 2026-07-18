@@ -301,28 +301,6 @@ pub fn render_pages(
         ));
         body.push_str(&render_table(ns, reg));
 
-        let page_file = crate::render_design::registry_doc_name(&ns.page_name(), cfg, idx);
-        let claimed = mock_dir.join(format!("{}.tmpl", ns.page_name()));
-        if claimed.is_file() {
-            eprintln!(
-                "  ERROR: namespace `{}` would generate {} over the document rendered from {}. Rename the namespace or the template.",
-                ns.key,
-                ns.page_name(),
-                claimed.display()
-            );
-            continue;
-        }
-        let mut body = format!("{header}\n# {}\n\n", ns.title());
-        if let Some(d) = &ns.description {
-            body.push_str(d);
-            body.push_str("\n\n");
-        }
-        body.push_str(&format!(
-            "{} rows. Identifiers are permanent: assigned once, never reused, never renumbered.\n\n",
-            ids.len()
-        ));
-        body.push_str(&render_table(ns, reg));
-
         // A registry page is a document like any other, so references inside
         // its rows resolve here too. Without this a row could reference another
         // row and the reference would render literally on the one page most

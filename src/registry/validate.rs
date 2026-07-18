@@ -23,7 +23,6 @@ pub fn validate_provenance(
     reg: &Registry,
 ) -> Vec<RegistryFinding> {
     let mut out = Vec::new();
-    let mut line_counts: BTreeMap<PathBuf, usize> = BTreeMap::new();
 
     for row in reg.rows.values() {
         let Some(raw) = row.fields.get("provenance") else {
