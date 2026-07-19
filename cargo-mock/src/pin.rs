@@ -68,6 +68,12 @@ pub struct Resolved {
     /// order until one succeeds. A `version` pin tries crates.io first, then
     /// the matching git tag.
     pub attempts: Vec<Vec<String>>,
+    /// The cargo dependency *value* for `mockspace-lint-rules`, renamed to the
+    /// package `mockspace`, pinned to the same source the engine is built
+    /// from. Passed to the engine so a custom-lint cdylib links the identical
+    /// lint-rules and its `Box<dyn Lint>` vtables match. Always a git ref (the
+    /// lint-rules crate lives in the same repo at the same tag/rev).
+    pub lint_rules_dep: String,
 }
 
 impl Pin {
@@ -149,6 +155,14 @@ impl Pin {
             a.push(ENGINE_CRATE.to_string());
             a
         };
+        // the lint-rules dep, renamed to `mockspace`, pinned by the same git
+        // ref (kind = "tag" | "rev") so a lint cdylib links identical types.
+        let lint_dep = |kind: &str, val: &str| -> String {
+            format!(
+                "{{ package = \"mockspace-lint-rules\", git = \"{}\", {kind} = \"{val}\" }}",
+                self.url
+            )
+        };
         match &self.reference {
             Reference::Version(v) => Ok(Resolved {
                 key_rev: format!("v:{v}"),
@@ -159,20 +173,24 @@ impl Pin {
                     // is published (and for git-only consumers).
                     git(&["--tag", v]),
                 ],
+                lint_rules_dep: lint_dep("tag", v),
             }),
             Reference::Rev(r) => Ok(Resolved {
                 key_rev: r.clone(),
                 attempts: vec![git(&["--rev", r])],
+                lint_rules_dep: lint_dep("rev", r),
             }),
             Reference::Tag(t) => Ok(Resolved {
                 key_rev: format!("tag:{t}"),
                 attempts: vec![git(&["--tag", t])],
+                lint_rules_dep: lint_dep("tag", t),
             }),
             Reference::Branch(b) => {
                 let sha = self.resolve_branch(b, cache_root)?;
                 Ok(Resolved {
                     key_rev: sha.clone(),
                     attempts: vec![git(&["--rev", &sha])],
+                    lint_rules_dep: lint_dep("rev", &sha),
                 })
             }
         }
