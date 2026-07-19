@@ -38,10 +38,8 @@ impl CrossCrateLint for NoDuplicateFn {
 
         // Build a quick crate-name to context map so the suppression
         // check below can look up the duplicate's source line.
-        let ctx_by_crate: HashMap<&str, &LintContext> = crates
-            .iter()
-            .map(|(name, ctx)| (*name, *ctx))
-            .collect();
+        let ctx_by_crate: HashMap<&str, &LintContext> =
+            crates.iter().map(|(name, ctx)| (*name, *ctx)).collect();
 
         for (name, sigs) in &by_name {
             if sigs.len() < 2 {
@@ -57,17 +55,17 @@ impl CrossCrateLint for NoDuplicateFn {
 
             // Report: first occurrence is the "original", others are duplicates
             let first = sigs[0];
-            for dup in &sigs[1..] {
+            for dup in &sigs[1 ..] {
                 if dup.crate_name != first.crate_name {
                     if is_suppressed(dup, &ctx_by_crate) {
                         continue;
                     }
                     errors.push(LintError {
-                        crate_name: dup.crate_name.clone(),
-                        line: dup.line,
-                        lint_name: "no-duplicate-fn",
-                        severity: crate::Severity::HARD_ERROR,
-                        message: format!(
+                        crate_name:   dup.crate_name.clone(),
+                        line:         dup.line,
+                        lint_name:    "no-duplicate-fn",
+                        severity:     crate::Severity::HARD_ERROR,
+                        message:      format!(
                             "function `{name}` also defined in {} — consider reusing",
                             first.crate_name,
                         ),
@@ -99,17 +97,17 @@ impl CrossCrateLint for NoDuplicateFn {
             }
 
             let first = sigs[0];
-            for dup in &sigs[1..] {
+            for dup in &sigs[1 ..] {
                 if dup.crate_name != first.crate_name && dup.name != first.name {
                     if is_suppressed(dup, &ctx_by_crate) {
                         continue;
                     }
                     errors.push(LintError {
-                        crate_name: dup.crate_name.clone(),
-                        line: dup.line,
-                        lint_name: "no-duplicate-fn",
-                        severity: crate::Severity::HARD_ERROR,
-                        message: format!(
+                        crate_name:   dup.crate_name.clone(),
+                        line:         dup.line,
+                        lint_name:    "no-duplicate-fn",
+                        severity:     crate::Severity::HARD_ERROR,
+                        message:      format!(
                             "function `{}` has same signature as `{}` in {} — consider reusing",
                             dup.name, first.name, first.crate_name,
                         ),
@@ -130,10 +128,7 @@ impl CrossCrateLint for NoDuplicateFn {
 /// example: the linker-bound `rust_eh_personality` stub in every
 /// `no_std` cdylib that does not unwind. The symbol name is fixed by
 /// the Rust ABI and the function body cannot be shared via reuse.
-fn is_suppressed(
-    sig: &FnSig,
-    ctx_by_crate: &HashMap<&str, &LintContext>,
-) -> bool {
+fn is_suppressed(sig: &FnSig, ctx_by_crate: &HashMap<&str, &LintContext>) -> bool {
     let ctx = match ctx_by_crate.get(sig.crate_name.as_str()) {
         Some(c) => c,
         None => return false,
@@ -199,10 +194,10 @@ pub fn comma_list_match() {}  // lint:allow(no-bare-result, no-duplicate-fn)
 
 struct FnSig {
     crate_name: String,
-    name: String,
-    params: Vec<String>,
-    ret: String,
-    line: usize,
+    name:       String,
+    params:     Vec<String>,
+    ret:        String,
+    line:       usize,
 }
 
 fn collect_pub_fns(root: Node, source: &str, crate_name: &str, out: &mut Vec<FnSig>) {
@@ -229,8 +224,8 @@ fn collect_pub_fns(root: Node, source: &str, crate_name: &str, out: &mut Vec<FnS
         let ret = extract_return_type(child, source);
 
         // Additional guard: skip if all params and return are TokenStream
-        let is_token_stream_sig = params.iter().all(|p| p == "TokenStream")
-            && (ret == "TokenStream" || ret.is_empty());
+        let is_token_stream_sig =
+            params.iter().all(|p| p == "TokenStream") && (ret == "TokenStream" || ret.is_empty());
         if is_token_stream_sig && !params.is_empty() {
             continue;
         }

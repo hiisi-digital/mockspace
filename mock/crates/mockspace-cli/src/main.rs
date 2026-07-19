@@ -14,18 +14,55 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-
+use mockspace_rs::config_loader::{
+    LintsConfig,
+    LintsTomlFile,
+    OverrideCascade,
+    find_and_read_lints_toml,
+};
+use mockspace_rs::design_rounds::discover_design_rounds;
+use mockspace_rs::engine::MockspaceEngine;
 use mockspace_rs::{
-    apply_plan, bootstrap,
-    config_loader::{find_and_read_lints_toml, LintsConfig, LintsTomlFile, OverrideCascade},
-    design_rounds::discover_design_rounds,
-    engine::MockspaceEngine,
-    explain, plan_fixes, preset_source, render_check, render_regenerate, render_unified_diff,
-    scope_walk, AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, BranchName,
-    CheckReport, CloseMetadata, DesignRound, Finding, FixOpts, FlockTransitionLock, Gate,
-    LintCfgStore, LintEngine, LockError, ObjectId, Phase, RegenerateError,
-    RegenerateReport, RepoError, RepoHandle, ReplanMode, RoundState, RunSurface, Severity, Slug,
-    TaskId, TaskMeta, TaskResolution, WriteState,
+    AdvanceError,
+    AdvanceReport,
+    AdvanceVerb,
+    ArchiveError,
+    ArchiveReport,
+    BranchName,
+    CheckReport,
+    CloseMetadata,
+    DesignRound,
+    Finding,
+    FixOpts,
+    FlockTransitionLock,
+    Gate,
+    LintCfgStore,
+    LintEngine,
+    LockError,
+    ObjectId,
+    Phase,
+    RegenerateError,
+    RegenerateReport,
+    ReplanMode,
+    RepoError,
+    RepoHandle,
+    RoundState,
+    RunSurface,
+    Severity,
+    Slug,
+    TaskId,
+    TaskMeta,
+    TaskResolution,
+    WriteState,
+    apply_plan,
+    bootstrap,
+    explain,
+    plan_fixes,
+    preset_source,
+    render_check,
+    render_regenerate,
+    render_unified_diff,
+    scope_walk,
 };
 
 /// Empty `LintCfgStore` for the `cargo mock check` CLI. The lint
@@ -93,14 +130,14 @@ enum Command {
         /// (pre-commit hook), `build` is intermediate (CI), `push`
         /// is the strictest. Defaults to `commit`.
         #[arg(long, value_enum, default_value_t = GateArg::Commit)]
-        gate: GateArg,
+        gate:    GateArg,
         /// Emit findings as a pretty-printed JSON array on stdout
         /// instead of the human-readable diagnostic format. The
         /// exit code semantics stay the same (failure on any Error
         /// at the gate); the format suits machine consumers such
         /// as editor integrations and CI dashboards.
         #[arg(long)]
-        json: bool,
+        json:    bool,
         /// Run surface to scope the project under. `local` is the
         /// default and matches developer-machine usage. `ci`
         /// simulates a CI run (useful for reproducing CI-only lint
@@ -116,7 +153,7 @@ enum Command {
         /// not silence error-level findings, it just additionally
         /// applies their fixes when the lint provides one.
         #[arg(long)]
-        fix: bool,
+        fix:     bool,
         /// With `--fix`, print the unified diff that would result
         /// instead of writing the changes. Implies `--fix`. Useful
         /// for previewing fixes in CI or for human review before
@@ -173,7 +210,7 @@ enum Command {
         /// Compare rendered output against `docs/` on disk and
         /// exit non-zero on any drift instead of writing.
         #[arg(long)]
-        check: bool,
+        check:   bool,
         /// Override the output directory. Defaults to
         /// `<repo-root>/docs`. Useful for dry-runs into a scratch
         /// location.
@@ -200,7 +237,7 @@ enum PhaseVerb {
         /// Slug of the round to seal. Must currently be in
         /// PLAN(doc) or PLAN(src) phase.
         #[arg(value_parser = parse_slug)]
-        slug: Slug,
+        slug:       Slug,
         /// Source-side branch tip OID at APPLY entry, in hex
         /// form (e.g. the output of `git rev-parse HEAD`). The
         /// anchor records this OID for provenance.
@@ -223,13 +260,13 @@ enum PhaseVerb {
         /// Slug of the round to replan. Must currently be in
         /// APPLY(doc) or APPLY(src) phase.
         #[arg(value_parser = parse_slug)]
-        slug: Slug,
+        slug:              Slug,
         /// Replan mode. Currently the local-ref portion does not
         /// branch on mode (rename plus phase flip is identical
         /// across modes); the parameter exists for API stability
         /// and forwards to higher orchestration when wired.
         #[arg(long, value_enum, default_value_t = ReplanModeArg::Destructive)]
-        mode: ReplanModeArg,
+        mode:              ReplanModeArg,
         /// Claimed source-side file path that may have lost
         /// post-APPLY work. Repeatable. Only consulted when
         /// `--mode accept-loss`; ignored otherwise. Each occurrence
@@ -249,7 +286,7 @@ enum TaskVerb {
         /// Task identifier in URI form. Examples:
         /// `migrate-to-codeberg`, `compiler::ir::lower-pass::define-grammar`.
         #[arg(value_parser = parse_task_id)]
-        id: TaskId,
+        id:    TaskId,
         /// One-line human-facing title. Defaults to the slug if absent.
         /// Free-form prose; String is the right type here.
         #[arg(long)]
@@ -295,7 +332,7 @@ enum TaskVerb {
     Close {
         /// Task identifier in URI form.
         #[arg(value_parser = parse_task_id)]
-        id: TaskId,
+        id:         TaskId,
         /// Why the task closed.
         #[arg(long, value_enum)]
         resolution: TaskResolutionArg,
@@ -303,10 +340,10 @@ enum TaskVerb {
         /// the [`BranchName`] validator (subset of
         /// `git-check-ref-format`).
         #[arg(long, value_parser = parse_branch_name)]
-        branch: Option<BranchName>,
+        branch:     Option<BranchName>,
         /// Phase marker at close time (e.g. `apply_src`).
         #[arg(long, value_parser = parse_phase)]
-        phase: Option<Phase>,
+        phase:      Option<Phase>,
         /// Round slug that closed this task.
         #[arg(long = "round-slug", value_parser = parse_slug)]
         round_slug: Option<Slug>,
@@ -321,7 +358,7 @@ enum TaskVerb {
         from: TaskId,
         /// Destination task identifier in URI form.
         #[arg(value_parser = parse_task_id)]
-        to: TaskId,
+        to:   TaskId,
     },
 }
 
@@ -436,13 +473,15 @@ fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let repo_root = match cli.repo_root {
         Some(p) => p,
-        None => match std::env::current_dir() {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!(
-                    "cannot determine current directory: {e}. Pass --repo-root explicitly."
-                );
-                return std::process::ExitCode::FAILURE;
+        None => {
+            match std::env::current_dir() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!(
+                        "cannot determine current directory: {e}. Pass --repo-root explicitly."
+                    );
+                    return std::process::ExitCode::FAILURE;
+                },
             }
         },
     };
@@ -452,35 +491,52 @@ fn main() -> std::process::ExitCode {
         Command::Install => run_install(&repo_root),
         Command::Uninstall => run_uninstall(&repo_root),
         Command::Refresh => run_refresh(&repo_root),
-        Command::Explain { name } => {
+        Command::Explain {
+            name,
+        } => {
             ensure_agent_ready(&repo_root);
             run_explain(&repo_root, &name)
-        }
-        Command::Check { gate, json, surface, fix, dry_run } => {
+        },
+        Command::Check {
+            gate,
+            json,
+            surface,
+            fix,
+            dry_run,
+        } => {
             ensure_agent_ready(&repo_root);
             run_check(&repo_root, gate.into(), json, surface.into(), fix, dry_run)
-        }
-        Command::Phase { verb } => {
+        },
+        Command::Phase {
+            verb,
+        } => {
             ensure_agent_ready(&repo_root);
             run_phase(&repo_root, verb)
-        }
-        Command::Close { slug } => {
+        },
+        Command::Close {
+            slug,
+        } => {
             ensure_agent_ready(&repo_root);
             run_close(&repo_root, slug)
-        }
+        },
         Command::Migrate => {
             ensure_agent_ready(&repo_root);
             run_migrate(&repo_root)
-        }
-        Command::Regenerate { check, out_dir } => {
+        },
+        Command::Regenerate {
+            check,
+            out_dir,
+        } => {
             ensure_agent_ready(&repo_root);
             let out = out_dir.unwrap_or_else(|| repo_root.join("docs"));
             run_regenerate(&repo_root, &out, check)
-        }
-        Command::Task { verb } => {
+        },
+        Command::Task {
+            verb,
+        } => {
             ensure_agent_ready(&repo_root);
             run_task(&repo_root, verb)
-        }
+        },
     }
 }
 
@@ -505,16 +561,14 @@ fn parse_task_id(raw: &str) -> Result<TaskId, String> {
 /// error message. Used as a clap `value_parser` for the
 /// `--source-tip <hex>` flag.
 fn parse_object_id(raw: &str) -> Result<ObjectId, String> {
-    ObjectId::from_hex(raw.as_bytes())
-        .map_err(|e| format!("invalid object id `{raw}`: {e}"))
+    ObjectId::from_hex(raw.as_bytes()).map_err(|e| format!("invalid object id `{raw}`: {e}"))
 }
 
 /// Parse a phase marker (e.g. `apply_src`, `plan_doc`) into
 /// [`Phase`]. Used as a clap `value_parser` for flags that name a
 /// phase by its on-disk marker.
 fn parse_phase(raw: &str) -> Result<Phase, String> {
-    Phase::from_marker(raw)
-        .ok_or_else(|| format!("unknown phase marker `{raw}`"))
+    Phase::from_marker(raw).ok_or_else(|| format!("unknown phase marker `{raw}`"))
 }
 
 /// Parse a git branch name into [`BranchName`] with a CLI-friendly
@@ -528,12 +582,23 @@ fn parse_branch_name(raw: &str) -> Result<BranchName, String> {
 /// message. `RepoError::NotFound` is rendered as "not inside a git
 /// repository"; other variants surface their inner error.
 fn open_repo(repo_root: &std::path::Path) -> Result<RepoHandle, String> {
-    RepoHandle::open(repo_root).map_err(|e| match e {
-        RepoError::NotFound { .. } => format!(
-            "not inside a git repository: no .git directory found under `{}`",
-            repo_root.display()
-        ),
-        other => format!("cannot open repository at `{}`: {other}", repo_root.display()),
+    RepoHandle::open(repo_root).map_err(|e| {
+        match e {
+            RepoError::NotFound {
+                ..
+            } => {
+                format!(
+                    "not inside a git repository: no .git directory found under `{}`",
+                    repo_root.display()
+                )
+            },
+            other => {
+                format!(
+                    "cannot open repository at `{}`: {other}",
+                    repo_root.display()
+                )
+            },
+        }
     })
 }
 
@@ -547,49 +612,70 @@ fn open_repo(repo_root: &std::path::Path) -> Result<RepoHandle, String> {
 /// in case a future caller switches to `try_acquire`, but the body
 /// of those arms is currently unreachable in practice.
 fn acquire_lock(repo_root: &std::path::Path) -> Result<FlockTransitionLock, String> {
-    FlockTransitionLock::acquire(repo_root).map_err(|e| match e {
-        LockError::GitDirMissing { workspace_root } => format!(
-            "cannot acquire transition lock: no .git directory at `{}`",
-            workspace_root.display()
-        ),
-        LockError::AlreadyHeld { previous: Some(h) } => format!(
-            "transition lock held by host={} pid={} acquired_at={}",
-            h.hostname, h.pid, h.acquired_at
-        ),
-        LockError::AlreadyHeld { previous: None } => {
-            "transition lock held by an unknown process".to_owned()
+    FlockTransitionLock::acquire(repo_root).map_err(|e| {
+        match e {
+            LockError::GitDirMissing {
+                workspace_root,
+            } => {
+                format!(
+                    "cannot acquire transition lock: no .git directory at `{}`",
+                    workspace_root.display()
+                )
+            },
+            LockError::AlreadyHeld {
+                previous: Some(h),
+            } => {
+                format!(
+                    "transition lock held by host={} pid={} acquired_at={}",
+                    h.hostname, h.pid, h.acquired_at
+                )
+            },
+            LockError::AlreadyHeld {
+                previous: None,
+            } => "transition lock held by an unknown process".to_owned(),
+            LockError::Io {
+                during,
+                path,
+                error,
+            } => {
+                format!(
+                    "transition lock IO failed during {during} on `{}`: {error}",
+                    path.display()
+                )
+            },
         }
-        LockError::Io { during, path, error } => format!(
-            "transition lock IO failed during {during} on `{}`: {error}",
-            path.display()
-        ),
     })
 }
 
-fn run_phase(
-    repo_root: &std::path::Path,
-    verb: PhaseVerb,
-) -> std::process::ExitCode {
+fn run_phase(repo_root: &std::path::Path, verb: PhaseVerb) -> std::process::ExitCode {
     // clap's `value_parser`s have already validated the per-verb
     // inputs (slug shape, source-tip hex). The body just maps the
     // typed PhaseVerb into the typed AdvanceVerb the executor takes.
     let (slug, advance_verb) = match verb {
-        PhaseVerb::Plan { slug } => (slug, AdvanceVerb::Plan),
-        PhaseVerb::Apply { slug, source_tip } => (
+        PhaseVerb::Plan {
             slug,
-            AdvanceVerb::Apply {
+        } => (slug, AdvanceVerb::Plan),
+        PhaseVerb::Apply {
+            slug,
+            source_tip,
+        } => {
+            (slug, AdvanceVerb::Apply {
                 source_branch_tip: source_tip,
-            },
-        ),
-        PhaseVerb::Finish { slug } => (slug, AdvanceVerb::Finish),
+            })
+        },
+        PhaseVerb::Finish {
+            slug,
+        } => (slug, AdvanceVerb::Finish),
         PhaseVerb::Replan {
             slug,
             mode,
             accept_loss_paths,
-        } => (
-            slug,
-            AdvanceVerb::Replan(replan_mode_from(mode, accept_loss_paths)),
-        ),
+        } => {
+            (
+                slug,
+                AdvanceVerb::Replan(replan_mode_from(mode, accept_loss_paths)),
+            )
+        },
     };
 
     let handle = match open_repo(repo_root) {
@@ -597,25 +683,25 @@ fn run_phase(
         Err(msg) => {
             eprintln!("{msg}");
             return std::process::ExitCode::FAILURE;
-        }
+        },
     };
     let lock = match acquire_lock(repo_root) {
         Ok(l) => l,
         Err(msg) => {
             eprintln!("{msg}");
             return std::process::ExitCode::FAILURE;
-        }
+        },
     };
 
     match handle.advance_phase(&lock, &slug, advance_verb) {
         Ok(report) => {
             print_advance_report(&slug, &report);
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("phase transition failed: {}", render_advance_error(&e));
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -648,16 +734,20 @@ fn phase_marker(phase: Phase) -> &'static str {
 
 fn render_advance_error(e: &AdvanceError) -> String {
     match e {
-        AdvanceError::RoundRefMissing { slug } => {
+        AdvanceError::RoundRefMissing {
+            slug,
+        } => {
             format!("no round ref exists for slug `{slug}`")
-        }
+        },
         AdvanceError::InvalidFromPhase {
             verb,
             current,
             allowed_from,
-        } => format!(
-            "verb {verb:?} is not valid from phase {current:?}; allowed from {allowed_from:?}"
-        ),
+        } => {
+            format!(
+                "verb {verb:?} is not valid from phase {current:?}; allowed from {allowed_from:?}"
+            )
+        },
         other => format!("{other}"),
     }
 }
@@ -668,15 +758,26 @@ fn run_task(repo_root: &std::path::Path, verb: TaskVerb) -> std::process::ExitCo
         Err(msg) => {
             eprintln!("{msg}");
             return std::process::ExitCode::FAILURE;
-        }
+        },
     };
     match verb {
-        TaskVerb::New { id, title } => run_task_new(&handle, id, title.as_deref()),
+        TaskVerb::New {
+            id,
+            title,
+        } => run_task_new(&handle, id, title.as_deref()),
         TaskVerb::List => run_task_list(&handle),
-        TaskVerb::Show { id } => run_task_show(&handle, &id),
-        TaskVerb::Start { id } => run_task_transition(&handle, &id, TaskTransitionVerb::Start),
-        TaskVerb::Block { id } => run_task_transition(&handle, &id, TaskTransitionVerb::Block),
-        TaskVerb::Defer { id } => run_task_transition(&handle, &id, TaskTransitionVerb::Defer),
+        TaskVerb::Show {
+            id,
+        } => run_task_show(&handle, &id),
+        TaskVerb::Start {
+            id,
+        } => run_task_transition(&handle, &id, TaskTransitionVerb::Start),
+        TaskVerb::Block {
+            id,
+        } => run_task_transition(&handle, &id, TaskTransitionVerb::Block),
+        TaskVerb::Defer {
+            id,
+        } => run_task_transition(&handle, &id, TaskTransitionVerb::Defer),
         TaskVerb::Close {
             id,
             resolution,
@@ -684,7 +785,10 @@ fn run_task(repo_root: &std::path::Path, verb: TaskVerb) -> std::process::ExitCo
             phase,
             round_slug,
         } => run_task_close(&handle, &id, resolution, branch, phase, round_slug.as_ref()),
-        TaskVerb::Move { from, to } => run_task_move(&handle, &from, &to),
+        TaskVerb::Move {
+            from,
+            to,
+        } => run_task_move(&handle, &from, &to),
     }
 }
 
@@ -735,11 +839,11 @@ fn run_task_new(
             println!("  ref: {}", report.ref_path);
             println!("  commit: {}", report.commit_oid);
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("task new failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -754,33 +858,35 @@ fn run_task_list(handle: &RepoHandle) -> std::process::ExitCode {
                 }
             }
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("task list failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
 fn run_task_show(handle: &RepoHandle, task_id: &TaskId) -> std::process::ExitCode {
     match handle.show_task(task_id) {
-        Ok(meta) => match meta.to_toml() {
-            Ok(toml) => {
-                // toml::to_string_pretty does not guarantee a
-                // trailing newline; use println! so the rendered
-                // body terminates cleanly under shell consumers.
-                println!("{}", toml.trim_end_matches('\n'));
-                std::process::ExitCode::SUCCESS
-            }
-            Err(e) => {
-                eprintln!("task show: failed to serialise meta as TOML: {e}");
-                std::process::ExitCode::FAILURE
+        Ok(meta) => {
+            match meta.to_toml() {
+                Ok(toml) => {
+                    // toml::to_string_pretty does not guarantee a
+                    // trailing newline; use println! so the rendered
+                    // body terminates cleanly under shell consumers.
+                    println!("{}", toml.trim_end_matches('\n'));
+                    std::process::ExitCode::SUCCESS
+                },
+                Err(e) => {
+                    eprintln!("task show: failed to serialise meta as TOML: {e}");
+                    std::process::ExitCode::FAILURE
+                },
             }
         },
         Err(e) => {
             eprintln!("task show failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -805,11 +911,11 @@ fn run_task_transition(
             println!("  ref: {}", report.ref_path);
             println!("  commit: {}", report.commit_oid);
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("task {verb_name} failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -824,9 +930,9 @@ fn run_task_close(
     // Every CloseMetadata field is now typed; the executor collapses
     // to wire-format strings on TaskClosure at the persistence boundary.
     let metadata = CloseMetadata {
-        resolution: resolution.into(),
-        closed_branch: branch,
-        closing_phase: phase,
+        resolution:         resolution.into(),
+        closed_branch:      branch,
+        closing_phase:      phase,
         closing_round_slug: round_slug.cloned(),
     };
     match handle.close_task(task_id, metadata) {
@@ -840,11 +946,11 @@ fn run_task_close(
             println!("  ref: {}", report.ref_path);
             println!("  commit: {}", report.commit_oid);
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("task close failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -860,11 +966,11 @@ fn run_task_move(handle: &RepoHandle, from: &TaskId, to: &TaskId) -> std::proces
             println!("  to-ref:   {}", report.to_ref_path);
             println!("  commit:   {}", report.commit_oid);
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("task move failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -893,9 +999,7 @@ fn format_iso8601(unix_secs: u64) -> String {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = if m <= 2 { y + 1 } else { y };
-    format!(
-        "{year:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z"
-    )
+    format!("{year:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
 
 fn run_close(repo_root: &std::path::Path, slug: Slug) -> std::process::ExitCode {
@@ -904,25 +1008,25 @@ fn run_close(repo_root: &std::path::Path, slug: Slug) -> std::process::ExitCode 
         Err(msg) => {
             eprintln!("{msg}");
             return std::process::ExitCode::FAILURE;
-        }
+        },
     };
     let lock = match acquire_lock(repo_root) {
         Ok(l) => l,
         Err(msg) => {
             eprintln!("{msg}");
             return std::process::ExitCode::FAILURE;
-        }
+        },
     };
 
     match handle.archive_round(&lock, &slug) {
         Ok(report) => {
             print_archive_report(&slug, &report);
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("archive failed: {}", render_archive_error(&e));
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -944,12 +1048,16 @@ fn print_archive_report(slug: &Slug, report: &ArchiveReport) {
 
 fn render_archive_error(e: &ArchiveError) -> String {
     match e {
-        ArchiveError::RoundRefMissing { slug } => {
+        ArchiveError::RoundRefMissing {
+            slug,
+        } => {
             format!("no round ref exists for slug `{slug}`")
-        }
-        ArchiveError::NotDone { current } => {
+        },
+        ArchiveError::NotDone {
+            current,
+        } => {
             format!("round is in phase {current:?}; only DONE rounds may be archived")
-        }
+        },
         other => format!("{other}"),
     }
 }
@@ -1012,31 +1120,37 @@ fn print_round_migration_report(round: &DesignRound) {
 /// manifests) print explicit manual steps.
 fn classify_v1_round(round: &DesignRound) -> (&'static str, String) {
     match round.state {
-        RoundState::Topic => (
-            "topic",
-            "Empty v1 round (no CLs). Tool can construct the v2 ref directly: \
+        RoundState::Topic => {
+            (
+                "topic",
+                "Empty v1 round (no CLs). Tool can construct the v2 ref directly: \
              run `mock phase plan <slug>` once `mock migrate --auto` ships, or \
              manually push an orphan ref carrying `.phase = topic`."
-                .to_owned(),
-        ),
-        RoundState::Doc => (
-            "plan_doc",
-            "v1 doc CL exists in markdown form. v2 stores manifests as \
+                    .to_owned(),
+            )
+        },
+        RoundState::Doc => {
+            (
+                "plan_doc",
+                "v1 doc CL exists in markdown form. v2 stores manifests as \
              structured TOML (see `mock/crates/mockspace-core/src/manifest.rs::Manifest`), \
              so the doc CL is NOT 1:1 translatable. Manual step: author \
              `manifest.doc.toml` for the round, then run `mock phase plan <slug>` \
              plus follow-up writes to seat the manifest."
-                .to_owned(),
-        ),
-        RoundState::Src => (
-            "plan_src",
-            "v1 round advanced to src side; doc was previously sealed. \
+                    .to_owned(),
+            )
+        },
+        RoundState::Src => {
+            (
+                "plan_src",
+                "v1 round advanced to src side; doc was previously sealed. \
              Manual steps: author both `manifest.doc.locked.toml` (from the \
              prior doc CL) and `manifest.src.toml` (from the current src CL), \
              then drive the round through `mock phase apply` (doc) + \
              `mock phase finish` to land at PLAN(src)."
-                .to_owned(),
-        ),
+                    .to_owned(),
+            )
+        },
         RoundState::Locked => {
             // Infer the side from which CLs are present. v1 stores
             // them as `Option<PathBuf>` so both being present means
@@ -1058,15 +1172,17 @@ fn classify_v1_round(round: &DesignRound) -> (&'static str, String) {
                  fresh anchor against the current source-side branch tip."
                 ),
             )
-        }
-        RoundState::Closed => (
-            "done (then archived)",
-            "v1 closed round. Manual steps: reconstruct the v2 round-ref \
+        },
+        RoundState::Closed => {
+            (
+                "done (then archived)",
+                "v1 closed round. Manual steps: reconstruct the v2 round-ref \
              tree carrying `.phase = done` plus the locked manifests for \
              both sides, then `mock close <slug>` to move it into \
              `refs/mock/round-archive`."
-                .to_owned(),
-        ),
+                    .to_owned(),
+            )
+        },
     }
 }
 
@@ -1104,15 +1220,15 @@ fn run_install(repo_root: &std::path::Path) -> std::process::ExitCode {
         Ok(bootstrap::InstallOutcome::Installed) => {
             println!("v2 bootstrap installed at {}", repo_root.display());
             std::process::ExitCode::SUCCESS
-        }
+        },
         Ok(bootstrap::InstallOutcome::AlreadyInstalled) => {
             println!("v2 bootstrap already installed; no changes");
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("install failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -1121,15 +1237,15 @@ fn run_uninstall(repo_root: &std::path::Path) -> std::process::ExitCode {
         Ok(bootstrap::UninstallOutcome::Removed) => {
             println!("v2 bootstrap removed from {}", repo_root.display());
             std::process::ExitCode::SUCCESS
-        }
+        },
         Ok(bootstrap::UninstallOutcome::AlreadyUninstalled) => {
             println!("v2 bootstrap was not installed; no changes");
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("uninstall failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -1138,15 +1254,15 @@ fn run_refresh(repo_root: &std::path::Path) -> std::process::ExitCode {
         Ok(bootstrap::InstallOutcome::Installed) => {
             println!("v2 bootstrap refreshed at {}", repo_root.display());
             std::process::ExitCode::SUCCESS
-        }
+        },
         Ok(bootstrap::InstallOutcome::AlreadyInstalled) => {
             println!("v2 bootstrap state matches canonical; no changes");
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("refresh failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -1172,7 +1288,7 @@ fn run_explain(repo_root: &std::path::Path, lint_name: &Slug) -> std::process::E
                 "warning: could not read user lints TOML ({e}); proceeding with catalog defaults only"
             );
             LintsTomlFile::default()
-        }
+        },
     };
     let overrides = OverrideCascade::default();
     let source = preset_source::FirstPartyPresetSource::new();
@@ -1183,11 +1299,11 @@ fn run_explain(repo_root: &std::path::Path, lint_name: &Slug) -> std::process::E
         Ok(report) => {
             print_explain_report(&report);
             std::process::ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             eprintln!("explain failed: {e}");
             std::process::ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -1196,9 +1312,7 @@ fn print_explain_report(report: &explain::ExplainReport) {
     println!("primitive: {}", report.primitive_kind);
     println!(
         "catalog severity: commit={:?} build={:?} push={:?}",
-        report.catalog_severity.commit,
-        report.catalog_severity.build,
-        report.catalog_severity.push,
+        report.catalog_severity.commit, report.catalog_severity.build, report.catalog_severity.push,
     );
     println!();
     println!("Cascade layers:");
@@ -1259,7 +1373,7 @@ fn run_check(
         Err(e) => {
             eprintln!("check failed: could not load lints config: {e}");
             return std::process::ExitCode::FAILURE;
-        }
+        },
     };
     // Per-lint cascade may have rejected entries (unknown TOML field,
     // invalid value, unknown finding kind, etc.). Each such failure
@@ -1284,11 +1398,13 @@ fn run_check(
         });
         for ce in sorted {
             let (path, line, col) = match &ce.source_location {
-                Some(span) => (
-                    span.file.display().to_string(),
-                    span.start_line,
-                    span.start_column,
-                ),
+                Some(span) => {
+                    (
+                        span.file.display().to_string(),
+                        span.start_line,
+                        span.start_column,
+                    )
+                },
                 None => (fallback.clone(), 0, 0),
             };
             eprintln!("{path}:{line}:{col}: [error] lint-config: {ce}");
@@ -1309,7 +1425,7 @@ fn run_check(
         Err(e) => {
             eprintln!("check failed: could not scope project: {e}");
             return std::process::ExitCode::FAILURE;
-        }
+        },
     };
     let cfg_store = EmptyCfgStore;
     let mut findings = match engine.run(&project, gate, &cfg_store) {
@@ -1317,7 +1433,7 @@ fn run_check(
         Err(e) => {
             eprintln!("check failed: engine dispatch error: {e}");
             return std::process::ExitCode::FAILURE;
-        }
+        },
     };
     // Stable sort by (file, line, column, severity). The engine
     // returns findings in catalog-dispatch order, which is
@@ -1351,10 +1467,12 @@ fn run_check(
             Err(e) => {
                 eprintln!("check failed: could not serialise findings as JSON: {e}");
                 return std::process::ExitCode::FAILURE;
-            }
+            },
         };
         println!("{body}");
-        let had_error = findings.iter().any(|f| matches!(f.severity, Severity::Error));
+        let had_error = findings
+            .iter()
+            .any(|f| matches!(f.severity, Severity::Error));
         if fix || dry_run {
             if let Some(code) = apply_fixes(repo_root, &findings, dry_run) {
                 return code;
@@ -1433,13 +1551,16 @@ fn apply_fixes(
     findings: &[Finding],
     dry_run: bool,
 ) -> Option<std::process::ExitCode> {
-    let opts = FixOpts { dry_run, only_lints: None };
+    let opts = FixOpts {
+        dry_run,
+        only_lints: None,
+    };
     let plan = match plan_fixes(repo_root, findings, &opts) {
         Ok(plan) => plan,
         Err(e) => {
             eprintln!("fix planning failed: {e}");
             return Some(std::process::ExitCode::FAILURE);
-        }
+        },
     };
 
     if dry_run {
@@ -1461,11 +1582,11 @@ fn apply_fixes(
                 skipped = plan.skipped_advisory,
             );
             None
-        }
+        },
         Err(e) => {
             eprintln!("fix application failed: {e}");
             Some(std::process::ExitCode::FAILURE)
-        }
+        },
     }
 }
 
@@ -1494,7 +1615,7 @@ fn run_regenerate(
                 repo_root.display()
             );
             return std::process::ExitCode::FAILURE;
-        }
+        },
     };
 
     if check_only {
@@ -1503,7 +1624,7 @@ fn run_regenerate(
             Err(e) => {
                 eprintln!("regenerate --check failed: {}", format_render_error(&e));
                 return std::process::ExitCode::FAILURE;
-            }
+            },
         }
     } else {
         match render_regenerate(&project, out_dir) {
@@ -1511,7 +1632,7 @@ fn run_regenerate(
             Err(e) => {
                 eprintln!("regenerate failed: {}", format_render_error(&e));
                 return std::process::ExitCode::FAILURE;
-            }
+            },
         }
     }
 }
@@ -1539,10 +1660,7 @@ fn print_regenerate_report(
     std::process::ExitCode::SUCCESS
 }
 
-fn print_check_report(
-    report: &CheckReport,
-    out_dir: &std::path::Path,
-) -> std::process::ExitCode {
+fn print_check_report(report: &CheckReport, out_dir: &std::path::Path) -> std::process::ExitCode {
     if report.needs_regen() {
         println!(
             "drift detected against `{}`: {} drifted, {} missing, {} matched",
@@ -1570,12 +1688,15 @@ fn print_check_report(
 
 fn format_render_error(e: &RegenerateError) -> String {
     match e {
-        RegenerateError::Io { path, source } => {
+        RegenerateError::Io {
+            path,
+            source,
+        } => {
             format!("io error on `{}`: {source}", path.display())
-        }
+        },
         RegenerateError::TemplateMissing(p) => {
             format!("template missing: `{}`", p.display())
-        }
+        },
         RegenerateError::Render(r) => format!("template render error: {r}"),
     }
 }

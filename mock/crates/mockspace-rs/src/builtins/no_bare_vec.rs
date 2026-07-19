@@ -32,9 +32,9 @@ pub const KIND: &str = "no-bare-vec";
 pub struct NoBareVecConfig {
     /// Phase 1: AST walk over type-bearing positions.
     pub forbidden_types: Vec<String>,
-    pub positions: Vec<TypePosition>,
+    pub positions:       Vec<TypePosition>,
     #[serde(default)]
-    pub visibility: Visibility,
+    pub visibility:      Visibility,
 
     /// Phase 2: text scan inside `define_*!` macro invocation bodies.
     /// The current impl scans the outermost macro tokens for the listed
@@ -45,18 +45,18 @@ pub struct NoBareVecConfig {
     #[serde(default)]
     pub macro_body_tokens: Vec<String>,
     #[serde(default)]
-    pub macros: Vec<String>,
+    pub macros:            Vec<String>,
 }
 
 pub struct NoBareVecLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: NoBareVecConfig,
-    forbidden_types: HashSet<String>,
-    positions: HashSet<TypePosition>,
-    macros: HashSet<String>,
-    macro_tokens: Vec<Vec<u8>>,
+    config:           NoBareVecConfig,
+    forbidden_types:  HashSet<String>,
+    positions:        HashSet<TypePosition>,
+    macros:           HashSet<String>,
+    macro_tokens:     Vec<Vec<u8>>,
 }
 
 impl NoBareVecLint {
@@ -91,12 +91,15 @@ impl Lint for NoBareVecLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_syn_ast(&self) -> bool {
         true
     }
@@ -131,10 +134,10 @@ impl Lint for NoBareVecLint {
 }
 
 struct TypeVisitor<'a> {
-    lint: &'a NoBareVecLint,
-    doc: &'a MockspaceDocument,
-    severity: Severity,
-    sink: &'a dyn FindingSink,
+    lint:             &'a NoBareVecLint,
+    doc:              &'a MockspaceDocument,
+    severity:         Severity,
+    sink:             &'a dyn FindingSink,
     visibility_stack: Vec<bool>,
 }
 
@@ -225,7 +228,7 @@ fn walk_type(ty: &syn::Type, on_ident: &mut dyn FnMut(&str)) {
                     }
                 }
             }
-        }
+        },
         syn::Type::Reference(r) => walk_type(&r.elem, on_ident),
         syn::Type::Slice(s) => walk_type(&s.elem, on_ident),
         syn::Type::Array(a) => walk_type(&a.elem, on_ident),
@@ -233,10 +236,10 @@ fn walk_type(ty: &syn::Type, on_ident: &mut dyn FnMut(&str)) {
             for inner in &t.elems {
                 walk_type(inner, on_ident);
             }
-        }
+        },
         syn::Type::Paren(p) => walk_type(&p.elem, on_ident),
         syn::Type::Group(g) => walk_type(&g.elem, on_ident),
-        _ => {}
+        _ => {},
     }
 }
 
@@ -288,7 +291,7 @@ fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || needle.len() > haystack.len() {
         return false;
     }
-    (0..=haystack.len() - needle.len()).any(|i| &haystack[i..i + needle.len()] == needle)
+    (0 ..= haystack.len() - needle.len()).any(|i| &haystack[i .. i + needle.len()] == needle)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -329,17 +332,15 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: NoBareVecConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("no-bare-vec config: {e}"),
-                source_location: None,
-            })?;
+    let parsed: NoBareVecConfig = config.clone().try_into().map_err(|e: toml::de::Error| {
+        ConfigError {
+            lint_name:       name.to_string(),
+            field_path:      String::new(),
+            kind:            ConfigErrorKind::InvalidValue,
+            message:         format!("no-bare-vec config: {e}"),
+            source_location: None,
+        }
+    })?;
     Ok(Box::new(NoBareVecLint::new(
         name,
         description,
@@ -350,11 +351,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, RunSurface};
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::{Gate, RunSurface};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -365,11 +368,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -380,11 +383,11 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             NoBareVecConfig {
-                forbidden_types: vec!["Vec".to_string()],
-                positions: vec![TypePosition::FnParam],
-                visibility: Visibility::Public,
+                forbidden_types:   vec!["Vec".to_string()],
+                positions:         vec![TypePosition::FnParam],
+                visibility:        Visibility::Public,
                 macro_body_tokens: Vec::new(),
-                macros: Vec::new(),
+                macros:            Vec::new(),
             },
         );
         let doc = MockspaceDocument::new("a.rs", "t", Language::Rust, "pub fn x(v: Vec<u8>) {}");
@@ -404,11 +407,11 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             NoBareVecConfig {
-                forbidden_types: Vec::new(),
-                positions: Vec::new(),
-                visibility: Visibility::Any,
+                forbidden_types:   Vec::new(),
+                positions:         Vec::new(),
+                visibility:        Visibility::Any,
                 macro_body_tokens: vec!["vec !".to_string()],
-                macros: vec!["define_resource".to_string()],
+                macros:            vec!["define_resource".to_string()],
             },
         );
         let doc = MockspaceDocument::new(

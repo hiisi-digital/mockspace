@@ -7,12 +7,12 @@ use crate::error::BenchError;
 
 /// One row of the end-of-run summary.
 pub(super) struct SummaryRow {
-    pub(super) bench: String,
-    pub(super) n: usize,
-    pub(super) variant: String,
-    pub(super) median_ns: f64,
+    pub(super) bench:         String,
+    pub(super) n:             usize,
+    pub(super) variant:       String,
+    pub(super) median_ns:     f64,
     pub(super) ratio_vs_best: f64,
-    pub(super) regression: bool,
+    pub(super) regression:    bool,
 }
 
 pub(super) fn fmt_ns(ns: f64) -> String {
@@ -37,7 +37,9 @@ pub(super) fn write_index(summary: &[SummaryRow]) -> Result<(), BenchError> {
          run. Full per-run data (CSV samples, meta, findings) lives beside each entry.\n\n",
     );
     if !summary.is_empty() {
-        md.push_str("## Latest run\n\n| bench | n | variant | median | vs best |\n|---|---|---|---|---|\n");
+        md.push_str(
+            "## Latest run\n\n| bench | n | variant | median | vs best |\n|---|---|---|---|---|\n",
+        );
         for row in summary {
             md.push_str(&format!(
                 "| {} | {} | {} | {} | {:.2}x{} |\n",
@@ -76,4 +78,3 @@ pub(super) fn write_index(summary: &[SummaryRow]) -> Result<(), BenchError> {
     std::fs::write(root.join("INDEX.md"), md)
         .map_err(|e| BenchError::io("writing results/INDEX.md", e))
 }
-

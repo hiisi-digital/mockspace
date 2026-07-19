@@ -16,11 +16,8 @@ use crate::{CrossCrateLint, LintContext, LintError};
 /// Macro-util crates and their parent crates often define matching types
 /// at different abstraction levels (parsing vs. runtime).
 /// Full crate names are built as `<prefix>-<suffix>` at check time.
-const EXEMPT_PAIRS: &[(&str, &str)] = &[
-    ("macro-util", "behavior"),
-    ("macro-util", "resource"),
-    ("macro-util", "signal"),
-];
+const EXEMPT_PAIRS: &[(&str, &str)] =
+    &[("macro-util", "behavior"), ("macro-util", "resource"), ("macro-util", "signal")];
 
 pub struct SingleSource;
 
@@ -31,7 +28,10 @@ impl CrossCrateLint for SingleSource {
 
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         // Get crate prefix from the first context (all share the same prefix).
-        let prefix = crates.first().map(|(_, ctx)| ctx.crate_prefix).unwrap_or("");
+        let prefix = crates
+            .first()
+            .map(|(_, ctx)| ctx.crate_prefix)
+            .unwrap_or("");
 
         // Collect all type definitions across all crates
         let mut all_defs: Vec<TypeDef> = Vec::new();
@@ -69,7 +69,7 @@ impl CrossCrateLint for SingleSource {
             }
 
             let first = defs[0];
-            for dup in &defs[1..] {
+            for dup in &defs[1 ..] {
                 if dup.crate_name != first.crate_name {
                     // Skip exempt pairs (e.g., macro-util mirrors parent crate types)
                     let is_exempt = exempt_full.iter().any(|(a, b)| {
@@ -80,11 +80,11 @@ impl CrossCrateLint for SingleSource {
                         continue;
                     }
                     errors.push(LintError {
-                        crate_name: dup.crate_name.clone(),
-                        line: dup.line,
-                        lint_name: "single-source",
-                        severity: crate::Severity::HARD_ERROR,
-                        message: format!(
+                        crate_name:   dup.crate_name.clone(),
+                        line:         dup.line,
+                        lint_name:    "single-source",
+                        severity:     crate::Severity::HARD_ERROR,
+                        message:      format!(
                             "{} `{name}` also defined in {} — one definition per concept",
                             dup.kind, first.crate_name,
                         ),
@@ -100,16 +100,13 @@ impl CrossCrateLint for SingleSource {
 
 struct TypeDef {
     crate_name: String,
-    name: String,
-    kind: &'static str, // "struct", "enum", "trait"
-    line: usize,
+    name:       String,
+    kind:       &'static str, // "struct", "enum", "trait"
+    line:       usize,
 }
 
-const TYPE_DEF_KINDS: &[(&str, &str)] = &[
-    ("struct_item", "struct"),
-    ("enum_item", "enum"),
-    ("trait_item", "trait"),
-];
+const TYPE_DEF_KINDS: &[(&str, &str)] =
+    &[("struct_item", "struct"), ("enum_item", "enum"), ("trait_item", "trait")];
 
 fn collect_type_defs(root: Node, source: &str, crate_name: &str, out: &mut Vec<TypeDef>) {
     let mut cursor = root.walk();

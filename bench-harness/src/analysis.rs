@@ -22,53 +22,45 @@ use crate::spec::RoutineSpec;
 /// `worst_20pct` mean may be pulled down slightly.
 #[derive(Debug, Clone, Copy)]
 pub struct Stats {
-    pub count: usize,
-    pub mean: f64,
-    pub std_dev: f64,
-    pub median: f64,
-    pub best_20pct: f64,
-    pub mid_60pct: f64,
+    pub count:       usize,
+    pub mean:        f64,
+    pub std_dev:     f64,
+    pub median:      f64,
+    pub best_20pct:  f64,
+    pub mid_60pct:   f64,
     pub worst_20pct: f64,
-    pub min: f64,
-    pub max: f64,
+    pub min:         f64,
+    pub max:         f64,
 }
 
 impl Stats {
     pub fn from_values(vals: &mut Vec<f64>) -> Self {
         if vals.is_empty() {
             return Stats {
-                count: 0,
-                mean: 0.0,
-                std_dev: 0.0,
-                median: 0.0,
-                best_20pct: 0.0,
-                mid_60pct: 0.0,
+                count:       0,
+                mean:        0.0,
+                std_dev:     0.0,
+                median:      0.0,
+                best_20pct:  0.0,
+                mid_60pct:   0.0,
                 worst_20pct: 0.0,
-                min: 0.0,
-                max: 0.0,
+                min:         0.0,
+                max:         0.0,
             };
         }
         vals.sort_by(|a, b| a.total_cmp(b));
         let n = vals.len();
         let q = n / 5;
         let mean = vals.iter().sum::<f64>() / n as f64;
-        let median = if n % 2 == 0 {
-            (vals[n / 2 - 1] + vals[n / 2]) / 2.0
-        } else {
-            vals[n / 2]
-        };
-        let best = if q > 0 {
-            vals[..q].iter().sum::<f64>() / q as f64
-        } else {
-            vals[0]
-        };
+        let median = if n % 2 == 0 { (vals[n / 2 - 1] + vals[n / 2]) / 2.0 } else { vals[n / 2] };
+        let best = if q > 0 { vals[.. q].iter().sum::<f64>() / q as f64 } else { vals[0] };
         let worst_start = 4 * q;
         let worst_count = n - worst_start;
-        let worst = vals[worst_start..].iter().sum::<f64>() / worst_count as f64;
-        let mid = vals[q..worst_start].iter().sum::<f64>() / (worst_start - q).max(1) as f64;
+        let worst = vals[worst_start ..].iter().sum::<f64>() / worst_count as f64;
+        let mid = vals[q .. worst_start].iter().sum::<f64>() / (worst_start - q).max(1) as f64;
 
-        let variance = vals.iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>()
-            / (n as f64).max(1.0);
+        let variance =
+            vals.iter().map(|&x| (x - mean) * (x - mean)).sum::<f64>() / (n as f64).max(1.0);
         let std_dev = variance.sqrt();
 
         Stats {
@@ -87,57 +79,57 @@ impl Stats {
 
 /// Per-variant analysis across modes and cooldowns.
 pub struct VariantAnalysis {
-    pub name: String,
-    pub algo_all: Stats,
-    pub e2e_all: Stats,
-    pub bridge_all: Stats,
-    pub algo_per_cd: BTreeMap<u64, Stats>,
-    pub e2e_per_cd: BTreeMap<u64, Stats>,
+    pub name:             String,
+    pub algo_all:         Stats,
+    pub e2e_all:          Stats,
+    pub bridge_all:       Stats,
+    pub algo_per_cd:      BTreeMap<u64, Stats>,
+    pub e2e_per_cd:       BTreeMap<u64, Stats>,
     pub nonstop_per_pass: Vec<f64>,
     /// Lag-1 autocorrelation of the nonstop per-pass time series.
     /// Values near +1 indicate persistent warm-up or drift; near -1
     /// indicate alternating high/low (thermal throttling bounce). Near
     /// 0 is ideal.
-    pub autocorrelation: f64,
+    pub autocorrelation:  f64,
     /// All samples keyed by `(run, pass, cooldown_ms, algo_ns)` for
     /// paired statistical comparisons. The key tuple allows
     /// deterministic re-pairing of variant vs baseline even across
     /// independent collection runs.
-    pub keyed_algo: Vec<(usize, usize, u64, f64)>,
+    pub keyed_algo:       Vec<(usize, usize, u64, f64)>,
     /// Quality scores from samples that have a non-`None` score.
-    pub scores: Vec<f64>,
+    pub scores:           Vec<f64>,
     /// Per-input-tag algo Stats (e.g. per sparsity pattern). Empty if
     /// no samples have `input_tag`.
-    pub algo_per_tag: BTreeMap<u8, Stats>,
+    pub algo_per_tag:     BTreeMap<u8, Stats>,
 }
 
 /// Full dataset with per-variant analysis.
 pub struct DataSet {
-    pub variants: Vec<VariantAnalysis>,
+    pub variants:     Vec<VariantAnalysis>,
     pub baseline_idx: usize,
     /// Optional warning to surface in the report when cross-epoch
     /// data is merged but drift correction was skipped (confidence < 3).
-    pub drift_note: String,
+    pub drift_note:   String,
     /// Methodology metadata for the report header.
-    pub meta: DataSetMeta,
+    pub meta:         DataSetMeta,
     /// Tag index → display name (e.g. 0 → "random", 1 → "banded").
     /// Populated from the Routine's `input_tag()` by the caller.
-    pub tag_names: BTreeMap<u8, String>,
+    pub tag_names:    BTreeMap<u8, String>,
 }
 
 /// Methodology and environment metadata carried through to the report.
 pub struct DataSetMeta {
-    pub passes: usize,
-    pub runs_per_pass: usize,
-    pub batch_size: usize,
-    pub harness_runs: usize,
-    pub cooldowns_ms: Vec<u64>,
-    pub master_seed: u64,
-    pub counter_freq: u64,
+    pub passes:           usize,
+    pub runs_per_pass:    usize,
+    pub batch_size:       usize,
+    pub harness_runs:     usize,
+    pub cooldowns_ms:     Vec<u64>,
+    pub master_seed:      u64,
+    pub counter_freq:     u64,
     pub drift_correction: String,
     /// Ops per algorithm call. When > 0, the report shows a
     /// throughput column.
-    pub ops_per_call: u64,
+    pub ops_per_call:     u64,
 }
 
 impl DataSet {
@@ -257,15 +249,15 @@ impl DataSet {
 impl Default for DataSetMeta {
     fn default() -> Self {
         DataSetMeta {
-            passes: 0,
-            runs_per_pass: 0,
-            batch_size: 0,
-            harness_runs: 0,
-            cooldowns_ms: Vec::new(),
-            master_seed: 0,
-            counter_freq: 0,
+            passes:           0,
+            runs_per_pass:    0,
+            batch_size:       0,
+            harness_runs:     0,
+            cooldowns_ms:     Vec::new(),
+            master_seed:      0,
+            counter_freq:     0,
             drift_correction: "none".into(),
-            ops_per_call: 0,
+            ops_per_call:     0,
         }
     }
 }
@@ -289,7 +281,7 @@ pub fn lag1_autocorrelation(vals: &[f64]) -> f64 {
     if denom == 0.0 {
         return 0.0;
     }
-    let numer: f64 = (0..n - 1)
+    let numer: f64 = (0 .. n - 1)
         .map(|i| (vals[i] - mean) * (vals[i + 1] - mean))
         .sum();
     numer / denom
@@ -317,12 +309,12 @@ pub fn bh_fdr_adjust(p_values: &mut Vec<(usize, f64)>) {
 
     p_values.sort_by(|a, b| a.1.total_cmp(&b.1));
 
-    for i in 0..m {
+    for i in 0 .. m {
         let rank = (i + 1) as f64;
         p_values[i].1 = (p_values[i].1 * m as f64 / rank).min(1.0);
     }
 
-    for i in (0..m - 1).rev() {
+    for i in (0 .. m - 1).rev() {
         if p_values[i].1 > p_values[i + 1].1 {
             p_values[i].1 = p_values[i + 1].1;
         }
@@ -376,9 +368,9 @@ pub fn bootstrap_ci_median(vals: &[f64], seed: u64) -> (f64, f64, f64) {
     let mut boot_medians = Vec::with_capacity(BOOTSTRAP_ITERATIONS);
     let mut rng = seed;
 
-    for _ in 0..BOOTSTRAP_ITERATIONS {
+    for _ in 0 .. BOOTSTRAP_ITERATIONS {
         let mut resample = Vec::with_capacity(n);
-        for _ in 0..n {
+        for _ in 0 .. n {
             rng = bootstrap_mix(rng);
             let idx = (rng as usize) % n;
             resample.push(sorted[idx]);
@@ -414,7 +406,7 @@ pub fn bootstrap_ci_diff(a: &[f64], b: &[f64], seed: u64) -> (f64, f64, f64) {
         return (0.0, 0.0, 0.0);
     }
 
-    let diffs: Vec<f64> = (0..n).map(|i| a[i] - b[i]).collect();
+    let diffs: Vec<f64> = (0 .. n).map(|i| a[i] - b[i]).collect();
     bootstrap_ci_median(&diffs, seed)
 }
 
@@ -424,19 +416,19 @@ pub struct Comparison {
     /// Median of `(variant - baseline)` in ns.
     pub median_diff_ns: f64,
     /// 95% CI lower bound on median difference.
-    pub ci_lo_ns: f64,
+    pub ci_lo_ns:       f64,
     /// 95% CI upper bound on median difference.
-    pub ci_hi_ns: f64,
+    pub ci_hi_ns:       f64,
     /// Percentage delta of medians.
-    pub pct: f64,
+    pub pct:            f64,
     /// Whether the CI excludes zero (statistically significant).
-    pub significant: bool,
+    pub significant:    bool,
     /// Sign test p-value (two-sided).
-    pub sign_test_p: f64,
+    pub sign_test_p:    f64,
     /// Number of tied pairs (`a[i] == b[i]`) dropped by the sign test.
     /// High tie count (> 10% of pairs) weakens the test and should be
     /// flagged.
-    pub ties: u32,
+    pub ties:           u32,
 }
 
 /// Sign test: two-sided p-value for the null hypothesis that
@@ -451,7 +443,7 @@ pub fn sign_test(a: &[f64], b: &[f64]) -> (f64, u32) {
     let mut pos = 0u32;
     let mut neg = 0u32;
     let mut ties = 0u32;
-    for i in 0..n {
+    for i in 0 .. n {
         let d = a[i] - b[i];
         if d > 0.0 {
             pos += 1;
@@ -474,7 +466,7 @@ pub fn sign_test(a: &[f64], b: &[f64]) -> (f64, u32) {
     let mut log_comb = 0.0f64;
     let log_half_m = (m as f64) * (-std::f64::consts::LN_2);
 
-    for i in 0..=k {
+    for i in 0 ..= k {
         tail += (log_comb + log_half_m).exp();
         if i < m {
             log_comb += ((m - i) as f64).ln() - ((i + 1) as f64).ln();
@@ -491,12 +483,12 @@ pub fn compare(variant: &[f64], baseline: &[f64], seed: u64) -> Comparison {
     if n < 3 {
         return Comparison {
             median_diff_ns: 0.0,
-            ci_lo_ns: 0.0,
-            ci_hi_ns: 0.0,
-            pct: 0.0,
-            significant: false,
-            sign_test_p: 1.0,
-            ties: 0,
+            ci_lo_ns:       0.0,
+            ci_hi_ns:       0.0,
+            pct:            0.0,
+            significant:    false,
+            sign_test_p:    1.0,
+            ties:           0,
         };
     }
 
@@ -512,11 +504,7 @@ pub fn compare(variant: &[f64], baseline: &[f64], seed: u64) -> Comparison {
         sorted_b[nb / 2]
     };
 
-    let pct = if base_median != 0.0 {
-        (med_diff / base_median) * 100.0
-    } else {
-        0.0
-    };
+    let pct = if base_median != 0.0 { (med_diff / base_median) * 100.0 } else { 0.0 };
     // CI excludes zero
     let significant = ci_lo > 0.0 || ci_hi < 0.0;
 

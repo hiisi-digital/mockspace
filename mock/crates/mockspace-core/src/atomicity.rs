@@ -55,9 +55,9 @@ pub trait TransitionLock: Sized {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockHolder {
     /// Hostname of the machine holding the lock.
-    pub hostname: String,
+    pub hostname:    String,
     /// OS process ID of the holder.
-    pub pid: u32,
+    pub pid:         u32,
     /// ISO-8601 timestamp at which the lock was acquired.
     pub acquired_at: String,
 }
@@ -75,14 +75,14 @@ pub struct PhaseRaceConflict {
     /// Round whose ref produced the conflict.
     pub round_slug: String,
     /// Local tip SHA at conflict detection (the work being preserved).
-    pub local_tip: String,
+    pub local_tip:  String,
     /// Remote tip SHA at the failed push (the work that won the race).
     pub remote_tip: String,
     /// Hostname of the machine that lost the race (for side-branch naming).
-    pub host: String,
+    pub host:       String,
     /// ISO-8601 timestamp at which the conflict was detected
     /// (for side-branch naming).
-    pub timestamp: String,
+    pub timestamp:  String,
 }
 
 impl PhaseRaceConflict {
@@ -183,10 +183,10 @@ mod tests {
     fn side_branch_ref_format() {
         let conflict = PhaseRaceConflict {
             round_slug: "202605181400-arvo-graph-csr".to_owned(),
-            local_tip: "abc123".to_owned(),
+            local_tip:  "abc123".to_owned(),
             remote_tip: "def456".to_owned(),
-            host: "alpha".to_owned(),
-            timestamp: "20260519T180000Z".to_owned(),
+            host:       "alpha".to_owned(),
+            timestamp:  "20260519T180000Z".to_owned(),
         };
         assert_eq!(
             conflict.side_branch_ref(),
@@ -226,8 +226,8 @@ mod tests {
     #[test]
     fn lock_holder_round_trips() {
         let holder = LockHolder {
-            hostname: "alpha".to_owned(),
-            pid: 4242,
+            hostname:    "alpha".to_owned(),
+            pid:         4242,
             acquired_at: "2026-05-19T18:00:00Z".to_owned(),
         };
         let s = toml::to_string(&holder).unwrap();
@@ -262,10 +262,10 @@ mod tests {
     fn phase_race_conflict_round_trips() {
         let conflict = PhaseRaceConflict {
             round_slug: "abc".to_owned(),
-            local_tip: "11".to_owned(),
+            local_tip:  "11".to_owned(),
             remote_tip: "22".to_owned(),
-            host: "h".to_owned(),
-            timestamp: "20260519T180000Z".to_owned(),
+            host:       "h".to_owned(),
+            timestamp:  "20260519T180000Z".to_owned(),
         };
         let s = toml::to_string(&conflict).unwrap();
         let r: PhaseRaceConflict = toml::from_str(&s).unwrap();

@@ -23,7 +23,13 @@
 //! PresetFile>>` cache slots in transparently behind the same
 //! trait surface; the change would be local to this module.
 
-use mockspace_config::{parse_preset_shorthand, PresetFile, PresetRef, PresetResolveError, PresetSource};
+use mockspace_config::{
+    PresetFile,
+    PresetRef,
+    PresetResolveError,
+    PresetSource,
+    parse_preset_shorthand,
+};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_presets.rs"));
 
@@ -51,7 +57,9 @@ impl FirstPartyPresetSource {
     /// Test-only constructor accepting an injected preset table.
     /// Production callers use [`Self::new`].
     pub fn from_static_slice(embedded: &'static [(&'static str, &'static str)]) -> Self {
-        Self { embedded }
+        Self {
+            embedded,
+        }
     }
 
     /// Number of embedded presets. Useful for explain commands and
@@ -127,14 +135,18 @@ impl PresetSource for FirstPartyPresetSource {
 
 /// Parse the optional `extends` string from a per-lint TOML block
 /// into a `PresetRef`. Returns `Ok(None)` when the field is absent.
-pub(crate) fn parse_extends(value: Option<&toml::Value>) -> Result<Option<PresetRef>, PresetResolveError> {
+pub(crate) fn parse_extends(
+    value: Option<&toml::Value>,
+) -> Result<Option<PresetRef>, PresetResolveError> {
     match value {
         None => Ok(None),
         Some(toml::Value::String(s)) => parse_preset_shorthand(s).map(Some),
-        Some(other) => Err(PresetResolveError::MalformedShorthand {
-            input: format!("{other:?}"),
-            reason: "extends value must be a TOML string".to_string(),
-        }),
+        Some(other) => {
+            Err(PresetResolveError::MalformedShorthand {
+                input:  format!("{other:?}"),
+                reason: "extends value must be a TOML string".to_string(),
+            })
+        },
     }
 }
 
@@ -193,10 +205,13 @@ name = "broken
         let src = source_with(&[("base", STUB_BASE)]);
         let pref = parse_preset_shorthand("mockspace::unknown").unwrap();
         match src.resolve(&pref) {
-            Err(PresetResolveError::NotFound { host, name }) => {
+            Err(PresetResolveError::NotFound {
+                host,
+                name,
+            }) => {
                 assert_eq!(host, "mockspace");
                 assert_eq!(name, "unknown");
-            }
+            },
             other => panic!("expected NotFound, got {other:?}"),
         }
     }
@@ -210,9 +225,12 @@ name = "broken
         let src = source_with(&[("base", STUB_BASE)]);
         let pref = parse_preset_shorthand("stack-lints::no-heap").unwrap();
         match src.resolve(&pref) {
-            Err(PresetResolveError::NotFound { host, .. }) => {
+            Err(PresetResolveError::NotFound {
+                host,
+                ..
+            }) => {
                 assert_eq!(host, "stack-lints");
-            }
+            },
             other => panic!("expected NotFound, got {other:?}"),
         }
     }
@@ -222,14 +240,17 @@ name = "broken
         let src = source_with(&[("mismatch", STUB_MISNAMED_FILE)]);
         let pref = parse_preset_shorthand("mockspace::mismatch").unwrap();
         match src.resolve(&pref) {
-            Err(PresetResolveError::NotFound { name, .. }) => {
+            Err(PresetResolveError::NotFound {
+                name,
+                ..
+            }) => {
                 // The diagnostic mentions the mismatch so a preset
                 // author sees the actual cause.
                 assert!(
                     name.contains("filename") && name.contains("name = `different-name`"),
                     "diagnostic should name the mismatch; got `{name}`"
                 );
-            }
+            },
             other => panic!("expected NotFound (mismatch), got {other:?}"),
         }
     }
@@ -239,12 +260,15 @@ name = "broken
         let src = source_with(&[("broken", STUB_UNPARSEABLE)]);
         let pref = parse_preset_shorthand("mockspace::broken").unwrap();
         match src.resolve(&pref) {
-            Err(PresetResolveError::NotFound { name, .. }) => {
+            Err(PresetResolveError::NotFound {
+                name,
+                ..
+            }) => {
                 assert!(
                     name.contains("parse:"),
                     "diagnostic should include parse-error tail; got `{name}`"
                 );
-            }
+            },
             other => panic!("expected NotFound (parse), got {other:?}"),
         }
     }
@@ -276,11 +300,8 @@ name = "broken
 
     #[test]
     fn names_iter_is_lexicographically_sorted() {
-        let entries: &'static [(&'static str, &'static str)] = &[
-            ("alpha", STUB_BASE),
-            ("beta", STUB_BASE),
-            ("charlie", STUB_BASE),
-        ];
+        let entries: &'static [(&'static str, &'static str)] =
+            &[("alpha", STUB_BASE), ("beta", STUB_BASE), ("charlie", STUB_BASE)];
         let src = source_with(entries);
         let names: Vec<&str> = src.names().collect();
         assert_eq!(names, vec!["alpha", "beta", "charlie"]);
@@ -305,9 +326,12 @@ name = "broken
     fn parse_extends_rejects_non_string_value() {
         let value = toml::Value::Integer(42);
         match parse_extends(Some(&value)) {
-            Err(PresetResolveError::MalformedShorthand { reason, .. }) => {
+            Err(PresetResolveError::MalformedShorthand {
+                reason,
+                ..
+            }) => {
                 assert!(reason.contains("TOML string"));
-            }
+            },
             other => panic!("expected MalformedShorthand, got {other:?}"),
         }
     }

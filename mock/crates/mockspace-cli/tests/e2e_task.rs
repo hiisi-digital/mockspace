@@ -15,10 +15,11 @@
 //! and the `created` timestamp inside `meta.toml`. Both collapse to
 //! stable placeholders.
 
-use assert_cmd::Command;
-use mockspace_test_fixtures::MockspaceFixture;
 use std::path::Path;
 use std::process::Command as StdCommand;
+
+use assert_cmd::Command;
+use mockspace_test_fixtures::MockspaceFixture;
 
 mod common;
 use common::{assert_matches_golden, scrub_oid_lines};
@@ -65,7 +66,7 @@ fn scrub_created_timestamp(s: &str) -> String {
         .map(|line| {
             let trimmed = line.trim_start();
             if trimmed.starts_with("created = \"") {
-                let indent = &line[..line.len() - trimmed.len()];
+                let indent = &line[.. line.len() - trimmed.len()];
                 format!("{indent}created = \"<TIMESTAMP>\"")
             } else {
                 line.to_owned()
@@ -90,21 +91,20 @@ fn task_lifecycle_end_to_end() {
     let mut transcript = String::new();
 
     transcript.push_str("=== task new (top-level) ===\n");
-    transcript.push_str(&run_task(
-        &fixture,
-        &["new", "migrate-to-codeberg", "--title", "Migrate to Codeberg"],
-    ));
+    transcript.push_str(&run_task(&fixture, &[
+        "new",
+        "migrate-to-codeberg",
+        "--title",
+        "Migrate to Codeberg",
+    ]));
 
     transcript.push_str("\n=== task new (namespaced) ===\n");
-    transcript.push_str(&run_task(
-        &fixture,
-        &[
-            "new",
-            "compiler::ir::lower-pass",
-            "--title",
-            "Lower pass for IR",
-        ],
-    ));
+    transcript.push_str(&run_task(&fixture, &[
+        "new",
+        "compiler::ir::lower-pass",
+        "--title",
+        "Lower pass for IR",
+    ]));
 
     transcript.push_str("\n=== task list ===\n");
     transcript.push_str(&run_task(&fixture, &["list"]));
@@ -122,27 +122,21 @@ fn task_lifecycle_end_to_end() {
     transcript.push_str(&run_task(&fixture, &["defer", "migrate-to-codeberg"]));
 
     transcript.push_str("\n=== task close ===\n");
-    transcript.push_str(&run_task(
-        &fixture,
-        &[
-            "close",
-            "migrate-to-codeberg",
-            "--resolution",
-            "completed",
-            "--branch",
-            "feat/codeberg",
-        ],
-    ));
+    transcript.push_str(&run_task(&fixture, &[
+        "close",
+        "migrate-to-codeberg",
+        "--resolution",
+        "completed",
+        "--branch",
+        "feat/codeberg",
+    ]));
 
     transcript.push_str("\n=== task move ===\n");
-    transcript.push_str(&run_task(
-        &fixture,
-        &[
-            "move",
-            "compiler::ir::lower-pass",
-            "compiler::backend::lower-pass",
-        ],
-    ));
+    transcript.push_str(&run_task(&fixture, &[
+        "move",
+        "compiler::ir::lower-pass",
+        "compiler::backend::lower-pass",
+    ]));
 
     transcript.push_str("\n=== task list (after move) ===\n");
     transcript.push_str(&run_task(&fixture, &["list"]));
@@ -188,14 +182,8 @@ fn task_show_after_move_reflects_new_namespace() {
     let fixture = MockspaceFixture::new().build().expect("fixture");
     git_init(&fixture);
 
-    run_task(
-        &fixture,
-        &["new", "alpha::beta::leaf", "--title", "x"],
-    );
-    run_task(
-        &fixture,
-        &["move", "alpha::beta::leaf", "gamma::leaf"],
-    );
+    run_task(&fixture, &["new", "alpha::beta::leaf", "--title", "x"]);
+    run_task(&fixture, &["move", "alpha::beta::leaf", "gamma::leaf"]);
 
     let show = run_task(&fixture, &["show", "gamma::leaf"]);
     let scrubbed = scrub_created_timestamp(&show);

@@ -1,8 +1,15 @@
 //! v2 mockspace.toml parsing smoke tests (spec §46).
 
 use mockspace_config::{
-    parse_mockspace_toml, parse_mockspace_toml_str, BuiltInLiteral, ConfigError, ForgeKind,
-    LanguageEntry, MergeStyle, OnDirtyState, Severity,
+    BuiltInLiteral,
+    ConfigError,
+    ForgeKind,
+    LanguageEntry,
+    MergeStyle,
+    OnDirtyState,
+    Severity,
+    parse_mockspace_toml,
+    parse_mockspace_toml_str,
 };
 
 #[test]
@@ -147,10 +154,10 @@ keep_days = 30
 
     // [refs]
     assert_eq!(cfg.refs.task_archive_threshold_days, 90);
-    assert_eq!(
-        cfg.refs.security.domain_allowlist,
-        vec!["github.com", "codeberg.org"]
-    );
+    assert_eq!(cfg.refs.security.domain_allowlist, vec![
+        "github.com",
+        "codeberg.org"
+    ]);
 
     // [hosts.*] + primary host
     assert_eq!(cfg.primary_host.as_deref(), Some("self"));
@@ -314,7 +321,10 @@ fn rejects_empty_version_string() {
     "#;
     let err = parse_mockspace_toml_str(toml).unwrap_err();
     match err {
-        ConfigError::Validation { rule, .. } => assert_eq!(rule, "mockspace.version"),
+        ConfigError::Validation {
+            rule,
+            ..
+        } => assert_eq!(rule, "mockspace.version"),
         other => panic!("expected validation error, got {other:?}"),
     }
 }
@@ -327,13 +337,16 @@ fn rejects_unsupported_major_version() {
     "#;
     let err = parse_mockspace_toml_str(toml).unwrap_err();
     match err {
-        ConfigError::Validation { rule, details } => {
+        ConfigError::Validation {
+            rule,
+            details,
+        } => {
             assert_eq!(rule, "mockspace.version");
             assert!(
                 details.contains("99"),
                 "details should mention major: {details}"
             );
-        }
+        },
         other => panic!("expected validation error, got {other:?}"),
     }
 }
@@ -524,7 +537,7 @@ import = ["mock://ext/stack-lints/export/lint-preset/no-heap"]
     match &cfg.imports.import[0] {
         mockspace_config::ImportEntry::Uri(s) => {
             assert_eq!(s, "mock://ext/stack-lints/export/lint-preset/no-heap");
-        }
+        },
         other => panic!("expected Uri, got {other:?}"),
     }
 }
@@ -545,7 +558,7 @@ kind = "config"
         mockspace_config::ImportEntry::Typed(t) => {
             assert_eq!(t.uri, "mock://ext/stack-lints/export/lint-preset/no-heap");
             assert_eq!(t.kind, mockspace_config::ImportKind::Config);
-        }
+        },
         other => panic!("expected Typed, got {other:?}"),
     }
 }
@@ -564,7 +577,7 @@ uri = "mock://ext/some-pack/export/hook/pre-commit"
         mockspace_config::ImportEntry::Typed(t) => {
             assert_eq!(t.kind, mockspace_config::ImportKind::Executable);
             assert_eq!(t.uri, "mock://ext/some-pack/export/hook/pre-commit");
-        }
+        },
         other => panic!("expected Typed, got {other:?}"),
     }
 }

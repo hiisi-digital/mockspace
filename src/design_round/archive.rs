@@ -7,7 +7,6 @@ pub(crate) enum ArchiveKind {
     Abandoned,
 }
 
-
 impl ArchiveKind {
     pub(crate) fn meta_status_line(self) -> &'static str {
         match self {
@@ -15,20 +14,23 @@ impl ArchiveKind {
             ArchiveKind::Abandoned => "abandoned: true",
         }
     }
+
     pub(crate) fn tag_suffix(self) -> &'static str {
         match self {
             ArchiveKind::Closed => "end",
             ArchiveKind::Abandoned => "abandoned",
         }
     }
+
     pub(crate) fn commit_subject(self, archive_dir_name: &str) -> String {
         match self {
-            ArchiveKind::Closed =>
-                format!("chore: close design round {archive_dir_name}"),
-            ArchiveKind::Abandoned =>
-                format!("chore: archive design round {archive_dir_name} (abandoned)"),
+            ArchiveKind::Closed => format!("chore: close design round {archive_dir_name}"),
+            ArchiveKind::Abandoned => {
+                format!("chore: archive design round {archive_dir_name} (abandoned)")
+            },
         }
     }
+
     pub(crate) fn announce_verb(self) -> &'static str {
         match self {
             ArchiveKind::Closed => "round closed",
@@ -36,7 +38,6 @@ impl ArchiveKind {
         }
     }
 }
-
 
 /// Pick a non-colliding archive directory name. Returns `base` when it is free
 /// (per the `exists` predicate); otherwise appends `-2`, `-3`, ... until a free
@@ -55,7 +56,6 @@ pub(crate) fn disambiguate_archive_name(base: &str, exists: impl Fn(&str) -> boo
         suffix += 1;
     }
 }
-
 
 /// Move every non-README file under `dr` into a `<archive_dir_name>/`
 /// subdirectory and emit `.meta` + `.history` metadata. Stages the moves
@@ -85,8 +85,7 @@ pub(crate) fn perform_archive(
     let archive_dir_name: &str = &final_name;
     let archive_dir = dr.join(archive_dir_name);
 
-    fs::create_dir_all(&archive_dir)
-        .expect("failed to create archive directory");
+    fs::create_dir_all(&archive_dir).expect("failed to create archive directory");
 
     let entries: Vec<_> = fs::read_dir(dr)
         .expect("can't read design_rounds")
@@ -104,8 +103,7 @@ pub(crate) fn perform_archive(
         let old_path = entry.path();
         let dest = archive_dir.join(&name);
         touched.push(old_path.clone());
-        fs::rename(&old_path, &dest)
-            .unwrap_or_else(|e| panic!("failed to move {name}: {e}"));
+        fs::rename(&old_path, &dest).unwrap_or_else(|e| panic!("failed to move {name}: {e}"));
         touched.push(dest);
         moved += 1;
     }
@@ -152,7 +150,6 @@ pub(crate) fn perform_archive(
     ExitCode::SUCCESS
 }
 
-
 /// Earliest 12-digit timestamp prefix among files in `dr`.
 ///
 /// Used by `cmd_archive` when no changelists may exist (TOPIC-only
@@ -169,7 +166,7 @@ pub(crate) fn determine_round_name_from_dir(dr: &Path) -> Option<String> {
         if name == "README.md" {
             continue;
         }
-        if let Some(prefix) = name.get(..12) {
+        if let Some(prefix) = name.get(.. 12) {
             if prefix.chars().all(|c| c.is_ascii_digit()) {
                 prefixes.push(prefix.to_string());
             }
@@ -179,12 +176,12 @@ pub(crate) fn determine_round_name_from_dir(dr: &Path) -> Option<String> {
     prefixes.into_iter().next()
 }
 
-
 /// Determine a round name from the changelist filenames.
 /// Uses the timestamp prefix of the earliest changelist.
 pub(crate) fn determine_round_name(cls: &[ParsedChangelist]) -> String {
     // Prefer non-deprecated changelists for naming.
-    let relevant: Vec<&ParsedChangelist> = cls.iter()
+    let relevant: Vec<&ParsedChangelist> = cls
+        .iter()
         .filter(|cl| cl.status != ClStatus::Deprecated)
         .collect();
 
@@ -205,12 +202,12 @@ pub(crate) fn determine_round_name(cls: &[ParsedChangelist]) -> String {
     let first = sorted[0];
 
     // Extract timestamp prefix.
-    if first.len() >= 12 && first[..12].chars().all(|c| c.is_ascii_digit()) {
-        return first[..12].to_string();
+    if first.len() >= 12 && first[.. 12].chars().all(|c| c.is_ascii_digit()) {
+        return first[.. 12].to_string();
     }
     // Legacy: YYYY-MM-DD
     if first.len() >= 10 {
-        return first[..10].to_string();
+        return first[.. 10].to_string();
     }
 
     "unknown-round".to_string()
@@ -219,4 +216,3 @@ pub(crate) fn determine_round_name(cls: &[ParsedChangelist]) -> String {
 // ---------------------------------------------------------------------------
 // migrate
 // ---------------------------------------------------------------------------
-

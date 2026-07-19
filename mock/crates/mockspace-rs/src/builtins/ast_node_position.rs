@@ -82,10 +82,10 @@ pub struct AstNodePositionConfig {
 }
 
 pub struct AstNodePositionMatchLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: AstNodePositionConfig,
+    config:           AstNodePositionConfig,
 }
 
 impl AstNodePositionMatchLint {
@@ -108,12 +108,15 @@ impl Lint for AstNodePositionMatchLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_tree_sitter(&self) -> bool {
         true
     }
@@ -263,7 +266,7 @@ fn node_text<'a>(node: tree_sitter::Node, source: &'a str) -> &'a str {
     if start >= end {
         return "";
     }
-    std::str::from_utf8(&bytes[start..end]).unwrap_or("")
+    std::str::from_utf8(&bytes[start .. end]).unwrap_or("")
 }
 
 pub fn instantiate_with(
@@ -274,16 +277,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: AstNodePositionConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("ast-node-position-match config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("ast-node-position-match config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(AstNodePositionMatchLint::new(
         name,
         description,
@@ -294,11 +296,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, Severity};
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::{Gate, Severity};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -309,11 +313,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: mockspace_core::lint::RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      mockspace_core::lint::RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -336,16 +340,13 @@ mod tests {
 
     #[test]
     fn fires_on_todo_macro() {
-        let findings = run(
-            "fn x() { todo!() }",
-            AstNodePositionConfig {
-                node_kinds: vec![TsNodeKind::MacroInvocation],
-                macro_names: vec!["todo".to_string()],
-                trait_names: Vec::new(),
-                member_names: Vec::new(),
-                exclude_under: Vec::new(),
-            },
-        );
+        let findings = run("fn x() { todo!() }", AstNodePositionConfig {
+            node_kinds:    vec![TsNodeKind::MacroInvocation],
+            macro_names:   vec!["todo".to_string()],
+            trait_names:   Vec::new(),
+            member_names:  Vec::new(),
+            exclude_under: Vec::new(),
+        });
         assert_eq!(findings.len(), 1);
     }
 
@@ -358,32 +359,26 @@ mod tests {
             }
             fn x() { todo!() }
         "#;
-        let findings = run(
-            source,
-            AstNodePositionConfig {
-                node_kinds: vec![TsNodeKind::MacroInvocation],
-                macro_names: vec!["todo".to_string()],
-                trait_names: Vec::new(),
-                member_names: Vec::new(),
-                exclude_under: vec![TsNodeKind::MacroDefinition],
-            },
-        );
+        let findings = run(source, AstNodePositionConfig {
+            node_kinds:    vec![TsNodeKind::MacroInvocation],
+            macro_names:   vec!["todo".to_string()],
+            trait_names:   Vec::new(),
+            member_names:  Vec::new(),
+            exclude_under: vec![TsNodeKind::MacroDefinition],
+        });
         // Only the fn-body todo! fires; the one inside macro_rules! is excluded.
         assert_eq!(findings.len(), 1);
     }
 
     #[test]
     fn does_not_fire_on_unmatched_macro() {
-        let findings = run(
-            "fn x() { println!(\"hi\") }",
-            AstNodePositionConfig {
-                node_kinds: vec![TsNodeKind::MacroInvocation],
-                macro_names: vec!["todo".to_string(), "unimplemented".to_string()],
-                trait_names: Vec::new(),
-                member_names: Vec::new(),
-                exclude_under: Vec::new(),
-            },
-        );
+        let findings = run("fn x() { println!(\"hi\") }", AstNodePositionConfig {
+            node_kinds:    vec![TsNodeKind::MacroInvocation],
+            macro_names:   vec!["todo".to_string(), "unimplemented".to_string()],
+            trait_names:   Vec::new(),
+            member_names:  Vec::new(),
+            exclude_under: Vec::new(),
+        });
         assert!(findings.is_empty());
     }
 }

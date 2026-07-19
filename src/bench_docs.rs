@@ -24,10 +24,10 @@ use crate::render_design;
 
 /// One parsed history row (subset of the harness's schema).
 struct Row {
-    timestamp: u64,
+    timestamp:  u64,
     git_commit: String,
-    variant: String,
-    median_ns: f64,
+    variant:    String,
+    median_ns:  f64,
 }
 
 /// Whether the consumer opted into bench docgen.
@@ -63,10 +63,10 @@ fn latest_cohort(path: &Path) -> Vec<Row> {
             continue;
         };
         rows.push(Row {
-            timestamp: ts,
+            timestamp:  ts,
             git_commit: f[1].to_string(),
-            variant: f[3].to_string(),
-            median_ns: median,
+            variant:    f[3].to_string(),
+            median_ns:  median,
         });
     }
     let max_ts = rows.iter().map(|r| r.timestamp).max().unwrap_or(0);
@@ -117,7 +117,7 @@ fn benchmark_dot(benchmark: &str, rows: &[Row]) -> String {
             hue
         ));
     }
-    for i in 1..sorted.len() {
+    for i in 1 .. sorted.len() {
         let step = sorted[i].median_ns / sorted[i - 1].median_ns;
         dot.push_str(&format!("  v{} -> v{i} [label=\"{step:.2}x\"];\n", i - 1));
     }
@@ -144,7 +144,10 @@ pub fn generate(cfg: &Config) {
         .unwrap_or_default();
     logs.sort();
     if logs.is_empty() {
-        eprintln!("  bench docgen enabled but no history at {}", history_dir.display());
+        eprintln!(
+            "  bench docgen enabled but no history at {}",
+            history_dir.display()
+        );
         return;
     }
 
@@ -222,7 +225,9 @@ pub fn generate(cfg: &Config) {
         }
     }
 
-    let md_path = cfg.docs_dir.join(render_design::ordered_doc_name("BENCHES.md", cfg));
+    let md_path = cfg
+        .docs_dir
+        .join(render_design::ordered_doc_name("BENCHES.md", cfg));
     render_design::write_generated(&md_path, &md);
     eprintln!("  {}", md_path.display());
 }

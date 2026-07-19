@@ -19,13 +19,13 @@ pub fn placeholder_exprs(line: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut rest = line;
     while let Some(s) = rest.find("{{") {
-        let after = &rest[s + 2..];
+        let after = &rest[s + 2 ..];
         let Some(e) = after.find("}}") else { break };
-        let inner = after[..e].trim().to_string();
+        let inner = after[.. e].trim().to_string();
         if !inner.is_empty() {
-            out.push((format!("{{{{{}}}}}", &after[..e]), inner));
+            out.push((format!("{{{{{}}}}}", &after[.. e]), inner));
         }
-        rest = &after[e + 2..];
+        rest = &after[e + 2 ..];
     }
     out
 }
@@ -36,7 +36,10 @@ pub fn placeholder_exprs(line: &str) -> Vec<(String, String)> {
 /// looked like an identifier, which meant guessing whether a token was a
 /// reference at all. Requiring `reg::` makes a reference something the author
 /// states.
-pub fn find_registry_refs(text: &str, namespaces: &BTreeSet<String>) -> Vec<(String, Option<String>)> {
+pub fn find_registry_refs(
+    text: &str,
+    namespaces: &BTreeSet<String>,
+) -> Vec<(String, Option<String>)> {
     let mut found = Vec::new();
     let mut in_fence = false;
     for line in text.lines() {
@@ -66,9 +69,14 @@ pub fn find_registry_refs(text: &str, namespaces: &BTreeSet<String>) -> Vec<(Str
                 continue;
             }
             match parts.len() {
-                3 => found.push((format!("{}::{}", parts[0], parts[1]), Some(parts[2].to_string()))),
+                3 => {
+                    found.push((
+                        format!("{}::{}", parts[0], parts[1]),
+                        Some(parts[2].to_string()),
+                    ))
+                },
                 2 => found.push((format!("{}::{}", parts[0], parts[1]), None)),
-                _ => {}
+                _ => {},
             }
         }
     }
@@ -88,14 +96,14 @@ pub fn dangling_references(
         match reg.get(&qualified) {
             None => {
                 out.insert(qualified.clone());
-            }
+            },
             Some(row) => {
                 if let Some(f) = &field {
                     if f != "id" && !row.fields.contains_key(f) {
                         out.insert(format!("{qualified}::{f}"));
                     }
                 }
-            }
+            },
         }
     }
     out
@@ -129,8 +137,8 @@ pub enum Anchor {
 /// `mock::crates::numeric::DESIGN::12` without either needing its own root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileRef {
-    pub root: String,
-    pub path: String,
+    pub root:   String,
+    pub path:   String,
     pub anchor: Anchor,
 }
 
@@ -157,11 +165,15 @@ impl FileRef {
         if root.is_empty() {
             return None;
         }
-        let path = parts[1..parts.len() - 1].join("/");
+        let path = parts[1 .. parts.len() - 1].join("/");
         if path.is_empty() {
             return None;
         }
-        Some(Self { root: root.to_string(), path, anchor })
+        Some(Self {
+            root: root.to_string(),
+            path,
+            anchor,
+        })
     }
 
     pub fn render(&self) -> String {
@@ -223,12 +235,14 @@ pub fn resolve_cited_path(root_dir: &Path, path: &str) -> PathResolution {
     match matches.len() {
         0 => PathResolution::Missing,
         1 => PathResolution::Found(matches.remove(0)),
-        _ => PathResolution::Ambiguous(
-            matches
-                .iter()
-                .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                .collect(),
-        ),
+        _ => {
+            PathResolution::Ambiguous(
+                matches
+                    .iter()
+                    .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                    .collect(),
+            )
+        },
     }
 }
 
@@ -238,7 +252,11 @@ pub(crate) fn relative_from(from: &Path, to: &Path) -> String {
     let t: Vec<_> = to.components().collect();
     let common = f.iter().zip(t.iter()).take_while(|(a, b)| a == b).count();
     let mut parts: Vec<String> = vec!["..".to_string(); f.len() - common];
-    parts.extend(t[common..].iter().map(|c| c.as_os_str().to_string_lossy().to_string()));
+    parts.extend(
+        t[common ..]
+            .iter()
+            .map(|c| c.as_os_str().to_string_lossy().to_string()),
+    );
     if parts.is_empty() { ".".to_string() } else { parts.join("/") }
 }
 
@@ -274,21 +292,17 @@ pub fn resolve_doc_refs(
                 continue;
             }
             let Some(rel) = roots.get(&r.root) else { continue };
-            if let PathResolution::Found(target) =
-                resolve_cited_path(&repo_root.join(rel), &r.path)
+            if let PathResolution::Found(target) = resolve_cited_path(&repo_root.join(rel), &r.path)
             {
                 let link = relative_from(docs_dir, &target);
-                rewritten = rewritten.replace(
-                    &tok,
-                    &match &r.anchor {
-                        Anchor::Heading(h) => {
-                            format!("[{}/{}#{h}]({}#{h})", r.root, r.path, link)
-                        }
-                        Anchor::Line(n) => {
-                            format!("[{}/{}:{n}]({}#L{n})", r.root, r.path, link)
-                        }
+                rewritten = rewritten.replace(&tok, &match &r.anchor {
+                    Anchor::Heading(h) => {
+                        format!("[{}/{}#{h}]({}#{h})", r.root, r.path, link)
                     },
-                );
+                    Anchor::Line(n) => {
+                        format!("[{}/{}:{n}]({}#L{n})", r.root, r.path, link)
+                    },
+                });
             }
         }
         out.push_str(&rewritten);
@@ -305,7 +319,13 @@ pub fn resolve_doc_refs(
 fn citation_tokens(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     for raw in line.split(|c: char| c.is_whitespace() || "()[]`\"',;".contains(c)) {
-        if raw.matches("::").count() >= 2 && raw.split("::").last().map(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())).unwrap_or(false) {
+        if raw.matches("::").count() >= 2
+            && raw
+                .split("::")
+                .last()
+                .map(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+                .unwrap_or(false)
+        {
             out.push(raw.to_string());
         }
     }
@@ -322,7 +342,7 @@ pub fn resolve_anchor(path: &Path, anchor: &Anchor) -> Option<usize> {
         Anchor::Line(n) => {
             let count = fs::read_to_string(path).ok()?.lines().count();
             if *n <= count { Some(*n) } else { None }
-        }
+        },
         Anchor::Heading(want) => {
             let text = fs::read_to_string(path).ok()?;
             text.lines().enumerate().find_map(|(i, l)| {
@@ -333,7 +353,7 @@ pub fn resolve_anchor(path: &Path, anchor: &Anchor) -> Option<usize> {
                 let title = trimmed.trim_start_matches('#').trim();
                 (heading_slug(title) == *want).then_some(i + 1)
             })
-        }
+        },
     }
 }
 

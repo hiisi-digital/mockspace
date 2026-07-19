@@ -15,21 +15,21 @@ pub mod bench;
 pub mod bench_docs;
 pub mod bootstrap;
 pub mod config;
+pub mod custom_lints;
 pub mod design_round;
-pub mod pdf;
-pub mod model;
-pub mod parse;
+pub mod document;
+pub mod dylib_check;
+mod entry;
 pub mod graph;
 pub mod lint;
-pub mod render;
-pub mod render_md;
-pub mod render_design;
-pub mod render_agent;
-pub mod dylib_check;
-pub mod custom_lints;
-pub mod document;
+pub mod model;
+pub mod parse;
+pub mod pdf;
 pub mod registry;
-mod entry;
+pub mod render;
+pub mod render_agent;
+pub mod render_design;
+pub mod render_md;
 
 /// Path to the mockspace source directory, captured at compile time.
 ///
@@ -39,15 +39,22 @@ mod entry;
 pub const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 // Re-export lint rules for convenience
-pub use mockspace_lint_rules::{LintMode, Level, Severity, LintError, LintContext, Lint, CrossCrateLint, LintConfig};
-
 /// Entry point: parses CLI args and runs the mockspace pipeline.
 ///
 /// Called by both mockspace's own `main.rs` and by the generated
 /// `target/mockspace-proxy/` runner crate.
 pub use entry::run;
-
 /// Entry point with consumer-provided custom lints.
 ///
 /// Called by proxy crates that define custom lints in `mock/lints/`.
 pub use entry::run_with_custom_lints;
+pub use mockspace_lint_rules::{
+    CrossCrateLint,
+    Level,
+    Lint,
+    LintConfig,
+    LintContext,
+    LintError,
+    LintMode,
+    Severity,
+};

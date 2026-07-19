@@ -8,9 +8,10 @@
 //! plumbing only (subcommand parsing, scope_walk integration, exit
 //! code wiring, report printing).
 
+use std::fs;
+
 use assert_cmd::Command;
 use mockspace_test_fixtures::MockspaceFixture;
-use std::fs;
 
 fn mock() -> Command {
     Command::cargo_bin("mock").expect("cargo build provides the mock binary")

@@ -20,8 +20,11 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoAdhocFramework;
 
 impl Lint for NoAdhocFramework {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         "no-adhoc-framework"
     }
 
@@ -63,8 +66,10 @@ fn name(&self) -> &'static str {
                 registry_brace_depth = 0;
             }
             if in_define_registry {
-                registry_brace_depth += trimmed.chars().filter(|c| *c == '{' || *c == '(').count() as i32;
-                registry_brace_depth -= trimmed.chars().filter(|c| *c == '}' || *c == ')').count() as i32;
+                registry_brace_depth +=
+                    trimmed.chars().filter(|c| *c == '{' || *c == '(').count() as i32;
+                registry_brace_depth -=
+                    trimmed.chars().filter(|c| *c == '}' || *c == ')').count() as i32;
                 if registry_brace_depth <= 0 && !trimmed.contains("define_registry!") {
                     in_define_registry = false;
                 }
@@ -77,9 +82,13 @@ fn name(&self) -> &'static str {
                     // Check current line AND up to 3 preceding lines for suppression.
                     let context_lines = gather_context_lines(ctx.source, line_num, 3);
                     emit_with_explanation(
-                        &context_lines, line_num, ctx.crate_name,
+                        &context_lines,
+                        line_num,
+                        ctx.crate_name,
                         crate::Severity::HARD_ERROR,
-                        &format!("struct `{name}` looks like an ad-hoc registry — use `define_registry!` instead"),
+                        &format!(
+                            "struct `{name}` looks like an ad-hoc registry — use `define_registry!` instead"
+                        ),
                         &mut errors,
                     );
                 }
@@ -89,7 +98,9 @@ fn name(&self) -> &'static str {
             if trimmed.contains("inventory::submit!") || trimmed.contains("inventory::collect!") {
                 let context_lines = gather_context_lines(ctx.source, line_num, 3);
                 emit_with_explanation(
-                    &context_lines, line_num, ctx.crate_name,
+                    &context_lines,
+                    line_num,
+                    ctx.crate_name,
                     crate::Severity::HARD_ERROR,
                     "direct `inventory` usage outside macro definitions — use `define_registry!` which manages inventory integration",
                     &mut errors,
@@ -100,7 +111,9 @@ fn name(&self) -> &'static str {
             if trimmed.contains("OnceLock<Mutex<") || trimmed.contains("OnceLock<RwLock<") {
                 let context_lines = gather_context_lines(ctx.source, line_num, 3);
                 emit_with_explanation(
-                    &context_lines, line_num, ctx.crate_name,
+                    &context_lines,
+                    line_num,
+                    ctx.crate_name,
                     crate::Severity::ADVISORY,
                     "`OnceLock<Mutex/RwLock<...>>` — global mutable singletons often indicate an ad-hoc registry; prefer `define_registry!` + `define_resource!`",
                     &mut errors,
@@ -108,10 +121,14 @@ fn name(&self) -> &'static str {
             }
 
             // ── Heuristic 4: HashMap index-lookup (registry smell) ───────
-            if trimmed.contains("HashMap<&str, usize>") || trimmed.contains("HashMap<String, usize>") {
+            if trimmed.contains("HashMap<&str, usize>")
+                || trimmed.contains("HashMap<String, usize>")
+            {
                 let context_lines = gather_context_lines(ctx.source, line_num, 3);
                 emit_with_explanation(
-                    &context_lines, line_num, ctx.crate_name,
+                    &context_lines,
+                    line_num,
+                    ctx.crate_name,
                     crate::Severity::HARD_ERROR,
                     "`HashMap<&str/String, usize>` is a manual name→index registry — use `define_registry!` which provides `Registry::index_of()`",
                     &mut errors,
@@ -128,7 +145,7 @@ fn name(&self) -> &'static str {
 fn gather_context_lines(source: &str, target_line: usize, look_back: usize) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let start = target_line.saturating_sub(look_back);
-    lines[start..=target_line.min(lines.len() - 1)].join("\n")
+    lines[start ..= target_line.min(lines.len() - 1)].join("\n")
 }
 
 /// Emit a lint violation respecting `// lint:allow(no_adhoc_framework) — <explanation>`.
@@ -164,11 +181,11 @@ fn emit_with_explanation(
         }
     } else {
         errors.push(LintError {
-            crate_name: crate_name.to_string(),
-            line: line_num + 1,
-            lint_name: "no-adhoc-framework",
-            severity: base_severity,
-            message: message.to_string(),
+            crate_name:   crate_name.to_string(),
+            line:         line_num + 1,
+            lint_name:    "no-adhoc-framework",
+            severity:     base_severity,
+            message:      message.to_string(),
             finding_kind: None,
         });
     }
@@ -179,15 +196,15 @@ fn emit_with_explanation(
 fn extract_allow_explanation(context: &str) -> Option<&str> {
     let marker = "lint:allow(no_adhoc_framework)";
     let pos = context.find(marker)?;
-    let after = &context[pos + marker.len()..];
+    let after = &context[pos + marker.len() ..];
 
     // Take only up to the end of the line containing the marker.
     let rest = after.split('\n').next().unwrap_or(after);
 
     if let Some(dash_pos) = rest.find('—') {
-        Some(rest[dash_pos + '—'.len_utf8()..].trim())
+        Some(rest[dash_pos + '—'.len_utf8() ..].trim())
     } else if let Some(dash_pos) = rest.find(" - ") {
-        Some(rest[dash_pos + 3..].trim())
+        Some(rest[dash_pos + 3 ..].trim())
     } else {
         Some("")
     }
@@ -207,9 +224,5 @@ fn extract_struct_name(line: &str) -> Option<&str> {
         .split(|c: char| !c.is_alphanumeric() && c != '_')
         .next()?;
 
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    if name.is_empty() { None } else { Some(name) }
 }

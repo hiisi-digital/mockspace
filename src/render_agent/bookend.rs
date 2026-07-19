@@ -35,7 +35,6 @@ pub(crate) fn count_bookend_words(text: &str) -> usize {
         .count()
 }
 
-
 /// Validate a consumer-authored preamble/postamble template against the
 /// word budget. Prints a cargo::warning on overflow: non-fatal so
 /// existing consumers aren't broken, but visible every `cargo mock` run.
@@ -54,8 +53,12 @@ pub(crate) fn validate_bookend_size(content: &str, filename: &str) {
     }
 }
 
-
-pub(crate) fn format_with_bookends(header: &str, preamble: &str, body: &str, postamble: &str) -> String {
+pub(crate) fn format_with_bookends(
+    header: &str,
+    preamble: &str,
+    body: &str,
+    postamble: &str,
+) -> String {
     let mut out = String::new();
     out.push_str(header);
     out.push('\n');
@@ -73,4 +76,3 @@ pub(crate) fn format_with_bookends(header: &str, preamble: &str, body: &str, pos
     }
     out
 }
-

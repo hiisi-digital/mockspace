@@ -16,8 +16,11 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoBarePublic;
 
 impl Lint for NoBarePublic {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         "no-bare-pub"
     }
 
@@ -94,7 +97,10 @@ fn is_bare_pub(trimmed: &str) -> bool {
     }
 
     // pub(crate), pub(super), pub(in ...) are scoped — allowed
-    if trimmed.starts_with("pub(crate)") || trimmed.starts_with("pub(super)") || trimmed.starts_with("pub(in ") {
+    if trimmed.starts_with("pub(crate)")
+        || trimmed.starts_with("pub(super)")
+        || trimmed.starts_with("pub(in ")
+    {
         return false;
     }
 
@@ -121,7 +127,7 @@ fn has_visibility_attribute(source: &str, target_line: usize) -> bool {
     let lines: Vec<&str> = source.lines().collect();
 
     // Look at the preceding lines (up to 5 lines back for multi-line attributes)
-    for i in (0..target_line).rev().take(5) {
+    for i in (0 .. target_line).rev().take(5) {
         let prev = lines[i].trim();
         if prev.is_empty() || prev.starts_with("//") {
             continue;

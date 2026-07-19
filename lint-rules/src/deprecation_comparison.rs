@@ -10,15 +10,17 @@
 //! Severity: PUSH_GATE (warn on commit, warn on build, error on push).
 
 use crate::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist};
-use crate::type_scanner;
-use crate::{CrossCrateLint, LintContext, LintError};
+use crate::{CrossCrateLint, LintContext, LintError, type_scanner};
 
 const LINT_NAME: &str = "deprecation-comparison";
 
 pub struct DeprecationComparison;
 
 impl CrossCrateLint for DeprecationComparison {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::PUSH_GATE
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
@@ -50,20 +52,16 @@ impl CrossCrateLint for DeprecationComparison {
         // active CL filename (`## 202604191900_changelist.doc.lock.md`)
         // or the generic header `## deprecation-comparison` waives the
         // error for the CL in question.
-        let shame_blobs: Vec<&str> = crates
-            .iter()
-            .filter_map(|(_, ctx)| ctx.shame_doc)
-            .collect();
+        let shame_blobs: Vec<&str> = crates.iter().filter_map(|(_, ctx)| ctx.shame_doc).collect();
 
         let mut errors = Vec::new();
 
         for dep_cl in &deprecated {
             // Find the active (non-deprecated, non-locked) CL of the same kind.
             // Also accept locked CLs — they should have had the comparison when active.
-            let active_cl = all_cls.iter().find(|cl| {
-                cl.kind == dep_cl.kind
-                    && cl.status != ClStatus::Deprecated
-            });
+            let active_cl = all_cls
+                .iter()
+                .find(|cl| cl.kind == dep_cl.kind && cl.status != ClStatus::Deprecated);
 
             let active_cl = match active_cl {
                 Some(cl) => cl,
@@ -109,9 +107,9 @@ fn shame_entry_with_min_words(shame_blobs: &[&str], key: &str, min_words: usize)
     let header = format!("## {key}");
     for blob in shame_blobs {
         if let Some(start) = blob.find(&header) {
-            let after = &blob[start + header.len()..];
+            let after = &blob[start + header.len() ..];
             let end = after.find("\n## ").unwrap_or(after.len());
-            let body = after[..end].trim();
+            let body = after[.. end].trim();
             if body.split_whitespace().count() >= min_words {
                 return true;
             }
@@ -202,7 +200,10 @@ fn find_comparison_section(content: &str) -> Option<String> {
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with("## ")
-            && trimmed[3..].trim().to_lowercase().starts_with("comparison to deprecated changelist")
+            && trimmed[3 ..]
+                .trim()
+                .to_lowercase()
+                .starts_with("comparison to deprecated changelist")
         {
             start = Some(i);
             break;
@@ -213,7 +214,7 @@ fn find_comparison_section(content: &str) -> Option<String> {
 
     // Find the end: next ## header or end of file
     let mut end = lines.len();
-    for i in (start + 1)..lines.len() {
+    for i in (start + 1) .. lines.len() {
         let trimmed = lines[i].trim();
         if trimmed.starts_with("## ") && !trimmed.starts_with("### ") {
             end = i;
@@ -221,7 +222,7 @@ fn find_comparison_section(content: &str) -> Option<String> {
         }
     }
 
-    Some(lines[start..end].join("\n"))
+    Some(lines[start .. end].join("\n"))
 }
 
 /// Extract all `## Header` text from markdown (the header titles, not the `##` prefix).
@@ -231,7 +232,7 @@ fn extract_h2_headers(content: &str) -> Vec<String> {
         .filter_map(|line| {
             let trimmed = line.trim();
             if trimmed.starts_with("## ") && !trimmed.starts_with("### ") {
-                Some(trimmed[3..].trim().to_string())
+                Some(trimmed[3 ..].trim().to_string())
             } else {
                 None
             }
@@ -246,7 +247,7 @@ fn extract_h3_headers_lowercase(content: &str) -> Vec<String> {
         .filter_map(|line| {
             let trimmed = line.trim();
             if trimmed.starts_with("### ") {
-                Some(trimmed[4..].trim().to_lowercase())
+                Some(trimmed[4 ..].trim().to_lowercase())
             } else {
                 None
             }
@@ -256,9 +257,11 @@ fn extract_h3_headers_lowercase(content: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
     use tempfile::TempDir;
+
+    use super::*;
 
     fn write_cl(dir: &std::path::Path, name: &str, content: &str) {
         fs::write(dir.join(name), content).unwrap();
@@ -376,7 +379,11 @@ The `Marker` type was redesigned.
             active,
             ClKind::Doc,
         );
-        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        assert!(
+            errors.is_empty(),
+            "expected no errors, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -391,7 +398,11 @@ The `Marker` type was redesigned.
             ClKind::Doc,
         );
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("missing a `## Comparison to deprecated changelist`"));
+        assert!(
+            errors[0]
+                .message
+                .contains("missing a `## Comparison to deprecated changelist`")
+        );
     }
 
     #[test]
@@ -460,7 +471,11 @@ Mentions `Foo`.
             active,
             ClKind::Doc,
         );
-        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        assert!(
+            errors.is_empty(),
+            "expected no errors, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -486,10 +501,17 @@ Mentions `Foo`.
         let tmp = TempDir::new().unwrap();
         let dr = tmp.path().join("design_rounds");
         fs::create_dir_all(&dr).unwrap();
-        write_cl(&dr, "202603071430_changelist.doc.md", "## Overview\nText.\n");
+        write_cl(
+            &dr,
+            "202603071430_changelist.doc.md",
+            "## Overview\nText.\n",
+        );
 
         let cls = changelist_helpers::find_changelists(&dr);
-        let deprecated: Vec<_> = cls.iter().filter(|c| c.status == ClStatus::Deprecated).collect();
+        let deprecated: Vec<_> = cls
+            .iter()
+            .filter(|c| c.status == ClStatus::Deprecated)
+            .collect();
         assert!(deprecated.is_empty());
     }
 
@@ -537,7 +559,11 @@ Mentions `Foo`.
         );
 
         assert!(!errors.is_empty());
-        assert!(errors[0].message.contains("Comparison to deprecated changelist"));
+        assert!(
+            errors[0]
+                .message
+                .contains("Comparison to deprecated changelist")
+        );
     }
 
     #[test]
@@ -589,7 +615,11 @@ Different design.
             dep_cl.kind,
         );
 
-        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors.iter().map(|e| &e.message).collect::<Vec<_>>());
+        assert!(
+            errors.is_empty(),
+            "expected no errors, got: {:?}",
+            errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
     }
 
     #[test]

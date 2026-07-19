@@ -2,24 +2,25 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use mockspace_lint_rules::{Lint, CrossCrateLint};
+use mockspace_lint_rules::{CrossCrateLint, Lint};
 
-use crate::bench;
-use crate::bootstrap;
-use crate::document;
 use crate::config::Config;
-use crate::design_round;
-use crate::registry;
-use crate::pdf;
-use crate::dylib_check;
-use crate::lint;
-use crate::parse;
-use crate::render;
-use crate::render_agent;
-use crate::render_design;
-use crate::render_md;
-use crate::LintMode;
-
+use crate::{
+    LintMode,
+    bench,
+    bootstrap,
+    design_round,
+    document,
+    dylib_check,
+    lint,
+    parse,
+    pdf,
+    registry,
+    render,
+    render_agent,
+    render_design,
+    render_md,
+};
 
 mod dispatch;
 pub(crate) use dispatch::*;
@@ -44,4 +45,3 @@ pub fn run_with_custom_lints(
 ) -> ExitCode {
     run_inner(&custom_lints, &custom_cross_lints)
 }
-

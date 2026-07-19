@@ -43,7 +43,7 @@ impl ManifestStage {
             Self::Locked => format!("manifest.{}.locked.toml", side.marker()),
             Self::Deprecated(n) => {
                 format!("manifest.{}.deprecated.{n}.toml", side.marker())
-            }
+            },
         }
     }
 }
@@ -87,7 +87,7 @@ pub struct PrMeta {
     pub number: Option<u64>,
     /// Direct URL to the PR.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
+    pub url:    Option<String>,
 }
 
 impl PrMeta {
@@ -106,14 +106,14 @@ impl PrMeta {
 pub struct ClosedMeta {
     /// ISO-8601 timestamp at which the round transitioned to DONE.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub closed_at: Option<String>,
+    pub closed_at:           Option<String>,
     /// Source-side branch tip SHA at the moment of closure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub final_source_sha: Option<String>,
+    pub final_source_sha:    Option<String>,
     /// Original mock-side ref name before archival (e.g.
     /// `refs/mock/round/202605181400-arvo-graph-csr`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub original_mock_ref: Option<String>,
+    pub original_mock_ref:   Option<String>,
     /// Original source-side branch ref name before archival.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_source_ref: Option<String>,
@@ -135,20 +135,20 @@ pub struct RoundMeta {
     /// Schema version.
     pub mockspace_version: String,
     /// Round slug (matches the ref name and the source-side branch suffix).
-    pub slug: String,
+    pub slug:              String,
     /// One-line human-facing title.
-    pub title: String,
+    pub title:             String,
     /// ISO-8601 creation timestamp.
-    pub created: String,
+    pub created:           String,
     /// Source-side branch this round pairs with (e.g.
     /// `round/202605181400-arvo-graph-csr`).
-    pub source_branch: String,
+    pub source_branch:     String,
     /// PR integration data (number + URL). Populated after PR creation.
     #[serde(default, skip_serializing_if = "PrMeta::is_empty")]
-    pub pr: PrMeta,
+    pub pr:                PrMeta,
     /// Closure metadata. Populated by `mock close`; absent until then.
     #[serde(default, skip_serializing_if = "ClosedMeta::is_empty")]
-    pub closed: ClosedMeta,
+    pub closed:            ClosedMeta,
 }
 
 impl RoundMeta {
@@ -231,15 +231,15 @@ mod tests {
     fn round_meta_round_trip() {
         let meta = RoundMeta {
             mockspace_version: "1.0".to_owned(),
-            slug: "202605181400-arvo-graph-csr".to_owned(),
-            title: "arvo-graph storage layout (CSR vs dense matrix)".to_owned(),
-            created: "2026-05-18T14:00:00Z".to_owned(),
-            source_branch: "round/202605181400-arvo-graph-csr".to_owned(),
-            pr: PrMeta {
+            slug:              "202605181400-arvo-graph-csr".to_owned(),
+            title:             "arvo-graph storage layout (CSR vs dense matrix)".to_owned(),
+            created:           "2026-05-18T14:00:00Z".to_owned(),
+            source_branch:     "round/202605181400-arvo-graph-csr".to_owned(),
+            pr:                PrMeta {
                 number: Some(437),
-                url: Some("https://github.com/orgrinrt/arvo/pull/437".to_owned()),
+                url:    Some("https://github.com/orgrinrt/arvo/pull/437".to_owned()),
             },
-            closed: ClosedMeta::default(),
+            closed:            ClosedMeta::default(),
         };
 
         let serialized = meta.to_toml().unwrap();
@@ -255,12 +255,12 @@ mod tests {
     fn round_meta_round_trip_no_pr() {
         let meta = RoundMeta {
             mockspace_version: "1.0".to_owned(),
-            slug: "202605181400-arvo-graph-csr".to_owned(),
-            title: "test title".to_owned(),
-            created: "2026-05-18T14:00:00Z".to_owned(),
-            source_branch: "round/202605181400-arvo-graph-csr".to_owned(),
-            pr: PrMeta::default(),
-            closed: ClosedMeta::default(),
+            slug:              "202605181400-arvo-graph-csr".to_owned(),
+            title:             "test title".to_owned(),
+            created:           "2026-05-18T14:00:00Z".to_owned(),
+            source_branch:     "round/202605181400-arvo-graph-csr".to_owned(),
+            pr:                PrMeta::default(),
+            closed:            ClosedMeta::default(),
         };
 
         let serialized = meta.to_toml().unwrap();
@@ -274,18 +274,18 @@ mod tests {
     fn round_meta_round_trip_with_closure() {
         let meta = RoundMeta {
             mockspace_version: "1.0".to_owned(),
-            slug: "202605181400-arvo-graph-csr".to_owned(),
-            title: "closed round".to_owned(),
-            created: "2026-05-18T14:00:00Z".to_owned(),
-            source_branch: "round/202605181400-arvo-graph-csr".to_owned(),
-            pr: PrMeta {
+            slug:              "202605181400-arvo-graph-csr".to_owned(),
+            title:             "closed round".to_owned(),
+            created:           "2026-05-18T14:00:00Z".to_owned(),
+            source_branch:     "round/202605181400-arvo-graph-csr".to_owned(),
+            pr:                PrMeta {
                 number: Some(437),
-                url: Some("https://github.com/orgrinrt/arvo/pull/437".to_owned()),
+                url:    Some("https://github.com/orgrinrt/arvo/pull/437".to_owned()),
             },
-            closed: ClosedMeta {
-                closed_at: Some("2026-05-19T18:30:00Z".to_owned()),
-                final_source_sha: Some("deadbeefcafebabe0000000000000000deadbeef".to_owned()),
-                original_mock_ref: Some("refs/mock/round/202605181400-arvo-graph-csr".to_owned()),
+            closed:            ClosedMeta {
+                closed_at:           Some("2026-05-19T18:30:00Z".to_owned()),
+                final_source_sha:    Some("deadbeefcafebabe0000000000000000deadbeef".to_owned()),
+                original_mock_ref:   Some("refs/mock/round/202605181400-arvo-graph-csr".to_owned()),
                 original_source_ref: Some(
                     "refs/heads/round/202605181400-arvo-graph-csr".to_owned(),
                 ),
@@ -303,21 +303,25 @@ mod tests {
     #[test]
     fn pr_meta_default_is_empty() {
         assert!(PrMeta::default().is_empty());
-        assert!(!PrMeta {
-            number: Some(1),
-            url: None,
-        }
-        .is_empty());
+        assert!(
+            !PrMeta {
+                number: Some(1),
+                url:    None,
+            }
+            .is_empty()
+        );
     }
 
     #[test]
     fn closed_meta_default_is_empty() {
         assert!(ClosedMeta::default().is_empty());
-        assert!(!ClosedMeta {
-            closed_at: Some("2026-05-19T18:30:00Z".to_owned()),
-            ..Default::default()
-        }
-        .is_empty());
+        assert!(
+            !ClosedMeta {
+                closed_at: Some("2026-05-19T18:30:00Z".to_owned()),
+                ..Default::default()
+            }
+            .is_empty()
+        );
     }
 
     #[test]

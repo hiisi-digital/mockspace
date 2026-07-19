@@ -19,12 +19,23 @@
 pub mod comment;
 pub mod rust_attr;
 
-use mockspace_core::lint::{
-    Directive, DirectiveRecord, Document, FileDisableEntry, FileDisableSet, Language, PropMap,
-    ScopeAddEntry, ScopeAddMap, SuppressionKind, SuppressionMap, SuppressionScope,
-};
 use std::collections::BTreeSet;
 use std::path::Path;
+
+use mockspace_core::lint::{
+    Directive,
+    DirectiveRecord,
+    Document,
+    FileDisableEntry,
+    FileDisableSet,
+    Language,
+    PropMap,
+    ScopeAddEntry,
+    ScopeAddMap,
+    SuppressionKind,
+    SuppressionMap,
+    SuppressionScope,
+};
 
 /// Per-document directive extracts. Returned from
 /// [`LanguagePreprocessor::extract`]; engines merge the per-document
@@ -42,16 +53,16 @@ pub struct DirectiveExtracts {
     /// to compare directives against a project-wide style policy.
     /// Each record is also routed into the appropriate per-kind field
     /// below; this field is the raw inventory.
-    pub records: Vec<DirectiveRecord>,
+    pub records:       Vec<DirectiveRecord>,
     /// `lint:allow` and `lint:defer` records routed into
     /// [`SuppressionMap`]. Allows carry [`SuppressionKind::Allow`];
     /// defers carry [`SuppressionKind::Defer`] with the `until: <task>`
     /// argument stored in `tracked`.
-    pub suppressions: SuppressionMap,
+    pub suppressions:  SuppressionMap,
     /// `lint:prop` records routed into [`PropMap`].
-    pub props: PropMap,
+    pub props:         PropMap,
     /// `lint:scope-add` records routed into [`ScopeAddMap`].
-    pub scope_adds: ScopeAddMap,
+    pub scope_adds:    ScopeAddMap,
     /// `lint:file-disable` records routed into [`FileDisableSet`].
     pub file_disables: FileDisableSet,
 }
@@ -74,17 +85,27 @@ pub trait LanguagePreprocessor {
 /// Error produced by a preprocessor when source is too malformed to walk.
 #[derive(Debug)]
 pub enum PreprocessorError {
-    SyntaxFailure { path: String, reason: String },
-    Internal { reason: String },
+    SyntaxFailure {
+        path:   String,
+        reason: String,
+    },
+    Internal {
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for PreprocessorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SyntaxFailure { path, reason } => {
+            Self::SyntaxFailure {
+                path,
+                reason,
+            } => {
                 write!(f, "preprocessor syntax failure in {path}: {reason}")
-            }
-            Self::Internal { reason } => write!(f, "preprocessor internal: {reason}"),
+            },
+            Self::Internal {
+                reason,
+            } => write!(f, "preprocessor internal: {reason}"),
         }
     }
 }
@@ -180,7 +201,7 @@ fn route_record(record: DirectiveRecord, doc_path: &Path, out: &mut DirectiveExt
                 tracked,
                 reason,
             });
-        }
+        },
         Directive::Defer {
             lint_name,
             until,
@@ -199,7 +220,7 @@ fn route_record(record: DirectiveRecord, doc_path: &Path, out: &mut DirectiveExt
                 tracked: Some(until),
                 reason,
             });
-        }
+        },
         Directive::ScopeAdd {
             lint_name,
             axis,
@@ -211,7 +232,7 @@ fn route_record(record: DirectiveRecord, doc_path: &Path, out: &mut DirectiveExt
                 axis,
                 value,
             });
-        }
+        },
         Directive::FileDisable {
             lint_name,
             reason,
@@ -224,21 +245,22 @@ fn route_record(record: DirectiveRecord, doc_path: &Path, out: &mut DirectiveExt
                 tracked,
                 reason,
             });
-        }
+        },
         Directive::Prop {
             name,
             value,
             reason,
         } => {
             out.props.push(record.span, name, value, reason);
-        }
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use mockspace_core::lint::ContentHash;
+
+    use super::*;
 
     /// Minimal Document impl for unit tests. The real
     /// [`crate::document::MockspaceDocument`] carries syn/tree-sitter
@@ -246,21 +268,24 @@ mod tests {
     /// integration test focused on directive extraction.
     #[derive(Debug)]
     struct StubDocument {
-        path: std::path::PathBuf,
+        path:   std::path::PathBuf,
         source: String,
-        hash: ContentHash,
+        hash:   ContentHash,
     }
 
     impl Document for StubDocument {
         fn path(&self) -> &std::path::Path {
             &self.path
         }
+
         fn language(&self) -> Language {
             Language::Rust
         }
+
         fn source(&self) -> &str {
             &self.source
         }
+
         fn content_hash(&self) -> &ContentHash {
             &self.hash
         }
@@ -293,13 +318,13 @@ mod tests {
         use mockspace_core::lint::{ScopeAxis, SuppressionKind};
 
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: r#"// lint:scope-add(no-bare-numeric, exempt_paths="tests/**")
 // lint:defer(no-bare-string, until: #185)
 // lint:file-disable(writing-style) reason: "generated" tracked: #207
 "#
             .to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
 
@@ -318,9 +343,11 @@ mod tests {
         assert_eq!(scopes[0].tracked.as_deref(), Some("#185"));
 
         // FileDisable → FileDisableSet.
-        assert!(extracts
-            .file_disables
-            .disabled(std::path::Path::new("lib.rs"), "writing-style"));
+        assert!(
+            extracts
+                .file_disables
+                .disabled(std::path::Path::new("lib.rs"), "writing-style")
+        );
         let file_entries = extracts.file_disables.entries();
         assert_eq!(file_entries.len(), 1);
         assert_eq!(file_entries[0].reason.as_deref(), Some("generated"));
@@ -335,14 +362,14 @@ mod tests {
         // Single parse drives both suppressions and props. Verifies
         // the bundled-output collapse.
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: r#"// lint:allow(no-bare-numeric) reason: "constants" tracked: #1
 // lint:prop(audited)
 // lint:prop(arena_size = 4096)
 // lint:allow(no-bare-string) reason: "test fixture" tracked: #3
 "#
             .to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         // Two allow scopes
@@ -367,14 +394,14 @@ mod tests {
     #[test]
     fn extract_writes_prop_keyvalue_forms() {
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: r#"// lint:prop(arena_size = 4096)
 // lint:prop(audit_id = "A-2026-04")
 // lint:prop(enabled = false)
 struct Cfg;
 "#
             .to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         assert_eq!(extracts.props.len(), 3);
@@ -389,9 +416,9 @@ struct Cfg;
     #[test]
     fn extract_prop_carries_optional_reason() {
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: "// lint:prop(audited) reason: \"audit pass 2026-04\"\nfn x() {}\n".to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         let audited: Vec<PropEntry<'_>> = extracts.props.all_named("audited").collect();
@@ -401,13 +428,13 @@ struct Cfg;
     #[test]
     fn extract_accumulates_multiple_prop_directives() {
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: r#"// lint:prop(allowed_import = "alloc")
 // lint:prop(allowed_import = "core")
 fn imports() {}
 "#
             .to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         let imports: Vec<PropEntry<'_>> = extracts.props.all_named("allowed_import").collect();
@@ -420,9 +447,9 @@ fn imports() {}
     #[test]
     fn extract_on_source_without_directives_yields_empty_extracts() {
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: "fn main() {}\n".to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         assert!(extracts.suppressions.scopes().is_empty());
@@ -438,13 +465,13 @@ fn imports() {}
         // suppression map alongside what comment-form directives would
         // produce.
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: r##"
 #[mockspace::allow("no-bare-numeric", reason = "fixture", tracked = "#427")]
 const X: u64 = 1;
 "##
             .to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         let scopes = extracts.suppressions.scopes();
@@ -459,14 +486,14 @@ const X: u64 = 1;
         // Both surfaces produce records in one extract call. The engine
         // does not care which surface a directive came from.
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: r##"// lint:allow(no-bare-string) reason: "comment-form" tracked: #3
 
 #[mockspace::allow("no-bare-numeric", reason = "attr-form", tracked = "#4")]
 const X: u64 = 1;
 "##
             .to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         let scopes = extracts.suppressions.scopes();
@@ -482,7 +509,7 @@ const X: u64 = 1;
     #[test]
     fn extract_routes_attribute_form_scope_add_and_file_disable() {
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: r##"
 #[mockspace::scope_add("no-bare-numeric", axis = "exempt_paths", value = "tests/**")]
 mod ffi {}
@@ -491,7 +518,7 @@ mod ffi {}
 fn generated_thing() {}
 "##
             .to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         assert_eq!(extracts.scope_adds.entries().len(), 1);
@@ -500,9 +527,11 @@ fn generated_thing() {}
             "no-bare-numeric"
         );
         assert_eq!(extracts.file_disables.entries().len(), 1);
-        assert!(extracts
-            .file_disables
-            .disabled(std::path::Path::new("lib.rs"), "writing-style",));
+        assert!(
+            extracts
+                .file_disables
+                .disabled(std::path::Path::new("lib.rs"), "writing-style",)
+        );
     }
 
     #[test]
@@ -513,13 +542,13 @@ fn generated_thing() {}
         // prop on a source item lands in the PropMap identically to
         // its comment-form counterpart.
         let doc = StubDocument {
-            path: "lib.rs".into(),
+            path:   "lib.rs".into(),
             source: r##"
 #[mockspace::prop("audited")]
 fn x() {}
 "##
             .to_string(),
-            hash: ContentHash::ZERO,
+            hash:   ContentHash::ZERO,
         };
         let extracts = RustPreprocessor.extract(&doc).unwrap();
         assert!(

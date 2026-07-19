@@ -25,7 +25,9 @@ impl CrossCrateLint for ChangelistRequired {
         LINT_NAME
     }
 
-    fn source_only(&self) -> bool { false }
+    fn source_only(&self) -> bool {
+        false
+    }
 
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         let workspace_root = match crates.first() {
@@ -50,7 +52,10 @@ impl CrossCrateLint for ChangelistRequired {
                 // Skip nuked crates — intentionally wiped source is not a
                 // phase violation. Check the crate's lib.rs for the nuke marker.
                 let crate_name = extract_crate_name(file).unwrap_or_default();
-                let librs = workspace_root.join("crates").join(&crate_name).join("src/lib.rs");
+                let librs = workspace_root
+                    .join("crates")
+                    .join(&crate_name)
+                    .join("src/lib.rs");
                 let nuked = std::fs::read_to_string(&librs)
                     .map(|s| s.contains("Nuked by"))
                     .unwrap_or(false);
@@ -70,28 +75,27 @@ impl CrossCrateLint for ChangelistRequired {
                 !content.map(|s| declares_nothing(&s)).unwrap_or(false)
             })
             .map(|(file, source)| {
-                let crate_name = extract_crate_name(&file)
-                    .unwrap_or_else(|| "unknown".to_string());
+                let crate_name = extract_crate_name(&file).unwrap_or_else(|| "unknown".to_string());
 
                 let phase_hint = match phase {
                     Phase::Topic => {
                         "phase TOPIC: only topic files allowed. \
                          Create a doc changelist, lock it, then create a src changelist \
                          to open the source window"
-                    }
+                    },
                     Phase::Doc => {
                         "phase DOC: docs window open, source blocked. \
                          Lock the doc changelist and create a src changelist \
                          to open the source window"
-                    }
+                    },
                     Phase::SrcPlan => {
                         "phase DRAFT: doc CL locked, but no src changelist yet. \
                          Create an unlocked src changelist to open the source window"
-                    }
+                    },
                     Phase::Done => {
                         "phase CLOSED: round complete, both changelists locked. \
                          Start a new design round to make further changes"
-                    }
+                    },
                     Phase::Src => unreachable!(),
                 };
 
@@ -115,7 +119,12 @@ fn get_all_modified_rs_files(workspace_root: &Path) -> Vec<(String, String)> {
 
     // Staged changes
     if let Some(output) = run_git(workspace_root, &[
-        "diff", "--cached", "--name-only", "--relative", "--", "crates/",
+        "diff",
+        "--cached",
+        "--name-only",
+        "--relative",
+        "--",
+        "crates/",
     ]) {
         for line in output.lines() {
             let file = line.trim();
@@ -127,7 +136,11 @@ fn get_all_modified_rs_files(workspace_root: &Path) -> Vec<(String, String)> {
 
     // Unstaged tracked changes
     if let Some(output) = run_git(workspace_root, &[
-        "diff", "--name-only", "--relative", "--", "crates/",
+        "diff",
+        "--name-only",
+        "--relative",
+        "--",
+        "crates/",
     ]) {
         for line in output.lines() {
             let file = line.trim();
@@ -139,7 +152,11 @@ fn get_all_modified_rs_files(workspace_root: &Path) -> Vec<(String, String)> {
 
     // Untracked files
     if let Some(output) = run_git(workspace_root, &[
-        "ls-files", "--others", "--exclude-standard", "--", "crates/",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "--",
+        "crates/",
     ]) {
         for line in output.lines() {
             let file = line.trim();
@@ -222,7 +239,7 @@ fn declares_nothing(src: &str) -> bool {
                 None => {
                     in_block = true;
                     continue;
-                }
+                },
             }
         }
         return false;
@@ -233,5 +250,5 @@ fn declares_nothing(src: &str) -> bool {
 fn extract_crate_name(path: &str) -> Option<String> {
     let after_crates = path.strip_prefix("crates/")?;
     let end = after_crates.find('/')?;
-    Some(after_crates[..end].to_string())
+    Some(after_crates[.. end].to_string())
 }

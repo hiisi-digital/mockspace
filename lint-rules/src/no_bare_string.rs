@@ -19,7 +19,10 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoBareString;
 
 impl Lint for NoBareString {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::PUSH_GATE
+    }
+
     fn name(&self) -> &'static str {
         "no-bare-string"
     }
@@ -40,8 +43,8 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 if !is_inside_macro_def(child) {
                     check_type_fields(child, ctx, errors);
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
         if child.named_child_count() > 0 {
             visit_nodes(child, ctx, errors);
@@ -87,7 +90,8 @@ fn check_field_recursive(node: Node, ctx: &LintContext, errors: &mut Vec<LintErr
                     ctx.crate_name.to_string(),
                     line_idx + 1,
                     "no-bare-string",
-                    "`String` field suppressed without explanation (need 8+ words after `—`)".to_string(),
+                    "`String` field suppressed without explanation (need 8+ words after `—`)"
+                        .to_string(),
                 ));
             }
             return;
@@ -150,7 +154,7 @@ fn contains_bare_string_type(field_text: &str) -> bool {
 fn gather_context_lines(source: &str, target_line: usize, look_back: usize) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let start = target_line.saturating_sub(look_back);
-    lines[start..=target_line.min(lines.len() - 1)].join("\n")
+    lines[start ..= target_line.min(lines.len() - 1)].join("\n")
 }
 
 /// Extract the explanation text after `lint:allow(rule_name) —`.
@@ -159,16 +163,16 @@ fn gather_context_lines(source: &str, target_line: usize, look_back: usize) -> S
 fn extract_allow_explanation<'a>(context: &'a str, rule_name: &str) -> Option<&'a str> {
     let marker = format!("lint:allow({rule_name})");
     let pos = context.find(&marker)?;
-    let after = &context[pos + marker.len()..];
+    let after = &context[pos + marker.len() ..];
 
     // Take only up to the end of the line containing the marker.
     let rest = after.split('\n').next().unwrap_or(after);
 
     // Look for ` — ` (em dash) or ` - ` (hyphen) as separator.
     if let Some(dash_pos) = rest.find('—') {
-        Some(rest[dash_pos + '—'.len_utf8()..].trim())
+        Some(rest[dash_pos + '—'.len_utf8() ..].trim())
     } else if let Some(dash_pos) = rest.find(" - ") {
-        Some(rest[dash_pos + 3..].trim())
+        Some(rest[dash_pos + 3 ..].trim())
     } else {
         Some("") // Marker found but no explanation.
     }

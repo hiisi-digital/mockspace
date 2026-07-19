@@ -33,7 +33,7 @@ use crate::core::RoutineBridge;
 pub struct RoutineSpec {
     /// Routine display name. Used in CSV cache, findings.md, and CLI
     /// output. Convention: matches the `Routine` impl type name.
-    pub name: String,
+    pub name:   String,
     /// Byte-level dispatch bridge built via
     /// [`mockspace_bench_core::routine_bridge!`].
     pub bridge: RoutineBridge,
@@ -45,7 +45,7 @@ pub struct RoutineSpec {
 pub struct VariantSpec {
     /// Short variant name (e.g. `"fnv1a"`, `"xxhash3"`). Used in
     /// reports and CSV cache.
-    pub name: String,
+    pub name:       String,
     /// Filesystem path to the variant cdylib (`.dylib` on macOS,
     /// `.so` on Linux, `.dll` on Windows).
     pub dylib_path: PathBuf,
@@ -53,5 +53,5 @@ pub struct VariantSpec {
     /// `dlsym`-ing `bench_abi_hash` after load. Compared against
     /// [`mockspace_bench_core::abi_hash`] at run start; mismatch is
     /// [`BenchError::AbiMismatch`].
-    pub abi_hash: u64,
+    pub abi_hash:   u64,
 }

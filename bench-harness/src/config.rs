@@ -49,7 +49,7 @@ use crate::error::BenchError;
 pub struct BenchManifest {
     /// Named bench entries. Key is the bench short name.
     #[serde(default)]
-    pub bench: HashMap<String, BenchSection>,
+    pub bench:  HashMap<String, BenchSection>,
     /// Shared timing parameters applied to every bench unless a
     /// bench declares a `[bench.<name>.timing]` override.
     #[serde(default)]
@@ -60,10 +60,10 @@ pub struct BenchManifest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BenchSection {
     /// Display title for the bench (used in findings.md).
-    pub title: String,
+    pub title:       String,
     /// Workload program identifier (matches a name registered with
     /// the harness's workload module in Round 2).
-    pub workload: String,
+    pub workload:    String,
     /// Master seed for input generation. `0` means "use a fresh
     /// random seed every run"; any other value reproduces.
     ///
@@ -80,25 +80,25 @@ pub struct BenchSection {
     /// relative to `mock/benches/` (containing a separator; a bare
     /// stem gets the platform dylib prefix and extension).
     #[serde(default)]
-    pub variants: Vec<String>,
+    pub variants:    Vec<String>,
     /// The N values the bench runs at. Two TOML shapes are accepted:
     /// a plain integer array (`sizes = [64, 256, 1024]`, using the
     /// bench-level `variants`) or the array-of-tables form
     /// (`[[bench.<name>.sizes]]` with `n` and an optional per-size
     /// `variants` list overriding the bench-level one).
     #[serde(default, deserialize_with = "de_sizes")]
-    pub sizes: Vec<SizeSection>,
+    pub sizes:       Vec<SizeSection>,
     /// Whether variants may produce different valid outputs for the
     /// same input. `false` (default): the harness cross-validates
     /// outputs byte-exact. `true`: variants are independent
     /// algorithms; only per-variant validation applies.
     #[serde(default)]
-    pub may_differ: bool,
+    pub may_differ:  bool,
     /// Whether a validation failure on this bench fails the whole
     /// run (process exit code). `false` (default): failures are
     /// recorded in findings and the run continues.
     #[serde(default)]
-    pub required: bool,
+    pub required:    bool,
     /// Whether variants spawn their own threads inside the timed run
     /// block. `true` disables the worker's P-core self-pin (spawned
     /// threads never inherit the pin, and pinning only the
@@ -106,18 +106,18 @@ pub struct BenchSection {
     /// wall-clock-correct either way; see the threading-contract
     /// notes in the framework docs for what is and is not measured.
     #[serde(default)]
-    pub threaded: bool,
+    pub threaded:    bool,
     /// Per-bench timing override. Any field left out falls back to
     /// the global `[timing]` section.
     #[serde(default)]
-    pub timing: Option<TimingOverride>,
+    pub timing:      Option<TimingOverride>,
 }
 
 /// One `(N, [variants])` pair inside a [`BenchSection`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SizeSection {
     /// Logical size parameter passed into `bench_entry(... , n: usize)`.
-    pub n: usize,
+    pub n:        usize,
     /// Per-size variant entries (short names or paths, same grammar
     /// as the bench-level list). Empty means "use the bench-level
     /// `variants`".
@@ -129,11 +129,11 @@ pub struct SizeSection {
 /// global [`TimingSection`] by [`BenchManifest::for_size`].
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TimingOverride {
-    pub passes: Option<usize>,
+    pub passes:        Option<usize>,
     pub runs_per_pass: Option<usize>,
-    pub batch_size: Option<usize>,
-    pub harness_runs: Option<usize>,
-    pub cooldowns_ms: Option<Vec<u64>>,
+    pub batch_size:    Option<usize>,
+    pub harness_runs:  Option<usize>,
+    pub cooldowns_ms:  Option<Vec<u64>>,
 }
 
 /// Deserialize `master_seed` from a TOML integer or a string
@@ -156,7 +156,7 @@ fn de_seed<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
                 t.parse::<u64>()
             };
             parsed.map_err(|e| D::Error::custom(format!("master_seed `{s}`: {e}")))
-        }
+        },
     }
 }
 
@@ -172,9 +172,16 @@ fn de_sizes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<SizeSection>, 
     let raw: Vec<Raw> = Vec::deserialize(d)?;
     Ok(raw
         .into_iter()
-        .map(|r| match r {
-            Raw::Bare(n) => SizeSection { n, variants: Vec::new() },
-            Raw::Full(s) => s,
+        .map(|r| {
+            match r {
+                Raw::Bare(n) => {
+                    SizeSection {
+                        n,
+                        variants: Vec::new(),
+                    }
+                },
+                Raw::Full(s) => s,
+            }
         })
         .collect())
 }
@@ -216,37 +223,47 @@ pub fn resolve_variant_path(entry: &str, mock_benches_dir: &Path) -> PathBuf {
 pub struct TimingSection {
     /// Outer pass count per harness run.
     #[serde(default = "default_passes")]
-    pub passes: usize,
+    pub passes:        usize,
     /// Inner runs per pass.
     #[serde(default = "default_runs")]
     pub runs_per_pass: usize,
     /// Calls per emitted [`crate::Sample`].
     #[serde(default = "default_batch")]
-    pub batch_size: usize,
+    pub batch_size:    usize,
     /// Outer harness runs (the whole pipeline repeated for stability).
     #[serde(default = "default_harness_runs")]
-    pub harness_runs: usize,
+    pub harness_runs:  usize,
     /// Cooldown durations injected between cohorts, in milliseconds.
     /// Each cooldown becomes a separate cohort in the cache; analysis
     /// uses the spread to detect thermal drift.
     #[serde(default = "default_cooldowns")]
-    pub cooldowns_ms: Vec<u64>,
+    pub cooldowns_ms:  Vec<u64>,
 }
 
-fn default_passes() -> usize { 10 }
-fn default_runs() -> usize { 50_000 }
-fn default_batch() -> usize { 5_000 }
-fn default_harness_runs() -> usize { 3 }
-fn default_cooldowns() -> Vec<u64> { vec![0, 100, 600] }
+fn default_passes() -> usize {
+    10
+}
+fn default_runs() -> usize {
+    50_000
+}
+fn default_batch() -> usize {
+    5_000
+}
+fn default_harness_runs() -> usize {
+    3
+}
+fn default_cooldowns() -> Vec<u64> {
+    vec![0, 100, 600]
+}
 
 impl Default for TimingSection {
     fn default() -> Self {
         TimingSection {
-            passes: default_passes(),
+            passes:        default_passes(),
             runs_per_pass: default_runs(),
-            batch_size: default_batch(),
-            harness_runs: default_harness_runs(),
-            cooldowns_ms: default_cooldowns(),
+            batch_size:    default_batch(),
+            harness_runs:  default_harness_runs(),
+            cooldowns_ms:  default_cooldowns(),
         }
     }
 }
@@ -255,10 +272,12 @@ impl BenchManifest {
     /// Load a manifest from a TOML file. The file is read in full;
     /// missing keys fall back to [`Default`].
     pub fn load(path: &Path) -> Result<Self, BenchError> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| BenchError::io("reading bench.toml", e))?;
-        toml::from_str(&text).map_err(|e| BenchError::InvalidConfig {
-            reason: format!("bench.toml parse error: {e}"),
+        let text =
+            std::fs::read_to_string(path).map_err(|e| BenchError::io("reading bench.toml", e))?;
+        toml::from_str(&text).map_err(|e| {
+            BenchError::InvalidConfig {
+                reason: format!("bench.toml parse error: {e}"),
+            }
         })
     }
 
@@ -275,20 +294,20 @@ impl BenchManifest {
         size_idx: usize,
         mock_benches_dir: &Path,
     ) -> Result<BenchConfig, BenchError> {
-        let section = self.bench.get(bench_name).ok_or_else(|| BenchError::InvalidConfig {
-            reason: format!("bench `{bench_name}` not found in manifest"),
+        let section = self.bench.get(bench_name).ok_or_else(|| {
+            BenchError::InvalidConfig {
+                reason: format!("bench `{bench_name}` not found in manifest"),
+            }
         })?;
-        let size = section.sizes.get(size_idx).ok_or_else(|| BenchError::InvalidConfig {
-            reason: format!(
-                "bench `{bench_name}` has no size at index {size_idx} (have {})",
-                section.sizes.len()
-            ),
+        let size = section.sizes.get(size_idx).ok_or_else(|| {
+            BenchError::InvalidConfig {
+                reason: format!(
+                    "bench `{bench_name}` has no size at index {size_idx} (have {})",
+                    section.sizes.len()
+                ),
+            }
         })?;
-        let entries = if size.variants.is_empty() {
-            &section.variants
-        } else {
-            &size.variants
-        };
+        let entries = if size.variants.is_empty() { &section.variants } else { &size.variants };
         if entries.is_empty() {
             return Err(BenchError::InvalidConfig {
                 reason: format!(
@@ -314,7 +333,9 @@ impl BenchManifest {
             runs_per_pass: ov
                 .and_then(|t| t.runs_per_pass)
                 .unwrap_or(self.timing.runs_per_pass),
-            batch_size: ov.and_then(|t| t.batch_size).unwrap_or(self.timing.batch_size),
+            batch_size: ov
+                .and_then(|t| t.batch_size)
+                .unwrap_or(self.timing.batch_size),
             harness_runs: ov
                 .and_then(|t| t.harness_runs)
                 .unwrap_or(self.timing.harness_runs),
@@ -348,46 +369,46 @@ impl BenchManifest {
 #[derive(Clone, Debug)]
 pub struct BenchConfig {
     /// Manifest key for this bench (e.g. `"content_hash"`).
-    pub bench_name: String,
+    pub bench_name:    String,
     /// Display title (for findings.md).
-    pub title: String,
+    pub title:         String,
     /// Workload program identifier.
-    pub workload: String,
+    pub workload:      String,
     /// Master seed (`0` = fresh random).
-    pub master_seed: u64,
+    pub master_seed:   u64,
     /// Logical size N (passed into `bench_entry(... n)` and
     /// `Routine::max_call_us(n)`).
-    pub n: usize,
+    pub n:             usize,
     /// Resolved cdylib paths (one per variant).
     pub variant_paths: Vec<PathBuf>,
     /// Outer pass count.
-    pub passes: usize,
+    pub passes:        usize,
     /// Inner runs per pass.
     pub runs_per_pass: usize,
     /// Calls per emitted sample.
-    pub batch_size: usize,
+    pub batch_size:    usize,
     /// Outer harness runs.
-    pub harness_runs: usize,
+    pub harness_runs:  usize,
     /// Cooldown cohorts (milliseconds).
-    pub cooldowns_ms: Vec<u64>,
+    pub cooldowns_ms:  Vec<u64>,
     /// Cross-variant outputs may differ (from the manifest).
-    pub may_differ: bool,
+    pub may_differ:    bool,
     /// Validation failure fails the whole run (from the manifest).
-    pub required: bool,
+    pub required:      bool,
     /// Variants spawn threads; the worker skips its P-core self-pin.
-    pub threaded: bool,
+    pub threaded:      bool,
     /// Batch-amortised mode. `1` = normal (one timed call per batch
     /// entry). `>1` = K calls between one outer counter pair, then
     /// per-call time = total / K. Useful when bridge overhead
     /// dominates measured time at small N.
-    pub batch_k: usize,
+    pub batch_k:       usize,
     /// Per-call timeout in microseconds. If a worker's batch mean
     /// exceeds this, the worker aborts and reports
     /// [`BenchError::WorkerFailed`]. `None` = no timeout.
-    pub max_call_us: Option<u64>,
+    pub max_call_us:   Option<u64>,
     /// Tunable iteration counts and on-disk roots; see
     /// [`HarnessTuning`] for individual knobs and defaults.
-    pub tuning: HarnessTuning,
+    pub tuning:        HarnessTuning,
 }
 
 /// Tunable iteration counts. Defaults match the polka-dots
@@ -404,13 +425,13 @@ pub struct BenchConfig {
 #[derive(Clone, Debug)]
 pub struct HarnessTuning {
     /// Number of seeds used in [`crate::validate`]. Default 100.
-    pub validation_seeds: usize,
+    pub validation_seeds:        usize,
     /// Subset of `validation_seeds` used for the determinism check.
     /// Default 10.
     pub determinism_check_seeds: usize,
     /// Number of seeds used in [`crate::measure_quality`]. Default
     /// 1000.
-    pub quality_seeds: usize,
+    pub quality_seeds:           usize,
     /// Bootstrap iterations for CI estimates in
     /// [`crate::analysis::bootstrap_ci_median`] /
     /// [`crate::analysis::bootstrap_ci_diff`]. Default 10000.
@@ -418,16 +439,16 @@ pub struct HarnessTuning {
     /// Currently informational: the analysis module reads from a
     /// const for the v2 launch. Wiring the override end-to-end is
     /// part of the v3 polish (#281, item 1).
-    pub bootstrap_iterations: usize,
+    pub bootstrap_iterations:    usize,
 }
 
 impl Default for HarnessTuning {
     fn default() -> Self {
         HarnessTuning {
-            validation_seeds: 100,
+            validation_seeds:        100,
             determinism_check_seeds: 10,
-            quality_seeds: 1000,
-            bootstrap_iterations: 10_000,
+            quality_seeds:           1000,
+            bootstrap_iterations:    10_000,
         }
     }
 }
@@ -435,23 +456,23 @@ impl Default for HarnessTuning {
 impl Default for BenchConfig {
     fn default() -> Self {
         BenchConfig {
-            bench_name: String::new(),
-            title: "Benchmark".into(),
-            workload: String::new(),
-            master_seed: 0,
-            n: 64,
+            bench_name:    String::new(),
+            title:         "Benchmark".into(),
+            workload:      String::new(),
+            master_seed:   0,
+            n:             64,
             variant_paths: Vec::new(),
-            passes: default_passes(),
+            passes:        default_passes(),
             runs_per_pass: default_runs(),
-            batch_size: default_batch(),
-            harness_runs: default_harness_runs(),
-            cooldowns_ms: default_cooldowns(),
-            may_differ: false,
-            required: false,
-            threaded: false,
-            batch_k: 1,
-            max_call_us: None,
-            tuning: HarnessTuning::default(),
+            batch_size:    default_batch(),
+            harness_runs:  default_harness_runs(),
+            cooldowns_ms:  default_cooldowns(),
+            may_differ:    false,
+            required:      false,
+            threaded:      false,
+            batch_k:       1,
+            max_call_us:   None,
+            tuning:        HarnessTuning::default(),
         }
     }
 }
@@ -601,7 +622,10 @@ mod tests {
         let explicit = resolve_variant_path("variants/x/target/release/libx.dylib", root)
             .display()
             .to_string();
-        assert!(explicit.ends_with("libx.dylib"), "explicit extensions pass through");
+        assert!(
+            explicit.ends_with("libx.dylib"),
+            "explicit extensions pass through"
+        );
     }
 
     #[test]

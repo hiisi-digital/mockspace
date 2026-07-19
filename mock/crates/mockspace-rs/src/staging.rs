@@ -36,7 +36,9 @@ pub enum StagedSet {
 pub enum StagingFilterError {
     /// `MOCKSPACE_PUSH_DIFF_BASE` was set but does not resolve to a
     /// git object the worktree knows about.
-    BadEnvRef { value: String },
+    BadEnvRef {
+        value: String,
+    },
     /// `git` subprocess failed.
     Git(GitError),
 }
@@ -44,10 +46,14 @@ pub enum StagingFilterError {
 impl std::fmt::Display for StagingFilterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::BadEnvRef { value } => write!(
-                f,
-                "MOCKSPACE_PUSH_DIFF_BASE = `{value}` does not resolve to a git ref"
-            ),
+            Self::BadEnvRef {
+                value,
+            } => {
+                write!(
+                    f,
+                    "MOCKSPACE_PUSH_DIFF_BASE = `{value}` does not resolve to a git ref"
+                )
+            },
             Self::Git(e) => write!(f, "git command failed: {e}"),
         }
     }
@@ -58,7 +64,10 @@ impl std::error::Error for StagingFilterError {}
 #[derive(Debug)]
 pub enum GitError {
     Spawn(std::io::Error),
-    NonZeroExit { code: Option<i32>, stderr: String },
+    NonZeroExit {
+        code:   Option<i32>,
+        stderr: String,
+    },
     NotUtf8(std::str::Utf8Error),
 }
 
@@ -66,9 +75,12 @@ impl std::fmt::Display for GitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Spawn(e) => write!(f, "git spawn: {e}"),
-            Self::NonZeroExit { code, stderr } => {
+            Self::NonZeroExit {
+                code,
+                stderr,
+            } => {
                 write!(f, "git exit {code:?}: {stderr}")
-            }
+            },
             Self::NotUtf8(e) => write!(f, "git output not utf-8: {e}"),
         }
     }
@@ -81,9 +93,9 @@ impl std::error::Error for GitError {}
 #[derive(Debug)]
 pub struct StagingFilter {
     #[allow(dead_code)]
-    gate: Gate,
+    gate:           Gate,
     workspace_root: PathBuf,
-    staged: StagedSet,
+    staged:         StagedSet,
 }
 
 impl StagingFilter {
@@ -114,7 +126,9 @@ impl StagingFilter {
     fn staged_for_push(root: &Path) -> Result<StagedSet, StagingFilterError> {
         if let Ok(base) = env::var("MOCKSPACE_PUSH_DIFF_BASE") {
             if !git_rev_parse_verify(root, &base) {
-                return Err(StagingFilterError::BadEnvRef { value: base });
+                return Err(StagingFilterError::BadEnvRef {
+                    value: base,
+                });
             }
             let range = format!("{base}..HEAD");
             let paths = run_git(root, &["diff", "--name-only", "-z", &range])
@@ -147,7 +161,7 @@ impl StagingFilter {
                     self.workspace_root.join(path)
                 };
                 set.contains(&abs)
-            }
+            },
         }
     }
 
@@ -168,7 +182,7 @@ fn run_git(root: &Path, args: &[&str]) -> Result<HashSet<PathBuf>, GitError> {
         .map_err(GitError::Spawn)?;
     if !output.status.success() {
         return Err(GitError::NonZeroExit {
-            code: output.status.code(),
+            code:   output.status.code(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
     }
@@ -182,13 +196,13 @@ fn run_git(root: &Path, args: &[&str]) -> Result<HashSet<PathBuf>, GitError> {
         match std::str::from_utf8(slice) {
             Ok(s) => {
                 out.insert(PathBuf::from(s));
-            }
+            },
             Err(_) => {
                 eprintln!(
                     "warning: git returned a non-utf-8 path; skipping ({} bytes)",
                     slice.len()
                 );
-            }
+            },
         }
     }
     Ok(out)
@@ -221,11 +235,7 @@ fn git_rev_parse_upstream(root: &Path) -> Option<String> {
     }
     let stdout = String::from_utf8(output.stdout).ok()?;
     let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
 }
 
 fn git_merge_base(root: &Path, a: &str, b: &str) -> Option<String> {
@@ -239,11 +249,7 @@ fn git_merge_base(root: &Path, a: &str, b: &str) -> Option<String> {
     }
     let stdout = String::from_utf8(output.stdout).ok()?;
     let trimmed = stdout.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
 }
 
 #[cfg(test)]
@@ -303,9 +309,11 @@ mod tests {
         let result = StagingFilter::new(Gate::Push, tmp.path());
         std::env::remove_var("MOCKSPACE_PUSH_DIFF_BASE");
         match result {
-            Err(StagingFilterError::BadEnvRef { value }) => {
+            Err(StagingFilterError::BadEnvRef {
+                value,
+            }) => {
                 assert_eq!(value, "totally-nonexistent-ref-zzz");
-            }
+            },
             other => panic!("expected BadEnvRef, got {other:?}"),
         }
     }

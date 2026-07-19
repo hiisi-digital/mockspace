@@ -44,37 +44,84 @@ pub mod spec;
 pub mod validation;
 pub mod workload;
 
-pub use cache::{
-    Cache, CachedBatch, apply_drift, config_hash, consensus_drift, dylib_hash,
-    global_mean, global_mean_for_mode, DEFAULT_CACHE_ROOT,
+pub use analysis::{
+    Comparison,
+    DataSet,
+    DataSetMeta,
+    Stats,
+    VariantAnalysis,
+    bh_fdr_adjust,
+    bootstrap_ci_diff,
+    bootstrap_ci_median,
+    compare,
+    lag1_autocorrelation,
+    pct_delta,
+    sign_test,
 };
-pub use config::{BenchConfig, BenchManifest, BenchSection, HarnessTuning, SizeSection, TimingSection};
+pub use cache::{
+    Cache,
+    CachedBatch,
+    DEFAULT_CACHE_ROOT,
+    apply_drift,
+    config_hash,
+    consensus_drift,
+    dylib_hash,
+    global_mean,
+    global_mean_for_mode,
+};
+pub use config::{
+    BenchConfig,
+    BenchManifest,
+    BenchSection,
+    HarnessTuning,
+    SizeSection,
+    TimingSection,
+};
+pub use disasm::check_duplicates as check_disasm_duplicates;
+pub use driver::{DriverRegistry, drive};
 pub use env::{EnvMeta, collect_env_meta};
 pub use error::BenchError;
 pub use harness::{run_orchestrator, run_worker, write_csv};
-pub use sample::{load_samples_csv, BenchResult, Sample};
-pub use spec::{RoutineSpec, VariantSpec};
-pub use analysis::{
-    bh_fdr_adjust, bootstrap_ci_diff, bootstrap_ci_median, compare, lag1_autocorrelation,
-    pct_delta, sign_test, Comparison, DataSet, DataSetMeta, Stats, VariantAnalysis,
-};
-pub use disasm::check_duplicates as check_disasm_duplicates;
-pub use driver::{drive, DriverRegistry};
 pub use history::{
-    append as append_history, append_in as append_history_in, detect_regressions,
-    detect_regressions_window, git_commit, load as load_history, load_in as load_history_in,
-    timestamp, HistoryEntry, DEFAULT_HISTORY_DIR,
+    DEFAULT_HISTORY_DIR,
+    HistoryEntry,
+    append as append_history,
+    append_in as append_history_in,
+    detect_regressions,
+    detect_regressions_window,
+    git_commit,
+    load as load_history,
+    load_in as load_history_in,
+    timestamp,
 };
-pub use inline_bench::{run_inline, InlineResult, InlineVariant};
-pub use meta_report::{classify_family, generate as generate_meta_report, VariantResult};
-pub use perf::{available as perf_available, read as perf_read, setup as perf_setup, PerfSnapshot};
-pub use quality::{measure as measure_quality, VariantQuality};
+pub use inline_bench::{InlineResult, InlineVariant, run_inline};
+pub use meta_report::{VariantResult, classify_family, generate as generate_meta_report};
+pub use perf::{PerfSnapshot, available as perf_available, read as perf_read, setup as perf_setup};
+pub use quality::{VariantQuality, measure as measure_quality};
 pub use report::generate as generate_report;
+pub use sample::{BenchResult, Sample, load_samples_csv};
+pub use spec::{RoutineSpec, VariantSpec};
 pub use validation::validate;
 pub use workload::{
-    AllocHandle, Chain, OneOf, Program, ProgramBuilder, Shuffle, Stage, StageStrategy, Workload,
-    WorkloadCtx, WorkloadItemKind, algo_call, branch_work, domain_work, graph_work, heavy_memory,
-    light_scalar, mix, scalar_work,
+    AllocHandle,
+    Chain,
+    OneOf,
+    Program,
+    ProgramBuilder,
+    Shuffle,
+    Stage,
+    StageStrategy,
+    Workload,
+    WorkloadCtx,
+    WorkloadItemKind,
+    algo_call,
+    branch_work,
+    domain_work,
+    graph_work,
+    heavy_memory,
+    light_scalar,
+    mix,
+    scalar_work,
 };
 
 /// Run the harness against one [`BenchConfig`] using the given
@@ -105,11 +152,7 @@ pub fn run(
 /// `DataSet.meta.ops_per_call`, so the report skips the throughput /
 /// Gops/s rows. Use [`write_report_for_routine`] to get throughput
 /// tables filled from the Routine's `ops_per_call` declaration.
-pub fn write_report(
-    result: &BenchResult,
-    mode: &str,
-    path: &str,
-) -> Result<(), BenchError> {
+pub fn write_report(result: &BenchResult, mode: &str, path: &str) -> Result<(), BenchError> {
     let ds = result.dataset(mode);
     let md = generate_report(&ds, &result.title);
     std::fs::write(path, md).map_err(|e| BenchError::io("writing findings.md", e))?;

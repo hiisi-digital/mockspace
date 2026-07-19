@@ -31,13 +31,15 @@ pub fn parse_mockspace_toml_str(source: &str) -> Result<Config, ConfigError> {
 }
 
 fn validate_version(version: &str) -> Result<(), ConfigError> {
-    let major = parse_major(version).ok_or_else(|| ConfigError::Validation {
-        rule: "mockspace.version",
-        details: format!("expected `<major>.<minor>` form (e.g. \"1.0\"); got {version:?}"),
+    let major = parse_major(version).ok_or_else(|| {
+        ConfigError::Validation {
+            rule:    "mockspace.version",
+            details: format!("expected `<major>.<minor>` form (e.g. \"1.0\"); got {version:?}"),
+        }
     })?;
     if major != SCHEMA_MAJOR {
         return Err(ConfigError::Validation {
-            rule: "mockspace.version",
+            rule:    "mockspace.version",
             details: format!(
                 "schema major {major} not supported by this loader (expected {SCHEMA_MAJOR})"
             ),

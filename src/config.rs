@@ -6,10 +6,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use mockspace_lint_rules::{Level, LintConfig, Severity, parse_severity};
 use serde::Deserialize;
 use serde::de::IntoDeserializer;
-
-use mockspace_lint_rules::{Level, Severity, parse_severity, LintConfig};
 
 /// How mockspace-managed content is installed into existing files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,31 +35,31 @@ impl InstallMode {
 #[derive(Clone, Debug)]
 pub struct Config {
     // --- Core fields ---
-    pub mock_dir: PathBuf,
+    pub mock_dir:               PathBuf,
     /// The `mockspace.toml` this config was read from (in the mock dir or at
     /// the repo root). Needed by callers that re-read the raw config, such as
     /// the runtime custom-lint loader reading `[lint-crates]`.
-    pub config_path: PathBuf,
-    pub crates_dir: PathBuf,
-    pub repo_root: PathBuf,
-    pub docs_dir: PathBuf,
-    pub project_name: String,
-    pub crate_prefix: String,
+    pub config_path:            PathBuf,
+    pub crates_dir:             PathBuf,
+    pub repo_root:              PathBuf,
+    pub docs_dir:               PathBuf,
+    pub project_name:           String,
+    pub crate_prefix:           String,
     /// Prepended to every document link a reference renders.
     ///
     /// Empty for a document written into the docs directory, where a bare
     /// filename is the correct relative target. Set for output written
     /// elsewhere, such as the agent rules under `.claude/`, whose links would
     /// otherwise point at siblings that are not there.
-    pub doc_link_prefix: String,
+    pub doc_link_prefix:        String,
     /// What every generated document will be called, keyed by what a
     /// reference calls it.
     ///
     /// Built from the planned set before anything renders, so a reference from
     /// a document written early to one written later is ordinary rather than a
     /// special case, and so nothing computes a filename a second time.
-    pub doc_index: crate::document::DocIndex,
-    pub proc_macro_crates: Vec<String>,
+    pub doc_index:              crate::document::DocIndex,
+    pub proc_macro_crates:      Vec<String>,
     /// Whether source-scanning lints should run against proc-macro crate source.
     /// Default false: proc-macro crates run in the compiler host context and
     /// their heap-using parsers do not ship with consumer binaries. Projects
@@ -71,14 +70,14 @@ pub struct Config {
     /// the macro's emitted output is always subject to consumer-crate rules
     /// because it compiles into consumer binaries.
     pub lint_proc_macro_source: bool,
-    pub module_crates: Vec<String>,
-    pub unprefixed_crates: Vec<String>,
-    pub abi_version: u32,
-    pub nuke_marker: String,
-    pub commit_style: CommitStyle,
+    pub module_crates:          Vec<String>,
+    pub unprefixed_crates:      Vec<String>,
+    pub abi_version:            u32,
+    pub nuke_marker:            String,
+    pub commit_style:           CommitStyle,
     /// Declared registry namespaces. Empty when the project declares none, and
     /// every registry code path is a no-op in that case.
-    pub registry_namespaces: Vec<crate::registry::RegistryNamespace>,
+    pub registry_namespaces:    Vec<crate::registry::RegistryNamespace>,
     /// Whether to also emit a single document containing every deep dive.
     ///
     /// Off by default. Each deep dive already renders as a sibling of its
@@ -86,7 +85,7 @@ pub struct Config {
     /// combined document repeats all of that content in one file that grows
     /// without bound as crates gain deep dives. A project that genuinely wants
     /// one long read can turn it back on.
-    pub deep_dive_index: bool,
+    pub deep_dive_index:        bool,
     /// Whether generated documents carry a sort prefix.
     ///
     /// A docs directory of thirty crates plus project documents has no
@@ -94,39 +93,37 @@ pub struct Config {
     /// leaf crate's deep dive above the document explaining what any of it
     /// is. Prefixing by dependency depth makes the listing read in the order
     /// the architecture is built.
-    pub ordered_docs: bool,
+    pub ordered_docs:           bool,
     /// Documents a reader should start with, by output name without extension
     /// (`DESIGN`, `IDENTITY`). These sort first. Everything else that is not
     /// generated from a crate sorts last, as supplementary material.
-    pub primary_docs: Vec<String>,
+    pub primary_docs:           Vec<String>,
     /// Named roots for registry provenance references. See `RawRegistry::roots`.
-    pub registry_roots: BTreeMap<String, String>,
+    pub registry_roots:         BTreeMap<String, String>,
     /// Roots declared frozen. Line citations into any other root are reported
     /// as fragile.
-    pub frozen_roots: std::collections::BTreeSet<String>,
+    pub frozen_roots:           std::collections::BTreeSet<String>,
 
     /// Roots whose citations render as prose rather than links, with the name
     /// each goes by.
-    pub prose_roots: BTreeMap<String, String>,
+    pub prose_roots:          BTreeMap<String, String>,
     /// Roots whose citations are dropped from generated documents entirely.
-    pub internal_roots: std::collections::BTreeSet<String>,
-    pub install_git_hooks: InstallMode,
+    pub internal_roots:       std::collections::BTreeSet<String>,
+    pub install_git_hooks:    InstallMode,
     pub install_cargo_config: InstallMode,
-    pub install_agent_files: InstallMode,
+    pub install_agent_files:  InstallMode,
 
     /// Agent integration config from `mock/agent/config.toml` if present.
     /// Empty defaults when the file is absent.
     pub attribution: AttributionConfig,
 
     // --- Lint overrides ---
-
     /// Per-lint severity overrides from `[lints]` section.
     /// Key: lint name (e.g. "no-float"), Value: configured severity.
     /// Empty if no `[lints]` section is present (all lints use defaults).
     pub lint_overrides: LintConfig,
 
     // --- Domain-specific config ---
-
     /// Macro icon+label for STRUCTURE.md domain items.
     /// e.g. "define_signal" -> "signal"
     pub domain_kinds: BTreeMap<String, String>,
@@ -214,35 +211,42 @@ pub struct AttributionConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroStyle {
     pub label: String,
-    pub icon: String,
-    pub bg: String,
-    pub fg: String,
+    pub icon:  String,
+    pub bg:    String,
+    pub fg:    String,
 }
 
 impl MacroStyle {
     #[must_use]
     pub fn default_for(macro_name: &str) -> Self {
         Self {
-            label: macro_name.strip_prefix("define_").unwrap_or("generated").to_string(),
-            icon: "\u{2699}".to_string(),
-            bg: "#F5F5F5".to_string(),
-            fg: "#616161".to_string(),
+            label: macro_name
+                .strip_prefix("define_")
+                .unwrap_or("generated")
+                .to_string(),
+            icon:  "\u{2699}".to_string(),
+            bg:    "#F5F5F5".to_string(),
+            fg:    "#616161".to_string(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitStyle {
-    pub types: Vec<String>,
+    pub types:  Vec<String>,
     pub format: String,
 }
 
 impl Default for CommitStyle {
     fn default() -> Self {
         Self {
-            types: vec![
-                "feat".into(), "fix".into(), "refactor".into(),
-                "docs".into(), "test".into(), "chore".into(),
+            types:  vec![
+                "feat".into(),
+                "fix".into(),
+                "refactor".into(),
+                "docs".into(),
+                "test".into(),
+                "chore".into(),
             ],
             format: "type: lowercase imperative message".into(),
         }
@@ -264,7 +268,7 @@ struct RawAgentConfig {
 #[serde(default)]
 struct RawAttribution {
     non_autonomous: Option<String>,
-    autonomous: Option<String>,
+    autonomous:     Option<String>,
 }
 
 /// One declared reference root. A table rather than a bare string so a root
@@ -272,7 +276,7 @@ struct RawAttribution {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 struct RawRefRoot {
-    path: String,
+    path:   String,
     /// Whether this root's contents are settled and will not shift.
     ///
     /// Line citations are only honest into a frozen root. Everywhere else an
@@ -333,34 +337,33 @@ struct RawRef {
 struct RawRegistry {
     #[serde(rename = "namespace")]
     namespace: Vec<crate::registry::RegistryNamespace>,
-
 }
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct RawConfig {
-    project_name: Option<String>,
-    crate_prefix: Option<String>,
-    abi_version: Option<u32>,
-    proc_macro_crates: Vec<String>,
+    project_name:           Option<String>,
+    crate_prefix:           Option<String>,
+    abi_version:            Option<u32>,
+    proc_macro_crates:      Vec<String>,
     #[serde(default)]
     lint_proc_macro_source: Option<bool>,
-    module_crates: Vec<String>,
+    module_crates:          Vec<String>,
     #[serde(default)]
-    unprefixed_crates: Vec<String>,
-    layers: Vec<String>,
-    primary_domain_macro: Option<String>,
-    primary_domain_label: Option<String>,
-    install_git_hooks: Option<String>,
-    install_cargo_config: Option<String>,
-    install_agent_files: Option<String>,
+    unprefixed_crates:      Vec<String>,
+    layers:                 Vec<String>,
+    primary_domain_macro:   Option<String>,
+    primary_domain_label:   Option<String>,
+    install_git_hooks:      Option<String>,
+    install_cargo_config:   Option<String>,
+    install_agent_files:    Option<String>,
 
     // Sections (simple key=value maps)
-    domain_kinds: Option<BTreeMap<String, String>>,
-    known_macros: Option<BTreeMap<String, String>>,
-    agent_macros: Option<BTreeMap<String, String>>,
-    macro_styles: Option<BTreeMap<String, String>>,
-    crate_colors: Option<BTreeMap<String, String>>,
+    domain_kinds:   Option<BTreeMap<String, String>>,
+    known_macros:   Option<BTreeMap<String, String>>,
+    agent_macros:   Option<BTreeMap<String, String>>,
+    macro_styles:   Option<BTreeMap<String, String>>,
+    crate_colors:   Option<BTreeMap<String, String>>,
     crate_grouping: Option<BTreeMap<String, String>>,
 
     // Primitive-introductions map: crate_name -> list of primitive
@@ -390,7 +393,6 @@ struct RawConfig {
     /// Documents a reader should start with. See `Config::primary_docs`.
     #[serde(default)]
     primary_docs: Vec<String>,
-
     // Lints section is handled separately via toml_edit document API
     // because it contains heterogeneous values (strings and tables).
 }
@@ -406,30 +408,32 @@ enum LintEntry {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct LintTableConfig {
-    commit: Option<String>,
-    build: Option<String>,
-    push: Option<String>,
+    commit:   Option<String>,
+    build:    Option<String>,
+    push:     Option<String>,
     severity: Option<String>,
     findings: Option<BTreeMap<String, String>>,
-    rule: Option<BTreeMap<String, BTreeMap<String, StringOrOther>>>,
+    rule:     Option<BTreeMap<String, BTreeMap<String, StringOrOther>>>,
     /// Inline array of tables format:
     /// `rules = [{ scope = "...", forbidden = "...", reason = "..." }]`
-    rules: Option<Vec<InlineRule>>,
+    rules:    Option<Vec<InlineRule>>,
     #[serde(flatten)]
-    params: BTreeMap<String, StringOrOther>,
+    params:   BTreeMap<String, StringOrOther>,
 }
 
 /// A single forbidden-imports rule in inline array format.
 #[derive(Deserialize)]
 struct InlineRule {
-    scope: String,
+    scope:     String,
     forbidden: String,
-    reason: String,
+    reason:    String,
     #[serde(default = "default_true")]
-    enabled: bool,
+    enabled:   bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// Helper to deserialize heterogeneous TOML values as strings.
 /// Handles string, integer, float, and boolean values.
@@ -463,8 +467,7 @@ impl Config {
         let mock_dir = mock_dir.to_path_buf();
         let crates_dir = mock_dir.join("crates");
 
-        let repo_root = find_repo_root(&mock_dir)
-            .unwrap_or_else(|| mock_dir.clone());
+        let repo_root = find_repo_root(&mock_dir).unwrap_or_else(|| mock_dir.clone());
         let docs_dir = repo_root.join("docs");
 
         // The config sits either in the mock dir (in place, the historical
@@ -483,21 +486,21 @@ impl Config {
         };
         let toml_content = fs::read_to_string(&toml_path).unwrap_or_default();
 
-        let raw: RawConfig = toml_edit::de::from_str(&toml_content)
-            .unwrap_or_default();
+        let raw: RawConfig = toml_edit::de::from_str(&toml_content).unwrap_or_default();
 
-        let project_name = raw.project_name
-            .unwrap_or_else(|| "project".into());
-        let crate_prefix = raw.crate_prefix
-            .unwrap_or_else(|| project_name.clone());
+        let project_name = raw.project_name.unwrap_or_else(|| "project".into());
+        let crate_prefix = raw.crate_prefix.unwrap_or_else(|| project_name.clone());
 
-        let install_git_hooks = raw.install_git_hooks
+        let install_git_hooks = raw
+            .install_git_hooks
             .and_then(|s| InstallMode::parse(&s))
             .unwrap_or(InstallMode::Replace);
-        let install_cargo_config = raw.install_cargo_config
+        let install_cargo_config = raw
+            .install_cargo_config
             .and_then(|s| InstallMode::parse(&s))
             .unwrap_or(InstallMode::MergeAppend);
-        let install_agent_files = raw.install_agent_files
+        let install_agent_files = raw
+            .install_agent_files
             .and_then(|s| InstallMode::parse(&s))
             .unwrap_or(InstallMode::Replace);
 
@@ -511,18 +514,22 @@ impl Config {
 
         let lint_overrides = parse_lints_from_document(&toml_content, &crate_prefix);
 
-        let primary_domain_label = raw.primary_domain_label
+        let primary_domain_label = raw
+            .primary_domain_label
             .unwrap_or_else(|| "Items".to_string());
 
         // Load mock/agent/config.toml if present. Empty defaults when absent.
         let agent_config_path = mock_dir.join("agent").join("config.toml");
         let agent_config_content = fs::read_to_string(&agent_config_path).unwrap_or_default();
-        let raw_agent: RawAgentConfig = toml_edit::de::from_str(&agent_config_content)
-            .unwrap_or_default();
-        let attribution = raw_agent.attribution
-            .map(|a| AttributionConfig {
-                non_autonomous: a.non_autonomous.unwrap_or_default(),
-                autonomous: a.autonomous.unwrap_or_default(),
+        let raw_agent: RawAgentConfig =
+            toml_edit::de::from_str(&agent_config_content).unwrap_or_default();
+        let attribution = raw_agent
+            .attribution
+            .map(|a| {
+                AttributionConfig {
+                    non_autonomous: a.non_autonomous.unwrap_or_default(),
+                    autonomous:     a.autonomous.unwrap_or_default(),
+                }
             })
             .unwrap_or_default();
 
@@ -540,9 +547,13 @@ impl Config {
             }
         }
         Config {
-            mock_dir, crates_dir, repo_root, docs_dir,
+            mock_dir,
+            crates_dir,
+            repo_root,
+            docs_dir,
             config_path: toml_path,
-            project_name, crate_prefix,
+            project_name,
+            crate_prefix,
             doc_link_prefix: String::new(),
             doc_index: crate::document::DocIndex::default(),
             proc_macro_crates: raw.proc_macro_crates,
@@ -566,9 +577,7 @@ impl Config {
                     r.roots
                         .iter()
                         .filter(|(_, v)| !v.links)
-                        .map(|(k, v)| {
-                            (k.clone(), v.label.clone().unwrap_or_else(|| k.clone()))
-                        })
+                        .map(|(k, v)| (k.clone(), v.label.clone().unwrap_or_else(|| k.clone())))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -594,12 +603,16 @@ impl Config {
                         .collect()
                 })
                 .unwrap_or_default(),
-            install_git_hooks, install_cargo_config, install_agent_files,
+            install_git_hooks,
+            install_cargo_config,
+            install_agent_files,
             attribution,
             lint_overrides,
             domain_kinds,
-            known_macros, agent_macros,
-            macro_styles, crate_colors,
+            known_macros,
+            agent_macros,
+            macro_styles,
+            crate_colors,
             layer_labels: raw.layers,
             primary_domain_macro: raw.primary_domain_macro,
             primary_domain_label,
@@ -623,7 +636,8 @@ impl Config {
     /// Get graph style for a macro name.
     #[must_use]
     pub fn macro_style(&self, macro_name: &str) -> MacroStyle {
-        self.macro_styles.get(macro_name)
+        self.macro_styles
+            .get(macro_name)
             .cloned()
             .unwrap_or_else(|| MacroStyle::default_for(macro_name))
     }
@@ -631,7 +645,8 @@ impl Config {
     /// Get crate header colors for graph. Returns (bg, fg).
     #[must_use]
     pub fn crate_color(&self, short_name: &str) -> (String, String) {
-        self.crate_colors.get(short_name)
+        self.crate_colors
+            .get(short_name)
             .cloned()
             .unwrap_or_else(|| ("#F0F0F0".to_string(), "#666666".to_string()))
     }
@@ -639,7 +654,8 @@ impl Config {
     /// Get layer label for a depth index.
     #[must_use]
     pub fn layer_label(&self, depth: usize) -> String {
-        self.layer_labels.get(depth)
+        self.layer_labels
+            .get(depth)
             .cloned()
             .unwrap_or_else(|| "Other".to_string())
     }
@@ -667,13 +683,15 @@ fn pipe2_section(raw: Option<BTreeMap<String, String>>) -> Vec<(String, String, 
         Some(m) => m,
         None => return Vec::new(),
     };
-    raw.into_iter().map(|(key, val)| {
-        let parts: Vec<&str> = val.splitn(2, '|').map(|s| s.trim()).collect();
-        match parts.len() {
-            1 => (key, parts[0].to_string(), String::new()),
-            _ => (key, parts[0].to_string(), parts[1].to_string()),
-        }
-    }).collect()
+    raw.into_iter()
+        .map(|(key, val)| {
+            let parts: Vec<&str> = val.splitn(2, '|').map(|s| s.trim()).collect();
+            match parts.len() {
+                1 => (key, parts[0].to_string(), String::new()),
+                _ => (key, parts[0].to_string(), parts[1].to_string()),
+            }
+        })
+        .collect()
 }
 
 /// Convert `[macro_styles]` pipe-separated values into `MacroStyle` structs.
@@ -692,15 +710,21 @@ fn convert_macro_styles(
         if parts.len() >= 4 {
             result.insert(name, MacroStyle {
                 label: parts[0].to_string(),
-                icon: parts[1].to_string(),
-                bg: parts[2].to_string(),
-                fg: parts[3].to_string(),
+                icon:  parts[1].to_string(),
+                bg:    parts[2].to_string(),
+                fg:    parts[3].to_string(),
             });
         } else if parts.len() == 3 {
             // 3-field: icon | bg | fg (label from domain_kinds)
-            let label = domain_kinds.get(&name)
-                .map(|dk| dk.chars().skip_while(|c| !c.is_ascii_alphanumeric())
-                    .collect::<String>().trim().to_string())
+            let label = domain_kinds
+                .get(&name)
+                .map(|dk| {
+                    dk.chars()
+                        .skip_while(|c| !c.is_ascii_alphanumeric())
+                        .collect::<String>()
+                        .trim()
+                        .to_string()
+                })
                 .unwrap_or_else(|| name.strip_prefix("define_").unwrap_or(&name).to_string());
             result.insert(name, MacroStyle {
                 label,
@@ -787,7 +811,7 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
                 if let Some(severity) = parse_severity(&s) {
                     base.insert(lint_name, severity);
                 }
-            }
+            },
             LintEntry::Config(table) => {
                 // Determine base severity from "severity" key
                 if let Some(ref s) = table.severity {
@@ -797,9 +821,8 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
                 }
 
                 // Per-gate severity from commit/build/push keys
-                let has_gates = table.commit.is_some()
-                    || table.build.is_some()
-                    || table.push.is_some();
+                let has_gates =
+                    table.commit.is_some() || table.build.is_some() || table.push.is_some();
                 if has_gates {
                     let entry = base.entry(lint_name.clone()).or_insert(Severity::OFF);
                     if let Some(ref s) = table.commit {
@@ -834,8 +857,7 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
                     let param_entry = params.entry(lint_name.clone()).or_default();
                     for (rule_name, rule_fields) in rule_map {
                         for (key, val) in rule_fields {
-                            let val_str = val.into_string()
-                                .replace("{prefix}", crate_prefix);
+                            let val_str = val.into_string().replace("{prefix}", crate_prefix);
                             let param_key = format!("rule.{rule_name}.{key}");
                             param_entry.insert(param_key, val_str);
                         }
@@ -846,7 +868,9 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
                 if let Some(rules_array) = table.rules {
                     let param_entry = params.entry(lint_name.clone()).or_default();
                     for (idx, rule) in rules_array.into_iter().enumerate() {
-                        if !rule.enabled { continue; }
+                        if !rule.enabled {
+                            continue;
+                        }
                         let scope = rule.scope.replace("{prefix}", crate_prefix);
                         let forbidden = rule.forbidden.replace("{prefix}", crate_prefix);
                         let reason = rule.reason.replace("{prefix}", crate_prefix);
@@ -861,16 +885,19 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
                 if !table.params.is_empty() {
                     let param_entry = params.entry(lint_name.clone()).or_default();
                     for (key, val) in table.params {
-                        let val_str = val.into_string()
-                            .replace("{prefix}", crate_prefix);
+                        let val_str = val.into_string().replace("{prefix}", crate_prefix);
                         param_entry.insert(key, val_str);
                     }
                 }
-            }
+            },
         }
     }
 
-    LintConfig { base, findings, params }
+    LintConfig {
+        base,
+        findings,
+        params,
+    }
 }
 
 // ---------------------------------------------------------------------------

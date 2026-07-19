@@ -23,7 +23,10 @@ pub fn generate_schemas(
     // the hooks, and never beside the registry data they validate: a generated
     // file sitting in a source tree invites hand-edits that the next
     // regeneration silently discards.
-    let dir = repo_root.join("target").join("mockspace").join("registry-schemas");
+    let dir = repo_root
+        .join("target")
+        .join("mockspace")
+        .join("registry-schemas");
     if fs::create_dir_all(&dir).is_err() {
         return 0;
     }
@@ -52,7 +55,7 @@ pub fn generate_schemas(
                 "boolean" => "\"type\": \"boolean\"".to_string(),
                 "string[]" => {
                     "\"type\": \"array\", \"items\": { \"type\": \"string\" }".to_string()
-                }
+                },
                 _ => "\"type\": \"string\"".to_string(),
             };
             // An internal field stays in the schema: it is valid data, checked
@@ -62,7 +65,7 @@ pub fn generate_schemas(
             let internal_note = match f.visibility {
                 FieldVisibility::Internal => {
                     " (internal: recorded and checked, never rendered into the generated documents)"
-                }
+                },
                 FieldVisibility::Public => "",
             };
             let desc = f
@@ -181,11 +184,7 @@ fn write_if_changed(path: &Path, content: &str) -> bool {
 /// Column order follows the namespace's declared field order rather than the
 /// rows' own key order, so the table reads the way the project described the
 /// namespace and stays stable when a row happens to omit an optional field.
-pub fn render_table(
-    ns: &RegistryNamespace,
-    reg: &Registry,
-    cfg: &crate::config::Config,
-) -> String {
+pub fn render_table(ns: &RegistryNamespace, reg: &Registry, cfg: &crate::config::Config) -> String {
     let Some(ids) = reg.by_namespace.get(&ns.key) else {
         return String::new();
     };
@@ -233,9 +232,11 @@ fn visible_value(raw: &str, cfg: &crate::config::Config) -> String {
     }
     let kept: Vec<&str> = raw
         .split(", ")
-        .filter(|item| match FileRef::parse(item.trim()) {
-            Some(r) => !cfg.internal_roots.contains(&r.root),
-            None => true,
+        .filter(|item| {
+            match FileRef::parse(item.trim()) {
+                Some(r) => !cfg.internal_roots.contains(&r.root),
+                None => true,
+            }
         })
         .collect();
     kept.join(", ")
@@ -248,7 +249,6 @@ fn render_rows(
     ids: &[String],
     cfg: &crate::config::Config,
 ) -> String {
-
     // `id` first, then declared fields in declaration order. A field that no
     // row actually carries is dropped: an always-empty column is noise.
     //
@@ -332,7 +332,6 @@ pub fn registry_page_body(
     body.push_str(&render_table(ns, reg, cfg));
     body
 }
-
 
 /// Expand `{{registry:<key>}}` placeholders into that namespace's table.
 ///

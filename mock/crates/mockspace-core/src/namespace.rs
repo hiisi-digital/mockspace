@@ -24,9 +24,14 @@ pub enum NamespaceError {
     /// Empty input or only separators.
     Empty,
     /// A `::` appears with no content on one side (leading, trailing, or doubled).
-    EmptySegment { position: usize },
+    EmptySegment {
+        position: usize,
+    },
     /// A segment failed slug validation.
-    InvalidSegment { index: usize, error: SlugError },
+    InvalidSegment {
+        index: usize,
+        error: SlugError,
+    },
 }
 
 impl Namespace {
@@ -37,7 +42,9 @@ impl Namespace {
         if segments.is_empty() {
             None
         } else {
-            Some(Self { segments })
+            Some(Self {
+                segments,
+            })
         }
     }
 
@@ -50,14 +57,22 @@ impl Namespace {
         let mut byte_pos = 0;
         for (index, raw) in input.split("::").enumerate() {
             if raw.is_empty() {
-                return Err(NamespaceError::EmptySegment { position: byte_pos });
+                return Err(NamespaceError::EmptySegment {
+                    position: byte_pos,
+                });
             }
-            let slug = Slug::new(raw)
-                .map_err(|error| NamespaceError::InvalidSegment { index, error })?;
+            let slug = Slug::new(raw).map_err(|error| {
+                NamespaceError::InvalidSegment {
+                    index,
+                    error,
+                }
+            })?;
             segments.push(slug);
             byte_pos += raw.len() + 2;
         }
-        Ok(Self { segments })
+        Ok(Self {
+            segments,
+        })
     }
 
     /// Borrow the segments in declaration order.
@@ -100,12 +115,17 @@ impl fmt::Display for NamespaceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => f.write_str("namespace is empty"),
-            Self::EmptySegment { position } => {
+            Self::EmptySegment {
+                position,
+            } => {
                 write!(f, "empty namespace segment at byte position {position}")
-            }
-            Self::InvalidSegment { index, error } => {
+            },
+            Self::InvalidSegment {
+                index,
+                error,
+            } => {
                 write!(f, "segment {index} is not a valid slug: {error}")
-            }
+            },
         }
     }
 }
@@ -164,9 +184,12 @@ mod tests {
     #[test]
     fn rejects_invalid_segment_charset() {
         match Namespace::parse("compiler::IR::lower") {
-            Err(NamespaceError::InvalidSegment { index, .. }) => {
+            Err(NamespaceError::InvalidSegment {
+                index,
+                ..
+            }) => {
                 assert_eq!(index, 1);
-            }
+            },
             other => panic!("expected InvalidSegment, got {other:?}"),
         }
     }

@@ -14,16 +14,22 @@
 use std::fs;
 
 use mockspace_bench_harness::{
-    cache, generate_report, BenchManifest, BenchResult, DataSet, EnvMeta, Sample,
+    BenchManifest,
+    BenchResult,
+    DataSet,
+    EnvMeta,
+    Sample,
+    cache,
+    generate_report,
 };
 
 fn synthetic_samples() -> Vec<Sample> {
     let mut samples = Vec::new();
     // Two variants, two cooldowns, three runs * three passes.
-    for run in 1..=3 {
-        for pass in 1..=3 {
+    for run in 1 ..= 3 {
+        for pass in 1 ..= 3 {
             for cooldown in [0u64, 100u64] {
-                for batch_idx in 0..5 {
+                for batch_idx in 0 .. 5 {
                     samples.push(Sample {
                         run,
                         pass,
@@ -68,8 +74,14 @@ fn dataset_aggregates_per_variant() {
     let alpha = ds.variants.iter().find(|v| v.name == "alpha").unwrap();
     let beta = ds.variants.iter().find(|v| v.name == "beta").unwrap();
 
-    assert!(alpha.algo_all.median > 0.0, "alpha should have a positive median");
-    assert!(beta.algo_all.median > 0.0, "beta should have a positive median");
+    assert!(
+        alpha.algo_all.median > 0.0,
+        "alpha should have a positive median"
+    );
+    assert!(
+        beta.algo_all.median > 0.0,
+        "beta should have a positive median"
+    );
     assert!(
         beta.algo_all.median < alpha.algo_all.median,
         "beta is constructed faster than alpha; median should reflect that"
@@ -104,10 +116,7 @@ fn report_renders_expected_sections() {
 
 #[test]
 fn cache_csv_round_trips() {
-    let tmp = std::env::temp_dir().join(format!(
-        "mockspace_bench_smoke_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("mockspace_bench_smoke_{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
     let cwd = std::env::current_dir().unwrap();
@@ -118,7 +127,13 @@ fn cache_csv_round_trips() {
     // the orchestrator uses post-run.
     let mut c = cache::Cache::load("smoke", 0xDEADBEEF);
     let samples = synthetic_samples();
-    c.save_variant("variants/alpha/target/release/libalpha.dylib", 0xCAFE, 100.0, 95.0, &samples);
+    c.save_variant(
+        "variants/alpha/target/release/libalpha.dylib",
+        0xCAFE,
+        100.0,
+        95.0,
+        &samples,
+    );
     c.flush();
 
     // Reload + partition: with the dylib_hash returning 0 for missing
@@ -126,9 +141,7 @@ fn cache_csv_round_trips() {
     // to schedule everything for re-run. That's the correct safe
     // behaviour for missing artefacts.
     let c2 = cache::Cache::load("smoke", 0xDEADBEEF);
-    let (to_run, cached) = c2.partition(&[
-        "variants/alpha/target/release/libalpha.dylib".into(),
-    ]);
+    let (to_run, cached) = c2.partition(&["variants/alpha/target/release/libalpha.dylib".into()]);
     assert!(to_run.contains(&0), "baseline must always re-run");
     let _ = cached;
 
@@ -138,10 +151,7 @@ fn cache_csv_round_trips() {
 
 #[test]
 fn manifest_loads_and_converts_to_config() {
-    let tmp = std::env::temp_dir().join(format!(
-        "mockspace_bench_manifest_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("mockspace_bench_manifest_{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
 
@@ -184,10 +194,10 @@ cooldowns_ms = [0, 100]
 fn bench_result_dataset_helpers_compile() {
     // No actual workload, but the pipeline shape needs to typecheck.
     let result = BenchResult {
-        title: "demo".into(),
-        env: EnvMeta::default(),
-        samples: synthetic_samples(),
-        cache_path: String::new(),
+        title:       "demo".into(),
+        env:         EnvMeta::default(),
+        samples:     synthetic_samples(),
+        cache_path:  String::new(),
         report_path: String::new(),
     };
     let ds = result.dataset("warm");
@@ -210,10 +220,10 @@ fn report_from_csv_round_trip_emits_findings_md() {
     let csv_path = tmp.join("samples.csv");
     let findings_path = tmp.join("findings.md");
     let result = BenchResult {
-        title: "round-trip-demo".into(),
-        env: EnvMeta::default(),
-        samples: synthetic_samples(),
-        cache_path: String::new(),
+        title:       "round-trip-demo".into(),
+        env:         EnvMeta::default(),
+        samples:     synthetic_samples(),
+        cache_path:  String::new(),
         report_path: String::new(),
     };
     write_csv(&result, csv_path.to_str().expect("utf-8 path"))

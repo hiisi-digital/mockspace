@@ -1,11 +1,13 @@
-use std::fmt;
-use std::io;
+use std::{fmt, io};
 
 #[derive(Debug)]
 pub enum ConfigError {
     Io(io::Error),
     Parse(toml::de::Error),
-    Validation { rule: &'static str, details: String },
+    Validation {
+        rule:    &'static str,
+        details: String,
+    },
 }
 
 impl fmt::Display for ConfigError {
@@ -13,9 +15,12 @@ impl fmt::Display for ConfigError {
         match self {
             Self::Io(e) => write!(f, "config io error: {e}"),
             Self::Parse(e) => write!(f, "config parse error: {e}"),
-            Self::Validation { rule, details } => {
+            Self::Validation {
+                rule,
+                details,
+            } => {
                 write!(f, "config validation failed [{rule}]: {details}")
-            }
+            },
         }
     }
 }
@@ -25,7 +30,9 @@ impl std::error::Error for ConfigError {
         match self {
             Self::Io(e) => Some(e),
             Self::Parse(e) => Some(e),
-            Self::Validation { .. } => None,
+            Self::Validation {
+                ..
+            } => None,
         }
     }
 }

@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use super::{resolve_routine, Cli, DriverRegistry};
+use super::{Cli, DriverRegistry, resolve_routine};
 use crate::config::{BenchConfig, BenchManifest};
 use crate::harness;
 
@@ -24,7 +24,7 @@ pub(super) fn drive_worker(registry: &DriverRegistry, cli: &Cli) -> ExitCode {
         None => {
             eprintln!("error: --worker requires a dylib path");
             return ExitCode::FAILURE;
-        }
+        },
     };
     let bench_name = get("--bench-name").unwrap_or_default();
     let seed: u64 = get("--seed").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -50,7 +50,7 @@ pub(super) fn drive_worker(registry: &DriverRegistry, cli: &Cli) -> ExitCode {
                  mock/benches/): {e}"
             );
             return ExitCode::FAILURE;
-        }
+        },
     };
     let Some((workload_name, may_differ)) = manifest
         .bench
@@ -70,7 +70,7 @@ pub(super) fn drive_worker(registry: &DriverRegistry, cli: &Cli) -> ExitCode {
         Err(e) => {
             eprintln!("error: worker routine resolution: {e}");
             return ExitCode::FAILURE;
-        }
+        },
     };
     let workload = (registry.build_workload)(&workload_name, n);
 

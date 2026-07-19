@@ -10,20 +10,30 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use mockspace_lint_rules::{self, CrateSourceFile, LintContext, LintError, LintMode, Level, Lint, CrossCrateLint, LintConfig};
+use mockspace_lint_rules::{
+    self,
+    CrateSourceFile,
+    CrossCrateLint,
+    Level,
+    Lint,
+    LintConfig,
+    LintContext,
+    LintError,
+    LintMode,
+};
 
 use crate::model::CrateMap;
 
 /// Collected data for a single crate, kept alive for cross-crate pass.
 struct ParsedCrate {
-    crate_name: String,
-    short_name: String,
-    source: String,
-    tree: tree_sitter::Tree,
-    all_sources: Vec<CrateSourceFile>,
-    design_doc: Option<String>,
+    crate_name:      String,
+    short_name:      String,
+    source:          String,
+    tree:            tree_sitter::Tree,
+    all_sources:     Vec<CrateSourceFile>,
+    design_doc:      Option<String>,
     all_doc_content: String,
-    shame_doc: Option<String>,
+    shame_doc:       Option<String>,
 }
 
 /// Walk `crate_dir/src/**/*.rs` and return every file's (rel_path, text),
@@ -68,7 +78,10 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
             Err(_) => continue,
         };
         let rel_path = path.strip_prefix(crate_dir).unwrap_or(&path).to_path_buf();
-        out.push(CrateSourceFile { rel_path, text });
+        out.push(CrateSourceFile {
+            rel_path,
+            text,
+        });
     }
 }
 
@@ -111,20 +124,14 @@ pub fn run_lints(
     custom_cross_lints: &[Box<dyn CrossCrateLint>],
 ) -> usize {
     let all_crate_names: BTreeSet<String> = crates.keys().cloned().collect();
-    let workspace_root = crates_dir
-        .parent()
-        .unwrap_or(crates_dir);
+    let workspace_root = crates_dir.parent().unwrap_or(crates_dir);
 
     let mut parser = mockspace_lint_rules::make_parser();
     let mut all_errors: Vec<LintError> = Vec::new();
 
     let mut parsed: Vec<ParsedCrate> = Vec::new();
 
-    let overrides = if lint_overrides.is_empty() {
-        None
-    } else {
-        Some(lint_overrides)
-    };
+    let overrides = if lint_overrides.is_empty() { None } else { Some(lint_overrides) };
 
     for (crate_name, info) in crates {
         // Skip crates not in scope (when scoped)
@@ -178,7 +185,12 @@ pub fn run_lints(
             primitive_introductions,
         };
 
-        all_errors.extend(mockspace_lint_rules::check_crate_with_extra(&ctx, doc_only, overrides, custom_lints));
+        all_errors.extend(mockspace_lint_rules::check_crate_with_extra(
+            &ctx,
+            doc_only,
+            overrides,
+            custom_lints,
+        ));
 
         parsed.push(ParsedCrate {
             crate_name: crate_name.clone(),
@@ -197,26 +209,23 @@ pub fn run_lints(
         .iter()
         .map(|p| {
             let info = &crates[p.crate_name.as_str()];
-            (
-                p.crate_name.as_str(),
-                LintContext {
-                    crate_name: &p.crate_name,
-                    short_name: &p.short_name,
-                    source: &p.source,
-                    tree: &p.tree,
-                    all_sources: &p.all_sources,
-                    deps: &info.deps,
-                    all_crates: &all_crate_names,
-                    design_doc: p.design_doc.as_deref(),
-                    all_doc_content: &p.all_doc_content,
-                    shame_doc: p.shame_doc.as_deref(),
-                    workspace_root,
-                    proc_macro_crates,
-                    lint_proc_macro_source,
-                    crate_prefix,
-                    primitive_introductions,
-                },
-            )
+            (p.crate_name.as_str(), LintContext {
+                crate_name: &p.crate_name,
+                short_name: &p.short_name,
+                source: &p.source,
+                tree: &p.tree,
+                all_sources: &p.all_sources,
+                deps: &info.deps,
+                all_crates: &all_crate_names,
+                design_doc: p.design_doc.as_deref(),
+                all_doc_content: &p.all_doc_content,
+                shame_doc: p.shame_doc.as_deref(),
+                workspace_root,
+                proc_macro_crates,
+                lint_proc_macro_source,
+                crate_prefix,
+                primitive_introductions,
+            })
         })
         .collect();
 
@@ -225,7 +234,12 @@ pub fn run_lints(
         .map(|(name, ctx)| (*name, ctx))
         .collect();
 
-    all_errors.extend(mockspace_lint_rules::check_cross_crate_with_extra(&cross_refs, doc_only, overrides, custom_cross_lints));
+    all_errors.extend(mockspace_lint_rules::check_cross_crate_with_extra(
+        &cross_refs,
+        doc_only,
+        overrides,
+        custom_cross_lints,
+    ));
 
     // Partition by effective severity
     let mut info = Vec::new();
@@ -234,7 +248,7 @@ pub fn run_lints(
 
     for e in all_errors {
         match e.severity.effective(mode) {
-            Level::Pass => {} // skip silently
+            Level::Pass => {}, // skip silently
             Level::Info => info.push(e),
             Level::Warn => warnings.push(e),
             Level::Error => errors.push(e),

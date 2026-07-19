@@ -3,8 +3,8 @@ use super::*;
 
 /// How long between remote-head checks. The check runs at most once per this
 /// interval, so a routine `cargo mock` almost never touches the network.
-pub(crate) const REMOTE_CHECK_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
-
+pub(crate) const REMOTE_CHECK_TTL: std::time::Duration =
+    std::time::Duration::from_secs(24 * 60 * 60);
 
 /// Keep the consumer's locked mockspace current with its branch's remote head.
 ///
@@ -76,12 +76,10 @@ pub fn ensure_mockspace_current(
     }
 }
 
-
 /// First seven characters of a git revision, for readable log lines.
 pub(crate) fn short_rev(rev: &str) -> String {
     rev.chars().take(7).collect()
 }
-
 
 /// True when no check has run within `ttl` (marker missing or older than `ttl`).
 pub(crate) fn remote_check_due(marker: &Path, ttl: std::time::Duration) -> bool {
@@ -91,7 +89,6 @@ pub(crate) fn remote_check_due(marker: &Path, ttl: std::time::Duration) -> bool 
     }
 }
 
-
 /// Record that a check ran now, by writing the marker (creating its dir).
 pub(crate) fn touch(marker: &Path) {
     if let Some(parent) = marker.parent() {
@@ -100,10 +97,8 @@ pub(crate) fn touch(marker: &Path) {
     let _ = fs::write(marker, b"");
 }
 
-
 /// The maximum time a remote-head query may take before it is abandoned.
 pub(crate) const LS_REMOTE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
-
 
 /// The remote head revision of `branch` at `url`, or `None` on any failure.
 ///
@@ -138,7 +133,6 @@ pub(crate) fn git_ls_remote_head(url: &str, branch: &str) -> Option<String> {
     stdout.split_whitespace().next().map(str::to_string)
 }
 
-
 /// Run `cmd` and return its output, or `None` if it fails to spawn or exceeds
 /// `timeout` (in which case the child is killed).
 ///
@@ -149,7 +143,11 @@ pub(crate) fn output_with_timeout(
     timeout: std::time::Duration,
 ) -> Option<std::process::Output> {
     use std::process::Stdio;
-    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().ok()?;
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
@@ -161,12 +159,11 @@ pub(crate) fn output_with_timeout(
                     return None;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
-            }
+            },
             Err(_) => return None,
         }
     }
 }
-
 
 /// Advance the locked mockspace to its branch head.
 ///
@@ -176,7 +173,11 @@ pub(crate) fn output_with_timeout(
 /// ambiguous. The auto-advance then reported being behind on every run and
 /// never advanced, which reads as the feature not working rather than as one
 /// stale lock entry.
-pub(crate) fn cargo_update_dep(mock_dir: &Path, name: &str, source: &GitSource) -> Result<(), String> {
+pub(crate) fn cargo_update_dep(
+    mock_dir: &Path,
+    name: &str,
+    source: &GitSource,
+) -> Result<(), String> {
     let spec = match &source.branch {
         Some(b) => format!("{}?branch={}#{name}", source.url, b),
         None => format!("{}#{name}", source.url),
@@ -193,4 +194,3 @@ pub(crate) fn cargo_update_dep(mock_dir: &Path, name: &str, source: &GitSource) 
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
 }
-

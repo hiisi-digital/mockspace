@@ -22,7 +22,10 @@ pub fn check_module_dylibs(cfg: &Config) -> usize {
         let dylib_path = cfg.mock_dir.join("target/debug").join(&dylib_name);
 
         if !dylib_path.exists() {
-            eprintln!("  FAIL {crate_name}: dylib not found at {}", dylib_path.display());
+            eprintln!(
+                "  FAIL {crate_name}: dylib not found at {}",
+                dylib_path.display()
+            );
             failures += 1;
             continue;
         }
@@ -32,7 +35,7 @@ pub fn check_module_dylibs(cfg: &Config) -> usize {
             Err(e) => {
                 eprintln!("  FAIL {crate_name}: {e}");
                 failures += 1;
-            }
+            },
         }
     }
 
@@ -48,31 +51,32 @@ fn check_one_dylib(path: &Path, expected_abi: u32, sym_prefix: &str) -> Result<(
     // Safety: we only read static data and call trivial functions.
     // The dylibs are our own code, built seconds ago.
     unsafe {
-        let lib = libloading::Library::new(path)
-            .map_err(|e| format!("dlopen failed: {e}"))?;
+        let lib = libloading::Library::new(path).map_err(|e| format!("dlopen failed: {e}"))?;
 
         // 1. ABI version handshake
-        let abi_fn: libloading::Symbol<extern "C" fn() -> u32> = lib
+        let abi_fn: libloading::Symbol<extern fn() -> u32> = lib
             .get(abi_sym.as_bytes())
             .map_err(|e| format!("missing {abi_sym}: {e}"))?;
 
         let ver = abi_fn();
         if ver != expected_abi {
-            return Err(format!("ABI version mismatch: got {ver}, expected {expected_abi}"));
+            return Err(format!(
+                "ABI version mismatch: got {ver}, expected {expected_abi}"
+            ));
         }
 
         // 2. Manifest function exists
-        let _manifest_fn: libloading::Symbol<extern "C" fn()> = lib
+        let _manifest_fn: libloading::Symbol<extern fn()> = lib
             .get(manifest_sym.as_bytes())
             .map_err(|e| format!("missing {manifest_sym}: {e}"))?;
 
         // 3. Init function exists
-        let _init_fn: libloading::Symbol<extern "C" fn()> = lib
+        let _init_fn: libloading::Symbol<extern fn()> = lib
             .get(init_sym.as_bytes())
             .map_err(|e| format!("missing {init_sym}: {e}"))?;
 
         // 4. Shutdown function exists and is safe to call (default is no-op)
-        let shutdown_fn: libloading::Symbol<extern "C" fn()> = lib
+        let shutdown_fn: libloading::Symbol<extern fn()> = lib
             .get(shutdown_sym.as_bytes())
             .map_err(|e| format!("missing {shutdown_sym}: {e}"))?;
 

@@ -29,24 +29,23 @@
 mod index;
 mod worker;
 
-use index::{fmt_ns, write_index, SummaryRow};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::Instant;
+
+use index::{SummaryRow, fmt_ns, write_index};
 use worker::drive_worker;
 
 use crate::analysis::bootstrap_ci_median;
-use std::path::{Path, PathBuf};
-use std::process::ExitCode;
-use std::collections::BTreeMap;
-use crate::sample::BenchResult;
-use std::time::Instant;
-
 use crate::config::{BenchConfig, BenchManifest};
 use crate::core::ByteDispatch;
 use crate::error::BenchError;
-use crate::harness;
 use crate::history::{self, HistoryEntry};
+use crate::sample::BenchResult;
 use crate::spec::RoutineSpec;
-use crate::validation;
 use crate::workload::Workload;
+use crate::{harness, validation};
 
 /// Root directory (relative to `mock/benches/`) for organised
 /// per-bench outputs.
@@ -59,19 +58,19 @@ pub struct DriverRegistry {
     /// Custom routine hook for benches whose inputs are not plain
     /// bytes (graph shapes, sparse layouts). Return `None` to fall
     /// through to the byte dispatch.
-    pub routine_for: fn(&BenchConfig) -> Option<RoutineSpec>,
+    pub routine_for:    fn(&BenchConfig) -> Option<RoutineSpec>,
     /// The declared const byte-size dispatch
     /// (`byte_routine_dispatch!`). Manifest sizes must be members of
     /// its list; the driver errors by name otherwise.
-    pub byte_dispatch: ByteDispatch,
+    pub byte_dispatch:  ByteDispatch,
 }
 
 pub(super) struct Cli {
-    pub(super) worker: bool,
-    pub(super) report_only: bool,
-    pub(super) only: Vec<String>,
+    pub(super) worker:        bool,
+    pub(super) report_only:   bool,
+    pub(super) only:          Vec<String>,
     pub(super) seed_override: Option<u64>,
-    pub(super) raw: Vec<String>,
+    pub(super) raw:           Vec<String>,
 }
 
 fn parse_cli(args: &[String]) -> Cli {
@@ -85,15 +84,15 @@ fn parse_cli(args: &[String]) -> Cli {
                     only.push(v.clone());
                     i += 1;
                 }
-            }
+            },
             "--seed" => {
                 if let Some(v) = args.get(i + 1) {
                     seed_override = parse_seed(v);
                     i += 1;
                 }
-            }
+            },
             a if !a.starts_with("--") => only.push(a.to_string()),
-            _ => {}
+            _ => {},
         }
         i += 1;
     }
@@ -125,16 +124,23 @@ pub(super) fn resolve_routine(
         return Ok(spec);
     }
     match (registry.byte_dispatch.dispatch)(config.n, config.may_differ) {
-        Some(bridge) => Ok(RoutineSpec { name: config.workload.clone(), bridge }),
-        None => Err(BenchError::InvalidConfig {
-            reason: format!(
-                "bench `{}` n={} has no monomorphised byte routine: the compiled \
+        Some(bridge) => {
+            Ok(RoutineSpec {
+                name: config.workload.clone(),
+                bridge,
+            })
+        },
+        None => {
+            Err(BenchError::InvalidConfig {
+                reason: format!(
+                    "bench `{}` n={} has no monomorphised byte routine: the compiled \
                  dispatch list is {:?}. Add {} to the `byte_routine_dispatch!` \
                  declaration in your bench binary (each size is its own \
                  monomorphisation by design), or serve it from `routine_for`.",
-                config.bench_name, config.n, registry.byte_dispatch.sizes, config.n
-            ),
-        }),
+                    config.bench_name, config.n, registry.byte_dispatch.sizes, config.n
+                ),
+            })
+        },
     }
 }
 
@@ -157,7 +163,10 @@ fn warm_medians(result: &BenchResult) -> BTreeMap<String, Vec<f64>> {
     let mut per_variant: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for s in &result.samples {
         if s.mode == "warm" {
-            per_variant.entry(s.variant.clone()).or_default().push(s.algo_ns);
+            per_variant
+                .entry(s.variant.clone())
+                .or_default()
+                .push(s.algo_ns);
         }
     }
     per_variant
@@ -185,7 +194,7 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
-        }
+        },
     };
 
     // ── selection ──
@@ -216,18 +225,18 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
     let mut configs: Vec<BenchConfig> = Vec::new();
     for name in &selected {
         let section = &manifest.bench[name];
-        for idx in 0..section.sizes.len() {
+        for idx in 0 .. section.sizes.len() {
             match manifest.for_size(name, idx, &cwd) {
                 Ok(mut c) => {
                     if let Some(seed) = cli.seed_override {
                         c.master_seed = seed;
                     }
                     configs.push(c);
-                }
+                },
                 Err(e) => {
                     eprintln!("error: {e}");
                     return ExitCode::FAILURE;
-                }
+                },
             }
         }
     }
@@ -297,7 +306,7 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             Err(e) => {
                 eprintln!("error: {e}");
                 return ExitCode::FAILURE;
-            }
+            },
         };
         let workload = (registry.build_workload)(&config.workload, config.n);
         let (dir, csv_path, findings_path) = output_paths(config);
@@ -322,7 +331,7 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
                         config.bench_name, config.n, csv_path
                     );
                     return ExitCode::FAILURE;
-                }
+                },
             }
             continue;
         }
@@ -367,14 +376,13 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
                             dropped.len(),
                             dropped.join(", ")
                         );
-                        config.variant_paths =
-                            survivors.iter().map(PathBuf::from).collect();
+                        config.variant_paths = survivors.iter().map(PathBuf::from).collect();
                     }
-                }
+                },
                 Err(e) => {
                     eprintln!("  VALIDATION ERROR: {e}");
                     dropped.push(format!("(validation error: {e})"));
-                }
+                },
             }
             if config.required && !dropped.is_empty() {
                 required_failure = true;
@@ -402,15 +410,13 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
                     required_failure = true;
                 }
                 continue;
-            }
+            },
         };
         if let Err(e) = harness::write_csv(&result, &csv_path) {
             eprintln!("error: writing csv: {e}");
             return ExitCode::FAILURE;
         }
-        if let Err(e) =
-            crate::write_report_for_routine(&result, &routine, "warm", &findings_path)
-        {
+        if let Err(e) = crate::write_report_for_routine(&result, &routine, "warm", &findings_path) {
             eprintln!("error: writing report: {e}");
             return ExitCode::FAILURE;
         }
@@ -428,15 +434,15 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             }
             let (_, lo, hi) = bootstrap_ci_median(vals, config.master_seed);
             entries.push(HistoryEntry {
-                timestamp: history::timestamp(),
+                timestamp:  history::timestamp(),
                 git_commit: history::git_commit(),
-                benchmark: benchmark_key.clone(),
-                variant: variant.clone(),
-                n: config.n,
-                mode: "warm".into(),
-                median_ns: m,
-                ci_lo_ns: lo,
-                ci_hi_ns: hi,
+                benchmark:  benchmark_key.clone(),
+                variant:    variant.clone(),
+                n:          config.n,
+                mode:       "warm".into(),
+                median_ns:  m,
+                ci_lo_ns:   lo,
+                ci_hi_ns:   hi,
             });
         }
         let historical = history::load(&benchmark_key);
@@ -453,16 +459,14 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             eprintln!("  history append failed: {e}");
         }
         for e in &entries {
-            let flagged = regressions
-                .iter()
-                .any(|(_, v, _, f)| *f && v == &e.variant);
+            let flagged = regressions.iter().any(|(_, v, _, f)| *f && v == &e.variant);
             summary.push(SummaryRow {
-                bench: config.bench_name.clone(),
-                n: config.n,
-                variant: e.variant.clone(),
-                median_ns: e.median_ns,
+                bench:         config.bench_name.clone(),
+                n:             config.n,
+                variant:       e.variant.clone(),
+                median_ns:     e.median_ns,
                 ratio_vs_best: if best > 0.0 { e.median_ns / best } else { 1.0 },
-                regression: flagged,
+                regression:    flagged,
             });
         }
     }
@@ -499,4 +503,3 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
     }
     ExitCode::SUCCESS
 }
-

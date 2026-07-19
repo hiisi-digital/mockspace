@@ -199,8 +199,8 @@ mod tests {
 
     #[test]
     fn task_from_id_namespaced() {
-        let id = crate::task::TaskId::parse("compiler::ir::lower-pass::define-grammar")
-            .expect("parse");
+        let id =
+            crate::task::TaskId::parse("compiler::ir::lower-pass::define-grammar").expect("parse");
         assert_eq!(
             RefPath::task_from_id(&id).as_str(),
             "refs/mock/task/compiler/ir/lower-pass/define-grammar"

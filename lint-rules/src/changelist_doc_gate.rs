@@ -27,7 +27,9 @@ impl CrossCrateLint for ChangelistDocGate {
         LINT_NAME
     }
 
-    fn source_only(&self) -> bool { false }
+    fn source_only(&self) -> bool {
+        false
+    }
 
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         let workspace_root = match crates.first() {
@@ -48,7 +50,12 @@ impl CrossCrateLint for ChangelistDocGate {
 
         // 1. Check staged changes.
         if let Some(output) = run_git(workspace_root, &[
-            "diff", "--cached", "--name-only", "--relative", "--", "crates/",
+            "diff",
+            "--cached",
+            "--name-only",
+            "--relative",
+            "--",
+            "crates/",
         ]) {
             for line in output.lines() {
                 let file = line.trim();
@@ -60,7 +67,11 @@ impl CrossCrateLint for ChangelistDocGate {
 
         // 2. Check unstaged working tree changes.
         if let Some(output) = run_git(workspace_root, &[
-            "diff", "--name-only", "--relative", "--", "crates/",
+            "diff",
+            "--name-only",
+            "--relative",
+            "--",
+            "crates/",
         ]) {
             for line in output.lines() {
                 let file = line.trim();
@@ -72,7 +83,11 @@ impl CrossCrateLint for ChangelistDocGate {
 
         // 3. Check untracked files.
         if let Some(output) = run_git(workspace_root, &[
-            "ls-files", "--others", "--exclude-standard", "--", "crates/",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "crates/",
         ]) {
             for line in output.lines() {
                 let file = line.trim();
@@ -85,30 +100,29 @@ impl CrossCrateLint for ChangelistDocGate {
         violating_files
             .into_iter()
             .map(|(file, source)| {
-                let crate_name = extract_crate_name(&file)
-                    .unwrap_or_else(|| "unknown".to_string());
+                let crate_name = extract_crate_name(&file).unwrap_or_else(|| "unknown".to_string());
 
                 let phase_hint = match phase {
                     Phase::Topic => {
                         "phase TOPIC: only topic files allowed. \
                          Create an unlocked doc changelist to open the docs window"
-                    }
+                    },
                     Phase::SrcPlan => {
                         // The phase below is the user-visible label; the variant
                         // name (SrcPlan) preserves the file-suffix machinery.
                         "phase DRAFT: doc CL is locked. \
                          Doc edits are frozen after locking. \
                          Use SHAME.md.tmpl for gaps discovered during execution"
-                    }
+                    },
                     Phase::Src => {
                         "phase IMPL: source window open, doc edits blocked. \
                          Doc edits are frozen after locking. \
                          Use SHAME.md.tmpl for gaps discovered during execution"
-                    }
+                    },
                     Phase::Done => {
                         "phase CLOSED: round complete. \
                          Start a new design round to make further doc changes"
-                    }
+                    },
                     Phase::Doc => unreachable!(),
                 };
 
@@ -159,7 +173,7 @@ fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
 fn extract_crate_name(path: &str) -> Option<String> {
     let after_crates = path.strip_prefix("crates/")?;
     let end = after_crates.find('/')?;
-    Some(after_crates[..end].to_string())
+    Some(after_crates[.. end].to_string())
 }
 
 #[cfg(test)]

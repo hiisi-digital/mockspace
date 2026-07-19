@@ -57,17 +57,17 @@ pub fn validate_provenance(
                 PathResolution::Found(t) => t,
                 PathResolution::Missing => {
                     out.push(RegistryFinding {
-                        kind: "unresolvable-provenance",
+                        kind:    "unresolvable-provenance",
                         message: format!(
                             "{}: `{}` matches no file under root `{}`.",
                             row.qualified(),
                             p.render(),
                             p.root
                         ),
-                        source: Some(row.source.clone()),
+                        source:  Some(row.source.clone()),
                     });
                     continue;
-                }
+                },
                 PathResolution::Ambiguous(names) => {
                     out.push(RegistryFinding {
                         kind: "ambiguous-provenance",
@@ -80,7 +80,7 @@ pub fn validate_provenance(
                         source: Some(row.source.clone()),
                     });
                     continue;
-                }
+                },
             };
             if matches!(p.anchor, Anchor::Line(_)) && !frozen.contains(&p.root) {
                 out.push(RegistryFinding {
@@ -95,7 +95,7 @@ pub fn validate_provenance(
                 });
             }
             match resolve_anchor(&target, &p.anchor) {
-                Some(_) => {}
+                Some(_) => {},
                 None => {
                     out.push(RegistryFinding {
                         kind: match p.anchor {
@@ -118,7 +118,7 @@ pub fn validate_provenance(
                         },
                         source: Some(row.source.clone()),
                     });
-                }
+                },
             }
         }
     }
@@ -130,9 +130,9 @@ pub fn validate_provenance(
 pub struct RegistryFinding {
     /// Which check produced it, so severity can be configured per kind rather
     /// than for the registry as a whole.
-    pub kind: &'static str,
+    pub kind:    &'static str,
     pub message: String,
-    pub source: Option<PathBuf>,
+    pub source:  Option<PathBuf>,
 }
 
 /// The finding kinds this validation produces, for per-kind severity config.
@@ -205,7 +205,9 @@ pub fn validate_references(
 /// The outcome of delegating schema validation to a TOML validator.
 pub enum SchemaCheck {
     /// The validator ran. Non-empty means it reported problems.
-    Ran { failures: Vec<String> },
+    Ran {
+        failures: Vec<String>,
+    },
     /// The validator is not installed. Reported rather than treated as a pass,
     /// because a check that silently does not run is worse than no check: it
     /// produces the same green output as a check that ran and found nothing.
@@ -223,9 +225,13 @@ pub enum SchemaCheck {
 /// absence is reported rather than passed over.
 pub fn check_schemas(repo_root: &Path, namespaces: &[RegistryNamespace]) -> SchemaCheck {
     if namespaces.is_empty() {
-        return SchemaCheck::Ran { failures: Vec::new() };
+        return SchemaCheck::Ran {
+            failures: Vec::new(),
+        };
     }
-    let probe = std::process::Command::new("taplo").arg("--version").output();
+    let probe = std::process::Command::new("taplo")
+        .arg("--version")
+        .output();
     if probe.is_err() {
         return SchemaCheck::Unavailable;
     }
@@ -250,8 +256,10 @@ pub fn check_schemas(repo_root: &Path, namespaces: &[RegistryNamespace]) -> Sche
                     ],
                 };
             }
-            SchemaCheck::Ran { failures: Vec::new() }
-        }
+            SchemaCheck::Ran {
+                failures: Vec::new(),
+            }
+        },
         Ok(o) => {
             let text = String::from_utf8_lossy(&o.stderr);
             let failures = text
@@ -259,8 +267,10 @@ pub fn check_schemas(repo_root: &Path, namespaces: &[RegistryNamespace]) -> Sche
                 .filter(|l| l.contains("error") || l.contains("does not match"))
                 .map(|l| l.trim().to_string())
                 .collect();
-            SchemaCheck::Ran { failures }
-        }
+            SchemaCheck::Ran {
+                failures,
+            }
+        },
         Err(_) => SchemaCheck::Unavailable,
     }
 }
@@ -274,7 +284,7 @@ pub(crate) fn files_examined(stderr: &str) -> Option<usize> {
     let line = stderr.lines().find(|l| l.contains("found files total="))?;
     let get = |key: &str| -> Option<usize> {
         let at = line.find(key)? + key.len();
-        line[at..]
+        line[at ..]
             .chars()
             .take_while(|c| c.is_ascii_digit())
             .collect::<String>()

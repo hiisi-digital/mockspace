@@ -12,10 +12,11 @@
 //! drift: a refactor that changes which files install creates,
 //! or where, would land here.
 
-use assert_cmd::Command;
-use mockspace_test_fixtures::MockspaceFixture;
 use std::fs;
 use std::path::Path;
+
+use assert_cmd::Command;
+use mockspace_test_fixtures::MockspaceFixture;
 
 mod common;
 use common::assert_matches_golden;
@@ -80,17 +81,13 @@ fn snapshot_tree(root: &Path) -> String {
 /// pairs under `current` rooted at `root`. Hidden directories like
 /// `.git` are walked through; their contents matter for install
 /// snapshots (e.g. `.git/config` for `core.hooksPath`).
-fn collect(
-    root: &Path,
-    current: &Path,
-    out: &mut Vec<(String, std::path::PathBuf)>,
-) {
+fn collect(root: &Path, current: &Path, out: &mut Vec<(String, std::path::PathBuf)>) {
     // Same rationale as the metadata stat above: a fixture-controlled
     // tempdir that fails to read_dir is a snapshot bug, not a permitted
     // run-time condition. Panic loud so a missing subdir doesn't
     // silently shrink the snapshot.
-    let entries = fs::read_dir(current)
-        .unwrap_or_else(|e| panic!("read_dir failed for {current:?}: {e}"));
+    let entries =
+        fs::read_dir(current).unwrap_or_else(|e| panic!("read_dir failed for {current:?}: {e}"));
     for entry in entries {
         let entry =
             entry.unwrap_or_else(|e| panic!("read_dir entry failed under {current:?}: {e}"));

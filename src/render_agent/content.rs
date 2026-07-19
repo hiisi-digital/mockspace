@@ -30,12 +30,22 @@ pub(crate) fn generate_lint_derived_content(
     let mut scope_rules: Map<String, Vec<(String, String)>> = Map::new();
 
     // Look for forbidden-imports params in lint config
-    for (key, value) in &cfg.lint_overrides.params.get("forbidden-imports").cloned().unwrap_or_default() {
+    for (key, value) in &cfg
+        .lint_overrides
+        .params
+        .get("forbidden-imports")
+        .cloned()
+        .unwrap_or_default()
+    {
         // Keys are like "rule.no-dyn.scope", "rule.no-dyn.forbidden", "rule.no-dyn.reason"
-        if !key.starts_with("rule.") { continue; }
+        if !key.starts_with("rule.") {
+            continue;
+        }
 
         let parts: Vec<&str> = key.splitn(3, '.').collect();
-        if parts.len() < 3 { continue; }
+        if parts.len() < 3 {
+            continue;
+        }
 
         let field = parts[2];
 
@@ -46,39 +56,59 @@ pub(crate) fn generate_lint_derived_content(
     }
 
     // Now collect forbidden + reason per scope
-    let params = cfg.lint_overrides.params.get("forbidden-imports").cloned().unwrap_or_default();
+    let params = cfg
+        .lint_overrides
+        .params
+        .get("forbidden-imports")
+        .cloned()
+        .unwrap_or_default();
     let mut rules_by_name: Map<String, (String, String, String)> = Map::new(); // name -> (scope, forbidden, reason)
 
     for (key, value) in &params {
-        if !key.starts_with("rule.") { continue; }
+        if !key.starts_with("rule.") {
+            continue;
+        }
         let parts: Vec<&str> = key.splitn(3, '.').collect();
-        if parts.len() < 3 { continue; }
+        if parts.len() < 3 {
+            continue;
+        }
 
         let rule_name = parts[1].to_string();
         let field = parts[2];
 
-        let entry = rules_by_name.entry(rule_name).or_insert_with(|| (String::new(), String::new(), String::new()));
+        let entry = rules_by_name
+            .entry(rule_name)
+            .or_insert_with(|| (String::new(), String::new(), String::new()));
         match field {
             "scope" => entry.0 = value.clone(),
             "forbidden" => entry.1 = value.clone(),
             "reason" => entry.2 = value.clone(),
-            "enabled" if value == "false" => { entry.0 = "__disabled__".to_string(); }
-            _ => {}
+            "enabled" if value == "false" => {
+                entry.0 = "__disabled__".to_string();
+            },
+            _ => {},
         }
     }
 
     // Group by scope
     let mut by_scope: Map<String, Vec<(String, String)>> = Map::new(); // scope -> [(forbidden, reason)]
     for (_name, (scope, forbidden, reason)) in &rules_by_name {
-        if scope == "__disabled__" || scope.is_empty() || forbidden.is_empty() { continue; }
-        by_scope.entry(scope.clone()).or_default().push((forbidden.clone(), reason.clone()));
+        if scope == "__disabled__" || scope.is_empty() || forbidden.is_empty() {
+            continue;
+        }
+        by_scope
+            .entry(scope.clone())
+            .or_default()
+            .push((forbidden.clone(), reason.clone()));
     }
 
     if by_scope.is_empty() {
         return 0;
     }
 
-    let mock_rel = cfg.mock_dir.strip_prefix(&cfg.repo_root)
+    let mock_rel = cfg
+        .mock_dir
+        .strip_prefix(&cfg.repo_root)
         .unwrap_or(&cfg.mock_dir)
         .to_string_lossy()
         .replace('\\', "/");
@@ -88,18 +118,33 @@ pub(crate) fn generate_lint_derived_content(
         let apply_to_glob = format!("{mock_rel}/crates/{scope}/**");
 
         // Generate a slug for the filename
-        let slug = scope.replace('*', "star").replace(',', "-").replace(' ', "");
+        let slug = scope
+            .replace('*', "star")
+            .replace(',', "-")
+            .replace(' ', "");
         active_slugs.insert(slug.clone());
 
         // --- Agent Rule ---
         let mut body = String::new();
-        let _ = writeln!(body, "## Forbidden imports for scope `{scope}` (auto-generated from lint config)\n");
-        let _ = writeln!(body, "The following are **forbidden** in crates matching `{scope}`.");
-        let _ = writeln!(body, "Violations are caught by the `forbidden-imports` lint at error level.\n");
+        let _ = writeln!(
+            body,
+            "## Forbidden imports for scope `{scope}` (auto-generated from lint config)\n"
+        );
+        let _ = writeln!(
+            body,
+            "The following are **forbidden** in crates matching `{scope}`."
+        );
+        let _ = writeln!(
+            body,
+            "Violations are caught by the `forbidden-imports` lint at error level.\n"
+        );
         for (forbidden, reason) in rules {
             let _ = writeln!(body, "- `{forbidden}`: {reason}");
         }
-        let _ = writeln!(body, "\nDo NOT write code that uses any of these. Check before writing.");
+        let _ = writeln!(
+            body,
+            "\nDo NOT write code that uses any of these. Check before writing."
+        );
 
         let claude_fm = format!("---\napply_to: [\"{apply_to_glob}\"]\n---\n\n");
         let copilot_fm = format!("---\napplyTo: [\"{apply_to_glob}\"]\n---\n\n");
@@ -131,11 +176,14 @@ pub(crate) fn generate_lint_derived_content(
             }
         }
 
-        if forbidden_patterns.is_empty() { continue; }
+        if forbidden_patterns.is_empty() {
+            continue;
+        }
 
         // Build the scope match pattern for the hook
         let scope_grep = scope.replace('*', ".*").replace(',', "|");
-        let patterns_grep = forbidden_patterns.iter()
+        let patterns_grep = forbidden_patterns
+            .iter()
             .map(|p| format!("\"{}\"", p.replace('"', "\\\"")))
             .collect::<Vec<_>>()
             .join(" ");
@@ -191,13 +239,17 @@ pub(crate) fn generate_lint_derived_content(
     // files whose slug is no longer in active_slugs, delete them.
     const P: &str = "lint-forbidden-";
     sweep_orphan_generated_files(claude_rules_dir, P, ".md", &active_slugs);
-    sweep_orphan_generated_files(copilot_instructions_dir, P, ".instructions.md", &active_slugs);
+    sweep_orphan_generated_files(
+        copilot_instructions_dir,
+        P,
+        ".instructions.md",
+        &active_slugs,
+    );
     sweep_orphan_generated_files(claude_hooks_dir, P, ".sh", &active_slugs);
     sweep_orphan_generated_files(copilot_hooks_dir, P, ".sh", &active_slugs);
 
     count
 }
-
 
 /// Delete any file in `dir` whose name matches `<prefix><slug><suffix>` where
 /// the slug is not in `active`. Conservative: only touches files carrying the
@@ -220,12 +272,13 @@ pub(crate) fn sweep_orphan_generated_files(
         };
         let Some(rest) = name.strip_prefix(prefix) else { continue };
         let Some(slug) = rest.strip_suffix(suffix) else { continue };
-        if active.contains(slug) { continue; }
+        if active.contains(slug) {
+            continue;
+        }
         let _ = fs::remove_file(entry.path());
         eprintln!("  removed orphan: {}", entry.path().display());
     }
 }
-
 
 /// Generate one path-scoped agent rule per crate, carrying that crate's
 /// `README.md.tmpl`.
@@ -256,7 +309,6 @@ pub(crate) fn docs_link_prefix(cfg: &Config) -> String {
     format!("../../{}/", rel.to_string_lossy().replace('\\', "/"))
 }
 
-
 /// Resolve a consumer template's references for output that lands outside the
 /// docs directory.
 ///
@@ -285,7 +337,6 @@ pub(crate) fn render_agent_body(
     )
 }
 
-
 pub(crate) fn generate_crate_readme_rules(
     cfg: &Config,
     claude_rules_dir: &Path,
@@ -311,7 +362,11 @@ pub(crate) fn generate_crate_readme_rules(
     // active set. It must NOT return early: the sweep below still has to run,
     // or removing the last crate would strand every rule it had written.
     let mut entries: Vec<_> = fs::read_dir(&crates_dir)
-        .map(|e| e.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).collect())
+        .map(|e| {
+            e.filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .collect()
+        })
         .unwrap_or_default();
     entries.sort_by_key(|e| e.file_name());
 
@@ -356,8 +411,7 @@ pub(crate) fn generate_crate_readme_rules(
             format_copilot_apply_to(&apply_to),
             format_with_bookends(header_md, preamble, &body, postamble)
         );
-        let copilot_path =
-            copilot_instructions_dir.join(format!("{rule_name}.instructions.md"));
+        let copilot_path = copilot_instructions_dir.join(format!("{rule_name}.instructions.md"));
         render_design::write_generated(&copilot_path, &copilot_content);
         eprintln!("  {} (crate readme)", copilot_path.display());
         count += 1;
@@ -371,4 +425,3 @@ pub(crate) fn generate_crate_readme_rules(
 
     count
 }
-

@@ -11,16 +11,18 @@ use crate::{Lint, LintContext, LintError};
 const MAP_TYPES: &[&str] = &["HashMap", "BTreeMap"];
 
 const PRIMITIVE_KEY_TYPES: &[&str] = &[
-    "String", "&str",
-    "u8", "u16", "u32", "u64", "u128", "usize",
-    "i8", "i16", "i32", "i64", "i128", "isize",
+    "String", "&str", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64",
+    "i128", "isize",
 ];
 
 pub struct NoPrimitiveKey;
 
 impl Lint for NoPrimitiveKey {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         "no-primitive-key"
     }
 
@@ -43,12 +45,8 @@ fn name(&self) -> &'static str {
 
             for map_type in MAP_TYPES {
                 if let Some(pos) = trimmed.find(&format!("{map_type}<")) {
-                    let after_angle = &trimmed[pos + map_type.len() + 1..];
-                    let key_type = after_angle
-                        .split(',')
-                        .next()
-                        .unwrap_or("")
-                        .trim();
+                    let after_angle = &trimmed[pos + map_type.len() + 1 ..];
+                    let key_type = after_angle.split(',').next().unwrap_or("").trim();
 
                     for prim in PRIMITIVE_KEY_TYPES {
                         if key_type == *prim {
@@ -61,11 +59,11 @@ fn name(&self) -> &'static str {
                                 ));
                             } else {
                                 errors.push(LintError {
-                                    crate_name: ctx.crate_name.to_string(),
-                                    line: line_num + 1,
-                                    lint_name: "no-primitive-key",
-                                    severity: crate::Severity::HARD_ERROR,
-                                    message: format!(
+                                    crate_name:   ctx.crate_name.to_string(),
+                                    line:         line_num + 1,
+                                    lint_name:    "no-primitive-key",
+                                    severity:     crate::Severity::HARD_ERROR,
+                                    message:      format!(
                                         "`{map_type}<{prim}, ...>` — use a define_id! type as key",
                                     ),
                                     finding_kind: None,

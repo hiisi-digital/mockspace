@@ -74,35 +74,37 @@ impl FindingSink for VecFindingSink {
 /// through their own accessors when useful.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunReport {
-    pub findings_emitted: usize,
+    pub findings_emitted:           usize,
     pub findings_after_suppression: usize,
-    pub lints_invoked: usize,
-    pub lints_skipped: usize,
-    pub documents_scanned: usize,
-    pub gate_blocked: bool,
+    pub lints_invoked:              usize,
+    pub lints_skipped:              usize,
+    pub documents_scanned:          usize,
+    pub gate_blocked:               bool,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use mockspace_core::lint::{Severity, Span};
     use std::borrow::Cow;
+
+    use mockspace_core::lint::{Severity, Span};
+
+    use super::*;
 
     fn dummy_finding(line: u32) -> Finding {
         Finding {
-            lint_name: Cow::Borrowed("test"),
-            rule_id: None,
-            plugin_id: None,
-            severity: Severity::Warn,
-            impact: None,
-            category: None,
-            message: Cow::Borrowed("x"),
-            span: Span::single_line("a.rs", line, 1, 1),
-            hint: None,
-            help: None,
-            suggestion: None,
+            lint_name:     Cow::Borrowed("test"),
+            rule_id:       None,
+            plugin_id:     None,
+            severity:      Severity::Warn,
+            impact:        None,
+            category:      None,
+            message:       Cow::Borrowed("x"),
+            span:          Span::single_line("a.rs", line, 1, 1),
+            hint:          None,
+            help:          None,
+            suggestion:    None,
             related_spans: Vec::new(),
-            metadata: None,
+            metadata:      None,
         }
     }
 

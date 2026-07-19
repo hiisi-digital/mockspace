@@ -6,7 +6,6 @@ pub(crate) fn generated_hooks_dir(mock_dir: &Path) -> PathBuf {
     mock_dir.join("target").join("hooks")
 }
 
-
 pub(crate) fn ensure_generated_hooks(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>) {
     let out_dir = generated_hooks_dir(mock_dir);
     let _ = fs::create_dir_all(&out_dir);
@@ -58,7 +57,6 @@ pub(crate) fn ensure_generated_hooks(repo_root: &Path, mock_dir: &Path, actions:
     }
 }
 
-
 pub(crate) fn gen_hook(name: &str, mock_rel: &str, user_hook: &Path) -> String {
     match name {
         "pre-commit" => gen_pre_commit(mock_rel, user_hook),
@@ -66,7 +64,6 @@ pub(crate) fn gen_hook(name: &str, mock_rel: &str, user_hook: &Path) -> String {
         _ => String::new(),
     }
 }
-
 
 /// Generate the source-user-hook preamble. This runs the user's original
 /// `.git/hooks/<name>` if it exists, so their hooks always execute
@@ -82,7 +79,6 @@ fi
 "#
     )
 }
-
 
 pub(crate) fn gen_pre_commit(mock_rel: &str, user_hook: &Path) -> String {
     let user_section = source_user_hook(user_hook);
@@ -142,7 +138,6 @@ echo "pre-commit: validation passed."
 "##
     )
 }
-
 
 pub(crate) fn gen_pre_push(mock_rel: &str, user_hook: &Path) -> String {
     let user_section = source_user_hook(user_hook);
@@ -249,4 +244,3 @@ echo "pre-push: validation passed."
 // ──────────────────────────────────────────────────────────────────────
 // Utilities
 // ──────────────────────────────────────────────────────────────────────
-

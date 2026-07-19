@@ -28,7 +28,10 @@ const COUNTABLE_KINDS: &[&str] = &[
 pub struct ExportCount;
 
 impl Lint for ExportCount {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::ADVISORY }
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::ADVISORY
+    }
+
     fn name(&self) -> &'static str {
         "export-count"
     }
@@ -39,11 +42,11 @@ impl Lint for ExportCount {
 
         if count > MAX_EXPORTS {
             vec![LintError {
-                crate_name: ctx.crate_name.to_string(),
-                line: 1,
-                lint_name: "export-count",
-                severity: crate::Severity::ADVISORY,
-                message: format!(
+                crate_name:   ctx.crate_name.to_string(),
+                line:         1,
+                lint_name:    "export-count",
+                severity:     crate::Severity::ADVISORY,
+                message:      format!(
                     "file has {count} public exports (guideline: ~{MAX_EXPORTS})",
                 ),
                 finding_kind: None,

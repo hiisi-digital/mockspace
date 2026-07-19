@@ -57,7 +57,6 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-
 /// Unset `core.hooksPath`, restoring git's default `.git/hooks/`.
 pub fn deactivate(repo_root: &Path) -> Result<(), String> {
     let status = std::process::Command::new("git")
@@ -74,7 +73,6 @@ pub fn deactivate(repo_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-
 /// Check if mockspace hooks are currently active.
 pub fn is_active(repo_root: &Path) -> bool {
     let output = std::process::Command::new("git")
@@ -87,7 +85,7 @@ pub fn is_active(repo_root: &Path) -> bool {
             let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
             // Active if it points to a mockspace-generated hooks dir.
             path.contains("mockspace") || path.contains("target/hooks")
-        }
+        },
         _ => false,
     }
 }
@@ -95,7 +93,6 @@ pub fn is_active(repo_root: &Path) -> bool {
 // ──────────────────────────────────────────────────────────────────────
 // Cargo alias
 // ──────────────────────────────────────────────────────────────────────
-
 
 pub(crate) fn check_activation(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>) {
     // Opt-out for CI and sandboxed environments where git config edits are
@@ -143,7 +140,8 @@ pub(crate) fn check_activation(repo_root: &Path, mock_dir: &Path, actions: &mut 
     if opt_out {
         actions.push(
             "mockspace hooks not active (auto-activate opted out via \
-             MOCKSPACE_NO_AUTO_ACTIVATE; run `cargo mock activate` manually)".into(),
+             MOCKSPACE_NO_AUTO_ACTIVATE; run `cargo mock activate` manually)"
+                .into(),
         );
         return;
     }
@@ -163,10 +161,7 @@ pub(crate) fn check_activation(repo_root: &Path, mock_dir: &Path, actions: &mut 
     if let Ok(o) = existing {
         if o.status.success() {
             let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if !path.is_empty()
-                && !path.contains("mockspace")
-                && !path.contains("target/hooks")
-            {
+            if !path.is_empty() && !path.contains("mockspace") && !path.contains("target/hooks") {
                 actions.push(format!(
                     "mockspace hooks not active: core.hooksPath already points at \
                      {path} (non-mockspace); not overwriting. Run \
@@ -180,17 +175,16 @@ pub(crate) fn check_activation(repo_root: &Path, mock_dir: &Path, actions: &mut 
     match activate(repo_root, mock_dir) {
         Ok(()) => {
             actions.push("activated mockspace hooks (core.hooksPath set)".into());
-        }
+        },
         Err(e) => {
             actions.push(format!(
                 "mockspace hooks not active (auto-activate failed: {e}; \
                  run `cargo mock activate` manually)"
             ));
-        }
+        },
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────
 // Hook templates
 // ──────────────────────────────────────────────────────────────────────
-

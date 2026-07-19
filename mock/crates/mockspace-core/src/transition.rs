@@ -71,11 +71,13 @@ impl Default for ReplanMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransitionValidity {
     /// The transition is valid; the round will land in `next`.
-    Valid { next: Phase },
+    Valid {
+        next: Phase,
+    },
     /// The transition is invalid from the current phase.
     InvalidFromPhase {
-        current: Phase,
-        verb: TransitionVerb,
+        current:      Phase,
+        verb:         TransitionVerb,
         allowed_from: &'static [Phase],
     },
 }
@@ -137,11 +139,17 @@ impl Transition {
     pub fn validate(&self, current: Phase) -> TransitionValidity {
         let verb = self.verb();
         match verb.next_phase(current) {
-            Some(next) => TransitionValidity::Valid { next },
-            None => TransitionValidity::InvalidFromPhase {
-                current,
-                verb,
-                allowed_from: verb.allowed_from(),
+            Some(next) => {
+                TransitionValidity::Valid {
+                    next,
+                }
+            },
+            None => {
+                TransitionValidity::InvalidFromPhase {
+                    current,
+                    verb,
+                    allowed_from: verb.allowed_from(),
+                }
             },
         }
     }
@@ -218,13 +226,8 @@ mod tests {
 
     #[test]
     fn plan_only_valid_from_topic() {
-        for from in [
-            Phase::PlanDoc,
-            Phase::ApplyDoc,
-            Phase::PlanSrc,
-            Phase::ApplySrc,
-            Phase::Done,
-        ] {
+        for from in [Phase::PlanDoc, Phase::ApplyDoc, Phase::PlanSrc, Phase::ApplySrc, Phase::Done]
+        {
             assert_eq!(next(TransitionVerb::Plan, from), None, "from {from:?}");
         }
     }
@@ -255,7 +258,7 @@ mod tests {
                 assert_eq!(current, Phase::Topic);
                 assert_eq!(verb, TransitionVerb::Apply);
                 assert_eq!(allowed_from, &[Phase::PlanDoc, Phase::PlanSrc]);
-            }
+            },
             other => panic!("expected invalid, got {other:?}"),
         }
     }
@@ -263,7 +266,9 @@ mod tests {
     #[test]
     fn transition_validate_reports_valid_next_phase() {
         match Transition::Plan.validate(Phase::Topic) {
-            TransitionValidity::Valid { next } => assert_eq!(next, Phase::PlanDoc),
+            TransitionValidity::Valid {
+                next,
+            } => assert_eq!(next, Phase::PlanDoc),
             other => panic!("expected valid, got {other:?}"),
         }
     }
@@ -277,7 +282,7 @@ mod tests {
         assert!(matches!(
             t.validate(Phase::ApplyDoc),
             TransitionValidity::Valid {
-                next: Phase::PlanDoc
+                next: Phase::PlanDoc,
             }
         ));
     }

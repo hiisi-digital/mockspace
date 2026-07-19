@@ -13,7 +13,6 @@ pub(crate) fn resolve_cargo_home(
         .or_else(|| home_env.map(|h| PathBuf::from(h).join(".cargo")))
 }
 
-
 /// Read sudo's identity handoff. `Ok(None)` when not under sudo,
 /// `Ok(Some((uid, gid)))` when sudo published both ids, `Err` when the
 /// sudo marker is present but the ids are missing or malformed (a state
@@ -33,7 +32,7 @@ pub(crate) fn parse_sudo_ids(
             } else {
                 Ok(None)
             }
-        }
+        },
         (Some(uid), Some(gid)) => {
             let parse = |v: &std::ffi::OsStr, name: &str| {
                 v.to_str()
@@ -43,15 +42,16 @@ pub(crate) fn parse_sudo_ids(
             let uid = parse(&uid, "SUDO_UID")?;
             let gid = parse(&gid, "SUDO_GID")?;
             Ok(Some((uid, gid)))
-        }
-        (uid, gid) => Err(format!(
-            "sudo id handoff incomplete: SUDO_UID {}, SUDO_GID {}",
-            if uid.is_some() { "present" } else { "missing" },
-            if gid.is_some() { "present" } else { "missing" },
-        )),
+        },
+        (uid, gid) => {
+            Err(format!(
+                "sudo id handoff incomplete: SUDO_UID {}, SUDO_GID {}",
+                if uid.is_some() { "present" } else { "missing" },
+                if gid.is_some() { "present" } else { "missing" },
+            ))
+        },
     }
 }
-
 
 /// Chown `path` and, when it is a real directory, everything under it.
 ///
@@ -71,7 +71,6 @@ pub(crate) fn chown_tree(path: &Path, uid: u32, gid: u32) -> std::io::Result<()>
     }
     Ok(())
 }
-
 
 /// Return the bootstrap's output roots to the invoking user after a
 /// sudo-run install. Covers exactly what the bootstrap writes: broad
@@ -115,7 +114,6 @@ pub(crate) fn repair_ownership(
     Ok(())
 }
 
-
 /// `true` when `manifest_dir` lies inside the cargo home (the shared
 /// dependency cache): the build is compiling a git checkout or registry
 /// copy, not a working repo, and the bootstrap must not install there.
@@ -133,4 +131,3 @@ pub(crate) fn is_inside_cargo_home(manifest_dir: &Path, cargo_home: Option<&Path
     let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
     dir.starts_with(&home)
 }
-

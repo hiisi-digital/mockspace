@@ -236,11 +236,7 @@ pub trait Routine {
 
     /// Compare two output byte slices using relative error tolerance.
     #[cfg(feature = "std")]
-    fn compare_outputs_approx(
-        a: &[u8],
-        b: &[u8],
-        epsilon: f64,
-    ) -> Result<(), std::string::String> {
+    fn compare_outputs_approx(a: &[u8], b: &[u8], epsilon: f64) -> Result<(), std::string::String> {
         if a.len() != b.len() {
             return Err(std::format!(
                 "output size mismatch: {} vs {}",
@@ -251,7 +247,7 @@ pub trait Routine {
         let n = a.len() / core::mem::size_of::<f64>();
         let a_f64 = unsafe { core::slice::from_raw_parts(a.as_ptr() as *const f64, n) };
         let b_f64 = unsafe { core::slice::from_raw_parts(b.as_ptr() as *const f64, n) };
-        for i in 0..n {
+        for i in 0 .. n {
             let va = a_f64[i];
             let vb = b_f64[i];
             let denom = va.abs().max(vb.abs()).max(1e-15);
@@ -259,7 +255,11 @@ pub trait Routine {
             if rel_err > epsilon {
                 return Err(std::format!(
                     "element [{}]: {:.6e} vs {:.6e} (rel_err={:.2e}, eps={:.2e})",
-                    i, va, vb, rel_err, epsilon
+                    i,
+                    va,
+                    vb,
+                    rel_err,
+                    epsilon
                 ));
             }
         }
@@ -286,17 +286,17 @@ pub trait Routine {
 /// Input/Output types. Built via `routine_bridge!`.
 #[cfg(feature = "std")]
 pub struct RoutineBridge {
-    pub input_builder: fn(u64) -> std::vec::Vec<u8>,
-    pub output_size: usize,
-    pub validator: fn(&[u8], &[u8]) -> Result<(), std::string::String>,
+    pub input_builder:      fn(u64) -> std::vec::Vec<u8>,
+    pub output_size:        usize,
+    pub validator:          fn(&[u8], &[u8]) -> Result<(), std::string::String>,
     pub outputs_may_differ: bool,
     pub max_relative_error: Option<f64>,
-    pub approx_comparator: fn(&[u8], &[u8], f64) -> Result<(), std::string::String>,
-    pub scorer: fn(&[u8], &[u8]) -> Option<f64>,
-    pub score_label: Option<&'static str>,
-    pub ops_per_call: fn(&[u8]) -> u64,
-    pub max_call_us: fn(usize) -> Option<u64>,
-    pub input_tagger: Option<fn(u64) -> (std::string::String, u8)>,
+    pub approx_comparator:  fn(&[u8], &[u8], f64) -> Result<(), std::string::String>,
+    pub scorer:             fn(&[u8], &[u8]) -> Option<f64>,
+    pub score_label:        Option<&'static str>,
+    pub ops_per_call:       fn(&[u8]) -> u64,
+    pub max_call_us:        fn(usize) -> Option<u64>,
+    pub input_tagger:       Option<fn(u64) -> (std::string::String, u8)>,
 }
 
 /// Build a RoutineBridge from a monomorphised Routine type.
@@ -315,17 +315,17 @@ macro_rules! routine_bridge {
             );
         };
         $crate::RoutineBridge {
-            input_builder: <$R as $crate::Routine>::build_input_bytes,
-            output_size: <$R as $crate::Routine>::output_size(),
-            validator: <$R as $crate::Routine>::validate_output_bytes,
+            input_builder:      <$R as $crate::Routine>::build_input_bytes,
+            output_size:        <$R as $crate::Routine>::output_size(),
+            validator:          <$R as $crate::Routine>::validate_output_bytes,
             outputs_may_differ: <$R as $crate::Routine>::outputs_may_differ(),
             max_relative_error: <$R as $crate::Routine>::max_relative_error(),
-            approx_comparator: <$R as $crate::Routine>::compare_outputs_approx,
-            scorer: <$R as $crate::Routine>::score_output_bytes,
-            score_label: <$R as $crate::Routine>::score_label(),
-            ops_per_call: <$R as $crate::Routine>::ops_per_call_bytes,
-            max_call_us: <$R as $crate::Routine>::max_call_us,
-            input_tagger: {
+            approx_comparator:  <$R as $crate::Routine>::compare_outputs_approx,
+            scorer:             <$R as $crate::Routine>::score_output_bytes,
+            score_label:        <$R as $crate::Routine>::score_label(),
+            ops_per_call:       <$R as $crate::Routine>::ops_per_call_bytes,
+            max_call_us:        <$R as $crate::Routine>::max_call_us,
+            input_tagger:       {
                 fn __tagger(seed: u64) -> Option<(std::string::String, u8)> {
                     <$R as $crate::Routine>::input_tag(seed)
                         .map(|(name, idx)| (std::string::String::from(name), idx))
@@ -387,7 +387,7 @@ pub struct ByteDispatch {
     /// when `n` is not in the declared list.
     pub dispatch: fn(usize, bool) -> Option<RoutineBridge>,
     /// The declared sizes (for error messages).
-    pub sizes: &'static [usize],
+    pub sizes:    &'static [usize],
 }
 
 /// Timing result returned across the dylib boundary.
@@ -404,31 +404,28 @@ pub struct FfiBenchCall {
 /// Function signature exported by each variant dylib.
 /// `n` is a size parameter for multi-N dispatch (consumer-defined; the
 /// harness passes whatever sizes the consumer registered).
-pub type BenchEntryFn = unsafe extern "C" fn(
-    input: *const u8,
-    output: *mut u8,
-    n: usize,
-) -> FfiBenchCall;
+pub type BenchEntryFn =
+    unsafe extern fn(input: *const u8, output: *mut u8, n: usize) -> FfiBenchCall;
 
 /// Name accessor exported by each variant dylib.
-pub type BenchNameFn = extern "C" fn() -> *const u8;
+pub type BenchNameFn = extern fn() -> *const u8;
 
 /// ABI hash for version checking on dylib load.
-pub type AbiHashFn = extern "C" fn() -> u64;
+pub type AbiHashFn = extern fn() -> u64;
 
 /// Compute the ABI hash at compile time. FNV-1a over the FfiBenchCall
 /// layout. Variants compile-in this hash at build time; on load, the
 /// harness checks the hash to detect ABI drift.
 #[must_use]
 pub const fn abi_hash() -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
+    let mut h: u64 = 0xCBF29CE484222325;
     let size = core::mem::size_of::<FfiBenchCall>() as u64;
     h ^= size;
-    h = h.wrapping_mul(0x100000001b3);
+    h = h.wrapping_mul(0x100000001B3);
     h ^= 1u64; // field count: run_ticks
-    h = h.wrapping_mul(0x100000001b3);
+    h = h.wrapping_mul(0x100000001B3);
     h ^= 8u64; // run_ticks size
-    h = h.wrapping_mul(0x100000001b3);
+    h = h.wrapping_mul(0x100000001B3);
     h
 }
 

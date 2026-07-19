@@ -31,6 +31,13 @@ pub use ref_write::RefTreeWriteError;
 pub use repo::{RepoError, RepoHandle};
 pub use seal::{SealError, SealReport};
 pub use task::{
-    CloseMetadata, CreateTaskError, CreateTaskReport, ListTasksError, MoveTaskError,
-    MoveTaskReport, ShowTaskError, TaskTransitionError, TaskTransitionReport,
+    CloseMetadata,
+    CreateTaskError,
+    CreateTaskReport,
+    ListTasksError,
+    MoveTaskError,
+    MoveTaskReport,
+    ShowTaskError,
+    TaskTransitionError,
+    TaskTransitionReport,
 };

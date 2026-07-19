@@ -72,16 +72,16 @@ pub fn classify_root_entry(name: &str) -> RootEntry {
         ".phase" => RootEntry::Bookkeeping(BookkeepingFile::Phase),
         ".anchor.doc.toml" => {
             RootEntry::Bookkeeping(BookkeepingFile::AnchorIndex(ManifestSide::Doc))
-        }
+        },
         ".anchor.src.toml" => {
             RootEntry::Bookkeeping(BookkeepingFile::AnchorIndex(ManifestSide::Src))
-        }
+        },
         ".anchor.doc.blobs" => {
             RootEntry::Bookkeeping(BookkeepingFile::AnchorBlobs(ManifestSide::Doc))
-        }
+        },
         ".anchor.src.blobs" => {
             RootEntry::Bookkeeping(BookkeepingFile::AnchorBlobs(ManifestSide::Src))
-        }
+        },
         _ => RootEntry::Reserved,
     }
 }
@@ -156,12 +156,7 @@ mod tests {
 
     #[test]
     fn classifies_unknown_dot_as_reserved() {
-        for name in [
-            ".future-marker",
-            ".anchor.doc.extra",
-            ".phase-backup",
-            ".lock",
-        ] {
+        for name in [".future-marker", ".anchor.doc.extra", ".phase-backup", ".lock"] {
             assert_eq!(
                 classify_root_entry(name),
                 RootEntry::Reserved,

@@ -63,36 +63,45 @@ pub use resolve::*;
 pub use resolved::*;
 pub use validate::*;
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn ns(key: &str, value_field: Option<&str>) -> RegistryNamespace {
         RegistryNamespace {
-            key: key.into(),
-            title: None,
+            key:         key.into(),
+            title:       None,
             description: None,
             value_field: value_field.map(|s| s.to_string()),
-            render: RenderMode::Page,
-            group_by: None,
-            fields: vec![],
+            render:      RenderMode::Page,
+            group_by:    None,
+            fields:      vec![],
         }
     }
 
     fn r_all(text: &str, nss: &[RegistryNamespace], reg: &Registry) -> String {
         let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-        resolve_all(text, nss, reg, &BTreeMap::new(), Path::new("/r"), Path::new("/r/docs"), &cfg)
+        resolve_all(
+            text,
+            nss,
+            reg,
+            &BTreeMap::new(),
+            Path::new("/r"),
+            Path::new("/r/docs"),
+            &cfg,
+        )
     }
 
     fn reg_with(slug: &str, namespace: &str, fields: &[(&str, &str)]) -> Registry {
         let mut reg = Registry::default();
         let row = RegistryRow {
-            slug: slug.into(),
+            slug:      slug.into(),
             namespace: namespace.into(),
-            source: PathBuf::from("t.toml"),
-            fields: fields.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            source:    PathBuf::from("t.toml"),
+            fields:    fields
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         };
         let q = row.qualified();
         reg.by_namespace.insert(namespace.into(), vec![q.clone()]);
@@ -112,7 +121,11 @@ mod tests {
         // Lets a document state a constant once and have every mention of it
         // stay current.
         let reg = reg_with("froxel", "constant", &[("value", "32 km")]);
-        let out = r_all("reaches {{ reg::constant::froxel::value }} out", &[ns("constant", None)], &reg);
+        let out = r_all(
+            "reaches {{ reg::constant::froxel::value }} out",
+            &[ns("constant", None)],
+            &reg,
+        );
         assert_eq!(out, "reaches 32 km out");
     }
 
@@ -149,7 +162,10 @@ mod tests {
         let reg = reg_with("xpbd", "vocab", &[]);
         let text = "a {{ reg::vocab::xpbd }}\n```\nb {{ reg::vocab::xpbd }}\n```";
         let out = r_all(text, &[ns("vocab", None)], &reg);
-        assert!(out.contains("```\nb {{ reg::vocab::xpbd }}\n```"), "fence rewritten: {out}");
+        assert!(
+            out.contains("```\nb {{ reg::vocab::xpbd }}\n```"),
+            "fence rewritten: {out}"
+        );
     }
 
     #[test]
@@ -169,7 +185,15 @@ mod tests {
         let roots = BTreeMap::new();
         let r = |s: &str| {
             let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-            resolve_all(s, &nss, &reg, &roots, Path::new("/r"), Path::new("/r/docs"), &cfg)
+            resolve_all(
+                s,
+                &nss,
+                &reg,
+                &roots,
+                Path::new("/r"),
+                Path::new("/r/docs"),
+                &cfg,
+            )
         };
         assert_eq!(r("{{ reg::vocab::xpbd }}"), "[xpbd](VOCAB.md#xpbd)");
         assert_eq!(r("{{ reg::vocab::xpbd::what }}"), "constraint projection");
@@ -191,15 +215,20 @@ mod tests {
     #[test]
     fn heading_slugs_match_the_forge_form() {
         // So a reader can click the same anchor the link generates.
-        assert_eq!(heading_slug("The four lanes and the joint LOD cut"),
-                   "the-four-lanes-and-the-joint-lod-cut");
+        assert_eq!(
+            heading_slug("The four lanes and the joint LOD cut"),
+            "the-four-lanes-and-the-joint-lod-cut"
+        );
         assert_eq!(heading_slug("R(V), the drift class"), "r-v-the-drift-class");
     }
 
     #[test]
     fn a_line_anchor_still_parses() {
         // Kept for frozen roots, where the file genuinely does not move.
-        assert_eq!(FileRef::parse("seed::DESIGN::844").unwrap().anchor, Anchor::Line(844));
+        assert_eq!(
+            FileRef::parse("seed::DESIGN::844").unwrap().anchor,
+            Anchor::Line(844)
+        );
         assert!(FileRef::parse("seed::DESIGN::0").is_none());
         assert!(FileRef::parse("seed::DESIGN::#").is_none());
     }
@@ -221,10 +250,10 @@ mod tests {
     fn reference_is_builtin_and_renders_as_a_citation() {
         let mut reg = Registry::default();
         let row = RegistryRow {
-            slug: "burns_hunt".into(),
+            slug:      "burns_hunt".into(),
             namespace: "reference".into(),
-            source: PathBuf::from("t.toml"),
-            fields: [
+            source:    PathBuf::from("t.toml"),
+            fields:    [
                 ("title", "The Visibility Buffer"),
                 ("authors", "Burns and Hunt"),
                 ("venue", "JCGT"),
@@ -234,7 +263,8 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
         };
-        reg.by_namespace.insert("reference".into(), vec![row.qualified()]);
+        reg.by_namespace
+            .insert("reference".into(), vec![row.qualified()]);
         reg.rows.insert(row.qualified(), row);
         // Short by default: it has to fit a table cell beside hundreds of
         // others, and the full form is one click away.
@@ -244,23 +274,31 @@ mod tests {
         );
         // The full form on request, for prose that wants the title.
         assert_eq!(
-            r_all("{{ reference::burns_hunt::citation }}", &with_builtins(&[]), &reg),
+            r_all(
+                "{{ reference::burns_hunt::citation }}",
+                &with_builtins(&[]),
+                &reg
+            ),
             "[Burns and Hunt, The Visibility Buffer (JCGT 2013)](REFERENCE.md#burns-hunt)"
         );
         // A real field is still a real field.
         assert_eq!(
-            r_all("{{ reference::burns_hunt::year }}", &with_builtins(&[]), &reg),
+            r_all(
+                "{{ reference::burns_hunt::year }}",
+                &with_builtins(&[]),
+                &reg
+            ),
             "2013"
         );
     }
 
     fn field(name: &str, vis: FieldVisibility) -> RegistryField {
         RegistryField {
-            name: name.into(),
-            r#type: "string".into(),
-            required: false,
+            name:        name.into(),
+            r#type:      "string".into(),
+            required:    false,
             description: None,
-            visibility: vis,
+            visibility:  vis,
         }
     }
 
@@ -273,11 +311,17 @@ mod tests {
             field("what", FieldVisibility::Public),
             field("seed_id", FieldVisibility::Internal),
         ];
-        let reg = reg_with("keys", "law", &[("what", "a key is closed"), ("seed_id", "[24B]")]);
+        let reg = reg_with("keys", "law", &[
+            ("what", "a key is closed"),
+            ("seed_id", "[24B]"),
+        ]);
         let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
         let table = render_table(&ns, &reg, &cfg);
         assert!(table.contains("what"), "{table}");
-        assert!(!table.contains("seed_id"), "internal column rendered: {table}");
+        assert!(
+            !table.contains("seed_id"),
+            "internal column rendered: {table}"
+        );
         assert!(!table.contains("[24B]"), "internal value rendered: {table}");
     }
 
@@ -304,7 +348,15 @@ mod tests {
             .collect();
         let reg = Registry::default();
         let r = |s: &str| {
-            resolve_all(s, &[], &reg, &cfg.registry_roots.clone(), Path::new("/r"), Path::new("/r/docs"), &cfg)
+            resolve_all(
+                s,
+                &[],
+                &reg,
+                &cfg.registry_roots.clone(),
+                Path::new("/r"),
+                Path::new("/r/docs"),
+                &cfg,
+            )
         };
         assert_eq!(
             r("The split becomes structural ({{ seed::DESIGN::189 }})."),
@@ -325,14 +377,19 @@ mod tests {
         cfg.internal_roots = ["seed".to_string()].into_iter().collect();
         let mut ns = ns("law", None);
         ns.fields = vec![field("provenance", FieldVisibility::Public)];
-        let reg = reg_with(
-            "keys",
-            "law",
-            &[("provenance", "seed::DESIGN::844, mock::DESIGN::12")],
-        );
+        let reg = reg_with("keys", "law", &[(
+            "provenance",
+            "seed::DESIGN::844, mock::DESIGN::12",
+        )]);
         let table = render_table(&ns, &reg, &cfg);
-        assert!(!table.contains("seed::DESIGN"), "internal root survived: {table}");
-        assert!(table.contains("mock::DESIGN::12"), "public citation lost: {table}");
+        assert!(
+            !table.contains("seed::DESIGN"),
+            "internal root survived: {table}"
+        );
+        assert!(
+            table.contains("mock::DESIGN::12"),
+            "public citation lost: {table}"
+        );
     }
 
     #[test]
@@ -354,9 +411,15 @@ mod tests {
         cfg.internal_roots = ["seed".to_string()].into_iter().collect();
         let mut ns = ns("law", None);
         ns.fields = vec![field("what", FieldVisibility::Public)];
-        let reg = reg_with("keys", "law", &[("what", "std::mem::swap is not a citation")]);
+        let reg = reg_with("keys", "law", &[(
+            "what",
+            "std::mem::swap is not a citation",
+        )]);
         let table = render_table(&ns, &reg, &cfg);
-        assert!(table.contains("std::mem::swap is not a citation"), "{table}");
+        assert!(
+            table.contains("std::mem::swap is not a citation"),
+            "{table}"
+        );
     }
 
     #[test]
@@ -415,7 +478,8 @@ mod tests {
         // The net that catches a generation path forgetting to resolve. Two
         // did, and the symptom was a literal reference in a finished document
         // with nothing saying so.
-        let doc = "# T\n\nBound by {{ reg::law::keys }}.\n\n```\nwrite {{ reg::law::x }}\n```\n\nDone.\n";
+        let doc =
+            "# T\n\nBound by {{ reg::law::keys }}.\n\n```\nwrite {{ reg::law::x }}\n```\n\nDone.\n";
         let found = unresolved_in_generated(doc);
         assert_eq!(found, vec!["{{ reg::law::keys }}"], "{found:?}");
     }
@@ -448,9 +512,9 @@ mod tests {
         // Built from what will exist, not from what has been written.
         let plan = vec![crate::document::Planned::computed(
             crate::document::DocId::Crate {
-                upper: "PLAN_VALIDATE".into(),
+                upper:   "PLAN_VALIDATE".into(),
                 subject: "OVERVIEW".into(),
-                depth: 4,
+                depth:   4,
             },
             String::new(),
         )];
@@ -466,7 +530,10 @@ mod tests {
             &docs,
             &cfg,
         );
-        assert_eq!(out, "see [plan-validate](140_PLAN_VALIDATE.md) now", "{out}");
+        assert_eq!(
+            out, "see [plan-validate](140_PLAN_VALIDATE.md) now",
+            "{out}"
+        );
     }
 
     #[test]
@@ -496,7 +563,10 @@ mod tests {
             &docs,
             &cfg,
         );
-        assert_eq!(out, "see [plan-validate](140_PLAN_VALIDATE.md) now", "{out}");
+        assert_eq!(
+            out, "see [plan-validate](140_PLAN_VALIDATE.md) now",
+            "{out}"
+        );
     }
 
     #[test]
@@ -513,7 +583,7 @@ mod tests {
 
         let plan = vec![crate::document::Planned::computed(
             crate::document::DocId::Registry {
-                page: "LAW.md".into(),
+                page:  "LAW.md".into(),
                 index: 2,
             },
             String::new(),
@@ -524,10 +594,10 @@ mod tests {
         // settles before any document reads it.
         let mut reg = reg_with("keys", "law", &[("statement", "closed")]);
         let row = RegistryRow {
-            slug: "derived".into(),
+            slug:      "derived".into(),
             namespace: "law".into(),
-            source: PathBuf::from("t.toml"),
-            fields: [("statement".to_string(), "see {{ law::keys }}".to_string())]
+            source:    PathBuf::from("t.toml"),
+            fields:    [("statement".to_string(), "see {{ law::keys }}".to_string())]
                 .into_iter()
                 .collect(),
         };
@@ -572,10 +642,10 @@ mod tests {
         // The question a rule telling an agent where to edit is asking.
         let mut reg = Registry::default();
         let row = RegistryRow {
-            slug: "keys".into(),
+            slug:      "keys".into(),
             namespace: "law".into(),
-            source: PathBuf::from("/r/mock/registry/law/seam.toml"),
-            fields: BTreeMap::new(),
+            source:    PathBuf::from("/r/mock/registry/law/seam.toml"),
+            fields:    BTreeMap::new(),
         };
         let q = row.qualified();
         reg.by_namespace.insert("law".into(), vec![q.clone()]);
@@ -599,10 +669,10 @@ mod tests {
     fn a_method_chain_narrows_what_an_expression_resolved_to() {
         let mut reg = Registry::default();
         let row = RegistryRow {
-            slug: "keys".into(),
+            slug:      "keys".into(),
             namespace: "law".into(),
-            source: PathBuf::from("/r/mock/registry/law/seam.toml"),
-            fields: BTreeMap::new(),
+            source:    PathBuf::from("/r/mock/registry/law/seam.toml"),
+            fields:    BTreeMap::new(),
         };
         let q = row.qualified();
         reg.by_namespace.insert("law".into(), vec![q.clone()]);
@@ -610,7 +680,15 @@ mod tests {
         let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
         let nss = vec![ns("law", None)];
         let r = |e: &str| {
-            resolve_all(e, &nss, &reg, &BTreeMap::new(), Path::new("/r"), Path::new("/r/docs"), &cfg)
+            resolve_all(
+                e,
+                &nss,
+                &reg,
+                &BTreeMap::new(),
+                Path::new("/r"),
+                Path::new("/r/docs"),
+                &cfg,
+            )
         };
         assert_eq!(r("{{ pathof(law::keys).dir() }}"), "mock/registry/law");
         assert_eq!(r("{{ pathof(law::keys).filename() }}"), "seam.toml");
@@ -624,7 +702,10 @@ mod tests {
     fn a_list_method_reads_a_multi_valued_result() {
         let reg = reg_with("keys", "law", &[("crates", "store, world, bake")]);
         let nss = vec![ns("law", None)];
-        assert_eq!(r_all("{{ law::keys::crates.first() }}", &nss, &reg), "store");
+        assert_eq!(
+            r_all("{{ law::keys::crates.first() }}", &nss, &reg),
+            "store"
+        );
         assert_eq!(r_all("{{ law::keys::crates.last() }}", &nss, &reg), "bake");
         assert_eq!(r_all("{{ law::keys::crates.count() }}", &nss, &reg), "3");
     }
@@ -704,7 +785,10 @@ mod tests {
     fn an_unknown_single_word_is_left_alone() {
         // Otherwise a stray word in prose would be eaten as a namespace.
         let reg = reg_with("xpbd", "vocab", &[]);
-        assert_eq!(r_all("{{ nope }}", &[ns("vocab", None)], &reg), "{{ nope }}");
+        assert_eq!(
+            r_all("{{ nope }}", &[ns("vocab", None)], &reg),
+            "{{ nope }}"
+        );
     }
 
     #[test]
@@ -748,8 +832,20 @@ mod tests {
         let mut reg = Registry::default();
         let mut n = ns("law", None);
         n.fields = vec![
-            RegistryField { name: "name".into(), r#type: "string".into(), required: false, description: None, visibility: FieldVisibility::Public },
-            RegistryField { name: "crates".into(), r#type: "string[]".into(), required: false, description: None, visibility: FieldVisibility::Public },
+            RegistryField {
+                name:        "name".into(),
+                r#type:      "string".into(),
+                required:    false,
+                description: None,
+                visibility:  FieldVisibility::Public,
+            },
+            RegistryField {
+                name:        "crates".into(),
+                r#type:      "string[]".into(),
+                required:    false,
+                description: None,
+                visibility:  FieldVisibility::Public,
+            },
         ];
         for (slug, name, crates) in [
             ("keys", "the key law", "store, bake"),
@@ -757,15 +853,21 @@ mod tests {
             ("rank", "the rank law", "store"),
         ] {
             let row = RegistryRow {
-                slug: slug.into(),
+                slug:      slug.into(),
                 namespace: "law".into(),
-                source: PathBuf::from("t.toml"),
-                fields: [("name".to_string(), name.to_string()), ("crates".to_string(), crates.to_string())]
-                    .into_iter()
-                    .collect(),
+                source:    PathBuf::from("t.toml"),
+                fields:    [
+                    ("name".to_string(), name.to_string()),
+                    ("crates".to_string(), crates.to_string()),
+                ]
+                .into_iter()
+                .collect(),
             };
             let q = row.qualified();
-            reg.by_namespace.entry("law".into()).or_default().push(q.clone());
+            reg.by_namespace
+                .entry("law".into())
+                .or_default()
+                .push(q.clone());
             reg.rows.insert(q, row);
         }
         (reg, vec![n])
@@ -776,23 +878,49 @@ mod tests {
         let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
         let by_key: BTreeMap<&str, &RegistryNamespace> =
             nss.iter().map(|n| (n.key.as_str(), n)).collect();
-        resolve_typed(expr, &by_key, &reg, &BTreeMap::new(), Path::new("/r"), Path::new("/r/docs"), &cfg)
-            .expect("did not resolve")
+        resolve_typed(
+            expr,
+            &by_key,
+            &reg,
+            &BTreeMap::new(),
+            Path::new("/r"),
+            Path::new("/r/docs"),
+            &cfg,
+        )
+        .expect("did not resolve")
     }
 
     #[test]
     fn where_filters_a_table_by_substring_or_exactly() {
         // Both questions are common: which rows name exactly this crate, and
         // which rows mention it at all.
-        let Resolved::Table { rows, .. } = q("law.where(crates~store)") else { panic!() };
+        let Resolved::Table {
+            rows,
+            ..
+        } = q("law.where(crates~store)")
+        else {
+            panic!()
+        };
         assert_eq!(rows.len(), 2, "{rows:?}");
-        let Resolved::Table { rows, .. } = q("law.where(crates=store)") else { panic!() };
+        let Resolved::Table {
+            rows,
+            ..
+        } = q("law.where(crates=store)")
+        else {
+            panic!()
+        };
         assert_eq!(rows.len(), 1, "exact match matched a substring: {rows:?}");
     }
 
     #[test]
     fn select_narrows_the_columns_and_count_ends_a_chain() {
-        let Resolved::Table { columns, .. } = q("law.select(id,name)") else { panic!() };
+        let Resolved::Table {
+            columns,
+            ..
+        } = q("law.select(id,name)")
+        else {
+            panic!()
+        };
         assert_eq!(columns, vec!["id", "name"]);
         assert_eq!(q("law.where(crates~store).count()"), Resolved::Count(2));
     }
@@ -803,7 +931,10 @@ mod tests {
         // the shape decides the presentation rather than the caller.
         let table = q("law.select(id,name)");
         assert!(table.to_markdown().contains('|'), "markdown lost its pipes");
-        assert!(!table.to_terminal().contains('|'), "terminal kept markdown pipes");
+        assert!(
+            !table.to_terminal().contains('|'),
+            "terminal kept markdown pipes"
+        );
         assert!(table.to_terminal().contains("3 rows in law"));
     }
 
@@ -814,13 +945,19 @@ mod tests {
         // noise around the only part worth reading.
         let r = Resolved::Row {
             namespace: "law".into(),
-            slug: "keys".into(),
-            target: "902_LAW.md#keys".into(),
-            fields: vec![("crates".into(), "[world](120_WORLD.md), [store](130_STORE.md)".into())],
+            slug:      "keys".into(),
+            target:    "902_LAW.md#keys".into(),
+            fields:    vec![(
+                "crates".into(),
+                "[world](120_WORLD.md), [store](130_STORE.md)".into(),
+            )],
         };
         let t = r.to_terminal();
         assert!(t.contains("world, store"), "{t}");
-        assert!(!t.contains("120_WORLD.md"), "target survived into the terminal: {t}");
+        assert!(
+            !t.contains("120_WORLD.md"),
+            "target survived into the terminal: {t}"
+        );
     }
 
     #[test]
@@ -829,9 +966,31 @@ mod tests {
         let cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
         let by_key: BTreeMap<&str, &RegistryNamespace> =
             nss.iter().map(|n| (n.key.as_str(), n)).collect();
-        assert!(resolve_typed("law.nope(x)", &by_key, &reg, &BTreeMap::new(), Path::new("/r"), Path::new("/r/docs"), &cfg).is_none());
+        assert!(
+            resolve_typed(
+                "law.nope(x)",
+                &by_key,
+                &reg,
+                &BTreeMap::new(),
+                Path::new("/r"),
+                Path::new("/r/docs"),
+                &cfg
+            )
+            .is_none()
+        );
         // A column that does not exist is the same kind of nothing.
-        assert!(resolve_typed("law.where(nope~x)", &by_key, &reg, &BTreeMap::new(), Path::new("/r"), Path::new("/r/docs"), &cfg).is_none());
+        assert!(
+            resolve_typed(
+                "law.where(nope~x)",
+                &by_key,
+                &reg,
+                &BTreeMap::new(),
+                Path::new("/r"),
+                Path::new("/r/docs"),
+                &cfg
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -910,7 +1069,7 @@ pub fn cmd_query(cfg: &crate::config::Config, expr: &str) -> std::process::ExitC
         Some(found) => {
             print!("{}", found.to_terminal());
             ExitCode::SUCCESS
-        }
+        },
         None => {
             // The same answer a document gets, said out loud. A reference that
             // resolves to nothing is reported rather than rendered as something
@@ -932,6 +1091,6 @@ pub fn cmd_query(cfg: &crate::config::Config, expr: &str) -> std::process::ExitC
                 }
             }
             ExitCode::FAILURE
-        }
+        },
     }
 }

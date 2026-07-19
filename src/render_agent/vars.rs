@@ -11,9 +11,7 @@ pub(crate) fn collect_consumer_rule_names(agent_dir: &Path) -> std::collections:
                 let path = entry.path();
                 if path.extension().map(|x| x == "tmpl").unwrap_or(false) {
                     if let Some(stem) = path.file_stem() {
-                        let name = stem.to_string_lossy()
-                            .trim_end_matches(".md")
-                            .to_string();
+                        let name = stem.to_string_lossy().trim_end_matches(".md").to_string();
                         names.insert(name);
                     }
                 }
@@ -22,7 +20,6 @@ pub(crate) fn collect_consumer_rule_names(agent_dir: &Path) -> std::collections:
     }
     names
 }
-
 
 /// Collect consumer skill directory names.
 pub(crate) fn collect_consumer_skill_names(agent_dir: &Path) -> std::collections::HashSet<String> {
@@ -43,7 +40,6 @@ pub(crate) fn collect_consumer_skill_names(agent_dir: &Path) -> std::collections
     names
 }
 
-
 /// Compute template variables from parsed crate data.
 pub(crate) fn compute_template_vars(crates: &CrateMap, cfg: &Config) -> Vec<(String, String)> {
     let mut vars = Vec::new();
@@ -52,7 +48,8 @@ pub(crate) fn compute_template_vars(crates: &CrateMap, cfg: &Config) -> Vec<(Str
     vars.push(("project_name".to_string(), cfg.project_name.clone()));
 
     // {{mock_dir}}: relative path from repo root to mock workspace
-    let mock_rel = cfg.mock_dir
+    let mock_rel = cfg
+        .mock_dir
         .strip_prefix(&cfg.repo_root)
         .unwrap_or(&cfg.mock_dir)
         .to_string_lossy()
@@ -74,7 +71,6 @@ pub(crate) fn compute_template_vars(crates: &CrateMap, cfg: &Config) -> Vec<(Str
 
     vars
 }
-
 
 /// Build a markdown table of crates.
 pub(crate) fn compute_crate_table(crates: &CrateMap, cfg: &Config) -> String {
@@ -104,7 +100,6 @@ pub(crate) fn compute_crate_table(crates: &CrateMap, cfg: &Config) -> String {
     table.trim_end().to_string()
 }
 
-
 /// Infer a one-line purpose from a crate's items.
 pub(crate) fn infer_crate_purpose(info: &CrateInfo) -> String {
     let mut types: Vec<String> = Vec::new();
@@ -112,14 +107,14 @@ pub(crate) fn infer_crate_purpose(info: &CrateInfo) -> String {
         match item {
             Item::Trait(t) => types.push(t.name.clone()),
             Item::Struct(s) => types.push(s.name.clone()),
-            _ => {}
+            _ => {},
         }
     }
     if types.is_empty() {
         return format!("{} subsystem", info.short_name);
     }
     let max = 3.min(types.len());
-    let shown: Vec<_> = types[..max].iter().map(|t| format!("`{t}`")).collect();
+    let shown: Vec<_> = types[.. max].iter().map(|t| format!("`{t}`")).collect();
     let suffix = if types.len() > max {
         format!(" +{}", types.len() - max)
     } else {
@@ -127,7 +122,6 @@ pub(crate) fn infer_crate_purpose(info: &CrateInfo) -> String {
     };
     format!("{}{suffix}", shown.join(", "))
 }
-
 
 /// Build the macros table for agent instructions from config.
 pub(crate) fn compute_macro_table(crates: &CrateMap, cfg: &Config) -> String {
@@ -157,7 +151,7 @@ pub(crate) fn compute_macro_table(crates: &CrateMap, cfg: &Config) -> String {
 
     // Any extra macros not in config
     for name in &found {
-        if !macros.iter().any(|(n, _, _)| n == name) {
+        if !macros.iter().any(|(n, ..)| n == name) {
             writeln!(table, "| `{name}!` | Custom | `{name}!(...)` |").unwrap();
         }
     }
@@ -165,14 +159,12 @@ pub(crate) fn compute_macro_table(crates: &CrateMap, cfg: &Config) -> String {
     table.trim_end().to_string()
 }
 
-
 /// Read a template file and substitute variables.
 pub(crate) fn read_and_substitute(path: &Path, vars: &[(String, String)]) -> String {
     let raw = fs::read_to_string(path).expect("failed to read template");
     let (_frontmatter, body) = split_frontmatter(&raw);
     substitute_vars(&body, vars)
 }
-
 
 /// Replace {{var}} placeholders in text.
 pub(crate) fn substitute_vars(text: &str, vars: &[(String, String)]) -> String {
@@ -182,7 +174,6 @@ pub(crate) fn substitute_vars(text: &str, vars: &[(String, String)]) -> String {
     }
     result
 }
-
 
 /// Assemble one `.claude/agents/<name>.md` from an already-substituted
 /// template's frontmatter and body.
@@ -202,7 +193,6 @@ pub(crate) fn render_agent_content(frontmatter: &str, body: &str) -> String {
     format!("---\n{}\n---{sep}{body}", frontmatter.trim())
 }
 
-
 /// Split YAML frontmatter from body content.
 pub(crate) fn split_frontmatter(text: &str) -> (String, String) {
     let trimmed = text.trim_start();
@@ -210,16 +200,15 @@ pub(crate) fn split_frontmatter(text: &str) -> (String, String) {
         return (String::new(), text.to_string());
     }
 
-    let after_first = &trimmed[3..];
+    let after_first = &trimmed[3 ..];
     if let Some(end) = after_first.find("\n---") {
-        let fm = after_first[..end].to_string();
-        let body = after_first[end + 4..].to_string();
+        let fm = after_first[.. end].to_string();
+        let body = after_first[end + 4 ..].to_string();
         (fm, body)
     } else {
         (String::new(), text.to_string())
     }
 }
-
 
 /// Parse apply_to field from frontmatter YAML.
 pub(crate) fn parse_apply_to(frontmatter: &str) -> Vec<String> {
@@ -245,7 +234,7 @@ pub(crate) fn parse_apply_to(frontmatter: &str) -> Vec<String> {
                 patterns.push(value.trim_matches('"').trim_matches('\'').to_string());
             }
         } else if in_list && trimmed.starts_with("- ") {
-            let p = trimmed[2..].trim().trim_matches('"').trim_matches('\'');
+            let p = trimmed[2 ..].trim().trim_matches('"').trim_matches('\'');
             if !p.is_empty() {
                 patterns.push(p.to_string());
             }
@@ -257,20 +246,18 @@ pub(crate) fn parse_apply_to(frontmatter: &str) -> Vec<String> {
     patterns
 }
 
-
 /// Parse a simple key: value field from frontmatter.
 pub(crate) fn parse_field(frontmatter: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}:");
     for line in frontmatter.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with(&prefix) {
-            let value = trimmed[prefix.len()..].trim();
+            let value = trimmed[prefix.len() ..].trim();
             return Some(value.trim_matches('"').trim_matches('\'').to_string());
         }
     }
     None
 }
-
 
 /// Format glob patterns as Claude's paths: YAML list.
 pub(crate) fn format_claude_paths(patterns: &[String]) -> String {
@@ -285,7 +272,6 @@ pub(crate) fn format_claude_paths(patterns: &[String]) -> String {
     fm
 }
 
-
 /// Format glob patterns as Copilot's applyTo: string.
 pub(crate) fn format_copilot_apply_to(patterns: &[String]) -> String {
     if patterns.is_empty() {
@@ -294,7 +280,6 @@ pub(crate) fn format_copilot_apply_to(patterns: &[String]) -> String {
     let joined = patterns.join(",");
     format!("---\napplyTo: \"{joined}\"\n---")
 }
-
 
 /// Read an optional template file, returning empty string if missing.
 pub(crate) fn read_optional_template(path: &Path) -> String {
@@ -306,4 +291,3 @@ pub(crate) fn read_optional_template(path: &Path) -> String {
         String::new()
     }
 }
-

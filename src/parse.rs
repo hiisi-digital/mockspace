@@ -100,7 +100,7 @@ fn txt<'a>(node: Node<'a>, src: &'a str) -> &'a str {
 }
 
 fn is_pub(node: Node, src: &str) -> bool {
-    for i in 0..node.child_count() {
+    for i in 0 .. node.child_count() {
         let child = node.child(i).unwrap();
         if child.kind() == "visibility_modifier" {
             let t = txt(child, src);
@@ -166,27 +166,30 @@ fn parse_items(parser: &mut Parser, source: &str) -> Vec<Item> {
         match node.kind() {
             "struct_item" if is_pub(node, source) => {
                 items.push(parse_struct(node, source, detect_visibility(node, source)));
-            }
+            },
             "trait_item" if is_pub(node, source) => {
                 items.push(parse_trait(node, source, detect_visibility(node, source)));
-            }
+            },
             "enum_item" if is_pub(node, source) => {
                 items.push(parse_enum(node, source, detect_visibility(node, source)));
-            }
+            },
             "function_item" if is_pub(node, source) => {
                 items.push(Item::Fn(FnItem {
-                    sig: parse_fn_sig(node, source),
+                    sig:        parse_fn_sig(node, source),
                     visibility: detect_visibility(node, source),
                 }));
-            }
+            },
             "macro_definition" => {
                 if has_attribute(node, source, "macro_export") {
                     let name = get_name(node, source);
                     if !name.is_empty() {
-                        items.push(Item::Macro(MacroItem { name, is_proc: false }));
+                        items.push(Item::Macro(MacroItem {
+                            name,
+                            is_proc: false,
+                        }));
                     }
                 }
-            }
+            },
             "attribute_item" => {
                 let attr_text = txt(node, source);
                 if attr_text.contains("proc_macro") {
@@ -194,13 +197,16 @@ fn parse_items(parser: &mut Parser, source: &str) -> Vec<Item> {
                         if next.kind() == "function_item" {
                             let name = get_name(next, source);
                             if !name.is_empty() {
-                                items.push(Item::Macro(MacroItem { name, is_proc: true }));
+                                items.push(Item::Macro(MacroItem {
+                                    name,
+                                    is_proc: true,
+                                }));
                             }
                         }
                     }
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -222,13 +228,21 @@ fn parse_struct(node: Node, src: &str, visibility: ApiVisibility) -> Item {
                     .map(|t| txt(t, src).to_string())
                     .unwrap_or_default();
                 if !fname.is_empty() {
-                    fields.push(Field { name: fname, ty: ftype });
+                    fields.push(Field {
+                        name: fname,
+                        ty:   ftype,
+                    });
                 }
             }
         }
     }
 
-    Item::Struct(StructItem { name, generics, fields, visibility })
+    Item::Struct(StructItem {
+        name,
+        generics,
+        fields,
+        visibility,
+    })
 }
 
 fn parse_trait(node: Node, src: &str, visibility: ApiVisibility) -> Item {
@@ -250,13 +264,19 @@ fn parse_trait(node: Node, src: &str, visibility: ApiVisibility) -> Item {
             match child.kind() {
                 "function_item" | "function_signature_item" => {
                     methods.push(parse_fn_sig(child, src));
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
 
-    Item::Trait(TraitItem { name, generics, bounds, methods, visibility })
+    Item::Trait(TraitItem {
+        name,
+        generics,
+        bounds,
+        methods,
+        visibility,
+    })
 }
 
 fn parse_enum(node: Node, src: &str, visibility: ApiVisibility) -> Item {
@@ -287,7 +307,11 @@ fn parse_enum(node: Node, src: &str, visibility: ApiVisibility) -> Item {
         }
     }
 
-    Item::Enum(EnumItem { name, variants, visibility })
+    Item::Enum(EnumItem {
+        name,
+        variants,
+        visibility,
+    })
 }
 
 fn parse_fn_sig(node: Node, src: &str) -> FnSig {
@@ -316,7 +340,12 @@ fn parse_fn_sig(node: Node, src: &str) -> FnSig {
         })
         .unwrap_or_default();
 
-    FnSig { name, generics, params, ret }
+    FnSig {
+        name,
+        generics,
+        params,
+        ret,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -347,7 +376,9 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
             let opens = trimmed.chars().filter(|c| *c == '{').count() as i32;
             let closes = trimmed.chars().filter(|c| *c == '}').count() as i32;
             inside_macro_rules += opens - closes;
-            if inside_macro_rules < 0 { inside_macro_rules = 0; }
+            if inside_macro_rules < 0 {
+                inside_macro_rules = 0;
+            }
             continue;
         }
 
@@ -363,17 +394,17 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
 
         // Find `define_*!(` pattern
         if let Some(macro_start) = trimmed.find("define_") {
-            let after_define = &trimmed[macro_start..];
+            let after_define = &trimmed[macro_start ..];
             // Extract macro name (up to `!`)
             if let Some(bang) = after_define.find('!') {
-                let macro_name = &after_define[..bang];
+                let macro_name = &after_define[.. bang];
                 // Check it looks valid (no spaces in macro name)
                 if macro_name.contains(' ') {
                     continue;
                 }
 
                 // Figure out source crate from path prefix
-                let prefix = &trimmed[..macro_start];
+                let prefix = &trimmed[.. macro_start];
                 let underscore_prefix = format!("{}_", crate_prefix.replace('-', "_"));
                 let source_crate = if prefix.ends_with("::") {
                     // e.g. "<prefix>_signal::" -> "signal"
@@ -388,7 +419,7 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
                 };
 
                 // Extract generated item name (first identifier after `!(`)
-                let after_bang = &after_define[bang + 1..];
+                let after_bang = &after_define[bang + 1 ..];
                 let after_paren = after_bang.trim_start_matches('(');
                 let generated_name: String = after_paren
                     .trim()
@@ -396,7 +427,9 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
                     .take_while(|c| c.is_alphanumeric() || *c == '_')
                     .collect();
 
-                if !generated_name.is_empty() && generated_name.chars().next().unwrap().is_uppercase() {
+                if !generated_name.is_empty()
+                    && generated_name.chars().next().unwrap().is_uppercase()
+                {
                     results.push(MacroGenerated {
                         macro_name: macro_name.to_string(),
                         generated_name,
@@ -430,10 +463,10 @@ ikiuni-renderer-contract = { path = "../ikiuni-renderer-contract" }
 ikiuni-renderer-world = { path = "../ikiuni-renderer-world" }
 "#;
         let deps = extract_deps(toml, "ikiuni-renderer-store", "ikiuni-renderer");
-        assert_eq!(
-            deps,
-            vec!["ikiuni-renderer-contract", "ikiuni-renderer-world"]
-        );
+        assert_eq!(deps, vec![
+            "ikiuni-renderer-contract",
+            "ikiuni-renderer-world"
+        ]);
     }
 
     #[test]

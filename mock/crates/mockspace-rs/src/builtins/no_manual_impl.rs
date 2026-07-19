@@ -40,10 +40,10 @@ impl Default for NoManualImplConfig {
 }
 
 pub struct NoManualImplLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    forbidden: HashSet<String>,
+    forbidden:        HashSet<String>,
 }
 
 impl NoManualImplLint {
@@ -67,12 +67,15 @@ impl Lint for NoManualImplLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_syn_ast(&self) -> bool {
         true
     }
@@ -142,16 +145,15 @@ pub fn instantiate_with(
     let parsed: NoManualImplConfig = if config.is_empty() {
         NoManualImplConfig::default()
     } else {
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("no-manual-impl config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("no-manual-impl config: {e}"),
                 source_location: None,
-            })?
+            }
+        })?
     };
     Ok(Box::new(NoManualImplLint::new(
         name,
@@ -163,11 +165,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, RunSurface};
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::{Gate, RunSurface};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -194,11 +198,11 @@ mod tests {
         let root = PathBuf::from("/tmp");
         let cfg = EmptyCfg;
         let ctx = LintContext {
-            gate: Gate::Commit,
-            severities: GateSeverity::uniform(Severity::Warn),
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   GateSeverity::uniform(Severity::Warn),
+            surface:      RunSurface::Local,
             project_root: &root,
-            config: &cfg,
+            config:       &cfg,
         };
         lint.check_document(&ctx, &doc, &sink).unwrap();
         assert_eq!(sink.into_findings().len(), 1);

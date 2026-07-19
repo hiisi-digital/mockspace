@@ -58,10 +58,10 @@ pub struct DirectiveStyleConsistencyConfig {
 }
 
 pub struct DirectiveStyleConsistencyLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: DirectiveStyleConsistencyConfig,
+    config:           DirectiveStyleConsistencyConfig,
 }
 
 impl DirectiveStyleConsistencyLint {
@@ -84,9 +84,11 @@ impl Lint for DirectiveStyleConsistencyLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
@@ -112,29 +114,29 @@ impl Lint for DirectiveStyleConsistencyLint {
         let policy_msg = match self.config.style {
             Style::CommentsOnly => {
                 "directive uses attribute form, but project policy is `comments-only`"
-            }
+            },
             Style::AttributesWhenAvailable => {
                 "directive uses comment form, but project policy is `attributes-when-available`"
-            }
+            },
             Style::Mixed => unreachable!("mixed short-circuits above"),
         };
 
         for record in project.directive_records() {
             if record.source_form == forbidden {
                 sink.emit(Finding {
-                    lint_name: Cow::Borrowed(self.name),
-                    rule_id: None,
-                    plugin_id: None,
-                    severity: active,
-                    impact: None,
-                    category: None,
-                    message: Cow::Borrowed(policy_msg),
-                    span: record.span.clone(),
-                    hint: None,
-                    help: None,
-                    suggestion: None,
+                    lint_name:     Cow::Borrowed(self.name),
+                    rule_id:       None,
+                    plugin_id:     None,
+                    severity:      active,
+                    impact:        None,
+                    category:      None,
+                    message:       Cow::Borrowed(policy_msg),
+                    span:          record.span.clone(),
+                    hint:          None,
+                    help:          None,
+                    suggestion:    None,
                     related_spans: Vec::new(),
-                    metadata: None,
+                    metadata:      None,
                 });
             }
         }
@@ -150,16 +152,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: DirectiveStyleConsistencyConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("directive-style-consistency config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("directive-style-consistency config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(DirectiveStyleConsistencyLint::new(
         name,
         description,
@@ -170,13 +171,21 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{
+        Directive,
+        DirectiveRecord,
+        Gate,
+        RunSurface,
+        Severity,
+        SourceForm,
+        Span,
+    };
+
     use super::*;
     use crate::finding_sink::VecFindingSink;
     use crate::project::ProjectBuilder;
-    use mockspace_core::lint::{
-        Directive, DirectiveRecord, Gate, RunSurface, Severity, SourceForm, Span,
-    };
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -187,22 +196,22 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
     fn rec(form: SourceForm, lint_name: &str) -> DirectiveRecord {
         DirectiveRecord {
-            directive: Directive::Allow {
+            directive:   Directive::Allow {
                 lint_name: lint_name.to_string(),
-                reason: Some("test".to_string()),
-                tracked: Some("#1".to_string()),
+                reason:    Some("test".to_string()),
+                tracked:   Some("#1".to_string()),
             },
-            span: Span::single_line("a.rs", 1, 0, 30),
+            span:        Span::single_line("a.rs", 1, 0, 30),
             source_form: form,
         }
     }
@@ -218,7 +227,9 @@ mod tests {
             "directive-style-consistency",
             "test",
             GateSeverity::uniform(Severity::Warn),
-            DirectiveStyleConsistencyConfig { style },
+            DirectiveStyleConsistencyConfig {
+                style,
+            },
         );
         let project = project_with_records(records);
         let root = PathBuf::from("/tmp");
@@ -231,74 +242,64 @@ mod tests {
 
     #[test]
     fn comments_only_fires_on_attribute_record() {
-        let findings = run_lint(
-            Style::CommentsOnly,
-            vec![rec(SourceForm::Attribute, "no-bare-numeric")],
-        );
+        let findings = run_lint(Style::CommentsOnly, vec![rec(
+            SourceForm::Attribute,
+            "no-bare-numeric",
+        )]);
         assert_eq!(findings.len(), 1);
         assert!(findings[0].message.contains("comments-only"));
     }
 
     #[test]
     fn comments_only_silent_on_comment_record() {
-        let findings = run_lint(
-            Style::CommentsOnly,
-            vec![rec(SourceForm::Comment, "no-bare-numeric")],
-        );
+        let findings = run_lint(Style::CommentsOnly, vec![rec(
+            SourceForm::Comment,
+            "no-bare-numeric",
+        )]);
         assert!(findings.is_empty());
     }
 
     #[test]
     fn attributes_when_available_fires_on_comment_record() {
-        let findings = run_lint(
-            Style::AttributesWhenAvailable,
-            vec![rec(SourceForm::Comment, "no-bare-numeric")],
-        );
+        let findings = run_lint(Style::AttributesWhenAvailable, vec![rec(
+            SourceForm::Comment,
+            "no-bare-numeric",
+        )]);
         assert_eq!(findings.len(), 1);
         assert!(findings[0].message.contains("attributes-when-available"));
     }
 
     #[test]
     fn attributes_when_available_silent_on_attribute_record() {
-        let findings = run_lint(
-            Style::AttributesWhenAvailable,
-            vec![rec(SourceForm::Attribute, "no-bare-numeric")],
-        );
+        let findings = run_lint(Style::AttributesWhenAvailable, vec![rec(
+            SourceForm::Attribute,
+            "no-bare-numeric",
+        )]);
         assert!(findings.is_empty());
     }
 
     #[test]
     fn mixed_silent_on_both_forms() {
-        let findings = run_lint(
-            Style::Mixed,
-            vec![
-                rec(SourceForm::Comment, "no-bare-numeric"),
-                rec(SourceForm::Attribute, "no-bare-string"),
-            ],
-        );
+        let findings = run_lint(Style::Mixed, vec![
+            rec(SourceForm::Comment, "no-bare-numeric"),
+            rec(SourceForm::Attribute, "no-bare-string"),
+        ]);
         assert!(findings.is_empty());
     }
 
     #[test]
     fn comments_only_fires_per_violating_record() {
-        let findings = run_lint(
-            Style::CommentsOnly,
-            vec![
-                rec(SourceForm::Attribute, "no-bare-numeric"),
-                rec(SourceForm::Comment, "no-bare-string"),
-                rec(SourceForm::Attribute, "no-alloc"),
-            ],
-        );
+        let findings = run_lint(Style::CommentsOnly, vec![
+            rec(SourceForm::Attribute, "no-bare-numeric"),
+            rec(SourceForm::Comment, "no-bare-string"),
+            rec(SourceForm::Attribute, "no-alloc"),
+        ]);
         assert_eq!(findings.len(), 2);
     }
 
     #[test]
     fn empty_records_yields_no_findings() {
-        for style in [
-            Style::CommentsOnly,
-            Style::AttributesWhenAvailable,
-            Style::Mixed,
-        ] {
+        for style in [Style::CommentsOnly, Style::AttributesWhenAvailable, Style::Mixed] {
             let findings = run_lint(style, vec![]);
             assert!(
                 findings.is_empty(),

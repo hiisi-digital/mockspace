@@ -67,17 +67,17 @@ pub enum CrossDocPredicate {
         deprecated_cls_dir: PathBuf,
     },
     MustBeReferencedInDoc {
-        doc_glob: String,
+        doc_glob:    String,
         ref_pattern: String,
     },
 }
 
 pub struct CrossDocSymbolCheckLint {
-    name: &'static str,
-    description: &'static str,
-    default_severity: GateSeverity,
-    config: CrossDocSymbolCheckConfig,
-    compiled_glob: Option<globset::GlobMatcher>,
+    name:               &'static str,
+    description:        &'static str,
+    default_severity:   GateSeverity,
+    config:             CrossDocSymbolCheckConfig,
+    compiled_glob:      Option<globset::GlobMatcher>,
     compiled_ref_regex: Option<Regex>,
 }
 
@@ -89,31 +89,39 @@ impl CrossDocSymbolCheckLint {
         config: CrossDocSymbolCheckConfig,
     ) -> Result<Self, ConfigError> {
         let (compiled_glob, compiled_ref_regex) = match &config.predicate {
-            CrossDocPredicate::SourceMustAppearInDoc { design_doc_glob }
-            | CrossDocPredicate::DocMustReferenceSource { design_doc_glob } => {
+            CrossDocPredicate::SourceMustAppearInDoc {
+                design_doc_glob,
+            }
+            | CrossDocPredicate::DocMustReferenceSource {
+                design_doc_glob,
+            } => {
                 let glob = compile_glob(name, design_doc_glob)?;
                 (Some(glob), None)
-            }
+            },
             CrossDocPredicate::MustBeReferencedInDoc {
                 doc_glob,
                 ref_pattern,
             } => {
                 let glob = compile_glob(name, doc_glob)?;
                 let regex = if let Some(re_pat) = ref_pattern.strip_prefix("re:") {
-                    Some(Regex::new(re_pat).map_err(|e| ConfigError {
-                        lint_name: name.to_string(),
-                        field_path: "predicate.ref_pattern".to_string(),
-                        kind: ConfigErrorKind::UnparseableRegex {
-                            error: e.to_string(),
-                        },
-                        message: format!("ref pattern regex `{re_pat}` did not compile"),
-                        source_location: None,
+                    Some(Regex::new(re_pat).map_err(|e| {
+                        ConfigError {
+                            lint_name:       name.to_string(),
+                            field_path:      "predicate.ref_pattern".to_string(),
+                            kind:            ConfigErrorKind::UnparseableRegex {
+                                error: e.to_string(),
+                            },
+                            message:         format!(
+                                "ref pattern regex `{re_pat}` did not compile"
+                            ),
+                            source_location: None,
+                        }
                     })?)
                 } else {
                     None
                 };
                 (Some(glob), regex)
-            }
+            },
             _ => (None, None),
         };
         Ok(Self {
@@ -133,14 +141,16 @@ fn compile_glob(
 ) -> Result<globset::GlobMatcher, ConfigError> {
     Glob::new(pattern)
         .map(|g| g.compile_matcher())
-        .map_err(|e| ConfigError {
-            lint_name: lint_name.to_string(),
-            field_path: "predicate.glob".to_string(),
-            kind: ConfigErrorKind::UnparseableGlob {
-                error: e.to_string(),
-            },
-            message: format!("glob `{pattern}` did not compile"),
-            source_location: None,
+        .map_err(|e| {
+            ConfigError {
+                lint_name:       lint_name.to_string(),
+                field_path:      "predicate.glob".to_string(),
+                kind:            ConfigErrorKind::UnparseableGlob {
+                    error: e.to_string(),
+                },
+                message:         format!("glob `{pattern}` did not compile"),
+                source_location: None,
+            }
         })
 }
 
@@ -148,12 +158,15 @@ impl Lint for CrossDocSymbolCheckLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_syn_ast(&self) -> bool {
         true
     }
@@ -180,83 +193,92 @@ impl Lint for CrossDocSymbolCheckLint {
                         let crates: Vec<_> =
                             entries.iter().map(|e| e.crate_name.as_str()).collect();
                         sink.emit(Finding {
-                            lint_name: Cow::Borrowed(self.name),
-                            rule_id: Some(Cow::Borrowed("duplicate-across-crates")),
-                            plugin_id: None,
-                            severity: active,
-                            impact: None,
-                            category: None,
-                            message: Cow::Owned(format!(
+                            lint_name:     Cow::Borrowed(self.name),
+                            rule_id:       Some(Cow::Borrowed("duplicate-across-crates")),
+                            plugin_id:     None,
+                            severity:      active,
+                            impact:        None,
+                            category:      None,
+                            message:       Cow::Owned(format!(
                                 "symbol `{name}` is pub in multiple crates: [{}]",
                                 crates.join(", ")
                             )),
-                            span: entries[0].span.clone(),
-                            hint: None,
-                            help: None,
-                            suggestion: None,
+                            span:          entries[0].span.clone(),
+                            hint:          None,
+                            help:          None,
+                            suggestion:    None,
                             related_spans: Vec::new(),
-                            metadata: None,
+                            metadata:      None,
                         });
                     }
                 }
-            }
-            CrossDocPredicate::SourceMustAppearInDoc { .. } => {
+            },
+            CrossDocPredicate::SourceMustAppearInDoc {
+                ..
+            } => {
                 let backticked = collect_backticked_symbols(project, self.compiled_glob.as_ref());
                 for sym in &symbols {
                     if !backticked.contains(&sym.name) {
                         sink.emit(Finding {
-                            lint_name: Cow::Borrowed(self.name),
-                            rule_id: Some(Cow::Borrowed("source-not-in-doc")),
-                            plugin_id: None,
-                            severity: active,
-                            impact: None,
-                            category: None,
-                            message: Cow::Owned(format!(
+                            lint_name:     Cow::Borrowed(self.name),
+                            rule_id:       Some(Cow::Borrowed("source-not-in-doc")),
+                            plugin_id:     None,
+                            severity:      active,
+                            impact:        None,
+                            category:      None,
+                            message:       Cow::Owned(format!(
                                 "pub symbol `{}` does not appear backticked in any design doc",
                                 sym.name
                             )),
-                            span: sym.span.clone(),
-                            hint: None,
-                            help: None,
-                            suggestion: None,
+                            span:          sym.span.clone(),
+                            hint:          None,
+                            help:          None,
+                            suggestion:    None,
                             related_spans: Vec::new(),
-                            metadata: None,
+                            metadata:      None,
                         });
                     }
                 }
-            }
-            CrossDocPredicate::DocMustReferenceSource { .. } => {
+            },
+            CrossDocPredicate::DocMustReferenceSource {
+                ..
+            } => {
                 let source_names: HashSet<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
                 let backticked_with_loc =
                     collect_backticked_symbols_with_loc(project, self.compiled_glob.as_ref());
                 for (name, (path, line)) in backticked_with_loc {
                     if !source_names.contains(name.as_str()) {
                         sink.emit(Finding {
-                            lint_name: Cow::Borrowed(self.name),
-                            rule_id: Some(Cow::Borrowed("doc-claim-missing-source")),
-                            plugin_id: None,
-                            severity: active,
-                            impact: None,
-                            category: None,
-                            message: Cow::Owned(format!(
+                            lint_name:     Cow::Borrowed(self.name),
+                            rule_id:       Some(Cow::Borrowed("doc-claim-missing-source")),
+                            plugin_id:     None,
+                            severity:      active,
+                            impact:        None,
+                            category:      None,
+                            message:       Cow::Owned(format!(
                                 "doc backticks `{name}` but no matching pub item exists in source"
                             )),
-                            span: Span::single_line(&path, line, 1, name.len() as u32),
-                            hint: None,
-                            help: None,
-                            suggestion: None,
+                            span:          Span::single_line(&path, line, 1, name.len() as u32),
+                            hint:          None,
+                            help:          None,
+                            suggestion:    None,
                             related_spans: Vec::new(),
-                            metadata: None,
+                            metadata:      None,
                         });
                     }
                 }
-            }
-            CrossDocPredicate::MustMatchDeprecationEntry { deprecated_cls_dir } => {
+            },
+            CrossDocPredicate::MustMatchDeprecationEntry {
+                deprecated_cls_dir,
+            } => {
                 let _ = deprecated_cls_dir;
                 // Future hook: walk deprecated CLs in this dir, compare
                 // their listed symbols against source. Stub today.
-            }
-            CrossDocPredicate::MustBeReferencedInDoc { ref_pattern, .. } => {
+            },
+            CrossDocPredicate::MustBeReferencedInDoc {
+                ref_pattern,
+                ..
+            } => {
                 let mut doc_contents = String::new();
                 for doc in project.documents() {
                     if !is_doc_language(doc.language()) {
@@ -299,7 +321,7 @@ impl Lint for CrossDocSymbolCheckLint {
                         });
                     }
                 }
-            }
+            },
         }
         Ok(())
     }
@@ -307,9 +329,9 @@ impl Lint for CrossDocSymbolCheckLint {
 
 #[derive(Debug, Clone)]
 struct SymbolEntry {
-    name: String,
+    name:       String,
     crate_name: String,
-    span: Span,
+    span:       Span,
 }
 
 fn collect_source_symbols(
@@ -346,41 +368,55 @@ fn collect_source_symbols(
 
 fn item_kind_info(item: &syn::Item) -> Option<(String, SymbolKind, bool)> {
     match item {
-        syn::Item::Fn(it) => Some((
-            it.sig.ident.to_string(),
-            SymbolKind::Fn,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Struct(it) => Some((
-            it.ident.to_string(),
-            SymbolKind::Type,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Enum(it) => Some((
-            it.ident.to_string(),
-            SymbolKind::Type,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Type(it) => Some((
-            it.ident.to_string(),
-            SymbolKind::Type,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Trait(it) => Some((
-            it.ident.to_string(),
-            SymbolKind::Trait,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Const(it) => Some((
-            it.ident.to_string(),
-            SymbolKind::Const,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Mod(it) => Some((
-            it.ident.to_string(),
-            SymbolKind::Mod,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
+        syn::Item::Fn(it) => {
+            Some((
+                it.sig.ident.to_string(),
+                SymbolKind::Fn,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Struct(it) => {
+            Some((
+                it.ident.to_string(),
+                SymbolKind::Type,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Enum(it) => {
+            Some((
+                it.ident.to_string(),
+                SymbolKind::Type,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Type(it) => {
+            Some((
+                it.ident.to_string(),
+                SymbolKind::Type,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Trait(it) => {
+            Some((
+                it.ident.to_string(),
+                SymbolKind::Trait,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Const(it) => {
+            Some((
+                it.ident.to_string(),
+                SymbolKind::Const,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Mod(it) => {
+            Some((
+                it.ident.to_string(),
+                SymbolKind::Mod,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
         _ => None,
     }
 }
@@ -452,6 +488,7 @@ struct BacktickRegex;
 
 impl std::ops::Deref for BacktickRegex {
     type Target = Regex;
+
     fn deref(&self) -> &Self::Target {
         &BACKTICK_REGEX_INIT
     }
@@ -465,16 +502,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: CrossDocSymbolCheckConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("cross-doc-symbol config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("cross-doc-symbol config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(CrossDocSymbolCheckLint::new(
         name,
         description,
@@ -485,12 +521,14 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, RunSurface, Severity};
+
     use super::*;
     use crate::document::MockspaceDocument;
     use crate::finding_sink::VecFindingSink;
     use crate::project::ProjectBuilder;
-    use mockspace_core::lint::{Gate, RunSurface, Severity};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -501,11 +539,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -517,8 +555,8 @@ mod tests {
             GateSeverity::uniform(Severity::Warn),
             CrossDocSymbolCheckConfig {
                 symbol_kind: SymbolKind::Fn,
-                visibility: Visibility::Public,
-                predicate: CrossDocPredicate::NoDuplicatesAcrossCrates,
+                visibility:  Visibility::Public,
+                predicate:   CrossDocPredicate::NoDuplicatesAcrossCrates,
             },
         )
         .unwrap();
@@ -555,8 +593,8 @@ mod tests {
             GateSeverity::uniform(Severity::Warn),
             CrossDocSymbolCheckConfig {
                 symbol_kind: SymbolKind::Fn,
-                visibility: Visibility::Public,
-                predicate: CrossDocPredicate::DocMustReferenceSource {
+                visibility:  Visibility::Public,
+                predicate:   CrossDocPredicate::DocMustReferenceSource {
                     design_doc_glob: "**/*.md".to_string(),
                 },
             },

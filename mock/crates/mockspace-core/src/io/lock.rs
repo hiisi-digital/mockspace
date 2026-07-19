@@ -38,44 +38,63 @@ pub enum LockError {
     /// The repository's `.git/` directory was not found relative to
     /// the given workspace root. `acquire` only succeeds inside a
     /// real git repository.
-    GitDirMissing { workspace_root: PathBuf },
+    GitDirMissing {
+        workspace_root: PathBuf,
+    },
     /// `try_lock_exclusive` returned `WouldBlock` and the caller
     /// requested non-blocking mode. Carries the previous holder's
     /// payload if it could be read from the lock file body.
-    AlreadyHeld { previous: Option<LockHolder> },
+    AlreadyHeld {
+        previous: Option<LockHolder>,
+    },
     /// A filesystem error occurred opening or writing the lock file.
     Io {
         during: &'static str,
-        path: PathBuf,
-        error: io::Error,
+        path:   PathBuf,
+        error:  io::Error,
     },
 }
 
 impl core::fmt::Display for LockError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::GitDirMissing { workspace_root } => write!(
-                f,
-                "no .git directory under workspace root `{}`",
-                workspace_root.display()
-            ),
-            Self::AlreadyHeld { previous: Some(h) } => write!(
-                f,
-                "transition lock already held by host={} pid={} at={}",
-                h.hostname, h.pid, h.acquired_at
-            ),
-            Self::AlreadyHeld { previous: None } => {
-                write!(f, "transition lock already held (holder payload unreadable)")
-            }
+            Self::GitDirMissing {
+                workspace_root,
+            } => {
+                write!(
+                    f,
+                    "no .git directory under workspace root `{}`",
+                    workspace_root.display()
+                )
+            },
+            Self::AlreadyHeld {
+                previous: Some(h),
+            } => {
+                write!(
+                    f,
+                    "transition lock already held by host={} pid={} at={}",
+                    h.hostname, h.pid, h.acquired_at
+                )
+            },
+            Self::AlreadyHeld {
+                previous: None,
+            } => {
+                write!(
+                    f,
+                    "transition lock already held (holder payload unreadable)"
+                )
+            },
             Self::Io {
                 during,
                 path,
                 error,
-            } => write!(
-                f,
-                "lock-file IO failed during {during} on `{}`: {error}",
-                path.display()
-            ),
+            } => {
+                write!(
+                    f,
+                    "lock-file IO failed during {during} on `{}`: {error}",
+                    path.display()
+                )
+            },
         }
     }
 }
@@ -91,8 +110,8 @@ impl std::error::Error for LockError {}
 /// cycles for diagnostic purposes; we only overwrite it.
 #[derive(Debug)]
 pub struct FlockTransitionLock {
-    file: File,
-    holder: LockHolder,
+    file:      File,
+    holder:    LockHolder,
     lock_path: PathBuf,
 }
 
@@ -118,10 +137,12 @@ impl FlockTransitionLock {
             });
         }
         let mockspace_dir = git_dir.join("mockspace");
-        std::fs::create_dir_all(&mockspace_dir).map_err(|error| LockError::Io {
-            during: "create-dir",
-            path: mockspace_dir.clone(),
-            error,
+        std::fs::create_dir_all(&mockspace_dir).map_err(|error| {
+            LockError::Io {
+                during: "create-dir",
+                path: mockspace_dir.clone(),
+                error,
+            }
         })?;
         let lock_path = mockspace_dir.join(".lock");
 
@@ -131,29 +152,35 @@ impl FlockTransitionLock {
             .create(true)
             .truncate(false)
             .open(&lock_path)
-            .map_err(|error| LockError::Io {
-                during: "open",
-                path: lock_path.clone(),
-                error,
+            .map_err(|error| {
+                LockError::Io {
+                    during: "open",
+                    path: lock_path.clone(),
+                    error,
+                }
             })?;
 
         if non_blocking {
             if let Err(e) = file.try_lock_exclusive() {
                 if e.kind() == io::ErrorKind::WouldBlock {
                     let previous = read_holder(&lock_path).ok();
-                    return Err(LockError::AlreadyHeld { previous });
+                    return Err(LockError::AlreadyHeld {
+                        previous,
+                    });
                 }
                 return Err(LockError::Io {
                     during: "try-lock",
-                    path: lock_path,
-                    error: e,
+                    path:   lock_path,
+                    error:  e,
                 });
             }
         } else {
-            file.lock_exclusive().map_err(|error| LockError::Io {
-                during: "lock",
-                path: lock_path.clone(),
-                error,
+            file.lock_exclusive().map_err(|error| {
+                LockError::Io {
+                    during: "lock",
+                    path: lock_path.clone(),
+                    error,
+                }
             })?;
         }
 
@@ -163,27 +190,33 @@ impl FlockTransitionLock {
         let holder = current_holder();
         let body = format_holder(&holder);
         // Drop the read pointer; rewrite from offset 0.
-        let mut writer = file.try_clone().map_err(|error| LockError::Io {
-            during: "clone",
-            path: lock_path.clone(),
-            error,
+        let mut writer = file.try_clone().map_err(|error| {
+            LockError::Io {
+                during: "clone",
+                path: lock_path.clone(),
+                error,
+            }
         })?;
-        writer.set_len(0).map_err(|error| LockError::Io {
-            during: "truncate",
-            path: lock_path.clone(),
-            error,
+        writer.set_len(0).map_err(|error| {
+            LockError::Io {
+                during: "truncate",
+                path: lock_path.clone(),
+                error,
+            }
         })?;
-        writer
-            .write_all(body.as_bytes())
-            .map_err(|error| LockError::Io {
+        writer.write_all(body.as_bytes()).map_err(|error| {
+            LockError::Io {
                 during: "write-holder",
                 path: lock_path.clone(),
                 error,
-            })?;
-        writer.flush().map_err(|error| LockError::Io {
-            during: "flush",
-            path: lock_path.clone(),
-            error,
+            }
+        })?;
+        writer.flush().map_err(|error| {
+            LockError::Io {
+                during: "flush",
+                path: lock_path.clone(),
+                error,
+            }
         })?;
 
         Ok(Self {
@@ -253,8 +286,8 @@ fn read_holder(path: &Path) -> Result<LockHolder, io::Error> {
         }
     }
     Ok(LockHolder {
-        hostname: hostname.unwrap_or_else(|| "unknown".to_owned()),
-        pid: pid.unwrap_or(0),
+        hostname:    hostname.unwrap_or_else(|| "unknown".to_owned()),
+        pid:         pid.unwrap_or(0),
         acquired_at: acquired_at.unwrap_or_else(|| "unknown".to_owned()),
     })
 }
@@ -272,18 +305,16 @@ fn hostname_lookup() -> Option<String> {
     }
     let output = std::process::Command::new("hostname").output().ok()?;
     let trimmed = String::from_utf8(output.stdout).ok()?.trim().to_owned();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
+    if trimmed.is_empty() { None } else { Some(trimmed) }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::process::Command;
+
     use tempfile::TempDir;
+
+    use super::*;
 
     fn init_repo(dir: &Path) {
         let out = Command::new("git")
@@ -320,7 +351,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         // No `git init`; no .git/ directory.
         let err = FlockTransitionLock::acquire(dir.path()).unwrap_err();
-        assert!(matches!(err, LockError::GitDirMissing { .. }), "got {err:?}");
+        assert!(
+            matches!(err, LockError::GitDirMissing { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -331,12 +365,14 @@ mod tests {
 
         let err = FlockTransitionLock::try_acquire(dir.path()).unwrap_err();
         match err {
-            LockError::AlreadyHeld { previous: Some(h) } => {
+            LockError::AlreadyHeld {
+                previous: Some(h),
+            } => {
                 // The reported previous holder should match the
                 // first guard's payload (same PID, same hostname).
                 assert_eq!(h.pid, first.holder().pid);
                 assert_eq!(h.hostname, first.holder().hostname);
-            }
+            },
             other => panic!("expected AlreadyHeld with previous, got {other:?}"),
         }
     }
@@ -352,5 +388,4 @@ mod tests {
         let second = FlockTransitionLock::try_acquire(dir.path()).expect("second acquire");
         assert!(second.lock_path().exists());
     }
-
 }

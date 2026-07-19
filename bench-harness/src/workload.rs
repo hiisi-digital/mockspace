@@ -43,9 +43,9 @@ pub trait StageStrategy {
 
 impl StageStrategy for Shuffle {
     fn order(n: usize, seed: u64) -> Vec<usize> {
-        let mut indices: Vec<usize> = (0..n).collect();
+        let mut indices: Vec<usize> = (0 .. n).collect();
         let mut h = seed;
-        for i in (1..n).rev() {
+        for i in (1 .. n).rev() {
             h = mix(h);
             let j = (h as usize) % (i + 1);
             indices.swap(i, j);
@@ -56,7 +56,7 @@ impl StageStrategy for Shuffle {
 
 impl StageStrategy for Chain {
     fn order(n: usize, _seed: u64) -> Vec<usize> {
-        (0..n).collect()
+        (0 .. n).collect()
     }
 }
 
@@ -77,7 +77,7 @@ pub struct AllocHandle(pub u32);
 /// across stages within a program run. Workload items can read/write
 /// shared state (e.g. algorithm output from a previous stage).
 pub struct WorkloadCtx {
-    slots: HashMap<AllocHandle, Vec<u8>>,
+    slots:   HashMap<AllocHandle, Vec<u8>>,
     next_id: u32,
 }
 
@@ -89,7 +89,10 @@ impl Default for WorkloadCtx {
 
 impl WorkloadCtx {
     pub fn new() -> Self {
-        WorkloadCtx { slots: HashMap::new(), next_id: 0 }
+        WorkloadCtx {
+            slots:   HashMap::new(),
+            next_id: 0,
+        }
     }
 
     /// Allocate a persistent slot of `size` bytes. Returns a handle.
@@ -118,7 +121,10 @@ impl WorkloadCtx {
     /// Get a mutable reference to the slot's data. Same contract as
     /// [`Self::get`].
     pub fn get_mut(&mut self, handle: AllocHandle) -> &mut [u8] {
-        self.slots.get_mut(&handle).map(|v| v.as_mut_slice()).unwrap_or(&mut [])
+        self.slots
+            .get_mut(&handle)
+            .map(|v| v.as_mut_slice())
+            .unwrap_or(&mut [])
     }
 
     /// Reset all slots to zero (for fresh program runs).
@@ -138,18 +144,28 @@ pub enum WorkloadItemKind {
     /// Marker for an algorithm call point. Execution handled by the harness.
     AlgoCall,
     /// Dependent multiply-add chain. Pure ALU, 1 register working set.
-    ScalarWork { n: u32 },
+    ScalarWork {
+        n: u32,
+    },
     /// Pointer chase through shuffled cache-line nodes. Memory latency.
-    GraphWork { n: u32 },
+    GraphWork {
+        n: u32,
+    },
     /// Data-dependent branches (~50% taken). Branch predictor pressure.
-    BranchWork { n: u32 },
+    BranchWork {
+        n: u32,
+    },
     /// Sequential scan + second pass. L1 eviction.
-    HeavyMemory { u64_count: usize },
+    HeavyMemory {
+        u64_count: usize,
+    },
     /// Single comparison. Negligible cost. Minimal gap.
     LightScalar,
     /// Domain-specific work item with a captured function pointer.
     /// Used for benchmark-specific surrounding work (e.g. RCM pipeline items).
-    DomainWork { run_fn: fn(u64, &mut u64) },
+    DomainWork {
+        run_fn: fn(u64, &mut u64),
+    },
 }
 
 impl WorkloadItemKind {
@@ -159,35 +175,43 @@ impl WorkloadItemKind {
 
     pub fn run(&self, seed: u64, accum: &mut u64) {
         match self {
-            WorkloadItemKind::AlgoCall => {}
-            WorkloadItemKind::ScalarWork { n } => {
+            WorkloadItemKind::AlgoCall => {},
+            WorkloadItemKind::ScalarWork {
+                n,
+            } => {
                 let mut x = seed;
-                for _ in 0..*n {
-                    x = x.wrapping_mul(0x517cc1b727220a95).wrapping_add(0x6c62272e07bb0142);
+                for _ in 0 .. *n {
+                    x = x
+                        .wrapping_mul(0x517CC1B727220A95)
+                        .wrapping_add(0x6C62272E07BB0142);
                 }
                 *accum = accum.wrapping_add(x);
-            }
-            WorkloadItemKind::GraphWork { n } => {
+            },
+            WorkloadItemKind::GraphWork {
+                n,
+            } => {
                 let n = *n as usize;
-                let mut chain: Vec<usize> = (0..n).collect();
+                let mut chain: Vec<usize> = (0 .. n).collect();
                 let mut h = seed;
-                for i in (1..n).rev() {
+                for i in (1 .. n).rev() {
                     h = mix(h);
                     let j = (h as usize) % (i + 1);
                     chain.swap(i, j);
                 }
                 let mut idx = 0;
                 let mut acc = 0u64;
-                for _ in 0..n {
+                for _ in 0 .. n {
                     idx = chain[idx % n];
                     acc = acc.wrapping_add(idx as u64);
                 }
                 *accum = accum.wrapping_add(acc);
-            }
-            WorkloadItemKind::BranchWork { n } => {
+            },
+            WorkloadItemKind::BranchWork {
+                n,
+            } => {
                 let mut h = seed;
                 let mut acc = 0u64;
-                for _ in 0..*n {
+                for _ in 0 .. *n {
                     h = mix(h);
                     if h & 1 == 0 {
                         acc = acc.wrapping_add(h);
@@ -196,42 +220,77 @@ impl WorkloadItemKind {
                     }
                 }
                 *accum = accum.wrapping_add(acc);
-            }
-            WorkloadItemKind::HeavyMemory { u64_count } => {
+            },
+            WorkloadItemKind::HeavyMemory {
+                u64_count,
+            } => {
                 let n = (*u64_count).min(1024);
                 let mut buf = [0u64; 1024];
                 let mut h = seed;
-                for i in 0..n { h = mix(h); buf[i] = h; }
+                for i in 0 .. n {
+                    h = mix(h);
+                    buf[i] = h;
+                }
                 let mut acc = 0u64;
-                for i in 0..n { acc = acc.wrapping_add(buf[i]); }
-                for i in 0..n { acc = acc.wrapping_add(buf[i].wrapping_mul(3)); }
+                for i in 0 .. n {
+                    acc = acc.wrapping_add(buf[i]);
+                }
+                for i in 0 .. n {
+                    acc = acc.wrapping_add(buf[i].wrapping_mul(3));
+                }
                 *accum = accum.wrapping_add(acc);
-            }
+            },
             WorkloadItemKind::LightScalar => {
                 *accum = mix(*accum ^ seed);
-            }
-            WorkloadItemKind::DomainWork { run_fn } => {
+            },
+            WorkloadItemKind::DomainWork {
+                run_fn,
+            } => {
                 run_fn(seed, accum);
-            }
+            },
         }
     }
 }
 
 // ── Convenience constructors ──
 
-pub fn algo_call() -> WorkloadItemKind { WorkloadItemKind::AlgoCall }
-pub fn scalar_work(n: u32) -> WorkloadItemKind { WorkloadItemKind::ScalarWork { n } }
-pub fn graph_work(n: u32) -> WorkloadItemKind { WorkloadItemKind::GraphWork { n } }
-pub fn branch_work(n: u32) -> WorkloadItemKind { WorkloadItemKind::BranchWork { n } }
-pub fn heavy_memory(u64_count: usize) -> WorkloadItemKind { WorkloadItemKind::HeavyMemory { u64_count } }
-pub fn light_scalar() -> WorkloadItemKind { WorkloadItemKind::LightScalar }
-pub fn domain_work(run_fn: fn(u64, &mut u64)) -> WorkloadItemKind { WorkloadItemKind::DomainWork { run_fn } }
+pub fn algo_call() -> WorkloadItemKind {
+    WorkloadItemKind::AlgoCall
+}
+pub fn scalar_work(n: u32) -> WorkloadItemKind {
+    WorkloadItemKind::ScalarWork {
+        n,
+    }
+}
+pub fn graph_work(n: u32) -> WorkloadItemKind {
+    WorkloadItemKind::GraphWork {
+        n,
+    }
+}
+pub fn branch_work(n: u32) -> WorkloadItemKind {
+    WorkloadItemKind::BranchWork {
+        n,
+    }
+}
+pub fn heavy_memory(u64_count: usize) -> WorkloadItemKind {
+    WorkloadItemKind::HeavyMemory {
+        u64_count,
+    }
+}
+pub fn light_scalar() -> WorkloadItemKind {
+    WorkloadItemKind::LightScalar
+}
+pub fn domain_work(run_fn: fn(u64, &mut u64)) -> WorkloadItemKind {
+    WorkloadItemKind::DomainWork {
+        run_fn,
+    }
+}
 
 // ── Stage ──
 
 /// A resolved stage: items + strategy order function.
 pub struct Stage {
-    pub items: Vec<WorkloadItemKind>,
+    pub items:    Vec<WorkloadItemKind>,
     pub order_fn: fn(usize, u64) -> Vec<usize>,
 }
 
@@ -239,20 +298,20 @@ pub struct Stage {
 
 /// A sequence of stages forming one mini-program.
 pub struct Program {
-    pub name: String,
+    pub name:   String,
     pub stages: Vec<Stage>,
 }
 
 /// Builder for a single program.
 pub struct ProgramBuilder {
-    name: String,
+    name:   String,
     stages: Vec<Stage>,
 }
 
 impl ProgramBuilder {
     pub fn new(name: &str) -> Self {
         ProgramBuilder {
-            name: name.to_string(),
+            name:   name.to_string(),
             stages: Vec::new(),
         }
     }
@@ -277,7 +336,7 @@ impl ProgramBuilder {
 
     pub fn build(self) -> Program {
         Program {
-            name: self.name,
+            name:   self.name,
             stages: self.stages,
         }
     }
@@ -298,7 +357,9 @@ impl Default for Workload {
 
 impl Workload {
     pub fn new() -> Self {
-        Workload { programs: Vec::new() }
+        Workload {
+            programs: Vec::new(),
+        }
     }
 
     pub fn program(&mut self, name: &str, f: impl FnOnce(&mut ProgramBuilder)) -> &mut Self {
@@ -315,10 +376,8 @@ impl Workload {
     /// structural changes (add/remove programs/stages/items) move the
     /// hash.
     pub fn structure_hash(&self) -> u64 {
-        let mut h: u64 = 0xcbf29ce484222325;
-        let mix_in = |h: u64, v: u64| -> u64 {
-            (h ^ v).wrapping_mul(0x100000001b3)
-        };
+        let mut h: u64 = 0xCBF29CE484222325;
+        let mix_in = |h: u64, v: u64| -> u64 { (h ^ v).wrapping_mul(0x100000001B3) };
         h = mix_in(h, self.programs.len() as u64);
         for prog in &self.programs {
             h = mix_in(h, prog.stages.len() as u64);
@@ -328,12 +387,22 @@ impl Workload {
                     // structural tag only, not parameter values
                     let tag: u64 = match item {
                         WorkloadItemKind::AlgoCall => 0,
-                        WorkloadItemKind::ScalarWork { .. } => 1,
-                        WorkloadItemKind::GraphWork { .. } => 2,
-                        WorkloadItemKind::BranchWork { .. } => 3,
-                        WorkloadItemKind::HeavyMemory { .. } => 4,
+                        WorkloadItemKind::ScalarWork {
+                            ..
+                        } => 1,
+                        WorkloadItemKind::GraphWork {
+                            ..
+                        } => 2,
+                        WorkloadItemKind::BranchWork {
+                            ..
+                        } => 3,
+                        WorkloadItemKind::HeavyMemory {
+                            ..
+                        } => 4,
                         WorkloadItemKind::LightScalar => 5,
-                        WorkloadItemKind::DomainWork { .. } => 6,
+                        WorkloadItemKind::DomainWork {
+                            ..
+                        } => 6,
                     };
                     h = mix_in(h, tag);
                 }

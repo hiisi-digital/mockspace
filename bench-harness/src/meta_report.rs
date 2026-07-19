@@ -8,11 +8,11 @@ use std::collections::BTreeMap;
 
 /// A summarised result for one variant in one benchmark.
 pub struct VariantResult {
-    pub variant: String,
-    pub benchmark: String,
-    pub n: usize,
-    pub warm_median_ns: f64,
-    pub cold_median_ns: f64,
+    pub variant:              String,
+    pub benchmark:            String,
+    pub n:                    usize,
+    pub warm_median_ns:       f64,
+    pub cold_median_ns:       f64,
     pub warm_pct_vs_baseline: f64,
     pub cold_pct_vs_baseline: f64,
 }
@@ -104,7 +104,12 @@ pub fn generate(csv_paths: &[&str], baseline_name: Option<&str>) -> String {
             .collect();
         md.push_str(&format!(
             "| {} | {} | {:+.1}% | {:+.1}% | {:+.1}% | {} |\n",
-            family, n, mean, min, max, benchmarks.join(", ")
+            family,
+            n,
+            mean,
+            min,
+            max,
+            benchmarks.join(", ")
         ));
     }
 
@@ -159,7 +164,7 @@ pub fn generate(csv_paths: &[&str], baseline_name: Option<&str>) -> String {
             match (min_n_val, max_n_val) {
                 (Some(&lo), Some(&hi)) if lo > 0.0 => {
                     md.push_str(&format!(" | {:.1}x", hi / lo));
-                }
+                },
                 _ => md.push_str(" | -"),
             }
             md.push_str(" |\n");

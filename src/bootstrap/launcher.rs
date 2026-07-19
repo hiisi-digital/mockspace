@@ -15,11 +15,9 @@ pub(crate) fn cargo_bin_dir_from(
         .map(|c| c.join("bin"))
 }
 
-
 pub(crate) fn cargo_bin_dir() -> Option<PathBuf> {
     cargo_bin_dir_from(env::var_os("CARGO_HOME"), env::var_os("HOME"))
 }
-
 
 /// The launcher script installed as both `mock` (short form) and
 /// `cargo-mock` (cargo's external-subcommand convention). Generic across
@@ -73,7 +71,6 @@ exec cargo run --quiet --manifest-path "$proxy" -- --dir "$root/$mockdir" "$@"
     )
 }
 
-
 /// Install the launcher into the cargo bin dir as `mock` and `cargo-mock`,
 /// when that dir exists. Idempotent by fingerprint, executable. Skips
 /// silently when there is no cargo bin dir; the `.cargo/config.toml` alias
@@ -108,7 +105,10 @@ pub(crate) fn ensure_launcher(actions: &mut Vec<String>) {
                 }
             } else {
                 // Unreadable (likely a real compiled binary): do not touch.
-                actions.push(format!("not overwriting existing binary {}", path.display()));
+                actions.push(format!(
+                    "not overwriting existing binary {}",
+                    path.display()
+                ));
                 continue;
             }
         }
@@ -125,4 +125,3 @@ pub(crate) fn ensure_launcher(actions: &mut Vec<String>) {
         actions.push(format!("installed launcher {}", path.display()));
     }
 }
-

@@ -31,7 +31,9 @@ pub enum RepoError {
     /// `gix::discover` could not locate a `.git` directory walking up
     /// from the given path. The path may be outside any repo, or the
     /// caller may be running from a tempdir without `git init`.
-    NotFound { searched_from: PathBuf },
+    NotFound {
+        searched_from: PathBuf,
+    },
     /// `gix::open` / `gix::discover` failed for a non-not-found reason
     /// (permissions, malformed repo, etc.).
     Open(Box<gix::discover::Error>),
@@ -40,11 +42,15 @@ pub enum RepoError {
 impl core::fmt::Display for RepoError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::NotFound { searched_from } => write!(
-                f,
-                "no git repository found walking up from `{}`",
-                searched_from.display()
-            ),
+            Self::NotFound {
+                searched_from,
+            } => {
+                write!(
+                    f,
+                    "no git repository found walking up from `{}`",
+                    searched_from.display()
+                )
+            },
             Self::Open(e) => write!(f, "failed to open repository: {e}"),
         }
     }
@@ -60,7 +66,11 @@ impl RepoHandle {
     /// workspace root, a subdirectory, or anywhere under the repo.
     pub fn open(path: &Path) -> Result<Self, RepoError> {
         match gix::discover(path) {
-            Ok(repo) => Ok(Self { repo }),
+            Ok(repo) => {
+                Ok(Self {
+                    repo,
+                })
+            },
             Err(e) => {
                 // gix::discover::Error does not expose a structural
                 // "not found" discriminant; match on the Display
@@ -76,7 +86,7 @@ impl RepoHandle {
                 } else {
                     Err(RepoError::Open(Box::new(e)))
                 }
-            }
+            },
         }
     }
 
@@ -92,9 +102,11 @@ impl RepoHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::process::Command;
+
     use tempfile::TempDir;
+
+    use super::*;
 
     fn init_repo(dir: &Path) {
         let status = Command::new("git")
@@ -152,13 +164,15 @@ mod tests {
         // by accepting either NotFound (the expected branch on a
         // clean runner) or skipping (if a parent repo exists).
         match RepoHandle::open(dir.path()) {
-            Err(RepoError::NotFound { .. }) => {}
+            Err(RepoError::NotFound {
+                ..
+            }) => {},
             Ok(_) => {
                 // Host has a parent .git that swallowed the test
                 // path. Skip rather than fail; the NotFound branch
                 // is exercised on any normal dev/CI environment.
                 eprintln!("skipped: tempdir was inside a parent git repo");
-            }
+            },
             Err(other) => panic!("expected NotFound, got {other:?}"),
         }
     }

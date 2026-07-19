@@ -28,23 +28,17 @@
 pub mod dep_graph;
 
 use std::collections::BTreeMap;
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
+use mockspace_template::{RenderError, Template, TemplateEnv, render_atomic, write_atomic};
 use serde::Serialize;
-
-use mockspace_template::{render_atomic, write_atomic, RenderError, Template, TemplateEnv};
 
 use crate::project::{CrateInfo, MockspaceProject};
 
 /// Mock-root templates. Order is the on-disk write order; output
 /// filenames drop the trailing `.tmpl`.
-const MOCK_ROOT_TEMPLATES: &[&str] = &[
-    "DESIGN.md.tmpl",
-    "PRINCIPLES.md.tmpl",
-    "WORKFLOW.md.tmpl",
-];
+const MOCK_ROOT_TEMPLATES: &[&str] = &["DESIGN.md.tmpl", "PRINCIPLES.md.tmpl", "WORKFLOW.md.tmpl"];
 
 /// Per-crate "leaf" templates that ship to public docs. Each is
 /// optional: a crate without one of these silently skips it.
@@ -64,7 +58,7 @@ pub struct RegenerateReport {
 /// Outcome for a single rendered file.
 #[derive(Debug)]
 pub struct RenderedFile {
-    pub path: PathBuf,
+    pub path:  PathBuf,
     pub state: WriteState,
 }
 
@@ -110,7 +104,7 @@ pub enum RegenerateError {
     /// Filesystem operation failed. `path` is the file or directory the
     /// operation targeted; `source` is the underlying io error.
     Io {
-        path: PathBuf,
+        path:   PathBuf,
         source: io::Error,
     },
     /// Expected template missing at the mock root.
@@ -122,7 +116,10 @@ pub enum RegenerateError {
 
 impl RegenerateError {
     fn io(path: impl Into<PathBuf>, source: io::Error) -> Self {
-        Self::Io { path: path.into(), source }
+        Self::Io {
+            path: path.into(),
+            source,
+        }
     }
 }
 
@@ -135,9 +132,12 @@ impl From<RenderError> for RegenerateError {
 impl std::fmt::Display for RegenerateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Io { path, source } => {
+            Self::Io {
+                path,
+                source,
+            } => {
                 write!(f, "io error on {}: {source}", path.display())
-            }
+            },
             Self::TemplateMissing(p) => write!(f, "template missing: {}", p.display()),
             Self::Render(e) => write!(f, "render error: {e}"),
         }
@@ -147,7 +147,10 @@ impl std::fmt::Display for RegenerateError {
 impl std::error::Error for RegenerateError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io { source, .. } => Some(source),
+            Self::Io {
+                source,
+                ..
+            } => Some(source),
             Self::TemplateMissing(_) => None,
             Self::Render(e) => Some(e),
         }
@@ -180,8 +183,7 @@ pub fn regenerate(
     let context = build_context(project)?;
     let env = build_env(&mock_root)?;
 
-    fs::create_dir_all(out_dir)
-        .map_err(|e| RegenerateError::io(out_dir, e))?;
+    fs::create_dir_all(out_dir).map_err(|e| RegenerateError::io(out_dir, e))?;
 
     let mut files = Vec::with_capacity(MOCK_ROOT_TEMPLATES.len());
     // Mock-root templates go through fragment injection (see
@@ -195,7 +197,10 @@ pub fn regenerate(
         let rendered = template.render(&context)?;
         let injected = inject_mock_root_fragments(tmpl_name, rendered);
         let state = write_raw_with_state(&injected, &dest)?;
-        files.push(RenderedFile { path: dest, state });
+        files.push(RenderedFile {
+            path: dest,
+            state,
+        });
     }
 
     regenerate_per_crate(project, out_dir, &mut files)?;
@@ -203,7 +208,9 @@ pub fn regenerate(
     regenerate_benches(project, out_dir, &mut files)?;
     regenerate_sketches(project, out_dir, &mut files)?;
 
-    Ok(RegenerateReport { files })
+    Ok(RegenerateReport {
+        files,
+    })
 }
 
 /// Output filename for the Graphviz dependency-graph `.dot` source.
@@ -230,12 +237,18 @@ fn write_dep_graph(
 ) -> Result<(), RegenerateError> {
     let dot_dest = out_dir.join(DEP_GRAPH_DOT);
     let dot_state = write_raw_with_state(dot_source, &dot_dest)?;
-    out.push(RenderedFile { path: dot_dest, state: dot_state });
+    out.push(RenderedFile {
+        path:  dot_dest,
+        state: dot_state,
+    });
 
     if let Some(svg) = dep_graph::try_render_svg(dot_source) {
         let svg_dest = out_dir.join(DEP_GRAPH_SVG);
         let svg_state = write_raw_with_state(&svg, &svg_dest)?;
-        out.push(RenderedFile { path: svg_dest, state: svg_state });
+        out.push(RenderedFile {
+            path:  svg_dest,
+            state: svg_state,
+        });
     }
 
     Ok(())
@@ -302,7 +315,10 @@ fn regenerate_benches(
             let body = fs::read_to_string(&output.source)
                 .map_err(|e| RegenerateError::io(output.source.clone(), e))?;
             let state = write_raw_with_state(&body, &dest)?;
-            out.push(RenderedFile { path: dest, state });
+            out.push(RenderedFile {
+                path: dest,
+                state,
+            });
         }
     }
     Ok(())
@@ -335,7 +351,7 @@ fn check_benches(
 /// One rendered output for a bench bundle: source path on disk
 /// plus the destination path relative to `out_dir/benches/`.
 struct BenchOutput {
-    source: PathBuf,
+    source:        PathBuf,
     /// `<bundle>.md` for single-size, `<bundle>/<size>.md` for
     /// multi-size. Caller joins onto `out_dir/benches/`.
     relative_dest: PathBuf,
@@ -350,9 +366,7 @@ struct BenchBundle {
 /// bench bundle. Returns `None` when `benches_root` itself does not
 /// exist (project has no benches yet). Empty `Some(vec![])` means
 /// the directory exists but contains no readable bundles.
-fn collect_bench_bundles(
-    benches_root: &Path,
-) -> Result<Option<Vec<BenchBundle>>, RegenerateError> {
+fn collect_bench_bundles(benches_root: &Path) -> Result<Option<Vec<BenchBundle>>, RegenerateError> {
     let entries = match fs::read_dir(benches_root) {
         Ok(e) => e,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -376,7 +390,9 @@ fn collect_bench_bundles(
         };
         let outputs = classify_bench_bundle(&bundle_dir, &bundle_name)?;
         if !outputs.is_empty() {
-            bundles.push(BenchBundle { outputs });
+            bundles.push(BenchBundle {
+                outputs,
+            });
         }
     }
     Ok(Some(bundles))
@@ -401,7 +417,7 @@ fn classify_bench_bundle(
     let single = bundle_dir.join("findings.md");
     if single.is_file() {
         return Ok(vec![BenchOutput {
-            source: single,
+            source:        single,
             relative_dest: PathBuf::from(format!("{bundle_name}.md")),
         }]);
     }
@@ -431,9 +447,11 @@ fn classify_bench_bundle(
 
     Ok(size_files
         .into_iter()
-        .map(|(size, source)| BenchOutput {
-            source,
-            relative_dest: PathBuf::from(bundle_name).join(format!("{size}.md")),
+        .map(|(size, source)| {
+            BenchOutput {
+                source,
+                relative_dest: PathBuf::from(bundle_name).join(format!("{size}.md")),
+            }
         })
         .collect())
 }
@@ -474,11 +492,16 @@ fn regenerate_sketches(
     };
 
     for index in indexes {
-        let dest = out_dir.join(SKETCHES_OUT_DIR).join(format!("{}.md", index.slug));
+        let dest = out_dir
+            .join(SKETCHES_OUT_DIR)
+            .join(format!("{}.md", index.slug));
         let body = fs::read_to_string(&index.source)
             .map_err(|e| RegenerateError::io(index.source.clone(), e))?;
         let state = write_raw_with_state(&body, &dest)?;
-        out.push(RenderedFile { path: dest, state });
+        out.push(RenderedFile {
+            path: dest,
+            state,
+        });
     }
     Ok(())
 }
@@ -497,7 +520,9 @@ fn check_sketches(
     };
 
     for index in indexes {
-        let dest = out_dir.join(SKETCHES_OUT_DIR).join(format!("{}.md", index.slug));
+        let dest = out_dir
+            .join(SKETCHES_OUT_DIR)
+            .join(format!("{}.md", index.slug));
         let body = fs::read_to_string(&index.source)
             .map_err(|e| RegenerateError::io(index.source.clone(), e))?;
         classify_against_disk(&dest, &body, report)?;
@@ -509,7 +534,7 @@ fn check_sketches(
 /// disk plus the round slug used to derive the destination filename.
 struct SketchIndex {
     source: PathBuf,
-    slug: String,
+    slug:   String,
 }
 
 /// Walk `sketches_root` and classify each direct subdirectory as a
@@ -543,7 +568,10 @@ fn collect_sketch_indexes(
         };
         let readme = round_dir.join(SKETCH_INDEX_FILE);
         if readme.is_file() {
-            indexes.push(SketchIndex { source: readme, slug });
+            indexes.push(SketchIndex {
+                source: readme,
+                slug,
+            });
         }
     }
     Ok(Some(indexes))
@@ -558,13 +586,9 @@ fn collect_sketch_indexes(
 /// underlying atomic-rename is delegated to
 /// [`mockspace_template::write_atomic`] for consistency with the
 /// template-render path.
-fn write_raw_with_state(
-    content: &str,
-    dest: &Path,
-) -> Result<WriteState, RegenerateError> {
+fn write_raw_with_state(content: &str, dest: &Path) -> Result<WriteState, RegenerateError> {
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| RegenerateError::io(parent, e))?;
+        fs::create_dir_all(parent).map_err(|e| RegenerateError::io(parent, e))?;
     }
 
     let state = match fs::read_to_string(dest) {
@@ -584,10 +608,7 @@ fn write_raw_with_state(
 /// Read-only; never writes. Suitable for CI gating: pair with
 /// [`CheckReport::needs_regen`] to fail builds when the rendered output
 /// diverges from the committed copy.
-pub fn check(
-    project: &MockspaceProject,
-    out_dir: &Path,
-) -> Result<CheckReport, RegenerateError> {
+pub fn check(project: &MockspaceProject, out_dir: &Path) -> Result<CheckReport, RegenerateError> {
     let mock_root = project.root().join("mock");
     let context = build_context(project)?;
     let env = build_env(&mock_root)?;
@@ -621,7 +642,7 @@ pub fn check(
 /// be populated by the dependency-graph rendering work.
 #[derive(Serialize, Default)]
 struct RenderContext {
-    crates: Vec<CrateSummary>,
+    crates:    Vec<CrateSummary>,
     dep_graph: String,
 }
 
@@ -640,16 +661,16 @@ struct CrateSummary {
 /// templates can introspect their own relationship to the workspace.
 #[derive(Serialize)]
 struct PerCrateContext {
-    name: String,
-    deps: Vec<String>,
+    name:          String,
+    deps:          Vec<String>,
     is_proc_macro: bool,
 }
 
 impl PerCrateContext {
     fn from_info(info: &CrateInfo) -> Self {
         Self {
-            name: info.name.clone(),
-            deps: info.deps.clone(),
+            name:          info.name.clone(),
+            deps:          info.deps.clone(),
             is_proc_macro: info.is_proc_macro,
         }
     }
@@ -659,7 +680,7 @@ impl PerCrateContext {
 /// key (so [`TemplateEnv::get_template`] can look it up), the source
 /// path (for diagnostics), and the destination path under `out_dir`.
 struct PerCrateTask {
-    key: String,
+    key:  String,
     dest: PathBuf,
 }
 
@@ -684,7 +705,10 @@ fn regenerate_per_crate(
         for task in tasks {
             let template = env.get_template(&task.key)?;
             let state = write_with_state(&template, &context, &task.dest)?;
-            out.push(RenderedFile { path: task.dest, state });
+            out.push(RenderedFile {
+                path: task.dest,
+                state,
+            });
         }
     }
     Ok(())
@@ -738,7 +762,7 @@ fn build_per_crate_env(
         };
         env.add_template(leaf, &body)?;
         tasks.push(PerCrateTask {
-            key: (*leaf).to_string(),
+            key:  (*leaf).to_string(),
             dest: crate_out.join(strip_tmpl_suffix(leaf)),
         });
     }
@@ -766,17 +790,19 @@ fn build_per_crate_env(
                     .and_then(|s| s.to_str())
                     .expect("deepdive template path filtered to .md.tmpl above")
                     .to_string();
-                let body = fs::read_to_string(&src)
-                    .map_err(|e| RegenerateError::io(src.clone(), e))?;
+                let body =
+                    fs::read_to_string(&src).map_err(|e| RegenerateError::io(src.clone(), e))?;
                 let key = format!("deepdives/{file_name}");
                 env.add_template(&key, &body)?;
                 tasks.push(PerCrateTask {
                     key,
-                    dest: crate_out.join("deepdives").join(strip_tmpl_suffix(&file_name)),
+                    dest: crate_out
+                        .join("deepdives")
+                        .join(strip_tmpl_suffix(&file_name)),
                 });
             }
-        }
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        },
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {},
         Err(e) => return Err(RegenerateError::io(deepdives_dir, e)),
     }
 
@@ -830,12 +856,20 @@ fn build_context(project: &MockspaceProject) -> Result<RenderContext, Regenerate
 
     let crates = crates
         .into_iter()
-        .map(|(name, body)| CrateSummary { name, body })
+        .map(|(name, body)| {
+            CrateSummary {
+                name,
+                body,
+            }
+        })
         .collect();
 
     let dep_graph = dep_graph::render_dot(project.crate_graph());
 
-    Ok(RenderContext { crates, dep_graph })
+    Ok(RenderContext {
+        crates,
+        dep_graph,
+    })
 }
 
 fn build_env(mock_root: &Path) -> Result<TemplateEnv, RegenerateError> {
@@ -846,7 +880,7 @@ fn build_env(mock_root: &Path) -> Result<TemplateEnv, RegenerateError> {
             Ok(s) => s,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 return Err(RegenerateError::TemplateMissing(src));
-            }
+            },
             Err(e) => return Err(RegenerateError::io(src, e)),
         };
         env.add_template(tmpl_name, &body)?;
@@ -891,8 +925,13 @@ fn strip_tmpl_suffix(name: &str) -> &str {
 /// strings.
 fn inject_mock_root_fragments(tmpl_name: &str, rendered: String) -> String {
     use crate::render_fragments::{
-        inject_if_absent, AI_NOTICE_FORM_A, AI_NOTICE_FORM_A_MARKER, AI_NOTICE_FORM_B,
-        AI_NOTICE_FORM_B_MARKER, WORKFLOW_REFERENCE, WORKFLOW_REFERENCE_MARKER,
+        AI_NOTICE_FORM_A,
+        AI_NOTICE_FORM_A_MARKER,
+        AI_NOTICE_FORM_B,
+        AI_NOTICE_FORM_B_MARKER,
+        WORKFLOW_REFERENCE,
+        WORKFLOW_REFERENCE_MARKER,
+        inject_if_absent,
     };
     match tmpl_name {
         "WORKFLOW.md.tmpl" => {
@@ -901,10 +940,10 @@ fn inject_mock_root_fragments(tmpl_name: &str, rendered: String) -> String {
             let rendered =
                 inject_if_absent(rendered, WORKFLOW_REFERENCE_MARKER, WORKFLOW_REFERENCE);
             inject_if_absent(rendered, AI_NOTICE_FORM_A_MARKER, AI_NOTICE_FORM_A)
-        }
+        },
         "PRINCIPLES.md.tmpl" => {
             inject_if_absent(rendered, AI_NOTICE_FORM_B_MARKER, AI_NOTICE_FORM_B)
-        }
+        },
         _ => rendered,
     }
 }
@@ -917,8 +956,7 @@ fn write_with_state<C: Serialize>(
     let rendered = template.render(context)?;
 
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| RegenerateError::io(parent, e))?;
+        fs::create_dir_all(parent).map_err(|e| RegenerateError::io(parent, e))?;
     }
 
     let state = match fs::read_to_string(dest) {
@@ -937,23 +975,27 @@ fn write_with_state<C: Serialize>(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use mockspace_core::lint::{Gate, RunSurface};
+    use tempfile::TempDir;
+
     use super::*;
     use crate::project::{CrateGraph, CrateInfo, ProjectBuilder};
-    use mockspace_core::lint::{Gate, RunSurface};
-    use std::fs;
-    use tempfile::TempDir;
 
     /// Build a project rooted at `root` with the given workspace members
     /// (each represented as a crate name; pass empty slice for none).
     fn project(root: &Path, members: &[&str]) -> MockspaceProject {
         let crates = members
             .iter()
-            .map(|name| CrateInfo {
-                name: (*name).to_string(),
-                root_path: root.join(name),
-                is_proc_macro: false,
-                is_workspace_member: true,
-                deps: Vec::new(),
+            .map(|name| {
+                CrateInfo {
+                    name:                (*name).to_string(),
+                    root_path:           root.join(name),
+                    is_proc_macro:       false,
+                    is_workspace_member: true,
+                    deps:                Vec::new(),
+                }
             })
             .collect::<Vec<_>>();
 
@@ -961,7 +1003,10 @@ mod tests {
         for (i, c) in crates.iter().enumerate() {
             by_name.insert(c.name.clone(), i);
         }
-        let graph = CrateGraph { crates, by_name };
+        let graph = CrateGraph {
+            crates,
+            by_name,
+        };
 
         ProjectBuilder::new(root.to_path_buf(), RunSurface::Ci, Gate::Commit)
             .with_crate_graph(graph)
@@ -995,7 +1040,11 @@ mod tests {
         // dep-graph.svg also lands when the test host has the
         // Graphviz `dot` binary on PATH; asserting on at-least
         // count keeps the test portable.
-        assert!(report.files.len() >= 4, "expected >=4 files, got {}", report.files.len());
+        assert!(
+            report.files.len() >= 4,
+            "expected >=4 files, got {}",
+            report.files.len()
+        );
         assert!(out.join("DESIGN.md").is_file());
         assert!(out.join("PRINCIPLES.md").is_file());
         assert!(out.join("WORKFLOW.md").is_file());
@@ -1080,7 +1129,7 @@ mod tests {
         match err {
             RegenerateError::TemplateMissing(p) => {
                 assert!(p.ends_with("WORKFLOW.md.tmpl"), "got {}", p.display());
-            }
+            },
             other => panic!("expected TemplateMissing, got {other:?}"),
         }
     }
@@ -1150,7 +1199,11 @@ mod tests {
         fs::create_dir(&out).unwrap();
 
         let report = regenerate(&proj, &out).expect("regenerate");
-        assert!(report.files.len() >= 4, "expected >=4 files, got {}", report.files.len());
+        assert!(
+            report.files.len() >= 4,
+            "expected >=4 files, got {}",
+            report.files.len()
+        );
         for f in &report.files {
             assert_eq!(f.state, WriteState::Created);
         }
@@ -1190,7 +1243,11 @@ mod tests {
     }
 
     fn write_crate_deepdive(root: &Path, crate_name: &str, topic: &str, body: &str) {
-        let dir = root.join("mock").join("crates").join(crate_name).join("deepdives");
+        let dir = root
+            .join("mock")
+            .join("crates")
+            .join(crate_name)
+            .join("deepdives");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(format!("{topic}.md.tmpl")), body).unwrap();
     }
@@ -1199,7 +1256,12 @@ mod tests {
     fn regenerate_renders_per_crate_design_and_backlog() {
         let tmp = TempDir::new().unwrap();
         write_mock_root_templates(tmp.path());
-        write_crate_template(tmp.path(), "alpha", "DESIGN.md.tmpl", "alpha design {{ name }}");
+        write_crate_template(
+            tmp.path(),
+            "alpha",
+            "DESIGN.md.tmpl",
+            "alpha design {{ name }}",
+        );
         write_crate_template(tmp.path(), "alpha", "BACKLOG.md.tmpl", "alpha backlog");
         let proj = project(tmp.path(), &["alpha"]);
         let out = tmp.path().join("docs");
@@ -1208,7 +1270,11 @@ mod tests {
 
         // 3 mock-root + 2 per-crate + dep-graph.dot (+ optional .svg
         // when Graphviz is on PATH) >= 6.
-        assert!(report.files.len() >= 6, "expected >=6 files, got {}", report.files.len());
+        assert!(
+            report.files.len() >= 6,
+            "expected >=6 files, got {}",
+            report.files.len()
+        );
         let design = fs::read_to_string(out.join("alpha").join("DESIGN.md")).unwrap();
         assert_eq!(design, "alpha design alpha");
         let backlog = fs::read_to_string(out.join("alpha").join("BACKLOG.md")).unwrap();
@@ -1233,13 +1299,11 @@ mod tests {
         let per_crate: Vec<&PathBuf> = report
             .files
             .iter()
-            .filter_map(|f| {
-                if f.path.starts_with(&deepdive_dir) {
-                    Some(&f.path)
-                } else {
-                    None
-                }
-            })
+            .filter_map(
+                |f| {
+                    if f.path.starts_with(&deepdive_dir) { Some(&f.path) } else { None }
+                },
+            )
             .collect();
         assert_eq!(per_crate.len(), 2);
         assert!(per_crate[0].ends_with("memory-model.md"));
@@ -1257,7 +1321,11 @@ mod tests {
         let report = regenerate(&proj, &out).expect("regenerate");
         // Mock-root files plus dep-graph.dot; per-crate walk silently
         // produces zero (no per-crate templates on disk).
-        assert!(report.files.len() >= 4, "expected >=4 files, got {}", report.files.len());
+        assert!(
+            report.files.len() >= 4,
+            "expected >=4 files, got {}",
+            report.files.len()
+        );
         assert!(!out.join("alpha").exists());
     }
 
@@ -1296,18 +1364,18 @@ mod tests {
         );
         // Hand-build a project with a dep edge alpha → beta.
         let alpha = CrateInfo {
-            name: "alpha".to_string(),
-            root_path: tmp.path().join("alpha"),
-            is_proc_macro: false,
+            name:                "alpha".to_string(),
+            root_path:           tmp.path().join("alpha"),
+            is_proc_macro:       false,
             is_workspace_member: true,
-            deps: Vec::new(),
+            deps:                Vec::new(),
         };
         let beta = CrateInfo {
-            name: "beta".to_string(),
-            root_path: tmp.path().join("beta"),
-            is_proc_macro: false,
+            name:                "beta".to_string(),
+            root_path:           tmp.path().join("beta"),
+            is_proc_macro:       false,
             is_workspace_member: true,
-            deps: vec!["alpha".to_string()],
+            deps:                vec!["alpha".to_string()],
         };
         let mut by_name = std::collections::HashMap::new();
         by_name.insert("alpha".to_string(), 0);
@@ -1505,19 +1573,23 @@ mod tests {
         regenerate(&proj, &out).expect("seed");
         let clean = check(&proj, &out).expect("check matches");
         assert!(!clean.needs_regen());
-        assert!(clean
-            .matched
-            .iter()
-            .any(|p| p.ends_with("benches/alpha.md")));
+        assert!(
+            clean
+                .matched
+                .iter()
+                .any(|p| p.ends_with("benches/alpha.md"))
+        );
 
         // Hand-edit to simulate stale committed copy.
         fs::write(out.join("benches").join("alpha.md"), "stale").unwrap();
         let drifted = check(&proj, &out).expect("check drift");
         assert!(drifted.needs_regen());
-        assert!(drifted
-            .drifted
-            .iter()
-            .any(|p| p.ends_with("benches/alpha.md")));
+        assert!(
+            drifted
+                .drifted
+                .iter()
+                .any(|p| p.ends_with("benches/alpha.md"))
+        );
     }
 
     #[test]
@@ -1528,11 +1600,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mock = tmp.path().join("mock");
         fs::create_dir_all(&mock).unwrap();
-        fs::write(
-            mock.join("DESIGN.md.tmpl"),
-            "graph:\n{{ dep_graph }}",
-        )
-        .unwrap();
+        fs::write(mock.join("DESIGN.md.tmpl"), "graph:\n{{ dep_graph }}").unwrap();
         fs::write(mock.join("PRINCIPLES.md.tmpl"), "principles").unwrap();
         fs::write(mock.join("WORKFLOW.md.tmpl"), "workflow").unwrap();
         let proj = project(tmp.path(), &["alpha"]);
@@ -1558,23 +1626,34 @@ mod tests {
         // No regenerate first: per-crate file is missing on disk.
         let report = check(&proj, &out).expect("check");
         assert!(report.needs_regen());
-        assert!(report
-            .missing
-            .iter()
-            .any(|p| p.ends_with("alpha/DESIGN.md")));
+        assert!(
+            report
+                .missing
+                .iter()
+                .any(|p| p.ends_with("alpha/DESIGN.md"))
+        );
 
         // Seed, then check again: matched.
         regenerate(&proj, &out).expect("seed");
         let report = check(&proj, &out).expect("check after seed");
         assert!(!report.needs_regen());
-        assert!(report.matched.iter().any(|p| p.ends_with("alpha/DESIGN.md")));
+        assert!(
+            report
+                .matched
+                .iter()
+                .any(|p| p.ends_with("alpha/DESIGN.md"))
+        );
     }
 
     // -----------------------------------------------------------------
     // Sketch-index render tests.
 
     fn write_sketch_round(root: &Path, slug: &str, readme_body: Option<&str>) {
-        let dir = root.join("mock").join("research").join("sketches").join(slug);
+        let dir = root
+            .join("mock")
+            .join("research")
+            .join("sketches")
+            .join(slug);
         fs::create_dir_all(&dir).unwrap();
         if let Some(body) = readme_body {
             fs::write(dir.join("README.md"), body).unwrap();
@@ -1585,15 +1664,17 @@ mod tests {
     fn regenerate_renders_sketch_round_index() {
         let tmp = TempDir::new().unwrap();
         write_mock_root_templates(tmp.path());
-        write_sketch_round(tmp.path(), "202605221502_render-pipeline", Some("index body"));
+        write_sketch_round(
+            tmp.path(),
+            "202605221502_render-pipeline",
+            Some("index body"),
+        );
         let proj = project(tmp.path(), &[]);
         let out = tmp.path().join("docs");
 
         regenerate(&proj, &out).expect("regenerate");
-        let body = fs::read_to_string(
-            out.join("sketches").join("202605221502_render-pipeline.md"),
-        )
-        .unwrap();
+        let body = fs::read_to_string(out.join("sketches").join("202605221502_render-pipeline.md"))
+            .unwrap();
         assert_eq!(body, "index body");
     }
 
@@ -1688,19 +1769,23 @@ mod tests {
         regenerate(&proj, &out).expect("seed");
         let clean = check(&proj, &out).expect("check matches");
         assert!(!clean.needs_regen());
-        assert!(clean
-            .matched
-            .iter()
-            .any(|p| p.ends_with(format!("sketches/{slug}.md"))));
+        assert!(
+            clean
+                .matched
+                .iter()
+                .any(|p| p.ends_with(format!("sketches/{slug}.md")))
+        );
 
         // Hand-edit to simulate stale committed copy.
         fs::write(out.join("sketches").join(format!("{slug}.md")), "stale").unwrap();
         let drifted = check(&proj, &out).expect("check drift");
         assert!(drifted.needs_regen());
-        assert!(drifted
-            .drifted
-            .iter()
-            .any(|p| p.ends_with(format!("sketches/{slug}.md"))));
+        assert!(
+            drifted
+                .drifted
+                .iter()
+                .any(|p| p.ends_with(format!("sketches/{slug}.md")))
+        );
     }
 
     #[test]
@@ -1716,10 +1801,12 @@ mod tests {
         // missing on disk; check must flag it.
         let report = check(&proj, &out).expect("check");
         assert!(report.needs_regen());
-        assert!(report
-            .missing
-            .iter()
-            .any(|p| p.ends_with(format!("sketches/{slug}.md"))));
+        assert!(
+            report
+                .missing
+                .iter()
+                .any(|p| p.ends_with(format!("sketches/{slug}.md")))
+        );
     }
 
     // -----------------------------------------------------------------
@@ -1903,7 +1990,9 @@ mod tests {
 
         regenerate(&proj, &out).expect("regenerate");
         let body = fs::read_to_string(out.join("WORKFLOW.md")).unwrap();
-        let marker_hits = body.matches("<!-- mockspace:workflow-reference -->").count();
+        let marker_hits = body
+            .matches("<!-- mockspace:workflow-reference -->")
+            .count();
         assert_eq!(
             marker_hits, 1,
             "in-template marker must suppress auto-injection so only one copy lands; got {marker_hits} hits in: {body}"

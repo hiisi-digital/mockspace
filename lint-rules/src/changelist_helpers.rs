@@ -28,8 +28,8 @@ pub enum ClStatus {
 #[derive(Debug, Clone)]
 pub struct ParsedChangelist {
     pub filename: String,
-    pub kind: ClKind,
-    pub status: ClStatus,
+    pub kind:     ClKind,
+    pub status:   ClStatus,
 }
 
 /// Lifecycle phase of a design round.
@@ -94,11 +94,7 @@ fn strip_timestamp_prefix(name: &str) -> Option<&str> {
         return None;
     }
     let (prefix, rest) = name.split_at(12);
-    if prefix.chars().all(|c| c.is_ascii_digit()) {
-        Some(rest)
-    } else {
-        None
-    }
+    if prefix.chars().all(|c| c.is_ascii_digit()) { Some(rest) } else { None }
 }
 
 /// Parse the suffix after `_changelist.` in new-format filenames.
@@ -143,9 +139,7 @@ pub fn find_changelists(design_rounds: &Path) -> Vec<ParsedChangelist> {
 
     entries
         .flatten()
-        .filter(|e| {
-            e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
-        })
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             parse_changelist(&name)
@@ -197,10 +191,18 @@ pub fn current_phase(design_rounds: &Path) -> Phase {
     let cls = find_changelists(design_rounds);
 
     // Filter out deprecated CLs — they don't count.
-    let active_doc = cls.iter().any(|cl| cl.kind == ClKind::Doc && cl.status == ClStatus::Active);
-    let locked_doc = cls.iter().any(|cl| cl.kind == ClKind::Doc && cl.status == ClStatus::Locked);
-    let active_src = cls.iter().any(|cl| cl.kind == ClKind::Src && cl.status == ClStatus::Active);
-    let locked_src = cls.iter().any(|cl| cl.kind == ClKind::Src && cl.status == ClStatus::Locked);
+    let active_doc = cls
+        .iter()
+        .any(|cl| cl.kind == ClKind::Doc && cl.status == ClStatus::Active);
+    let locked_doc = cls
+        .iter()
+        .any(|cl| cl.kind == ClKind::Doc && cl.status == ClStatus::Locked);
+    let active_src = cls
+        .iter()
+        .any(|cl| cl.kind == ClKind::Src && cl.status == ClStatus::Active);
+    let locked_src = cls
+        .iter()
+        .any(|cl| cl.kind == ClKind::Src && cl.status == ClStatus::Locked);
 
     if locked_doc && locked_src {
         Phase::Done

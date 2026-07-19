@@ -80,39 +80,61 @@ pub struct VerifierNot {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VerifierKind {
     /// Regex match present in file.
-    GrepPresent { pattern: String, file: PathBuf },
+    GrepPresent {
+        pattern: String,
+        file:    PathBuf,
+    },
     /// Regex match absent from file.
-    GrepAbsent { pattern: String, file: PathBuf },
+    GrepAbsent {
+        pattern: String,
+        file:    PathBuf,
+    },
     /// Path exists in working tree.
-    PathExists { file: PathBuf },
+    PathExists {
+        file: PathBuf,
+    },
     /// Path does not exist in working tree.
-    PathAbsent { file: PathBuf },
+    PathAbsent {
+        file: PathBuf,
+    },
     /// File byte count is strictly below threshold.
-    FileSizeBelow { file: PathBuf, bytes: u64 },
+    FileSizeBelow {
+        file:  PathBuf,
+        bytes: u64,
+    },
     /// File byte count is strictly above threshold.
-    FileSizeAbove { file: PathBuf, bytes: u64 },
+    FileSizeAbove {
+        file:  PathBuf,
+        bytes: u64,
+    },
     /// File line count is strictly below threshold.
-    LineCountBelow { file: PathBuf, lines: u64 },
+    LineCountBelow {
+        file:  PathBuf,
+        lines: u64,
+    },
     /// File line count is strictly above threshold.
-    LineCountAbove { file: PathBuf, lines: u64 },
+    LineCountAbove {
+        file:  PathBuf,
+        lines: u64,
+    },
     /// JSON field at the given dotted path equals the given value.
     JsonFieldEquals {
-        file: PathBuf,
-        path: String,
+        file:  PathBuf,
+        path:  String,
         value: toml::Value,
     },
     /// TOML field at the given dotted path equals the given value.
     TomlFieldEquals {
-        file: PathBuf,
-        path: String,
+        file:  PathBuf,
+        path:  String,
         value: toml::Value,
     },
     /// YAML field at the given dotted path equals the given value.
     /// Safe-load mode only; custom tags and external anchors are refused
     /// at execution time.
     YamlFieldEquals {
-        file: PathBuf,
-        path: String,
+        file:  PathBuf,
+        path:  String,
         value: toml::Value,
     },
 }
@@ -124,17 +146,48 @@ impl VerifierKind {
     /// path-traversal defence at execution time (spec §54).
     pub fn file(&self) -> &PathBuf {
         match self {
-            Self::GrepPresent { file, .. }
-            | Self::GrepAbsent { file, .. }
-            | Self::PathExists { file }
-            | Self::PathAbsent { file }
-            | Self::FileSizeBelow { file, .. }
-            | Self::FileSizeAbove { file, .. }
-            | Self::LineCountBelow { file, .. }
-            | Self::LineCountAbove { file, .. }
-            | Self::JsonFieldEquals { file, .. }
-            | Self::TomlFieldEquals { file, .. }
-            | Self::YamlFieldEquals { file, .. } => file,
+            Self::GrepPresent {
+                file,
+                ..
+            }
+            | Self::GrepAbsent {
+                file,
+                ..
+            }
+            | Self::PathExists {
+                file,
+            }
+            | Self::PathAbsent {
+                file,
+            }
+            | Self::FileSizeBelow {
+                file,
+                ..
+            }
+            | Self::FileSizeAbove {
+                file,
+                ..
+            }
+            | Self::LineCountBelow {
+                file,
+                ..
+            }
+            | Self::LineCountAbove {
+                file,
+                ..
+            }
+            | Self::JsonFieldEquals {
+                file,
+                ..
+            }
+            | Self::TomlFieldEquals {
+                file,
+                ..
+            }
+            | Self::YamlFieldEquals {
+                file,
+                ..
+            } => file,
         }
     }
 }
@@ -156,10 +209,13 @@ mod tests {
         "#;
         let check = parse(toml);
         match check {
-            VerifierCheck::Kind(VerifierKind::GrepPresent { pattern, file }) => {
+            VerifierCheck::Kind(VerifierKind::GrepPresent {
+                pattern,
+                file,
+            }) => {
                 assert_eq!(pattern, "pub struct Baz");
                 assert_eq!(file, PathBuf::from("crates/ir/src/grammar.rs"));
-            }
+            },
             other => panic!("expected grep_present, got {other:?}"),
         }
     }
@@ -186,10 +242,13 @@ mod tests {
         "#;
         let check = parse(toml);
         match check {
-            VerifierCheck::Kind(VerifierKind::FileSizeBelow { file, bytes }) => {
+            VerifierCheck::Kind(VerifierKind::FileSizeBelow {
+                file,
+                bytes,
+            }) => {
                 assert_eq!(file, PathBuf::from("DESIGN.md"));
                 assert_eq!(bytes, 8192);
-            }
+            },
             other => panic!("expected file_size_below, got {other:?}"),
         }
     }
@@ -204,11 +263,15 @@ mod tests {
         "#;
         let check = parse(toml);
         match check {
-            VerifierCheck::Kind(VerifierKind::TomlFieldEquals { file, path, value }) => {
+            VerifierCheck::Kind(VerifierKind::TomlFieldEquals {
+                file,
+                path,
+                value,
+            }) => {
                 assert_eq!(file, PathBuf::from("Cargo.toml"));
                 assert_eq!(path, "package.version");
                 assert_eq!(value, toml::Value::String("1.0.0".to_owned()));
-            }
+            },
             other => panic!("expected toml_field_equals, got {other:?}"),
         }
     }
@@ -223,9 +286,11 @@ mod tests {
         "#;
         let check = parse(toml);
         match check {
-            VerifierCheck::AllOf(VerifierAllOf { all_of }) => {
+            VerifierCheck::AllOf(VerifierAllOf {
+                all_of,
+            }) => {
                 assert_eq!(all_of.len(), 2);
-            }
+            },
             other => panic!("expected all_of, got {other:?}"),
         }
     }
@@ -249,12 +314,14 @@ mod tests {
         "#;
         let check = parse(toml);
         match check {
-            VerifierCheck::Not(VerifierNot { not }) => {
+            VerifierCheck::Not(VerifierNot {
+                not,
+            }) => {
                 assert!(matches!(
                     *not,
                     VerifierCheck::Kind(VerifierKind::GrepPresent { .. })
                 ));
-            }
+            },
             other => panic!("expected not, got {other:?}"),
         }
     }
@@ -273,12 +340,14 @@ mod tests {
         "###;
         let check = parse(toml);
         match check {
-            VerifierCheck::AllOf(VerifierAllOf { all_of }) => {
+            VerifierCheck::AllOf(VerifierAllOf {
+                all_of,
+            }) => {
                 assert_eq!(all_of.len(), 3);
                 assert!(matches!(all_of[0], VerifierCheck::Kind(_)));
                 assert!(matches!(all_of[1], VerifierCheck::Not(_)));
                 assert!(matches!(all_of[2], VerifierCheck::AnyOf(_)));
-            }
+            },
             other => panic!("expected all_of, got {other:?}"),
         }
     }
@@ -299,7 +368,7 @@ mod tests {
             all_of: vec![
                 VerifierCheck::Kind(VerifierKind::GrepPresent {
                     pattern: "pub struct Csr".to_owned(),
-                    file: PathBuf::from("crates/arvo-graph/src/csr.rs"),
+                    file:    PathBuf::from("crates/arvo-graph/src/csr.rs"),
                 }),
                 VerifierCheck::Not(VerifierNot {
                     not: Box::new(VerifierCheck::Kind(VerifierKind::PathExists {
@@ -316,7 +385,7 @@ mod tests {
     #[test]
     fn kind_file_accessor() {
         let k = VerifierKind::LineCountAbove {
-            file: PathBuf::from("DESIGN.md"),
+            file:  PathBuf::from("DESIGN.md"),
             lines: 50,
         };
         assert_eq!(k.file(), &PathBuf::from("DESIGN.md"));

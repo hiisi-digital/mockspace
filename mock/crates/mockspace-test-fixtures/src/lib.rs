@@ -19,10 +19,12 @@
 //!
 //! let fixture = MockspaceFixture::new()
 //!     .with_install()
-//!     .with_lints_toml(r#"
+//!     .with_lints_toml(
+//!         r#"
 //!         [lints.no-bare-numeric.config]
 //!         visibility = "crate"
-//!     "#)
+//!     "#,
+//!     )
 //!     .build()
 //!     .expect("build fixture");
 //!
@@ -55,10 +57,10 @@ use tempfile::TempDir;
 /// test.
 #[derive(Debug, Default)]
 pub struct MockspaceFixtureBuilder {
-    install: bool,
+    install:         bool,
     create_mock_dir: bool,
-    lints_toml: Option<String>,
-    rust_crates: Vec<RustCrateSpec>,
+    lints_toml:      Option<String>,
+    rust_crates:     Vec<RustCrateSpec>,
 }
 
 /// One workspace member produced by [`MockspaceFixtureBuilder::with_rust_crate`].
@@ -68,7 +70,7 @@ pub struct MockspaceFixtureBuilder {
 /// to include the crate.
 #[derive(Debug, Clone)]
 struct RustCrateSpec {
-    name: String,
+    name:       String,
     src_lib_rs: String,
 }
 
@@ -187,8 +189,7 @@ impl MockspaceFixtureBuilder {
                 "[workspace]\nmembers = [{}]\nresolver = \"2\"\n",
                 members.join(", ")
             );
-            std::fs::write(root.join("Cargo.toml"), workspace_toml)
-                .map_err(FixtureError::Io)?;
+            std::fs::write(root.join("Cargo.toml"), workspace_toml).map_err(FixtureError::Io)?;
             for crate_spec in &self.rust_crates {
                 let crate_dir = root.join("crates").join(&crate_spec.name);
                 std::fs::create_dir_all(crate_dir.join("src")).map_err(FixtureError::Io)?;
@@ -209,7 +210,7 @@ impl MockspaceFixtureBuilder {
 
         Ok(MockspaceFixture {
             _tempdir: tempdir,
-            path: root,
+            path:     root,
         })
     }
 }
@@ -225,7 +226,7 @@ pub struct MockspaceFixture {
     _tempdir: TempDir,
     /// Resolved absolute path to the fixture root. Computed once at
     /// build time so repeat reads are infallible.
-    path: PathBuf,
+    path:     PathBuf,
 }
 
 impl MockspaceFixture {
@@ -327,7 +328,10 @@ mod tests {
             status.has_cargo_alias,
             "with_install should flip has_cargo_alias"
         );
-        assert!(status.has_hooks_path, "with_install should flip has_hooks_path");
+        assert!(
+            status.has_hooks_path,
+            "with_install should flip has_hooks_path"
+        );
     }
 
     #[test]
@@ -355,12 +359,21 @@ mod tests {
         assert!(workspace_toml.contains("\"crates/probe\""));
         assert!(workspace_toml.contains("resolver = \"2\""));
         let crate_toml = std::fs::read_to_string(
-            fixture.path().join("crates").join("probe").join("Cargo.toml"),
+            fixture
+                .path()
+                .join("crates")
+                .join("probe")
+                .join("Cargo.toml"),
         )
         .expect("crate Cargo.toml exists");
         assert!(crate_toml.contains("name = \"probe\""));
         let lib_rs = std::fs::read_to_string(
-            fixture.path().join("crates").join("probe").join("src").join("lib.rs"),
+            fixture
+                .path()
+                .join("crates")
+                .join("probe")
+                .join("src")
+                .join("lib.rs"),
         )
         .expect("crate src/lib.rs exists");
         assert_eq!(lib_rs, "pub fn count() -> usize { 42 }\n");
@@ -410,8 +423,24 @@ mod tests {
         let workspace_toml = std::fs::read_to_string(fixture.path().join("Cargo.toml")).unwrap();
         assert!(workspace_toml.contains("\"crates/alpha\""));
         assert!(workspace_toml.contains("\"crates/beta\""));
-        assert!(fixture.path().join("crates").join("alpha").join("src").join("lib.rs").is_file());
-        assert!(fixture.path().join("crates").join("beta").join("src").join("lib.rs").is_file());
+        assert!(
+            fixture
+                .path()
+                .join("crates")
+                .join("alpha")
+                .join("src")
+                .join("lib.rs")
+                .is_file()
+        );
+        assert!(
+            fixture
+                .path()
+                .join("crates")
+                .join("beta")
+                .join("src")
+                .join("lib.rs")
+                .is_file()
+        );
     }
 
     #[test]

@@ -40,4 +40,3 @@ target/
         actions.push("added catch-all target/ to .gitignore".into());
     }
 }
-

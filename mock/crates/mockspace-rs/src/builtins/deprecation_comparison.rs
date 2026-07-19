@@ -16,32 +16,31 @@ use globset::Glob;
 use mockspace_core::lint::{Finding, GateSeverity, LintContext, Severity, Span};
 use serde::Deserialize;
 
+use super::cross_doc_symbol::SymbolKind;
 use crate::errors::{ConfigError, ConfigErrorKind, LintError};
 use crate::finding_sink::FindingSink;
 use crate::lint::Lint;
 use crate::project::MockspaceProject;
-
-use super::cross_doc_symbol::SymbolKind;
 
 pub const KIND: &str = "deprecation-comparison";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct DeprecationComparisonConfig {
-    pub active_cls_glob: String,
+    pub active_cls_glob:     String,
     pub deprecated_cls_glob: String,
-    pub symbol_kinds: Vec<SymbolKind>,
+    pub symbol_kinds:        Vec<SymbolKind>,
 }
 
 pub struct DeprecationComparisonLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: DeprecationComparisonConfig,
+    config:           DeprecationComparisonConfig,
     #[allow(dead_code)]
-    active_glob: globset::GlobMatcher,
+    active_glob:      globset::GlobMatcher,
     #[allow(dead_code)]
-    deprecated_glob: globset::GlobMatcher,
+    deprecated_glob:  globset::GlobMatcher,
 }
 
 impl DeprecationComparisonLint {
@@ -72,14 +71,16 @@ fn compile_glob(
 ) -> Result<globset::GlobMatcher, ConfigError> {
     Glob::new(pattern)
         .map(|g| g.compile_matcher())
-        .map_err(|e| ConfigError {
-            lint_name: lint_name.to_string(),
-            field_path: field.to_string(),
-            kind: ConfigErrorKind::UnparseableGlob {
-                error: e.to_string(),
-            },
-            message: format!("glob `{pattern}` did not compile"),
-            source_location: None,
+        .map_err(|e| {
+            ConfigError {
+                lint_name:       lint_name.to_string(),
+                field_path:      field.to_string(),
+                kind:            ConfigErrorKind::UnparseableGlob {
+                    error: e.to_string(),
+                },
+                message:         format!("glob `{pattern}` did not compile"),
+                source_location: None,
+            }
         })
 }
 
@@ -87,9 +88,11 @@ impl Lint for DeprecationComparisonLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
@@ -150,16 +153,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: DeprecationComparisonConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("deprecation-comparison config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("deprecation-comparison config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(DeprecationComparisonLint::new(
         name,
         description,

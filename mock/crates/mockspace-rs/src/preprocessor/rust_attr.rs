@@ -85,7 +85,7 @@ fn walk_inner(item: &syn::Item, path: &str, out: &mut Vec<DirectiveRecord>) {
             if let Some((_, inner)) = &m.content {
                 walk_items(inner, path, out);
             }
-        }
+        },
         syn::Item::Impl(im) => {
             for inner in &im.items {
                 let attrs: &[syn::Attribute] = match inner {
@@ -96,7 +96,7 @@ fn walk_inner(item: &syn::Item, path: &str, out: &mut Vec<DirectiveRecord>) {
                 };
                 visit_attrs(attrs, path, out);
             }
-        }
+        },
         syn::Item::Trait(tr) => {
             for inner in &tr.items {
                 let attrs: &[syn::Attribute] = match inner {
@@ -107,7 +107,7 @@ fn walk_inner(item: &syn::Item, path: &str, out: &mut Vec<DirectiveRecord>) {
                 };
                 visit_attrs(attrs, path, out);
             }
-        }
+        },
         syn::Item::ForeignMod(fm) => {
             for inner in &fm.items {
                 let attrs: &[syn::Attribute] = match inner {
@@ -118,23 +118,23 @@ fn walk_inner(item: &syn::Item, path: &str, out: &mut Vec<DirectiveRecord>) {
                 };
                 visit_attrs(attrs, path, out);
             }
-        }
+        },
         syn::Item::Enum(en) => {
             for variant in &en.variants {
                 visit_attrs(&variant.attrs, path, out);
             }
-        }
+        },
         syn::Item::Struct(st) => {
             for field in &st.fields {
                 visit_attrs(&field.attrs, path, out);
             }
-        }
+        },
         syn::Item::Union(un) => {
             for field in &un.fields.named {
                 visit_attrs(&field.attrs, path, out);
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -248,15 +248,15 @@ fn parse_file_disable(attr: &syn::Attribute) -> Option<Directive> {
 fn parse_prop(attr: &syn::Attribute) -> Option<Directive> {
     let parsed = parse_prop_args(attr)?;
     Some(Directive::Prop {
-        name: parsed.name,
-        value: parsed.value,
+        name:   parsed.name,
+        value:  parsed.value,
         reason: parsed.reason,
     })
 }
 
 struct PropAttrArgs {
-    name: String,
-    value: PropValue,
+    name:   String,
+    value:  PropValue,
     reason: Option<String>,
 }
 
@@ -278,7 +278,9 @@ struct PropAttrArgs {
 ///   should not cancel an otherwise valid directive.
 fn parse_prop_args(attr: &syn::Attribute) -> Option<PropAttrArgs> {
     let parsed = attr
-        .parse_args_with(syn::punctuated::Punctuated::<PropAttrArg, syn::Token![,]>::parse_terminated)
+        .parse_args_with(
+            syn::punctuated::Punctuated::<PropAttrArg, syn::Token![,]>::parse_terminated,
+        )
         .ok()?;
     let mut name: Option<String> = None;
     let mut value: Option<PropValue> = None;
@@ -289,15 +291,17 @@ fn parse_prop_args(attr: &syn::Attribute) -> Option<PropAttrArgs> {
                 if name.is_none() {
                     name = Some(s);
                 }
-            }
-            PropAttrArg::Keyed(key, val) => match key.as_str() {
-                "value" => value = Some(val),
-                "reason" => {
-                    if let PropValue::String(s) = val {
-                        reason = Some(s);
-                    }
+            },
+            PropAttrArg::Keyed(key, val) => {
+                match key.as_str() {
+                    "value" => value = Some(val),
+                    "reason" => {
+                        if let PropValue::String(s) = val {
+                            reason = Some(s);
+                        }
+                    },
+                    _ => {},
                 }
-                _ => {}
             },
         }
     }
@@ -366,7 +370,7 @@ fn parse_axis(s: &str) -> Option<ScopeAxis> {
 #[derive(Default)]
 struct Args {
     positional: Vec<String>,
-    keyed: Vec<(String, String)>,
+    keyed:      Vec<(String, String)>,
 }
 
 impl Args {
@@ -439,8 +443,9 @@ fn span_of(p_span: proc_macro2::Span, path: &str) -> Span {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use mockspace_core::lint::Directive;
+
+    use super::*;
 
     fn parse(src: &str) -> Vec<DirectiveRecord> {
         let ast = syn::parse_file(src).expect("parse_file");
@@ -464,7 +469,7 @@ const X: u64 = 1;
                 assert_eq!(lint_name, "no-bare-numeric");
                 assert_eq!(reason.as_deref(), Some("spec-fixed"));
                 assert_eq!(tracked.as_deref(), Some("#427"));
-            }
+            },
             other => panic!("expected Allow, got {other:?}"),
         }
     }
@@ -486,7 +491,7 @@ mod ffi {}
                 assert_eq!(lint_name, "no-bare-numeric");
                 assert_eq!(*axis, ScopeAxis::ExemptPaths);
                 assert_eq!(value, "tests/**");
-            }
+            },
             other => panic!("expected ScopeAdd, got {other:?}"),
         }
     }
@@ -508,7 +513,7 @@ fn legacy(name: String) {}
                 assert_eq!(lint_name, "no-bare-string");
                 assert_eq!(until, "#185");
                 assert_eq!(reason.as_deref(), Some("test rehab pending"));
-            }
+            },
             other => panic!("expected Defer, got {other:?}"),
         }
     }
@@ -569,10 +574,18 @@ impl Y {
         assert_eq!(recs.len(), 2);
         let names: Vec<&str> = recs
             .iter()
-            .map(|r| match &r.directive {
-                Directive::Allow { lint_name, .. } => lint_name.as_str(),
-                Directive::FileDisable { lint_name, .. } => lint_name.as_str(),
-                _ => "other",
+            .map(|r| {
+                match &r.directive {
+                    Directive::Allow {
+                        lint_name,
+                        ..
+                    } => lint_name.as_str(),
+                    Directive::FileDisable {
+                        lint_name,
+                        ..
+                    } => lint_name.as_str(),
+                    _ => "other",
+                }
             })
             .collect();
         assert!(names.contains(&"no-bare-numeric"));
@@ -589,11 +602,13 @@ const X: u64 = 1;
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
             Directive::Allow {
-                reason, tracked, ..
+                reason,
+                tracked,
+                ..
             } => {
                 assert!(reason.is_none());
                 assert!(tracked.is_none());
-            }
+            },
             other => panic!("expected Allow, got {other:?}"),
         }
     }
@@ -731,11 +746,15 @@ fn critical_path() {}
         let recs = parse(src);
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { name, value, reason } => {
+            Directive::Prop {
+                name,
+                value,
+                reason,
+            } => {
                 assert_eq!(name, "audited");
                 assert_eq!(*value, PropValue::Bool(true));
                 assert!(reason.is_none());
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -749,10 +768,14 @@ struct StaticBuffer;
         let recs = parse(src);
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { name, value, .. } => {
+            Directive::Prop {
+                name,
+                value,
+                ..
+            } => {
                 assert_eq!(name, "arena_size");
                 assert_eq!(*value, PropValue::Integer(4096));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -766,10 +789,14 @@ pub fn export_descriptor() {}
         let recs = parse(src);
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { name, value, .. } => {
+            Directive::Prop {
+                name,
+                value,
+                ..
+            } => {
                 assert_eq!(name, "audit_id");
                 assert_eq!(*value, PropValue::String("A-2026-04".to_string()));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -783,11 +810,15 @@ struct Pool;
         let recs = parse(src);
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { name, value, reason } => {
+            Directive::Prop {
+                name,
+                value,
+                reason,
+            } => {
                 assert_eq!(name, "thread_safe");
                 assert_eq!(*value, PropValue::Bool(true));
                 assert_eq!(reason.as_deref(), Some("verified by audit"));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -801,10 +832,14 @@ struct Frame;
         let recs = parse(src);
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { name, value, .. } => {
+            Directive::Prop {
+                name,
+                value,
+                ..
+            } => {
                 assert_eq!(name, "offset");
                 assert_eq!(*value, PropValue::Integer(-8));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -832,9 +867,12 @@ struct X;
         let recs = parse(src);
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { value, .. } => {
+            Directive::Prop {
+                value,
+                ..
+            } => {
                 assert_eq!(*value, PropValue::Integer(4096));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }

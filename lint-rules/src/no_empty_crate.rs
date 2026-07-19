@@ -38,7 +38,10 @@ const SUBSTANTIVE_KINDS: &[&str] = &[
 pub struct NoEmptyCrate;
 
 impl Lint for NoEmptyCrate {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::ADVISORY }
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::ADVISORY
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
@@ -98,10 +101,11 @@ fn has_substantive_content(node: Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::CrateSourceFile;
     use std::collections::BTreeSet;
     use std::path::PathBuf;
+
+    use super::*;
+    use crate::CrateSourceFile;
 
     fn make_ctx(
         lib_src: &str,
@@ -112,12 +116,12 @@ mod tests {
         let tree = Box::leak(Box::new(tree));
         let mut sources: Vec<CrateSourceFile> = vec![CrateSourceFile {
             rel_path: PathBuf::from("src/lib.rs"),
-            text: lib_src.to_string(),
+            text:     lib_src.to_string(),
         }];
         for (name, body) in extra {
             sources.push(CrateSourceFile {
                 rel_path: PathBuf::from(format!("src/{}", name)),
-                text: body.to_string(),
+                text:     body.to_string(),
             });
         }
         let ctx = LintContext {

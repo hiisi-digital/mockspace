@@ -53,10 +53,10 @@ fn default_min_reason_words() -> u32 {
 }
 
 pub struct SuppressionMetaLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: SuppressionMetaConfig,
+    config:           SuppressionMetaConfig,
 }
 
 impl SuppressionMetaLint {
@@ -79,9 +79,11 @@ impl Lint for SuppressionMetaLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
@@ -221,16 +223,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: SuppressionMetaConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("suppression-meta config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("suppression-meta config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(SuppressionMetaLint::new(
         name,
         description,
@@ -241,14 +242,22 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{
+        Gate,
+        RunSurface,
+        Severity,
+        Span,
+        SuppressionKind,
+        SuppressionMap,
+        SuppressionScope,
+    };
+
     use super::*;
     use crate::finding_sink::VecFindingSink;
     use crate::project::ProjectBuilder;
-    use mockspace_core::lint::{
-        Gate, RunSurface, Severity, Span, SuppressionKind, SuppressionMap, SuppressionScope,
-    };
-    use std::collections::BTreeSet;
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -259,11 +268,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -290,19 +299,19 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             SuppressionMetaConfig {
-                require_tracked: true,
-                require_reason: false,
-                require_reason_min_words: 1,
-                forbid_expired: false,
+                require_tracked:             true,
+                require_reason:              false,
+                require_reason_min_words:    1,
+                forbid_expired:              false,
                 overuse_threshold_per_crate: None,
             },
         );
         let project = project_with_suppressions(vec![SuppressionScope {
-            scope: Span::single_line("a.rs", 1, 1, 5),
-            lints: lint_set(),
-            kind: SuppressionKind::Allow,
+            scope:   Span::single_line("a.rs", 1, 1, 5),
+            lints:   lint_set(),
+            kind:    SuppressionKind::Allow,
             tracked: None,
-            reason: Some("because reasons".to_string()),
+            reason:  Some("because reasons".to_string()),
         }]);
         let sink = VecFindingSink::new();
         let root = PathBuf::from("/tmp");
@@ -320,19 +329,19 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             SuppressionMetaConfig {
-                require_tracked: false,
-                require_reason: true,
-                require_reason_min_words: 5,
-                forbid_expired: false,
+                require_tracked:             false,
+                require_reason:              true,
+                require_reason_min_words:    5,
+                forbid_expired:              false,
                 overuse_threshold_per_crate: None,
             },
         );
         let project = project_with_suppressions(vec![SuppressionScope {
-            scope: Span::single_line("a.rs", 1, 1, 5),
-            lints: lint_set(),
-            kind: SuppressionKind::Allow,
+            scope:   Span::single_line("a.rs", 1, 1, 5),
+            lints:   lint_set(),
+            kind:    SuppressionKind::Allow,
             tracked: Some("#123".to_string()),
-            reason: Some("short".to_string()),
+            reason:  Some("short".to_string()),
         }]);
         let sink = VecFindingSink::new();
         let root = PathBuf::from("/tmp");
@@ -350,19 +359,19 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             SuppressionMetaConfig {
-                require_tracked: true,
-                require_reason: true,
-                require_reason_min_words: 3,
-                forbid_expired: false,
+                require_tracked:             true,
+                require_reason:              true,
+                require_reason_min_words:    3,
+                forbid_expired:              false,
                 overuse_threshold_per_crate: None,
             },
         );
         let project = project_with_suppressions(vec![SuppressionScope {
-            scope: Span::single_line("a.rs", 1, 1, 5),
-            lints: lint_set(),
-            kind: SuppressionKind::Allow,
+            scope:   Span::single_line("a.rs", 1, 1, 5),
+            lints:   lint_set(),
+            kind:    SuppressionKind::Allow,
             tracked: Some("#456".to_string()),
-            reason: Some("Boundary requires raw bytes".to_string()),
+            reason:  Some("Boundary requires raw bytes".to_string()),
         }]);
         let sink = VecFindingSink::new();
         let root = PathBuf::from("/tmp");
@@ -399,30 +408,30 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             SuppressionMetaConfig {
-                require_tracked: false,
-                require_reason: false,
-                require_reason_min_words: 1,
-                forbid_expired: true,
+                require_tracked:             false,
+                require_reason:              false,
+                require_reason_min_words:    1,
+                forbid_expired:              true,
                 overuse_threshold_per_crate: None,
             },
         );
         let mut closed = std::collections::HashSet::new();
         closed.insert("#9".to_string());
         let workspace = WorkspaceMetadata {
-            root: PathBuf::from("/tmp"),
+            root:              PathBuf::from("/tmp"),
             proc_macro_crates: std::collections::HashSet::new(),
-            task_state: TaskStateView {
-                open_tasks: std::collections::HashSet::new(),
+            task_state:        TaskStateView {
+                open_tasks:   std::collections::HashSet::new(),
                 closed_tasks: closed,
             },
         };
         let mut map = SuppressionMap::new();
         map.push(SuppressionScope {
-            scope: Span::single_line("a.rs", 1, 1, 5),
-            lints: lint_set(),
-            kind: SuppressionKind::Allow,
+            scope:   Span::single_line("a.rs", 1, 1, 5),
+            lints:   lint_set(),
+            kind:    SuppressionKind::Allow,
             tracked: Some("#9".to_string()),
-            reason: None,
+            reason:  None,
         });
         let project = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit)
             .with_workspace(workspace)
@@ -456,34 +465,34 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             SuppressionMetaConfig {
-                require_tracked: false,
-                require_reason: false,
-                require_reason_min_words: 1,
-                forbid_expired: false,
+                require_tracked:             false,
+                require_reason:              false,
+                require_reason_min_words:    1,
+                forbid_expired:              false,
                 overuse_threshold_per_crate: Some(1),
             },
         );
         let project = project_with_suppressions(vec![
             SuppressionScope {
-                scope: Span::single_line("mock/crates/a/src/lib.rs", 1, 1, 5),
-                lints: lint_set(),
-                kind: SuppressionKind::Allow,
+                scope:   Span::single_line("mock/crates/a/src/lib.rs", 1, 1, 5),
+                lints:   lint_set(),
+                kind:    SuppressionKind::Allow,
                 tracked: Some("#1".to_string()),
-                reason: None,
+                reason:  None,
             },
             SuppressionScope {
-                scope: Span::single_line("mock/crates/a/src/other.rs", 2, 1, 5),
-                lints: lint_set(),
-                kind: SuppressionKind::Allow,
+                scope:   Span::single_line("mock/crates/a/src/other.rs", 2, 1, 5),
+                lints:   lint_set(),
+                kind:    SuppressionKind::Allow,
                 tracked: Some("#2".to_string()),
-                reason: None,
+                reason:  None,
             },
             SuppressionScope {
-                scope: Span::single_line("mock/crates/b/src/lib.rs", 3, 1, 5),
-                lints: lint_set(),
-                kind: SuppressionKind::Allow,
+                scope:   Span::single_line("mock/crates/b/src/lib.rs", 3, 1, 5),
+                lints:   lint_set(),
+                kind:    SuppressionKind::Allow,
                 tracked: Some("#3".to_string()),
-                reason: None,
+                reason:  None,
             },
         ]);
         let sink = VecFindingSink::new();
@@ -514,19 +523,20 @@ mod tests {
 
     #[test]
     fn meta_lint_sees_scope_from_real_preprocessor_run() {
-        use crate::document::MockspaceDocument;
-        use crate::MockspaceEngine;
         use mockspace_core::lint::Language;
+
+        use crate::MockspaceEngine;
+        use crate::document::MockspaceDocument;
 
         let lint = SuppressionMetaLint::new(
             "no-untracked-suppressions",
             "",
             GateSeverity::uniform(Severity::Warn),
             SuppressionMetaConfig {
-                require_tracked: true,
-                require_reason: false,
-                require_reason_min_words: 1,
-                forbid_expired: false,
+                require_tracked:             true,
+                require_reason:              false,
+                require_reason_min_words:    1,
+                forbid_expired:              false,
                 overuse_threshold_per_crate: None,
             },
         );

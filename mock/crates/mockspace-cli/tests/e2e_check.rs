@@ -126,7 +126,8 @@ fn check_json_on_rust_crate_with_violations_at_commit_gate() {
     // The golden is otherwise the point of the test: any wire-shape
     // drift visible to JSON consumers (editor integrations, CI
     // dashboards) flags here.
-    let lib_rs = "pub fn handle(items: Vec<u8>) {}\npub struct Bag {\n    pub items: Vec<u32>,\n}\n";
+    let lib_rs =
+        "pub fn handle(items: Vec<u8>) {}\npub struct Bag {\n    pub items: Vec<u32>,\n}\n";
     let fixture = MockspaceFixture::new()
         .with_rust_crate("probe", lib_rs)
         .build()
@@ -196,7 +197,10 @@ fn check_surfaces_config_errors_visibly_for_invalid_visibility_variant() {
     let stderr = String::from_utf8(output.stderr).expect("check stderr is UTF-8");
     let fixture_path = fixture.path().display().to_string();
     let stable = stderr.replace(&fixture_path, "<FIXTURE>");
-    assert_matches_golden("check_config_errors_visible_for_invalid_visibility", &stable);
+    assert_matches_golden(
+        "check_config_errors_visible_for_invalid_visibility",
+        &stable,
+    );
 }
 
 #[test]
@@ -212,7 +216,8 @@ fn check_human_on_rust_crate_with_violations_at_commit_gate() {
     // actual line in the source. Future engine work refining span
     // precision will regenerate this golden. The order is also
     // engine emission order, not alphabetical.
-    let lib_rs = "pub fn handle(items: Vec<u8>) {}\npub struct Bag {\n    pub items: Vec<u32>,\n}\n";
+    let lib_rs =
+        "pub fn handle(items: Vec<u8>) {}\npub struct Bag {\n    pub items: Vec<u32>,\n}\n";
     let fixture = MockspaceFixture::new()
         .with_rust_crate("probe", lib_rs)
         .build()
@@ -305,7 +310,8 @@ fn check_fix_on_rust_crate_with_violations_keeps_findings_visible() {
     // still print and the exit code still reflects the gate
     // failure. Verifies `--fix` does not silence Error-severity
     // diagnostics.
-    let lib_rs = "pub fn handle(items: Vec<u8>) {}\npub struct Bag {\n    pub items: Vec<u32>,\n}\n";
+    let lib_rs =
+        "pub fn handle(items: Vec<u8>) {}\npub struct Bag {\n    pub items: Vec<u32>,\n}\n";
     let fixture = MockspaceFixture::new()
         .with_rust_crate("probe", lib_rs)
         .build()
@@ -364,8 +370,7 @@ extends = "mockspace::writing-style"
         ("b.md", "Second doc \u{2014} marker.\n"),
         ("c.md", "Third doc \u{2014} marker.\n"),
     ] {
-        std::fs::write(fixture.path().join(name), body)
-            .expect("write fixture markdown");
+        std::fs::write(fixture.path().join(name), body).expect("write fixture markdown");
     }
     let invoke = || {
         let out = Command::cargo_bin("mock")
@@ -447,8 +452,7 @@ extends = "mockspace::writing-style"
         .build()
         .expect("fixture A");
     for name in &["a.md", "b.md", "c.md"] {
-        std::fs::write(fixture_a.path().join(name), content)
-            .expect("write fixture A markdown");
+        std::fs::write(fixture_a.path().join(name), content).expect("write fixture A markdown");
     }
     // Fixture B: same content but file names that sort in reverse
     // dictionary order against the fixture-A names (`zzz` > `c`,
@@ -461,8 +465,7 @@ extends = "mockspace::writing-style"
         .build()
         .expect("fixture B");
     for name in &["zzz.md", "yyy.md", "xxx.md"] {
-        std::fs::write(fixture_b.path().join(name), content)
-            .expect("write fixture B markdown");
+        std::fs::write(fixture_b.path().join(name), content).expect("write fixture B markdown");
     }
     let count_a = count_em_dash_findings(&fixture_a);
     let count_b = count_em_dash_findings(&fixture_b);

@@ -19,9 +19,8 @@
 //! generated file always exists (empty slice when no presets are
 //! present) so the include site never has to conditionalise.
 
-use std::env;
-use std::fs;
 use std::path::PathBuf;
+use std::{env, fs};
 
 fn main() {
     let manifest_dir =
@@ -63,9 +62,8 @@ fn main() {
                 .strip_suffix(".toml")
                 .expect("filtered by extension check above")
                 .to_string();
-            let toml_body = fs::read_to_string(&path).unwrap_or_else(|e| {
-                panic!("failed to read preset {}: {e}", path.display())
-            });
+            let toml_body = fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("failed to read preset {}: {e}", path.display()));
             entries.push((name, toml_body));
         }
     }

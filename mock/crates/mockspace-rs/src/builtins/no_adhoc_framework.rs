@@ -22,14 +22,14 @@ pub const KIND: &str = "no-adhoc-framework";
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct NoAdhocFrameworkConfig {
     #[serde(default = "default_true")]
-    pub detect_dispatch_tables: bool,
+    pub detect_dispatch_tables:   bool,
     #[serde(default = "default_true")]
     pub detect_lifecycle_triples: bool,
     #[serde(default = "default_true")]
-    pub detect_callback_chains: bool,
+    pub detect_callback_chains:   bool,
     /// Minimum signal count to fire (heuristic threshold).
     #[serde(default = "default_min_signal")]
-    pub min_signal_count: u32,
+    pub min_signal_count:         u32,
 }
 
 fn default_true() -> bool {
@@ -41,10 +41,10 @@ fn default_min_signal() -> u32 {
 }
 
 pub struct NoAdhocFrameworkLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: NoAdhocFrameworkConfig,
+    config:           NoAdhocFrameworkConfig,
 }
 
 impl NoAdhocFrameworkLint {
@@ -67,12 +67,15 @@ impl Lint for NoAdhocFrameworkLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_syn_ast(&self) -> bool {
         true
     }
@@ -142,12 +145,16 @@ impl Lint for NoAdhocFrameworkLint {
                             .sig
                             .inputs
                             .iter()
-                            .filter(|i| match i {
-                                syn::FnArg::Typed(pt) => matches!(
-                                    &*pt.ty,
-                                    syn::Type::BareFn(_) | syn::Type::ImplTrait(_)
-                                ),
-                                _ => false,
+                            .filter(|i| {
+                                match i {
+                                    syn::FnArg::Typed(pt) => {
+                                        matches!(
+                                            &*pt.ty,
+                                            syn::Type::BareFn(_) | syn::Type::ImplTrait(_)
+                                        )
+                                    },
+                                    _ => false,
+                                }
                             })
                             .count() as u32;
                         if callback_params >= 2 {
@@ -193,22 +200,21 @@ pub fn instantiate_with(
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: NoAdhocFrameworkConfig = if config.is_empty() {
         NoAdhocFrameworkConfig {
-            detect_dispatch_tables: true,
+            detect_dispatch_tables:   true,
             detect_lifecycle_triples: true,
-            detect_callback_chains: true,
-            min_signal_count: default_min_signal(),
+            detect_callback_chains:   true,
+            min_signal_count:         default_min_signal(),
         }
     } else {
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("no-adhoc-framework config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("no-adhoc-framework config: {e}"),
                 source_location: None,
-            })?
+            }
+        })?
     };
     Ok(Box::new(NoAdhocFrameworkLint::new(
         name,
@@ -220,13 +226,15 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, RunSurface, Severity};
+
     use super::*;
     use crate::config_types::Language;
     use crate::document::MockspaceDocument;
     use crate::finding_sink::VecFindingSink;
     use crate::project::ProjectBuilder;
-    use mockspace_core::lint::{Gate, RunSurface, Severity};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -242,10 +250,10 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             NoAdhocFrameworkConfig {
-                detect_dispatch_tables: true,
+                detect_dispatch_tables:   true,
                 detect_lifecycle_triples: true,
-                detect_callback_chains: true,
-                min_signal_count: 1,
+                detect_callback_chains:   true,
+                min_signal_count:         1,
             },
         );
         let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
@@ -260,11 +268,11 @@ mod tests {
         let root = PathBuf::from("/tmp");
         let cfg = EmptyCfg;
         let ctx = LintContext {
-            gate: Gate::Commit,
-            severities: GateSeverity::uniform(Severity::Warn),
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   GateSeverity::uniform(Severity::Warn),
+            surface:      RunSurface::Local,
             project_root: &root,
-            config: &cfg,
+            config:       &cfg,
         };
         lint.check_project(&ctx, &project, &sink).unwrap();
         assert_eq!(sink.into_findings().len(), 1);

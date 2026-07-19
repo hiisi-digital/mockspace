@@ -12,11 +12,12 @@
 //! scrubbed before comparison; the snapshot helper itself prints refs
 //! by name (no commit OIDs) so no OID scrub is needed.
 
+use std::collections::BTreeMap;
+use std::process::Command as StdCommand;
+
 use assert_cmd::Command;
 use mockspace_rs::{RefPath, RepoHandle, RoundRefTree, Slug};
 use mockspace_test_fixtures::MockspaceFixture;
-use std::collections::BTreeMap;
-use std::process::Command as StdCommand;
 
 mod common;
 use common::{assert_matches_golden, snapshot_mock_refs};
@@ -83,7 +84,7 @@ fn scrub_iso8601_lines(s: &str) -> String {
                         .all(|b| b.is_ascii_alphanumeric() || b == b'_')
                     && looks_like_iso8601_quoted_value(rest)
                 {
-                    let indent = &line[..line.len() - trimmed.len()];
+                    let indent = &line[.. line.len() - trimmed.len()];
                     return format!("{indent}{field} = \"<TIMESTAMP>\"");
                 }
             }
@@ -115,7 +116,7 @@ fn looks_like_iso8601_quoted_value(rest: &str) -> bool {
         && digit(8)
         && digit(9)
         && bytes[10] == b'T'
-        && rest[..rest.len() - 1].contains('Z')
+        && rest[.. rest.len() - 1].contains('Z')
 }
 
 #[test]
@@ -132,43 +133,42 @@ fn tree_of_refs_after_task_lifecycle() {
     git_init(&fixture);
 
     // Two tasks: one bare slug, one namespaced.
-    run_mock(
-        &fixture,
-        &["task", "new", "migrate-to-codeberg", "--title", "Migrate to Codeberg"],
-    );
-    run_mock(
-        &fixture,
-        &[
-            "task",
-            "new",
-            "compiler::ir::lower-pass",
-            "--title",
-            "Lower pass for IR",
-        ],
-    );
+    run_mock(&fixture, &[
+        "task",
+        "new",
+        "migrate-to-codeberg",
+        "--title",
+        "Migrate to Codeberg",
+    ]);
+    run_mock(&fixture, &[
+        "task",
+        "new",
+        "compiler::ir::lower-pass",
+        "--title",
+        "Lower pass for IR",
+    ]);
 
     // Walk the bare task through every state.
     run_mock(&fixture, &["task", "start", "migrate-to-codeberg"]);
     run_mock(&fixture, &["task", "block", "migrate-to-codeberg"]);
     run_mock(&fixture, &["task", "defer", "migrate-to-codeberg"]);
-    run_mock(
-        &fixture,
-        &[
-            "task",
-            "close",
-            "migrate-to-codeberg",
-            "--resolution",
-            "completed",
-            "--branch",
-            "feat/codeberg",
-        ],
-    );
+    run_mock(&fixture, &[
+        "task",
+        "close",
+        "migrate-to-codeberg",
+        "--resolution",
+        "completed",
+        "--branch",
+        "feat/codeberg",
+    ]);
 
     // Move the namespaced one to verify the old ref disappears.
-    run_mock(
-        &fixture,
-        &["task", "move", "compiler::ir::lower-pass", "compiler::backend::lower-pass"],
-    );
+    run_mock(&fixture, &[
+        "task",
+        "move",
+        "compiler::ir::lower-pass",
+        "compiler::backend::lower-pass",
+    ]);
 
     let snapshot = snapshot_mock_refs(fixture.path());
     let scrubbed = scrub_iso8601_lines(&snapshot);
@@ -205,23 +205,17 @@ fn tree_of_refs_after_combined_lifecycle() {
     git_init(&fixture);
 
     // Task side: one task transitioned through close.
-    run_mock(
-        &fixture,
-        &["task", "new", "ship-it", "--title", "Ship it"],
-    );
+    run_mock(&fixture, &["task", "new", "ship-it", "--title", "Ship it"]);
     run_mock(&fixture, &["task", "start", "ship-it"]);
-    run_mock(
-        &fixture,
-        &[
-            "task",
-            "close",
-            "ship-it",
-            "--resolution",
-            "completed",
-            "--branch",
-            "feat/ship",
-        ],
-    );
+    run_mock(&fixture, &[
+        "task",
+        "close",
+        "ship-it",
+        "--resolution",
+        "completed",
+        "--branch",
+        "feat/ship",
+    ]);
 
     // Round side: seed topic, advance plan.
     let slug = Slug::new("round-alpha").expect("slug");
@@ -232,4 +226,3 @@ fn tree_of_refs_after_combined_lifecycle() {
     let scrubbed = scrub_iso8601_lines(&snapshot);
     assert_matches_golden("tree_of_refs_after_combined_lifecycle", &scrubbed);
 }
-

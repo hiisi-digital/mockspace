@@ -44,7 +44,7 @@ use mockspace_core::lint::{FileOp, Finding, Fix};
 pub struct FixOpts {
     /// When `true`, [`apply_plan`] is a no-op; the plan is meant to be
     /// rendered as a diff via [`render_unified_diff`] instead.
-    pub dry_run: bool,
+    pub dry_run:    bool,
     /// When `Some`, only findings whose `lint_name` appears in this list
     /// are eligible. When `None`, every finding with a `suggestion.fix`
     /// is eligible.
@@ -56,9 +56,9 @@ pub struct FixOpts {
 /// when [`apply_plan`] is called with `dry_run == false`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileChange {
-    pub path: PathBuf,
+    pub path:   PathBuf,
     pub before: String,
-    pub after: String,
+    pub after:  String,
 }
 
 /// Why a particular finding's fix was dropped from the plan. Reported
@@ -69,9 +69,9 @@ pub struct ConflictReport {
     /// Name of the lint that emitted the dropped finding.
     pub lint_name: String,
     /// File the dropped fix would have touched.
-    pub path: PathBuf,
+    pub path:      PathBuf,
     /// Plain-English reason, e.g. "overlaps with prior fix at bytes 12..18".
-    pub reason: String,
+    pub reason:    String,
 }
 
 /// Result of [`plan_fixes`]. Carries the in-buffer changes that survived
@@ -79,16 +79,16 @@ pub struct ConflictReport {
 /// the planner dropped, and a tally for the caller's reporting.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FixPlan {
-    pub file_changes: Vec<FileChange>,
-    pub file_ops: Vec<FileOp>,
-    pub conflicts: Vec<ConflictReport>,
+    pub file_changes:     Vec<FileChange>,
+    pub file_ops:         Vec<FileOp>,
+    pub conflicts:        Vec<ConflictReport>,
     /// Number of findings inspected but not eligible (no `suggestion.fix`
     /// at all, or filtered out by `only_lints`). Distinct from
     /// `conflicts.len()` which counts findings whose fix WAS eligible but
     /// then dropped during conflict resolution.
     pub skipped_advisory: usize,
     /// Total leaf byte-edits + file ops that survived to `apply_plan`.
-    pub fixes_applied: usize,
+    pub fixes_applied:    usize,
 }
 
 /// Errors arising during fix planning or application.
@@ -96,28 +96,33 @@ pub struct FixPlan {
 pub enum FixError {
     /// A `Replace` / `Delete` named byte offsets outside the source.
     OutOfRangeEdit {
-        path: PathBuf,
+        path:  PathBuf,
         start: usize,
-        end: usize,
-        len: usize,
+        end:   usize,
+        len:   usize,
     },
     /// A byte offset fell on a non-UTF-8-character boundary.
-    NotCharBoundary { path: PathBuf, offset: usize },
+    NotCharBoundary {
+        path:   PathBuf,
+        offset: usize,
+    },
     /// IO error reading or writing a source file.
     Io {
-        path: PathBuf,
+        path:   PathBuf,
         source: std::io::Error,
     },
     /// File-level op conflicts (delete-then-edit, create-existing, etc).
-    FileOpConflict { reason: String },
+    FileOpConflict {
+        reason: String,
+    },
     /// A `Fix::Multi` contains internally-overlapping leaf edits on the same
     /// file. Reported as an error (not a soft conflict) because Multi must
     /// apply atomically per the design memo; a Multi whose own leaves
     /// conflict cannot satisfy that contract.
     MultiAtomicityViolation {
         lint_name: String,
-        path: PathBuf,
-        reason: String,
+        path:      PathBuf,
+        reason:    String,
     },
 }
 
@@ -129,29 +134,43 @@ impl std::fmt::Display for FixError {
                 start,
                 end,
                 len,
-            } => write!(
-                f,
-                "fix edit {start}..{end} out of range in {} ({len} bytes)",
-                path.display()
-            ),
-            FixError::NotCharBoundary { path, offset } => write!(
-                f,
-                "fix offset {offset} not on UTF-8 boundary in {}",
-                path.display()
-            ),
-            FixError::Io { path, source } => {
+            } => {
+                write!(
+                    f,
+                    "fix edit {start}..{end} out of range in {} ({len} bytes)",
+                    path.display()
+                )
+            },
+            FixError::NotCharBoundary {
+                path,
+                offset,
+            } => {
+                write!(
+                    f,
+                    "fix offset {offset} not on UTF-8 boundary in {}",
+                    path.display()
+                )
+            },
+            FixError::Io {
+                path,
+                source,
+            } => {
                 write!(f, "io error on {}: {source}", path.display())
-            }
-            FixError::FileOpConflict { reason } => write!(f, "file-op conflict: {reason}"),
+            },
+            FixError::FileOpConflict {
+                reason,
+            } => write!(f, "file-op conflict: {reason}"),
             FixError::MultiAtomicityViolation {
                 lint_name,
                 path,
                 reason,
-            } => write!(
-                f,
-                "Fix::Multi atomicity violation from `{lint_name}` on {}: {reason}",
-                path.display()
-            ),
+            } => {
+                write!(
+                    f,
+                    "Fix::Multi atomicity violation from `{lint_name}` on {}: {reason}",
+                    path.display()
+                )
+            },
         }
     }
 }
@@ -159,7 +178,10 @@ impl std::fmt::Display for FixError {
 impl std::error::Error for FixError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            FixError::Io { source, .. } => Some(source),
+            FixError::Io {
+                source,
+                ..
+            } => Some(source),
             _ => None,
         }
     }
@@ -168,9 +190,9 @@ impl std::error::Error for FixError {
 /// A single leaf byte-edit collected from a finding's fix tree.
 #[derive(Debug, Clone)]
 struct LeafEdit {
-    lint_name: String,
-    start: usize,
-    end: usize,
+    lint_name:   String,
+    start:       usize,
+    end:         usize,
     replacement: String,
 }
 
@@ -191,37 +213,47 @@ fn collect_leaves(
             replacement,
         } => {
             out_edits.push(LeafEdit {
-                lint_name: lint_name.to_owned(),
-                start: *start,
-                end: *end,
+                lint_name:   lint_name.to_owned(),
+                start:       *start,
+                end:         *end,
                 replacement: replacement.to_string(),
             });
-        }
-        Fix::Insert { position, text } => {
+        },
+        Fix::Insert {
+            position,
+            text,
+        } => {
             // An Insert is a zero-width edit at `position`.
             out_edits.push(LeafEdit {
-                lint_name: lint_name.to_owned(),
-                start: *position,
-                end: *position,
+                lint_name:   lint_name.to_owned(),
+                start:       *position,
+                end:         *position,
                 replacement: text.to_string(),
             });
-        }
-        Fix::Delete { start, end } => {
+        },
+        Fix::Delete {
+            start,
+            end,
+        } => {
             out_edits.push(LeafEdit {
-                lint_name: lint_name.to_owned(),
-                start: *start,
-                end: *end,
+                lint_name:   lint_name.to_owned(),
+                start:       *start,
+                end:         *end,
                 replacement: String::new(),
             });
-        }
-        Fix::Multi { fixes } => {
+        },
+        Fix::Multi {
+            fixes,
+        } => {
             for inner in fixes {
                 collect_leaves(inner, lint_name, out_edits, out_ops);
             }
-        }
-        Fix::File { op } => {
+        },
+        Fix::File {
+            op,
+        } => {
             out_ops.push(op.clone());
-        }
+        },
     }
 }
 
@@ -241,7 +273,7 @@ fn collect_leaves(
 #[derive(Debug, Clone)]
 struct FindingEditGroup {
     lint_name: String,
-    leaves: Vec<LeafEdit>,
+    leaves:    Vec<LeafEdit>,
 }
 
 pub fn plan_fixes(
@@ -263,7 +295,7 @@ pub fn plan_fixes(
             None => {
                 plan.skipped_advisory += 1;
                 continue;
-            }
+            },
         };
         if let Some(only) = opts.only_lints.as_ref() {
             if !only.iter().any(|n| n == finding.lint_name.as_ref()) {
@@ -280,13 +312,13 @@ pub fn plan_fixes(
             // unsatisfiable (atomic application would require both
             // edits in conflicting positions). Surface as a hard error
             // so the lint author can fix the Multi at its source.
-            for i in 0..edits.len() {
-                for j in (i + 1)..edits.len() {
+            for i in 0 .. edits.len() {
+                for j in (i + 1) .. edits.len() {
                     if ranges_conflict(&edits[i], &edits[j]) {
                         return Err(FixError::MultiAtomicityViolation {
                             lint_name: finding.lint_name.to_string(),
-                            path: path.clone(),
-                            reason: format!(
+                            path:      path.clone(),
+                            reason:    format!(
                                 "leaves at bytes {}..{} and {}..{} overlap within one Fix::Multi",
                                 edits[i].start, edits[i].end, edits[j].start, edits[j].end
                             ),
@@ -294,13 +326,10 @@ pub fn plan_fixes(
                     }
                 }
             }
-            by_file
-                .entry(path)
-                .or_default()
-                .push(FindingEditGroup {
-                    lint_name: finding.lint_name.to_string(),
-                    leaves: edits,
-                });
+            by_file.entry(path).or_default().push(FindingEditGroup {
+                lint_name: finding.lint_name.to_string(),
+                leaves:    edits,
+            });
         }
     }
 
@@ -308,9 +337,11 @@ pub fn plan_fixes(
     // conflicting groups as one unit, apply surviving groups' leaves
     // in reverse byte-offset order.
     for (path, groups) in by_file {
-        let source = fs::read_to_string(&path).map_err(|source| FixError::Io {
-            path: path.clone(),
-            source,
+        let source = fs::read_to_string(&path).map_err(|source| {
+            FixError::Io {
+                path: path.clone(),
+                source,
+            }
         })?;
 
         // Validate each group's leaf bounds first; out-of-range is a
@@ -319,21 +350,21 @@ pub fn plan_fixes(
             for edit in &group.leaves {
                 if edit.start > source.len() || edit.end > source.len() || edit.start > edit.end {
                     return Err(FixError::OutOfRangeEdit {
-                        path: path.clone(),
+                        path:  path.clone(),
                         start: edit.start,
-                        end: edit.end,
-                        len: source.len(),
+                        end:   edit.end,
+                        len:   source.len(),
                     });
                 }
                 if !source.is_char_boundary(edit.start) {
                     return Err(FixError::NotCharBoundary {
-                        path: path.clone(),
+                        path:   path.clone(),
                         offset: edit.start,
                     });
                 }
                 if !source.is_char_boundary(edit.end) {
                     return Err(FixError::NotCharBoundary {
-                        path: path.clone(),
+                        path:   path.clone(),
                         offset: edit.end,
                     });
                 }
@@ -356,8 +387,8 @@ pub fn plan_fixes(
             if let Some((own, prior)) = conflict {
                 plan.conflicts.push(ConflictReport {
                     lint_name: group.lint_name.clone(),
-                    path: path.clone(),
-                    reason: format!(
+                    path:      path.clone(),
+                    reason:    format!(
                         "leaf at bytes {}..{} overlaps with prior fix from `{}` at bytes {}..{}",
                         own.start, own.end, prior.lint_name, prior.start, prior.end
                     ),
@@ -381,7 +412,7 @@ pub fn plan_fixes(
 
         let mut buf = source.clone();
         for edit in &survivors {
-            buf.replace_range(edit.start..edit.end, &edit.replacement);
+            buf.replace_range(edit.start .. edit.end, &edit.replacement);
         }
 
         plan.fixes_applied += survivors.len();
@@ -396,7 +427,10 @@ pub fn plan_fixes(
     // a `FileOp::Delete { path: P }` while a byte-edit also targeted P
     // is a conflict ("delete then edit" makes no sense).
     for op in &file_ops {
-        if let FileOp::Delete { path } = op {
+        if let FileOp::Delete {
+            path,
+        } = op
+        {
             let resolved = normalize_relative_path(project_root, Path::new(path.as_ref()));
             if plan.file_changes.iter().any(|c| c.path == resolved) {
                 return Err(FixError::FileOpConflict {
@@ -429,7 +463,7 @@ fn normalize_relative_path(project_root: &Path, rel: impl AsRef<Path>) -> PathBu
     let mut out = PathBuf::new();
     for comp in joined.components() {
         match comp {
-            Component::CurDir => {}
+            Component::CurDir => {},
             other => out.push(other.as_os_str()),
         }
     }
@@ -469,14 +503,19 @@ pub fn apply_plan(plan: &FixPlan, opts: &FixOpts, project_root: &Path) -> Result
         return Ok(());
     }
     for change in &plan.file_changes {
-        fs::write(&change.path, &change.after).map_err(|source| FixError::Io {
-            path: change.path.clone(),
-            source,
+        fs::write(&change.path, &change.after).map_err(|source| {
+            FixError::Io {
+                path: change.path.clone(),
+                source,
+            }
         })?;
     }
     for op in &plan.file_ops {
         match op {
-            FileOp::Create { path, content } => {
+            FileOp::Create {
+                path,
+                content,
+            } => {
                 let resolved = project_root.join(path.as_ref());
                 if resolved.exists() {
                     return Err(FixError::FileOpConflict {
@@ -485,25 +524,36 @@ pub fn apply_plan(plan: &FixPlan, opts: &FixOpts, project_root: &Path) -> Result
                 }
                 if let Some(parent) = resolved.parent() {
                     if !parent.as_os_str().is_empty() {
-                        fs::create_dir_all(parent).map_err(|source| FixError::Io {
-                            path: parent.to_owned(),
-                            source,
+                        fs::create_dir_all(parent).map_err(|source| {
+                            FixError::Io {
+                                path: parent.to_owned(),
+                                source,
+                            }
                         })?;
                     }
                 }
-                fs::write(&resolved, content.as_ref()).map_err(|source| FixError::Io {
-                    path: resolved,
-                    source,
+                fs::write(&resolved, content.as_ref()).map_err(|source| {
+                    FixError::Io {
+                        path: resolved,
+                        source,
+                    }
                 })?;
-            }
-            FileOp::Delete { path } => {
+            },
+            FileOp::Delete {
+                path,
+            } => {
                 let resolved = project_root.join(path.as_ref());
-                fs::remove_file(&resolved).map_err(|source| FixError::Io {
-                    path: resolved,
-                    source,
+                fs::remove_file(&resolved).map_err(|source| {
+                    FixError::Io {
+                        path: resolved,
+                        source,
+                    }
                 })?;
-            }
-            FileOp::Rename { from, to } => {
+            },
+            FileOp::Rename {
+                from,
+                to,
+            } => {
                 let from_p = project_root.join(from.as_ref());
                 let to_p = project_root.join(to.as_ref());
                 if to_p.exists() {
@@ -511,11 +561,13 @@ pub fn apply_plan(plan: &FixPlan, opts: &FixOpts, project_root: &Path) -> Result
                         reason: format!("Fix::File::Rename target exists: {}", to),
                     });
                 }
-                fs::rename(&from_p, &to_p).map_err(|source| FixError::Io {
-                    path: from_p,
-                    source,
+                fs::rename(&from_p, &to_p).map_err(|source| {
+                    FixError::Io {
+                        path: from_p,
+                        source,
+                    }
                 })?;
-            }
+            },
         }
     }
     Ok(())
@@ -578,50 +630,48 @@ pub fn render_unified_diff(plan: &FixPlan) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use mockspace_core::lint::{Severity, Span, Suggestion};
     use std::borrow::Cow;
 
-    fn finding_with_fix(
-        path: &str,
-        lint_name: &'static str,
-        fix: Fix,
-    ) -> Finding {
+    use mockspace_core::lint::{Severity, Span, Suggestion};
+
+    use super::*;
+
+    fn finding_with_fix(path: &str, lint_name: &'static str, fix: Fix) -> Finding {
         Finding {
-            lint_name: Cow::Borrowed(lint_name),
-            rule_id: None,
-            plugin_id: None,
-            severity: Severity::Warn,
-            impact: None,
-            category: None,
-            message: Cow::Borrowed("test"),
-            span: Span::single_line(path, 1, 0, 1),
-            hint: None,
-            help: None,
-            suggestion: Some(Suggestion {
+            lint_name:     Cow::Borrowed(lint_name),
+            rule_id:       None,
+            plugin_id:     None,
+            severity:      Severity::Warn,
+            impact:        None,
+            category:      None,
+            message:       Cow::Borrowed("test"),
+            span:          Span::single_line(path, 1, 0, 1),
+            hint:          None,
+            help:          None,
+            suggestion:    Some(Suggestion {
                 description: Cow::Borrowed("apply"),
-                fix: Some(fix),
+                fix:         Some(fix),
             }),
             related_spans: Vec::new(),
-            metadata: None,
+            metadata:      None,
         }
     }
 
     fn finding_advisory(lint_name: &'static str) -> Finding {
         Finding {
-            lint_name: Cow::Borrowed(lint_name),
-            rule_id: None,
-            plugin_id: None,
-            severity: Severity::Warn,
-            impact: None,
-            category: None,
-            message: Cow::Borrowed("test"),
-            span: Span::single_line("a.rs", 1, 0, 1),
-            hint: Some(Cow::Borrowed("consider X")),
-            help: None,
-            suggestion: None,
+            lint_name:     Cow::Borrowed(lint_name),
+            rule_id:       None,
+            plugin_id:     None,
+            severity:      Severity::Warn,
+            impact:        None,
+            category:      None,
+            message:       Cow::Borrowed("test"),
+            span:          Span::single_line("a.rs", 1, 0, 1),
+            hint:          Some(Cow::Borrowed("consider X")),
+            help:          None,
+            suggestion:    None,
             related_spans: Vec::new(),
-            metadata: None,
+            metadata:      None,
         }
     }
 
@@ -641,24 +691,16 @@ mod tests {
         // Two non-overlapping replaces. Reverse-order application means
         // the second-byte-offset edit must succeed regardless of where
         // the first lands.
-        let f1 = finding_with_fix(
-            "a.rs",
-            "lint-a",
-            Fix::Replace {
-                start: 8,
-                end: 9,
-                replacement: Cow::Borrowed("9"),
-            },
-        );
-        let f2 = finding_with_fix(
-            "a.rs",
-            "lint-b",
-            Fix::Replace {
-                start: 19,
-                end: 20,
-                replacement: Cow::Borrowed("8"),
-            },
-        );
+        let f1 = finding_with_fix("a.rs", "lint-a", Fix::Replace {
+            start:       8,
+            end:         9,
+            replacement: Cow::Borrowed("9"),
+        });
+        let f2 = finding_with_fix("a.rs", "lint-b", Fix::Replace {
+            start:       19,
+            end:         20,
+            replacement: Cow::Borrowed("8"),
+        });
         let plan = plan_fixes(tmp.path(), &[f1, f2], &FixOpts::default()).unwrap();
         assert_eq!(plan.file_changes.len(), 1);
         assert_eq!(plan.file_changes[0].after, "let x = 9; let y = 8;");
@@ -670,24 +712,16 @@ mod tests {
     fn overlapping_edits_drop_later_finding() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "hello world");
-        let f1 = finding_with_fix(
-            "a.rs",
-            "lint-a",
-            Fix::Replace {
-                start: 0,
-                end: 5,
-                replacement: Cow::Borrowed("HELLO"),
-            },
-        );
-        let f2 = finding_with_fix(
-            "a.rs",
-            "lint-b",
-            Fix::Replace {
-                start: 2,
-                end: 7,
-                replacement: Cow::Borrowed("XXXXX"),
-            },
-        );
+        let f1 = finding_with_fix("a.rs", "lint-a", Fix::Replace {
+            start:       0,
+            end:         5,
+            replacement: Cow::Borrowed("HELLO"),
+        });
+        let f2 = finding_with_fix("a.rs", "lint-b", Fix::Replace {
+            start:       2,
+            end:         7,
+            replacement: Cow::Borrowed("XXXXX"),
+        });
         let plan = plan_fixes(tmp.path(), &[f1, f2], &FixOpts::default()).unwrap();
         assert_eq!(plan.file_changes.len(), 1);
         assert_eq!(plan.file_changes[0].after, "HELLO world");
@@ -701,22 +735,14 @@ mod tests {
     fn insert_at_same_position_is_a_conflict() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "ab");
-        let f1 = finding_with_fix(
-            "a.rs",
-            "lint-a",
-            Fix::Insert {
-                position: 1,
-                text: Cow::Borrowed("X"),
-            },
-        );
-        let f2 = finding_with_fix(
-            "a.rs",
-            "lint-b",
-            Fix::Insert {
-                position: 1,
-                text: Cow::Borrowed("Y"),
-            },
-        );
+        let f1 = finding_with_fix("a.rs", "lint-a", Fix::Insert {
+            position: 1,
+            text:     Cow::Borrowed("X"),
+        });
+        let f2 = finding_with_fix("a.rs", "lint-b", Fix::Insert {
+            position: 1,
+            text:     Cow::Borrowed("Y"),
+        });
         let plan = plan_fixes(tmp.path(), &[f1, f2], &FixOpts::default()).unwrap();
         assert_eq!(plan.file_changes[0].after, "aXb");
         assert_eq!(plan.conflicts.len(), 1);
@@ -727,22 +753,14 @@ mod tests {
     fn insert_at_distinct_positions_both_land() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "abc");
-        let f1 = finding_with_fix(
-            "a.rs",
-            "lint-a",
-            Fix::Insert {
-                position: 1,
-                text: Cow::Borrowed("X"),
-            },
-        );
-        let f2 = finding_with_fix(
-            "a.rs",
-            "lint-b",
-            Fix::Insert {
-                position: 2,
-                text: Cow::Borrowed("Y"),
-            },
-        );
+        let f1 = finding_with_fix("a.rs", "lint-a", Fix::Insert {
+            position: 1,
+            text:     Cow::Borrowed("X"),
+        });
+        let f2 = finding_with_fix("a.rs", "lint-b", Fix::Insert {
+            position: 2,
+            text:     Cow::Borrowed("Y"),
+        });
         let plan = plan_fixes(tmp.path(), &[f1, f2], &FixOpts::default()).unwrap();
         assert_eq!(plan.file_changes[0].after, "aXbYc");
         assert!(plan.conflicts.is_empty());
@@ -752,11 +770,10 @@ mod tests {
     fn delete_compacts_source() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "alpha beta gamma");
-        let f1 = finding_with_fix(
-            "a.rs",
-            "lint-a",
-            Fix::Delete { start: 5, end: 10 },
-        );
+        let f1 = finding_with_fix("a.rs", "lint-a", Fix::Delete {
+            start: 5,
+            end:   10,
+        });
         let plan = plan_fixes(tmp.path(), &[f1], &FixOpts::default()).unwrap();
         assert_eq!(plan.file_changes[0].after, "alpha gamma");
     }
@@ -765,24 +782,20 @@ mod tests {
     fn multi_fix_collects_all_leaves() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "12345");
-        let f = finding_with_fix(
-            "a.rs",
-            "multi-lint",
-            Fix::Multi {
-                fixes: vec![
-                    Fix::Replace {
-                        start: 0,
-                        end: 1,
-                        replacement: Cow::Borrowed("A"),
-                    },
-                    Fix::Replace {
-                        start: 4,
-                        end: 5,
-                        replacement: Cow::Borrowed("E"),
-                    },
-                ],
-            },
-        );
+        let f = finding_with_fix("a.rs", "multi-lint", Fix::Multi {
+            fixes: vec![
+                Fix::Replace {
+                    start:       0,
+                    end:         1,
+                    replacement: Cow::Borrowed("A"),
+                },
+                Fix::Replace {
+                    start:       4,
+                    end:         5,
+                    replacement: Cow::Borrowed("E"),
+                },
+            ],
+        });
         let plan = plan_fixes(tmp.path(), &[f], &FixOpts::default()).unwrap();
         assert_eq!(plan.file_changes[0].after, "A234E");
         assert_eq!(plan.fixes_applied, 2);
@@ -806,26 +819,18 @@ mod tests {
     fn only_lints_filter_excludes_other_findings() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "abc");
-        let f_kept = finding_with_fix(
-            "a.rs",
-            "kept",
-            Fix::Replace {
-                start: 0,
-                end: 1,
-                replacement: Cow::Borrowed("A"),
-            },
-        );
-        let f_dropped = finding_with_fix(
-            "a.rs",
-            "dropped",
-            Fix::Replace {
-                start: 1,
-                end: 2,
-                replacement: Cow::Borrowed("B"),
-            },
-        );
+        let f_kept = finding_with_fix("a.rs", "kept", Fix::Replace {
+            start:       0,
+            end:         1,
+            replacement: Cow::Borrowed("A"),
+        });
+        let f_dropped = finding_with_fix("a.rs", "dropped", Fix::Replace {
+            start:       1,
+            end:         2,
+            replacement: Cow::Borrowed("B"),
+        });
         let opts = FixOpts {
-            dry_run: false,
+            dry_run:    false,
             only_lints: Some(vec!["kept".to_string()]),
         };
         let plan = plan_fixes(tmp.path(), &[f_kept, f_dropped], &opts).unwrap();
@@ -838,15 +843,11 @@ mod tests {
     fn out_of_range_edit_is_an_error() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "abc");
-        let f = finding_with_fix(
-            "a.rs",
-            "lint-a",
-            Fix::Replace {
-                start: 0,
-                end: 100,
-                replacement: Cow::Borrowed("X"),
-            },
-        );
+        let f = finding_with_fix("a.rs", "lint-a", Fix::Replace {
+            start:       0,
+            end:         100,
+            replacement: Cow::Borrowed("X"),
+        });
         let err = plan_fixes(tmp.path(), &[f], &FixOpts::default()).unwrap_err();
         assert!(matches!(err, FixError::OutOfRangeEdit { .. }));
     }
@@ -856,15 +857,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // Multi-byte char: first byte at 0, next char boundary at 4.
         write_source(tmp.path(), "a.rs", "🦀x");
-        let f = finding_with_fix(
-            "a.rs",
-            "lint-a",
-            Fix::Replace {
-                start: 1,
-                end: 2,
-                replacement: Cow::Borrowed("Y"),
-            },
-        );
+        let f = finding_with_fix("a.rs", "lint-a", Fix::Replace {
+            start:       1,
+            end:         2,
+            replacement: Cow::Borrowed("Y"),
+        });
         let err = plan_fixes(tmp.path(), &[f], &FixOpts::default()).unwrap_err();
         assert!(matches!(err, FixError::NotCharBoundary { .. }));
     }
@@ -873,15 +870,11 @@ mod tests {
     fn apply_plan_writes_file_when_not_dry_run() {
         let tmp = tempfile::tempdir().unwrap();
         let path = write_source(tmp.path(), "a.rs", "hello");
-        let f = finding_with_fix(
-            "a.rs",
-            "lint-a",
-            Fix::Replace {
-                start: 0,
-                end: 5,
-                replacement: Cow::Borrowed("HELLO"),
-            },
-        );
+        let f = finding_with_fix("a.rs", "lint-a", Fix::Replace {
+            start:       0,
+            end:         5,
+            replacement: Cow::Borrowed("HELLO"),
+        });
         let plan = plan_fixes(tmp.path(), &[f], &FixOpts::default()).unwrap();
         apply_plan(&plan, &FixOpts::default(), tmp.path()).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "HELLO");
@@ -891,18 +884,14 @@ mod tests {
     fn dry_run_does_not_write() {
         let tmp = tempfile::tempdir().unwrap();
         let path = write_source(tmp.path(), "a.rs", "hello");
-        let f = finding_with_fix(
-            "a.rs",
-            "lint-a",
-            Fix::Replace {
-                start: 0,
-                end: 5,
-                replacement: Cow::Borrowed("HELLO"),
-            },
-        );
+        let f = finding_with_fix("a.rs", "lint-a", Fix::Replace {
+            start:       0,
+            end:         5,
+            replacement: Cow::Borrowed("HELLO"),
+        });
         let plan = plan_fixes(tmp.path(), &[f], &FixOpts::default()).unwrap();
         let opts = FixOpts {
-            dry_run: true,
+            dry_run:    true,
             only_lints: None,
         };
         apply_plan(&plan, &opts, tmp.path()).unwrap();
@@ -915,15 +904,15 @@ mod tests {
     #[test]
     fn unified_diff_renders_changed_file() {
         let plan = FixPlan {
-            file_changes: vec![FileChange {
-                path: PathBuf::from("a.rs"),
+            file_changes:     vec![FileChange {
+                path:   PathBuf::from("a.rs"),
                 before: "hello\n".to_string(),
-                after: "HELLO\n".to_string(),
+                after:  "HELLO\n".to_string(),
             }],
-            file_ops: Vec::new(),
-            conflicts: Vec::new(),
+            file_ops:         Vec::new(),
+            conflicts:        Vec::new(),
             skipped_advisory: 0,
-            fixes_applied: 1,
+            fixes_applied:    1,
         };
         let diff = render_unified_diff(&plan);
         assert!(diff.contains("--- a/a.rs"));
@@ -936,16 +925,12 @@ mod tests {
     fn file_op_create_writes_new_file() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "fn x() {}\n");
-        let f = finding_with_fix(
-            "a.rs",
-            "scaffold-lint",
-            Fix::File {
-                op: FileOp::Create {
-                    path: Cow::Borrowed("BACKLOG.md"),
-                    content: Cow::Borrowed("# Backlog\n"),
-                },
+        let f = finding_with_fix("a.rs", "scaffold-lint", Fix::File {
+            op: FileOp::Create {
+                path:    Cow::Borrowed("BACKLOG.md"),
+                content: Cow::Borrowed("# Backlog\n"),
             },
-        );
+        });
         let plan = plan_fixes(tmp.path(), &[f], &FixOpts::default()).unwrap();
         assert_eq!(plan.file_ops.len(), 1);
         apply_plan(&plan, &FixOpts::default(), tmp.path()).unwrap();
@@ -959,16 +944,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "x");
         write_source(tmp.path(), "already.md", "exists");
-        let f = finding_with_fix(
-            "a.rs",
-            "scaffold-lint",
-            Fix::File {
-                op: FileOp::Create {
-                    path: Cow::Borrowed("already.md"),
-                    content: Cow::Borrowed("nope"),
-                },
+        let f = finding_with_fix("a.rs", "scaffold-lint", Fix::File {
+            op: FileOp::Create {
+                path:    Cow::Borrowed("already.md"),
+                content: Cow::Borrowed("nope"),
             },
-        );
+        });
         let plan = plan_fixes(tmp.path(), &[f], &FixOpts::default()).unwrap();
         let err = apply_plan(&plan, &FixOpts::default(), tmp.path()).unwrap_err();
         assert!(matches!(err, FixError::FileOpConflict { .. }));
@@ -978,24 +959,16 @@ mod tests {
     fn file_op_delete_collides_with_buffer_edit_on_same_path() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "doomed.rs", "let x = 1;");
-        let f_edit = finding_with_fix(
-            "doomed.rs",
-            "edit-lint",
-            Fix::Replace {
-                start: 4,
-                end: 5,
-                replacement: Cow::Borrowed("y"),
+        let f_edit = finding_with_fix("doomed.rs", "edit-lint", Fix::Replace {
+            start:       4,
+            end:         5,
+            replacement: Cow::Borrowed("y"),
+        });
+        let f_delete = finding_with_fix("doomed.rs", "delete-lint", Fix::File {
+            op: FileOp::Delete {
+                path: Cow::Borrowed("doomed.rs"),
             },
-        );
-        let f_delete = finding_with_fix(
-            "doomed.rs",
-            "delete-lint",
-            Fix::File {
-                op: FileOp::Delete {
-                    path: Cow::Borrowed("doomed.rs"),
-                },
-            },
-        );
+        });
         let err = plan_fixes(tmp.path(), &[f_edit, f_delete], &FixOpts::default()).unwrap_err();
         assert!(matches!(err, FixError::FileOpConflict { .. }));
     }
@@ -1004,32 +977,30 @@ mod tests {
     fn intra_multi_overlap_returns_atomicity_violation() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "abcdef");
-        let f = finding_with_fix(
-            "a.rs",
-            "buggy-multi",
-            Fix::Multi {
-                fixes: vec![
-                    Fix::Replace {
-                        start: 0,
-                        end: 3,
-                        replacement: Cow::Borrowed("X"),
-                    },
-                    Fix::Replace {
-                        start: 2,
-                        end: 5,
-                        replacement: Cow::Borrowed("Y"),
-                    },
-                ],
-            },
-        );
+        let f = finding_with_fix("a.rs", "buggy-multi", Fix::Multi {
+            fixes: vec![
+                Fix::Replace {
+                    start:       0,
+                    end:         3,
+                    replacement: Cow::Borrowed("X"),
+                },
+                Fix::Replace {
+                    start:       2,
+                    end:         5,
+                    replacement: Cow::Borrowed("Y"),
+                },
+            ],
+        });
         let err = plan_fixes(tmp.path(), &[f], &FixOpts::default()).unwrap_err();
         match err {
             FixError::MultiAtomicityViolation {
-                lint_name, reason, ..
+                lint_name,
+                reason,
+                ..
             } => {
                 assert_eq!(lint_name, "buggy-multi");
                 assert!(reason.contains("overlap"));
-            }
+            },
             other => panic!("expected MultiAtomicityViolation, got {other:?}"),
         }
     }
@@ -1045,33 +1016,25 @@ mod tests {
         // partially).
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "abcdef");
-        let f_first = finding_with_fix(
-            "a.rs",
-            "blocker",
-            Fix::Replace {
-                start: 0,
-                end: 6,
-                replacement: Cow::Borrowed("ZZZZZZ"),
-            },
-        );
-        let f_multi = finding_with_fix(
-            "a.rs",
-            "multi-loser",
-            Fix::Multi {
-                fixes: vec![
-                    Fix::Replace {
-                        start: 0,
-                        end: 1,
-                        replacement: Cow::Borrowed("X"),
-                    },
-                    Fix::Replace {
-                        start: 5,
-                        end: 6,
-                        replacement: Cow::Borrowed("Y"),
-                    },
-                ],
-            },
-        );
+        let f_first = finding_with_fix("a.rs", "blocker", Fix::Replace {
+            start:       0,
+            end:         6,
+            replacement: Cow::Borrowed("ZZZZZZ"),
+        });
+        let f_multi = finding_with_fix("a.rs", "multi-loser", Fix::Multi {
+            fixes: vec![
+                Fix::Replace {
+                    start:       0,
+                    end:         1,
+                    replacement: Cow::Borrowed("X"),
+                },
+                Fix::Replace {
+                    start:       5,
+                    end:         6,
+                    replacement: Cow::Borrowed("Y"),
+                },
+            ],
+        });
         let plan = plan_fixes(tmp.path(), &[f_first, f_multi], &FixOpts::default()).unwrap();
         assert_eq!(plan.file_changes[0].after, "ZZZZZZ");
         // The Multi was dropped as one unit; one conflict report names it.
@@ -1089,24 +1052,16 @@ mod tests {
         // and the delete-then-edit collision is detected.
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "a.rs", "hi");
-        let f_edit = finding_with_fix(
-            "a.rs",
-            "edit-lint",
-            Fix::Replace {
-                start: 0,
-                end: 2,
-                replacement: Cow::Borrowed("HI"),
+        let f_edit = finding_with_fix("a.rs", "edit-lint", Fix::Replace {
+            start:       0,
+            end:         2,
+            replacement: Cow::Borrowed("HI"),
+        });
+        let f_delete = finding_with_fix("b.rs", "delete-lint", Fix::File {
+            op: FileOp::Delete {
+                path: Cow::Borrowed("./a.rs"),
             },
-        );
-        let f_delete = finding_with_fix(
-            "b.rs",
-            "delete-lint",
-            Fix::File {
-                op: FileOp::Delete {
-                    path: Cow::Borrowed("./a.rs"),
-                },
-            },
-        );
+        });
         let err = plan_fixes(tmp.path(), &[f_edit, f_delete], &FixOpts::default()).unwrap_err();
         assert!(matches!(err, FixError::FileOpConflict { .. }));
     }
@@ -1117,15 +1072,15 @@ mod tests {
         // newline both before and after via the standard sentinel so
         // `git apply -R` round-trips byte-for-byte.
         let plan = FixPlan {
-            file_changes: vec![FileChange {
-                path: PathBuf::from("a.rs"),
+            file_changes:     vec![FileChange {
+                path:   PathBuf::from("a.rs"),
                 before: "hello".to_string(), // no trailing newline
-                after: "HELLO".to_string(),  // no trailing newline
+                after:  "HELLO".to_string(), // no trailing newline
             }],
-            file_ops: Vec::new(),
-            conflicts: Vec::new(),
+            file_ops:         Vec::new(),
+            conflicts:        Vec::new(),
             skipped_advisory: 0,
-            fixes_applied: 1,
+            fixes_applied:    1,
         };
         let diff = render_unified_diff(&plan);
         // Both sides must carry the sentinel.
@@ -1139,15 +1094,15 @@ mod tests {
     #[test]
     fn diff_omits_sentinel_when_both_sides_end_in_newline() {
         let plan = FixPlan {
-            file_changes: vec![FileChange {
-                path: PathBuf::from("a.rs"),
+            file_changes:     vec![FileChange {
+                path:   PathBuf::from("a.rs"),
                 before: "hello\n".to_string(),
-                after: "HELLO\n".to_string(),
+                after:  "HELLO\n".to_string(),
             }],
-            file_ops: Vec::new(),
-            conflicts: Vec::new(),
+            file_ops:         Vec::new(),
+            conflicts:        Vec::new(),
             skipped_advisory: 0,
-            fixes_applied: 1,
+            fixes_applied:    1,
         };
         let diff = render_unified_diff(&plan);
         assert!(
@@ -1160,16 +1115,12 @@ mod tests {
     fn file_op_rename_succeeds() {
         let tmp = tempfile::tempdir().unwrap();
         write_source(tmp.path(), "old.rs", "fn x() {}\n");
-        let f = finding_with_fix(
-            "old.rs",
-            "rename-lint",
-            Fix::File {
-                op: FileOp::Rename {
-                    from: Cow::Borrowed("old.rs"),
-                    to: Cow::Borrowed("new.rs"),
-                },
+        let f = finding_with_fix("old.rs", "rename-lint", Fix::File {
+            op: FileOp::Rename {
+                from: Cow::Borrowed("old.rs"),
+                to:   Cow::Borrowed("new.rs"),
             },
-        );
+        });
         let plan = plan_fixes(tmp.path(), &[f], &FixOpts::default()).unwrap();
         apply_plan(&plan, &FixOpts::default(), tmp.path()).unwrap();
         assert!(!tmp.path().join("old.rs").exists());

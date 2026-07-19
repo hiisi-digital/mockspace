@@ -17,17 +17,17 @@ pub struct EnvMeta {
     /// CPU brand string (`sysctl machdep.cpu.brand_string` on macOS,
     /// `model name` from `/proc/cpuinfo` on Linux). Empty when
     /// collection fails.
-    pub cpu: String,
+    pub cpu:          String,
     /// `uname -sr` output. Identifies kernel + version.
-    pub os: String,
+    pub os:           String,
     /// `rustc --version` output. Pins the toolchain that built the
     /// variant cdylibs.
-    pub rustc: String,
+    pub rustc:        String,
     /// Short git commit (`git rev-parse --short HEAD`) of the consumer
     /// repo at run start. Empty when not in a git tree.
-    pub git_commit: String,
+    pub git_commit:   String,
     /// Unix timestamp at run start (seconds since epoch).
-    pub timestamp: u64,
+    pub timestamp:    u64,
     /// Hardware counter frequency in Hz; used by the harness to convert
     /// raw counter ticks into nanoseconds.
     pub counter_freq: u64,
@@ -44,10 +44,10 @@ pub struct EnvMeta {
 /// the corresponding field empty (no panic).
 pub fn collect_env_meta() -> EnvMeta {
     EnvMeta {
-        cpu: collect_cpu(),
-        os: collect_os(),
-        rustc: collect_rustc(),
-        git_commit: {
+        cpu:          collect_cpu(),
+        os:           collect_os(),
+        rustc:        collect_rustc(),
+        git_commit:   {
             // A dirty tree suffix keeps every recorded number traceable
             // to an exact source state, not just a nearby commit.
             let mut c = collect_git_commit();
@@ -63,7 +63,7 @@ pub fn collect_env_meta() -> EnvMeta {
             }
             c
         },
-        timestamp: collect_timestamp(),
+        timestamp:    collect_timestamp(),
         counter_freq: mockspace_bench_core::counter::counter_frequency(),
     }
 }

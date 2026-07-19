@@ -7,7 +7,7 @@
 
 use crate::config::HarnessTuning;
 use crate::core::counter::Rng;
-use crate::core::{abi_hash, AbiHashFn, BenchEntryFn, BenchNameFn};
+use crate::core::{AbiHashFn, BenchEntryFn, BenchNameFn, abi_hash};
 use crate::error::BenchError;
 use crate::spec::RoutineSpec;
 
@@ -19,10 +19,10 @@ const QUALITY_ROOT_SEED: u64 = 0xC0DE_0A11_1700_BEEF;
 /// One row of the quality table per variant.
 #[derive(Debug, Clone)]
 pub struct VariantQuality {
-    pub name: String,
-    pub mean: f64,
-    pub min: f64,
-    pub max: f64,
+    pub name:   String,
+    pub mean:   f64,
+    pub min:    f64,
+    pub max:    f64,
     pub median: f64,
 }
 
@@ -49,7 +49,7 @@ pub fn measure(
         .unwrap_or(DEFAULT_QUALITY_SEEDS);
 
     let mut rng = Rng::new(QUALITY_ROOT_SEED);
-    let seeds: Vec<u64> = (0..quality_seeds).map(|_| rng.next()).collect();
+    let seeds: Vec<u64> = (0 .. quality_seeds).map(|_| rng.next()).collect();
 
     let mut results: Vec<VariantQuality> = Vec::new();
     let mut _libs: Vec<libloading::Library> = Vec::new();
@@ -58,16 +58,17 @@ pub fn measure(
         let (variant_name, entry) = unsafe {
             let lib = libloading::Library::new(path).map_err(|e| {
                 BenchError::DylibLoadFailed {
-                    path: path.into(),
+                    path:   path.into(),
                     reason: e.to_string(),
                 }
             })?;
 
-            let hash_fn: libloading::Symbol<AbiHashFn> = lib
-                .get(b"bench_abi_hash")
-                .map_err(|e| BenchError::DylibLoadFailed {
-                    path: path.into(),
-                    reason: format!("missing bench_abi_hash symbol: {e}"),
+            let hash_fn: libloading::Symbol<AbiHashFn> =
+                lib.get(b"bench_abi_hash").map_err(|e| {
+                    BenchError::DylibLoadFailed {
+                        path:   path.into(),
+                        reason: format!("missing bench_abi_hash symbol: {e}"),
+                    }
                 })?;
             let found = hash_fn();
             let expected = abi_hash();
@@ -79,20 +80,20 @@ pub fn measure(
                 });
             }
 
-            let entry: libloading::Symbol<BenchEntryFn> = lib
-                .get(b"bench_entry")
-                .map_err(|e| BenchError::DylibLoadFailed {
-                    path: path.into(),
+            let entry: libloading::Symbol<BenchEntryFn> = lib.get(b"bench_entry").map_err(|e| {
+                BenchError::DylibLoadFailed {
+                    path:   path.into(),
                     reason: format!("missing bench_entry symbol: {e}"),
-                })?;
+                }
+            })?;
             let entry_fn: BenchEntryFn = *entry;
 
-            let name_fn: libloading::Symbol<BenchNameFn> = lib
-                .get(b"bench_name")
-                .map_err(|e| BenchError::DylibLoadFailed {
-                    path: path.into(),
+            let name_fn: libloading::Symbol<BenchNameFn> = lib.get(b"bench_name").map_err(|e| {
+                BenchError::DylibLoadFailed {
+                    path:   path.into(),
                     reason: format!("missing bench_name symbol: {e}"),
-                })?;
+                }
+            })?;
             let name = std::ffi::CStr::from_ptr(name_fn() as *const i8)
                 .to_string_lossy()
                 .into_owned();

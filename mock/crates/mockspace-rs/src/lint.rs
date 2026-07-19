@@ -6,11 +6,12 @@
 //! not on the trait, so a misconfigured impl can be diagnosed by the engine
 //! at first dispatch without silent divergence.
 
+use mockspace_core::lint::{Finding, Fix, GateSeverity, LintContext};
+
 use crate::document::MockspaceDocument;
 use crate::errors::LintError;
 use crate::finding_sink::FindingSink;
 use crate::project::MockspaceProject;
-use mockspace_core::lint::{Finding, Fix, GateSeverity, LintContext};
 
 /// The universal lint trait.
 ///
@@ -157,10 +158,12 @@ pub enum LintMode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use mockspace_core::lint::{Gate, Language, LintCfgStore, RunSurface, Severity, Span};
     use std::borrow::Cow;
     use std::path::Path;
+
+    use mockspace_core::lint::{Gate, Language, LintCfgStore, RunSurface, Severity, Span};
+
+    use super::*;
 
     /// Minimal Lint impl exercising only the required methods. Default
     /// `fix()` should return None without the impl having to spell it out.
@@ -169,9 +172,11 @@ mod tests {
         fn name(&self) -> &'static str {
             "test-minimal"
         }
+
         fn description(&self) -> &'static str {
             "minimal lint for trait-default-fix testing"
         }
+
         fn default_severity(&self) -> GateSeverity {
             GateSeverity::uniform(Severity::Warn)
         }
@@ -183,12 +188,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "test-fixable"
         }
+
         fn description(&self) -> &'static str {
             "fixable lint for trait-override-fix testing"
         }
+
         fn default_severity(&self) -> GateSeverity {
             GateSeverity::uniform(Severity::Error)
         }
+
         fn fix(
             &self,
             _ctx: &LintContext<'_>,
@@ -196,8 +204,8 @@ mod tests {
             _finding: &Finding,
         ) -> Option<Fix> {
             Some(Fix::Replace {
-                start: 10,
-                end: 13,
+                start:       10,
+                end:         13,
                 replacement: Cow::Borrowed("Maybe"),
             })
         }
@@ -205,19 +213,19 @@ mod tests {
 
     fn dummy_finding() -> Finding {
         Finding {
-            lint_name: Cow::Borrowed("test"),
-            rule_id: None,
-            plugin_id: None,
-            severity: Severity::Warn,
-            impact: None,
-            category: None,
-            message: Cow::Borrowed("test"),
-            span: Span::single_line("test.rs", 1, 1, 1),
-            hint: None,
-            help: None,
-            suggestion: None,
+            lint_name:     Cow::Borrowed("test"),
+            rule_id:       None,
+            plugin_id:     None,
+            severity:      Severity::Warn,
+            impact:        None,
+            category:      None,
+            message:       Cow::Borrowed("test"),
+            span:          Span::single_line("test.rs", 1, 1, 1),
+            hint:          None,
+            help:          None,
+            suggestion:    None,
             related_spans: Vec::new(),
-            metadata: None,
+            metadata:      None,
         }
     }
 
@@ -245,12 +253,15 @@ mod tests {
             fn name(&self) -> &'static str {
                 "test-props"
             }
+
             fn description(&self) -> &'static str {
                 "lint that declares props it reads"
             }
+
             fn default_severity(&self) -> GateSeverity {
                 GateSeverity::uniform(Severity::Warn)
             }
+
             fn declared_props(&self) -> &'static [&'static str] {
                 &["audited", "arena_size", "thread_safe"]
             }
@@ -269,11 +280,11 @@ mod tests {
         let cfg = EmptyCfg;
         let root = Path::new("/tmp");
         let ctx = LintContext {
-            gate: Gate::Commit,
-            severities: GateSeverity::uniform(Severity::Warn),
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   GateSeverity::uniform(Severity::Warn),
+            surface:      RunSurface::Local,
             project_root: root,
-            config: &cfg,
+            config:       &cfg,
         };
         let doc = dummy_doc();
         let finding = dummy_finding();
@@ -286,11 +297,11 @@ mod tests {
         let cfg = EmptyCfg;
         let root = Path::new("/tmp");
         let ctx = LintContext {
-            gate: Gate::Commit,
-            severities: GateSeverity::uniform(Severity::Error),
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   GateSeverity::uniform(Severity::Error),
+            surface:      RunSurface::Local,
             project_root: root,
-            config: &cfg,
+            config:       &cfg,
         };
         let doc = dummy_doc();
         let finding = dummy_finding();
@@ -306,7 +317,7 @@ mod tests {
                 assert_eq!(start, 10);
                 assert_eq!(end, 13);
                 assert_eq!(replacement.as_ref(), "Maybe");
-            }
+            },
             other => panic!("expected Replace, got {other:?}"),
         }
     }

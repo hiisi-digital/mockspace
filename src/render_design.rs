@@ -51,8 +51,7 @@ pub fn write_generated_vs(path: &Path, content: &str, previous: Option<&str>) ->
             return false;
         }
     }
-    fs::write(path, content)
-        .unwrap_or_else(|e| panic!("failed to write {}: {e}", path.display()));
+    fs::write(path, content).unwrap_or_else(|e| panic!("failed to write {}: {e}", path.display()));
     true
 }
 
@@ -103,7 +102,9 @@ fn is_timestamp_line(line: &str) -> bool {
 
 /// Generate a markdown generation header with timestamp.
 pub fn generation_header_md(cfg: &Config) -> String {
-    let mock_rel = cfg.mock_dir.strip_prefix(&cfg.repo_root)
+    let mock_rel = cfg
+        .mock_dir
+        .strip_prefix(&cfg.repo_root)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| cfg.mock_dir.display().to_string());
     let mut hdr = String::new();
@@ -123,7 +124,9 @@ pub fn generation_header_md(cfg: &Config) -> String {
 
 /// Generate a DOT comment header with timestamp.
 pub fn generation_header_dot(cfg: &Config) -> String {
-    let mock_rel = cfg.mock_dir.strip_prefix(&cfg.repo_root)
+    let mock_rel = cfg
+        .mock_dir
+        .strip_prefix(&cfg.repo_root)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| cfg.mock_dir.display().to_string());
     let mut hdr = String::new();
@@ -142,7 +145,9 @@ pub fn generation_header_dot(cfg: &Config) -> String {
 
 /// Generate an SVG comment to prepend before the SVG content.
 pub fn generation_header_svg(cfg: &Config) -> String {
-    let mock_rel = cfg.mock_dir.strip_prefix(&cfg.repo_root)
+    let mock_rel = cfg
+        .mock_dir
+        .strip_prefix(&cfg.repo_root)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| cfg.mock_dir.display().to_string());
     let mut hdr = String::new();
@@ -159,7 +164,6 @@ pub fn generation_header_svg(cfg: &Config) -> String {
 
     hdr
 }
-
 
 /// The document-name stem for a crate, with the project's own crate prefix
 /// stripped.
@@ -183,7 +187,6 @@ pub fn crate_doc_stem(crate_name: &str, crate_prefix: &str) -> String {
     stripped.to_uppercase().replace('-', "_")
 }
 
-
 /// Apply the standalone prefix to a document name, or leave it alone when the
 /// project has not opted into ordering.
 ///
@@ -195,11 +198,6 @@ pub fn crate_doc_stem(crate_name: &str, crate_prefix: &str) -> String {
 pub fn ordered_doc_name(base: &str, cfg: &Config) -> String {
     crate::document::DocId::root(base, cfg).file_name(cfg)
 }
-
-
-
-
-
 
 /// Create the docs output directory if it is not there yet.
 ///
@@ -226,13 +224,13 @@ pub fn ensure_docs_dir(cfg: &Config) {
 /// to write one today. Add an escape when one does, rather than carrying an
 /// unused mechanism.
 pub struct Placeholders {
-    project_name: String,
-    mock_dir: String,
-    crate_count: String,
-    macros_table: String,
-    primary_items: String,
-    crate_layers: String,
-    deep_dives: String,
+    project_name:    String,
+    mock_dir:        String,
+    crate_count:     String,
+    macros_table:    String,
+    primary_items:   String,
+    crate_layers:    String,
+    deep_dives:      String,
     crate_summaries: String,
 }
 
@@ -242,13 +240,13 @@ impl Placeholders {
     /// vocabulary computation.
     fn empty_for_test() -> Self {
         Self {
-            project_name: String::new(),
-            mock_dir: String::new(),
-            crate_count: String::new(),
-            macros_table: String::new(),
-            primary_items: String::new(),
-            crate_layers: String::new(),
-            deep_dives: String::new(),
+            project_name:    String::new(),
+            mock_dir:        String::new(),
+            crate_count:     String::new(),
+            macros_table:    String::new(),
+            primary_items:   String::new(),
+            crate_layers:    String::new(),
+            deep_dives:      String::new(),
             crate_summaries: String::new(),
         }
     }
@@ -301,7 +299,7 @@ impl Placeholders {
         // one level deep in practice. The cap is a guard against a value that
         // contains its own placeholder, which would otherwise never settle.
         let mut result = template.to_string();
-        for _ in 0..4 {
+        for _ in 0 .. 4 {
             let next = self.apply_once(&result);
             if next == result {
                 break;
@@ -378,7 +376,9 @@ fn compute_primary_items_per_crate(crates: &CrateMap, cfg: &Config) -> String {
 
     for info in crates.values() {
         let short = &info.short_name;
-        if short == &cfg.project_name { continue; }
+        if short == &cfg.project_name {
+            continue;
+        }
         for mg in &info.macro_generated {
             if mg.macro_name == primary {
                 items_by_crate
@@ -399,7 +399,11 @@ fn compute_primary_items_per_crate(crates: &CrateMap, cfg: &Config) -> String {
 
     for (crate_name, mut items) in items_by_crate {
         items.sort();
-        let formatted = items.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ");
+        let formatted = items
+            .iter()
+            .map(|s| format!("`{s}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
         writeln!(table, "| {crate_name} | {formatted} |").unwrap();
     }
 
@@ -411,21 +415,28 @@ fn compute_crate_layers(crates: &CrateMap, cfg: &Config) -> String {
     let mut depth_cache = BTreeMap::new();
     let mut depths = BTreeMap::new();
     for name in crates.keys() {
-        depths.insert(name.clone(), graph::compute_depth(name, crates, &mut depth_cache));
+        depths.insert(
+            name.clone(),
+            graph::compute_depth(name, crates, &mut depth_cache),
+        );
     }
     let max_depth = depths.values().copied().max().unwrap_or(0);
 
     let mut by_depth: Vec<Vec<String>> = vec![Vec::new(); max_depth + 1];
     for (name, &d) in &depths {
         let short = &crates[name.as_str()].short_name;
-        if short == &cfg.project_name { continue; }
+        if short == &cfg.project_name {
+            continue;
+        }
         by_depth[d].push(short.clone());
     }
 
     let mut layers = String::new();
     writeln!(layers, "```").unwrap();
     for (d, names) in by_depth.iter().enumerate() {
-        if names.is_empty() { continue; }
+        if names.is_empty() {
+            continue;
+        }
         let label = cfg.layer_label(d);
         let mut sorted = names.clone();
         sorted.sort();
@@ -502,8 +513,16 @@ pub fn generate_deep_dives_md(cfg: &Config) -> String {
     writeln!(md, "{header}").unwrap();
     writeln!(md, "# {name}: Deep Dives").unwrap();
     writeln!(md).unwrap();
-    writeln!(md, "> Detailed technical deep dives into {name} subsystems.").unwrap();
-    writeln!(md, "> See also: [DESIGN.md](DESIGN.md) for the high-level design.").unwrap();
+    writeln!(
+        md,
+        "> Detailed technical deep dives into {name} subsystems."
+    )
+    .unwrap();
+    writeln!(
+        md,
+        "> See also: [DESIGN.md](DESIGN.md) for the high-level design."
+    )
+    .unwrap();
     writeln!(md).unwrap();
     writeln!(md, "---").unwrap();
     writeln!(md).unwrap();
@@ -513,7 +532,12 @@ pub fn generate_deep_dives_md(cfg: &Config) -> String {
 }
 
 /// Compute crate summaries from per-crate README.md.tmpl files.
-fn compute_crate_summaries(mock_dir: &Path, crate_prefix: &str, cfg: &Config, crates: &CrateMap) -> String {
+fn compute_crate_summaries(
+    mock_dir: &Path,
+    crate_prefix: &str,
+    cfg: &Config,
+    crates: &CrateMap,
+) -> String {
     let mut depth_cache = BTreeMap::new();
     let crates_dir = mock_dir.join("crates");
     if !crates_dir.is_dir() {
@@ -594,8 +618,6 @@ pub fn find_deep_dives(crate_path: &Path) -> Vec<(String, std::path::PathBuf)> {
     dives
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -652,8 +674,15 @@ mod tests {
         // the previous is HDR_A, the target on disk is headerless junk, the new
         // content is HDR_B. Must skip AND restore HDR_A, not leave the junk.
         std::fs::write(&path, "clobbered by an external tool").unwrap();
-        assert!(!write_generated_vs(&path, HDR_B, Some(HDR_A)), "timestamp-only must skip");
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), HDR_A, "previous must be restored");
+        assert!(
+            !write_generated_vs(&path, HDR_B, Some(HDR_A)),
+            "timestamp-only must skip"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            HDR_A,
+            "previous must be restored"
+        );
 
         // A real body change writes.
         let changed = HDR_B.replace("body line two", "body line THREE");
@@ -663,7 +692,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
-
 
 #[cfg(test)]
 mod placeholder_spacing_tests {
@@ -693,6 +721,9 @@ mod placeholder_spacing_tests {
 
     #[test]
     fn a_different_placeholder_is_left_alone() {
-        assert_eq!(replace_placeholder("{{ other }}", "name", "X"), "{{ other }}");
+        assert_eq!(
+            replace_placeholder("{{ other }}", "name", "X"),
+            "{{ other }}"
+        );
     }
 }

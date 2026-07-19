@@ -38,7 +38,10 @@ fn fixture(root: &Path) -> Config {
 
     // An empty README is not a summary. Emitting a rule here would produce a
     // file that is nothing but bookends.
-    write(&mock.join("crates/fixture-three/src/lib.rs"), "//! three.\n");
+    write(
+        &mock.join("crates/fixture-three/src/lib.rs"),
+        "//! three.\n",
+    );
     write(&mock.join("crates/fixture-three/README.md.tmpl"), "\n  \n");
 
     Config::from_dir(&mock)
@@ -83,11 +86,15 @@ fn crate_readme_becomes_a_scoped_rule() {
     );
 
     assert!(
-        !root.join(".claude/rules/crate-readme-fixture-two.md").exists(),
+        !root
+            .join(".claude/rules/crate-readme-fixture-two.md")
+            .exists(),
         "a crate with no README must not produce a rule"
     );
     assert!(
-        !root.join(".claude/rules/crate-readme-fixture-three.md").exists(),
+        !root
+            .join(".claude/rules/crate-readme-fixture-three.md")
+            .exists(),
         "a whitespace-only README must not produce a bookends-only rule"
     );
 }
@@ -113,7 +120,10 @@ fn emptying_the_crates_dir_still_sweeps() {
     }
     render(&cfg);
 
-    assert!(!rule.exists(), "removing the last crate must sweep its rule");
+    assert!(
+        !rule.exists(),
+        "removing the last crate must sweep its rule"
+    );
 }
 
 #[test]
@@ -133,7 +143,10 @@ fn a_removed_crate_loses_its_rule() {
     render(&cfg);
 
     assert!(!rule.exists(), "the orphaned rule must be swept");
-    assert!(!copilot.exists(), "the orphaned copilot rule must be swept too");
+    assert!(
+        !copilot.exists(),
+        "the orphaned copilot rule must be swept too"
+    );
 }
 
 #[test]

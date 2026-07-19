@@ -42,46 +42,139 @@ pub mod verifier;
 
 pub use anchor::{Anchor, BlobSha, BlobShaError, FileEntry};
 pub use atomicity::{
-    AtomicityFinding, LockHolder, OnPhaseRaceAction, PhaseRaceConflict, ResolveStrategy,
+    AtomicityFinding,
+    LockHolder,
+    OnPhaseRaceAction,
+    PhaseRaceConflict,
+    ResolveStrategy,
     TransitionLock,
 };
-pub use bookkeeping::{classify_root_entry, BookkeepingFile, RootEntry};
-pub use io::{
-    AdvanceError, AdvanceReport, AdvanceVerb, AnchorCaptureError, ArchiveError, ArchiveReport,
-    FlockTransitionLock, LockError, RefTreeReadError, RefTreeWriteError, RepoError, RepoHandle,
-    RoundRefTree, SealError, SealReport,
-};
-pub use lint::{
-    matches_pattern, Category, ContentHash, Directive, DirectiveRecord, Document, FileDisableEntry,
-    FileDisableSet, FileOp, Finding, Fix, Gate, GateSeverity, HashAlgorithm, Impact, Language,
-    LintCfgStore, LintContext, LintEngine, LintError, MetadataBlob, Project, PropEntry, PropMap,
-    PropValue, RelatedSpan, RunSurface, ScopeAddEntry, ScopeAddMap, ScopeAxis, Severity, Span,
-    Suggestion, SuppressionKind, SuppressionMap, SuppressionScope, LINT_CONTRACT_VERSION,
-};
-pub use manifest::{
-    parse_task_uri, validate_deprecated_accounting, validate_structural, AcceptanceBlock,
-    ChangeBlock, DeprecatedAccounting, Manifest, ScopeBlock, TaskUriError, ValidationError,
-    SCHEMA_MAJOR, TASK_URI_PREFIX,
-};
+pub use bookkeeping::{BookkeepingFile, RootEntry, classify_root_entry};
 pub use branch_name::{BranchName, BranchNameError};
 pub use entity::{Branch, GitRef, Instant, Round, Task};
 pub use identity::{NamedRefTo, RefTo};
+pub use io::{
+    AdvanceError,
+    AdvanceReport,
+    AdvanceVerb,
+    AnchorCaptureError,
+    ArchiveError,
+    ArchiveReport,
+    FlockTransitionLock,
+    LockError,
+    RefTreeReadError,
+    RefTreeWriteError,
+    RepoError,
+    RepoHandle,
+    RoundRefTree,
+    SealError,
+    SealReport,
+};
 pub use iso8601::{Iso8601Utc, Iso8601UtcError};
+pub use lint::{
+    Category,
+    ContentHash,
+    Directive,
+    DirectiveRecord,
+    Document,
+    FileDisableEntry,
+    FileDisableSet,
+    FileOp,
+    Finding,
+    Fix,
+    Gate,
+    GateSeverity,
+    HashAlgorithm,
+    Impact,
+    LINT_CONTRACT_VERSION,
+    Language,
+    LintCfgStore,
+    LintContext,
+    LintEngine,
+    LintError,
+    MetadataBlob,
+    Project,
+    PropEntry,
+    PropMap,
+    PropValue,
+    RelatedSpan,
+    RunSurface,
+    ScopeAddEntry,
+    ScopeAddMap,
+    ScopeAxis,
+    Severity,
+    Span,
+    Suggestion,
+    SuppressionKind,
+    SuppressionMap,
+    SuppressionScope,
+    matches_pattern,
+};
+pub use manifest::{
+    AcceptanceBlock,
+    ChangeBlock,
+    DeprecatedAccounting,
+    Manifest,
+    SCHEMA_MAJOR,
+    ScopeBlock,
+    TASK_URI_PREFIX,
+    TaskUriError,
+    ValidationError,
+    parse_task_uri,
+    validate_deprecated_accounting,
+    validate_structural,
+};
 pub use namespace::{Namespace, NamespaceError};
 pub use phase::{ManifestSide, Phase};
 pub use ref_path::{RefPath, RefPathError};
-pub use round::{comment_filename, topic_filename, ClosedMeta, ManifestStage, PrMeta, RoundMeta};
+pub use round::{ClosedMeta, ManifestStage, PrMeta, RoundMeta, comment_filename, topic_filename};
 pub use slug::{Slug, SlugError};
 pub use task::{
-    Step, StepPhase, StepRef, StepRefError, TaskClosure, TaskId, TaskIdError, TaskMeta, TaskRefs,
-    TaskResolution, TaskState,
+    Step,
+    StepPhase,
+    StepRef,
+    StepRefError,
+    TaskClosure,
+    TaskId,
+    TaskIdError,
+    TaskMeta,
+    TaskRefs,
+    TaskResolution,
+    TaskState,
 };
 pub use transition::{ReplanMode, Transition, TransitionValidity, TransitionVerb};
 pub use typestate::{
-    AdvanceVia, ApplyDocState, ApplySrcState, ApplyVerb, AuthoringStage, BlockedTaskState,
-    ClosedTaskState, DeferredTaskState, DeprecatedStage, DocSide, DoneState, FinishVerb,
-    InProgressTaskState, LockProof, LockedStage, OpenTaskState, PhaseMarker, PhaseMismatch,
-    PlanDocState, PlanSrcState, PlanVerb, ReplanVerb, Side, SideMismatch, SrcSide, Stage,
-    TaskStateMarker, TaskTransitionsTo, TopicState, TypedManifest, TypedRound, VerbMarker,
+    AdvanceVia,
+    ApplyDocState,
+    ApplySrcState,
+    ApplyVerb,
+    AuthoringStage,
+    BlockedTaskState,
+    ClosedTaskState,
+    DeferredTaskState,
+    DeprecatedStage,
+    DocSide,
+    DoneState,
+    FinishVerb,
+    InProgressTaskState,
+    LockProof,
+    LockedStage,
+    OpenTaskState,
+    PhaseMarker,
+    PhaseMismatch,
+    PlanDocState,
+    PlanSrcState,
+    PlanVerb,
+    ReplanVerb,
+    Side,
+    SideMismatch,
+    SrcSide,
+    Stage,
+    TaskStateMarker,
+    TaskTransitionsTo,
+    TopicState,
+    TypedManifest,
+    TypedRound,
+    VerbMarker,
 };
 pub use verifier::{VerifierAllOf, VerifierAnyOf, VerifierCheck, VerifierKind, VerifierNot};

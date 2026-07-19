@@ -52,12 +52,10 @@
 //!    cargo dependencies; types match so long as the pack and the proxy
 //!    resolve the same `mockspace-lint-rules` source.
 
-use std::env;
-use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-
+use std::{env, fs};
 
 mod gitignore;
 pub(crate) use gitignore::*;
@@ -85,17 +83,17 @@ pub(crate) use durable::*;
 mod repair;
 pub(crate) use repair::*;
 #[cfg(test)]
-mod lint_crates_tests;
+mod bootstrap_guard_tests;
 #[cfg(test)]
 mod gitignore_tests;
+#[cfg(test)]
+mod lint_crates_tests;
+#[cfg(test)]
+mod proxy_freshness_tests;
 #[cfg(test)]
 mod proxy_pin_tests;
 #[cfg(test)]
 mod remote_head_tests;
-#[cfg(test)]
-mod proxy_freshness_tests;
-#[cfg(test)]
-mod bootstrap_guard_tests;
 
 /// Marker in generated hooks for identification and versioning.
 const MANAGED_MARKER: &str = "# mockspace-managed";
@@ -137,7 +135,9 @@ pub fn bootstrap_from_buildscript() {
     // consumer's working repo gets its hooks from its own build.rs.
     let cargo_home = resolve_cargo_home(env::var_os("CARGO_HOME"), env::var_os("HOME"));
     if is_inside_cargo_home(&build_crate_dir, cargo_home.as_deref()) {
-        println!("cargo::warning=mockspace: dependency build inside the cargo cache, skipping bootstrap");
+        println!(
+            "cargo::warning=mockspace: dependency build inside the cargo cache, skipping bootstrap"
+        );
         return;
     }
 
@@ -155,11 +155,13 @@ pub fn bootstrap_from_buildscript() {
         env::var_os("SUDO_GID"),
     ) {
         Ok(ids) => ids,
-        Err(why) => panic!(
-            "mockspace: running under sudo but cannot identify the invoking user ({why}). \
+        Err(why) => {
+            panic!(
+                "mockspace: running under sudo but cannot identify the invoking user ({why}). \
              Re-run the build without sudo; installing root-owned safeguards would brick \
              later unprivileged builds."
-        ),
+            )
+        },
     };
 
     let mock_dir = match find_ancestor_with(&build_crate_dir, "mockspace.toml") {
@@ -170,7 +172,7 @@ pub fn bootstrap_from_buildscript() {
                 build_crate_dir.display()
             );
             return;
-        }
+        },
     };
 
     let repo_root = match find_ancestor_with(&mock_dir, ".git") {
@@ -178,7 +180,7 @@ pub fn bootstrap_from_buildscript() {
         None => {
             println!("cargo::warning=mockspace: not in a git repo, skipping bootstrap");
             return;
-        }
+        },
     };
 
     let actions = run(&repo_root, &mock_dir, &mockspace_manifest_dir);
@@ -223,20 +225,13 @@ pub fn bootstrap_from_buildscript() {
     }
     // Rerun when custom lint files change.
     let custom_lints_dir = mock_dir.join("lints");
-    println!(
-        "cargo::rerun-if-changed={}",
-        custom_lints_dir.display()
-    );
+    println!("cargo::rerun-if-changed={}", custom_lints_dir.display());
 }
 
 /// Run bootstrap health checks, fixing anything missing or stale.
 ///
 /// Returns a list of human-readable actions taken. Empty = healthy.
-pub fn run(
-    repo_root: &Path,
-    mock_dir: &Path,
-    mockspace_manifest_dir: &Path,
-) -> Vec<String> {
+pub fn run(repo_root: &Path, mock_dir: &Path, mockspace_manifest_dir: &Path) -> Vec<String> {
     let mut actions = Vec::new();
 
     ensure_cargo_alias(repo_root, mock_dir, mockspace_manifest_dir, &mut actions);
@@ -329,4 +324,3 @@ fn find_ancestor_with(start: &Path, target_name: &str) -> Option<PathBuf> {
         }
     }
 }
-

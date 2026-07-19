@@ -40,10 +40,10 @@ pub struct IdentifierPatternConfig {
 }
 
 pub struct IdentifierPatternLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: IdentifierPatternConfig,
+    config:           IdentifierPatternConfig,
     compiled_regexes: Vec<Regex>,
 }
 
@@ -56,14 +56,16 @@ impl IdentifierPatternLint {
     ) -> Result<Self, ConfigError> {
         let mut compiled_regexes = Vec::with_capacity(config.forbidden_regexes.len());
         for (i, pattern) in config.forbidden_regexes.iter().enumerate() {
-            let regex = Regex::new(pattern).map_err(|e| ConfigError {
-                lint_name: name.to_string(),
-                field_path: format!("forbidden_regexes[{i}]"),
-                kind: ConfigErrorKind::UnparseableRegex {
-                    error: e.to_string(),
-                },
-                message: format!("regex `{pattern}` did not compile"),
-                source_location: None,
+            let regex = Regex::new(pattern).map_err(|e| {
+                ConfigError {
+                    lint_name:       name.to_string(),
+                    field_path:      format!("forbidden_regexes[{i}]"),
+                    kind:            ConfigErrorKind::UnparseableRegex {
+                        error: e.to_string(),
+                    },
+                    message:         format!("regex `{pattern}` did not compile"),
+                    source_location: None,
+                }
             })?;
             compiled_regexes.push(regex);
         }
@@ -107,12 +109,15 @@ impl Lint for IdentifierPatternLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_syn_ast(&self) -> bool {
         true
     }
@@ -147,46 +152,62 @@ impl Lint for IdentifierPatternLint {
 
 fn identify_item(item: &syn::Item) -> Option<(String, ItemKind, bool)> {
     match item {
-        syn::Item::Fn(it) => Some((
-            it.sig.ident.to_string(),
-            ItemKind::Fn,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Struct(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Struct,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Enum(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Enum,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Trait(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Trait,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Type(it) => Some((
-            it.ident.to_string(),
-            ItemKind::TypeAlias,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Const(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Const,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Static(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Static,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
-        syn::Item::Mod(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Mod,
-            matches!(it.vis, syn::Visibility::Public(_)),
-        )),
+        syn::Item::Fn(it) => {
+            Some((
+                it.sig.ident.to_string(),
+                ItemKind::Fn,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Struct(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Struct,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Enum(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Enum,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Trait(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Trait,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Type(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::TypeAlias,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Const(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Const,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Static(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Static,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
+        syn::Item::Mod(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Mod,
+                matches!(it.vis, syn::Visibility::Public(_)),
+            ))
+        },
         _ => None,
     }
 }
@@ -232,16 +253,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: IdentifierPatternConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("identifier-pattern config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("identifier-pattern config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(IdentifierPatternLint::new(
         name,
         description,
@@ -252,11 +272,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, Severity};
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::{Gate, Severity};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -267,11 +289,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: mockspace_core::lint::RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      mockspace_core::lint::RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -282,11 +304,11 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             IdentifierPatternConfig {
-                item_kinds: vec![ItemKind::Struct],
+                item_kinds:         vec![ItemKind::Struct],
                 forbidden_prefixes: Vec::new(),
                 forbidden_suffixes: vec!["Builder".to_string()],
-                forbidden_regexes: Vec::new(),
-                visibility: Visibility::Public,
+                forbidden_regexes:  Vec::new(),
+                visibility:         Visibility::Public,
             },
         )
         .unwrap();
@@ -315,11 +337,11 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             IdentifierPatternConfig {
-                item_kinds: vec![ItemKind::Fn],
+                item_kinds:         vec![ItemKind::Fn],
                 forbidden_prefixes: Vec::new(),
                 forbidden_suffixes: Vec::new(),
-                forbidden_regexes: vec!["^_[a-z]+_inner$".to_string()],
-                visibility: Visibility::Any,
+                forbidden_regexes:  vec!["^_[a-z]+_inner$".to_string()],
+                visibility:         Visibility::Any,
             },
         )
         .unwrap();
@@ -346,18 +368,22 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             IdentifierPatternConfig {
-                item_kinds: vec![ItemKind::Fn],
+                item_kinds:         vec![ItemKind::Fn],
                 forbidden_prefixes: Vec::new(),
                 forbidden_suffixes: Vec::new(),
-                forbidden_regexes: vec!["(unclosed".to_string()],
-                visibility: Visibility::Any,
+                forbidden_regexes:  vec!["(unclosed".to_string()],
+                visibility:         Visibility::Any,
             },
         );
         match result {
             Ok(_) => panic!("expected ConfigError"),
-            Err(e) => match e.kind {
-                ConfigErrorKind::UnparseableRegex { .. } => {}
-                other => panic!("unexpected: {other:?}"),
+            Err(e) => {
+                match e.kind {
+                    ConfigErrorKind::UnparseableRegex {
+                        ..
+                    } => {},
+                    other => panic!("unexpected: {other:?}"),
+                }
             },
         }
     }

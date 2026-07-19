@@ -63,7 +63,7 @@ pub struct AdoptionStatus {
     /// Does a `mock/` directory exist at the repo root? This is the
     /// minimum signal that the consumer has opted into the v2
     /// workflow at all.
-    pub has_mock_dir: bool,
+    pub has_mock_dir:    bool,
     /// Does a `.cargo/config.toml` (at the repo root) carry a
     /// `[alias] mock = ...` line? The bootstrap installs this so
     /// `cargo mock <subcommand>` resolves.
@@ -71,10 +71,10 @@ pub struct AdoptionStatus {
     /// Does `core.hooksPath` (in `.git/config`) point at a path
     /// under `mock/target/hooks/`? The bootstrap writes this so
     /// git's commit and push gates fire mockspace's hook scripts.
-    pub has_hooks_path: bool,
+    pub has_hooks_path:  bool,
     /// State of the builtin agent extraction under
     /// `mock/target/agent/`. See [`AgentExtractState`].
-    pub agent_extract: AgentExtractState,
+    pub agent_extract:   AgentExtractState,
 }
 
 impl AdoptionStatus {
@@ -113,10 +113,10 @@ impl AdoptionStatus {
 /// installed" or "installed").
 pub fn status(repo_root: &Path) -> AdoptionStatus {
     AdoptionStatus {
-        has_mock_dir: has_mock_dir(repo_root),
+        has_mock_dir:    has_mock_dir(repo_root),
         has_cargo_alias: has_cargo_alias(repo_root),
-        has_hooks_path: has_hooks_path(repo_root),
-        agent_extract: agent_extract_state(repo_root),
+        has_hooks_path:  has_hooks_path(repo_root),
+        agent_extract:   agent_extract_state(repo_root),
     }
 }
 
@@ -138,7 +138,7 @@ fn agent_extract_state(repo_root: &Path) -> AgentExtractState {
             } else {
                 AgentExtractState::Present
             }
-        }
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => AgentExtractState::Missing,
         // Any non-NotFound read failure (permission denied, IO error)
         // maps to Stale rather than Missing. The status surface tells
@@ -192,15 +192,21 @@ pub enum InstallError {
 impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnparseableCargoConfig(e) => write!(
-                f,
-                ".cargo/config.toml is not parseable as TOML; repair the file before re-running bootstrap. Underlying error: {e}"
-            ),
+            Self::UnparseableCargoConfig(e) => {
+                write!(
+                    f,
+                    ".cargo/config.toml is not parseable as TOML; repair the file before re-running bootstrap. Underlying error: {e}"
+                )
+            },
             Self::Io(e) => write!(f, "filesystem operation failed: {e}"),
-            Self::AliasMismatch { existing } => write!(
-                f,
-                "`[alias] mock` already exists with a different value: {existing:?}. Refusing to overwrite; remove the existing entry or re-run with the overwrite flag once the CLI surface ships it"
-            ),
+            Self::AliasMismatch {
+                existing,
+            } => {
+                write!(
+                    f,
+                    "`[alias] mock` already exists with a different value: {existing:?}. Refusing to overwrite; remove the existing entry or re-run with the overwrite flag once the CLI surface ships it"
+                )
+            },
         }
     }
 }
@@ -210,7 +216,9 @@ impl std::error::Error for InstallError {
         match self {
             Self::UnparseableCargoConfig(e) => Some(e),
             Self::Io(e) => Some(e),
-            Self::AliasMismatch { .. } => None,
+            Self::AliasMismatch {
+                ..
+            } => None,
         }
     }
 }
@@ -266,9 +274,11 @@ pub fn install_cargo_alias(repo_root: &Path) -> Result<InstallOutcome, InstallEr
     let dir = repo_root.join(".cargo");
     let path = dir.join("config.toml");
     let mut doc = match std::fs::read_to_string(&path) {
-        Ok(contents) => contents
-            .parse::<toml::Table>()
-            .map_err(InstallError::UnparseableCargoConfig)?,
+        Ok(contents) => {
+            contents
+                .parse::<toml::Table>()
+                .map_err(InstallError::UnparseableCargoConfig)?
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Table::new(),
         Err(e) => return Err(InstallError::Io(e)),
     };
@@ -287,7 +297,7 @@ pub fn install_cargo_alias(repo_root: &Path) -> Result<InstallOutcome, InstallEr
             return Err(InstallError::AliasMismatch {
                 existing: other.to_string(),
             });
-        }
+        },
     };
 
     if let Some(existing) = alias_table.get("mock") {
@@ -354,12 +364,14 @@ pub fn uninstall_cargo_alias(repo_root: &Path) -> Result<UninstallOutcome, Insta
     let dir = repo_root.join(".cargo");
     let path = dir.join("config.toml");
     let mut doc = match std::fs::read_to_string(&path) {
-        Ok(contents) => contents
-            .parse::<toml::Table>()
-            .map_err(InstallError::UnparseableCargoConfig)?,
+        Ok(contents) => {
+            contents
+                .parse::<toml::Table>()
+                .map_err(InstallError::UnparseableCargoConfig)?
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(UninstallOutcome::AlreadyUninstalled);
-        }
+        },
         Err(e) => return Err(InstallError::Io(e)),
     };
 
@@ -374,7 +386,7 @@ pub fn uninstall_cargo_alias(repo_root: &Path) -> Result<UninstallOutcome, Insta
             return Err(InstallError::AliasMismatch {
                 existing: other.to_string(),
             });
-        }
+        },
     };
 
     if alias_table.remove("mock").is_none() {
@@ -500,7 +512,7 @@ pub fn uninstall_hooks(repo_root: &Path) -> Result<UninstallOutcome, InstallErro
         let path = hooks_dir.join(name);
         match std::fs::remove_file(&path) {
             Ok(()) => any_changed = true,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
             Err(e) => return Err(InstallError::Io(e)),
         }
     }
@@ -594,14 +606,14 @@ pub fn uninstall_agent_builtin(repo_root: &Path) -> Result<UninstallOutcome, Ins
         let path = agent_dir.join(name);
         match std::fs::remove_file(&path) {
             Ok(()) => any_changed = true,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
             Err(e) => return Err(InstallError::Io(e)),
         }
     }
     let version_path = agent_dir.join(AGENT_VERSION_FILE);
     match std::fs::remove_file(&version_path) {
         Ok(()) => any_changed = true,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
         Err(e) => return Err(InstallError::Io(e)),
     }
     Ok(if any_changed {
@@ -736,7 +748,7 @@ fn set_hooks_path(repo_root: &Path, value: Option<&str>) -> Result<bool, Install
 
     let mut hooks_idx: Option<usize> = None;
     if let Some(start) = core_start {
-        for i in (start + 1)..core_end {
+        for i in (start + 1) .. core_end {
             let trimmed = lines[i].trim();
             if trimmed.starts_with('#') || trimmed.is_empty() {
                 continue;
@@ -760,14 +772,14 @@ fn set_hooks_path(repo_root: &Path, value: Option<&str>) -> Result<bool, Install
         (Some(line), Some(idx), _) => {
             // Replace existing hooksPath line.
             lines[idx] = line;
-        }
+        },
         (Some(line), None, Some(_start)) => {
             // Insert hooksPath at the tail of the existing [core]
             // section (just before the next section header, or at
             // EOF if [core] runs to the end). Matches git's own
             // emit order, which appends new keys at section tails.
             lines.insert(core_end, line);
-        }
+        },
         (Some(line), None, None) => {
             // No [core] section yet; append a fresh one.
             if !lines.is_empty() && !lines.last().is_some_and(|l| l.is_empty()) {
@@ -775,7 +787,7 @@ fn set_hooks_path(repo_root: &Path, value: Option<&str>) -> Result<bool, Install
             }
             lines.push("[core]".to_string());
             lines.push(line);
-        }
+        },
         (None, Some(idx), _) => {
             // Remove the hooksPath line.
             lines.remove(idx);
@@ -794,20 +806,20 @@ fn set_hooks_path(repo_root: &Path, value: Option<&str>) -> Result<bool, Install
                     })
                     .map(|(i, _)| i)
                     .unwrap_or(lines.len());
-                let core_has_content = (start + 1..new_end).any(|i| {
+                let core_has_content = (start + 1 .. new_end).any(|i| {
                     let t = lines[i].trim();
                     !t.is_empty() && !t.starts_with('#')
                 });
                 if !core_has_content {
                     // Remove lines from `start` up to (but not
                     // including) `new_end`.
-                    lines.drain(start..new_end);
+                    lines.drain(start .. new_end);
                 }
             }
-        }
+        },
         (None, None, _) => {
             // Nothing to do.
-        }
+        },
     }
 
     if lines == original_lines {
@@ -899,8 +911,9 @@ fn has_hooks_path(repo_root: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     fn fixture_dir(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -1172,8 +1185,10 @@ mod tests {
         )
         .expect("write existing");
         install_cargo_alias(&root).expect("install");
-        let parsed: toml::Table =
-            std::fs::read_to_string(dir.join("config.toml")).unwrap().parse().unwrap();
+        let parsed: toml::Table = std::fs::read_to_string(dir.join("config.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
         // [build] survives the install.
         assert!(parsed.get("build").and_then(|v| v.as_table()).is_some());
         // [alias.mock] now exists.
@@ -1209,9 +1224,11 @@ mod tests {
         let observed = install_cargo_alias(&root);
         cleanup(&root);
         match observed {
-            Err(InstallError::AliasMismatch { existing }) => {
+            Err(InstallError::AliasMismatch {
+                existing,
+            }) => {
                 assert_eq!(existing, "some-other-thing");
-            }
+            },
             other => panic!("expected AliasMismatch, got {other:?}"),
         }
     }
@@ -1225,7 +1242,7 @@ mod tests {
         let observed = install_cargo_alias(&root);
         cleanup(&root);
         match observed {
-            Err(InstallError::UnparseableCargoConfig(_)) => {}
+            Err(InstallError::UnparseableCargoConfig(_)) => {},
             other => panic!("expected UnparseableCargoConfig, got {other:?}"),
         }
     }
@@ -1242,7 +1259,9 @@ mod tests {
         let observed = install_cargo_alias(&root);
         cleanup(&root);
         match observed {
-            Err(InstallError::AliasMismatch { .. }) => {}
+            Err(InstallError::AliasMismatch {
+                ..
+            }) => {},
             other => panic!("expected AliasMismatch for non-table alias, got {other:?}"),
         }
     }
@@ -1323,7 +1342,10 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let alias = parsed.get("alias").and_then(|v| v.as_table()).expect("alias table survives");
+        let alias = parsed
+            .get("alias")
+            .and_then(|v| v.as_table())
+            .expect("alias table survives");
         assert!(!alias.contains_key("mock"));
         assert!(alias.contains_key("other"));
         cleanup(&root);
@@ -1382,7 +1404,7 @@ mod tests {
         let observed = uninstall_cargo_alias(&root);
         cleanup(&root);
         match observed {
-            Err(InstallError::UnparseableCargoConfig(_)) => {}
+            Err(InstallError::UnparseableCargoConfig(_)) => {},
             other => panic!("expected UnparseableCargoConfig, got {other:?}"),
         }
     }
@@ -1396,7 +1418,9 @@ mod tests {
         let observed = uninstall_cargo_alias(&root);
         cleanup(&root);
         match observed {
-            Err(InstallError::AliasMismatch { .. }) => {}
+            Err(InstallError::AliasMismatch {
+                ..
+            }) => {},
             other => panic!("expected AliasMismatch for non-table alias, got {other:?}"),
         }
     }
@@ -1662,7 +1686,7 @@ mod tests {
         assert!(
             restored.starts_with("# Phases"),
             "expected restored canonical body, got: {}",
-            &restored[..restored.len().min(60)]
+            &restored[.. restored.len().min(60)]
         );
         cleanup(&root);
     }
@@ -1829,10 +1853,10 @@ mod tests {
                         AgentExtractState::Missing,
                     ] {
                         let s = AdoptionStatus {
-                            has_mock_dir: mock,
+                            has_mock_dir:    mock,
                             has_cargo_alias: alias,
-                            has_hooks_path: hooks,
-                            agent_extract: agent,
+                            has_hooks_path:  hooks,
+                            agent_extract:   agent,
                         };
                         let n = s.is_fully_adopted() as u8
                             + s.is_uninstalled() as u8

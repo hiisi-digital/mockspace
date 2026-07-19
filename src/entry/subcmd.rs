@@ -20,13 +20,12 @@ pub(crate) const KNOWN_SUBCOMMANDS: &[&str] = &[
     "bench",
 ];
 
-
 /// Classic Levenshtein edit distance between two ASCII-ish words. Small
 /// inputs (subcommand names), so the simple two-row DP is more than enough.
 pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut prev: Vec<usize> = (0 ..= b.len()).collect();
     let mut curr = vec![0usize; b.len() + 1];
     for (i, ca) in a.iter().enumerate() {
         curr[0] = i + 1;
@@ -38,7 +37,6 @@ pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
     }
     prev[b.len()]
 }
-
 
 /// Nearest known subcommand to `input`, when close enough to be a likely
 /// typo. The threshold scales with word length so short words need a close
@@ -55,4 +53,3 @@ pub(crate) fn suggest_subcommand(input: &str) -> Option<&'static str> {
     let threshold = (input.len() / 2).max(2);
     (dist <= threshold).then_some(name)
 }
-

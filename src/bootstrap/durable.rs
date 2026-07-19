@@ -12,7 +12,6 @@ pub(crate) fn durable_hooks_dir() -> Option<PathBuf> {
     durable_hooks_dir_from(env::var_os("XDG_CONFIG_HOME"), env::var_os("HOME"))
 }
 
-
 /// Pure core of [`durable_hooks_dir`]: resolves the config base from the
 /// two env values so the resolution is testable without touching process
 /// env. `XDG_CONFIG_HOME` (when non-empty) wins, else `$HOME/.config`.
@@ -24,9 +23,11 @@ pub(crate) fn durable_hooks_dir_from(
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| home.map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("mockspace").join(format!("hooks-v{HOOK_VERSION}")))
+    Some(
+        base.join("mockspace")
+            .join(format!("hooks-v{HOOK_VERSION}")),
+    )
 }
-
 
 /// Write the durable fallback hooks into the user config home. Idempotent
 /// by fingerprint, executable, one dir shared by every repo on this
@@ -35,7 +36,10 @@ pub(crate) fn durable_hooks_dir_from(
 pub(crate) fn ensure_durable_hooks(actions: &mut Vec<String>) -> Option<PathBuf> {
     let dir = durable_hooks_dir()?;
     if let Err(e) = fs::create_dir_all(&dir) {
-        actions.push(format!("could not create durable hooks dir {}: {e}", dir.display()));
+        actions.push(format!(
+            "could not create durable hooks dir {}: {e}",
+            dir.display()
+        ));
         return None;
     }
 
@@ -70,7 +74,6 @@ pub(crate) fn ensure_durable_hooks(actions: &mut Vec<String>) -> Option<PathBuf>
 
     Some(dir)
 }
-
 
 /// The durable gate: a self-contained hook in the user config home that
 /// `core.hooksPath` points at, so it is invisible to the repo and survives a
@@ -241,4 +244,3 @@ if ! "$launcher" "${ARGS[@]}" 2>&1; then
 fi
 echo "pre-push: validation passed."
 "##;
-

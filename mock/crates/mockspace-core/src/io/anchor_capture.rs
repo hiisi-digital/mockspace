@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::anchor::{Anchor, BlobSha, FileEntry, BlobShaError};
+use crate::anchor::{Anchor, BlobSha, BlobShaError, FileEntry};
 use crate::io::repo::RepoHandle;
 use crate::io::time::current_iso8601;
 use crate::phase::ManifestSide;
@@ -35,44 +35,68 @@ pub enum AnchorCaptureError {
     /// The given `source_tip` OID does not resolve to a commit. The
     /// caller passed a ref pointing at a tag or a tree, neither of
     /// which carries the per-file blob set we need.
-    NotACommit { tip: String },
+    NotACommit {
+        tip: String,
+    },
     /// A tree entry was not a blob or subtree (e.g. a gitlink). Spec
     /// §23 expects the source-side tree to be ordinary blobs +
     /// subtrees only.
-    UnexpectedTreeEntry { path: String, kind: &'static str },
+    UnexpectedTreeEntry {
+        path: String,
+        kind: &'static str,
+    },
     /// gix's blob OID did not parse as a hex SHA after stringifying.
     /// Should not happen on a healthy odb; surfaces as a typed
     /// variant rather than a panic.
     BadBlobSha {
-        path: String,
-        raw: String,
+        path:  String,
+        raw:   String,
         error: BlobShaError,
     },
     /// gix returned an error reading objects out of the odb.
-    GixOdb { source: Box<dyn std::error::Error + Send + Sync> },
+    GixOdb {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     /// `Anchor::to_toml` failed to serialise the assembled document.
     /// Should not happen on a well-formed Anchor; surfaces as a
     /// typed variant.
-    SerialiseFailed { error: toml::ser::Error },
+    SerialiseFailed {
+        error: toml::ser::Error,
+    },
 }
 
 impl core::fmt::Display for AnchorCaptureError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::NotACommit { tip } => {
+            Self::NotACommit {
+                tip,
+            } => {
                 write!(f, "source-tip `{tip}` does not resolve to a commit")
-            }
-            Self::UnexpectedTreeEntry { path, kind } => {
+            },
+            Self::UnexpectedTreeEntry {
+                path,
+                kind,
+            } => {
                 write!(f, "unexpected tree entry `{path}` of kind `{kind}`")
-            }
-            Self::BadBlobSha { path, raw, error } => write!(
-                f,
-                "blob OID `{raw}` at path `{path}` not a valid SHA: {error}"
-            ),
-            Self::GixOdb { source } => write!(f, "object database read failed: {source}"),
-            Self::SerialiseFailed { error } => {
+            },
+            Self::BadBlobSha {
+                path,
+                raw,
+                error,
+            } => {
+                write!(
+                    f,
+                    "blob OID `{raw}` at path `{path}` not a valid SHA: {error}"
+                )
+            },
+            Self::GixOdb {
+                source,
+            } => write!(f, "object database read failed: {source}"),
+            Self::SerialiseFailed {
+                error,
+            } => {
                 write!(f, "anchor TOML serialisation failed: {error}")
-            }
+            },
         }
     }
 }
@@ -102,21 +126,23 @@ impl RepoHandle {
         side: ManifestSide,
     ) -> Result<BTreeMap<String, Vec<u8>>, AnchorCaptureError> {
         let repo = self.repo();
-        let object = repo
-            .find_object(source_tip)
-            .map_err(|e| AnchorCaptureError::GixOdb {
+        let object = repo.find_object(source_tip).map_err(|e| {
+            AnchorCaptureError::GixOdb {
                 source: Box::new(e),
-            })?;
+            }
+        })?;
         let commit = match object.try_into_commit() {
             Ok(c) => c,
             Err(_) => {
                 return Err(AnchorCaptureError::NotACommit {
                     tip: source_tip.to_string(),
                 });
-            }
+            },
         };
-        let tree = commit.tree().map_err(|e| AnchorCaptureError::GixOdb {
-            source: Box::new(e),
+        let tree = commit.tree().map_err(|e| {
+            AnchorCaptureError::GixOdb {
+                source: Box::new(e),
+            }
         })?;
 
         // Walk the commit's tree recursively, collecting (path,
@@ -134,12 +160,19 @@ impl RepoHandle {
             captured_from_source_branch_tip: source_tip.to_string(),
             files: files
                 .into_iter()
-                .map(|(path, blob_sha)| FileEntry { path, blob_sha })
+                .map(|(path, blob_sha)| {
+                    FileEntry {
+                        path,
+                        blob_sha,
+                    }
+                })
                 .collect(),
         };
-        let anchor_toml = anchor
-            .to_toml()
-            .map_err(|error| AnchorCaptureError::SerialiseFailed { error })?;
+        let anchor_toml = anchor.to_toml().map_err(|error| {
+            AnchorCaptureError::SerialiseFailed {
+                error,
+            }
+        })?;
 
         let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         let side_marker = side.marker();
@@ -163,19 +196,19 @@ fn walk_source_tree(
     blob_bytes: &mut BTreeMap<String, Vec<u8>>,
 ) -> Result<(), AnchorCaptureError> {
     for entry in tree.iter() {
-        let entry = entry.map_err(|e| AnchorCaptureError::GixOdb {
-            source: Box::new(e),
+        let entry = entry.map_err(|e| {
+            AnchorCaptureError::GixOdb {
+                source: Box::new(e),
+            }
         })?;
         let name = entry.filename().to_string();
-        let child_path = if prefix.is_empty() {
-            name
-        } else {
-            format!("{prefix}/{name}")
-        };
+        let child_path = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
         let mode = entry.mode();
         if mode.is_tree() {
-            let subtree_obj = entry.id().object().map_err(|e| AnchorCaptureError::GixOdb {
-                source: Box::new(e),
+            let subtree_obj = entry.id().object().map_err(|e| {
+                AnchorCaptureError::GixOdb {
+                    source: Box::new(e),
+                }
             })?;
             let subtree = match subtree_obj.try_into_tree() {
                 Ok(t) => t,
@@ -184,7 +217,7 @@ fn walk_source_tree(
                         path: child_path,
                         kind: "tree-typed-entry-not-a-tree-object",
                     });
-                }
+                },
             };
             walk_source_tree(repo, &subtree, child_path, files, blob_bytes)?;
         } else if mode.is_blob() {
@@ -197,11 +230,11 @@ fn walk_source_tree(
                     error,
                 }
             })?;
-            let blob = repo
-                .find_object(blob_id.detach())
-                .map_err(|e| AnchorCaptureError::GixOdb {
+            let blob = repo.find_object(blob_id.detach()).map_err(|e| {
+                AnchorCaptureError::GixOdb {
                     source: Box::new(e),
-                })?;
+                }
+            })?;
             // Content-addressed storage: one entry per unique SHA.
             // Multiple files with the same content share the same
             // entry, which is the whole point of content-addressing.
@@ -232,10 +265,12 @@ fn walk_source_tree(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::Path;
     use std::process::Command;
+
     use tempfile::TempDir;
+
+    use super::*;
 
     fn run(args: &[&str], dir: &Path) -> std::process::Output {
         Command::new("git")
@@ -280,13 +315,10 @@ mod tests {
     #[test]
     fn capture_anchor_emits_toml_and_blob_entries() {
         let dir = TempDir::new().unwrap();
-        let tip = init_with_commit(
-            dir.path(),
-            &[
-                ("src/lib.rs", "pub fn one() {}\n"),
-                ("README.md", "hello\n"),
-            ],
-        );
+        let tip = init_with_commit(dir.path(), &[
+            ("src/lib.rs", "pub fn one() {}\n"),
+            ("README.md", "hello\n"),
+        ]);
 
         let handle = RepoHandle::open(dir.path()).expect("open");
         let map = handle
@@ -324,10 +356,10 @@ mod tests {
         // in git, so the content-addressed storage emits only one
         // entry. The anchor's `files` vector still has both paths.
         let dir = TempDir::new().unwrap();
-        let tip = init_with_commit(
-            dir.path(),
-            &[("a.txt", "duplicate-content\n"), ("b.txt", "duplicate-content\n")],
-        );
+        let tip = init_with_commit(dir.path(), &[
+            ("a.txt", "duplicate-content\n"),
+            ("b.txt", "duplicate-content\n"),
+        ]);
 
         let handle = RepoHandle::open(dir.path()).expect("open");
         let map = handle
@@ -369,13 +401,16 @@ mod tests {
         // tree object directly via plumbing.
         let tree_oid_out = run(&["write-tree"], dir.path());
         assert!(tree_oid_out.status.success());
-        let tree_oid = String::from_utf8(tree_oid_out.stdout).unwrap().trim().to_owned();
-        let commit_oid_out = run(
-            &["commit-tree", &tree_oid, "-m", "empty"],
-            dir.path(),
-        );
+        let tree_oid = String::from_utf8(tree_oid_out.stdout)
+            .unwrap()
+            .trim()
+            .to_owned();
+        let commit_oid_out = run(&["commit-tree", &tree_oid, "-m", "empty"], dir.path());
         assert!(commit_oid_out.status.success());
-        let commit_oid = String::from_utf8(commit_oid_out.stdout).unwrap().trim().to_owned();
+        let commit_oid = String::from_utf8(commit_oid_out.stdout)
+            .unwrap()
+            .trim()
+            .to_owned();
 
         let tip = gix::ObjectId::from_hex(commit_oid.as_bytes()).unwrap();
         let handle = RepoHandle::open(dir.path()).expect("open");
@@ -394,15 +429,14 @@ mod tests {
         // Nested directory should show up in the anchor's files
         // vector with `/`-separated path. Tests the recursive walk.
         let dir = TempDir::new().unwrap();
-        let tip = init_with_commit(
-            dir.path(),
-            &[
-                ("top.txt", "top\n"),
-                ("nested/dir/inner.txt", "inner\n"),
-            ],
-        );
+        let tip = init_with_commit(dir.path(), &[
+            ("top.txt", "top\n"),
+            ("nested/dir/inner.txt", "inner\n"),
+        ]);
         let handle = RepoHandle::open(dir.path()).expect("open");
-        let map = handle.capture_anchor(tip, ManifestSide::Doc).expect("capture");
+        let map = handle
+            .capture_anchor(tip, ManifestSide::Doc)
+            .expect("capture");
         let anchor =
             Anchor::from_toml(std::str::from_utf8(map.get(".anchor.doc.toml").unwrap()).unwrap())
                 .unwrap();

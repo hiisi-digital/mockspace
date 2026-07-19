@@ -221,7 +221,7 @@ impl AdvanceVia<ReplanVerb> for ApplySrcState {
 /// `Phase` to a specific state.
 #[derive(Debug, Clone)]
 pub struct TypedRound<P: PhaseMarker> {
-    slug: Slug,
+    slug:   Slug,
     _phase: PhantomData<fn() -> P>,
 }
 
@@ -242,7 +242,7 @@ impl<P: PhaseMarker> TypedRound<P> {
         } else {
             Err(PhaseMismatch {
                 expected: P::PHASE,
-                found: phase,
+                found:    phase,
             })
         }
     }
@@ -268,7 +268,7 @@ impl<P: PhaseMarker> TypedRound<P> {
         P: AdvanceVia<V>,
     {
         TypedRound {
-            slug: self.slug,
+            slug:   self.slug,
             _phase: PhantomData,
         }
     }
@@ -288,7 +288,7 @@ pub struct PhaseMismatch {
     /// What the caller asked for (typestate `P::PHASE`).
     pub expected: Phase,
     /// What was loaded from disk.
-    pub found: Phase,
+    pub found:    Phase,
 }
 
 // =========================================================================
@@ -416,10 +416,10 @@ impl DeprecatedStage {
 /// read accessors.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedManifest<S: Side, St: Stage> {
-    inner: Manifest,
+    inner:       Manifest,
     deprecation: Option<u32>,
-    _side: PhantomData<fn() -> S>,
-    _stage: PhantomData<fn() -> St>,
+    _side:       PhantomData<fn() -> S>,
+    _stage:      PhantomData<fn() -> St>,
 }
 
 impl<S: Side, St: Stage> TypedManifest<S, St> {
@@ -453,7 +453,7 @@ impl<S: Side> TypedManifest<S, AuthoringStage> {
         if inner.phase != S::SIDE {
             return Err(SideMismatch {
                 expected: S::SIDE,
-                found: inner.phase,
+                found:    inner.phase,
             });
         }
         Ok(Self {
@@ -480,10 +480,10 @@ impl<S: Side> TypedManifest<S, AuthoringStage> {
     /// taken by shared reference and only used as a witness.
     pub fn seal(self, _lock: &LockProof<'_>) -> TypedManifest<S, LockedStage> {
         TypedManifest {
-            inner: self.inner,
+            inner:       self.inner,
             deprecation: None,
-            _side: PhantomData,
-            _stage: PhantomData,
+            _side:       PhantomData,
+            _stage:      PhantomData,
         }
     }
 }
@@ -493,10 +493,10 @@ impl<S: Side> TypedManifest<S, LockedStage> {
     /// typed manifest at iteration `n`.
     pub fn deprecate(self, n: u32, _lock: &LockProof<'_>) -> TypedManifest<S, DeprecatedStage> {
         TypedManifest {
-            inner: self.inner,
+            inner:       self.inner,
             deprecation: Some(n),
-            _side: PhantomData,
-            _stage: PhantomData,
+            _side:       PhantomData,
+            _stage:      PhantomData,
         }
     }
 }
@@ -506,7 +506,7 @@ impl<S: Side> TypedManifest<S, LockedStage> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SideMismatch {
     pub expected: ManifestSide,
-    pub found: ManifestSide,
+    pub found:    ManifestSide,
 }
 
 // =========================================================================
@@ -723,13 +723,10 @@ mod tests {
     fn typed_round_from_runtime_refuses_mismatch() {
         let slug = Slug::new("test").unwrap();
         let err = TypedRound::<PlanDocState>::from_runtime(slug, Phase::Topic).unwrap_err();
-        assert_eq!(
-            err,
-            PhaseMismatch {
-                expected: Phase::PlanDoc,
-                found: Phase::Topic
-            }
-        );
+        assert_eq!(err, PhaseMismatch {
+            expected: Phase::PlanDoc,
+            found:    Phase::Topic,
+        });
     }
 
     #[test]
@@ -783,18 +780,18 @@ mod tests {
 
     fn empty_manifest(side: ManifestSide) -> Manifest {
         Manifest {
-            mockspace_version: "1.0".to_owned(),
-            round_slug: "test".to_owned(),
-            phase: side,
-            scope: ScopeBlock {
-                description: String::new(),
+            mockspace_version:     "1.0".to_owned(),
+            round_slug:            "test".to_owned(),
+            phase:                 side,
+            scope:                 ScopeBlock {
+                description:    String::new(),
                 in_scope_tasks: vec![],
-                out_of_scope: vec![],
+                out_of_scope:   vec![],
             },
-            acceptance: AcceptanceBlock {
+            acceptance:            AcceptanceBlock {
                 criteria: String::new(),
             },
-            changes: vec![],
+            changes:               vec![],
             deprecated_accounting: vec![],
         }
     }
@@ -803,13 +800,10 @@ mod tests {
     fn typed_manifest_new_refuses_side_mismatch() {
         let m = empty_manifest(ManifestSide::Src);
         let err = TypedManifest::<DocSide, AuthoringStage>::new(m).unwrap_err();
-        assert_eq!(
-            err,
-            SideMismatch {
-                expected: ManifestSide::Doc,
-                found: ManifestSide::Src
-            }
-        );
+        assert_eq!(err, SideMismatch {
+            expected: ManifestSide::Doc,
+            found:    ManifestSide::Src,
+        });
     }
 
     #[test]

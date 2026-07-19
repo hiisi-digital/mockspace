@@ -40,7 +40,7 @@ use crate::io::lock::FlockTransitionLock;
 use crate::io::ref_tree::{RefTreeReadError, RoundRefTree};
 use crate::io::ref_write::RefTreeWriteError;
 use crate::io::repo::RepoHandle;
-use crate::manifest::{validate_structural, Manifest, ValidationError};
+use crate::manifest::{Manifest, ValidationError, validate_structural};
 use crate::phase::{ManifestSide, Phase};
 use crate::ref_path::RefPath;
 use crate::round::ManifestStage;
@@ -50,7 +50,7 @@ use crate::slug::Slug;
 #[derive(Debug, Clone)]
 pub struct SealReport {
     /// New commit OID on `refs/mock/round/<slug>` after seal.
-    pub new_commit: gix::ObjectId,
+    pub new_commit:           gix::ObjectId,
     /// Path of the sealed manifest within the round-ref tree,
     /// e.g. `manifest.doc.locked.toml`. Useful for logging /
     /// follow-up surfaces.
@@ -60,39 +60,52 @@ pub struct SealReport {
     /// source-side files with identical content count once. To get
     /// the source-side file count, parse the `.anchor.<side>.toml`
     /// entry from the sealed tree and read `Anchor.files.len()`.
-    pub anchor_blob_count: usize,
+    pub anchor_blob_count:    usize,
 }
 
 /// Failure modes for [`RepoHandle::seal_manifest`].
 #[derive(Debug)]
 pub enum SealError {
     /// The round ref does not exist; nothing to seal.
-    RoundRefMissing { slug: String },
+    RoundRefMissing {
+        slug: String,
+    },
     /// The round ref exists but does not contain a `.phase` blob.
     /// Indicates the ref was not authored by mockspace or has been
     /// corrupted.
     PhaseMarkerMissing,
     /// The `.phase` blob did not parse as a known phase marker.
-    PhaseMarkerInvalid { raw: String },
+    PhaseMarkerInvalid {
+        raw: String,
+    },
     /// The round is in a phase other than PLAN(side); seal only
     /// transitions PLAN(side) -> APPLY(side).
-    WrongPhase { expected: Phase, actual: Phase },
+    WrongPhase {
+        expected: Phase,
+        actual:   Phase,
+    },
     /// The authoring manifest file `manifest.<side>.toml` is absent
     /// from the round tree.
-    AuthoringManifestMissing { path: String },
+    AuthoringManifestMissing {
+        path: String,
+    },
     /// The authoring manifest bytes are not valid UTF-8. Manifests
     /// are TOML; non-UTF-8 input is a corruption signal.
-    ManifestNotUtf8 { path: String },
+    ManifestNotUtf8 {
+        path: String,
+    },
     /// The authoring manifest did not parse as TOML.
     ManifestParseFailed {
-        path: String,
+        path:  String,
         error: toml::de::Error,
     },
     /// The parsed manifest failed structural validation.
     ManifestInvalid(ValidationError),
     /// A locked manifest already exists at the target path. Sealing
     /// twice is forbidden.
-    AlreadyLocked { path: String },
+    AlreadyLocked {
+        path: String,
+    },
     /// Read of the current round ref failed.
     ReadFailed(RefTreeReadError),
     /// Anchor capture from the source-side tip failed.
@@ -104,29 +117,48 @@ pub enum SealError {
 impl core::fmt::Display for SealError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::RoundRefMissing { slug } => {
+            Self::RoundRefMissing {
+                slug,
+            } => {
                 write!(f, "round ref for slug `{slug}` does not exist")
-            }
+            },
             Self::PhaseMarkerMissing => write!(f, ".phase blob missing from round tree"),
-            Self::PhaseMarkerInvalid { raw } => {
+            Self::PhaseMarkerInvalid {
+                raw,
+            } => {
                 write!(f, "`.phase` blob did not parse as a known phase: {raw:?}")
-            }
-            Self::WrongPhase { expected, actual } => {
-                write!(f, "wrong phase for seal; expected {expected:?}, got {actual:?}")
-            }
-            Self::AuthoringManifestMissing { path } => {
+            },
+            Self::WrongPhase {
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "wrong phase for seal; expected {expected:?}, got {actual:?}"
+                )
+            },
+            Self::AuthoringManifestMissing {
+                path,
+            } => {
                 write!(f, "authoring manifest missing at `{path}`")
-            }
-            Self::ManifestNotUtf8 { path } => {
+            },
+            Self::ManifestNotUtf8 {
+                path,
+            } => {
                 write!(f, "manifest at `{path}` is not valid UTF-8")
-            }
-            Self::ManifestParseFailed { path, error } => {
+            },
+            Self::ManifestParseFailed {
+                path,
+                error,
+            } => {
                 write!(f, "manifest at `{path}` did not parse: {error}")
-            }
+            },
             Self::ManifestInvalid(e) => write!(f, "manifest failed structural validation: {e:?}"),
-            Self::AlreadyLocked { path } => {
+            Self::AlreadyLocked {
+                path,
+            } => {
                 write!(f, "locked manifest already present at `{path}`")
-            }
+            },
             Self::ReadFailed(e) => write!(f, "round ref read failed: {e}"),
             Self::AnchorFailed(e) => write!(f, "anchor capture failed: {e}"),
             Self::WriteFailed(e) => write!(f, "round ref write failed: {e}"),
@@ -198,11 +230,13 @@ impl RepoHandle {
         // for the CAS update later.
         let current_oid = match self.resolve_ref_oid(&ref_path) {
             Ok(oid) => oid,
-            Err(RefTreeReadError::RefNotFound { .. }) => {
+            Err(RefTreeReadError::RefNotFound {
+                ..
+            }) => {
                 return Err(SealError::RoundRefMissing {
                     slug: slug.as_ref().to_owned(),
                 });
-            }
+            },
             Err(other) => return Err(other.into()),
         };
         let current_tree = self.read_ref_tree(&ref_path)?;
@@ -215,14 +249,17 @@ impl RepoHandle {
             .get(".phase")
             .ok_or(SealError::PhaseMarkerMissing)?;
         let phase_str = std::str::from_utf8(phase_bytes)
-            .map_err(|_| SealError::PhaseMarkerInvalid {
-                raw: format!("{phase_bytes:?}"),
+            .map_err(|_| {
+                SealError::PhaseMarkerInvalid {
+                    raw: format!("{phase_bytes:?}"),
+                }
             })?
             .trim();
-        let actual_phase =
-            Phase::from_marker(phase_str).ok_or_else(|| SealError::PhaseMarkerInvalid {
+        let actual_phase = Phase::from_marker(phase_str).ok_or_else(|| {
+            SealError::PhaseMarkerInvalid {
                 raw: phase_str.to_owned(),
-            })?;
+            }
+        })?;
         let expected = plan_phase_for(side);
         if actual_phase != expected {
             return Err(SealError::WrongPhase {
@@ -235,22 +272,26 @@ impl RepoHandle {
         let authoring_name = ManifestStage::Authoring.filename(side);
         let locked_name = ManifestStage::Locked.filename(side);
         if current_tree.get(&locked_name).is_some() {
-            return Err(SealError::AlreadyLocked { path: locked_name });
+            return Err(SealError::AlreadyLocked {
+                path: locked_name,
+            });
         }
         let authoring_bytes = current_tree.get(&authoring_name).ok_or_else(|| {
             SealError::AuthoringManifestMissing {
                 path: authoring_name.clone(),
             }
         })?;
-        let manifest_text =
-            std::str::from_utf8(authoring_bytes).map_err(|_| SealError::ManifestNotUtf8 {
+        let manifest_text = std::str::from_utf8(authoring_bytes).map_err(|_| {
+            SealError::ManifestNotUtf8 {
                 path: authoring_name.clone(),
-            })?;
-        let manifest =
-            Manifest::from_toml(manifest_text).map_err(|error| SealError::ManifestParseFailed {
+            }
+        })?;
+        let manifest = Manifest::from_toml(manifest_text).map_err(|error| {
+            SealError::ManifestParseFailed {
                 path: authoring_name.clone(),
                 error,
-            })?;
+            }
+        })?;
         validate_structural(&manifest, side)?;
 
         // Step 8: capture the anchor at the source-side branch tip.
@@ -262,8 +303,10 @@ impl RepoHandle {
         // manifest path, insert it under the locked name with the
         // same bytes, splice in every anchor entry, and rewrite
         // `.phase` to the apply marker.
-        let mut new_entries: BTreeMap<String, Vec<u8>> =
-            current_tree.iter().map(|(k, v)| (k.to_owned(), v.to_vec())).collect();
+        let mut new_entries: BTreeMap<String, Vec<u8>> = current_tree
+            .iter()
+            .map(|(k, v)| (k.to_owned(), v.to_vec()))
+            .collect();
         let manifest_bytes = new_entries
             .remove(&authoring_name)
             .expect("authoring_bytes existed in current_tree");
@@ -287,8 +330,7 @@ impl RepoHandle {
 
         // Step 11: write the new commit + CAS-advance the ref.
         let message = format!("seal: PLAN({side}) -> APPLY({side})");
-        let new_commit =
-            self.write_round_ref(&ref_path, &new_tree, &message, Some(current_oid))?;
+        let new_commit = self.write_round_ref(&ref_path, &new_tree, &message, Some(current_oid))?;
 
         Ok(SealReport {
             new_commit,
@@ -300,13 +342,14 @@ impl RepoHandle {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    use tempfile::TempDir;
+
     use super::*;
     use crate::manifest::{AcceptanceBlock, ChangeBlock, Manifest, ScopeBlock};
     use crate::verifier::{VerifierCheck, VerifierKind};
-    use std::path::Path;
-    use std::path::PathBuf;
-    use std::process::Command;
-    use tempfile::TempDir;
 
     fn run(args: &[&str], dir: &Path) -> std::process::Output {
         Command::new("git")
@@ -345,22 +388,22 @@ mod tests {
 
     fn doc_manifest_toml(slug: &str) -> String {
         let m = Manifest {
-            mockspace_version: "1.0".to_owned(),
-            round_slug: slug.to_owned(),
-            phase: ManifestSide::Doc,
-            scope: ScopeBlock {
-                description: "test seal".to_owned(),
+            mockspace_version:     "1.0".to_owned(),
+            round_slug:            slug.to_owned(),
+            phase:                 ManifestSide::Doc,
+            scope:                 ScopeBlock {
+                description:    "test seal".to_owned(),
                 in_scope_tasks: vec![],
-                out_of_scope: vec![],
+                out_of_scope:   vec![],
             },
-            acceptance: AcceptanceBlock {
+            acceptance:            AcceptanceBlock {
                 criteria: "passes".to_owned(),
             },
-            changes: vec![ChangeBlock {
-                task: None,
-                file: PathBuf::from("README.md"),
+            changes:               vec![ChangeBlock {
+                task:        None,
+                file:        PathBuf::from("README.md"),
                 description: "doc change".to_owned(),
-                verify: VerifierCheck::Kind(VerifierKind::PathExists {
+                verify:      VerifierCheck::Kind(VerifierKind::PathExists {
                     file: PathBuf::from("README.md"),
                 }),
             }],
@@ -435,7 +478,10 @@ mod tests {
         let err = handle
             .seal_manifest(&lock, &slug, ManifestSide::Doc, source_tip)
             .unwrap_err();
-        assert!(matches!(err, SealError::RoundRefMissing { .. }), "got {err:?}");
+        assert!(
+            matches!(err, SealError::RoundRefMissing { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -469,13 +515,10 @@ mod tests {
             .seal_manifest(&lock, &slug, ManifestSide::Doc, source_tip)
             .unwrap_err();
         assert!(
-            matches!(
-                err,
-                SealError::WrongPhase {
-                    expected: Phase::PlanDoc,
-                    actual: Phase::ApplyDoc
-                }
-            ),
+            matches!(err, SealError::WrongPhase {
+                expected: Phase::PlanDoc,
+                actual:   Phase::ApplyDoc,
+            }),
             "got {err:?}"
         );
     }
@@ -515,7 +558,10 @@ mod tests {
         let err = handle
             .seal_manifest(&lock, &slug, ManifestSide::Doc, source_tip)
             .unwrap_err();
-        assert!(matches!(err, SealError::AlreadyLocked { .. }), "got {err:?}");
+        assert!(
+            matches!(err, SealError::AlreadyLocked { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]

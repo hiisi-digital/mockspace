@@ -40,10 +40,10 @@ pub enum WorkflowRule {
 }
 
 pub struct WorkflowStateLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: WorkflowStateConfig,
+    config:           WorkflowStateConfig,
 }
 
 impl WorkflowStateLint {
@@ -66,9 +66,11 @@ impl Lint for WorkflowStateLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
@@ -86,7 +88,7 @@ impl Lint for WorkflowStateLint {
                 // Future hook: compare locked CL file content against the
                 // git index. Today, this is a no-op until the engine wires
                 // the git-tracked-hash inspection.
-            }
+            },
             WorkflowRule::ChangelistImmutability => {
                 for round in &rounds.rounds {
                     if round.state == RoundState::Locked && !round.locked {
@@ -101,7 +103,7 @@ impl Lint for WorkflowStateLint {
                         );
                     }
                 }
-            }
+            },
             WorkflowRule::ChangelistRequired => {
                 for round in &rounds.rounds {
                     if round.doc_cl.is_none() && round.state != RoundState::Topic {
@@ -116,7 +118,7 @@ impl Lint for WorkflowStateLint {
                         );
                     }
                 }
-            }
+            },
             WorkflowRule::ChangelistDocGate => {
                 for round in &rounds.rounds {
                     if round.src_cl.is_some() && round.doc_cl.is_none() {
@@ -128,7 +130,7 @@ impl Lint for WorkflowStateLint {
                         );
                     }
                 }
-            }
+            },
             WorkflowRule::DesignRoundFilenameConvention => {
                 for round in &rounds.rounds {
                     if !is_valid_round_timestamp(&round.timestamp) {
@@ -143,7 +145,7 @@ impl Lint for WorkflowStateLint {
                         );
                     }
                 }
-            }
+            },
         }
         Ok(())
     }
@@ -181,17 +183,15 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: WorkflowStateConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("workflow-state config: {e}"),
-                source_location: None,
-            })?;
+    let parsed: WorkflowStateConfig = config.clone().try_into().map_err(|e: toml::de::Error| {
+        ConfigError {
+            lint_name:       name.to_string(),
+            field_path:      String::new(),
+            kind:            ConfigErrorKind::InvalidValue,
+            message:         format!("workflow-state config: {e}"),
+            source_location: None,
+        }
+    })?;
     Ok(Box::new(WorkflowStateLint::new(
         name,
         description,
@@ -202,11 +202,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, RunSurface, Severity};
+
     use super::*;
     use crate::finding_sink::VecFindingSink;
     use crate::project::{DesignRound, DesignRoundsView, ProjectBuilder};
-    use mockspace_core::lint::{Gate, RunSurface, Severity};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -217,11 +219,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -246,10 +248,10 @@ mod tests {
         );
         let project = project_with(vec![DesignRound {
             timestamp: "bad-format".to_string(),
-            state: RoundState::Topic,
-            doc_cl: None,
-            src_cl: None,
-            locked: false,
+            state:     RoundState::Topic,
+            doc_cl:    None,
+            src_cl:    None,
+            locked:    false,
         }]);
         let sink = VecFindingSink::new();
         let root = PathBuf::from("/tmp");
@@ -272,10 +274,10 @@ mod tests {
         );
         let project = project_with(vec![DesignRound {
             timestamp: "202605211200".to_string(),
-            state: RoundState::Src,
-            doc_cl: None,
-            src_cl: Some(PathBuf::from("src.md")),
-            locked: false,
+            state:     RoundState::Src,
+            doc_cl:    None,
+            src_cl:    Some(PathBuf::from("src.md")),
+            locked:    false,
         }]);
         let sink = VecFindingSink::new();
         let root = PathBuf::from("/tmp");

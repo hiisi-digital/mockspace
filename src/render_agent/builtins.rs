@@ -80,7 +80,6 @@ allow
     )
 }
 
-
 /// Generate the mockspace-write-guard.sh hook content.
 pub(crate) fn builtin_write_guard(cfg: &Config) -> String {
     let mock_rel = cfg
@@ -269,7 +268,6 @@ allow
     )
 }
 
-
 /// Generate the mockspace-reminder.sh hook content.
 pub(crate) fn builtin_reminder(cfg: &Config) -> String {
     let mock_rel = cfg
@@ -303,7 +301,6 @@ allow
 "##
     )
 }
-
 
 /// Generate the no-yagni-guard.sh hook content.
 /// The durable agent-side gate. Fires on Bash; for a git commit or push,
@@ -358,7 +355,6 @@ deny "mockspace gate is broken and self-heal failed: the git validator at $valid
     .to_string()
 }
 
-
 pub(crate) fn builtin_no_yagni() -> String {
     r##"#!/usr/bin/env bash
 # Built-in mockspace hook: flag YAGNI reasoning in commit messages
@@ -379,4 +375,3 @@ allow
 "##
     .to_string()
 }
-

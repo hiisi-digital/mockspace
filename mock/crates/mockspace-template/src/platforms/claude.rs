@@ -98,11 +98,7 @@ impl Platform for ClaudePlatform {
         CLAUDE_HOOK_HELPERS.replace("{{REPO_ROOT}}", &repo_root.display().to_string())
     }
 
-    fn settings_file(
-        &self,
-        repo_root: &Path,
-        hooks: &[HookDecl],
-    ) -> Option<(PathBuf, String)> {
+    fn settings_file(&self, repo_root: &Path, hooks: &[HookDecl]) -> Option<(PathBuf, String)> {
         if hooks.is_empty() {
             return None;
         }
@@ -125,11 +121,17 @@ fn build_claude_settings_json(hooks: &[HookDecl]) -> String {
         let n_h = hooks_for_event.len();
         for (j, h) in hooks_for_event.iter().enumerate() {
             s.push_str("      {\n");
-            s.push_str(&format!("        \"matcher\": \"{}\",\n", json_escape(&h.matcher)));
+            s.push_str(&format!(
+                "        \"matcher\": \"{}\",\n",
+                json_escape(&h.matcher)
+            ));
             s.push_str("        \"hooks\": [\n");
             s.push_str("          {\n");
             s.push_str("            \"type\": \"command\",\n");
-            s.push_str(&format!("            \"command\": \"{}\"\n", json_escape(&h.command)));
+            s.push_str(&format!(
+                "            \"command\": \"{}\"\n",
+                json_escape(&h.command)
+            ));
             s.push_str("          }\n");
             s.push_str("        ]\n");
             if j + 1 < n_h {

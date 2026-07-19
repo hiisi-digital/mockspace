@@ -30,17 +30,18 @@
 
 use mockspace_core::lint::{GateSeverity, Severity};
 
+use super::{
+    deprecation_comparison,
+    directive_style_consistency,
+    no_adhoc_framework,
+    no_bare_vec,
+    no_manual_id,
+    no_manual_impl,
+    registrable_completeness,
+};
 use crate::catalog::CatalogEntry;
 use crate::errors::ConfigError;
 use crate::lint::{Lint, LintMode};
-
-use super::deprecation_comparison;
-use super::directive_style_consistency;
-use super::no_adhoc_framework;
-use super::no_bare_vec;
-use super::no_manual_id;
-use super::no_manual_impl;
-use super::registrable_completeness;
 
 // =========================================================================
 // Helper: wrap a primitive's instantiate_with for catalog dispatch.

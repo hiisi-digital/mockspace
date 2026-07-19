@@ -44,12 +44,12 @@ pub struct AstTypePositionConfig {
 }
 
 pub struct AstTypePositionLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: AstTypePositionConfig,
-    forbidden: HashSet<String>,
-    positions: HashSet<TypePosition>,
+    config:           AstTypePositionConfig,
+    forbidden:        HashSet<String>,
+    positions:        HashSet<TypePosition>,
 }
 
 impl AstTypePositionLint {
@@ -84,12 +84,15 @@ impl Lint for AstTypePositionLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_syn_ast(&self) -> bool {
         true
     }
@@ -116,10 +119,10 @@ impl Lint for AstTypePositionLint {
 }
 
 struct TypePositionVisitor<'a> {
-    lint: &'a AstTypePositionLint,
-    doc: &'a MockspaceDocument,
-    ctx: &'a LintContext<'a>,
-    sink: &'a dyn FindingSink,
+    lint:             &'a AstTypePositionLint,
+    doc:              &'a MockspaceDocument,
+    ctx:              &'a LintContext<'a>,
+    sink:             &'a dyn FindingSink,
     /// Stack of `(item_is_pub)` flags as we descend. Used by visibility
     /// gating on positions inside structs / enums / impls / traits.
     visibility_stack: Vec<bool>,
@@ -248,7 +251,7 @@ fn walk_type(ty: &syn::Type, on_ident: &mut dyn FnMut(&str)) {
                     }
                 }
             }
-        }
+        },
         syn::Type::Reference(r) => walk_type(&r.elem, on_ident),
         syn::Type::Slice(s) => walk_type(&s.elem, on_ident),
         syn::Type::Array(a) => walk_type(&a.elem, on_ident),
@@ -256,7 +259,7 @@ fn walk_type(ty: &syn::Type, on_ident: &mut dyn FnMut(&str)) {
             for inner in &t.elems {
                 walk_type(inner, on_ident);
             }
-        }
+        },
         syn::Type::Ptr(p) => walk_type(&p.elem, on_ident),
         syn::Type::Paren(p) => walk_type(&p.elem, on_ident),
         syn::Type::Group(g) => walk_type(&g.elem, on_ident),
@@ -264,7 +267,7 @@ fn walk_type(ty: &syn::Type, on_ident: &mut dyn FnMut(&str)) {
         // do not carry simple ident paths the bare-primitive lints care
         // about. ImplTrait could in principle (e.g. `impl Iterator<Item = u8>`),
         // but the bare-primitive policy treats those as already-typed.
-        _ => {}
+        _ => {},
     }
 }
 
@@ -297,9 +300,11 @@ fn emit(
         // for real source positions yet. Shipping a Fix::Replace with
         // those coordinates would corrupt files at byte 0; emit advice
         // until the visitor is updated to carry proc_macro2::Span.
-        suggestion: replacement.map(|r| Suggestion {
-            description: Cow::Owned(format!("replace with canonical type `{r}`")),
-            fix: None,
+        suggestion: replacement.map(|r| {
+            Suggestion {
+                description: Cow::Owned(format!("replace with canonical type `{r}`")),
+                fix:         None,
+            }
         }),
         related_spans: Vec::new(),
         metadata: None,
@@ -314,16 +319,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: AstTypePositionConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("ast-type-position config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("ast-type-position config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(AstTypePositionLint::new(
         name,
         description,
@@ -334,11 +338,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, Severity};
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::{Gate, Severity};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -349,11 +355,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: mockspace_core::lint::RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      mockspace_core::lint::RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -372,44 +378,35 @@ mod tests {
 
     #[test]
     fn fires_on_pub_fn_param() {
-        let findings = run(
-            "pub fn x(s: String) {}",
-            AstTypePositionConfig {
-                forbidden_types: vec!["String".to_string()],
-                positions: vec![TypePosition::FnParam],
-                visibility: Visibility::Public,
-                replacements: Vec::new(),
-            },
-        );
+        let findings = run("pub fn x(s: String) {}", AstTypePositionConfig {
+            forbidden_types: vec!["String".to_string()],
+            positions:       vec![TypePosition::FnParam],
+            visibility:      Visibility::Public,
+            replacements:    Vec::new(),
+        });
         assert_eq!(findings.len(), 1);
         assert!(findings[0].message.contains("String"));
     }
 
     #[test]
     fn does_not_fire_on_private_fn_with_public_filter() {
-        let findings = run(
-            "fn x(s: String) {}",
-            AstTypePositionConfig {
-                forbidden_types: vec!["String".to_string()],
-                positions: vec![TypePosition::FnParam],
-                visibility: Visibility::Public,
-                replacements: Vec::new(),
-            },
-        );
+        let findings = run("fn x(s: String) {}", AstTypePositionConfig {
+            forbidden_types: vec!["String".to_string()],
+            positions:       vec![TypePosition::FnParam],
+            visibility:      Visibility::Public,
+            replacements:    Vec::new(),
+        });
         assert!(findings.is_empty());
     }
 
     #[test]
     fn fires_on_any_visibility() {
-        let findings = run(
-            "fn x(s: String) {}",
-            AstTypePositionConfig {
-                forbidden_types: vec!["String".to_string()],
-                positions: vec![TypePosition::FnParam],
-                visibility: Visibility::Any,
-                replacements: Vec::new(),
-            },
-        );
+        let findings = run("fn x(s: String) {}", AstTypePositionConfig {
+            forbidden_types: vec!["String".to_string()],
+            positions:       vec![TypePosition::FnParam],
+            visibility:      Visibility::Any,
+            replacements:    Vec::new(),
+        });
         assert_eq!(findings.len(), 1);
     }
 
@@ -421,15 +418,12 @@ mod tests {
         // `FnReturn` is listed; the lint must not fire on the field.
         // This negative case was missing from the suite even though
         // it is the load-bearing contract for narrowing the visitor.
-        let findings = run(
-            "pub struct S { pub v: Vec<u8> }",
-            AstTypePositionConfig {
-                forbidden_types: vec!["Vec".to_string()],
-                positions: vec![TypePosition::FnReturn],
-                visibility: Visibility::Public,
-                replacements: Vec::new(),
-            },
-        );
+        let findings = run("pub struct S { pub v: Vec<u8> }", AstTypePositionConfig {
+            forbidden_types: vec!["Vec".to_string()],
+            positions:       vec![TypePosition::FnReturn],
+            visibility:      Visibility::Public,
+            replacements:    Vec::new(),
+        });
         assert!(
             findings.is_empty(),
             "lint should not fire when forbidden type's position is not listed: {findings:?}"
@@ -438,15 +432,12 @@ mod tests {
 
     #[test]
     fn fires_on_struct_field() {
-        let findings = run(
-            "pub struct S { pub v: Vec<u8> }",
-            AstTypePositionConfig {
-                forbidden_types: vec!["Vec".to_string()],
-                positions: vec![TypePosition::StructField],
-                visibility: Visibility::Public,
-                replacements: Vec::new(),
-            },
-        );
+        let findings = run("pub struct S { pub v: Vec<u8> }", AstTypePositionConfig {
+            forbidden_types: vec!["Vec".to_string()],
+            positions:       vec![TypePosition::StructField],
+            visibility:      Visibility::Public,
+            replacements:    Vec::new(),
+        });
         assert_eq!(findings.len(), 1);
     }
 
@@ -456,9 +447,9 @@ mod tests {
             "pub fn x() -> String { String::new() }",
             AstTypePositionConfig {
                 forbidden_types: vec!["String".to_string()],
-                positions: vec![TypePosition::FnReturn],
-                visibility: Visibility::Public,
-                replacements: vec![("String".to_string(), "Str".to_string())],
+                positions:       vec![TypePosition::FnReturn],
+                visibility:      Visibility::Public,
+                replacements:    vec![("String".to_string(), "Str".to_string())],
             },
         );
         assert_eq!(findings.len(), 1);
@@ -477,29 +468,23 @@ mod tests {
     fn nested_generic_args_are_walked() {
         // Verify that walk_type recurses into generic args:
         // `Option<Vec<u8>>` should match if `Vec` is forbidden.
-        let findings = run(
-            "pub fn x(v: Option<Vec<u8>>) {}",
-            AstTypePositionConfig {
-                forbidden_types: vec!["Vec".to_string()],
-                positions: vec![TypePosition::FnParam],
-                visibility: Visibility::Public,
-                replacements: Vec::new(),
-            },
-        );
+        let findings = run("pub fn x(v: Option<Vec<u8>>) {}", AstTypePositionConfig {
+            forbidden_types: vec!["Vec".to_string()],
+            positions:       vec![TypePosition::FnParam],
+            visibility:      Visibility::Public,
+            replacements:    Vec::new(),
+        });
         assert_eq!(findings.len(), 1);
     }
 
     #[test]
     fn trait_method_signatures_are_walked() {
-        let findings = run(
-            "pub trait T { fn x(v: Vec<u8>); }",
-            AstTypePositionConfig {
-                forbidden_types: vec!["Vec".to_string()],
-                positions: vec![TypePosition::FnParam],
-                visibility: Visibility::Public,
-                replacements: Vec::new(),
-            },
-        );
+        let findings = run("pub trait T { fn x(v: Vec<u8>); }", AstTypePositionConfig {
+            forbidden_types: vec!["Vec".to_string()],
+            positions:       vec![TypePosition::FnParam],
+            visibility:      Visibility::Public,
+            replacements:    Vec::new(),
+        });
         assert_eq!(findings.len(), 1);
     }
 }

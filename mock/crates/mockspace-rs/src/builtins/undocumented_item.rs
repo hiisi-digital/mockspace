@@ -38,15 +38,15 @@ pub struct UndocumentedItemConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShameEscapeRule {
-    pub min_words: u32,
+    pub min_words:  u32,
     pub shame_path: PathBuf,
 }
 
 pub struct UndocumentedItemLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: UndocumentedItemConfig,
+    config:           UndocumentedItemConfig,
 }
 
 impl UndocumentedItemLint {
@@ -69,12 +69,15 @@ impl Lint for UndocumentedItemLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_syn_ast(&self) -> bool {
         true
     }
@@ -106,19 +109,19 @@ impl Lint for UndocumentedItemLint {
             // SHAME escape check is a future hook; without per-project
             // SHAME content available, the default behaviour is to fire.
             sink.emit(Finding {
-                lint_name: Cow::Borrowed(self.name),
-                rule_id: None,
-                plugin_id: None,
-                severity: active,
-                impact: None,
-                category: None,
-                message: Cow::Owned(format!("{kind:?} `{name}` is undocumented")),
-                span: Span::single_line(path, 1, 1, name.len() as u32),
-                hint: None,
-                help: None,
-                suggestion: None,
+                lint_name:     Cow::Borrowed(self.name),
+                rule_id:       None,
+                plugin_id:     None,
+                severity:      active,
+                impact:        None,
+                category:      None,
+                message:       Cow::Owned(format!("{kind:?} `{name}` is undocumented")),
+                span:          Span::single_line(path, 1, 1, name.len() as u32),
+                hint:          None,
+                help:          None,
+                suggestion:    None,
                 related_spans: Vec::new(),
-                metadata: None,
+                metadata:      None,
             });
         }
         Ok(())
@@ -127,54 +130,70 @@ impl Lint for UndocumentedItemLint {
 
 fn item_info(item: &syn::Item) -> Option<(String, ItemKind, bool, &[syn::Attribute])> {
     match item {
-        syn::Item::Fn(it) => Some((
-            it.sig.ident.to_string(),
-            ItemKind::Fn,
-            matches!(it.vis, syn::Visibility::Public(_)),
-            &it.attrs,
-        )),
-        syn::Item::Struct(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Struct,
-            matches!(it.vis, syn::Visibility::Public(_)),
-            &it.attrs,
-        )),
-        syn::Item::Enum(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Enum,
-            matches!(it.vis, syn::Visibility::Public(_)),
-            &it.attrs,
-        )),
-        syn::Item::Trait(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Trait,
-            matches!(it.vis, syn::Visibility::Public(_)),
-            &it.attrs,
-        )),
-        syn::Item::Type(it) => Some((
-            it.ident.to_string(),
-            ItemKind::TypeAlias,
-            matches!(it.vis, syn::Visibility::Public(_)),
-            &it.attrs,
-        )),
-        syn::Item::Const(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Const,
-            matches!(it.vis, syn::Visibility::Public(_)),
-            &it.attrs,
-        )),
-        syn::Item::Static(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Static,
-            matches!(it.vis, syn::Visibility::Public(_)),
-            &it.attrs,
-        )),
-        syn::Item::Mod(it) => Some((
-            it.ident.to_string(),
-            ItemKind::Mod,
-            matches!(it.vis, syn::Visibility::Public(_)),
-            &it.attrs,
-        )),
+        syn::Item::Fn(it) => {
+            Some((
+                it.sig.ident.to_string(),
+                ItemKind::Fn,
+                matches!(it.vis, syn::Visibility::Public(_)),
+                &it.attrs,
+            ))
+        },
+        syn::Item::Struct(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Struct,
+                matches!(it.vis, syn::Visibility::Public(_)),
+                &it.attrs,
+            ))
+        },
+        syn::Item::Enum(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Enum,
+                matches!(it.vis, syn::Visibility::Public(_)),
+                &it.attrs,
+            ))
+        },
+        syn::Item::Trait(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Trait,
+                matches!(it.vis, syn::Visibility::Public(_)),
+                &it.attrs,
+            ))
+        },
+        syn::Item::Type(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::TypeAlias,
+                matches!(it.vis, syn::Visibility::Public(_)),
+                &it.attrs,
+            ))
+        },
+        syn::Item::Const(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Const,
+                matches!(it.vis, syn::Visibility::Public(_)),
+                &it.attrs,
+            ))
+        },
+        syn::Item::Static(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Static,
+                matches!(it.vis, syn::Visibility::Public(_)),
+                &it.attrs,
+            ))
+        },
+        syn::Item::Mod(it) => {
+            Some((
+                it.ident.to_string(),
+                ItemKind::Mod,
+                matches!(it.vis, syn::Visibility::Public(_)),
+                &it.attrs,
+            ))
+        },
         _ => None,
     }
 }
@@ -195,16 +214,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: UndocumentedItemConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("undocumented-item config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("undocumented-item config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(UndocumentedItemLint::new(
         name,
         description,
@@ -215,11 +233,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, Severity};
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::{Gate, Severity};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -230,11 +250,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: mockspace_core::lint::RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      mockspace_core::lint::RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -244,8 +264,8 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             UndocumentedItemConfig {
-                item_kinds: vec![ItemKind::Fn, ItemKind::Struct],
-                visibility: Visibility::Public,
+                item_kinds:   vec![ItemKind::Fn, ItemKind::Struct],
+                visibility:   Visibility::Public,
                 shame_escape: None,
             },
         );

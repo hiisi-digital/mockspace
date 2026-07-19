@@ -54,10 +54,10 @@ fn default_true() -> bool {
 }
 
 pub struct TermReplacementTableLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: TermReplacementTableConfig,
+    config:           TermReplacementTableConfig,
 }
 
 impl TermReplacementTableLint {
@@ -80,9 +80,11 @@ impl Lint for TermReplacementTableLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
@@ -97,10 +99,10 @@ impl Lint for TermReplacementTableLint {
             return Ok(());
         }
         let opts = StripOpts {
-            strings: self.config.strip_strings,
-            comments: self.config.strip_comments,
+            strings:      self.config.strip_strings,
+            comments:     self.config.strip_comments,
             doc_comments: self.config.strip_doc_comments,
-            code_fences: false,
+            code_fences:  false,
         };
         let view = doc.source_stripped(opts);
         let active = ctx.active_severity();
@@ -113,18 +115,18 @@ impl Lint for TermReplacementTableLint {
                 self.config.word_boundary,
                 |line, column, length, _byte_offset_in_view| {
                     sink.emit(Finding {
-                        lint_name: Cow::Borrowed(lint_name),
-                        rule_id: None,
-                        plugin_id: None,
-                        severity: active,
-                        impact: None,
-                        category: None,
-                        message: Cow::Owned(format!(
+                        lint_name:     Cow::Borrowed(lint_name),
+                        rule_id:       None,
+                        plugin_id:     None,
+                        severity:      active,
+                        impact:        None,
+                        category:      None,
+                        message:       Cow::Owned(format!(
                             "dead term `{term}`; use `{replacement}` instead"
                         )),
-                        span: Span::single_line(doc.path(), line, column, length as u32),
-                        hint: None,
-                        help: None,
+                        span:          Span::single_line(doc.path(), line, column, length as u32),
+                        hint:          None,
+                        help:          None,
                         // Description only; no Fix recipe. The byte offset
                         // we have here (`_byte_offset_in_view`) is into the
                         // source-stripped view, not the original document
@@ -133,14 +135,14 @@ impl Lint for TermReplacementTableLint {
                         // stripper does not currently maintain. Emit advice
                         // until that translation is wired (or until
                         // term_replacement scans the unstripped source).
-                        suggestion: Some(Suggestion {
+                        suggestion:    Some(Suggestion {
                             description: Cow::Owned(format!(
                                 "replace `{term}` with `{replacement}`"
                             )),
-                            fix: None,
+                            fix:         None,
                         }),
                         related_spans: Vec::new(),
-                        metadata: None,
+                        metadata:      None,
                     });
                 },
             );
@@ -171,7 +173,7 @@ fn scan_term<F: FnMut(u32, u32, usize, usize)>(
             i += 1;
             continue;
         }
-        if &bytes[i..i + term_bytes.len()] == term_bytes {
+        if &bytes[i .. i + term_bytes.len()] == term_bytes {
             let first_is_word = is_word_byte(term_bytes[0]);
             let last_is_word = is_word_byte(term_bytes[term_bytes.len() - 1]);
             let lhs_ok = !word_boundary || !first_is_word || i == 0 || !is_word_byte(bytes[i - 1]);
@@ -203,16 +205,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: TermReplacementTableConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("term-replacement-table config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("term-replacement-table config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(TermReplacementTableLint::new(
         name,
         description,
@@ -223,11 +224,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, Severity};
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::{Gate, Severity};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -238,11 +241,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: mockspace_core::lint::RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      mockspace_core::lint::RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 

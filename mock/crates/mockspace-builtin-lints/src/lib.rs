@@ -41,16 +41,29 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 // unwind; the symbol name is fixed by the Rust ABI.
 #[cfg(not(test))]
 #[unsafe(no_mangle)]
-pub extern "C" fn rust_eh_personality() {}
+pub extern fn rust_eh_personality() {}
 
 use core::ffi::c_void;
 
 use hilavitkutin_extensions::{ProviderExport, ProviderId};
 use hilavitkutin_extensions_macros::export_extension;
 use viola_plugin_abi::{
-    AbiStatus, BytesRef, Diagnostic, DiagnosticSeverity, IndexBatch, LintEvaluateProjectIndexVtable,
-    LintEvaluateVtable, NamFileEntry, NamNode, NamPayload, PROVIDER_LINT_EVALUATE_PROJECT,
-    SourceLocation, SourceRange, nam_file_entries, nam_file_nodes, node_kind,
+    AbiStatus,
+    BytesRef,
+    Diagnostic,
+    DiagnosticSeverity,
+    IndexBatch,
+    LintEvaluateProjectIndexVtable,
+    LintEvaluateVtable,
+    NamFileEntry,
+    NamNode,
+    NamPayload,
+    PROVIDER_LINT_EVALUATE_PROJECT,
+    SourceLocation,
+    SourceRange,
+    nam_file_entries,
+    nam_file_nodes,
+    node_kind,
 };
 
 // ---------------------------------------------------------------------------
@@ -63,8 +76,7 @@ use viola_plugin_abi::{
 /// mockspace built-in pool uses the `mockspace-builtin.lint.<name>.v2`
 /// shape. `.v2` tracks the host-owned-buffer vtable (Decision 1 / Option
 /// B of the locked cdylib-port decisions).
-pub const PROVIDER_NO_TODO: ProviderId =
-    ProviderId::from_name("mockspace-builtin.lint.no-todo.v2");
+pub const PROVIDER_NO_TODO: ProviderId = ProviderId::from_name("mockspace-builtin.lint.no-todo.v2");
 
 /// The marker token the lint flags. Built from separate byte literals so
 /// the four-letter token never appears contiguously in this source (the
@@ -93,7 +105,7 @@ const MESSAGE: &[u8] = b"todo marker found in shipped source";
 /// SAFETY: the host upholds the `LintEvaluateVtable` contract. `nam` is a
 /// valid v1.x payload or null; `out_entries` addresses `out_capacity`
 /// writable `Diagnostic` slots; `out_len` is a valid writable pointer.
-unsafe extern "C" fn no_todo_evaluate(
+unsafe extern fn no_todo_evaluate(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     _lint_config_bytes: *const u8,
@@ -122,9 +134,8 @@ unsafe extern "C" fn no_todo_evaluate(
         }
         // SAFETY: NamFileEntry.source addresses host-owned bytes valid for
         // the call; its byte length is entry.source.len.
-        let source: &[u8] = unsafe {
-            core::slice::from_raw_parts(entry.source.data, entry.source.len.0)
-        };
+        let source: &[u8] =
+            unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) };
 
         for_each_match(source, |line, column| {
             if would_emit < capacity {
@@ -146,11 +157,7 @@ unsafe extern "C" fn no_todo_evaluate(
         *out_len = arvo::USize(would_emit);
     }
 
-    if would_emit > capacity {
-        AbiStatus::Internal
-    } else {
-        AbiStatus::Ok
-    }
+    if would_emit > capacity { AbiStatus::Internal } else { AbiStatus::Ok }
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +173,7 @@ fn for_each_match(source: &[u8], mut emit: impl FnMut(u32, u32)) {
     let n = NEEDLE.len();
     let mut i: usize = 0;
     while i + n <= source.len() {
-        if &source[i..i + n] == NEEDLE
+        if &source[i .. i + n] == NEEDLE
             && left_boundary(source, i)
             && right_boundary(source, i + n)
         {
@@ -224,8 +231,11 @@ fn make_diagnostic(path: BytesRef, line: u32, column: u32) -> Diagnostic {
         message: bytes_ref_static(MESSAGE),
         path,
         range: SourceRange {
-            start: SourceLocation { line, column },
-            end: SourceLocation {
+            start: SourceLocation {
+                line,
+                column,
+            },
+            end:   SourceLocation {
                 line,
                 column: column + NEEDLE.len() as u32,
             },
@@ -240,7 +250,7 @@ fn make_diagnostic(path: BytesRef, line: u32, column: u32) -> Diagnostic {
 const fn bytes_ref_static(b: &'static [u8]) -> BytesRef {
     BytesRef {
         data: b.as_ptr(),
-        len: arvo::USize(b.len()),
+        len:  arvo::USize(b.len()),
     }
 }
 
@@ -279,7 +289,7 @@ pub const METRIC_TOTAL_ITEM_COUNT: u32 = 5;
 #[derive(Copy, Clone)]
 pub struct FileSizeConfig {
     /// One of the `METRIC_*` line-count discriminants.
-    pub metric: u32,
+    pub metric:    u32,
     /// Non-zero fires when count >= threshold; zero when count > threshold.
     pub inclusive: u32,
     pub threshold: arvo::USize,
@@ -298,7 +308,7 @@ pub struct FileSizeConfig {
 /// identical to [`no_todo_evaluate`].
 ///
 /// SAFETY: the host upholds the `LintEvaluateVtable` contract.
-unsafe extern "C" fn file_size_evaluate(
+unsafe extern fn file_size_evaluate(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     lint_config_bytes: *const u8,
@@ -318,9 +328,7 @@ unsafe extern "C" fn file_size_evaluate(
         }
         return AbiStatus::Ok;
     }
-    if lint_config_bytes.is_null()
-        || lint_config_len.0 != core::mem::size_of::<FileSizeConfig>()
-    {
+    if lint_config_bytes.is_null() || lint_config_len.0 != core::mem::size_of::<FileSizeConfig>() {
         return AbiStatus::InvalidArg;
     }
     // SAFETY: config_bytes is non-null and exactly FileSizeConfig-sized;
@@ -348,9 +356,8 @@ unsafe extern "C" fn file_size_evaluate(
             } else {
                 // SAFETY: a non-empty NamFileEntry.source addresses host-owned
                 // bytes valid for the call; its byte length is entry.source.len.
-                let source: &[u8] = unsafe {
-                    core::slice::from_raw_parts(entry.source.data, entry.source.len.0)
-                };
+                let source: &[u8] =
+                    unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) };
                 line_metric(source, config.metric)
             }
         } else {
@@ -383,11 +390,7 @@ unsafe extern "C" fn file_size_evaluate(
     unsafe {
         *out_len = arvo::USize(would_emit);
     }
-    if would_emit > capacity {
-        AbiStatus::Internal
-    } else {
-        AbiStatus::Ok
-    }
+    if would_emit > capacity { AbiStatus::Internal } else { AbiStatus::Ok }
 }
 
 fn make_file_diagnostic(path: BytesRef) -> Diagnostic {
@@ -399,8 +402,14 @@ fn make_file_diagnostic(path: BytesRef) -> Diagnostic {
         path,
         // whole-file finding: a zero-width point at the file start.
         range: SourceRange {
-            start: SourceLocation { line: 1, column: 0 },
-            end: SourceLocation { line: 1, column: 0 },
+            start: SourceLocation {
+                line:   1,
+                column: 0,
+            },
+            end:   SourceLocation {
+                line:   1,
+                column: 0,
+            },
         },
         suggestion: BytesRef::EMPTY,
         metadata_schema: ProviderId(0),
@@ -420,7 +429,7 @@ fn line_metric(source: &[u8], metric: u32) -> usize {
             METRIC_NON_BLANK_LINE_COUNT => !trimmed.is_empty(),
             METRIC_NON_BLANK_NON_COMMENT_LINE_COUNT => {
                 !trimmed.is_empty() && !trimmed.starts_with(b"//")
-            }
+            },
             // METRIC_LINE_COUNT and any already-validated discriminant.
             _ => true,
         };
@@ -438,7 +447,9 @@ struct Lines<'a> {
 
 impl<'a> Lines<'a> {
     fn new(source: &'a [u8]) -> Self {
-        Self { rest: source }
+        Self {
+            rest: source,
+        }
     }
 }
 
@@ -451,18 +462,18 @@ impl<'a> Iterator for Lines<'a> {
         }
         match self.rest.iter().position(|&b| b == b'\n') {
             Some(idx) => {
-                let mut line = &self.rest[..idx];
+                let mut line = &self.rest[.. idx];
                 if line.last() == Some(&b'\r') {
-                    line = &line[..line.len() - 1];
+                    line = &line[.. line.len() - 1];
                 }
-                self.rest = &self.rest[idx + 1..];
+                self.rest = &self.rest[idx + 1 ..];
                 Some(line)
-            }
+            },
             None => {
                 let line = self.rest;
                 self.rest = &[];
                 Some(line)
-            }
+            },
         }
     }
 }
@@ -497,7 +508,10 @@ fn item_metric(entry: &NamFileEntry, metric: u32) -> usize {
         // SAFETY: non-empty source addresses host-owned bytes valid for the call.
         unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) }
     };
-    let root = match nodes.iter().position(|nd| nd.kind.0 == node_kind::SOURCE_FILE.0) {
+    let root = match nodes
+        .iter()
+        .position(|nd| nd.kind.0 == node_kind::SOURCE_FILE.0)
+    {
         Some(i) => i,
         None => return 0,
     };
@@ -560,7 +574,7 @@ fn node_is_public(nodes: &[NamNode], item_idx: usize, source: &[u8]) -> bool {
         if nd.parent.0 == item_idx && nd.kind.0 == node_kind::VISIBILITY_MODIFIER.0 {
             let start = nd.start_byte.0;
             let end = nd.end_byte.0;
-            if start <= end && end <= source.len() && &source[start..end] == b"pub" {
+            if start <= end && end <= source.len() && &source[start .. end] == b"pub" {
                 return true;
             }
         }
@@ -620,7 +634,7 @@ const VISIBILITY_ANY: u8 = 0;
 #[derive(Copy, Clone)]
 struct AstTypePositionFlags {
     visibility: u8,
-    positions: u8,
+    positions:  u8,
 }
 
 /// Upper bound on the forbidden-type count a single config may carry. The
@@ -644,7 +658,7 @@ const MAX_FORBIDDEN: usize = 32;
 /// [`no_todo_evaluate`].
 ///
 /// SAFETY: the host upholds the `LintEvaluateVtable` contract.
-unsafe extern "C" fn ast_type_position_evaluate(
+unsafe extern fn ast_type_position_evaluate(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     lint_config_bytes: *const u8,
@@ -713,8 +727,7 @@ unsafe extern "C" fn ast_type_position_evaluate(
             let Some(container) = nearest_container(nodes, leaf_idx) else {
                 continue;
             };
-            let Some(position) =
-                position_for_container(nodes, container, nodes[container].kind.0)
+            let Some(position) = position_for_container(nodes, container, nodes[container].kind.0)
             else {
                 continue;
             };
@@ -731,10 +744,10 @@ unsafe extern "C" fn ast_type_position_evaluate(
             if !(start <= end && end <= source.len()) {
                 continue;
             }
-            let leaf_text = &source[start..end];
+            let leaf_text = &source[start .. end];
             let mut matched = false;
-            for &(off, len) in &forbidden[..forbidden_count] {
-                if leaf_text == &config[off..off + len] {
+            for &(off, len) in &forbidden[.. forbidden_count] {
+                if leaf_text == &config[off .. off + len] {
                     matched = true;
                     break;
                 }
@@ -746,12 +759,8 @@ unsafe extern "C" fn ast_type_position_evaluate(
                 let (line, column) = byte_offset_to_line_col(source, start);
                 // path aliases host-owned, call-scoped NAM memory; see the
                 // note on make_diagnostic.
-                let diag = make_type_position_diagnostic(
-                    entry.path,
-                    line,
-                    column,
-                    (end - start) as u32,
-                );
+                let diag =
+                    make_type_position_diagnostic(entry.path, line, column, (end - start) as u32);
                 // SAFETY: written == would_emit < capacity -> in-bounds.
                 unsafe {
                     out_entries.add(written).write(diag);
@@ -766,11 +775,7 @@ unsafe extern "C" fn ast_type_position_evaluate(
     unsafe {
         *out_len = arvo::USize(would_emit);
     }
-    if would_emit > capacity {
-        AbiStatus::Internal
-    } else {
-        AbiStatus::Ok
-    }
+    if would_emit > capacity { AbiStatus::Internal } else { AbiStatus::Ok }
 }
 
 /// Decode the ast-type-position config blob.
@@ -788,10 +793,9 @@ fn decode_ast_type_position_config(
     }
     let flags = AstTypePositionFlags {
         visibility: config[0],
-        positions: config[1],
+        positions:  config[1],
     };
-    let forbidden_count =
-        u32::from_le_bytes([config[2], config[3], config[4], config[5]]) as usize;
+    let forbidden_count = u32::from_le_bytes([config[2], config[3], config[4], config[5]]) as usize;
     if forbidden_count > MAX_FORBIDDEN {
         return None;
     }
@@ -925,8 +929,14 @@ fn make_type_position_diagnostic(
         path,
         // type leaves are single-line; the span covers the matched leaf.
         range: SourceRange {
-            start: SourceLocation { line, column },
-            end: SourceLocation { line, column: column + length },
+            start: SourceLocation {
+                line,
+                column,
+            },
+            end:   SourceLocation {
+                line,
+                column: column + length,
+            },
         },
         suggestion: BytesRef::EMPTY,
         metadata_schema: ProviderId(0),
@@ -940,8 +950,7 @@ fn make_type_position_diagnostic(
 // ---------------------------------------------------------------------------
 
 /// Provider id for the no-std lint (the `token-scan` primitive).
-pub const PROVIDER_NO_STD: ProviderId =
-    ProviderId::from_name("mockspace-builtin.lint.no-std.v2");
+pub const PROVIDER_NO_STD: ProviderId = ProviderId::from_name("mockspace-builtin.lint.no-std.v2");
 
 const NO_STD_RULE_ID: &[u8] = b"no-std";
 const TOKEN_SCAN_MESSAGE: &[u8] = b"forbidden token matched outside strings and comments";
@@ -954,9 +963,9 @@ const MAX_TOKENS: usize = 32;
 /// Decoded strip flags from the variable-config blob.
 #[derive(Copy, Clone)]
 struct TokenScanFlags {
-    word_boundary: bool,
-    strip_strings: bool,
-    strip_comments: bool,
+    word_boundary:      bool,
+    strip_strings:      bool,
+    strip_comments:     bool,
     strip_doc_comments: bool,
 }
 
@@ -965,7 +974,7 @@ struct TokenScanFlags {
 /// their own wrapper + provider and reuse the core.
 ///
 /// SAFETY: the host upholds the `LintEvaluateVtable` contract.
-unsafe extern "C" fn no_std_evaluate(
+unsafe extern fn no_std_evaluate(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     lint_config_bytes: *const u8,
@@ -1050,18 +1059,16 @@ unsafe fn token_scan_core(
         }
         // SAFETY: non-empty source addresses host-owned bytes valid for the
         // call; its length is entry.source.len.
-        let source: &[u8] = unsafe {
-            core::slice::from_raw_parts(entry.source.data, entry.source.len.0)
-        };
-        for &(off, len) in &tokens[..token_count] {
-            let token = &config[off..off + len];
+        let source: &[u8] =
+            unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) };
+        for &(off, len) in &tokens[.. token_count] {
+            let token = &config[off .. off + len];
             scan_one_token(source, token, flags, |match_off| {
                 if would_emit < capacity {
                     let (line, column) = byte_offset_to_line_col(source, match_off);
                     // path aliases host-owned, call-scoped NAM memory; see
                     // the note on make_diagnostic.
-                    let diag =
-                        make_token_diagnostic(entry.path, rule_id, line, column, len as u32);
+                    let diag = make_token_diagnostic(entry.path, rule_id, line, column, len as u32);
                     // SAFETY: written == would_emit < capacity -> in-bounds.
                     unsafe {
                         out_entries.add(written).write(diag);
@@ -1077,11 +1084,7 @@ unsafe fn token_scan_core(
     unsafe {
         *out_len = arvo::USize(would_emit);
     }
-    if would_emit > capacity {
-        AbiStatus::Internal
-    } else {
-        AbiStatus::Ok
-    }
+    if would_emit > capacity { AbiStatus::Internal } else { AbiStatus::Ok }
 }
 
 /// Decode the config blob into flags plus a fixed table of `(offset, len)`
@@ -1093,9 +1096,9 @@ fn decode_token_config(
         return None;
     }
     let flags = TokenScanFlags {
-        word_boundary: config[0] != 0,
-        strip_strings: config[1] != 0,
-        strip_comments: config[2] != 0,
+        word_boundary:      config[0] != 0,
+        strip_strings:      config[1] != 0,
+        strip_comments:     config[2] != 0,
         strip_doc_comments: config[3] != 0,
     };
     let token_count = u32::from_le_bytes([config[4], config[5], config[6], config[7]]) as usize;
@@ -1118,7 +1121,7 @@ fn decode_token_config(
         // comment / string delimiter byte (`/` or `"`); a token containing
         // one could match across a span boundary. Enforce the invariant
         // rather than assume it: reject such a config.
-        let tok = &config[p..p + len];
+        let tok = &config[p .. p + len];
         if tok.contains(&b'/') || tok.contains(&b'"') {
             return None;
         }
@@ -1145,7 +1148,8 @@ fn scan_one_token(source: &[u8], token: &[u8], flags: TokenScanFlags, mut emit: 
             i = end;
             continue;
         }
-        if &source[i..i + tlen] == token && token_boundary_ok(source, i, tlen, flags.word_boundary)
+        if &source[i .. i + tlen] == token
+            && token_boundary_ok(source, i, tlen, flags.word_boundary)
         {
             emit(i);
             i += tlen;
@@ -1165,8 +1169,7 @@ fn strip_span_at(source: &[u8], i: usize, flags: TokenScanFlags) -> Option<usize
     // line comment, possibly a doc comment.
     if b == b'/' && i + 1 < len && source[i + 1] == b'/' {
         let is_doc = i + 2 < len && (source[i + 2] == b'/' || source[i + 2] == b'!');
-        let strip_this =
-            (is_doc && flags.strip_doc_comments) || (!is_doc && flags.strip_comments);
+        let strip_this = (is_doc && flags.strip_doc_comments) || (!is_doc && flags.strip_comments);
         if strip_this {
             return Some(find_line_end(source, i));
         }
@@ -1175,8 +1178,7 @@ fn strip_span_at(source: &[u8], i: usize, flags: TokenScanFlags) -> Option<usize
     // block comment, possibly a doc block.
     if b == b'/' && i + 1 < len && source[i + 1] == b'*' {
         let is_doc = i + 2 < len && (source[i + 2] == b'*' || source[i + 2] == b'!');
-        let strip_this =
-            (is_doc && flags.strip_doc_comments) || (!is_doc && flags.strip_comments);
+        let strip_this = (is_doc && flags.strip_doc_comments) || (!is_doc && flags.strip_comments);
         if strip_this {
             return Some(find_block_comment_end(source, i));
         }
@@ -1202,11 +1204,7 @@ fn find_line_end(source: &[u8], from: usize) -> usize {
     while i < source.len() && source[i] != b'\n' {
         i += 1;
     }
-    if i < source.len() {
-        i + 1
-    } else {
-        i
-    }
+    if i < source.len() { i + 1 } else { i }
 }
 
 fn find_block_comment_end(source: &[u8], from: usize) -> usize {
@@ -1283,7 +1281,7 @@ fn token_boundary_ok(source: &[u8], start: usize, tlen: usize, word_boundary: bo
     if !word_boundary {
         return true;
     }
-    let token = &source[start..start + tlen];
+    let token = &source[start .. start + tlen];
     let lhs_ok = if is_word_byte(token[0]) {
         start == 0 || !is_word_byte(source[start - 1])
     } else {
@@ -1314,8 +1312,14 @@ fn make_token_diagnostic(
         // tokens are single-line, so the span stays on one line; this
         // matches scan_token reporting length = token byte length.
         range: SourceRange {
-            start: SourceLocation { line, column },
-            end: SourceLocation { line, column: column + length },
+            start: SourceLocation {
+                line,
+                column,
+            },
+            end:   SourceLocation {
+                line,
+                column: column + length,
+            },
         },
         suggestion: BytesRef::EMPTY,
         metadata_schema: ProviderId(0),
@@ -1362,13 +1366,13 @@ const NO_DUPLICATE_FN_MESSAGE: &[u8] =
 pub struct IndexRecord {
     /// Index of the file (its position in the NAM entry slice) that
     /// defines the function.
-    pub file_idx: u32,
+    pub file_idx:  u32,
     /// Index of the FUNCTION_ITEM node within that file's node array.
-    pub node_idx: arvo::USize,
+    pub node_idx:  arvo::USize,
     /// FNV-1a hash of the function name bytes.
     pub name_hash: u64,
     /// FNV-1a hash of the parameter type-leaf spans, joined by `0x1f`.
-    pub sig_hash: u64,
+    pub sig_hash:  u64,
 }
 
 /// FNV-1a over a byte slice. Used to group function names cheaply in the
@@ -1376,10 +1380,10 @@ pub struct IndexRecord {
 /// confirmed by a byte comparison in `evaluate_phase`, so a collision can
 /// only cost work, never a false positive.
 fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut hash: u64 = 0xCBF2_9CE4_8422_2325;
     for &b in bytes {
         hash ^= b as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
     }
     hash
 }
@@ -1395,7 +1399,7 @@ fn fn_name<'a>(nodes: &[NamNode], fn_idx: usize, source: &'a [u8]) -> &'a [u8] {
             let start = nd.start_byte.0;
             let end = nd.end_byte.0;
             if start <= end && end <= source.len() {
-                return &source[start..end];
+                return &source[start .. end];
             }
             return &[];
         }
@@ -1416,8 +1420,8 @@ fn fn_name<'a>(nodes: &[NamNode], fn_idx: usize, source: &'a [u8]) -> &'a [u8] {
 /// signature hash being param-only does not affect which duplicates fire;
 /// it is the carried-forward axis for a future signature-duplicate variant.
 fn sig_hash_of(nodes: &[NamNode], fn_idx: usize, source: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    let mul: u64 = 0x0000_0100_0000_01b3;
+    let mut hash: u64 = 0xCBF2_9CE4_8422_2325;
+    let mul: u64 = 0x0000_0100_0000_01B3;
     for (param_idx, param) in nodes.iter().enumerate() {
         if param.parent.0 != fn_idx || param.kind.0 != node_kind::PARAMETER.0 {
             continue;
@@ -1439,11 +1443,11 @@ fn sig_hash_of(nodes: &[NamNode], fn_idx: usize, source: &[u8]) -> u64 {
             if !(start <= end && end <= source.len()) {
                 continue;
             }
-            for &b in &source[start..end] {
+            for &b in &source[start .. end] {
                 hash ^= b as u64;
                 hash = hash.wrapping_mul(mul);
             }
-            hash ^= 0x1f;
+            hash ^= 0x1F;
             hash = hash.wrapping_mul(mul);
         }
     }
@@ -1470,7 +1474,7 @@ fn sig_hash_of(nodes: &[NamNode], fn_idx: usize, source: &[u8]) -> u64 {
 /// `nam` is a valid full-project v1.x payload or null; `out_index` is a
 /// valid writable pointer whose `entries` field addresses `capacity`
 /// writable [`IndexRecord`] slots.
-unsafe extern "C" fn no_duplicate_fn_index_phase(
+unsafe extern fn no_duplicate_fn_index_phase(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     _lint_config_bytes: *const u8,
@@ -1510,7 +1514,10 @@ unsafe extern "C" fn no_duplicate_fn_index_phase(
             // the call; its length is entry.source.len.
             unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) }
         };
-        let root = match nodes.iter().position(|nd| nd.kind.0 == node_kind::SOURCE_FILE.0) {
+        let root = match nodes
+            .iter()
+            .position(|nd| nd.kind.0 == node_kind::SOURCE_FILE.0)
+        {
             Some(i) => i,
             None => continue,
         };
@@ -1528,10 +1535,10 @@ unsafe extern "C" fn no_duplicate_fn_index_phase(
             total += 1;
             if written < capacity {
                 let rec = IndexRecord {
-                    file_idx: file_idx as u32,
-                    node_idx: arvo::USize(node_idx),
+                    file_idx:  file_idx as u32,
+                    node_idx:  arvo::USize(node_idx),
                     name_hash: fnv1a(name),
-                    sig_hash: sig_hash_of(nodes, node_idx, source),
+                    sig_hash:  sig_hash_of(nodes, node_idx, source),
                 };
                 // SAFETY: written < capacity, so the slot is inside the
                 // host buffer; records is non-null (checked above for any
@@ -1546,11 +1553,7 @@ unsafe extern "C" fn no_duplicate_fn_index_phase(
 
     batch.len = arvo::USize(written);
     batch.needed = arvo::USize(total);
-    if total > capacity {
-        AbiStatus::Internal
-    } else {
-        AbiStatus::Ok
-    }
+    if total > capacity { AbiStatus::Internal } else { AbiStatus::Ok }
 }
 
 /// `evaluate_phase` for no-duplicate-fn. For each public top-level function
@@ -1573,7 +1576,7 @@ unsafe extern "C" fn no_duplicate_fn_index_phase(
 /// SAFETY: the host upholds the `LintEvaluateProjectIndexVtable` contract.
 /// `nam` is the full-project payload `index_phase` saw; `file_idx` selects
 /// the file to evaluate; `index` is the [`IndexBatch`] `index_phase` filled.
-unsafe extern "C" fn no_duplicate_fn_evaluate_phase(
+unsafe extern fn no_duplicate_fn_evaluate_phase(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     file_idx: arvo::USize,
@@ -1627,7 +1630,7 @@ unsafe extern "C" fn no_duplicate_fn_evaluate_phase(
                 *out_len = arvo::USize(0);
             }
             return AbiStatus::Ok;
-        }
+        },
     };
     let source: &[u8] = if entry.source.is_empty() {
         &[]
@@ -1636,7 +1639,10 @@ unsafe extern "C" fn no_duplicate_fn_evaluate_phase(
         // call; its length is entry.source.len.
         unsafe { core::slice::from_raw_parts(entry.source.data, entry.source.len.0) }
     };
-    let root = match nodes.iter().position(|nd| nd.kind.0 == node_kind::SOURCE_FILE.0) {
+    let root = match nodes
+        .iter()
+        .position(|nd| nd.kind.0 == node_kind::SOURCE_FILE.0)
+    {
         Some(i) => i,
         None => {
             // SAFETY: out_len non-null.
@@ -1644,7 +1650,7 @@ unsafe extern "C" fn no_duplicate_fn_evaluate_phase(
                 *out_len = arvo::USize(0);
             }
             return AbiStatus::Ok;
-        }
+        },
     };
 
     let capacity = out_capacity.0;
@@ -1684,8 +1690,7 @@ unsafe extern "C" fn no_duplicate_fn_evaluate_phase(
             let (line, column) = byte_offset_to_line_col(source, start);
             // path aliases host-owned, call-scoped NAM memory; see the note
             // on make_diagnostic.
-            let diag =
-                make_no_duplicate_fn_diagnostic(entry.path, line, column, name.len() as u32);
+            let diag = make_no_duplicate_fn_diagnostic(entry.path, line, column, name.len() as u32);
             // SAFETY: written == would_emit < capacity -> in-bounds.
             unsafe {
                 out_entries.add(written).write(diag);
@@ -1699,11 +1704,7 @@ unsafe extern "C" fn no_duplicate_fn_evaluate_phase(
     unsafe {
         *out_len = arvo::USize(would_emit);
     }
-    if would_emit > capacity {
-        AbiStatus::Internal
-    } else {
-        AbiStatus::Ok
-    }
+    if would_emit > capacity { AbiStatus::Internal } else { AbiStatus::Ok }
 }
 
 /// Re-read the name an index record points at and compare it to `name` for
@@ -1758,8 +1759,14 @@ fn make_no_duplicate_fn_diagnostic(
         path,
         // the name token is single-line; the span covers it.
         range: SourceRange {
-            start: SourceLocation { line, column },
-            end: SourceLocation { line, column: column + length },
+            start: SourceLocation {
+                line,
+                column,
+            },
+            end:   SourceLocation {
+                line,
+                column: column + length,
+            },
         },
         suggestion: BytesRef::EMPTY,
         metadata_schema: ProviderId(0),
@@ -1782,8 +1789,7 @@ pub struct NoTodoProvider;
 
 impl ProviderExport for NoTodoProvider {
     const ID: ProviderId = PROVIDER_NO_TODO;
-    const VTABLE_PTR: *const c_void =
-        &NO_TODO_VTABLE as *const LintEvaluateVtable as *const c_void;
+    const VTABLE_PTR: *const c_void = &NO_TODO_VTABLE as *const LintEvaluateVtable as *const c_void;
 }
 
 static FILE_SIZE_VTABLE: LintEvaluateVtable = LintEvaluateVtable {
@@ -1821,8 +1827,7 @@ pub struct NoStdProvider;
 
 impl ProviderExport for NoStdProvider {
     const ID: ProviderId = PROVIDER_NO_STD;
-    const VTABLE_PTR: *const c_void =
-        &NO_STD_VTABLE as *const LintEvaluateVtable as *const c_void;
+    const VTABLE_PTR: *const c_void = &NO_STD_VTABLE as *const LintEvaluateVtable as *const c_void;
 }
 
 // The remaining token-scan lints differ from no-std only by provider id and
@@ -1836,7 +1841,7 @@ macro_rules! token_scan_lint {
 
         /// SAFETY: the host upholds the `LintEvaluateVtable` contract;
         /// delegates to the shared token-scan core with this lint's rule id.
-        unsafe extern "C" fn $eval(
+        unsafe extern fn $eval(
             _host_ctx: *mut c_void,
             nam: *const NamPayload,
             lint_config_bytes: *const u8,
@@ -1859,7 +1864,9 @@ macro_rules! token_scan_lint {
             }
         }
 
-        static $vtable: LintEvaluateVtable = LintEvaluateVtable { evaluate: $eval };
+        static $vtable: LintEvaluateVtable = LintEvaluateVtable {
+            evaluate: $eval,
+        };
 
         #[doc = concat!("Provider-export marker for the ", $id, " lint.")]
         pub struct $marker;
@@ -1906,7 +1913,7 @@ token_scan_lint!(
 );
 
 static NO_DUPLICATE_FN_VTABLE: LintEvaluateProjectIndexVtable = LintEvaluateProjectIndexVtable {
-    index_phase: no_duplicate_fn_index_phase,
+    index_phase:    no_duplicate_fn_index_phase,
     evaluate_phase: no_duplicate_fn_evaluate_phase,
 };
 
@@ -1941,9 +1948,10 @@ pub struct MockspaceBuiltinLints;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use core::mem::MaybeUninit;
     use std::vec::Vec;
+
+    use super::*;
 
     fn collect(source: &[u8]) -> Vec<(u32, u32)> {
         let mut out = Vec::new();
@@ -1981,24 +1989,26 @@ mod tests {
 
     fn entry(path: &[u8], source: &[u8]) -> viola_plugin_abi::NamFileEntry {
         viola_plugin_abi::NamFileEntry {
-            path: bytes_ref_static_runtime(path),
+            path:     bytes_ref_static_runtime(path),
             language: arvo::USize(0),
-            source: bytes_ref_static_runtime(source),
-            nodes: BytesRef::EMPTY,
+            source:   bytes_ref_static_runtime(source),
+            nodes:    BytesRef::EMPTY,
         }
     }
 
     fn bytes_ref_static_runtime(b: &[u8]) -> BytesRef {
-        BytesRef { data: b.as_ptr(), len: arvo::USize(b.len()) }
+        BytesRef {
+            data: b.as_ptr(),
+            len:  arvo::USize(b.len()),
+        }
     }
 
     fn payload(entries: &[viola_plugin_abi::NamFileEntry]) -> NamPayload {
         NamPayload {
             version: viola_plugin_abi::NamVersion::V1_0_0,
-            data: entries.as_ptr() as *const c_void,
-            len: arvo::USize(
-                core::mem::size_of::<viola_plugin_abi::NamFileEntry>()
-                    * entries.len(),
+            data:    entries.as_ptr() as *const c_void,
+            len:     arvo::USize(
+                core::mem::size_of::<viola_plugin_abi::NamFileEntry>() * entries.len(),
             ),
         }
     }
@@ -2009,8 +2019,7 @@ mod tests {
         let entries = [entry(b"a.rs", src)];
         let nam = payload(&entries);
 
-        let mut buf: [MaybeUninit<Diagnostic>; 8] =
-            [const { MaybeUninit::uninit() }; 8];
+        let mut buf: [MaybeUninit<Diagnostic>; 8] = [const { MaybeUninit::uninit() }; 8];
         let mut out_len = arvo::USize(0);
         // SAFETY: nam is a valid v1.0.0 payload; buf has 8 writable slots;
         // out_len is a valid pointer.
@@ -2043,8 +2052,7 @@ mod tests {
         let entries = [entry(b"a.rs", src)];
         let nam = payload(&entries);
 
-        let mut buf: [MaybeUninit<Diagnostic>; 1] =
-            [const { MaybeUninit::uninit() }; 1];
+        let mut buf: [MaybeUninit<Diagnostic>; 1] = [const { MaybeUninit::uninit() }; 1];
         let mut out_len = arvo::USize(0);
         // SAFETY: capacity 1 is honoured; only slot 0 is written.
         let status = unsafe {
@@ -2069,13 +2077,9 @@ mod tests {
         // first entry has empty source (skipped); second has one match.
         // exercises the `entry.source.is_empty()` skip and the multi-entry
         // loop, and that the emitted path tracks the matching entry.
-        let entries = [
-            entry(b"empty.rs", b""),
-            entry(b"a.rs", b"x \x54\x4f\x44\x4f y"),
-        ];
+        let entries = [entry(b"empty.rs", b""), entry(b"a.rs", b"x \x54\x4f\x44\x4f y")];
         let nam = payload(&entries);
-        let mut buf: [MaybeUninit<Diagnostic>; 4] =
-            [const { MaybeUninit::uninit() }; 4];
+        let mut buf: [MaybeUninit<Diagnostic>; 4] = [const { MaybeUninit::uninit() }; 4];
         let mut out_len = arvo::USize(0);
         // SAFETY: nam is a valid v1.0.0 payload; buf has 4 writable slots.
         let status = unsafe {
@@ -2095,9 +2099,7 @@ mod tests {
         let d0 = unsafe { buf[0].assume_init() };
         // the diagnostic path aliases the matching entry's path bytes.
         // SAFETY: d0.path points at the `b"a.rs"` slice live for this test.
-        let path = unsafe {
-            core::slice::from_raw_parts(d0.path.data, d0.path.len.0)
-        };
+        let path = unsafe { core::slice::from_raw_parts(d0.path.data, d0.path.len.0) };
         assert_eq!(path, b"a.rs");
     }
 
@@ -2105,8 +2107,7 @@ mod tests {
     fn evaluate_rejects_null_out_len() {
         let entries = [entry(b"a.rs", b"x \x54\x4f\x44\x4f y")];
         let nam = payload(&entries);
-        let mut buf: [MaybeUninit<Diagnostic>; 4] =
-            [const { MaybeUninit::uninit() }; 4];
+        let mut buf: [MaybeUninit<Diagnostic>; 4] = [const { MaybeUninit::uninit() }; 4];
         // SAFETY: out_len null is the case under test; the fn returns before
         // any write.
         let status = unsafe {
@@ -2128,16 +2129,7 @@ mod tests {
     #[test]
     fn line_metric_matches_str_lines() {
         // parity with str::lines() for the plain line-count metric.
-        for s in [
-            "",
-            "a",
-            "a\n",
-            "a\nb",
-            "a\nb\n",
-            "a\n\nb\n",
-            "\n",
-            "a\r\nb\r\n",
-        ] {
+        for s in ["", "a", "a\n", "a\nb", "a\nb\n", "a\n\nb\n", "\n", "a\r\nb\r\n"] {
             assert_eq!(
                 line_metric(s.as_bytes(), METRIC_LINE_COUNT),
                 s.lines().count(),
@@ -2163,14 +2155,15 @@ mod tests {
         cap: usize,
     ) -> (AbiStatus, usize) {
         let nam = payload(entries);
-        let mut buf: [MaybeUninit<Diagnostic>; 8] =
-            [const { MaybeUninit::uninit() }; 8];
+        let mut buf: [MaybeUninit<Diagnostic>; 8] = [const { MaybeUninit::uninit() }; 8];
         let mut out_len = arvo::USize(0);
         let (cptr, clen): (*const u8, arvo::USize) = match &cfg {
-            Some(c) => (
-                c as *const FileSizeConfig as *const u8,
-                arvo::USize(core::mem::size_of::<FileSizeConfig>()),
-            ),
+            Some(c) => {
+                (
+                    c as *const FileSizeConfig as *const u8,
+                    arvo::USize(core::mem::size_of::<FileSizeConfig>()),
+                )
+            },
             None => (core::ptr::null(), arvo::USize(0)),
         };
         // SAFETY: nam valid; buf has 8 slots (cap <= 8); out_len valid; cfg
@@ -2194,17 +2187,29 @@ mod tests {
         // 3-line file.
         let entries = [entry(b"a.rs", b"one\ntwo\nthree")];
         // exclusive, threshold 3: count 3 is NOT > 3 -> no fire.
-        let cfg = FileSizeConfig { metric: METRIC_LINE_COUNT, inclusive: 0, threshold: arvo::USize(3) };
+        let cfg = FileSizeConfig {
+            metric:    METRIC_LINE_COUNT,
+            inclusive: 0,
+            threshold: arvo::USize(3),
+        };
         let (s, n) = run_file_size(&entries, Some(cfg), 8);
         assert!(matches!(s, AbiStatus::Ok));
         assert_eq!(n, 0);
         // inclusive, threshold 3: count 3 IS >= 3 -> fire.
-        let cfg = FileSizeConfig { metric: METRIC_LINE_COUNT, inclusive: 1, threshold: arvo::USize(3) };
+        let cfg = FileSizeConfig {
+            metric:    METRIC_LINE_COUNT,
+            inclusive: 1,
+            threshold: arvo::USize(3),
+        };
         let (s, n) = run_file_size(&entries, Some(cfg), 8);
         assert!(matches!(s, AbiStatus::Ok));
         assert_eq!(n, 1);
         // exclusive, threshold 2: count 3 > 2 -> fire.
-        let cfg = FileSizeConfig { metric: METRIC_LINE_COUNT, inclusive: 0, threshold: arvo::USize(2) };
+        let cfg = FileSizeConfig {
+            metric:    METRIC_LINE_COUNT,
+            inclusive: 0,
+            threshold: arvo::USize(2),
+        };
         let (s, n) = run_file_size(&entries, Some(cfg), 8);
         assert!(matches!(s, AbiStatus::Ok));
         assert_eq!(n, 1);
@@ -2222,28 +2227,27 @@ mod tests {
     fn file_size_rejects_unknown_metric() {
         let entries = [entry(b"a.rs", b"x\ny")];
         // metric 6 is past the last metric (TotalItemCount = 5).
-        let cfg = FileSizeConfig { metric: 6, inclusive: 1, threshold: arvo::USize(1) };
+        let cfg = FileSizeConfig {
+            metric:    6,
+            inclusive: 1,
+            threshold: arvo::USize(1),
+        };
         let (s, _) = run_file_size(&entries, Some(cfg), 8);
         assert!(matches!(s, AbiStatus::InvalidArg));
     }
 
     // -- file-size AST item-count metrics (bucket-2) --
 
-    fn nn(
-        kind: usize,
-        parent: usize,
-        start: usize,
-        end: usize,
-    ) -> NamNode {
+    fn nn(kind: usize, parent: usize, start: usize, end: usize) -> NamNode {
         NamNode {
-            kind: arvo::USize(kind),
-            parent: arvo::USize(parent),
+            kind:        arvo::USize(kind),
+            parent:      arvo::USize(parent),
             // first_child is unused by item_metric (it navigates by parent).
             first_child: arvo::USize(0),
-            start_byte: arvo::USize(start),
-            end_byte: arvo::USize(end),
-            start_row: arvo::USize(0),
-            end_row: arvo::USize(0),
+            start_byte:  arvo::USize(start),
+            end_byte:    arvo::USize(end),
+            start_row:   arvo::USize(0),
+            end_row:     arvo::USize(0),
         }
     }
 
@@ -2253,12 +2257,12 @@ mod tests {
         nodes: &'a [NamNode],
     ) -> NamFileEntry {
         NamFileEntry {
-            path: bytes_ref_static_runtime(path),
+            path:     bytes_ref_static_runtime(path),
             language: arvo::USize(0),
-            source: bytes_ref_static_runtime(source),
-            nodes: BytesRef {
+            source:   bytes_ref_static_runtime(source),
+            nodes:    BytesRef {
                 data: nodes.as_ptr() as *const u8,
-                len: arvo::USize(nodes.len() * core::mem::size_of::<NamNode>()),
+                len:  arvo::USize(nodes.len() * core::mem::size_of::<NamNode>()),
             },
         }
     }
@@ -2316,7 +2320,7 @@ mod tests {
         let entries = [entry_with_nodes(b"a.rs", src, &nodes)];
         // PubItemCount is 2; exclusive threshold 1 fires.
         let cfg = FileSizeConfig {
-            metric: METRIC_PUB_ITEM_COUNT,
+            metric:    METRIC_PUB_ITEM_COUNT,
             inclusive: 0,
             threshold: arvo::USize(1),
         };
@@ -2325,7 +2329,7 @@ mod tests {
         assert_eq!(n, 1);
         // exclusive threshold 2 does not fire (2 is not > 2).
         let cfg = FileSizeConfig {
-            metric: METRIC_PUB_ITEM_COUNT,
+            metric:    METRIC_PUB_ITEM_COUNT,
             inclusive: 0,
             threshold: arvo::USize(2),
         };
@@ -2338,8 +2342,7 @@ mod tests {
     fn file_size_rejects_wrong_config_len() {
         let entries = [entry(b"a.rs", b"x\ny")];
         let nam = payload(&entries);
-        let mut buf: [MaybeUninit<Diagnostic>; 4] =
-            [const { MaybeUninit::uninit() }; 4];
+        let mut buf: [MaybeUninit<Diagnostic>; 4] = [const { MaybeUninit::uninit() }; 4];
         let mut out_len = arvo::USize(0);
         let stray: [u8; 3] = [1, 2, 3];
         // SAFETY: non-zero, non-FileSizeConfig-sized config -> InvalidArg
@@ -2375,11 +2378,12 @@ mod tests {
     #[test]
     fn file_size_counts_per_file_across_entries() {
         // first file 2 lines (under), second 4 lines (over threshold 3 excl).
-        let entries = [
-            entry(b"small.rs", b"a\nb"),
-            entry(b"big.rs", b"a\nb\nc\nd"),
-        ];
-        let cfg = FileSizeConfig { metric: METRIC_LINE_COUNT, inclusive: 0, threshold: arvo::USize(3) };
+        let entries = [entry(b"small.rs", b"a\nb"), entry(b"big.rs", b"a\nb\nc\nd")];
+        let cfg = FileSizeConfig {
+            metric:    METRIC_LINE_COUNT,
+            inclusive: 0,
+            threshold: arvo::USize(3),
+        };
         let (s, n) = run_file_size(&entries, Some(cfg), 8);
         assert!(matches!(s, AbiStatus::Ok));
         assert_eq!(n, 1);
@@ -2387,11 +2391,7 @@ mod tests {
 
     // -- ast-type-position --
 
-    fn ast_type_position_blob(
-        visibility: u8,
-        positions: u8,
-        forbidden: &[&[u8]],
-    ) -> Vec<u8> {
+    fn ast_type_position_blob(visibility: u8, positions: u8, forbidden: &[&[u8]]) -> Vec<u8> {
         let mut b = Vec::new();
         b.push(visibility);
         b.push(positions);
@@ -2409,8 +2409,7 @@ mod tests {
         cap: usize,
     ) -> (AbiStatus, usize, Vec<Diagnostic>) {
         let nam = payload(entries);
-        let mut buf: [MaybeUninit<Diagnostic>; 16] =
-            [const { MaybeUninit::uninit() }; 16];
+        let mut buf: [MaybeUninit<Diagnostic>; 16] = [const { MaybeUninit::uninit() }; 16];
         let mut out_len = arvo::USize(0);
         // SAFETY: nam valid; buf has 16 slots (cap <= 16); out_len valid;
         // blob addresses live config bytes for the call.
@@ -2427,7 +2426,7 @@ mod tests {
         };
         let written = out_len.0.min(cap);
         let mut diags = Vec::new();
-        for k in 0..written {
+        for k in 0 .. written {
             // SAFETY: slots 0..written were initialised by the evaluator.
             diags.push(unsafe { buf[k].assume_init() });
         }
@@ -2465,9 +2464,8 @@ mod tests {
         assert_eq!(diags[0].range.start.column, 18);
         assert_eq!(diags[0].range.end.column, 18 + 6);
         // SAFETY: rule_id points at the static b"ast-type-position".
-        let rid = unsafe {
-            core::slice::from_raw_parts(diags[0].rule_id.data, diags[0].rule_id.len.0)
-        };
+        let rid =
+            unsafe { core::slice::from_raw_parts(diags[0].rule_id.data, diags[0].rule_id.len.0) };
         assert_eq!(rid, b"ast-type-position");
     }
 
@@ -2515,8 +2513,7 @@ mod tests {
         assert_eq!(n, 1);
 
         let e2 = entry_with_nodes(b"a.rs", src, &nodes);
-        let blob_sf =
-            ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"String"]);
+        let blob_sf = ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"String"]);
         let (_, n2, _) = run_ast_type_position(&[e2], &blob_sf, 16);
         assert_eq!(n2, 0);
     }
@@ -2541,8 +2538,7 @@ mod tests {
 
         let e2 = entry_with_nodes(b"a.rs", src, &nodes);
         // Any filter includes it.
-        let blob_any =
-            ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"String"]);
+        let blob_any = ast_type_position_blob(VISIBILITY_ANY, POSITION_STRUCT_FIELD, &[b"String"]);
         let (_, n2, _) = run_ast_type_position(&[e2], &blob_any, 16);
         assert_eq!(n2, 1);
     }
@@ -2652,18 +2648,18 @@ mod tests {
         let e = entry_with_nodes(b"a.rs", src, &nodes);
         let entries = [e];
         // short header (< 6 bytes).
-        let (s1, _, _) = run_ast_type_position(&entries, &[0, 1, 0], 16);
+        let (s1, ..) = run_ast_type_position(&entries, &[0, 1, 0], 16);
         assert!(matches!(s1, AbiStatus::InvalidArg));
         // forbidden_count beyond MAX_FORBIDDEN.
         let mut huge = std::vec![0u8, POSITION_STRUCT_FIELD];
         huge.extend_from_slice(&(u32::MAX).to_le_bytes());
-        let (s2, _, _) = run_ast_type_position(&entries, &huge, 16);
+        let (s2, ..) = run_ast_type_position(&entries, &huge, 16);
         assert!(matches!(s2, AbiStatus::InvalidArg));
         // a type-name length running past the buffer.
         let mut overrun = std::vec![0u8, POSITION_STRUCT_FIELD];
         overrun.extend_from_slice(&(1u32).to_le_bytes()); // count 1
         overrun.extend_from_slice(&(99u32).to_le_bytes()); // len 99, no bytes
-        let (s3, _, _) = run_ast_type_position(&entries, &overrun, 16);
+        let (s3, ..) = run_ast_type_position(&entries, &overrun, 16);
         assert!(matches!(s3, AbiStatus::InvalidArg));
     }
 
@@ -2679,11 +2675,7 @@ mod tests {
 
     // -- token-scan (no-std) --
 
-    fn token_blob(
-        word_boundary: bool,
-        strip: (bool, bool, bool),
-        tokens: &[&[u8]],
-    ) -> Vec<u8> {
+    fn token_blob(word_boundary: bool, strip: (bool, bool, bool), tokens: &[&[u8]]) -> Vec<u8> {
         let mut b = Vec::new();
         b.push(word_boundary as u8);
         b.push(strip.0 as u8); // strings
@@ -2703,8 +2695,7 @@ mod tests {
         cap: usize,
     ) -> (AbiStatus, usize, Vec<Diagnostic>) {
         let nam = payload(entries);
-        let mut buf: [MaybeUninit<Diagnostic>; 16] =
-            [const { MaybeUninit::uninit() }; 16];
+        let mut buf: [MaybeUninit<Diagnostic>; 16] = [const { MaybeUninit::uninit() }; 16];
         let mut out_len = arvo::USize(0);
         // SAFETY: nam valid; buf has 16 slots (cap <= 16); out_len valid;
         // blob addresses live config bytes for the call.
@@ -2721,7 +2712,7 @@ mod tests {
         };
         let written = out_len.0.min(cap);
         let mut diags = Vec::new();
-        for k in 0..written {
+        for k in 0 .. written {
             // SAFETY: slots 0..written were initialised by the evaluator.
             diags.push(unsafe { buf[k].assume_init() });
         }
@@ -2740,9 +2731,8 @@ mod tests {
         // span covers the matched token: "use std::" is 9 bytes.
         assert_eq!(diags[0].range.end.column, 2 + 9);
         // SAFETY: rule_id points at the static b"no-std".
-        let rid = unsafe {
-            core::slice::from_raw_parts(diags[0].rule_id.data, diags[0].rule_id.len.0)
-        };
+        let rid =
+            unsafe { core::slice::from_raw_parts(diags[0].rule_id.data, diags[0].rule_id.len.0) };
         assert_eq!(rid, b"no-std");
     }
 
@@ -2781,7 +2771,10 @@ mod tests {
     fn token_scan_multiple_tokens() {
         let src = b"use std::io;\nextern crate std;\n";
         let entries = [entry(b"a.rs", src)];
-        let blob = token_blob(false, (true, true, true), &[b"use std::", b"extern crate std"]);
+        let blob = token_blob(false, (true, true, true), &[
+            b"use std::",
+            b"extern crate std",
+        ]);
         let (_, n, _) = run_token_scan(&entries, &blob, 16);
         assert_eq!(n, 2);
     }
@@ -2809,18 +2802,18 @@ mod tests {
     fn token_scan_rejects_malformed_config() {
         let entries = [entry(b"a.rs", b"use std::io;\n")];
         // short header (< 8 bytes).
-        let (s1, _, _) = run_token_scan(&entries, &[1, 1, 1], 16);
+        let (s1, ..) = run_token_scan(&entries, &[1, 1, 1], 16);
         assert!(matches!(s1, AbiStatus::InvalidArg));
         // token_count beyond MAX_TOKENS.
         let mut huge = std::vec![0u8, 1, 1, 1];
         huge.extend_from_slice(&(u32::MAX).to_le_bytes());
-        let (s2, _, _) = run_token_scan(&entries, &huge, 16);
+        let (s2, ..) = run_token_scan(&entries, &huge, 16);
         assert!(matches!(s2, AbiStatus::InvalidArg));
         // token length runs past the buffer.
         let mut overrun = std::vec![0u8, 1, 1, 1];
         overrun.extend_from_slice(&(1u32).to_le_bytes()); // count 1
         overrun.extend_from_slice(&(99u32).to_le_bytes()); // len 99, no bytes
-        let (s3, _, _) = run_token_scan(&entries, &overrun, 16);
+        let (s3, ..) = run_token_scan(&entries, &overrun, 16);
         assert!(matches!(s3, AbiStatus::InvalidArg));
     }
 
@@ -2830,10 +2823,10 @@ mod tests {
         // whole-span-skip invariant; the decoder rejects it.
         let entries = [entry(b"a.rs", b"a/b\n")];
         let slash = token_blob(false, (true, true, true), &[b"a/b"]);
-        let (s1, _, _) = run_token_scan(&entries, &slash, 16);
+        let (s1, ..) = run_token_scan(&entries, &slash, 16);
         assert!(matches!(s1, AbiStatus::InvalidArg));
         let quote = token_blob(false, (true, true, true), &[b"a\"b"]);
-        let (s2, _, _) = run_token_scan(&entries, &quote, 16);
+        let (s2, ..) = run_token_scan(&entries, &quote, 16);
         assert!(matches!(s2, AbiStatus::InvalidArg));
     }
 
@@ -2853,7 +2846,7 @@ mod tests {
     fn token_scan_family_bakes_distinct_rule_ids() {
         // the four remaining token-scan wrappers differ only by baked rule
         // id; verify each emits its own, sharing the same core + config.
-        type Eval = unsafe extern "C" fn(
+        type Eval = unsafe extern fn(
             *mut c_void,
             *const NamPayload,
             *const u8,
@@ -2872,8 +2865,7 @@ mod tests {
         let blob = token_blob(false, (true, true, true), &[b"marker"]);
         for (eval, expected_rule) in cases {
             let nam = payload(&entries);
-            let mut buf: [MaybeUninit<Diagnostic>; 4] =
-                [const { MaybeUninit::uninit() }; 4];
+            let mut buf: [MaybeUninit<Diagnostic>; 4] = [const { MaybeUninit::uninit() }; 4];
             let mut out_len = arvo::USize(0);
             // SAFETY: nam valid; buf has 4 slots; out_len valid; blob live.
             let status = unsafe {
@@ -2892,9 +2884,7 @@ mod tests {
             // SAFETY: one entry written.
             let d = unsafe { buf[0].assume_init() };
             // SAFETY: rule_id points at the macro-baked static byte slice.
-            let rid = unsafe {
-                core::slice::from_raw_parts(d.rule_id.data, d.rule_id.len.0)
-            };
+            let rid = unsafe { core::slice::from_raw_parts(d.rule_id.data, d.rule_id.len.0) };
             assert_eq!(rid, expected_rule);
         }
     }
@@ -2913,7 +2903,7 @@ mod tests {
         let nodes = [
             nn(node_kind::SOURCE_FILE.0, 4, 0, src.len()), // 0 root (parent=sentinel)
             nn(node_kind::FUNCTION_ITEM.0, 0, 0, item_end), // 1 fn item
-            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3),  // 2 "pub"
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3), // 2 "pub"
             nn(node_kind::IDENTIFIER.0, 1, name_start, name_end), // 3 name token
         ];
         (nodes, src)
@@ -2926,7 +2916,7 @@ mod tests {
         let name_end = name_start + name.len();
         let item_end = src.len() - 1;
         let nodes = [
-            nn(node_kind::SOURCE_FILE.0, 3, 0, src.len()),  // 0 root
+            nn(node_kind::SOURCE_FILE.0, 3, 0, src.len()), // 0 root
             nn(node_kind::FUNCTION_ITEM.0, 0, 0, item_end), // 1 fn item (no vis)
             nn(node_kind::IDENTIFIER.0, 1, name_start, name_end), // 2 name token
         ];
@@ -2936,20 +2926,20 @@ mod tests {
     // A NamFileEntry plus the owned buffers it borrows, kept alive together
     // so the entry's raw pointers stay valid for the call.
     struct OwnedEntry {
-        path: std::vec::Vec<u8>,
+        path:   std::vec::Vec<u8>,
         source: std::string::String,
-        nodes: std::vec::Vec<NamNode>,
+        nodes:  std::vec::Vec<NamNode>,
     }
 
     impl OwnedEntry {
         fn entry(&self) -> NamFileEntry {
             NamFileEntry {
-                path: bytes_ref_static_runtime(&self.path),
+                path:     bytes_ref_static_runtime(&self.path),
                 language: arvo::USize(0),
-                source: bytes_ref_static_runtime(self.source.as_bytes()),
-                nodes: BytesRef {
+                source:   bytes_ref_static_runtime(self.source.as_bytes()),
+                nodes:    BytesRef {
                     data: self.nodes.as_ptr() as *const u8,
-                    len: arvo::USize(self.nodes.len() * core::mem::size_of::<NamNode>()),
+                    len:  arvo::USize(self.nodes.len() * core::mem::size_of::<NamNode>()),
                 },
             }
         }
@@ -2958,18 +2948,18 @@ mod tests {
     fn owned_pub_fn(path: &str, name: &str) -> OwnedEntry {
         let (nodes, src) = pub_fn_nodes(name);
         OwnedEntry {
-            path: path.as_bytes().to_vec(),
+            path:   path.as_bytes().to_vec(),
             source: src,
-            nodes: nodes.to_vec(),
+            nodes:  nodes.to_vec(),
         }
     }
 
     fn owned_priv_fn(path: &str, name: &str) -> OwnedEntry {
         let (nodes, src) = priv_fn_nodes(name);
         OwnedEntry {
-            path: path.as_bytes().to_vec(),
+            path:   path.as_bytes().to_vec(),
             source: src,
-            nodes: nodes.to_vec(),
+            nodes:  nodes.to_vec(),
         }
     }
 
@@ -2985,14 +2975,14 @@ mod tests {
             cap
         ];
         let mut batch = IndexBatch {
-            entries: if cap == 0 {
+            entries:  if cap == 0 {
                 core::ptr::null_mut()
             } else {
                 buf.as_mut_ptr() as *mut c_void
             },
             capacity: arvo::USize(cap),
-            len: arvo::USize(0),
-            needed: arvo::USize(0),
+            len:      arvo::USize(0),
+            needed:   arvo::USize(0),
         };
         // SAFETY: nam valid full-project payload; out_index addresses a live
         // IndexBatch whose entries buffer holds `cap` IndexRecord slots.
@@ -3020,17 +3010,16 @@ mod tests {
     ) -> (AbiStatus, usize, Vec<Diagnostic>) {
         let nam = payload(entries);
         let batch = IndexBatch {
-            entries: if index_records.is_empty() {
+            entries:  if index_records.is_empty() {
                 core::ptr::null_mut()
             } else {
                 index_records.as_mut_ptr() as *mut c_void
             },
             capacity: arvo::USize(index_records.len()),
-            len: arvo::USize(index_records.len()),
-            needed: arvo::USize(index_records.len()),
+            len:      arvo::USize(index_records.len()),
+            needed:   arvo::USize(index_records.len()),
         };
-        let mut out_buf: [MaybeUninit<Diagnostic>; 16] =
-            [const { MaybeUninit::uninit() }; 16];
+        let mut out_buf: [MaybeUninit<Diagnostic>; 16] = [const { MaybeUninit::uninit() }; 16];
         let mut out_len = arvo::USize(0);
         // SAFETY: nam valid; index addresses live IndexRecords; out_buf has
         // 16 slots (cap <= 16); out_len valid.
@@ -3047,7 +3036,7 @@ mod tests {
         };
         let written = out_len.0.min(cap);
         let mut diags = Vec::new();
-        for k in 0..written {
+        for k in 0 .. written {
             // SAFETY: slots 0..written were initialised by the evaluator.
             diags.push(unsafe { out_buf[k].assume_init() });
         }
@@ -3078,9 +3067,8 @@ mod tests {
         assert_eq!(diags[0].range.start.column, 7);
         assert_eq!(diags[0].range.end.column, 7 + 3);
         // SAFETY: rule_id points at the static b"no-duplicate-fn".
-        let rid = unsafe {
-            core::slice::from_raw_parts(diags[0].rule_id.data, diags[0].rule_id.len.0)
-        };
+        let rid =
+            unsafe { core::slice::from_raw_parts(diags[0].rule_id.data, diags[0].rule_id.len.0) };
         assert_eq!(rid, b"no-duplicate-fn");
         assert_eq!(diags[0].severity, DiagnosticSeverity::Error);
 
@@ -3096,13 +3084,13 @@ mod tests {
         // never matches. No fire.
         let src = "pub fn run() {}\npub fn run() {}\n";
         let nodes = std::vec![
-            nn(node_kind::SOURCE_FILE.0, 7, 0, src.len()),  // 0 root
-            nn(node_kind::FUNCTION_ITEM.0, 0, 0, 15),        // 1 fn run #1
-            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3),   // 2 pub
-            nn(node_kind::IDENTIFIER.0, 1, 7, 10),           // 3 "run"
-            nn(node_kind::FUNCTION_ITEM.0, 0, 16, 31),       // 4 fn run #2
+            nn(node_kind::SOURCE_FILE.0, 7, 0, src.len()), // 0 root
+            nn(node_kind::FUNCTION_ITEM.0, 0, 0, 15),      // 1 fn run #1
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3), // 2 pub
+            nn(node_kind::IDENTIFIER.0, 1, 7, 10),         // 3 "run"
+            nn(node_kind::FUNCTION_ITEM.0, 0, 16, 31),     // 4 fn run #2
             nn(node_kind::VISIBILITY_MODIFIER.0, 4, 16, 19), // 5 pub
-            nn(node_kind::IDENTIFIER.0, 4, 23, 26),          // 6 "run"
+            nn(node_kind::IDENTIFIER.0, 4, 23, 26),        // 6 "run"
         ];
         let owned = OwnedEntry {
             path: b"a.rs".to_vec(),
@@ -3177,14 +3165,18 @@ mod tests {
         let src0 = "pub fn run() {}\npub fn go() {}\n";
         let nodes0 = std::vec![
             nn(node_kind::SOURCE_FILE.0, 7, 0, src0.len()), // 0 root
-            nn(node_kind::FUNCTION_ITEM.0, 0, 0, 15),        // 1 fn run
-            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3),   // 2 pub
-            nn(node_kind::IDENTIFIER.0, 1, 7, 10),           // 3 "run"
-            nn(node_kind::FUNCTION_ITEM.0, 0, 16, 30),       // 4 fn go
+            nn(node_kind::FUNCTION_ITEM.0, 0, 0, 15),       // 1 fn run
+            nn(node_kind::VISIBILITY_MODIFIER.0, 1, 0, 3),  // 2 pub
+            nn(node_kind::IDENTIFIER.0, 1, 7, 10),          // 3 "run"
+            nn(node_kind::FUNCTION_ITEM.0, 0, 16, 30),      // 4 fn go
             nn(node_kind::VISIBILITY_MODIFIER.0, 4, 16, 19), // 5 pub
-            nn(node_kind::IDENTIFIER.0, 4, 23, 25),          // 6 "go"
+            nn(node_kind::IDENTIFIER.0, 4, 23, 25),         // 6 "go"
         ];
-        let f0 = OwnedEntry { path: b"a.rs".to_vec(), source: src0.into(), nodes: nodes0 };
+        let f0 = OwnedEntry {
+            path:   b"a.rs".to_vec(),
+            source: src0.into(),
+            nodes:  nodes0,
+        };
         let r = owned_pub_fn("b.rs", "run");
         let g = owned_pub_fn("c.rs", "go");
         let entries = [f0.entry(), r.entry(), g.entry()];
@@ -3218,10 +3210,10 @@ mod tests {
         // evaluate_phase null out_entries -> InvalidArg.
         let mut records: [IndexRecord; 0] = [];
         let batch = IndexBatch {
-            entries: core::ptr::null_mut(),
+            entries:  core::ptr::null_mut(),
             capacity: arvo::USize(0),
-            len: arvo::USize(0),
-            needed: arvo::USize(0),
+            len:      arvo::USize(0),
+            needed:   arvo::USize(0),
         };
         let mut out_len = arvo::USize(0);
         let _ = &mut records;
@@ -3241,8 +3233,7 @@ mod tests {
         assert!(matches!(s_eval_null, AbiStatus::InvalidArg));
 
         // evaluate_phase null index -> InvalidArg.
-        let mut out_buf: [MaybeUninit<Diagnostic>; 4] =
-            [const { MaybeUninit::uninit() }; 4];
+        let mut out_buf: [MaybeUninit<Diagnostic>; 4] = [const { MaybeUninit::uninit() }; 4];
         // SAFETY: null index is the case under test; fn returns before any
         // index read.
         let s_eval_no_index = unsafe {
@@ -3283,6 +3274,9 @@ mod tests {
         // On any width, file_idx leads and the record is a multiple of its
         // alignment (no trailing-pad ambiguity for the host record stride).
         assert_eq!(offset_of!(IndexRecord, file_idx), 0);
-        assert_eq!(size_of::<IndexRecord>() % core::mem::align_of::<IndexRecord>(), 0);
+        assert_eq!(
+            size_of::<IndexRecord>() % core::mem::align_of::<IndexRecord>(),
+            0
+        );
     }
 }

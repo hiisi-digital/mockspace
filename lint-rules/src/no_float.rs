@@ -19,8 +19,11 @@ const LINT_NAME: &str = "no-float";
 pub struct NoFloat;
 
 impl Lint for NoFloat {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         LINT_NAME
     }
 
@@ -78,11 +81,11 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 ));
             } else {
                 errors.push(LintError {
-                    crate_name: ctx.crate_name.to_string(),
-                    line: line_idx + 1,
-                    lint_name: LINT_NAME,
-                    severity: crate::Severity::HARD_ERROR,
-                    message: format!(
+                    crate_name:   ctx.crate_name.to_string(),
+                    line:         line_idx + 1,
+                    lint_name:    LINT_NAME,
+                    severity:     crate::Severity::HARD_ERROR,
+                    message:      format!(
                         "`{text}` type annotation — use a fixed-point type \
                          (`UFixed`/`IFixed`) or a semantic alias instead",
                     ),
@@ -106,11 +109,11 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
             ));
         } else {
             errors.push(LintError {
-                crate_name: ctx.crate_name.to_string(),
-                line: line_idx + 1,
-                lint_name: LINT_NAME,
-                severity: crate::Severity::HARD_ERROR,
-                message: format!(
+                crate_name:   ctx.crate_name.to_string(),
+                line:         line_idx + 1,
+                lint_name:    LINT_NAME,
+                severity:     crate::Severity::HARD_ERROR,
+                message:      format!(
                     "float literal `{text}` — use fixed-point construction \
                      (e.g., `IFixed::from_raw()` or `ufixed!()`) instead",
                 ),
@@ -133,18 +136,33 @@ fn is_type_position(node: Node) -> bool {
     while let Some(parent) = current {
         match parent.kind() {
             // Direct type annotation contexts
-            "type_identifier" | "generic_type" | "reference_type" | "array_type"
-            | "tuple_type" | "pointer_type" | "scoped_type_identifier" => {
+            "type_identifier"
+            | "generic_type"
+            | "reference_type"
+            | "array_type"
+            | "tuple_type"
+            | "pointer_type"
+            | "scoped_type_identifier" => {
                 // Keep walking up — these are intermediate type nodes
-            }
+            },
             // Definite type-annotation parents
-            "function_item" | "function_signature_item" | "parameter"
-            | "field_declaration" | "let_declaration" | "const_item"
-            | "static_item" | "type_item" | "type_arguments"
-            | "return_type" | "closure_parameters" | "impl_item"
-            | "trait_item" | "where_predicate" | "type_bound" => {
+            "function_item"
+            | "function_signature_item"
+            | "parameter"
+            | "field_declaration"
+            | "let_declaration"
+            | "const_item"
+            | "static_item"
+            | "type_item"
+            | "type_arguments"
+            | "return_type"
+            | "closure_parameters"
+            | "impl_item"
+            | "trait_item"
+            | "where_predicate"
+            | "type_bound" => {
                 return true;
-            }
+            },
             // Literal expressions like `1.0_f32` — still a float usage
             "float_literal" => return true,
             _ => return true,
@@ -227,7 +245,8 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                                 ctx.crate_name.to_string(),
                                 line_num + 1,
                                 LINT_NAME,
-                                "suppressed by lint:allow(no_float) — review periodically".to_string(),
+                                "suppressed by lint:allow(no_float) — review periodically"
+                                    .to_string(),
                             ));
                             break;
                         }
@@ -237,11 +256,11 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                         if trimmed.contains(pattern) {
                             let float_ty = if pattern.contains("f32") { "f32" } else { "f64" };
                             errors.push(LintError {
-                                crate_name: ctx.crate_name.to_string(),
-                                line: line_num + 1,
-                                lint_name: LINT_NAME,
-                                severity: crate::Severity::HARD_ERROR,
-                                message: format!(
+                                crate_name:   ctx.crate_name.to_string(),
+                                line:         line_num + 1,
+                                lint_name:    LINT_NAME,
+                                severity:     crate::Severity::HARD_ERROR,
+                                message:      format!(
                                     "`{float_ty}` in macro body — use a fixed-point type \
                                      (`UFixed`/`IFixed`) or a semantic alias instead",
                                 ),

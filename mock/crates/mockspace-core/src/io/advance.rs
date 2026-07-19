@@ -86,7 +86,9 @@ impl AdvanceVerb {
     pub fn verb(&self) -> TransitionVerb {
         match self {
             Self::Plan => TransitionVerb::Plan,
-            Self::Apply { .. } => TransitionVerb::Apply,
+            Self::Apply {
+                ..
+            } => TransitionVerb::Apply,
             Self::Finish => TransitionVerb::Finish,
             Self::Replan(_) => TransitionVerb::Replan,
         }
@@ -97,16 +99,16 @@ impl AdvanceVerb {
 #[derive(Debug, Clone)]
 pub struct AdvanceReport {
     /// The verb that was executed.
-    pub verb: TransitionVerb,
+    pub verb:                 TransitionVerb,
     /// Phase the round landed in.
-    pub landed_in: Phase,
+    pub landed_in:            Phase,
     /// New commit OID on `refs/mock/round/<slug>` after the
     /// transition.
-    pub new_commit: gix::ObjectId,
+    pub new_commit:           gix::ObjectId,
     /// For [`AdvanceVerb::Apply`]: the underlying seal report
     /// (locked manifest path + anchor blob count). `None` for the
     /// other verbs.
-    pub seal: Option<SealReport>,
+    pub seal:                 Option<SealReport>,
     /// For [`AdvanceVerb::Replan`]: the deprecated manifest's
     /// iteration number. `None` for the other verbs.
     pub deprecated_iteration: Option<u32>,
@@ -116,15 +118,19 @@ pub struct AdvanceReport {
 #[derive(Debug)]
 pub enum AdvanceError {
     /// The round ref does not exist.
-    RoundRefMissing { slug: String },
+    RoundRefMissing {
+        slug: String,
+    },
     /// The round tree has no `.phase` blob.
     PhaseMarkerMissing,
     /// The `.phase` blob did not parse as a known phase.
-    PhaseMarkerInvalid { raw: String },
+    PhaseMarkerInvalid {
+        raw: String,
+    },
     /// The verb is not valid from the current phase.
     InvalidFromPhase {
-        verb: TransitionVerb,
-        current: Phase,
+        verb:         TransitionVerb,
+        current:      Phase,
         allowed_from: &'static [Phase],
     },
     /// Round ref read failed.
@@ -136,33 +142,43 @@ pub enum AdvanceError {
     /// Replan was requested but the locked manifest for the
     /// current side is missing from the tree. APPLY-phase
     /// invariant requires it; absence is a corruption signal.
-    LockedManifestMissing { path: String },
+    LockedManifestMissing {
+        path: String,
+    },
 }
 
 impl core::fmt::Display for AdvanceError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::RoundRefMissing { slug } => {
+            Self::RoundRefMissing {
+                slug,
+            } => {
                 write!(f, "round ref for slug `{slug}` does not exist")
-            }
+            },
             Self::PhaseMarkerMissing => write!(f, ".phase blob missing from round tree"),
-            Self::PhaseMarkerInvalid { raw } => {
+            Self::PhaseMarkerInvalid {
+                raw,
+            } => {
                 write!(f, "`.phase` blob did not parse: {raw:?}")
-            }
+            },
             Self::InvalidFromPhase {
                 verb,
                 current,
                 allowed_from,
-            } => write!(
-                f,
-                "verb {verb:?} not valid from {current:?}; allowed from {allowed_from:?}"
-            ),
+            } => {
+                write!(
+                    f,
+                    "verb {verb:?} not valid from {current:?}; allowed from {allowed_from:?}"
+                )
+            },
             Self::ReadFailed(e) => write!(f, "round ref read failed: {e}"),
             Self::WriteFailed(e) => write!(f, "round ref write failed: {e}"),
             Self::SealFailed(e) => write!(f, "seal executor failed: {e}"),
-            Self::LockedManifestMissing { path } => {
+            Self::LockedManifestMissing {
+                path,
+            } => {
                 write!(f, "locked manifest absent at `{path}`")
-            }
+            },
         }
     }
 }
@@ -200,11 +216,13 @@ impl RepoHandle {
         let ref_path = RefPath::round_mock(slug);
         let current_oid = match self.resolve_ref_oid(&ref_path) {
             Ok(oid) => oid,
-            Err(RefTreeReadError::RefNotFound { .. }) => {
+            Err(RefTreeReadError::RefNotFound {
+                ..
+            }) => {
                 return Err(AdvanceError::RoundRefMissing {
                     slug: slug.as_ref().to_owned(),
                 });
-            }
+            },
             Err(other) => return Err(other.into()),
         };
         let current_tree = self.read_ref_tree(&ref_path)?;
@@ -221,49 +239,49 @@ impl RepoHandle {
         }
 
         match verb {
-            AdvanceVerb::Plan => {
-                exec_plan(self, lock, slug, &ref_path, current_oid, &current_tree)
-            }
-            AdvanceVerb::Apply { source_branch_tip } => exec_apply(
-                self,
-                lock,
-                slug,
-                current_phase,
+            AdvanceVerb::Plan => exec_plan(self, lock, slug, &ref_path, current_oid, &current_tree),
+            AdvanceVerb::Apply {
                 source_branch_tip,
-            ),
-            AdvanceVerb::Finish => exec_finish(
-                self,
-                lock,
-                slug,
-                &ref_path,
-                current_oid,
-                &current_tree,
-                current_phase,
-            ),
-            AdvanceVerb::Replan(_mode) => exec_replan(
-                self,
-                lock,
-                slug,
-                &ref_path,
-                current_oid,
-                &current_tree,
-                current_phase,
-            ),
+            } => exec_apply(self, lock, slug, current_phase, source_branch_tip),
+            AdvanceVerb::Finish => {
+                exec_finish(
+                    self,
+                    lock,
+                    slug,
+                    &ref_path,
+                    current_oid,
+                    &current_tree,
+                    current_phase,
+                )
+            },
+            AdvanceVerb::Replan(_mode) => {
+                exec_replan(
+                    self,
+                    lock,
+                    slug,
+                    &ref_path,
+                    current_oid,
+                    &current_tree,
+                    current_phase,
+                )
+            },
         }
     }
 }
 
 fn read_phase(tree: &RoundRefTree) -> Result<Phase, AdvanceError> {
-    let bytes = tree
-        .get(".phase")
-        .ok_or(AdvanceError::PhaseMarkerMissing)?;
+    let bytes = tree.get(".phase").ok_or(AdvanceError::PhaseMarkerMissing)?;
     let s = core::str::from_utf8(bytes)
-        .map_err(|_| AdvanceError::PhaseMarkerInvalid {
-            raw: format!("{bytes:?}"),
+        .map_err(|_| {
+            AdvanceError::PhaseMarkerInvalid {
+                raw: format!("{bytes:?}"),
+            }
         })?
         .trim();
-    Phase::from_marker(s).ok_or_else(|| AdvanceError::PhaseMarkerInvalid {
-        raw: s.to_owned(),
+    Phase::from_marker(s).ok_or_else(|| {
+        AdvanceError::PhaseMarkerInvalid {
+            raw: s.to_owned(),
+        }
     })
 }
 
@@ -375,8 +393,10 @@ fn exec_replan(
     let locked_name = ManifestStage::Locked.filename(side);
     let locked_bytes = current_tree
         .get(&locked_name)
-        .ok_or_else(|| AdvanceError::LockedManifestMissing {
-            path: locked_name.clone(),
+        .ok_or_else(|| {
+            AdvanceError::LockedManifestMissing {
+                path: locked_name.clone(),
+            }
         })?
         .to_vec();
     let next_n = next_deprecation_iteration(current_tree, side);
@@ -447,12 +467,14 @@ fn rewrite_phase(current_tree: &RoundRefTree, new_phase: Phase) -> BTreeMap<Stri
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    use tempfile::TempDir;
+
     use super::*;
     use crate::manifest::{AcceptanceBlock, ChangeBlock, Manifest, ScopeBlock};
     use crate::verifier::{VerifierCheck, VerifierKind};
-    use std::path::{Path, PathBuf};
-    use std::process::Command;
-    use tempfile::TempDir;
 
     fn run(args: &[&str], dir: &Path) -> std::process::Output {
         Command::new("git")
@@ -491,22 +513,22 @@ mod tests {
 
     fn doc_manifest_toml(slug: &str) -> String {
         let m = Manifest {
-            mockspace_version: "1.0".to_owned(),
-            round_slug: slug.to_owned(),
-            phase: ManifestSide::Doc,
-            scope: ScopeBlock {
-                description: "test advance".to_owned(),
+            mockspace_version:     "1.0".to_owned(),
+            round_slug:            slug.to_owned(),
+            phase:                 ManifestSide::Doc,
+            scope:                 ScopeBlock {
+                description:    "test advance".to_owned(),
                 in_scope_tasks: vec![],
-                out_of_scope: vec![],
+                out_of_scope:   vec![],
             },
-            acceptance: AcceptanceBlock {
+            acceptance:            AcceptanceBlock {
                 criteria: "passes".to_owned(),
             },
-            changes: vec![ChangeBlock {
-                task: None,
-                file: PathBuf::from("README.md"),
+            changes:               vec![ChangeBlock {
+                task:        None,
+                file:        PathBuf::from("README.md"),
                 description: "doc change".to_owned(),
-                verify: VerifierCheck::Kind(VerifierKind::PathExists {
+                verify:      VerifierCheck::Kind(VerifierKind::PathExists {
                     file: PathBuf::from("README.md"),
                 }),
             }],
@@ -564,13 +586,9 @@ mod tests {
         let handle = RepoHandle::open(dir.path()).expect("open");
         let lock = FlockTransitionLock::acquire(dir.path()).expect("acquire");
         let report = handle
-            .advance_phase(
-                &lock,
-                &slug,
-                AdvanceVerb::Apply {
-                    source_branch_tip: source_tip,
-                },
-            )
+            .advance_phase(&lock, &slug, AdvanceVerb::Apply {
+                source_branch_tip: source_tip,
+            })
             .expect("apply");
         assert_eq!(report.landed_in, Phase::ApplyDoc);
         assert_eq!(report.verb, TransitionVerb::Apply);
@@ -706,14 +724,11 @@ mod tests {
             .advance_phase(&lock, &slug, AdvanceVerb::Finish)
             .unwrap_err();
         assert!(
-            matches!(
-                err,
-                AdvanceError::InvalidFromPhase {
-                    verb: TransitionVerb::Finish,
-                    current: Phase::Topic,
-                    ..
-                }
-            ),
+            matches!(err, AdvanceError::InvalidFromPhase {
+                verb: TransitionVerb::Finish,
+                current: Phase::Topic,
+                ..
+            }),
             "got {err:?}"
         );
     }

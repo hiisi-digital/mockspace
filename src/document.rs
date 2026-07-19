@@ -35,19 +35,28 @@ use crate::config::Config;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocId {
     /// A document a reader should start with. Sorts first.
-    Primary { stem: String, ext: String },
+    Primary {
+        stem: String,
+        ext:  String,
+    },
     /// One crate's overview, or one of its deep dives. Sorts by dependency
     /// depth, so the listing reads bottom-up: what everything rests on first.
     Crate {
-        upper: String,
+        upper:   String,
         subject: String,
-        depth: usize,
+        depth:   usize,
     },
     /// A registry namespace's table. Sorts by declaration order, which is the
     /// order the project chose to present its own vocabulary in.
-    Registry { page: String, index: usize },
+    Registry {
+        page:  String,
+        index: usize,
+    },
     /// Everything else. Sorts last, as supplementary material.
-    Supplementary { stem: String, ext: String },
+    Supplementary {
+        stem: String,
+        ext:  String,
+    },
 }
 
 impl DocId {
@@ -55,15 +64,19 @@ impl DocId {
     /// primary-versus-supplementary distinction is decided.
     pub fn root(file_name: &str, cfg: &Config) -> Self {
         let (stem, ext) = split_ext(file_name);
-        if cfg.primary_docs.iter().any(|p| p.eq_ignore_ascii_case(stem)) {
+        if cfg
+            .primary_docs
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(stem))
+        {
             DocId::Primary {
                 stem: stem.to_string(),
-                ext: ext.to_string(),
+                ext:  ext.to_string(),
             }
         } else {
             DocId::Supplementary {
                 stem: stem.to_string(),
-                ext: ext.to_string(),
+                ext:  ext.to_string(),
             }
         }
     }
@@ -74,13 +87,16 @@ impl DocId {
     /// everything that links to one asks this, so the two cannot drift.
     pub fn file_name(&self, cfg: &Config) -> String {
         match self {
-            DocId::Primary { stem, ext } => {
+            DocId::Primary {
+                stem,
+                ext,
+            } => {
                 if cfg.ordered_docs {
                     format!("000_{stem}.{ext}")
                 } else {
                     format!("{stem}.{ext}")
                 }
-            }
+            },
             DocId::Crate {
                 upper,
                 subject,
@@ -103,27 +119,37 @@ impl DocId {
                 } else {
                     format!("{stem}.md")
                 }
-            }
-            DocId::Registry { page, index } => {
+            },
+            DocId::Registry {
+                page,
+                index,
+            } => {
                 let (stem, ext) = split_ext(page);
                 if !cfg.ordered_docs {
                     return page.clone();
                 }
-                if cfg.primary_docs.iter().any(|p| p.eq_ignore_ascii_case(stem)) {
+                if cfg
+                    .primary_docs
+                    .iter()
+                    .any(|p| p.eq_ignore_ascii_case(stem))
+                {
                     return format!("000_{stem}.{ext}");
                 }
                 // Three digits leave the registry band room for as many
                 // namespaces as a project declares, without spilling into the
                 // supplementary one.
                 format!("{}_{stem}.{ext}", 900 + (*index).min(98))
-            }
-            DocId::Supplementary { stem, ext } => {
+            },
+            DocId::Supplementary {
+                stem,
+                ext,
+            } => {
                 if cfg.ordered_docs {
                     format!("999_{stem}.{ext}")
                 } else {
                     format!("{stem}.{ext}")
                 }
-            }
+            },
         }
     }
 
@@ -138,10 +164,13 @@ impl DocId {
                 subject,
                 depth: _,
             } if subject == "OVERVIEW" => Some(LinkKey::Crate(normalize_crate_key(upper))),
-            DocId::Registry { page, .. } => {
+            DocId::Registry {
+                page,
+                ..
+            } => {
                 let (stem, _) = split_ext(page);
                 Some(LinkKey::Registry(stem.to_lowercase().replace('-', "_")))
-            }
+            },
             _ => None,
         }
     }
@@ -166,8 +195,8 @@ pub enum Source {
 /// A document that will exist, before it is rendered.
 #[derive(Debug, Clone)]
 pub struct Planned {
-    pub id: DocId,
-    pub source: Source,
+    pub id:          DocId,
+    pub source:      Source,
     /// Whether the generation header is prepended. False for content that
     /// carries its own, such as a graph in another language's comment syntax.
     pub with_header: bool,
@@ -221,7 +250,9 @@ impl DocIndex {
                 entries.insert(key, p.id.file_name(cfg));
             }
         }
-        Self { entries }
+        Self {
+            entries,
+        }
     }
 
     /// The document for a crate, by its short name.
@@ -285,21 +316,19 @@ pub fn render_all(
     let mut written = Vec::new();
     for p in planned {
         let raw = match &p.source {
-            Source::Template(path) => match std::fs::read_to_string(path) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("  warning: cannot read {}: {e}", path.display());
-                    continue;
+            Source::Template(path) => {
+                match std::fs::read_to_string(path) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        eprintln!("  warning: cannot read {}: {e}", path.display());
+                        continue;
+                    },
                 }
             },
             Source::Computed(text) => text.clone(),
         };
         let body = render(&raw, ph, registry, cfg);
-        let full = if p.with_header {
-            format!("{header}\n{body}")
-        } else {
-            body
-        };
+        let full = if p.with_header { format!("{header}\n{body}") } else { body };
         let out = cfg.docs_dir.join(p.id.file_name(cfg));
         crate::render_design::write_generated(&out, &full);
         written.push(out);
@@ -354,7 +383,7 @@ mod tests {
         // 902_LAW.md, so every reference into the registry pointed at nothing.
         let cfg = cfg_ordered();
         let reg = DocId::Registry {
-            page: "LAW.md".into(),
+            page:  "LAW.md".into(),
             index: 2,
         };
         let planned = vec![Planned::computed(reg.clone(), String::new())];
@@ -368,14 +397,14 @@ mod tests {
     fn a_crate_overview_is_named_for_the_crate_alone() {
         let cfg = cfg_ordered();
         let overview = DocId::Crate {
-            upper: "PLAN_VALIDATE".into(),
+            upper:   "PLAN_VALIDATE".into(),
             subject: "OVERVIEW".into(),
-            depth: 4,
+            depth:   4,
         };
         let dive = DocId::Crate {
-            upper: "PLAN_VALIDATE".into(),
+            upper:   "PLAN_VALIDATE".into(),
             subject: "COMBAT".into(),
-            depth: 4,
+            depth:   4,
         };
         assert_eq!(overview.file_name(&cfg), "140_PLAN_VALIDATE.md");
         assert_eq!(dive.file_name(&cfg), "140_PLAN_VALIDATE_COMBAT.md");
@@ -387,14 +416,14 @@ mod tests {
         // be inventing an order and would shift when one is added.
         let cfg = cfg_ordered();
         let a = DocId::Crate {
-            upper: "SEAM".into(),
+            upper:   "SEAM".into(),
             subject: "OVERVIEW".into(),
-            depth: 1,
+            depth:   1,
         };
         let b = DocId::Crate {
-            upper: "REGISTER".into(),
+            upper:   "REGISTER".into(),
             subject: "OVERVIEW".into(),
-            depth: 1,
+            depth:   1,
         };
         assert!(a.file_name(&cfg).starts_with("110_"));
         assert!(b.file_name(&cfg).starts_with("110_"));
@@ -405,13 +434,13 @@ mod tests {
         let cfg = cfg_ordered();
         let primary = DocId::root("DESIGN.md", &cfg).file_name(&cfg);
         let crate_doc = DocId::Crate {
-            upper: "STORE".into(),
+            upper:   "STORE".into(),
             subject: "OVERVIEW".into(),
-            depth: 0,
+            depth:   0,
         }
         .file_name(&cfg);
         let registry = DocId::Registry {
-            page: "LAW.md".into(),
+            page:  "LAW.md".into(),
             index: 0,
         }
         .file_name(&cfg);
@@ -429,8 +458,8 @@ mod tests {
         assert_eq!(DocId::root("DESIGN.md", &cfg).file_name(&cfg), "DESIGN.md");
         assert_eq!(
             DocId::Registry {
-                page: "LAW.md".into(),
-                index: 2
+                page:  "LAW.md".into(),
+                index: 2,
             }
             .file_name(&cfg),
             "LAW.md"
@@ -444,14 +473,17 @@ mod tests {
         let cfg = cfg_ordered();
         let planned = vec![Planned::template(
             DocId::Crate {
-                upper: "PLAN_VALIDATE".into(),
+                upper:   "PLAN_VALIDATE".into(),
                 subject: "OVERVIEW".into(),
-                depth: 4,
+                depth:   4,
             },
             PathBuf::from("/nowhere/DESIGN.md.tmpl"),
         )];
         let index = DocIndex::build(&planned, &cfg);
-        assert_eq!(index.crate_doc("plan-validate"), Some("140_PLAN_VALIDATE.md"));
+        assert_eq!(
+            index.crate_doc("plan-validate"),
+            Some("140_PLAN_VALIDATE.md")
+        );
     }
 
     #[test]
@@ -461,9 +493,9 @@ mod tests {
         let cfg = cfg_ordered();
         let planned = vec![Planned::computed(
             DocId::Crate {
-                upper: "STORE".into(),
+                upper:   "STORE".into(),
                 subject: "KEYS".into(),
-                depth: 1,
+                depth:   1,
             },
             String::new(),
         )];
@@ -499,10 +531,7 @@ pub fn plan(cfg: &Config, crates: &crate::model::CrateMap) -> Vec<Planned> {
     if cfg.crates_dir.is_dir() {
         let mut depth_cache = std::collections::BTreeMap::new();
         if let Ok(entries) = std::fs::read_dir(&cfg.crates_dir) {
-            let mut dirs: Vec<_> = entries
-                .flatten()
-                .filter(|e| e.path().is_dir())
-                .collect();
+            let mut dirs: Vec<_> = entries.flatten().filter(|e| e.path().is_dir()).collect();
             dirs.sort_by_key(|e| e.file_name());
             for entry in dirs {
                 let dir = entry.path();
@@ -549,7 +578,11 @@ pub fn plan_registry_pages(
     mock_dir: &Path,
     cfg: &Config,
 ) {
-    for (index, ns) in namespaces.iter().filter(|n| n.render.has_page()).enumerate() {
+    for (index, ns) in namespaces
+        .iter()
+        .filter(|n| n.render.has_page())
+        .enumerate()
+    {
         if reg.by_namespace.get(&ns.key).is_none() {
             continue;
         }

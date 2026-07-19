@@ -42,8 +42,11 @@ const FORBIDDEN_CALLS: &[(&str, &[&str])] = &[
 pub struct NoBareMacroTypes;
 
 impl Lint for NoBareMacroTypes {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         "no-bare-macro-types"
     }
 
@@ -60,7 +63,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         match child.kind() {
             "call_expression" => check_call(child, ctx, errors),
             "struct_expression" => check_struct_literal(child, ctx, errors),
-            _ => {}
+            _ => {},
         }
         if child.named_child_count() > 0 {
             visit_nodes(child, ctx, errors);

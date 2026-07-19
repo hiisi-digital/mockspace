@@ -12,23 +12,23 @@ use crate::template::TemplateEnv;
 
 #[derive(Debug, Default)]
 pub struct RenderReport {
-    pub entries: Vec<RenderedFile>,
-    pub total_bytes: u64,
+    pub entries:        Vec<RenderedFile>,
+    pub total_bytes:    u64,
     pub total_duration: Duration,
 }
 
 #[derive(Debug)]
 pub struct RenderedFile {
-    pub source: PathBuf,
-    pub destination: PathBuf,
+    pub source:        PathBuf,
+    pub destination:   PathBuf,
     pub bytes_written: u64,
-    pub duration: Duration,
+    pub duration:      Duration,
 }
 
 /// Walks a source directory of `.md.tmpl` (or `.tmpl`) files and emits
 /// the rendered output to platform-derived paths under `dst_root`.
 pub struct AgentRenderer<'env, P: Platform> {
-    env: &'env mut TemplateEnv,
+    env:      &'env mut TemplateEnv,
     platform: P,
     src_root: PathBuf,
     dst_root: PathBuf,
@@ -49,10 +49,7 @@ impl<'env, P: Platform> AgentRenderer<'env, P> {
         }
     }
 
-    pub fn render_all<C: Serialize>(
-        &mut self,
-        ctx: &C,
-    ) -> Result<RenderReport, RenderError> {
+    pub fn render_all<C: Serialize>(&mut self, ctx: &C) -> Result<RenderReport, RenderError> {
         let started = Instant::now();
         let mut report = RenderReport::default();
         let mut templates = Vec::new();
@@ -113,10 +110,10 @@ fn render_one<C: Serialize>(
     fs::write(dst, rendered)?;
     let _ = logical; // logical retained for future use (caching, diagnostics)
     Ok(RenderedFile {
-        source: src.to_path_buf(),
-        destination: dst.to_path_buf(),
+        source:        src.to_path_buf(),
+        destination:   dst.to_path_buf(),
         bytes_written: bytes,
-        duration: started.elapsed(),
+        duration:      started.elapsed(),
     })
 }
 

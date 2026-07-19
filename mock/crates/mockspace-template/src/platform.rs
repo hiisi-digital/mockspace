@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct HookDecl {
     /// Hook event name (e.g. "PreToolUse").
-    pub event: String,
+    pub event:   String,
     /// Tool matcher pattern (e.g. "Bash", "Write|Edit", or ".*").
     pub matcher: String,
     /// Command line to execute when the hook fires.
@@ -33,9 +33,5 @@ pub trait Platform {
     /// Emit the platform's settings file (if any) for the given hook list.
     /// Returns `Some((path, contents))` to write, or `None` when the
     /// platform does not use a settings file.
-    fn settings_file(
-        &self,
-        repo_root: &Path,
-        hooks: &[HookDecl],
-    ) -> Option<(PathBuf, String)>;
+    fn settings_file(&self, repo_root: &Path, hooks: &[HookDecl]) -> Option<(PathBuf, String)>;
 }

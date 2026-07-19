@@ -71,7 +71,10 @@ pub fn build_crate_graph(root: &Path) -> CrateGraph {
         crates.push(info);
     }
 
-    CrateGraph { crates, by_name }
+    CrateGraph {
+        crates,
+        by_name,
+    }
 }
 
 /// Read the root `Cargo.toml`'s `[workspace].members` array, resolving
@@ -145,7 +148,7 @@ fn parse_manifest(path: &Path) -> Option<CrateInfo> {
         Err(e) => {
             eprintln!("warning: failed to parse {}: {e}", path.display());
             return None;
-        }
+        },
     };
 
     // Workspace-only manifests (no [package]) are not crates per se;
@@ -204,9 +207,10 @@ fn parse_manifest(path: &Path) -> Option<CrateInfo> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
     use std::io::Write;
+
+    use super::*;
 
     fn write(p: &Path, contents: &str) {
         if let Some(parent) = p.parent() {
