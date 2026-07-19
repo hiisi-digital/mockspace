@@ -132,6 +132,7 @@ mod tests {
     }
 
 
+    #[cfg(feature = "std")]
     #[test]
     fn heap_build_matches_typed_build() {
         let typed = ByteRoutine::<64, 8, false>::build_input(7);
@@ -139,6 +140,7 @@ mod tests {
         assert_eq!(&typed[..], &heaped[..]);
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn dispatch_macro_declared_sizes_only() {
         let d = crate::byte_routine_dispatch!(out = 8, sizes = [64, 1024]);
@@ -146,6 +148,28 @@ mod tests {
         assert!((d.dispatch)(1024, true).is_some());
         assert!((d.dispatch)(512, false).is_none(), "undeclared size rejects");
         assert_eq!(d.sizes, &[64, 1024]);
+    }
+
+
+    #[test]
+    fn timed_accepts_plain_and_wrapped_setup() {
+        fn plain() -> crate::FfiBenchCall {
+            crate::timed! {
+                let x = 2u64;
+                run { core::hint::black_box(x * 2); }
+            }
+        }
+        fn wrapped() -> crate::FfiBenchCall {
+            crate::timed! {
+                setup {
+                    let x = 2u64;
+                }
+                run { core::hint::black_box(x * 2); }
+                let _teardown = x;
+            }
+        }
+        let _ = plain();
+        let _ = wrapped();
     }
 
     #[test]
