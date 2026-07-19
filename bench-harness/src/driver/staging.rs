@@ -71,12 +71,14 @@ pub(super) fn quarantine_stale(results_root: &Path) {
         }
         let target = void_dir.join(&name);
         match std::fs::rename(&path, &target) {
-            Ok(()) => eprintln!(
-                "  VOIDED crash-borne results of run {name}: the run did not \
+            Ok(()) => {
+                eprintln!(
+                    "  VOIDED crash-borne results of run {name}: the run did not \
                  complete, so every stage it wrote is untrusted (the crash \
                  conditions were present while they timed). Quarantined at {}",
-                target.display()
-            ),
+                    target.display()
+                )
+            },
             Err(e) => eprintln!("  warning: quarantining {}: {e}", path.display()),
         }
     }

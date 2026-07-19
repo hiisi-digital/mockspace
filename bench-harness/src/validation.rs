@@ -390,7 +390,9 @@ pub fn validate(
                     if mismatches <= 3 {
                         eprintln!("  MISMATCH seed={} (#{}):", seed, si);
                         eprintln!("    {} vs {}", names[b0], names[i]);
-                        for (j, (a, b)) in baseline.iter().zip(collected[i][si].0.iter()).enumerate() {
+                        for (j, (a, b)) in
+                            baseline.iter().zip(collected[i][si].0.iter()).enumerate()
+                        {
                             if a != b {
                                 eprintln!("    first diff at byte {}: {} vs {}", j, a, b);
                                 break;
@@ -577,7 +579,7 @@ mod tests {
 
     #[test]
     fn from_hex_round_trips() {
-        assert_eq!(from_hex("00ff10"), Some(vec![0x00, 0xff, 0x10]));
+        assert_eq!(from_hex("00ff10"), Some(vec![0x00, 0xFF, 0x10]));
         assert_eq!(from_hex(""), Some(Vec::new()));
     }
 

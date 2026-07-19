@@ -128,28 +128,38 @@ read_mock_dir() {
     awk '/^[[:space:]]*\[/{exit} /^[[:space:]]*mock_dir[[:space:]]*=/{sub(/^[^=]*=[[:space:]]*/,""); gsub(/"/,""); sub(/[[:space:]].*$/,""); print; exit}' "$1" 2>/dev/null
 }
 
-# flexibly locate mockspace.toml + the mock dir (root first, then subdirs
-# hidden-first). This is a shell reimplementation of the launcher's
-# `discover::locate` (cargo-mock/src/discover.rs); the two MUST stay in sync.
-# It exists only for the no-launcher fallback path; when the launcher is
-# present, `locate` is authoritative and this block is bypassed.
-cfg=""; mockdir=""
+# locate the one mockspace.toml + the mock dir (root, then subdirs hidden-first).
+# This is a shell reimplementation of the launcher's `discover::locate`
+# (cargo-mock/src/discover.rs); the two MUST stay in sync, including the
+# single-config rule: a repo has exactly one mockspace.toml, and more than one
+# (root plus subdirs) is a hard error. It exists only for the no-launcher
+# fallback path; when the launcher is present, `locate` is authoritative.
+cfg=""; mockdir=""; cfgcount=0; cfglist=""
 if [ -f "$root/mockspace.toml" ]; then
+    cfgcount=$((cfgcount + 1)); cfglist="${cfglist}  $root/mockspace.toml
+"
     cfg="$root/mockspace.toml"
     md=$(read_mock_dir "$cfg"); [ -z "$md" ] && md="mock"
     mockdir="$root/$md"
-else
-    for d in "$root"/.*/ "$root"/*/; do
-        [ -d "$d" ] || continue
-        base=$(basename "$d")
-        case "$base" in .|..|.git|target|node_modules) continue ;; esac
-        if [ -f "${d}mockspace.toml" ]; then
+fi
+for d in "$root"/.*/ "$root"/*/; do
+    [ -d "$d" ] || continue
+    base=$(basename "$d")
+    case "$base" in .|..|.git|target|node_modules) continue ;; esac
+    if [ -f "${d}mockspace.toml" ]; then
+        cfgcount=$((cfgcount + 1)); cfglist="${cfglist}  ${d}mockspace.toml
+"
+        if [ -z "$cfg" ]; then
             cfg="${d}mockspace.toml"
             md=$(read_mock_dir "$cfg"); [ -z "$md" ] && md="."
             if [ "$md" = "." ]; then mockdir="${d%/}"; else mockdir="${d%/}/$md"; fi
-            break
         fi
-    done
+    fi
+done
+if [ "$cfgcount" -gt 1 ]; then
+    echo "mockspace gate: found more than one mockspace.toml; a repo must have exactly one. Remove the extras, keep one:" >&2
+    printf '%s' "$cfglist" >&2
+    exit 1
 fi
 mockrel="${mockdir#"$root"/}"
 cfgrel="${cfg#"$root"/}"
