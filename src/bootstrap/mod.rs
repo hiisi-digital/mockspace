@@ -70,6 +70,10 @@ mod proxy;
 pub(crate) use proxy::*;
 mod remote;
 pub use remote::ensure_mockspace_current;
+// The rest of `remote` (ls-remote head, TTL freshness helpers) is exercised
+// only by the in-module tests; re-export it into scope for them.
+#[cfg(test)]
+pub(crate) use remote::*;
 mod lints;
 pub(crate) use lints::*;
 mod hooks;
