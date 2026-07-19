@@ -89,6 +89,40 @@ pub fn bootstrap_from_buildscript() {
     );
     let mockspace_manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
+    // Guard A: dependency builds out of the cargo cache must not bootstrap.
+    // A git checkout under ~/.cargo/git/checkouts/ carries the full repo tree
+    // (mockspace.toml AND .git), so the ancestor probes below cannot tell it
+    // from a working repo. Installing there pollutes the shared cache, and
+    // under sudo poisons it with root-owned files (2026-06/07 incident).
+    // Skipping forfeits nothing: nobody commits from the cache, and a
+    // consumer's working repo gets its hooks from its own build.rs.
+    let cargo_home = resolve_cargo_home(env::var_os("CARGO_HOME"), env::var_os("HOME"));
+    if is_inside_cargo_home(&build_crate_dir, cargo_home.as_deref()) {
+        println!("cargo::warning=mockspace: dependency build inside the cargo cache, skipping bootstrap");
+        return;
+    }
+
+    // Under sudo the bootstrap must still install its safeguards: skipping
+    // would leave the repo working ungated, the one state mockspace exists
+    // to prevent. Instead the install proceeds and every path it wrote is
+    // chowned back to the invoking user (sudo publishes SUDO_UID/SUDO_GID,
+    // and root may chown). A sudo environment too broken to identify the
+    // user fails the build outright: a failed build blocks work with
+    // safeguards intact, where a skipped bootstrap would permit unguarded
+    // work. Fail closed, never open.
+    let sudo_ids = match parse_sudo_ids(
+        env::var_os("SUDO_USER"),
+        env::var_os("SUDO_UID"),
+        env::var_os("SUDO_GID"),
+    ) {
+        Ok(ids) => ids,
+        Err(why) => panic!(
+            "mockspace: running under sudo but cannot identify the invoking user ({why}). \
+             Re-run the build without sudo; installing root-owned safeguards would brick \
+             later unprivileged builds."
+        ),
+    };
+
     let mock_dir = match find_ancestor_with(&build_crate_dir, "mockspace.toml") {
         Some(d) => d,
         None => {
@@ -109,6 +143,23 @@ pub fn bootstrap_from_buildscript() {
     };
 
     let actions = run(&repo_root, &mock_dir, &mockspace_manifest_dir);
+
+    // Sudo repair: hand everything the bootstrap owns back to the invoking
+    // user. Any failure here panics (fails the build): leaving a partial
+    // root-owned install behind is the incident this exists to prevent.
+    #[cfg(unix)]
+    if let Some((uid, gid)) = sudo_ids {
+        if let Err(why) = repair_ownership(&repo_root, &mock_dir, uid, gid) {
+            panic!(
+                "mockspace: bootstrap installed under sudo but could not return \
+                 ownership to uid {uid} ({why}). Fix ownership manually or re-run \
+                 the build without sudo."
+            );
+        }
+        println!("cargo::warning=mockspace: sudo detected, bootstrap outputs chowned to uid {uid}");
+    }
+    #[cfg(not(unix))]
+    let _ = sudo_ids;
 
     for action in &actions {
         println!("cargo::warning=mockspace: {action}");
@@ -1443,6 +1494,135 @@ fn content_fingerprint(content: &str) -> u64 {
     hash
 }
 
+/// Resolve the cargo home the way cargo does: `CARGO_HOME` when set,
+/// else `$HOME/.cargo`. Pure over its arguments for testability.
+fn resolve_cargo_home(
+    cargo_home_env: Option<std::ffi::OsString>,
+    home_env: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    cargo_home_env
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home_env.map(|h| PathBuf::from(h).join(".cargo")))
+}
+
+/// Read sudo's identity handoff. `Ok(None)` when not under sudo,
+/// `Ok(Some((uid, gid)))` when sudo published both ids, `Err` when the
+/// sudo marker is present but the ids are missing or malformed (a state
+/// the caller must treat as fatal rather than guess through).
+fn parse_sudo_ids(
+    user_env: Option<std::ffi::OsString>,
+    uid_env: Option<std::ffi::OsString>,
+    gid_env: Option<std::ffi::OsString>,
+) -> Result<Option<(u32, u32)>, String> {
+    match (uid_env, gid_env) {
+        // No ids and no marker: not under sudo. No ids but the marker is
+        // set: something sudo-shaped without an identity handoff, which
+        // must fail closed rather than install root-owned unrepaired.
+        (None, None) => {
+            if user_env.is_some() {
+                Err("SUDO_USER is set but SUDO_UID/SUDO_GID are absent".to_string())
+            } else {
+                Ok(None)
+            }
+        }
+        (Some(uid), Some(gid)) => {
+            let parse = |v: &std::ffi::OsStr, name: &str| {
+                v.to_str()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .ok_or_else(|| format!("{name} is not a numeric id: {v:?}"))
+            };
+            let uid = parse(&uid, "SUDO_UID")?;
+            let gid = parse(&gid, "SUDO_GID")?;
+            Ok(Some((uid, gid)))
+        }
+        (uid, gid) => Err(format!(
+            "sudo id handoff incomplete: SUDO_UID {}, SUDO_GID {}",
+            if uid.is_some() { "present" } else { "missing" },
+            if gid.is_some() { "present" } else { "missing" },
+        )),
+    }
+}
+
+/// Chown `path` and, when it is a real directory, everything under it.
+///
+/// No-follow throughout: a symlink planted in a bootstrap-owned dir must
+/// never redirect this root chown onto an external file (2026-07 security
+/// review). `lchown` chowns the link itself without dereferencing, and
+/// `symlink_metadata` reports the link rather than its target, so a
+/// symlink is never seen as a directory and never descended.
+#[cfg(unix)]
+fn chown_tree(path: &Path, uid: u32, gid: u32) -> std::io::Result<()> {
+    let md = std::fs::symlink_metadata(path)?;
+    std::os::unix::fs::lchown(path, Some(uid), Some(gid))?;
+    if md.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            chown_tree(&entry?.path(), uid, gid)?;
+        }
+    }
+    Ok(())
+}
+
+/// Return the bootstrap's output roots to the invoking user after a
+/// sudo-run install. Covers exactly what the bootstrap writes: broad
+/// consumer build trees are cargo's outputs, not ours, and stay put.
+#[cfg(unix)]
+fn repair_ownership(
+    repo_root: &Path,
+    mock_dir: &Path,
+    uid: u32,
+    gid: u32,
+) -> std::io::Result<()> {
+    // (path, recursive). `.git/config` is in the set because activation
+    // runs `git config --local core.hooksPath`, and git rewrites the file
+    // via a lock-and-rename that, under sudo, leaves it root-owned. Missing
+    // it would reintroduce the exact EPERM class this repair prevents:
+    // every later unprivileged `git config --local` would fail. The git
+    // dir is resolved (not assumed at `.git/`) because `.git` may be a file
+    // pointing elsewhere in a worktree or submodule.
+    let targets: [(PathBuf, bool); 7] = [
+        (repo_root.join(".cargo"), true),
+        (repo_root.join("target"), false),
+        (repo_root.join("target/mockspace-proxy"), true),
+        (mock_dir.join("target"), false),
+        (mock_dir.join("target/hooks"), true),
+        (repo_root.join(".gitignore"), false),
+        // one file, never .git recursively.
+        (resolve_git_dir(repo_root).join("config"), false),
+    ];
+    for (path, recursive) in targets {
+        if !path.exists() {
+            continue;
+        }
+        if recursive {
+            chown_tree(&path, uid, gid)?;
+        } else {
+            // lchown, not chown: never dereference a symlink at an output
+            // root either (e.g. a .gitignore replaced by a link).
+            std::os::unix::fs::lchown(&path, Some(uid), Some(gid))?;
+        }
+    }
+    Ok(())
+}
+
+/// `true` when `manifest_dir` lies inside the cargo home (the shared
+/// dependency cache): the build is compiling a git checkout or registry
+/// copy, not a working repo, and the bootstrap must not install there.
+///
+/// Pure over its arguments so the guard is testable without touching
+/// process env. Canonicalizes each side where the path exists and falls
+/// back to the path as given, so nonexistent inputs never panic.
+fn is_inside_cargo_home(manifest_dir: &Path, cargo_home: Option<&Path>) -> bool {
+    let Some(home) = cargo_home else {
+        return false;
+    };
+    let dir = manifest_dir
+        .canonicalize()
+        .unwrap_or_else(|_| manifest_dir.to_path_buf());
+    let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    dir.starts_with(&home)
+}
+
 fn find_ancestor_with(start: &Path, target_name: &str) -> Option<PathBuf> {
     let mut dir = start.to_path_buf();
     loop {
@@ -1929,5 +2109,179 @@ mod proxy_freshness_tests {
         let mut actions = Vec::new();
         discard_proxy_binary(&tmp.path().join("mockspace-proxy"), &mut actions);
         assert!(actions.is_empty(), "{actions:?}");
+    }
+}
+
+#[cfg(test)]
+mod bootstrap_guard_tests {
+    use super::is_inside_cargo_home;
+    use std::path::Path;
+
+    #[test]
+    fn bootstrap_guard_skips_inside_cargo_home() {
+        // a git-checkout path like the 2026-06 incident's poisoned entry
+        assert!(is_inside_cargo_home(
+            Path::new("/home/u/.cargo/git/checkouts/arvo-da1db1860201e542/5776b61/mock/crates/arvo"),
+            Some(Path::new("/home/u/.cargo")),
+        ));
+    }
+
+    #[test]
+    fn bootstrap_guard_skips_registry_src_too() {
+        assert!(is_inside_cargo_home(
+            Path::new("/home/u/.cargo/registry/src/index.crates.io-1cd66030c949c28d/somecrate-0.1.0"),
+            Some(Path::new("/home/u/.cargo")),
+        ));
+    }
+
+    #[test]
+    fn bootstrap_guard_proceeds_for_working_repo() {
+        assert!(!is_inside_cargo_home(
+            Path::new("/home/u/Dev/clause-dev/arvo/mock/crates/arvo"),
+            Some(Path::new("/home/u/.cargo")),
+        ));
+    }
+
+    #[test]
+    fn bootstrap_guard_proceeds_when_cargo_home_unknown() {
+        assert!(!is_inside_cargo_home(
+            Path::new("/home/u/.cargo/git/checkouts/x/y"),
+            None,
+        ));
+    }
+
+    #[test]
+    fn bootstrap_guard_proceeds_for_this_repo_own_tree() {
+        // a real, canonicalizable dir against a fake cargo home
+        assert!(!is_inside_cargo_home(
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            Some(Path::new("/nonexistent/.cargo")),
+        ));
+    }
+
+    #[test]
+    fn bootstrap_guard_relative_paths_do_not_panic() {
+        assert!(!is_inside_cargo_home(
+            Path::new("mock/crates/arvo"),
+            Some(Path::new("/tmp/.cargo")),
+        ));
+    }
+
+    // resolve_cargo_home
+
+    #[test]
+    fn bootstrap_guard_cargo_home_explicit_wins() {
+        let home = super::resolve_cargo_home(
+            Some("/custom/cargo".into()),
+            Some("/home/u".into()),
+        );
+        assert_eq!(home, Some(std::path::PathBuf::from("/custom/cargo")));
+    }
+
+    #[test]
+    fn bootstrap_guard_cargo_home_falls_back_to_home() {
+        let home = super::resolve_cargo_home(None, Some("/home/u".into()));
+        assert_eq!(home, Some(std::path::PathBuf::from("/home/u/.cargo")));
+    }
+
+    #[test]
+    fn bootstrap_guard_cargo_home_empty_env_falls_back() {
+        // an exported-but-empty CARGO_HOME must not resolve to "".
+        let home = super::resolve_cargo_home(Some("".into()), Some("/home/u".into()));
+        assert_eq!(home, Some(std::path::PathBuf::from("/home/u/.cargo")));
+    }
+
+    #[test]
+    fn bootstrap_guard_cargo_home_unresolvable() {
+        assert_eq!(super::resolve_cargo_home(None, None), None);
+    }
+
+    // parse_sudo_ids
+
+    #[test]
+    fn bootstrap_guard_sudo_absent_is_none() {
+        assert_eq!(super::parse_sudo_ids(None, None, None), Ok(None));
+    }
+
+    #[test]
+    fn bootstrap_guard_sudo_complete_parses() {
+        assert_eq!(
+            super::parse_sudo_ids(Some("u".into()), Some("501".into()), Some("20".into())),
+            Ok(Some((501, 20))),
+        );
+    }
+
+    #[test]
+    fn bootstrap_guard_sudo_marker_without_ids_fails_closed() {
+        assert!(super::parse_sudo_ids(Some("u".into()), None, None).is_err());
+    }
+
+    #[test]
+    fn bootstrap_guard_sudo_partial_ids_fail_closed() {
+        assert!(super::parse_sudo_ids(Some("u".into()), Some("501".into()), None).is_err());
+    }
+
+    #[test]
+    fn bootstrap_guard_sudo_malformed_ids_fail_closed() {
+        assert!(
+            super::parse_sudo_ids(Some("u".into()), Some("fivehundred".into()), Some("20".into()))
+                .is_err()
+        );
+    }
+
+    // ownership repair traversal (chown to our own uid/gid is permitted
+    // unprivileged, so the walk is exercisable without root)
+
+    #[cfg(unix)]
+    #[test]
+    fn bootstrap_guard_repair_walk_covers_nested_tree() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".cargo")).unwrap();
+        std::fs::write(root.join(".cargo/config.toml"), "[alias]\n").unwrap();
+        std::fs::create_dir_all(root.join("target/mockspace-proxy/src")).unwrap();
+        std::fs::write(root.join("target/mockspace-proxy/Cargo.toml"), "").unwrap();
+        let mock = root.join("mock");
+        std::fs::create_dir_all(mock.join("target/hooks")).unwrap();
+        std::fs::write(mock.join("target/hooks/pre-commit"), "#!/bin/sh\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
+
+        let meta = std::fs::metadata(root).unwrap();
+        super::repair_ownership(root, &mock, meta.uid(), meta.gid())
+            .expect("repair over own files succeeds");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bootstrap_guard_repair_does_not_follow_symlinks() {
+        use std::os::unix::fs::MetadataExt;
+        // a symlink planted inside a repaired tree must not be followed:
+        // the external file it points at stays untouched.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(".cargo")).unwrap();
+
+        let external = dir.path().join("external-secret");
+        std::fs::write(&external, "do not touch").unwrap();
+        std::os::unix::fs::symlink(&external, root.join(".cargo/link")).unwrap();
+
+        let meta = std::fs::metadata(root).unwrap();
+        // repair succeeds and only touches the link, never its target.
+        super::chown_tree(&root.join(".cargo"), meta.uid(), meta.gid())
+            .expect("repair with a symlink present succeeds");
+
+        // the external file still exists with its content: not deleted,
+        // not redirected. (Ownership is unchanged; we chowned to our own
+        // uid so a follow would have been a silent no-op on content, but
+        // the file's continued existence and readability is the guard.)
+        assert_eq!(
+            std::fs::read_to_string(&external).unwrap(),
+            "do not touch"
+        );
+        assert!(std::fs::symlink_metadata(root.join(".cargo/link"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 }

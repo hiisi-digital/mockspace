@@ -1,0 +1,50 @@
+34a316d chore: lock src changelist for chown no-follow round
+58b5370 fix: use lchown in sudo repair to not follow symlinks
+778b8d0 docs: add src changelist for chown no-follow round
+cf61395 chore: lock doc changelist for chown no-follow round
+80a32ee docs: add empty doc changelist for chown no-follow round
+454d7ca docs: open chown no-follow round
+a123a25 chore: close design round 202607190816
+9c830e6 chore: lock src changelist for sudo-repair round
+587f1d6 fix: install under sudo as invoking user, fail closed on repair
+1f1993a docs: add src changelist for sudo-repair round
+783824b chore: lock doc changelist for sudo-repair round
+515799f docs: add empty doc changelist for sudo-repair round
+cfe2b74 docs: open bootstrap sudo-repair round
+c9a2075 chore: close design round 202607190741
+cad84a7 chore: lock src changelist for cache-guard round
+191813b fix: skip bootstrap inside cargo cache and under sudo
+40786f4 docs: add src changelist for cache-guard round
+dbd67c9 chore: lock doc changelist for cache-guard round
+547dedb docs: add empty doc changelist for cache-guard round
+22f5ddc docs: open bootstrap cache-guard round
+e37c7e5 feat: add a query subcommand over the template syntax
+e386e44 fix: a schema check that examined no files is not a pass
+ac9fe33 feat: allow a method chain on a resolved reference
+c75a32c feat: split pathof from sourcesof
+3be27e1 feat: add pathof, which answers where a thing comes from
+4a44406 fix: drop an internal root's citation from prose, not only from table cells
+32c4222 revert: drop the cross-crate document tier
+7e49176 feat: add a document tier for subjects that cross crates
+1303655 fix: render a namespace table from the bare form
+ffcc180 refactor: generate every document through one pipeline
+0c8db96 fix: substitute a placeholder that arrives inside an expansion
+a47ad96 fix: accept a placeholder written with spaces inside its braces
+0b3b9e3 fix: resolve references in DESIGN.md, and report any that render literally
+65d8d7d fix: resolve a crate reference from a name rather than from the docs directory
+9661131 fix: resolve registry references in per-crate documents
+b47d8da feat: keep every branch-tracked git dependency current, not only mockspace
+2e8a5a4 fix: keep the internal-field note terse in the generated reference rule
+b0a7813 fix: rebuild the proxy when its revision moves, and report an edgeless graph
+c18a51f feat: let a registry field or a citation root stay out of the generated docs
+d489700 fix: remove a duplicated collision check left by the registry split
+21ed2fe refactor: split registry into six modules along the path a row takes
+6248b67 fix: drop the anchor stub block below registry tables
+d132b6d fix: recognise every dependency form, not only workspace inheritance
+8eb7bbf feat: render citations as short links by default, full on request
+39f1404 feat: render prose roots and citations, generate the syntax rule per project
+1b0ac86 feat: add crates:: as a reference root
+ebd8456 fix: address the locked mockspace by its full source spec
+2b8c809 docs: state what the phase gate actually covers
+ccb668d feat: a registry of terms and concepts, resolved at doc-generation time
+1a49a63 feat: derive a scoped agent rule from each crate's README
