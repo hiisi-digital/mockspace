@@ -1,18 +1,23 @@
-//! Pre-commit auto-formatting and clippy-fix.
+//! Pre-commit auto-formatting and clippy-fix, scoped to the staged files.
 //!
-//! When a commit is being made, run the repo's own configured `cargo fmt` and
-//! (optionally) `cargo clippy --fix` in each package the staged changes touch
-//! (a file's nearest ancestor `Cargo.toml` directory), then re-stage the
-//! results so the commit lands already-fixed. Scoping to the changed packages
-//! keeps the cost proportional to the change: `cargo clippy --fix` only
-//! compiles those packages, not the whole workspace.
+//! When a commit is being made, the fixers touch **only the files being
+//! committed**, the lint-staged / prettier + eslint pre-commit model. Nothing
+//! outside the commit changes, so no unrelated file is rewritten and then
+//! blocked by the design-round phase gate.
 //!
-//! The fixers use whatever config the repo already has: `cargo fmt` resolves
-//! `rustfmt.toml` by walking the directory tree upward (it ignores workspace
-//! boundaries, so a repo-root `rustfmt.toml` governs `mock/` sources too), and
-//! `cargo clippy --fix` respects the `#![warn(clippy::…)]` crate attributes the
-//! entrypoints declare. This module never imposes a style; it applies the
-//! project's own.
+//! - `auto_fmt` runs `rustfmt` directly on the staged `.rs` files (those that
+//!   still exist; a staged deletion is skipped). rustfmt resolves `rustfmt.toml`
+//!   by walking the directory tree upward, so a repo-root config governs `mock/`
+//!   sources too.
+//! - `auto_clippy_fix` is crate-level (clippy cannot target single files), so it
+//!   runs `cargo clippy --fix` in each changed package, then **reverts** any file
+//!   clippy touched that is not part of the commit and was not already dirty.
+//!   Only the staged files keep their fixes; a pristine sibling clippy happened
+//!   to rewrite is restored. A sibling that was already dirty (the user's own
+//!   in-flight edit) is left alone and surfaced, never clobbered.
+//!
+//! The fixers use whatever config the repo already has (`rustfmt.toml`, the
+//! `#![warn(clippy::…)]` crate attributes); this module never imposes a style.
 //!
 //! Best-effort by design: a fixer that fails (rustfmt on unparseable source,
 //! clippy on code that does not compile yet) is logged and skipped, never
@@ -27,8 +32,8 @@ use std::process::Command;
 
 /// Run the configured pre-commit fixers. `repo_root` is the repository top
 /// level (the git work-tree root). Returns human-readable action lines for the
-/// caller to log. A no-op (and empty result) when both flags are off, nothing
-/// is staged, or no staged file belongs to a cargo package.
+/// caller to log. A no-op (and empty result) when both flags are off or nothing
+/// is staged.
 pub fn run(repo_root: &Path, auto_fmt: bool, auto_clippy_fix: bool) -> Vec<String> {
     let mut actions = Vec::new();
     if !auto_fmt && !auto_clippy_fix {
@@ -39,56 +44,60 @@ pub fn run(repo_root: &Path, auto_fmt: bool, auto_clippy_fix: bool) -> Vec<Strin
     if staged.is_empty() {
         return actions;
     }
-    // Files safe to re-stage after the fixers run: those staged with no
-    // unstaged component at entry. Re-adding a partially-staged file (`git add
-    // -p`) would sweep in edits the user deliberately withheld, so those are
-    // left alone.
-    let unstaged: BTreeSet<PathBuf> = git_lines(repo_root, &["diff", "--name-only"])
+    let staged_set: BTreeSet<PathBuf> = staged.iter().cloned().collect();
+    // Files already dirty before the fixers ran. Two uses: they must not be
+    // re-staged (a `git add -p` partial would sweep in withheld edits), and a
+    // clippy rewrite of one is the user's concern, never reverted.
+    let pre_dirty: BTreeSet<PathBuf> = git_lines(repo_root, &["diff", "--name-only"])
         .into_iter()
         .collect();
-    let (safe_to_restage, partially_staged) = partition_restage(&staged, &unstaged);
 
-    let pkgs = changed_package_dirs(&staged, repo_root, |p| p.is_file());
-    if pkgs.is_empty() {
-        return actions;
-    }
-
-    // Run the fixers in each changed package's own directory. cargo infers the
-    // package from the cwd, so a bare `cargo fmt` / `cargo clippy --fix` scopes
-    // to just that package (and, for clippy, only compiles that package and its
-    // deps). The cost is proportional to what is being committed, not the whole
-    // workspace, and members are covered because each maps to its own package.
-    for pkg in &pkgs {
-        let where_ = rel(repo_root, pkg);
-        if auto_fmt {
-            match run_cargo(pkg, &["fmt"]) {
-                true => actions.push(format!("auto_fmt: cargo fmt ({where_})")),
-                false => actions.push(format!("auto_fmt: skipped, cargo fmt failed ({where_})")),
-            }
-        }
-        if auto_clippy_fix {
-            // --allow-dirty/--allow-staged because the hook runs against staged
-            // and possibly dirty files.
-            let args = ["clippy", "--fix", "--allow-dirty", "--allow-staged"];
-            match run_cargo(pkg, &args) {
-                true => actions.push(format!("auto_clippy_fix: cargo clippy --fix ({where_})")),
-                false => {
-                    actions.push(format!(
-                        "auto_clippy_fix: skipped, clippy --fix failed ({where_})"
-                    ))
-                },
+    // auto_fmt: rustfmt ONLY the staged .rs files that still exist on disk.
+    if auto_fmt {
+        let files: Vec<PathBuf> = staged
+            .iter()
+            .filter(|p| p.extension().map(|e| e == "rs").unwrap_or(false))
+            .filter(|p| repo_root.join(p).is_file())
+            .cloned()
+            .collect();
+        if !files.is_empty() {
+            if run_rustfmt(repo_root, &files) {
+                actions.push(format!("auto_fmt: rustfmt {} staged file(s)", files.len()));
+            } else {
+                actions.push("auto_fmt: skipped, rustfmt failed".to_string());
             }
         }
     }
 
-    // Re-stage the safe set: files the fixers may have rewritten in the working
-    // tree, so the formatted content is what the commit records.
+    // auto_clippy_fix: crate-level, so run per changed package then revert any
+    // file clippy touched that is not staged and was not already dirty.
+    if auto_clippy_fix {
+        let pkgs = changed_package_dirs(&staged, repo_root, |p| p.is_file());
+        let mut ran = false;
+        for pkg in &pkgs {
+            ran |= run_cargo(pkg, &["clippy", "--fix", "--allow-dirty", "--allow-staged"]);
+        }
+        if ran {
+            let post_dirty: BTreeSet<PathBuf> = git_lines(repo_root, &["diff", "--name-only"])
+                .into_iter()
+                .collect();
+            let spurious = spurious_files(&post_dirty, &staged_set, &pre_dirty);
+            let reverted = revert(repo_root, &spurious);
+            actions.push(format!(
+                "auto_clippy_fix: cargo clippy --fix ({} package(s)); reverted {reverted} unrelated file(s)",
+                pkgs.len()
+            ));
+        }
+    }
+
+    // Re-stage the safe set: staged files (with no pre-existing unstaged edit)
+    // the fixers may have rewritten, so the fixed content is what the commit
+    // records. Partially-staged files are left as-is to preserve `git add -p`.
+    let (safe_to_restage, partially_staged) = partition_restage(&staged, &pre_dirty);
     let restaged = restage(repo_root, &safe_to_restage);
     if restaged > 0 {
         actions.push(format!("re-staged {restaged} file(s) after fixers"));
     }
-    // Partially-staged files that changed under a fixer are surfaced so the user
-    // knows the commit will NOT contain their reformat.
     if !partially_staged.is_empty() {
         actions.push(format!(
             "auto-fix left {} partially-staged file(s) untouched (re-stage manually if reformatted)",
@@ -96,6 +105,21 @@ pub fn run(repo_root: &Path, auto_fmt: bool, auto_clippy_fix: bool) -> Vec<Strin
         ));
     }
     actions
+}
+
+/// Files a fixer dirtied that are neither part of the commit nor previously
+/// dirty: the pristine siblings clippy rewrote, which must be reverted so only
+/// the staged files change. Pure over the three sets for testability.
+fn spurious_files(
+    post_dirty: &BTreeSet<PathBuf>,
+    staged: &BTreeSet<PathBuf>,
+    pre_dirty: &BTreeSet<PathBuf>,
+) -> Vec<PathBuf> {
+    post_dirty
+        .iter()
+        .filter(|f| !staged.contains(*f) && !pre_dirty.contains(*f))
+        .cloned()
+        .collect()
 }
 
 /// Split staged files into the set safe to re-stage (no unstaged component, so
@@ -170,6 +194,42 @@ fn run_cargo(root: &Path, args: &[&str]) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Run `rustfmt` on the given repo-relative files. rustfmt discovers
+/// `rustfmt.toml` (edition included) by walking up from each file, so the repo's
+/// own style applies. `true` on exit status 0.
+fn run_rustfmt(repo_root: &Path, files: &[PathBuf]) -> bool {
+    Command::new("rustfmt")
+        .args(files)
+        .current_dir(repo_root)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// `git checkout -- <files>` to restore working-tree files to their staged/HEAD
+/// content. Returns the count restored.
+fn revert(repo_root: &Path, files: &[PathBuf]) -> usize {
+    let mut n = 0;
+    for f in files {
+        let ok = Command::new("git")
+            .arg("checkout")
+            .arg("--")
+            .arg(f)
+            .current_dir(repo_root)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            n += 1;
+        }
+    }
+    n
 }
 
 /// `git add` the given repo-relative paths. Returns the count added.
@@ -312,5 +372,26 @@ mod tests {
         let (safe, partial) = partition_restage(&staged, &unstaged);
         assert_eq!(safe, staged);
         assert!(partial.is_empty());
+    }
+
+    #[test]
+    fn spurious_is_dirtied_minus_staged_minus_predirty() {
+        let set = |v: &[&str]| -> BTreeSet<PathBuf> { v.iter().map(PathBuf::from).collect() };
+        // clippy dirtied a staged file, a pre-existing dirty sibling, and a
+        // pristine sibling. Only the pristine sibling is spurious (to revert).
+        let post = set(&["staged.rs", "already_dirty.rs", "pristine_sibling.rs"]);
+        let staged = set(&["staged.rs"]);
+        let pre = set(&["already_dirty.rs"]);
+        assert_eq!(spurious_files(&post, &staged, &pre), vec![PathBuf::from(
+            "pristine_sibling.rs"
+        )]);
+    }
+
+    #[test]
+    fn spurious_empty_when_only_staged_changed() {
+        let set = |v: &[&str]| -> BTreeSet<PathBuf> { v.iter().map(PathBuf::from).collect() };
+        let post = set(&["staged.rs"]);
+        let staged = set(&["staged.rs"]);
+        assert!(spurious_files(&post, &staged, &BTreeSet::new()).is_empty());
     }
 }
