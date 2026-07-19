@@ -227,19 +227,51 @@
     }
 
     #[test]
-    fn bootstrap_durable_hook_self_heals_then_blocks() {
+    fn bootstrap_durable_hook_gates_via_launcher_or_blocks_surface() {
         let h = super::gen_durable_hook("pre-commit");
-        // locates the repo and the live validator
+        // resolves the repo root (MOCK_ROOT or the .git ancestor)
         assert!(h.contains("git rev-parse --show-toplevel"));
-        assert!(h.contains("mockspace.mockdir"));
-        assert!(h.contains("target/hooks/pre-commit"));
-        // execs the live validator when present
-        assert!(h.contains(r#"exec "$live" "$@""#));
-        // self-heals before blocking
-        assert!(h.contains("cargo check"));
-        // fails closed
-        assert!(h.contains("BLOCKED"));
+        assert!(h.contains("MOCK_ROOT"));
+        // flexibly resolves the config + mock dir (no baked mockdir, no git config)
+        assert!(h.contains("read_mock_dir"));
+        assert!(!h.contains("mockspace.mockdir"));
+        // discovers the launcher and calls it, not the `cargo mock` alias
+        assert!(h.contains("command -v mock"));
+        assert!(h.contains("command -v cargo-mock"));
+        assert!(h.contains(r#""$launcher""#));
+        assert!(!h.contains("cargo mock"));
+        // no launcher: fail closed for the design surface only, install hint
+        assert!(h.contains("cargo install cargo-mock"));
+        assert!(h.contains("git diff --cached --name-only -- \"$mockrel\""));
         assert!(h.contains("exit 1"));
+        // and the generated shell is syntactically valid
+        assert_bash_ok(&h);
+    }
+
+    #[test]
+    fn bootstrap_durable_pre_push_hook_valid() {
+        let h = super::gen_durable_hook("pre-push");
+        assert!(h.contains("pre-push: running mockspace validation"));
+        assert!(h.contains(r#""$launcher""#));
+        assert!(!h.contains("cargo mock"));
+        assert_bash_ok(&h);
+    }
+
+    /// `bash -n` the generated hook (syntax check only, no execution).
+    fn assert_bash_ok(script: &str) {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(script.as_bytes()).unwrap();
+        let out = std::process::Command::new("bash")
+            .arg("-n")
+            .arg(f.path())
+            .output()
+            .expect("run bash -n");
+        assert!(
+            out.status.success(),
+            "generated hook has a bash syntax error:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     #[cfg(unix)]
