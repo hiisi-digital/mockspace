@@ -35,6 +35,8 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use index::{SummaryRow, fmt_ns, write_index};
+
+mod staging;
 use worker::drive_worker;
 
 use crate::analysis::bootstrap_ci_median;
@@ -144,9 +146,11 @@ pub(super) fn resolve_routine(
     }
 }
 
-/// Per-config output paths under `results/<bench>/`.
-fn output_paths(config: &BenchConfig) -> (PathBuf, String, String) {
-    let dir = Path::new(RESULTS_DIR).join(&config.bench_name);
+/// Per-config output paths under `<root>/<bench>/`. During a run
+/// `root` is the in-flight staging tree; report-only reads the
+/// canonical `results/` directly.
+fn output_paths(config: &BenchConfig, root: &Path) -> (PathBuf, String, String) {
+    let dir = root.join(&config.bench_name);
     let csv = dir
         .join(format!("{}_n{}.csv", config.bench_name, config.n))
         .display()
@@ -270,6 +274,23 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
         }
     }
 
+    // ── transactional results: quarantine crash-borne trees, then
+    // stage this run's outputs; promotion happens only on orderly
+    // completion (see the staging module docs) ──
+    let results_root = PathBuf::from(RESULTS_DIR);
+    let stage_root: Option<PathBuf> = if cli.report_only {
+        None
+    } else {
+        staging::quarantine_stale(&results_root);
+        match staging::create_stage_root(&results_root) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("error: creating staging root: {e}");
+                return ExitCode::FAILURE;
+            },
+        }
+    };
+
     // ── run plan ──
     eprintln!(
         "run plan: {} bench(es), {} config(s){}",
@@ -279,6 +300,9 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
     );
 
     let mut summary: Vec<SummaryRow> = Vec::new();
+    // History appends are deferred to after promotion so the
+    // regression log never records a crash-borne run.
+    let mut deferred_history: Vec<(String, Vec<HistoryEntry>)> = Vec::new();
     let mut required_failure = false;
     let total = configs.len();
     let started = Instant::now();
@@ -309,7 +333,8 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             },
         };
         let workload = (registry.build_workload)(&config.workload, config.n);
-        let (dir, csv_path, findings_path) = output_paths(config);
+        let out_root = stage_root.as_deref().unwrap_or(results_root.as_path());
+        let (dir, csv_path, findings_path) = output_paths(config, out_root);
         if let Err(e) = std::fs::create_dir_all(&dir) {
             eprintln!("error: creating {}: {e}", dir.display());
             return ExitCode::FAILURE;
@@ -455,9 +480,6 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
                 );
             }
         }
-        if let Err(e) = history::append(&benchmark_key, &entries) {
-            eprintln!("  history append failed: {e}");
-        }
         for e in &entries {
             let flagged = regressions.iter().any(|(_, v, _, f)| *f && v == &e.variant);
             summary.push(SummaryRow {
@@ -468,6 +490,20 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
                 ratio_vs_best: if best > 0.0 { e.median_ns / best } else { 1.0 },
                 regression:    flagged,
             });
+        }
+        deferred_history.push((benchmark_key, entries));
+    }
+
+    // ── orderly completion: promote staged results, then history ──
+    if let Some(stage) = &stage_root {
+        if let Err(e) = staging::promote(&results_root, stage) {
+            eprintln!("error: promoting staged results: {e}");
+            return ExitCode::FAILURE;
+        }
+        for (key, entries) in &deferred_history {
+            if let Err(e) = history::append(key, entries) {
+                eprintln!("  history append failed: {e}");
+            }
         }
     }
 
