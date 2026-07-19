@@ -100,7 +100,9 @@ fn run(args: &[String]) -> Result<(), String> {
     let root = discover::repo_root().ok_or_else(|| {
         "not inside a git repository (no .git found, and MOCK_ROOT is unset)".to_string()
     })?;
-    let located = discover::locate(&root);
+    // `locate` hard-errors (blocking the run) if the repo has more than one
+    // mockspace.toml; `None` means none (legacy fallback), `Some` exactly one.
+    let located = discover::locate(&root)?;
     // fall back to the conventional mock dir for a repo that has only a legacy
     // Cargo.lock pin and no mockspace.toml yet.
     let mock_abs = located

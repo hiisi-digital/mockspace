@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 
 /// A located mockspace config and the mock dir it maps.
+#[derive(Debug)]
 pub struct Located {
     /// The `mockspace.toml` to read the pin from.
     pub config_path: PathBuf,
@@ -49,39 +50,66 @@ fn repo_root_with(mock_root: Option<std::ffi::OsString>) -> Option<PathBuf> {
     }
 }
 
-/// Resolve the `mockspace.toml` and the mock dir it maps, flexibly.
+/// Resolve the one `mockspace.toml` and the mock dir it maps.
 ///
-/// The repo root is checked first: a `mockspace.toml` there maps its mock dir
-/// via the `mock_dir` key, defaulting to `mock` (what almost every consumer
-/// uses). Otherwise the immediate subdirs are scanned, hidden ones (`.config`,
-/// `.mockspace`, ...) first, and the first that holds a `mockspace.toml` wins;
-/// there the `mock_dir` key defaults to `.`, so the config's own dir is the
-/// mock workspace. This keeps every existing `mock/mockspace.toml` working
-/// with no move, while a clean root placement points at `mock` explicitly.
+/// # Exactly one config per repo
+///
+/// A repo has **exactly one** `mockspace.toml`. It sits either at the repo root
+/// (its home once relocated) or in a single immediate subdir (the historical
+/// in-place location, e.g. `mock/`). There is no merging, no precedence, and no
+/// "nearest wins": those semantics were never specified, so rather than pick one
+/// silently, **more than one config anywhere in the repo (root plus immediate
+/// subdirs) is a hard error** that blocks every `mock` run until exactly one
+/// remains. This is `Err`. Zero configs is `Ok(None)` (the caller falls back to
+/// the legacy `Cargo.lock` pin). One config is `Ok(Some)`.
+///
+/// The one config maps its mock dir via the `mock_dir` key: at the root it
+/// defaults to `mock` (what almost every consumer uses); in a subdir it defaults
+/// to `.` (the config's own dir is the mock workspace).
+///
+/// The scan covers the repo root and its immediate subdirs (hidden ones first),
+/// skipping `.git` / `target` / `node_modules`. Deeper nesting is out of scope.
 ///
 /// The engine's durable git hook reimplements this same resolution in shell
 /// (`src/bootstrap/durable.rs`, the no-launcher fallback); the two MUST stay in
-/// sync.
-pub fn locate(root: &Path) -> Option<Located> {
+/// sync, including this single-config rule.
+pub fn locate(root: &Path) -> Result<Option<Located>, String> {
+    // Collect every (config, its-dir) in scope, so a second one is caught rather
+    // than silently shadowed by a precedence order.
+    let mut found: Vec<(PathBuf, PathBuf)> = Vec::new();
     let root_cfg = root.join("mockspace.toml");
     if root_cfg.is_file() {
-        let md = mock_dir_field(&root_cfg).unwrap_or_else(|| "mock".to_string());
-        return Some(Located {
-            config_path: root_cfg,
-            mock_dir:    normalize(root.join(md)),
-        });
+        found.push((root_cfg, root.to_path_buf()));
     }
     for sub in ordered_subdirs(root) {
         let cfg = sub.join("mockspace.toml");
         if cfg.is_file() {
-            let md = mock_dir_field(&cfg).unwrap_or_else(|| ".".to_string());
-            return Some(Located {
-                config_path: cfg,
-                mock_dir:    normalize(sub.join(md)),
-            });
+            found.push((cfg, sub));
         }
     }
-    None
+    match found.len() {
+        0 => Ok(None),
+        1 => {
+            let (config_path, dir) = found.into_iter().next().unwrap();
+            let default_md = if dir == root { "mock" } else { "." };
+            let md = mock_dir_field(&config_path).unwrap_or_else(|| default_md.to_string());
+            Ok(Some(Located {
+                mock_dir: normalize(dir.join(md)),
+                config_path,
+            }))
+        },
+        _ => {
+            let list = found
+                .iter()
+                .map(|(c, _)| format!("  {}", c.display()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Err(format!(
+                "found more than one mockspace.toml in this repo; a repo must have exactly \
+                 one (at the repo root, or in a single subdir). Remove the extras, keep one:\n{list}"
+            ))
+        },
+    }
 }
 
 /// Immediate subdirs of `root`, hidden (dotfile) ones first, each group sorted,
@@ -155,7 +183,7 @@ mod tests {
     fn locates_root_config_defaulting_mock() {
         let d = tempfile::tempdir().unwrap();
         fs::write(d.path().join("mockspace.toml"), "project_name = \"x\"\n").unwrap();
-        let loc = locate(d.path()).unwrap();
+        let loc = locate(d.path()).unwrap().unwrap();
         assert_eq!(loc.config_path, d.path().join("mockspace.toml"));
         assert_eq!(loc.mock_dir, d.path().join("mock"));
     }
@@ -164,7 +192,7 @@ mod tests {
     fn root_config_explicit_mock_dir() {
         let d = tempfile::tempdir().unwrap();
         fs::write(d.path().join("mockspace.toml"), "mock_dir = \"design\"\n").unwrap();
-        let loc = locate(d.path()).unwrap();
+        let loc = locate(d.path()).unwrap().unwrap();
         assert_eq!(loc.mock_dir, d.path().join("design"));
     }
 
@@ -177,34 +205,29 @@ mod tests {
             "project_name = \"x\"\n",
         )
         .unwrap();
-        let loc = locate(d.path()).unwrap();
+        let loc = locate(d.path()).unwrap().unwrap();
         assert_eq!(loc.config_path, d.path().join("mock/mockspace.toml"));
         // subdir default is `.` -> the config's own dir is the mock dir
         assert_eq!(loc.mock_dir, d.path().join("mock"));
     }
 
     #[test]
-    fn hidden_subdir_wins_over_plain() {
+    fn two_subdir_configs_is_an_error() {
         let d = tempfile::tempdir().unwrap();
-        fs::create_dir(d.path().join("mock")).unwrap();
-        fs::write(
-            d.path().join("mock/mockspace.toml"),
-            "project_name = \"p\"\n",
-        )
-        .unwrap();
-        fs::create_dir(d.path().join(".config")).unwrap();
-        fs::write(
-            d.path().join(".config/mockspace.toml"),
-            "project_name = \"h\"\n",
-        )
-        .unwrap();
-        let loc = locate(d.path()).unwrap();
-        assert_eq!(loc.config_path, d.path().join(".config/mockspace.toml"));
-        assert_eq!(loc.mock_dir, d.path().join(".config"));
+        for sub in ["mock", ".config"] {
+            fs::create_dir(d.path().join(sub)).unwrap();
+            fs::write(
+                d.path().join(sub).join("mockspace.toml"),
+                "project_name = \"x\"\n",
+            )
+            .unwrap();
+        }
+        // two configs is invalid: a hard error, not a precedence pick.
+        assert!(locate(d.path()).is_err());
     }
 
     #[test]
-    fn root_wins_over_subdir() {
+    fn root_plus_subdir_configs_is_an_error() {
         let d = tempfile::tempdir().unwrap();
         fs::write(d.path().join("mockspace.toml"), "project_name = \"root\"\n").unwrap();
         fs::create_dir(d.path().join("mock")).unwrap();
@@ -213,14 +236,15 @@ mod tests {
             "project_name = \"sub\"\n",
         )
         .unwrap();
-        let loc = locate(d.path()).unwrap();
-        assert_eq!(loc.config_path, d.path().join("mockspace.toml"));
-        assert_eq!(loc.mock_dir, d.path().join("mock"));
+        let err = locate(d.path()).unwrap_err();
+        // the error names both offending paths.
+        assert!(err.contains("mockspace.toml"));
+        assert!(err.contains("mock"));
     }
 
     #[test]
     fn none_when_no_config() {
         let d = tempfile::tempdir().unwrap();
-        assert!(locate(d.path()).is_none());
+        assert!(locate(d.path()).unwrap().is_none());
     }
 }
