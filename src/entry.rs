@@ -66,7 +66,10 @@ fn run_inner(
 
     let cfg = Config::from_dir(&mock_dir);
 
-    // Subcommands: positional args that aren't flags or --dir values.
+    // Subcommands: positional args that aren't flags or value-flag values.
+    // `--dir` and `--scope` both take a value; their values must not be read
+    // as a subcommand (a `--scope arvo` from a hook would otherwise look like
+    // an unknown subcommand `arvo`).
     let positional_args: Vec<&str> = {
         let mut result = Vec::new();
         let mut skip_next = false;
@@ -75,8 +78,8 @@ fn run_inner(
                 skip_next = false;
                 continue;
             }
-            if arg == "--dir" {
-                skip_next = true; // skip the --dir value
+            if arg == "--dir" || arg == "--scope" {
+                skip_next = true; // skip the value that follows
                 continue;
             }
             if arg.starts_with('-') {
@@ -174,7 +177,23 @@ fn run_inner(
                 let bench_args: Vec<&str> = positional_args.iter().skip(1).copied().collect();
                 return bench::cmd(&cfg, &bench_args);
             }
-            _ => {} // Not a subcommand, continue to flags.
+            other => {
+                // An unrecognised first positional is a mistyped subcommand,
+                // not a reason to silently run the default full regeneration
+                // (slow, and not what was asked). Report and exit non-zero.
+                eprintln!("error: unknown subcommand `{other}`");
+                if let Some(guess) = suggest_subcommand(other) {
+                    eprintln!("  did you mean `{guess}`?");
+                }
+                eprintln!("\navailable subcommands:");
+                for name in KNOWN_SUBCOMMANDS {
+                    eprintln!("  {name}");
+                }
+                eprintln!(
+                    "\n(run `cargo mock` with no subcommand to regenerate docs and agent rules)"
+                );
+                return ExitCode::from(2);
+            }
         }
     }
 
@@ -794,6 +813,59 @@ fn simple_hash(s: &str) -> u64 {
     h
 }
 
+/// Every subcommand `run_inner` dispatches on. Single source of truth for
+/// the dispatch match, the unknown-subcommand help, and the suggestion.
+const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "activate",
+    "deactivate",
+    "status",
+    "query",
+    "check",
+    "clean",
+    "pdf",
+    "lock",
+    "deprecate",
+    "unlock",
+    "close",
+    "archive",
+    "migrate",
+    "bench",
+];
+
+/// Classic Levenshtein edit distance between two ASCII-ish words. Small
+/// inputs (subcommand names), so the simple two-row DP is more than enough.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
+/// Nearest known subcommand to `input`, when close enough to be a likely
+/// typo. The threshold scales with word length so short words need a close
+/// match and longer ones tolerate a little more.
+fn suggest_subcommand(input: &str) -> Option<&'static str> {
+    let mut best: Option<(&'static str, usize)> = None;
+    for &name in KNOWN_SUBCOMMANDS {
+        let d = levenshtein(input, name);
+        if best.map_or(true, |(_, bd)| d < bd) {
+            best = Some((name, d));
+        }
+    }
+    let (name, dist) = best?;
+    let threshold = (input.len() / 2).max(2);
+    (dist <= threshold).then_some(name)
+}
+
 fn resolve_mock_dir(raw: &str) -> PathBuf {
     let path = PathBuf::from(raw);
 
@@ -1274,5 +1346,41 @@ mod clean_tests {
         mkdir(root, "mock/target");
         mkdir(root, "src");
         assert!(nested_artifact_targets(root).is_empty());
+    }
+
+    #[test]
+    fn levenshtein_basic_distances() {
+        assert_eq!(super::levenshtein("lock", "lock"), 0);
+        assert_eq!(super::levenshtein("locks", "lock"), 1);
+        assert_eq!(super::levenshtein("clsoe", "close"), 2);
+        assert_eq!(super::levenshtein("", "close"), 5);
+    }
+
+    #[test]
+    fn suggest_subcommand_catches_typos() {
+        assert_eq!(super::suggest_subcommand("locks"), Some("lock"));
+        assert_eq!(super::suggest_subcommand("closs"), Some("close"));
+        assert_eq!(super::suggest_subcommand("actlvate"), Some("activate"));
+        assert_eq!(super::suggest_subcommand("depricate"), Some("deprecate"));
+    }
+
+    #[test]
+    fn suggest_subcommand_declines_far_words() {
+        // a wholly unrelated word should not be forced onto a subcommand
+        assert_eq!(super::suggest_subcommand("frobnicate"), None);
+        assert_eq!(super::suggest_subcommand("xyzzy"), None);
+    }
+
+    #[test]
+    fn every_dispatched_subcommand_is_in_the_known_list() {
+        // guards against the list and the match drifting apart
+        for name in ["activate", "deactivate", "status", "query", "check",
+                     "clean", "pdf", "lock", "deprecate", "unlock", "close",
+                     "archive", "migrate", "bench"] {
+            assert!(
+                super::KNOWN_SUBCOMMANDS.contains(&name),
+                "{name} dispatched but missing from KNOWN_SUBCOMMANDS"
+            );
+        }
     }
 }
