@@ -106,8 +106,13 @@ fn write_cdylib_crate(
     // (a future optimisation) never collide. A run-local hash suffices; this
     // is not a persisted key.
     let crate_name = format!("mockspace-lints-{:016x}", path_hash(&cfg.mock_dir));
+    // A leading empty `[workspace]` makes this generated crate its own workspace
+    // root. Without it, sitting under `<mock>/target/`, cargo treats it as a
+    // member of the consumer's mock workspace and refuses to build it
+    // standalone ("current package believes it's in a workspace when it's not").
     let mut manifest = format!(
-        "[package]\nname = \"{crate_name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n\
+        "[workspace]\n\n\
+         [package]\nname = \"{crate_name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n\
          [lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\n\
          mockspace = {lint_rules_dep}\n"
     );
@@ -330,5 +335,8 @@ mod tests {
         assert!(manifest.contains("crate-type = [\"cdylib\"]"));
         assert!(manifest.contains(&format!("mockspace = {dep}")));
         assert!(manifest.contains("p = \"1\""));
+        // a leading [workspace] makes the crate its own root so cargo builds it
+        // standalone under the consumer's <mock>/target/ (not as a member).
+        assert!(manifest.trim_start().starts_with("[workspace]"));
     }
 }
