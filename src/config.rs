@@ -120,6 +120,10 @@ pub struct Config {
     /// linted, re-staging the result. Uses the repo's own clippy config (the
     /// entrypoint `#![warn(clippy::…)]` attributes). Best-effort. Default true.
     pub auto_clippy_fix: bool,
+    /// Run `cargo deny check` on push against the repo's `deny.toml` (advisories,
+    /// license compatibility, bans, sources). Blocks on a violation; skipped when
+    /// cargo-deny or the config is absent. Default true.
+    pub deny_check:      bool,
 
     /// Agent integration config from `mock/agent/config.toml` if present.
     /// Empty defaults when the file is absent.
@@ -370,6 +374,8 @@ struct RawConfig {
     auto_fmt:        Option<bool>,
     #[serde(default)]
     auto_clippy_fix: Option<bool>,
+    #[serde(default)]
+    deny_check:      Option<bool>,
 
     // Sections (simple key=value maps)
     domain_kinds:   Option<BTreeMap<String, String>>,
@@ -621,6 +627,7 @@ impl Config {
             install_agent_files,
             auto_fmt: raw.auto_fmt.unwrap_or(true),
             auto_clippy_fix: raw.auto_clippy_fix.unwrap_or(true),
+            deny_check: raw.deny_check.unwrap_or(true),
             attribution,
             lint_overrides,
             domain_kinds,

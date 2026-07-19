@@ -248,6 +248,25 @@ pub(crate) fn run_inner(
         }
     }
 
+    // Pre-push dependency gate: cargo-deny (advisories, license compatibility
+    // across the transitive graph, bans, sources). Blocks on a real violation;
+    // skipped when deny.toml or cargo-deny is absent. Config-gated (deny_check,
+    // default true).
+    if mode == LintMode::Push && cfg.deny_check {
+        match crate::deny::check(&cfg.repo_root, cfg.deny_check) {
+            Ok(actions) => {
+                for action in actions {
+                    eprintln!("--- deny: {action} ---");
+                }
+            },
+            Err(msg) => {
+                eprintln!();
+                eprintln!("BLOCKED: {msg}");
+                return ExitCode::FAILURE;
+            },
+        }
+    }
+
     // Keep the locked mockspace current with its branch's remote head, but only
     // in an interactive `cargo mock` (not a git hook, where it must not mutate
     // Cargo.lock mid-commit, and not a build script). `--lint-only` marks the

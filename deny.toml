@@ -1,0 +1,73 @@
+# cargo-deny configuration. Checks dependency advisories (RustSec), license
+# compatibility across the full transitive graph, dependency bans, and source
+# registries. Run with `cargo deny check`; mockspace's pre-push gate runs it
+# best-effort when cargo-deny is installed (opt out with `deny_check = false`
+# in mockspace.toml).
+
+# `targets` filters which platform's dependency tree cargo-deny analyses; it
+# takes rustc target triples, not cargo build-target names. An empty list
+# evaluates the graph for every platform, so a license or advisory problem on
+# any target is caught, not just the host's.
+[graph]
+targets = []
+exclude = []
+all-features = true
+no-default-features = false
+features = []
+
+[output]
+feature-depth = 1
+
+[advisories]
+db-path = "$CARGO_HOME/advisory-dbs"
+db-urls = ["https://github.com/RustSec/advisory-db"]
+ignore = []
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+exceptions = []
+
+[licenses.private]
+ignore = false
+registries = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Workspace-internal crates are path deps without a version; that is not a
+# real wildcard hazard, so allow it.
+allow-wildcard-paths = true
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+unknown-registry = "deny"
+unknown-git = "deny"
+# Codeberg (Forgejo) is not a built-in allow-org provider, so its org sources
+# are listed here as URL prefixes. Add hiisi-digital's codeberg org when it
+# migrates.
+allow-git = ["https://codeberg.org/orgrinrt"]
+
+# Only these git hosts + orgs are allowed as crate sources. allow-org supports
+# the three built-in providers; codeberg goes in allow-git above.
+[sources.allow-org]
+github = ["orgrinrt", "hiisi-digital"]
+gitlab = []
+bitbucket = []

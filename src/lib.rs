@@ -17,6 +17,7 @@ pub mod bench_docs;
 pub mod bootstrap;
 pub mod config;
 pub mod custom_lints;
+pub mod deny;
 pub mod design_round;
 pub mod document;
 pub mod dylib_check;
