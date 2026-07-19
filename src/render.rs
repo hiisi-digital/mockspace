@@ -226,13 +226,13 @@ fn write_domain_row(h: &mut String, item: &Item, mg: &MacroGenerated, cfg: &Conf
 
     match item {
         Item::Trait(t) => {
-            let gen = if t.generics.is_empty() { String::new() } else { esc(&t.generics) };
+            let gen_str = if t.generics.is_empty() { String::new() } else { esc(&t.generics) };
             let bounds_s = if t.bounds.is_empty() {
                 String::new()
             } else {
                 format!(" <FONT COLOR=\"#999999\" POINT-SIZE=\"5\">{}</FONT>", esc(&t.bounds))
             };
-            write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\"><FONT COLOR=\"{}\" POINT-SIZE=\"7\">{}</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\" PORT=\"{}\"><FONT COLOR=\"{}\"><B>{} {}{gen}</B></FONT>{bounds_s}</TD></TR>",
+            write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\"><FONT COLOR=\"{}\" POINT-SIZE=\"7\">{}</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\" PORT=\"{}\"><FONT COLOR=\"{}\"><B>{} {}{gen_str}</B></FONT>{bounds_s}</TD></TR>",
                 style.bg, style.fg, style.label, style.bg, port_id(&t.name), style.fg, style.icon, t.name).unwrap();
             for m in &t.methods {
                 let p = esc(&m.params);
@@ -242,8 +242,8 @@ fn write_domain_row(h: &mut String, item: &Item, mg: &MacroGenerated, cfg: &Conf
             }
         }
         Item::Struct(s) => {
-            let gen = if s.generics.is_empty() { String::new() } else { esc(&s.generics) };
-            write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\"><FONT COLOR=\"{}\" POINT-SIZE=\"7\">{}</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\" PORT=\"{}\"><FONT COLOR=\"{}\"><B>{} {}{gen}</B></FONT></TD></TR>",
+            let gen_str = if s.generics.is_empty() { String::new() } else { esc(&s.generics) };
+            write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\"><FONT COLOR=\"{}\" POINT-SIZE=\"7\">{}</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\" PORT=\"{}\"><FONT COLOR=\"{}\"><B>{} {}{gen_str}</B></FONT></TD></TR>",
                 style.bg, style.fg, style.label, style.bg, port_id(&s.name), style.fg, style.icon, s.name).unwrap();
         }
         Item::Enum(e) => {
@@ -258,13 +258,13 @@ fn write_raw_row(h: &mut String, item: &Item) {
     write!(h, "<HR/>").unwrap();
     match item {
         Item::Trait(t) => {
-            let gen = if t.generics.is_empty() { String::new() } else { esc(&t.generics) };
+            let gen_str = if t.generics.is_empty() { String::new() } else { esc(&t.generics) };
             let bounds_s = if t.bounds.is_empty() {
                 String::new()
             } else {
                 format!(" <FONT COLOR=\"#AAAAAA\" POINT-SIZE=\"5\">{}</FONT>", esc(&t.bounds))
             };
-            write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">trait</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>◆ {}{gen}</B></FONT>{bounds_s}</TD></TR>", port_id(&t.name), t.name).unwrap();
+            write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">trait</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>◆ {}{gen_str}</B></FONT>{bounds_s}</TD></TR>", port_id(&t.name), t.name).unwrap();
             for m in &t.methods {
                 let p = esc(&m.params);
                 let r = if m.ret.is_empty() { String::new() } else { format!(" → {}", esc(&m.ret)) };
@@ -273,8 +273,8 @@ fn write_raw_row(h: &mut String, item: &Item) {
             }
         }
         Item::Struct(s) => {
-            let gen = if s.generics.is_empty() { String::new() } else { esc(&s.generics) };
-            write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">struct</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>■ {}{gen}</B></FONT></TD></TR>", port_id(&s.name), s.name).unwrap();
+            let gen_str = if s.generics.is_empty() { String::new() } else { esc(&s.generics) };
+            write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">struct</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>■ {}{gen_str}</B></FONT></TD></TR>", port_id(&s.name), s.name).unwrap();
         }
         Item::Enum(e) => {
             write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">enum</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>▲ {}</B></FONT></TD></TR>", port_id(&e.name), e.name).unwrap();

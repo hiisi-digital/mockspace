@@ -72,48 +72,173 @@ pub(crate) fn ensure_durable_hooks(actions: &mut Vec<String>) -> Option<PathBuf>
 }
 
 
-/// The durable fallback hook: generic across every repo, so it locates
-/// the repo's live validator at runtime rather than baking a path in.
-/// If the validator is gone (a `target/` clean), it rebuilds it via a
-/// `cargo check`, then blocks hard if that fails. Fail closed, never open.
+/// The durable gate: a self-contained hook in the user config home that
+/// `core.hooksPath` points at, so it is invisible to the repo and survives a
+/// `target/` clean. Under the dissolved-proxy model there is no generated
+/// `mock/target/hooks/` layer to delegate to, so the durable hook does the
+/// whole job itself:
+///
+/// 1. resolves the repo root and, flexibly (root first, then subdirs hidden
+///    first), the `mockspace.toml` and mock dir, mirroring the launcher;
+/// 2. discovers the `mock` / `cargo-mock` launcher on PATH;
+/// 3. with the launcher present, runs the same staged-scope validation the
+///    generated hooks did, calling the launcher instead of the `cargo mock`
+///    alias;
+/// 4. with NO launcher installed, fails closed for the design surface only:
+///    a commit touching the mock dir or the config is blocked with an install
+///    hint, and everything outside the surface passes freely.
 pub(crate) fn gen_durable_hook(name: &str) -> String {
-    format!(
-        r##"#!/usr/bin/env bash
-{MANAGED_MARKER}
-# mockspace durable gate. Do not edit; rewritten by the bootstrap.
-# core.hooksPath points here so the gate survives a `target/` clean.
-set -u
-
-root=$(git rev-parse --show-toplevel 2>/dev/null) || {{
-    echo "mockspace gate: not inside a git repository; refusing to proceed." >&2
-    exit 1
-}}
-
-mockdir=$(git -C "$root" config --local mockspace.mockdir 2>/dev/null || true)
-[ -z "$mockdir" ] && mockdir="mock"
-
-live="$root/$mockdir/target/hooks/{name}"
-
-if [ -x "$live" ]; then
-    exec "$live" "$@"
-fi
-
-# The generated validator is missing: target/ was cleaned. Self-heal by
-# rebuilding it (build.rs re-runs the bootstrap), then retry.
-echo "mockspace gate: validator missing at $live" >&2
-echo "mockspace gate: self-healing (cargo check in $mockdir/ regenerates it)..." >&2
-if ( cd "$root/$mockdir" && cargo check --quiet --locked ) >/dev/null 2>&1 && [ -x "$live" ]; then
-    echo "mockspace gate: restored." >&2
-    exec "$live" "$@"
-fi
-
-echo "" >&2
-echo "mockspace gate: BLOCKED. the validator could not be restored." >&2
-echo "  run from the repo root:  cargo mock" >&2
-echo "  (or:  cd $mockdir && cargo check )" >&2
-echo "ALL {name} OPERATIONS BLOCKED until the mockspace validator is restored." >&2
-exit 1
-"##
-    )
+    let body = match name {
+        "pre-commit" => DURABLE_PRECOMMIT_BODY,
+        "pre-push" => DURABLE_PREPUSH_BODY,
+        _ => "\"$launcher\" --lint-only --strict 2>&1 || exit 1\n",
+    };
+    let mut s = String::new();
+    s.push_str("#!/usr/bin/env bash\n");
+    s.push_str(MANAGED_MARKER);
+    s.push('\n');
+    s.push_str(&format!(
+        "# mockspace durable gate ({name}). Do not edit; rewritten on each `mock` run.\n\
+         # core.hooksPath points here: invisible to the repo, survives a target/ clean.\n"
+    ));
+    s.push_str(DURABLE_PRELUDE);
+    s.push_str(body);
+    s
 }
+
+/// Shared prelude: resolve root + config + mock dir, discover the launcher,
+/// and handle the no-launcher fail-closed-for-the-surface case. Ends with the
+/// launcher present and `MOCK_DIR` set to the mock dir relative to the root.
+const DURABLE_PRELUDE: &str = r##"set -u
+
+# resolve the repo root (MOCK_ROOT wins, else the .git ancestor)
+root="${MOCK_ROOT:-}"
+if [ -z "$root" ] || [ ! -d "$root" ]; then
+    root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+        echo "mockspace gate: not inside a git repository." >&2
+        exit 1
+    }
+fi
+
+# a top-level `mock_dir = "..."` from a mockspace.toml (stops at the first table)
+read_mock_dir() {
+    awk '/^[[:space:]]*\[/{exit} /^[[:space:]]*mock_dir[[:space:]]*=/{sub(/^[^=]*=[[:space:]]*/,""); gsub(/"/,""); sub(/[[:space:]].*$/,""); print; exit}' "$1" 2>/dev/null
+}
+
+# flexibly locate mockspace.toml + the mock dir (root first, then subdirs
+# hidden-first). This is a shell reimplementation of the launcher's
+# `discover::locate` (cargo-mock/src/discover.rs); the two MUST stay in sync.
+# It exists only for the no-launcher fallback path; when the launcher is
+# present, `locate` is authoritative and this block is bypassed.
+cfg=""; mockdir=""
+if [ -f "$root/mockspace.toml" ]; then
+    cfg="$root/mockspace.toml"
+    md=$(read_mock_dir "$cfg"); [ -z "$md" ] && md="mock"
+    mockdir="$root/$md"
+else
+    for d in "$root"/.*/ "$root"/*/; do
+        [ -d "$d" ] || continue
+        base=$(basename "$d")
+        case "$base" in .|..|.git|target|node_modules) continue ;; esac
+        if [ -f "${d}mockspace.toml" ]; then
+            cfg="${d}mockspace.toml"
+            md=$(read_mock_dir "$cfg"); [ -z "$md" ] && md="."
+            if [ "$md" = "." ]; then mockdir="${d%/}"; else mockdir="${d%/}/$md"; fi
+            break
+        fi
+    done
+fi
+mockrel="${mockdir#"$root"/}"
+cfgrel="${cfg#"$root"/}"
+
+# discover the launcher (direct `mock` preferred; bypasses any stale alias)
+launcher=""
+if command -v mock >/dev/null 2>&1; then launcher="mock"
+elif command -v cargo-mock >/dev/null 2>&1; then launcher="cargo-mock"
+fi
+
+if [ -z "$launcher" ]; then
+    # no launcher installed: fail closed for the design surface only.
+    surface=""
+    [ -n "$mockrel" ] && surface=$(git diff --cached --name-only -- "$mockrel" 2>/dev/null || true)
+    if [ -z "$surface" ] && [ -n "$cfgrel" ]; then
+        surface=$(git diff --cached --name-only -- "$cfgrel" 2>/dev/null || true)
+    fi
+    if [ -n "$surface" ]; then
+        echo "mockspace gate: this changes the mockspace surface (${mockrel:-mock}), which the gate governs." >&2
+        echo "  install the launcher:  cargo install cargo-mock" >&2
+        echo "  (changes outside the mockspace surface are unaffected.)" >&2
+        exit 1
+    fi
+    exit 0
+fi
+
+MOCK_DIR="$mockrel"
+"##;
+
+/// pre-commit validation body (launcher present): scope to the changed crates
+/// and run the commit-tier lints. Mirrors the generated pre-commit hook.
+const DURABLE_PRECOMMIT_BODY: &str = r##"
+STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
+[ -z "$STAGED" ] && exit 0
+echo "pre-commit: mockspace changes detected, running validation..."
+CHANGED_CRATES=$(echo "$STAGED" | grep "^$MOCK_DIR/crates/" | sed "s|^$MOCK_DIR/crates/||" | cut -d/ -f1 | sort -u | tr '\n' ',' | sed 's/,$//' || true)
+ARGS=(--lint-only --commit)
+if [ -n "$CHANGED_CRATES" ]; then
+    STAGED_RS=$(echo "$STAGED" | grep "^$MOCK_DIR/crates/.*\.rs$" || true)
+    if [ -z "$STAGED_RS" ]; then
+        echo "  crates: $CHANGED_CRATES (doc-only)"
+        ARGS+=(--scope "$CHANGED_CRATES" --doc-only)
+    else
+        echo "  crates: $CHANGED_CRATES"
+        ARGS+=(--scope "$CHANGED_CRATES")
+    fi
+else
+    echo "  infrastructure-only (no crate files staged)"
+    ARGS+=(--scope infra)
+fi
+if ! "$launcher" "${ARGS[@]}" 2>&1; then
+    echo "" >&2
+    echo "BLOCKED: mockspace validation failed." >&2
+    exit 1
+fi
+echo "pre-commit: validation passed."
+"##;
+
+/// pre-push validation body (launcher present): compute changed crates across
+/// every pushed ref from stdin, then run the strict-tier lints. Mirrors the
+/// generated pre-push hook.
+const DURABLE_PREPUSH_BODY: &str = r##"
+echo "pre-push: running mockspace validation..."
+NEW_BRANCH=0
+CHANGED_CRATES=""
+while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ -z "$local_sha" ] && continue
+    [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then NEW_BRANCH=1; break; fi
+    if ! git cat-file -e "$remote_sha" 2>/dev/null; then NEW_BRANCH=1; break; fi
+    PUSH_CHANGED=$(git diff --name-only "$remote_sha".."$local_sha" -- "$MOCK_DIR/crates/" 2>/dev/null | sed "s|^$MOCK_DIR/crates/||" | cut -d/ -f1 | sort -u | tr '\n' ',' | sed 's/,$//' || true)
+    [ -z "$PUSH_CHANGED" ] && continue
+    if [ -z "$CHANGED_CRATES" ]; then CHANGED_CRATES="$PUSH_CHANGED"; else CHANGED_CRATES="$CHANGED_CRATES,$PUSH_CHANGED"; fi
+done
+if [ -n "$CHANGED_CRATES" ]; then
+    CHANGED_CRATES=$(echo "$CHANGED_CRATES" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
+fi
+if grep -rq "Nuked by" "$MOCK_DIR/crates/"*/src/lib.rs 2>/dev/null; then
+    echo "  nuked workspace: skipping source checks"
+    ARGS=(--lint-only --strict --doc-only)
+elif [ "$NEW_BRANCH" = "1" ] || [ -z "$CHANGED_CRATES" ]; then
+    echo "  scope: full project"
+    ARGS=(--lint-only --strict)
+else
+    echo "  scope: $CHANGED_CRATES"
+    ARGS=(--lint-only --strict --scope "$CHANGED_CRATES")
+fi
+if ! "$launcher" "${ARGS[@]}" 2>&1; then
+    echo "" >&2
+    echo "BLOCKED: mockspace validation failed." >&2
+    exit 1
+fi
+echo "pre-push: validation passed."
+"##;
 
