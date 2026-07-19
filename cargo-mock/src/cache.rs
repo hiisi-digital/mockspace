@@ -216,11 +216,13 @@ mod tests {
         let binpath = builds_dir(dir.path()).join(key).join("bin");
         std::fs::create_dir_all(&binpath).unwrap();
         std::fs::write(binpath.join("mockspace"), b"#!/bin/sh\n").unwrap();
-        let resolved = Pin {
-            url:       "u".into(),
-            reference: Reference::Rev("r".into()),
-        }
-        .resolve(dir.path())
+        let resolved = crate::pin::resolve(
+            &Pin {
+                url:       "u".into(),
+                reference: Reference::Rev("r".into()),
+            },
+            dir.path(),
+        )
         .unwrap();
         // present -> returns without invoking cargo.
         let got = ensure_built(dir.path(), key, &resolved).unwrap();

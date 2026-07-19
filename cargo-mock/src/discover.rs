@@ -112,26 +112,11 @@ fn ordered_subdirs(root: &Path) -> Vec<PathBuf> {
     hidden.into_iter().chain(plain).map(|(_, p)| p).collect()
 }
 
-/// A top-level (section-less) `mock_dir = "..."` string from a mockspace.toml.
+/// The top-level `mock_dir = "..."` from a mockspace.toml, via the shared
+/// manifest reader so the launcher and engine agree on the schema.
 fn mock_dir_field(config_path: &Path) -> Option<String> {
     let toml = std::fs::read_to_string(config_path).ok()?;
-    top_level_string(&toml, "mock_dir").filter(|s| !s.is_empty())
-}
-
-/// A top-level (section-less) `key = "value"` string from a mockspace.toml.
-fn top_level_string(toml: &str, key: &str) -> Option<String> {
-    for line in toml.lines() {
-        let t = line.trim();
-        if t.starts_with('[') {
-            break; // top-level keys precede the first table
-        }
-        if let Some((k, v)) = t.split_once('=')
-            && k.trim() == key
-        {
-            return Some(v.trim().trim_matches('"').trim_matches('\'').to_string());
-        }
-    }
-    None
+    mockspace_manifest::ManifestHeader::parse(&toml).mock_dir()
 }
 
 /// Collapse a trailing `/.` (from the `.` mock_dir default) so paths stay tidy.
