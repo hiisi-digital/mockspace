@@ -119,6 +119,15 @@ fn write_cdylib_crate(
     for (name, spec) in packs {
         manifest.push_str(&format!("{name} = {spec}\n"));
     }
+    // Force every reference to `mockspace-lint-rules` (the cdylib's own, and
+    // any a pack crate pulls in) to the ONE rev the engine is built from. A pack
+    // pins lint-rules by `branch = "dev"`; the engine passes it by `rev`; cargo
+    // keys those as distinct sources and would build two copies, whose
+    // `Box<dyn Lint>` vtables then differ across the dlopen boundary (E0271 at
+    // build, UB if it linked). The `[patch]` collapses them to one.
+    if let Some(patch) = patch_section(lint_rules_dep) {
+        manifest.push_str(&patch);
+    }
     write_if_changed(&gen_dir.join("Cargo.toml"), &manifest)?;
 
     write_if_changed(
@@ -126,6 +135,29 @@ fn write_cdylib_crate(
         &gen_collect_lib(lints_dir, lint_files, packs),
     )?;
     Ok(())
+}
+
+/// Build the `[patch]` that pins `mockspace-lint-rules` to the engine's exact
+/// source, parsed out of the engine-supplied dep spec (`{ package =
+/// "mockspace-lint-rules", git = "<url>", rev|tag = "<val>" }`). `None` if the
+/// spec is not a git dep (a path or registry override in local dev), where no
+/// patch is needed because every reference already resolves to that one source.
+fn patch_section(lint_rules_dep: &str) -> Option<String> {
+    let url = extract_between(lint_rules_dep, "git = \"", "\"")?;
+    let (kind, val) = ["rev", "tag"].iter().find_map(|k| {
+        extract_between(lint_rules_dep, &format!("{k} = \""), "\"").map(|v| (*k, v))
+    })?;
+    Some(format!(
+        "\n[patch.\"{url}\"]\nmockspace-lint-rules = {{ git = \"{url}\", {kind} = \"{val}\" }}\n"
+    ))
+}
+
+/// The substring of `s` between the first `start` and the next `end` after it.
+fn extract_between(s: &str, start: &str, end: &str) -> Option<String> {
+    let from = s.find(start)? + start.len();
+    let rest = &s[from ..];
+    let to = rest.find(end)?;
+    Some(rest[.. to].to_string())
 }
 
 /// The cdylib `lib.rs`: the repo's in-tree lint files pulled in by path, the
@@ -338,5 +370,31 @@ mod tests {
         // a leading [workspace] makes the crate its own root so cargo builds it
         // standalone under the consumer's <mock>/target/ (not as a member).
         assert!(manifest.trim_start().starts_with("[workspace]"));
+        // a [patch] pins lint-rules to the engine's source so packs unify.
+        assert!(manifest.contains("[patch."));
+    }
+
+    #[test]
+    fn patch_section_pins_lint_rules_to_engine_source() {
+        let dep =
+            "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", rev = \"abc123\" }";
+        let patch = patch_section(dep).unwrap();
+        assert!(patch.contains("[patch.\"ssh://x/m.git\"]"));
+        assert!(
+            patch.contains("mockspace-lint-rules = { git = \"ssh://x/m.git\", rev = \"abc123\" }")
+        );
+        // a tag dep patches by tag.
+        let tagdep =
+            "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", tag = \"0.0.0-d05\" }";
+        assert!(
+            patch_section(tagdep)
+                .unwrap()
+                .contains("tag = \"0.0.0-d05\"")
+        );
+    }
+
+    #[test]
+    fn patch_section_none_for_non_git_dep() {
+        assert!(patch_section("{ path = \"../lint-rules\" }").is_none());
     }
 }
