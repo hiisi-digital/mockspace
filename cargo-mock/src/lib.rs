@@ -98,24 +98,16 @@ fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
-    // v0.1: repo-specific lints are compiled into a keyed binary; that build
-    // is a follow-up. Refuse rather than silently run a lint-blind engine.
-    if let Some(reason) = custom_lints_present(located.as_ref(), &mock_abs) {
-        return Err(format!(
-            "{reason}\n  the launcher's custom-lint build is not implemented yet.\n  \
-             until it lands, run this repo through its existing proxy (`cargo check` in \
-             the mock dir, then `cargo mock` via the alias)."
-        ));
-    }
-
     let pin = resolve_pin(located.as_ref(), &root, &mock_abs)?;
     let cache_root = cache::cache_root()?;
     let resolved = pin.resolve(&cache_root)?;
     let key = cache::compute_key(&pin.url, &resolved.key_rev, &[]);
     let bin = cache::ensure_built(&cache_root, &key, &resolved)?;
 
-    // exec replaces this process; returns only on failure.
-    cache::exec_engine(&bin, &mock_abs, args).map(|_never| ())
+    // The engine builds and loads this repo's custom lints itself (into its own
+    // target/), using the pin-matched lint-rules dep we pass along; the
+    // launcher no longer needs to know about lints.
+    cache::exec_engine(&bin, &mock_abs, &resolved.lint_rules_dep, args).map(|_never| ())
 }
 
 /// The pin: the `mockspace_version` key in the located `mockspace.toml`
@@ -148,38 +140,6 @@ fn resolve_pin(
     ))
 }
 
-/// Whether the repo ships custom lints the cached bare-engine would not carry:
-/// `<mockdir>/lints/*.rs`, or a non-empty `[lint-crates]` table in the located
-/// config. Returns a human reason when present.
-fn custom_lints_present(located: Option<&discover::Located>, mock_abs: &Path) -> Option<String> {
-    let lints_dir = mock_abs.join("lints");
-    if let Ok(rd) = std::fs::read_dir(&lints_dir) {
-        for e in rd.flatten() {
-            if e.path().extension().map(|x| x == "rs").unwrap_or(false) {
-                return Some(format!(
-                    "this repo ships custom lints ({})",
-                    lints_dir.display()
-                ));
-            }
-        }
-    }
-    if let Some(l) = located {
-        if let Ok(s) = std::fs::read_to_string(&l.config_path) {
-            if has_lint_crates(&s) {
-                return Some("this repo declares [lint-crates]".to_string());
-            }
-        }
-    }
-    None
-}
-
-fn has_lint_crates(toml: &str) -> bool {
-    toml.lines().any(|l| {
-        let t = l.trim();
-        t == "[lint-crates]" || t.starts_with("[lint-crates.")
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,12 +170,5 @@ mod tests {
     fn user_dir_flag_is_stripped() {
         let raw = s(&["mock", "check", "--dir", "/somewhere", "--scope", "x"]);
         assert_eq!(normalize_args(&raw), s(&["check", "--scope", "x"]));
-    }
-
-    #[test]
-    fn detects_lint_crates_table() {
-        assert!(has_lint_crates("[lint-crates]\nfoo = \"1\"\n"));
-        assert!(has_lint_crates("[lint-crates.foo]\npath = \"x\"\n"));
-        assert!(!has_lint_crates("[lints]\nfoo = \"x\"\n"));
     }
 }

@@ -37,6 +37,10 @@ impl InstallMode {
 pub struct Config {
     // --- Core fields ---
     pub mock_dir: PathBuf,
+    /// The `mockspace.toml` this config was read from (in the mock dir or at
+    /// the repo root). Needed by callers that re-read the raw config, such as
+    /// the runtime custom-lint loader reading `[lint-crates]`.
+    pub config_path: PathBuf,
     pub crates_dir: PathBuf,
     pub repo_root: PathBuf,
     pub docs_dir: PathBuf,
@@ -537,6 +541,7 @@ impl Config {
         }
         Config {
             mock_dir, crates_dir, repo_root, docs_dir,
+            config_path: toml_path,
             project_name, crate_prefix,
             doc_link_prefix: String::new(),
             doc_index: crate::document::DocIndex::default(),

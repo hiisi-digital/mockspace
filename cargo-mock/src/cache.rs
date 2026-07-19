@@ -102,17 +102,21 @@ pub fn ensure_built(cache_root: &Path, key: &str, resolved: &Resolved) -> Result
 }
 
 /// Replace this process with the engine, passing the absolute mock dir so cwd
-/// is irrelevant, then the caller's forwarded arguments. On unix `exec` never
-/// returns on success; it returns only if the exec itself fails.
+/// is irrelevant, the pin-matched lint-rules dep (so a custom-lint cdylib links
+/// identical types), then the caller's forwarded arguments. On unix `exec`
+/// never returns on success; it returns only if the exec itself fails.
 pub fn exec_engine(
     bin: &Path,
     mock_abs: &Path,
+    lint_rules_dep: &str,
     args: &[String],
 ) -> Result<std::convert::Infallible, String> {
     use std::os::unix::process::CommandExt;
     let err = Command::new(bin)
         .arg("--dir")
         .arg(mock_abs)
+        .arg("--mockspace-lint-rules-dep")
+        .arg(lint_rules_dep)
         .args(args)
         .exec();
     Err(format!("failed to exec {}: {err}", bin.display()))
