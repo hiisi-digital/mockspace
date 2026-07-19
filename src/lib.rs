@@ -11,6 +11,7 @@
 //! - Nuke/restore for reproducibility testing
 //! - **Bootstrap**: auto-setup of cargo alias and git hooks via `build.rs`
 
+pub mod autofix;
 pub mod bench;
 pub mod bench_docs;
 pub mod bootstrap;
