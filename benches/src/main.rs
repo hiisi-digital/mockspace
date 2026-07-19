@@ -175,6 +175,9 @@ fn run_worker(args: &[String]) -> ExitCode {
     let max_call_us: Option<u64> = get("--max-call-us")
         .and_then(|s| s.parse().ok())
         .filter(|&v| v > 0);
+    // A bare flag the orchestrator passes for `threaded = true` manifests so the
+    // worker opts out of the self-pin (spawned threads never inherit the pin).
+    let threaded = args.iter().any(|a| a == "--threaded");
 
     let routine = RoutineSpec {
         name:   bench_name.clone(),
@@ -198,6 +201,7 @@ fn run_worker(args: &[String]) -> ExitCode {
         n,
         batch_k,
         max_call_us,
+        threaded,
     );
     ExitCode::SUCCESS
 }
