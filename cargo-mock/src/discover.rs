@@ -25,7 +25,14 @@ pub struct Located {
 /// matching the engine's override. Otherwise the nearest ancestor of cwd
 /// containing `.git`. `None` when neither resolves.
 pub fn repo_root() -> Option<PathBuf> {
-    if let Some(r) = std::env::var_os("MOCK_ROOT") {
+    repo_root_with(std::env::var_os("MOCK_ROOT"))
+}
+
+/// Pure core of [`repo_root`]: the `MOCK_ROOT` value is passed in so the
+/// resolution is testable without mutating process env (cargo runs tests in
+/// parallel threads, where `set_var` is a data race).
+fn repo_root_with(mock_root: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    if let Some(r) = mock_root {
         let p = PathBuf::from(r);
         if p.is_dir() {
             return Some(p);
@@ -137,12 +144,21 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn mock_root_env_wins() {
+    fn mock_root_wins_when_a_dir() {
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("MOCK_ROOT", dir.path());
-        let got = repo_root();
-        std::env::remove_var("MOCK_ROOT");
+        let got = repo_root_with(Some(dir.path().as_os_str().to_os_string()));
         assert_eq!(got.as_deref(), Some(dir.path()));
+    }
+
+    #[test]
+    fn mock_root_ignored_when_not_a_dir() {
+        // a bogus MOCK_ROOT falls through to the .git walk (this tree is a git
+        // repo, so it resolves to something, just not the bogus path).
+        let got = repo_root_with(Some("/definitely/not/a/dir/xyzzy".into()));
+        assert_ne!(
+            got.as_deref(),
+            Some(Path::new("/definitely/not/a/dir/xyzzy"))
+        );
     }
 
     #[test]

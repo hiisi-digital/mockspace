@@ -84,7 +84,7 @@ fn write_cdylib_crate(
     // is not a persisted key.
     let crate_name = format!("mockspace-lints-{:016x}", path_hash(&cfg.mock_dir));
     let mut manifest = format!(
-        "[package]\nname = \"{crate_name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n\
+        "[package]\nname = \"{crate_name}\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n\
          [lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\n\
          mockspace = {lint_rules_dep}\n"
     );
@@ -129,7 +129,7 @@ fn gen_collect_lib(lints_dir: &Path, lint_files: &[String], packs: &[(String, St
         "/// Collect this repo's lints. Both vecs are owned by the caller (the\n\
          /// engine); the boxes' vtables live in this cdylib, which the engine\n\
          /// keeps loaded for the duration of the lint run.\n\
-         #[no_mangle]\npub extern \"C\" fn __mockspace_collect_lints(\n\
+         #[unsafe(no_mangle)]\npub extern \"C\" fn __mockspace_collect_lints(\n\
          \x20   lints: &mut Vec<Box<dyn mockspace::Lint>>,\n\
          \x20   cross: &mut Vec<Box<dyn mockspace::CrossCrateLint>>,\n) {\n",
     );
@@ -161,7 +161,7 @@ fn build_cdylib(gen_dir: &Path) -> Result<PathBuf, String> {
     if !status.success() {
         return Err("building the custom-lint cdylib failed; see cargo output above".to_string());
     }
-    // cdylib lands in <gen>/target/release/ with the platform library prefix
+    // cdylib lands in <gen_dir>/target/release/ with the platform library prefix
     // and extension.
     let rel = gen_dir.join("target").join("release");
     for (prefix, ext) in [("lib", "dylib"), ("lib", "so"), ("", "dll")] {
@@ -182,19 +182,41 @@ fn build_cdylib(gen_dir: &Path) -> Result<PathBuf, String> {
 
 /// dlopen the cdylib, call its collector, and return the loaded lints holding
 /// the library alive.
+///
+/// # Safety
+///
+/// The caller must ensure the cdylib at `dylib` was built against the same
+/// `mockspace-lint-rules` pin (and the same toolchain) as this engine, so the
+/// `Box<dyn Lint>` vtables the collector hands back match this engine's layout.
+/// The launcher enforces this by passing the pin-matched `lint_rules_dep`.
 unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
-    let lib = libloading::Library::new(dylib)
+    // SAFETY: loading a cdylib runs its initialisers. This is our own crate,
+    // generated and built moments ago from this repo's lints, not arbitrary
+    // code of unknown provenance.
+    let lib = unsafe { libloading::Library::new(dylib) }
         .map_err(|e| format!("could not load the lint cdylib {}: {e}", dylib.display()))?;
-    type Collect = extern "C" fn(&mut Vec<Box<dyn Lint>>, &mut Vec<Box<dyn CrossCrateLint>>);
+    // `unsafe` on the fn-pointer type is deliberate: calling it is only sound
+    // when the cdylib's `mockspace-lint-rules` pin matches ours (the caller
+    // invariant), which the type system cannot check. Marking it unsafe forces
+    // the `unsafe {}` + SAFETY at the call, reflecting the real contract.
+    type Collect = unsafe extern "C" fn(&mut Vec<Box<dyn Lint>>, &mut Vec<Box<dyn CrossCrateLint>>);
     let mut lints: Vec<Box<dyn Lint>> = Vec::new();
     let mut cross: Vec<Box<dyn CrossCrateLint>> = Vec::new();
     {
         // the symbol borrows `lib`; scope it so the borrow ends before `lib`
         // moves into the returned struct.
-        let collect: libloading::Symbol<Collect> = lib.get(COLLECT_SYMBOL).map_err(|e| {
+        // SAFETY: `Collect` matches the cdylib's exported signature exactly:
+        // both the symbol name and the type are generated together with the
+        // collector, so the asserted type cannot disagree with the real one.
+        let collect: libloading::Symbol<Collect> = unsafe { lib.get(COLLECT_SYMBOL) }.map_err(|e| {
             format!("the lint cdylib is missing {}: {e}", String::from_utf8_lossy(COLLECT_SYMBOL))
         })?;
-        collect(&mut lints, &mut cross);
+        // SAFETY: a call across the C ABI. The vecs are `#[repr(Rust)]` but the
+        // caller-invariant above guarantees the cdylib's `mockspace-lint-rules`
+        // is the same pin as ours, so `Box<dyn Lint>`'s layout agrees on both
+        // sides (validated: identical trait source, separate compilation, same
+        // toolchain -> identical vtable layout).
+        unsafe { collect(&mut lints, &mut cross) };
     }
     Ok(LoadedLints { lints, cross, _lib: lib })
 }
@@ -224,7 +246,7 @@ mod tests {
         std::fs::create_dir_all(&lints).unwrap();
         std::fs::write(lints.join("foo.rs"), "pub fn lint() -> Box<dyn mockspace::Lint> { todo!() }\n").unwrap();
         let src = gen_collect_lib(&lints, &["foo".to_string()], &[("some-pack".into(), "\"1\"".into())]);
-        assert!(src.contains("#[no_mangle]"));
+        assert!(src.contains("#[unsafe(no_mangle)]"));
         assert!(src.contains("pub extern \"C\" fn __mockspace_collect_lints"));
         assert!(src.contains("mod foo;"));
         assert!(src.contains("lints.push(foo::lint());"));
@@ -239,10 +261,10 @@ mod tests {
     fn manifest_renames_lint_rules_to_mockspace() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = crate::config::Config::from_dir(dir.path());
-        let gen = dir.path().join("gen");
+        let gen_dir = dir.path().join("gen_dir");
         let dep = "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"r\" }";
-        write_cdylib_crate(&gen, &dir.path().join("lints"), &[], &[("p".into(), "\"1\"".into())], dep, &cfg).unwrap();
-        let manifest = std::fs::read_to_string(gen.join("Cargo.toml")).unwrap();
+        write_cdylib_crate(&gen_dir, &dir.path().join("lints"), &[], &[("p".into(), "\"1\"".into())], dep, &cfg).unwrap();
+        let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();
         assert!(manifest.contains("crate-type = [\"cdylib\"]"));
         assert!(manifest.contains(&format!("mockspace = {dep}")));
         assert!(manifest.contains("p = \"1\""));
