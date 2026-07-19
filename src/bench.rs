@@ -26,6 +26,8 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
         "init" => cmd_init(cfg),
         "run" => cmd_run(cfg, &rest),
         "report" => cmd_report(cfg, &rest),
+        "list" => cmd_list(cfg),
+        "add" => cmd_add(cfg, &rest),
         "" => {
             print_help();
             ExitCode::SUCCESS
@@ -45,6 +47,12 @@ fn print_help() {
     eprintln!("  init    scaffold mock/benches/ in this consumer");
     eprintln!("  run     build variants + bench binary, run the harness");
     eprintln!("  report  regenerate findings.md from cached results");
+    eprintln!("  list    list benches, sizes, and variants from bench.toml");
+    eprintln!("  add     scaffold a new variant crate: mock bench add <name>");
+    eprintln!();
+    eprintln!("`run` and `report` accept bench names to restrict the pass:");
+    eprintln!("  mock bench run <name> [<name> ...]   run only the named benches");
+    eprintln!("with no names, every bench in bench.toml runs");
     eprintln!();
     eprintln!("`mock/benches/` layout (created by `init`):");
     eprintln!("  Cargo.toml         the bench binary");
@@ -56,7 +64,7 @@ fn print_help() {
 
 // ── run ──
 
-fn cmd_run(cfg: &Config, _args: &[&str]) -> ExitCode {
+fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
     let bench_dir = cfg.mock_dir.join("benches");
     if !bench_dir.exists() {
         eprintln!(
@@ -66,7 +74,23 @@ fn cmd_run(cfg: &Config, _args: &[&str]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    if let Err(e) = build_variants_and_bin(&bench_dir) {
+    // Positional args are bench names: they restrict both the run
+    // (forwarded as --only) and the variant builds.
+    let names: Vec<&str> = args.iter().copied().filter(|a| !a.starts_with("--")).collect();
+    let extra: Vec<&str> = args.iter().copied().filter(|a| a.starts_with("--")).collect();
+
+    let dirs = if names.is_empty() {
+        None
+    } else {
+        match variant_dirs_for(&bench_dir, &names) {
+            Ok(d) => Some(d),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    };
+    if let Err(e) = build_variants_and_bin_filtered(&bench_dir, dirs.as_deref()) {
         eprintln!("error: build failed: {e}");
         return ExitCode::FAILURE;
     }
@@ -79,7 +103,14 @@ fn cmd_run(cfg: &Config, _args: &[&str]) -> ExitCode {
         }
     };
 
-    let status = Command::new(&bin_path)
+    let mut cmd = Command::new(&bin_path);
+    for n in &names {
+        cmd.args(["--only", n]);
+    }
+    for e in &extra {
+        cmd.arg(e);
+    }
+    let status = cmd
         .current_dir(&bench_dir)
         .status();
 
@@ -121,8 +152,12 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
         }
     };
 
-    let status = Command::new(&bin_path)
-        .arg("--report-only")
+    let mut cmd = Command::new(&bin_path);
+    cmd.arg("--report-only");
+    for a in _args.iter().filter(|a| !a.starts_with("--")) {
+        cmd.args(["--only", a]);
+    }
+    let status = cmd
         .current_dir(&bench_dir)
         .status();
 
@@ -141,7 +176,84 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
 
 // ── helpers ──
 
-fn build_variants_and_bin(bench_dir: &Path) -> Result<(), String> {
+/// Read `bench.toml` and map the named benches to the variant
+/// directories their entries reference. Short names map to
+/// `variants/<name>`; path entries starting with `variants/` map to
+/// their first two components; anything else is ignored (an
+/// out-of-tree path is not ours to build).
+fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, String> {
+    let text = fs::read_to_string(bench_dir.join("bench.toml"))
+        .map_err(|e| format!("reading bench.toml: {e}"))?;
+    let doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| format!("parsing bench.toml: {e}"))?;
+    let bench = doc
+        .get("bench")
+        .and_then(|b| b.as_table())
+        .ok_or_else(|| "bench.toml has no [bench.*] sections".to_string())?;
+    let mut dirs: Vec<String> = Vec::new();
+    let mut push_entry = |entry: &str, dirs: &mut Vec<String>| {
+        let dir = if !entry.contains('/') {
+            Some(entry.to_string())
+        } else {
+            entry
+                .strip_prefix("variants/")
+                .and_then(|rest| rest.split('/').next())
+                .map(|d| d.to_string())
+        };
+        if let Some(d) = dir {
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+    };
+    let collect_array = |item: Option<&toml_edit::Item>, dirs: &mut Vec<String>,
+                         push: &mut dyn FnMut(&str, &mut Vec<String>)| {
+        if let Some(arr) = item.and_then(|v| v.as_array()) {
+            for v in arr.iter() {
+                if let Some(sv) = v.as_str() {
+                    push(sv, dirs);
+                }
+            }
+        }
+    };
+    for name in names {
+        let section = bench.get(name).ok_or_else(|| {
+            let available: Vec<&str> = bench.iter().map(|(k, _)| k).collect();
+            format!(
+                "bench `{name}` not found in bench.toml. Available: {}",
+                available.join(", ")
+            )
+        })?;
+        collect_array(section.get("variants"), &mut dirs, &mut push_entry);
+        if let Some(sizes) = section.get("sizes") {
+            if let Some(arr) = sizes.as_array_of_tables() {
+                for t in arr.iter() {
+                    collect_array(t.get("variants"), &mut dirs, &mut push_entry);
+                }
+            }
+            if let Some(arr) = sizes.as_array() {
+                for v in arr.iter() {
+                    if let Some(t) = v.as_inline_table() {
+                        if let Some(tv) = t.get("variants").and_then(|x| x.as_array()) {
+                            for e in tv.iter() {
+                                if let Some(sv) = e.as_str() {
+                                    push_entry(sv, &mut dirs);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(dirs)
+}
+
+fn build_variants_and_bin_filtered(
+    bench_dir: &Path,
+    only_dirs: Option<&[String]>,
+) -> Result<(), String> {
     let variants_dir = bench_dir.join("variants");
     if variants_dir.exists() {
         for entry in fs::read_dir(&variants_dir)
@@ -149,6 +261,16 @@ fn build_variants_and_bin(bench_dir: &Path) -> Result<(), String> {
         {
             let entry = entry.map_err(|e| format!("variants dir entry: {e}"))?;
             let path = entry.path();
+            if let Some(dirs) = only_dirs {
+                let dir_name = path
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !dirs.contains(&dir_name) {
+                    continue;
+                }
+            }
             let manifest = path.join("Cargo.toml");
             if manifest.exists() {
                 eprintln!("  building variant {}...", path.display());
@@ -254,6 +376,96 @@ fn cmd_init(cfg: &Config) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+// ── list ──
+
+fn cmd_list(cfg: &Config) -> ExitCode {
+    let bench_dir = cfg.mock_dir.join("benches");
+    let text = match fs::read_to_string(bench_dir.join("bench.toml")) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("error: reading bench.toml: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let doc: toml_edit::DocumentMut = match text.parse() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: parsing bench.toml: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(bench) = doc.get("bench").and_then(|b| b.as_table()) else {
+        eprintln!("no [bench.*] sections in bench.toml");
+        return ExitCode::SUCCESS;
+    };
+    let mut names: Vec<&str> = bench.iter().map(|(k, _)| k).collect();
+    names.sort();
+    for name in names {
+        let section = bench.get(name).unwrap();
+        let title = section
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        let mut sizes: Vec<String> = Vec::new();
+        if let Some(item) = section.get("sizes") {
+            if let Some(arr) = item.as_array() {
+                for v in arr.iter() {
+                    if let Some(n) = v.as_integer() {
+                        sizes.push(n.to_string());
+                    }
+                }
+            }
+            if let Some(arr) = item.as_array_of_tables() {
+                for t in arr.iter() {
+                    if let Some(n) = t.get("n").and_then(|x| x.as_integer()) {
+                        sizes.push(n.to_string());
+                    }
+                }
+            }
+        }
+        let dirs = variant_dirs_for(&bench_dir, &[name]).unwrap_or_default();
+        println!("{name}  [{}]  variants: {}  {}", sizes.join(", "), dirs.join(", "), title);
+    }
+    println!();
+    println!("run one with: mock bench run <name>");
+    ExitCode::SUCCESS
+}
+
+// ── add ──
+
+fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
+    let Some(name) = args.first() else {
+        eprintln!("usage: mock bench add <variant-name>");
+        return ExitCode::FAILURE;
+    };
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        eprintln!("error: variant name must be [a-zA-Z0-9_] (it becomes a crate name)");
+        return ExitCode::FAILURE;
+    }
+    let bench_dir = cfg.mock_dir.join("benches");
+    let dir = bench_dir.join("variants").join(name);
+    if dir.exists() {
+        eprintln!("error: {} already exists", dir.display());
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = fs::create_dir_all(dir.join("src")) {
+        eprintln!("error: creating {}: {e}", dir.display());
+        return ExitCode::FAILURE;
+    }
+    let cargo = STARTER_VARIANT_CARGO_TOML.replace("sample", name);
+    let lib = STARTER_VARIANT_LIB.replace("sample", name);
+    if let Err(e) = fs::write(dir.join("Cargo.toml"), cargo)
+        .and_then(|_| fs::write(dir.join("src/lib.rs"), lib))
+    {
+        eprintln!("error: writing variant files: {e}");
+        return ExitCode::FAILURE;
+    }
+    eprintln!("scaffolded variants/{name}/. Next:");
+    eprintln!("  1. implement the run block in variants/{name}/src/lib.rs");
+    eprintln!("  2. reference \"{name}\" from a bench's `variants` list in bench.toml");
+    ExitCode::SUCCESS
+}
+
 fn write_starter_files(bench_dir: &Path) -> std::io::Result<()> {
     fs::write(bench_dir.join("Cargo.toml"), STARTER_BIN_CARGO_TOML)?;
     fs::write(bench_dir.join("src/main.rs"), STARTER_BIN_MAIN)?;
@@ -287,206 +499,88 @@ lto = "fat"
 codegen-units = 1
 "#;
 
-const STARTER_BIN_MAIN: &str = r#"//! Consumer bench binary. Defines one or more Routines and dispatches
-//! to the mockspace bench harness. `mock bench run` invokes this in
-//! release mode after building all variants under `variants/`.
+const STARTER_BIN_MAIN: &str = r##"//! Consumer bench binary: registrations only. The generic loop
+//! (manifest iteration, filtering, report-only, preflight, seed
+//! replay, validation, history, summary, findings index) lives in
+//! `mockspace_bench_harness::driver::drive`.
 
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use mockspace_bench_core::{routine_bridge, Routine};
-use mockspace_bench_harness::{
-    self as harness, BenchManifest, RoutineSpec, Workload,
-};
+use mockspace_bench_core::byte_routine_dispatch;
+use mockspace_bench_harness::driver::{drive, DriverRegistry};
+use mockspace_bench_harness::{self as harness, BenchConfig, RoutineSpec, Workload};
 
-/// Sample routine: identity-add. Replace with your real routine.
-pub struct IdentityAdd;
-
-impl Routine for IdentityAdd {
-    type Input = u64;
-    type Output = u64;
-
-    fn build_input(seed: u64) -> Self::Input {
-        seed
+/// Build the workload program for a workload name. The workload
+/// surrounds the measured call with realistic context so numbers
+/// approximate the real calling environment; add named programs as
+/// your benches need them.
+fn build_workload(name: &str, _n: usize) -> Workload {
+    let mut w = Workload::new();
+    match name {
+        "realistic" => {
+            w.program("realistic", |b| {
+                b.stage(vec![
+                    harness::algo_call(),
+                    harness::light_scalar(),
+                    harness::heavy_memory(),
+                    harness::branch_work(),
+                ]);
+            });
+        }
+        _ => {
+            w.program("default", |b| {
+                b.stage(vec![harness::algo_call(), harness::light_scalar()]);
+            });
+        }
     }
+    w
+}
 
-    fn ops_per_call(_input: &Self::Input) -> u64 {
-        1
-    }
+/// Custom routines for benches whose inputs are not plain bytes
+/// (graph shapes, sparse layouts). Return `None` to fall through to
+/// the byte dispatch below.
+fn routine_for(_config: &BenchConfig) -> Option<RoutineSpec> {
+    None
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
-
-    // Worker subprocess path (re-execed by the orchestrator).
-    if args.iter().any(|a| a == "--worker") {
-        return run_worker(&args);
-    }
-
-    // Report-only path (called by `mock bench report`).
-    let report_only = args.iter().any(|a| a == "--report-only");
-
-    let manifest_path = Path::new("bench.toml");
-    let manifest = match BenchManifest::load(manifest_path) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let mock_benches_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-
-    // Build a workload. Replace this with your real workload program.
-    let mut workload = Workload::new();
-    workload.program("default", |b| {
-        b.stage(vec![harness::algo_call(), harness::light_scalar()]);
-    });
-
-    // Iterate manifest entries and run each (bench, size).
-    for (bench_name, section) in &manifest.bench {
-        for (size_idx, _size) in section.sizes.iter().enumerate() {
-            let config = match manifest.for_size(bench_name, size_idx, &mock_benches_dir) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            let routine = RoutineSpec {
-                name: section.workload.clone(),
-                bridge: routine_bridge!(IdentityAdd),
-            };
-
-            let csv_path = format!("{}_n{}.csv", bench_name, config.n);
-            let report_path = format!("{}_n{}_findings.md", bench_name, config.n);
-
-            if report_only {
-                // Reload prior samples from the CSV the previous run
-                // wrote, build a synthetic BenchResult around them, and
-                // regenerate findings.md without re-running the harness.
-                let samples = match harness::load_samples_csv(
-                    std::path::Path::new(&csv_path),
-                ) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!(
-                            "error: report-only could not load `{csv_path}` for bench `{bench_name}` n={}: {e}",
-                            config.n
-                        );
-                        eprintln!("hint: run `mock bench run` first to produce the csv");
-                        return ExitCode::FAILURE;
-                    }
-                };
-                if samples.is_empty() {
-                    eprintln!(
-                        "error: report-only: no samples in `{csv_path}` for bench `{bench_name}` n={}",
-                        config.n
-                    );
-                    return ExitCode::FAILURE;
-                }
-                let result = mockspace_bench_harness::BenchResult {
-                    title: section.title.clone(),
-                    env: mockspace_bench_harness::EnvMeta::default(),
-                    samples,
-                    cache_path: csv_path.clone(),
-                    report_path: report_path.clone(),
-                };
-                if let Err(e) = harness::write_report_for_routine(
-                    &result, &routine, "warm", &report_path,
-                ) {
-                    eprintln!("error: writing report: {e}");
-                    return ExitCode::FAILURE;
-                }
-                eprintln!("  regenerated {report_path}");
-            } else {
-                let result = match harness::run(&config, &routine, &workload) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        eprintln!("error: bench `{bench_name}` n={}: {e}", config.n);
-                        return ExitCode::FAILURE;
-                    }
-                };
-                if let Err(e) = harness::write_csv(&result, &csv_path) {
-                    eprintln!("error: writing csv: {e}");
-                    return ExitCode::FAILURE;
-                }
-                if let Err(e) = harness::write_report_for_routine(
-                    &result, &routine, "warm", &report_path,
-                ) {
-                    eprintln!("error: writing report: {e}");
-                    return ExitCode::FAILURE;
-                }
-            }
-        }
-    }
-
-    ExitCode::SUCCESS
+    drive(&DriverRegistry {
+        build_workload,
+        routine_for,
+        // Every size stays its own monomorphisation: the declared
+        // list is the strictly controlled input set. A manifest size
+        // outside it is a targeted error naming this line.
+        byte_dispatch: byte_routine_dispatch!(out = 8, sizes = [64, 256, 1024, 4096, 16384]),
+    })
 }
+"##;
 
-fn run_worker(args: &[String]) -> ExitCode {
-    // Parse the --worker flag set forwarded by the orchestrator.
-    let get = |flag: &str| -> Option<String> {
-        let pos = args.iter().position(|a| a == flag)?;
-        args.get(pos + 1).cloned()
-    };
-
-    let dylib_path = match get("--worker") {
-        Some(p) => p,
-        None => {
-            eprintln!("worker: missing --worker <path>");
-            return ExitCode::FAILURE;
-        }
-    };
-    let bench_name = get("--bench-name").unwrap_or_default();
-    let seed: u64 = get("--seed").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let cooldown_ms: u64 = get("--cooldown").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let mode = get("--mode").unwrap_or_else(|| "warm".into());
-    let runs: usize = get("--runs").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let batch: usize = get("--batch").and_then(|s| s.parse().ok()).unwrap_or(1);
-    let n: usize = get("--n").and_then(|s| s.parse().ok()).unwrap_or(1);
-    let batch_k: usize = get("--batch-k").and_then(|s| s.parse().ok()).unwrap_or(1);
-    let max_call_us: Option<u64> = get("--max-call-us").and_then(|s| s.parse().ok()).filter(|&v| v > 0);
-
-    let routine = RoutineSpec {
-        name: bench_name.clone(),
-        bridge: routine_bridge!(IdentityAdd),
-    };
-
-    let mut workload = Workload::new();
-    workload.program("default", |b| {
-        b.stage(vec![harness::algo_call(), harness::light_scalar()]);
-    });
-
-    harness::run_worker(
-        &routine, &workload, &dylib_path,
-        seed, cooldown_ms, &mode,
-        runs, batch, n, batch_k, max_call_us,
-    );
-    ExitCode::SUCCESS
-}
-"#;
-
-const STARTER_BENCH_TOML: &str = r#"# Bench harness configuration.
+const STARTER_BENCH_TOML: &str = r#"# Bench harness configuration. `mock bench run [names...]` runs it;
+# `mock bench list` prints what is registered here.
 #
-# Each `[bench.<name>]` section defines one bench. Each
-# `[[bench.<name>.sizes]]` row sets a logical size (N) and the variant
-# cdylib paths to compare at that size. `[timing]` knobs apply
-# globally (passes per harness run, runs per pass, batch size,
-# cooldown cohorts).
+# Each [bench.<name>] section is one bench:
+#   variants = ["a", "b"]   variant short names (dirs under variants/)
+#   sizes = [64, 256]       the N list; every N must be in the bench
+#                           binary's byte_routine_dispatch! declaration
+#                           (each size is its own monomorphisation)
+#   may_differ = false      variants may produce different valid outputs
+#   required = false        validation failure fails the whole run
+#   threaded = false        variants spawn threads (skips the P-core pin)
+#   [bench.<name>.timing]   per-bench override of any [timing] knob
+#
+# master_seed: integer, or a string ("0x...") for values past the TOML
+# i64 cap; 0 picks a fresh random seed (printed, replayable with
+# `--seed`).
+#
+# [docgen] enabled = true makes the docs regeneration pass emit a
+# generated BENCHES.md (plus graphviz visualisations) under docs/
+# from the bench history.
 
-# Note on master_seed: TOML 1.0 caps integers at i64 (0x7FFF_FFFF_FFFF_FFFF).
-# Pick any value that fits, or set 0 to use a fresh random seed every run.
 [bench.sample]
 title = "Sample bench"
 workload = "default"
-master_seed = 0x1234_5678_9ABC_DEF0
-
-[[bench.sample.sizes]]
-n = 64
-variants = [
-    "variants/sample/target/release/libsample.dylib",
-]
+variants = ["sample"]
+sizes = [64, 256]
 
 [timing]
 passes = 4

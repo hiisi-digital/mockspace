@@ -8,14 +8,12 @@
 //! `Routine::Input`/`Output` types. A [`VariantSpec`] names one
 //! variant cdylib path and the ABI hash it was built against.
 //!
-//! Round 1 ships the types and a stub `discover_variants` helper that
-//! returns an empty list. Round 3 fills in real cdylib discovery from
-//! the consumer's `mock/benches/variants/<name>/target/release/`.
+//! Variant path resolution (short names to platform dylib paths)
+//! lives in [`crate::config::resolve_variant_path`].
 
 use std::path::PathBuf;
 
 use crate::core::RoutineBridge;
-use crate::error::BenchError;
 
 /// One Routine plus the byte-level dispatch bridge the harness needs
 /// to invoke its variants.
@@ -56,17 +54,4 @@ pub struct VariantSpec {
     /// [`mockspace_bench_core::abi_hash`] at run start; mismatch is
     /// [`BenchError::AbiMismatch`].
     pub abi_hash: u64,
-}
-
-/// Discover variant cdylibs under a consumer's
-/// `mock/benches/variants/` tree.
-///
-/// Round 1 stub: always returns
-/// [`BenchError::NotImplemented`]. Round 3 walks
-/// `<root>/variants/<name>/target/release/` looking for cdylibs and
-/// `dlsym`s `bench_abi_hash`/`bench_name` from each.
-pub fn discover_variants(_root: &std::path::Path) -> Result<Vec<VariantSpec>, BenchError> {
-    Err(BenchError::NotImplemented {
-        what: "discover_variants (cdylib walking lands in Round 3)",
-    })
 }
