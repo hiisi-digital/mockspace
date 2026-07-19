@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "cargo-mock",
     "lint-rules",
     "bench-core",
     "bench-harness",

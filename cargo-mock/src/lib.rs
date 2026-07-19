@@ -1,0 +1,207 @@
+//! `cargo-mock` / `mock`: the launcher for the mockspace design-round
+//! workflow engine.
+//!
+//! It resolves the engine version a repo pins (root `mockspace.toml`,
+//! `mockspace_version = "..."`, mapping to a git tag and a crates.io release),
+//! builds that engine once into a shared per-version cache under
+//! `~/.cache/mockspace/builds/`, and execs it with the absolute mock dir so
+//! the working directory never matters. No proxy crate, no `.cargo` alias, no
+//! `build.rs` bootstrap: the launcher is the sole entry.
+//!
+//! Installed as two binaries from one source: `cargo-mock` (cargo's external
+//! subcommand convention, so `cargo mock ...` works) and `mock` (the short
+//! direct form).
+
+mod cache;
+mod discover;
+mod hash;
+mod pin;
+
+use std::path::Path;
+use std::process::ExitCode;
+
+use pin::Pin;
+
+/// The launcher entry, shared by both installed binaries (`cargo-mock` and
+/// `mock`). Each bin is a two-line shim over this.
+pub fn run_cli() -> ExitCode {
+    let raw: Vec<String> = std::env::args().collect();
+    let forwarded = normalize_args(&raw);
+    match run(&forwarded) {
+        Ok(()) => ExitCode::SUCCESS, // unreachable when exec succeeds
+        Err(e) => {
+            eprintln!("mock: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The user-facing arguments to forward to the engine.
+///
+/// Two invocation shapes collapse to one: `mock <args...>` passes `<args...>`;
+/// `cargo mock <args...>` is executed by cargo as `cargo-mock mock <args...>`,
+/// so a leading `mock` is dropped when we were invoked as `cargo-mock`. Any
+/// user-supplied `--dir <x>` is stripped: the launcher owns `--dir` (it always
+/// passes the absolute mock dir).
+fn normalize_args(raw: &[String]) -> Vec<String> {
+    let prog = raw
+        .first()
+        .map(|p| {
+            Path::new(p)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        })
+        .unwrap_or_default();
+    let mut rest: Vec<String> = raw.iter().skip(1).cloned().collect();
+    if prog == "cargo-mock" && rest.first().map(String::as_str) == Some("mock") {
+        rest.remove(0);
+    }
+    strip_dir_flag(rest)
+}
+
+/// Drop a `--dir <value>` pair anywhere in the args.
+fn strip_dir_flag(args: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut skip = false;
+    for a in args {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if a == "--dir" {
+            skip = true;
+            continue;
+        }
+        out.push(a);
+    }
+    out
+}
+
+fn run(args: &[String]) -> Result<(), String> {
+    let root = discover::repo_root().ok_or_else(|| {
+        "not inside a git repository (no .git found, and MOCK_ROOT is unset)".to_string()
+    })?;
+    let mock_abs = root.join(discover::mock_dir_name(&root));
+
+    if !mock_abs.join("mockspace.toml").exists() && !mock_abs.join("Cargo.lock").exists() {
+        return Err(format!(
+            "no mock workspace at {} (expected mockspace.toml or Cargo.lock)",
+            mock_abs.display()
+        ));
+    }
+
+    // v0.1: repo-specific lints are compiled into a keyed binary; that build
+    // is a follow-up. Refuse rather than silently run a lint-blind engine.
+    if let Some(reason) = custom_lints_present(&root, &mock_abs) {
+        return Err(format!(
+            "{reason}\n  the launcher's custom-lint build is not implemented yet.\n  \
+             until it lands, run this repo through its existing proxy (`cargo check` in \
+             the mock dir, then `cargo mock` via the alias)."
+        ));
+    }
+
+    let pin = resolve_pin(&root, &mock_abs)?;
+    let cache_root = cache::cache_root()?;
+    let resolved = pin.resolve(&cache_root)?;
+    let key = cache::compute_key(&pin.url, &resolved.key_rev, &[]);
+    let bin = cache::ensure_built(&cache_root, &key, &resolved)?;
+
+    // exec replaces this process; returns only on failure.
+    cache::exec_engine(&bin, &mock_abs, args).map(|_never| ())
+}
+
+/// The pin: the `mockspace_version` key in the root `mockspace.toml` (its home
+/// after migration), then the pre-migration `<mockdir>/mockspace.toml`, then
+/// the legacy mockspace rev in the mock workspace's `Cargo.lock`. The last two
+/// keep an un-migrated repo running until the engine relocates its config.
+fn resolve_pin(root: &Path, mock_abs: &Path) -> Result<Pin, String> {
+    for toml in [root.join("mockspace.toml"), mock_abs.join("mockspace.toml")] {
+        if let Ok(s) = std::fs::read_to_string(&toml) {
+            if let Some(p) = Pin::from_mockspace_toml(&s) {
+                return Ok(p);
+            }
+        }
+    }
+    if let Ok(s) = std::fs::read_to_string(mock_abs.join("Cargo.lock")) {
+        if let Some(p) = Pin::from_legacy_lock(&s) {
+            return Ok(p);
+        }
+    }
+    Err(format!(
+        "no mockspace pin found. add one to {}:\n\n    \
+         mockspace_version = \"0.0.0-d05\"   # the released engine version\n",
+        root.join("mockspace.toml").display()
+    ))
+}
+
+/// Whether the repo ships custom lints the cached bare-engine would not carry:
+/// `<mockdir>/lints/*.rs`, or a non-empty `[lint-crates]` table. Returns a
+/// human reason when present.
+fn custom_lints_present(_root: &Path, mock_abs: &Path) -> Option<String> {
+    let lints_dir = mock_abs.join("lints");
+    if let Ok(rd) = std::fs::read_dir(&lints_dir) {
+        for e in rd.flatten() {
+            if e.path().extension().map(|x| x == "rs").unwrap_or(false) {
+                return Some(format!(
+                    "this repo ships custom lints ({})",
+                    lints_dir.display()
+                ));
+            }
+        }
+    }
+    if let Ok(s) = std::fs::read_to_string(mock_abs.join("mockspace.toml")) {
+        if has_lint_crates(&s) {
+            return Some("this repo declares [lint-crates]".to_string());
+        }
+    }
+    None
+}
+
+fn has_lint_crates(toml: &str) -> bool {
+    toml.lines().any(|l| {
+        let t = l.trim();
+        t == "[lint-crates]" || t.starts_with("[lint-crates.")
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn direct_mock_forwards_all() {
+        let raw = s(&["/usr/bin/mock", "lock", "--foo"]);
+        assert_eq!(normalize_args(&raw), s(&["lock", "--foo"]));
+    }
+
+    #[test]
+    fn cargo_mock_drops_leading_mock() {
+        let raw = s(&["/root/.cargo/bin/cargo-mock", "mock", "lock", "--foo"]);
+        assert_eq!(normalize_args(&raw), s(&["lock", "--foo"]));
+    }
+
+    #[test]
+    fn cargo_mock_without_subcommand() {
+        let raw = s(&["cargo-mock", "mock"]);
+        assert_eq!(normalize_args(&raw), Vec::<String>::new());
+    }
+
+    #[test]
+    fn user_dir_flag_is_stripped() {
+        let raw = s(&["mock", "check", "--dir", "/somewhere", "--scope", "x"]);
+        assert_eq!(normalize_args(&raw), s(&["check", "--scope", "x"]));
+    }
+
+    #[test]
+    fn detects_lint_crates_table() {
+        assert!(has_lint_crates("[lint-crates]\nfoo = \"1\"\n"));
+        assert!(has_lint_crates("[lint-crates.foo]\npath = \"x\"\n"));
+        assert!(!has_lint_crates("[lints]\nfoo = \"x\"\n"));
+    }
+}
