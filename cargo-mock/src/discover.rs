@@ -16,7 +16,7 @@ pub struct Located {
     /// The `mockspace.toml` to read the pin from.
     pub config_path: PathBuf,
     /// The absolute v0.1 mock workspace dir the engine runs against.
-    pub mock_dir: PathBuf,
+    pub mock_dir:    PathBuf,
 }
 
 /// The repo root.
@@ -58,13 +58,17 @@ fn repo_root_with(mock_root: Option<std::ffi::OsString>) -> Option<PathBuf> {
 /// there the `mock_dir` key defaults to `.`, so the config's own dir is the
 /// mock workspace. This keeps every existing `mock/mockspace.toml` working
 /// with no move, while a clean root placement points at `mock` explicitly.
+///
+/// The engine's durable git hook reimplements this same resolution in shell
+/// (`src/bootstrap/durable.rs`, the no-launcher fallback); the two MUST stay in
+/// sync.
 pub fn locate(root: &Path) -> Option<Located> {
     let root_cfg = root.join("mockspace.toml");
     if root_cfg.is_file() {
         let md = mock_dir_field(&root_cfg).unwrap_or_else(|| "mock".to_string());
         return Some(Located {
             config_path: root_cfg,
-            mock_dir: normalize(root.join(md)),
+            mock_dir:    normalize(root.join(md)),
         });
     }
     for sub in ordered_subdirs(root) {
@@ -73,7 +77,7 @@ pub fn locate(root: &Path) -> Option<Located> {
             let md = mock_dir_field(&cfg).unwrap_or_else(|| ".".to_string());
             return Some(Located {
                 config_path: cfg,
-                mock_dir: normalize(sub.join(md)),
+                mock_dir:    normalize(sub.join(md)),
             });
         }
     }
@@ -121,10 +125,10 @@ fn top_level_string(toml: &str, key: &str) -> Option<String> {
         if t.starts_with('[') {
             break; // top-level keys precede the first table
         }
-        if let Some((k, v)) = t.split_once('=') {
-            if k.trim() == key {
-                return Some(v.trim().trim_matches('"').trim_matches('\'').to_string());
-            }
+        if let Some((k, v)) = t.split_once('=')
+            && k.trim() == key
+        {
+            return Some(v.trim().trim_matches('"').trim_matches('\'').to_string());
         }
     }
     None
@@ -140,8 +144,9 @@ fn normalize(p: PathBuf) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
+    use super::*;
 
     #[test]
     fn mock_root_wins_when_a_dir() {

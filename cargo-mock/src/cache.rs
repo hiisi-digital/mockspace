@@ -29,10 +29,10 @@ fn cache_root_from(
     xdg: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,
 ) -> Result<PathBuf, String> {
-    if let Some(x) = xdg {
-        if !x.is_empty() {
-            return Ok(PathBuf::from(x).join("mockspace"));
-        }
+    if let Some(x) = xdg
+        && !x.is_empty()
+    {
+        return Ok(PathBuf::from(x).join("mockspace"));
     }
     let home = home
         .filter(|h| !h.is_empty())
@@ -44,15 +44,37 @@ fn builds_dir(root: &Path) -> PathBuf {
     root.join("builds")
 }
 
-/// The cache key: a hash of the full compilation input. Today that is the
-/// mockspace url and resolved rev; `lint_inputs` folds in repo-specific lint
-/// sources so a repo with custom lints gets its own keyed binary once the
-/// launcher builds lint-inclusive binaries (that build is a follow-up; the
-/// key is forward-compatible from the start).
-pub fn compute_key(url: &str, key_rev: &str, lint_inputs: &[(String, Vec<u8>)]) -> String {
+/// The toolchain identity to fold into the cache key: `rustc -vV` (version,
+/// commit hash, host, LLVM). rustc is part of the real compilation input, so a
+/// toolchain change must re-key the cached engine, or a frozen engine binary
+/// would be paired with a freshly-built lint cdylib compiled by a different
+/// rustc, whose `Box<dyn Lint>` vtable layout may differ (UB across the dlopen
+/// boundary). Empty string when rustc cannot be run (the key then omits it; the
+/// build itself would fail downstream anyway).
+pub fn rustc_fingerprint() -> String {
+    Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// The cache key: a hash of the full compilation input. The mockspace url and
+/// resolved rev, the `toolchain` identity (see [`rustc_fingerprint`]), and
+/// `lint_inputs` (repo-specific lint sources, so a repo with custom lints keys
+/// its own binary). A change in any re-keys and forces a coherent rebuild.
+pub fn compute_key(
+    url: &str,
+    key_rev: &str,
+    toolchain: &str,
+    lint_inputs: &[(String, Vec<u8>)],
+) -> String {
     let mut h = Fnv::new();
     h.write_field(url);
     h.write_field(key_rev);
+    h.write_field(toolchain);
     // lint inputs, order-independent: sort by path first.
     let mut sorted: Vec<&(String, Vec<u8>)> = lint_inputs.iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
@@ -161,28 +183,30 @@ mod tests {
 
     #[test]
     fn key_is_deterministic_and_input_sensitive() {
-        let a = compute_key("u", "r1", &[]);
-        let b = compute_key("u", "r1", &[]);
+        let a = compute_key("u", "r1", "tc", &[]);
+        let b = compute_key("u", "r1", "tc", &[]);
         assert_eq!(a, b);
-        assert_ne!(a, compute_key("u", "r2", &[]));
-        assert_ne!(a, compute_key("v", "r1", &[]));
+        assert_ne!(a, compute_key("u", "r2", "tc", &[]));
+        assert_ne!(a, compute_key("v", "r1", "tc", &[]));
+        // a toolchain change re-keys (the finding-#1 fix)
+        assert_ne!(a, compute_key("u", "r1", "tc2", &[]));
         assert_eq!(a.len(), 16);
     }
 
     #[test]
     fn key_lint_inputs_order_independent() {
-        let l1 = vec![
-            ("a.rs".to_string(), b"aa".to_vec()),
-            ("b.rs".to_string(), b"bb".to_vec()),
-        ];
-        let l2 = vec![
-            ("b.rs".to_string(), b"bb".to_vec()),
-            ("a.rs".to_string(), b"aa".to_vec()),
-        ];
-        assert_eq!(compute_key("u", "r", &l1), compute_key("u", "r", &l2));
+        let l1 = vec![("a.rs".to_string(), b"aa".to_vec()), ("b.rs".to_string(), b"bb".to_vec())];
+        let l2 = vec![("b.rs".to_string(), b"bb".to_vec()), ("a.rs".to_string(), b"aa".to_vec())];
+        assert_eq!(
+            compute_key("u", "r", "tc", &l1),
+            compute_key("u", "r", "tc", &l2)
+        );
         // but content-sensitive
         let l3 = vec![("a.rs".to_string(), b"XX".to_vec())];
-        assert_ne!(compute_key("u", "r", &l1), compute_key("u", "r", &l3));
+        assert_ne!(
+            compute_key("u", "r", "tc", &l1),
+            compute_key("u", "r", "tc", &l3)
+        );
     }
 
     #[test]
@@ -193,7 +217,7 @@ mod tests {
         std::fs::create_dir_all(&binpath).unwrap();
         std::fs::write(binpath.join("mockspace"), b"#!/bin/sh\n").unwrap();
         let resolved = Pin {
-            url: "u".into(),
+            url:       "u".into(),
             reference: Reference::Rev("r".into()),
         }
         .resolve(dir.path())

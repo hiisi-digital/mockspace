@@ -32,7 +32,7 @@ pub fn run_cli() -> ExitCode {
         Err(e) => {
             eprintln!("mock: {e}");
             ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -101,7 +101,8 @@ fn run(args: &[String]) -> Result<(), String> {
     let pin = resolve_pin(located.as_ref(), &root, &mock_abs)?;
     let cache_root = cache::cache_root()?;
     let resolved = pin.resolve(&cache_root)?;
-    let key = cache::compute_key(&pin.url, &resolved.key_rev, &[]);
+    let key = cache::compute_key(&pin.url, &resolved.key_rev, &cache::rustc_fingerprint(), &[
+    ]);
     let bin = cache::ensure_built(&cache_root, &key, &resolved)?;
 
     // The engine builds and loads this repo's custom lints itself (into its own
@@ -118,17 +119,16 @@ fn resolve_pin(
     root: &Path,
     mock_abs: &Path,
 ) -> Result<Pin, String> {
-    if let Some(l) = located {
-        if let Ok(s) = std::fs::read_to_string(&l.config_path) {
-            if let Some(p) = Pin::from_mockspace_toml(&s) {
-                return Ok(p);
-            }
-        }
+    if let Some(l) = located
+        && let Ok(s) = std::fs::read_to_string(&l.config_path)
+        && let Some(p) = Pin::from_mockspace_toml(&s)
+    {
+        return Ok(p);
     }
-    if let Ok(s) = std::fs::read_to_string(mock_abs.join("Cargo.lock")) {
-        if let Some(p) = Pin::from_legacy_lock(&s) {
-            return Ok(p);
-        }
+    if let Ok(s) = std::fs::read_to_string(mock_abs.join("Cargo.lock"))
+        && let Some(p) = Pin::from_legacy_lock(&s)
+    {
+        return Ok(p);
     }
     let where_to = located
         .map(|l| l.config_path.clone())
