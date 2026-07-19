@@ -463,7 +463,20 @@ impl Config {
             .unwrap_or_else(|| mock_dir.clone());
         let docs_dir = repo_root.join("docs");
 
-        let toml_path = mock_dir.join("mockspace.toml");
+        // The config sits either in the mock dir (in place, the historical
+        // location) or at the repo root (its home once relocated). Prefer the
+        // in-place one so an un-relocated repo is unchanged; else read the
+        // root one. The mock dir itself always comes from the caller (the
+        // launcher resolves it), so only the config's read location varies.
+        let in_mock = mock_dir.join("mockspace.toml");
+        let at_root = repo_root.join("mockspace.toml");
+        let toml_path = if in_mock.is_file() {
+            in_mock
+        } else if at_root.is_file() {
+            at_root
+        } else {
+            in_mock
+        };
         let toml_content = fs::read_to_string(&toml_path).unwrap_or_default();
 
         let raw: RawConfig = toml_edit::de::from_str(&toml_content)
