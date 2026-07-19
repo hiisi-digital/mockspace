@@ -26,6 +26,7 @@ pub mod render_md;
 pub mod render_design;
 pub mod render_agent;
 pub mod dylib_check;
+pub mod custom_lints;
 pub mod document;
 pub mod registry;
 mod entry;
