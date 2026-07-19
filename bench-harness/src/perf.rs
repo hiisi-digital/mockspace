@@ -79,7 +79,7 @@ mod macos {
 
     use super::PerfSnapshot;
 
-    extern {
+    extern "C" {
         fn kpc_set_counting(classes: u32) -> c_int;
         fn kpc_set_thread_counting(classes: u32) -> c_int;
         fn kpc_get_thread_counters(tid: u32, buf_count: u32, buf: *mut u64) -> c_int;

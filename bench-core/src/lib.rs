@@ -405,13 +405,13 @@ pub struct FfiBenchCall {
 /// `n` is a size parameter for multi-N dispatch (consumer-defined; the
 /// harness passes whatever sizes the consumer registered).
 pub type BenchEntryFn =
-    unsafe extern fn(input: *const u8, output: *mut u8, n: usize) -> FfiBenchCall;
+    unsafe extern "C" fn(input: *const u8, output: *mut u8, n: usize) -> FfiBenchCall;
 
 /// Name accessor exported by each variant dylib.
-pub type BenchNameFn = extern fn() -> *const u8;
+pub type BenchNameFn = extern "C" fn() -> *const u8;
 
 /// ABI hash for version checking on dylib load.
-pub type AbiHashFn = extern fn() -> u64;
+pub type AbiHashFn = extern "C" fn() -> u64;
 
 /// Compute the ABI hash at compile time. FNV-1a over the FfiBenchCall
 /// layout. Variants compile-in this hash at build time; on load, the

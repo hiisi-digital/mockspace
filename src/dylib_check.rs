@@ -54,7 +54,7 @@ fn check_one_dylib(path: &Path, expected_abi: u32, sym_prefix: &str) -> Result<(
         let lib = libloading::Library::new(path).map_err(|e| format!("dlopen failed: {e}"))?;
 
         // 1. ABI version handshake
-        let abi_fn: libloading::Symbol<extern fn() -> u32> = lib
+        let abi_fn: libloading::Symbol<extern "C" fn() -> u32> = lib
             .get(abi_sym.as_bytes())
             .map_err(|e| format!("missing {abi_sym}: {e}"))?;
 
@@ -66,17 +66,17 @@ fn check_one_dylib(path: &Path, expected_abi: u32, sym_prefix: &str) -> Result<(
         }
 
         // 2. Manifest function exists
-        let _manifest_fn: libloading::Symbol<extern fn()> = lib
+        let _manifest_fn: libloading::Symbol<extern "C" fn()> = lib
             .get(manifest_sym.as_bytes())
             .map_err(|e| format!("missing {manifest_sym}: {e}"))?;
 
         // 3. Init function exists
-        let _init_fn: libloading::Symbol<extern fn()> = lib
+        let _init_fn: libloading::Symbol<extern "C" fn()> = lib
             .get(init_sym.as_bytes())
             .map_err(|e| format!("missing {init_sym}: {e}"))?;
 
         // 4. Shutdown function exists and is safe to call (default is no-op)
-        let shutdown_fn: libloading::Symbol<extern fn()> = lib
+        let shutdown_fn: libloading::Symbol<extern "C" fn()> = lib
             .get(shutdown_sym.as_bytes())
             .map_err(|e| format!("missing {shutdown_sym}: {e}"))?;
 
