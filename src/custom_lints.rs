@@ -119,13 +119,15 @@ fn write_cdylib_crate(
     for (name, spec) in packs {
         manifest.push_str(&format!("{name} = {spec}\n"));
     }
-    // Force every reference to `mockspace-lint-rules` (the cdylib's own, and
-    // any a pack crate pulls in) to the ONE rev the engine is built from. A pack
-    // pins lint-rules by `branch = "dev"`; the engine passes it by `rev`; cargo
-    // keys those as distinct sources and would build two copies, whose
+    // Force every reference to `mockspace-lint-rules` (the cdylib's own, and any
+    // a pack crate pulls in) to the ONE lint-rules the engine is built from. A
+    // pack pins lint-rules by `branch = "dev"`; the engine passes it by `rev`;
+    // cargo keys those as distinct git sources and builds two copies, whose
     // `Box<dyn Lint>` vtables then differ across the dlopen boundary (E0271 at
-    // build, UB if it linked). The `[patch]` collapses them to one.
-    if let Some(patch) = patch_section(lint_rules_dep) {
+    // build, UB if it linked). The `[patch]` collapses them to one. It points at
+    // a path (cargo's own checkout of lint-rules at that rev) rather than the git
+    // source, because cargo rejects a patch pointing back at the same source.
+    if let Some(patch) = patch_section(lint_rules_dep, &cargo_home()) {
         manifest.push_str(&patch);
     }
     write_if_changed(&gen_dir.join("Cargo.toml"), &manifest)?;
@@ -138,18 +140,59 @@ fn write_cdylib_crate(
 }
 
 /// Build the `[patch]` that pins `mockspace-lint-rules` to the engine's exact
-/// source, parsed out of the engine-supplied dep spec (`{ package =
-/// "mockspace-lint-rules", git = "<url>", rev|tag = "<val>" }`). `None` if the
-/// spec is not a git dep (a path or registry override in local dev), where no
-/// patch is needed because every reference already resolves to that one source.
-fn patch_section(lint_rules_dep: &str) -> Option<String> {
+/// lint-rules, so a `[lint-crates]` pack that references lint-rules by branch
+/// unifies with the engine's rev-pinned copy instead of building a second one.
+///
+/// The patch points at a **path**: cargo's own checkout of the engine's source
+/// at that rev (`$CARGO_HOME/git/checkouts/<name>-<hash>/<short-rev>/lint-rules`),
+/// which cargo just extracted to build the engine. It has to be a path (or any
+/// source other than the original git url) because cargo rejects a patch that
+/// points back at the same git source. `None` when the dep is not a git-rev spec
+/// (a tag/version or a local path override) or the checkout cannot be located,
+/// in which case no patch is emitted.
+fn patch_section(lint_rules_dep: &str, cargo_home: &Path) -> Option<String> {
     let url = extract_between(lint_rules_dep, "git = \"", "\"")?;
-    let (kind, val) = ["rev", "tag"].iter().find_map(|k| {
-        extract_between(lint_rules_dep, &format!("{k} = \""), "\"").map(|v| (*k, v))
-    })?;
+    let rev = extract_between(lint_rules_dep, "rev = \"", "\"")?;
+    let path = find_lint_rules_checkout(cargo_home, &url, &rev)?;
     Some(format!(
-        "\n[patch.\"{url}\"]\nmockspace-lint-rules = {{ git = \"{url}\", {kind} = \"{val}\" }}\n"
+        "\n[patch.\"{url}\"]\nmockspace-lint-rules = {{ path = \"{}\" }}\n",
+        path.display()
     ))
+}
+
+/// Locate cargo's checkout of `lint-rules` at `rev` for the git repo `url`,
+/// under `<cargo_home>/git/checkouts/<name>-<hash>/<short-rev>/lint-rules`. The
+/// `<name>-<hash>` dir is keyed on the url; the sub-dir is the short rev.
+fn find_lint_rules_checkout(cargo_home: &Path, url: &str, rev: &str) -> Option<PathBuf> {
+    let name = url.rsplit('/').next()?.trim_end_matches(".git");
+    let short = &rev[.. rev.len().min(7)];
+    let checkouts = cargo_home.join("git").join("checkouts");
+    for repo in std::fs::read_dir(&checkouts).ok()?.flatten() {
+        if !repo
+            .file_name()
+            .to_string_lossy()
+            .starts_with(&format!("{name}-"))
+        {
+            continue;
+        }
+        for co in std::fs::read_dir(repo.path()).ok()?.flatten() {
+            if co.file_name().to_string_lossy().starts_with(short) {
+                let lr = co.path().join("lint-rules");
+                if lr.is_dir() {
+                    return Some(lr);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `$CARGO_HOME` or `~/.cargo`.
+fn cargo_home() -> PathBuf {
+    std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+        .unwrap_or_else(|| PathBuf::from(".cargo"))
 }
 
 /// The substring of `s` between the first `start` and the next `end` after it.
@@ -370,31 +413,31 @@ mod tests {
         // a leading [workspace] makes the crate its own root so cargo builds it
         // standalone under the consumer's <mock>/target/ (not as a member).
         assert!(manifest.trim_start().starts_with("[workspace]"));
-        // a [patch] pins lint-rules to the engine's source so packs unify.
-        assert!(manifest.contains("[patch."));
     }
 
     #[test]
-    fn patch_section_pins_lint_rules_to_engine_source() {
-        let dep =
-            "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", rev = \"abc123\" }";
-        let patch = patch_section(dep).unwrap();
-        assert!(patch.contains("[patch.\"ssh://x/m.git\"]"));
-        assert!(
-            patch.contains("mockspace-lint-rules = { git = \"ssh://x/m.git\", rev = \"abc123\" }")
-        );
-        // a tag dep patches by tag.
-        let tagdep =
-            "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", tag = \"0.0.0-d05\" }";
-        assert!(
-            patch_section(tagdep)
-                .unwrap()
-                .contains("tag = \"0.0.0-d05\"")
-        );
+    fn patch_section_points_at_the_checkout_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        // lay out cargo's checkout: git/checkouts/<name>-<hash>/<short-rev>/lint-rules
+        let lr = home.join("git/checkouts/mockspace-deadbeef/abc1234/lint-rules");
+        std::fs::create_dir_all(&lr).unwrap();
+        let dep = "{ package = \"mockspace-lint-rules\", git = \"ssh://x/mockspace.git\", rev = \"abc1234ff\" }";
+        let patch = patch_section(dep, home).unwrap();
+        assert!(patch.contains("[patch.\"ssh://x/mockspace.git\"]"));
+        assert!(patch.contains(&format!(
+            "mockspace-lint-rules = {{ path = \"{}\" }}",
+            lr.display()
+        )));
     }
 
     #[test]
-    fn patch_section_none_for_non_git_dep() {
-        assert!(patch_section("{ path = \"../lint-rules\" }").is_none());
+    fn patch_section_none_when_checkout_absent_or_not_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        // git-rev dep but no checkout on disk -> no patch.
+        let dep = "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", rev = \"abc\" }";
+        assert!(patch_section(dep, tmp.path()).is_none());
+        // path/registry override -> no patch.
+        assert!(patch_section("{ path = \"../lint-rules\" }", tmp.path()).is_none());
     }
 }
