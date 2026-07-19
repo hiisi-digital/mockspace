@@ -457,6 +457,15 @@ macro_rules! timed {
 /// accumulates setup, then on `run` emits the timed block.
 #[macro_export]
 macro_rules! __bench_expand_body {
+    // The documented `setup { ... }` wrapper: unwrap its tokens into
+    // the setup accumulator. Without this rule the wrapper leaked
+    // into the generated code verbatim, where `setup { ... }` parses
+    // as a struct literal; the doc example never compiled and no
+    // variant had used it until one did.
+    ( @setup [ $( $setup:tt )* ] setup { $( $s:tt )* } $( $rest:tt )* ) => {
+        $crate::__bench_expand_body!( @setup [ $( $setup )* $( $s )* ] $( $rest )* )
+    };
+
     ( @setup [ $( $setup:tt )* ] run { $( $run:tt )* } $( $teardown:tt )* ) => {{
         $( $setup )*
         let __start = $crate::counter::read_counter();
