@@ -1,12 +1,12 @@
 //! Smoke tests for the template engine.
 
-use mockspace_template::{TemplateEnv, RenderError};
+use mockspace_template::{RenderError, TemplateEnv};
 use serde::Serialize;
 
 #[derive(Serialize)]
 struct Ctx {
     project_name: String,
-    version: String,
+    version:      String,
 }
 
 #[test]
@@ -14,7 +14,7 @@ fn render_simple_substitution() {
     let env = TemplateEnv::new();
     let ctx = Ctx {
         project_name: "homma".into(),
-        version: "0.1.0".into(),
+        version:      "0.1.0".into(),
     };
     let out = env
         .render_str("# {{ project_name }} v{{ version }}", &ctx)
@@ -25,10 +25,11 @@ fn render_simple_substitution() {
 #[test]
 fn registered_template_renders() {
     let mut env = TemplateEnv::new();
-    env.add_template("greeting", "Hello {{ project_name }}!").unwrap();
+    env.add_template("greeting", "Hello {{ project_name }}!")
+        .unwrap();
     let ctx = Ctx {
         project_name: "world".into(),
-        version: "1".into(),
+        version:      "1".into(),
     };
     let t = env.get_template("greeting").unwrap();
     assert_eq!(t.render(&ctx).unwrap(), "Hello world!");
@@ -49,7 +50,7 @@ fn strict_undefined_errors() {
     let env = TemplateEnv::new();
     let ctx = Ctx {
         project_name: "x".into(),
-        version: "1".into(),
+        version:      "1".into(),
     };
     let err = env.render_str("{{ no_such_field }}", &ctx).unwrap_err();
     assert!(matches!(err, RenderError::Minijinja(_)));
@@ -61,11 +62,11 @@ fn loop_and_conditional() {
     #[derive(Serialize)]
     struct ListCtx {
         items: Vec<String>,
-        emit: bool,
+        emit:  bool,
     }
     let ctx = ListCtx {
         items: vec!["a".into(), "b".into(), "c".into()],
-        emit: true,
+        emit:  true,
     };
     let out = env
         .render_str(

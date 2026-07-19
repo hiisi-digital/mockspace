@@ -62,11 +62,11 @@ fn default_true() -> bool {
 impl Default for TokenScanConfig {
     fn default() -> Self {
         Self {
-            tokens: Vec::new(),
-            word_boundary: true,
-            strip_strings: true,
-            strip_comments: true,
-            strip_doc_comments: true,
+            tokens:              Vec::new(),
+            word_boundary:       true,
+            strip_strings:       true,
+            strip_comments:      true,
+            strip_doc_comments:  true,
             severity_escalation: None,
         }
     }
@@ -74,9 +74,9 @@ impl Default for TokenScanConfig {
 
 /// Concrete `TokenScan` lint, parameterised on its catalog name + config.
 pub struct TokenScanLint {
-    name: &'static str,
-    description: &'static str,
-    config: TokenScanConfig,
+    name:             &'static str,
+    description:      &'static str,
+    config:           TokenScanConfig,
     default_severity: GateSeverity,
     message_template: String,
 }
@@ -121,10 +121,10 @@ impl Lint for TokenScanLint {
             return Ok(());
         }
         let strip_opts = StripOpts {
-            strings: self.config.strip_strings,
-            comments: self.config.strip_comments,
+            strings:      self.config.strip_strings,
+            comments:     self.config.strip_comments,
             doc_comments: self.config.strip_doc_comments,
-            code_fences: false,
+            code_fences:  false,
         };
         let view = doc.source_stripped(strip_opts);
         let view_str: &str = view.as_ref();
@@ -183,17 +183,15 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: TokenScanConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("token-scan config: {e}"),
-                source_location: None,
-            })?;
+    let parsed: TokenScanConfig = config.clone().try_into().map_err(|e: toml::de::Error| {
+        ConfigError {
+            lint_name:       name.to_string(),
+            field_path:      String::new(),
+            kind:            ConfigErrorKind::InvalidValue,
+            message:         format!("token-scan config: {e}"),
+            source_location: None,
+        }
+    })?;
     Ok(Box::new(TokenScanLint::new(
         name,
         description,
@@ -228,7 +226,7 @@ fn scan_token(view: &str, token: &str, word_boundary: bool) -> Vec<(u32, u32, us
     }
     let mut i = 0;
     while i + token_bytes.len() <= bytes.len() {
-        if &bytes[i..i + token_bytes.len()] == token_bytes {
+        if &bytes[i .. i + token_bytes.len()] == token_bytes {
             // Left boundary: the token's preceding byte must be non-word
             // (only when the token's first byte is itself a word char;
             // tokens starting with punctuation never need a left boundary).
@@ -270,12 +268,14 @@ fn is_word_byte(b: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::Gate;
+    use toml::Table;
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::Gate;
-    use std::path::PathBuf;
-    use toml::Table;
 
     fn test_ctx() -> (PathBuf, GateSeverity) {
         (PathBuf::from("/tmp"), GateSeverity::uniform(Severity::Warn))
@@ -305,11 +305,11 @@ mod tests {
     #[test]
     fn fires_on_plain_token() {
         let config = TokenScanConfig {
-            tokens: vec!["Vec<".to_string()],
-            word_boundary: false,
-            strip_strings: true,
-            strip_comments: true,
-            strip_doc_comments: true,
+            tokens:              vec!["Vec<".to_string()],
+            word_boundary:       false,
+            strip_strings:       true,
+            strip_comments:      true,
+            strip_doc_comments:  true,
             severity_escalation: None,
         };
         let lint = TokenScanLint::new(

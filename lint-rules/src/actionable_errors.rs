@@ -72,8 +72,10 @@ impl Lint for ActionableErrors {
                     let after_colon = after_colon.trim();
 
                     // Empty if the value is `""` or `''`
-                    if after_colon == "\"\"," || after_colon == "\"\""
-                        || after_colon == "''," || after_colon == "''"
+                    if after_colon == "\"\","
+                        || after_colon == "\"\""
+                        || after_colon == "'',"
+                        || after_colon == "''"
                     {
                         // Empty hint — do not mark as found
                     } else {
@@ -85,7 +87,11 @@ impl Lint for ActionableErrors {
                 if brace_depth <= 0 && (trimmed.ends_with(");") || trimmed == ")") {
                     if !found_hint {
                         // Check the macro start line for lint:allow
-                        let start_line = ctx.source.lines().nth(macro_start_line.saturating_sub(1)).unwrap_or("");
+                        let start_line = ctx
+                            .source
+                            .lines()
+                            .nth(macro_start_line.saturating_sub(1))
+                            .unwrap_or("");
                         if crate::line_lint_allowed(start_line, "actionable_errors") {
                             errors.push(LintError::warning(
                                 ctx.crate_name.to_string(),
@@ -95,11 +101,11 @@ impl Lint for ActionableErrors {
                             ));
                         } else {
                             errors.push(LintError {
-                                crate_name: ctx.crate_name.to_string(),
-                                line: macro_start_line,
-                                lint_name: "actionable-errors",
-                                severity: crate::Severity::HARD_ERROR,
-                                message: format!(
+                                crate_name:   ctx.crate_name.to_string(),
+                                line:         macro_start_line,
+                                lint_name:    "actionable-errors",
+                                severity:     crate::Severity::HARD_ERROR,
+                                message:      format!(
                                     "{macro_name} missing hint field — errors must be actionable \
                                      (include what to do next)",
                                 ),

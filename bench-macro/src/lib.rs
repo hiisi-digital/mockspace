@@ -59,7 +59,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, ExprLit, FnArg, Ident, ItemFn, Lit, LitStr, Pat, Token, Type};
+use syn::{ExprLit, FnArg, Ident, ItemFn, Lit, LitStr, Pat, Token, Type, parse_macro_input};
 
 /// Parsed `#[bench_variant(...)]` arguments.
 ///
@@ -67,8 +67,8 @@ use syn::{parse_macro_input, ExprLit, FnArg, Ident, ItemFn, Lit, LitStr, Pat, To
 /// - Typed form: `("name", sizes = [...])`: `algo` is `None`.
 /// - Routine form: `(Algo, "name", sizes = [...])`: `algo` is `Some(Ident)`.
 struct BenchVariantArgs {
-    algo: Option<Ident>,
-    name: LitStr,
+    algo:  Option<Ident>,
+    name:  LitStr,
     sizes: Vec<usize>,
 }
 
@@ -119,7 +119,11 @@ impl Parse for BenchVariantArgs {
             ));
         }
 
-        Ok(BenchVariantArgs { algo, name, sizes })
+        Ok(BenchVariantArgs {
+            algo,
+            name,
+            sizes,
+        })
     }
 }
 
@@ -166,7 +170,7 @@ fn extract_typed_form_types(func: &ItemFn) -> syn::Result<(Type, Type)> {
                 input_arg,
                 "#[bench_variant] does not accept `self` parameters",
             ));
-        }
+        },
     };
     let output_ty = match output_arg {
         FnArg::Typed(pt) => {
@@ -179,15 +183,15 @@ fn extract_typed_form_types(func: &ItemFn) -> syn::Result<(Type, Type)> {
                         "#[bench_variant] typed form: second parameter \
                          must be `&mut Output`",
                     ));
-                }
+                },
             }
-        }
+        },
         FnArg::Receiver(_) => {
             return Err(syn::Error::new_spanned(
                 output_arg,
                 "#[bench_variant] does not accept `self` parameters",
             ));
-        }
+        },
     };
 
     // Input parameter must be a `&T` reference. The dispatch arm
@@ -241,11 +245,7 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name = &func.sig.ident;
 
     let const_param = func.sig.generics.params.iter().find_map(|p| {
-        if let syn::GenericParam::Const(cp) = p {
-            Some(&cp.ident)
-        } else {
-            None
-        }
+        if let syn::GenericParam::Const(cp) = p { Some(&cp.ident) } else { None }
     });
 
     let Some(const_param_ident) = const_param else {
@@ -303,7 +303,7 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 })
                 .collect()
-        }
+        },
     };
 
     let name_with_nul = format!("{}\0", name_str);

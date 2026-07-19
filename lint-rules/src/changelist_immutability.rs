@@ -28,7 +28,9 @@ impl CrossCrateLint for ChangelistImmutability {
         LINT_NAME
     }
 
-    fn source_only(&self) -> bool { false }
+    fn source_only(&self) -> bool {
+        false
+    }
 
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         let workspace_root = match crates.first() {
@@ -66,10 +68,7 @@ impl CrossCrateLint for ChangelistImmutability {
                     "workspace".to_string(),
                     0,
                     LINT_NAME,
-                    format!(
-                        "changelist `{}` ({source}) {msg}",
-                        cl.filename,
-                    ),
+                    format!("changelist `{}` ({source}) {msg}", cl.filename,),
                 ));
             }
         }
@@ -87,12 +86,12 @@ fn check_changelist_edit(cl: &ParsedChangelist, phase: Phase) -> Option<String> 
                 "cannot be modified — it is locked and frozen forever. \
                  Use SHAME.md.tmpl to document gaps discovered during execution."
             ))
-        }
+        },
         ClStatus::Deprecated => {
             Some(format!(
                 "cannot be modified — it is deprecated and frozen forever."
             ))
-        }
+        },
         ClStatus::Active => {
             match cl.kind {
                 ClKind::Doc => {
@@ -105,7 +104,7 @@ fn check_changelist_edit(cl: &ParsedChangelist, phase: Phase) -> Option<String> 
                     } else {
                         None // allowed
                     }
-                }
+                },
                 ClKind::Src => {
                     if phase != Phase::Src {
                         Some(format!(
@@ -116,9 +115,9 @@ fn check_changelist_edit(cl: &ParsedChangelist, phase: Phase) -> Option<String> 
                     } else {
                         None // allowed
                     }
-                }
+                },
             }
-        }
+        },
     }
 }
 
@@ -138,14 +137,23 @@ fn get_modified_in_design_rounds(workspace_root: &Path) -> Vec<(String, String)>
 
     // Staged changes
     if let Some(output) = run_git(workspace_root, &[
-        "diff", "--cached", "--name-status", "--relative", "--", "design_rounds/",
+        "diff",
+        "--cached",
+        "--name-status",
+        "--relative",
+        "--",
+        "design_rounds/",
     ]) {
         collect_non_additions(&output, "staged", &mut files);
     }
 
     // Unstaged tracked changes
     if let Some(output) = run_git(workspace_root, &[
-        "diff", "--name-status", "--relative", "--", "design_rounds/",
+        "diff",
+        "--name-status",
+        "--relative",
+        "--",
+        "design_rounds/",
     ]) {
         collect_non_additions(&output, "unstaged", &mut files);
     }
@@ -235,17 +243,16 @@ mod tests {
             "staged",
             &mut out,
         );
-        assert!(out.is_empty(), "added file should not appear in modified-list");
+        assert!(
+            out.is_empty(),
+            "added file should not appear in modified-list"
+        );
     }
 
     #[test]
     fn modification_included() {
         let mut out = Vec::new();
-        collect_non_additions(
-            "M\tdesign_rounds/foo.doc.lock.md\n",
-            "staged",
-            &mut out,
-        );
+        collect_non_additions("M\tdesign_rounds/foo.doc.lock.md\n", "staged", &mut out);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "design_rounds/foo.doc.lock.md");
     }
@@ -280,11 +287,7 @@ mod tests {
     #[test]
     fn deletion_included() {
         let mut out = Vec::new();
-        collect_non_additions(
-            "D\tdesign_rounds/foo.doc.md\n",
-            "staged",
-            &mut out,
-        );
+        collect_non_additions("D\tdesign_rounds/foo.doc.md\n", "staged", &mut out);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "design_rounds/foo.doc.md");
     }

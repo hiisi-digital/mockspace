@@ -30,24 +30,24 @@ pub struct ContentRegexConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct ContentPattern {
-    pub regex: String,
-    pub message: String,
+    pub regex:              String,
+    pub message:            String,
     /// Optional finding kind. When set, must appear in the lint's
     /// `CatalogEntry::finding_kinds`.
     #[serde(default)]
-    pub finding_kind: Option<String>,
+    pub finding_kind:       Option<String>,
     /// Optional ratio-threshold gating (max matches per window before fires).
     #[serde(default)]
-    pub ratio: Option<RatioThreshold>,
+    pub ratio:              Option<RatioThreshold>,
     /// Strip markdown fenced code blocks before matching.
     #[serde(default)]
-    pub strip_code_fences: bool,
+    pub strip_code_fences:  bool,
     /// Strip string literals before matching.
     #[serde(default)]
-    pub strip_strings: bool,
+    pub strip_strings:      bool,
     /// Strip comments before matching.
     #[serde(default)]
-    pub strip_comments: bool,
+    pub strip_comments:     bool,
     /// Strip doc comments before matching.
     #[serde(default)]
     pub strip_doc_comments: bool,
@@ -59,26 +59,26 @@ pub struct ContentPattern {
     /// call-site context the regex cannot capture; the `message` field
     /// then carries the prose advice instead.
     #[serde(default)]
-    pub replace_with: Option<String>,
+    pub replace_with:       Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RatioThreshold {
-    pub max_matches: u32,
+    pub max_matches:  u32,
     pub lines_window: u32,
 }
 
 struct CompiledPattern {
     pattern: ContentPattern,
-    regex: Regex,
+    regex:   Regex,
 }
 
 pub struct ContentRegexLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    patterns: Vec<CompiledPattern>,
+    patterns:         Vec<CompiledPattern>,
 }
 
 impl ContentRegexLint {
@@ -90,16 +90,21 @@ impl ContentRegexLint {
     ) -> Result<Self, ConfigError> {
         let mut patterns = Vec::with_capacity(config.patterns.len());
         for (i, p) in config.patterns.into_iter().enumerate() {
-            let regex = Regex::new(&p.regex).map_err(|e| ConfigError {
-                lint_name: name.to_string(),
-                field_path: format!("patterns[{i}].regex"),
-                kind: ConfigErrorKind::UnparseableRegex {
-                    error: e.to_string(),
-                },
-                message: format!("regex `{}` did not compile", p.regex),
-                source_location: None,
+            let regex = Regex::new(&p.regex).map_err(|e| {
+                ConfigError {
+                    lint_name:       name.to_string(),
+                    field_path:      format!("patterns[{i}].regex"),
+                    kind:            ConfigErrorKind::UnparseableRegex {
+                        error: e.to_string(),
+                    },
+                    message:         format!("regex `{}` did not compile", p.regex),
+                    source_location: None,
+                }
             })?;
-            patterns.push(CompiledPattern { pattern: p, regex });
+            patterns.push(CompiledPattern {
+                pattern: p,
+                regex,
+            });
         }
         Ok(Self {
             name,
@@ -114,9 +119,11 @@ impl Lint for ContentRegexLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
@@ -130,10 +137,10 @@ impl Lint for ContentRegexLint {
         let active = ctx.active_severity();
         for compiled in &self.patterns {
             let opts = StripOpts {
-                strings: compiled.pattern.strip_strings,
-                comments: compiled.pattern.strip_comments,
+                strings:      compiled.pattern.strip_strings,
+                comments:     compiled.pattern.strip_comments,
                 doc_comments: compiled.pattern.strip_doc_comments,
-                code_fences: compiled.pattern.strip_code_fences,
+                code_fences:  compiled.pattern.strip_code_fences,
             };
             let view = if opts.strings || opts.comments || opts.doc_comments || opts.code_fences {
                 doc.source_stripped(opts)
@@ -250,14 +257,16 @@ fn make_finding(
     // `cargo mock check --fix` can apply the substitution. Otherwise
     // the message field carries the advice and the consumer hand-fixes.
     let suggestion = match (pattern.replace_with.as_ref(), byte_range) {
-        (Some(replacement), Some((start, end))) => Some(Suggestion {
-            description: Cow::Owned(format!("replace with `{replacement}`")),
-            fix: Some(Fix::Replace {
-                start,
-                end,
-                replacement: Cow::Owned(replacement.clone()),
-            }),
-        }),
+        (Some(replacement), Some((start, end))) => {
+            Some(Suggestion {
+                description: Cow::Owned(format!("replace with `{replacement}`")),
+                fix:         Some(Fix::Replace {
+                    start,
+                    end,
+                    replacement: Cow::Owned(replacement.clone()),
+                }),
+            })
+        },
         _ => None,
     };
     Finding {
@@ -304,17 +313,15 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: ContentRegexConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("content-regex config: {e}"),
-                source_location: None,
-            })?;
+    let parsed: ContentRegexConfig = config.clone().try_into().map_err(|e: toml::de::Error| {
+        ConfigError {
+            lint_name:       name.to_string(),
+            field_path:      String::new(),
+            kind:            ConfigErrorKind::InvalidValue,
+            message:         format!("content-regex config: {e}"),
+            source_location: None,
+        }
+    })?;
     Ok(Box::new(ContentRegexLint::new(
         name,
         description,
@@ -325,11 +332,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::Gate;
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::Gate;
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -340,11 +349,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: mockspace_core::lint::RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      mockspace_core::lint::RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -352,15 +361,15 @@ mod tests {
     fn fires_on_simple_regex() {
         let config = ContentRegexConfig {
             patterns: vec![ContentPattern {
-                regex: r"\bTODO\b".to_string(),
-                message: "todo found".to_string(),
-                finding_kind: None,
-                ratio: None,
-                strip_code_fences: false,
-                strip_strings: false,
-                strip_comments: false,
+                regex:              r"\bTODO\b".to_string(),
+                message:            "todo found".to_string(),
+                finding_kind:       None,
+                ratio:              None,
+                strip_code_fences:  false,
+                strip_strings:      false,
+                strip_comments:     false,
                 strip_doc_comments: false,
-                replace_with: None,
+                replace_with:       None,
             }],
         };
         let lint =
@@ -383,18 +392,18 @@ mod tests {
     fn ratio_threshold_collapses_burst() {
         let config = ContentRegexConfig {
             patterns: vec![ContentPattern {
-                regex: r"—".to_string(), // em-dash
-                message: "em-dash found".to_string(),
-                finding_kind: None,
-                ratio: Some(RatioThreshold {
-                    max_matches: 3,
+                regex:              r"—".to_string(), // em-dash
+                message:            "em-dash found".to_string(),
+                finding_kind:       None,
+                ratio:              Some(RatioThreshold {
+                    max_matches:  3,
                     lines_window: 5,
                 }),
-                strip_code_fences: false,
-                strip_strings: false,
-                strip_comments: false,
+                strip_code_fences:  false,
+                strip_strings:      false,
+                strip_comments:     false,
                 strip_doc_comments: false,
-                replace_with: None,
+                replace_with:       None,
             }],
         };
         let lint = ContentRegexLint::new(
@@ -426,15 +435,15 @@ mod tests {
         // matched range exactly.
         let config = ContentRegexConfig {
             patterns: vec![ContentPattern {
-                regex: r"—".to_string(),
-                message: "em-dash found".to_string(),
-                finding_kind: Some("em-dash".to_string()),
-                ratio: None,
-                strip_code_fences: false,
-                strip_strings: false,
-                strip_comments: false,
+                regex:              r"—".to_string(),
+                message:            "em-dash found".to_string(),
+                finding_kind:       Some("em-dash".to_string()),
+                ratio:              None,
+                strip_code_fences:  false,
+                strip_strings:      false,
+                strip_comments:     false,
                 strip_doc_comments: false,
-                replace_with: Some(".".to_string()),
+                replace_with:       Some(".".to_string()),
             }],
         };
         let lint = ContentRegexLint::new(
@@ -470,7 +479,7 @@ mod tests {
                 assert_eq!(*start, 6);
                 assert_eq!(*end, 9);
                 assert_eq!(replacement.as_ref(), ".");
-            }
+            },
             other => panic!("expected Fix::Replace, got {other:?}"),
         }
     }
@@ -483,18 +492,18 @@ mod tests {
         // because there is no single byte range to act on.
         let config = ContentRegexConfig {
             patterns: vec![ContentPattern {
-                regex: r"—".to_string(),
-                message: "em-dash burst".to_string(),
-                finding_kind: None,
-                ratio: Some(RatioThreshold {
-                    max_matches: 3,
+                regex:              r"—".to_string(),
+                message:            "em-dash burst".to_string(),
+                finding_kind:       None,
+                ratio:              Some(RatioThreshold {
+                    max_matches:  3,
                     lines_window: 5,
                 }),
-                strip_code_fences: false,
-                strip_strings: false,
-                strip_comments: false,
+                strip_code_fences:  false,
+                strip_strings:      false,
+                strip_comments:     false,
                 strip_doc_comments: false,
-                replace_with: Some(".".to_string()),
+                replace_with:       Some(".".to_string()),
             }],
         };
         let lint =
@@ -567,20 +576,24 @@ replace_with = "."
         // at the original-source byte range.
         let config = ContentRegexConfig {
             patterns: vec![ContentPattern {
-                regex: r"—".to_string(),
-                message: "em-dash".to_string(),
-                finding_kind: Some("em-dash".to_string()),
-                ratio: None,
-                strip_code_fences: true,
-                strip_strings: false,
-                strip_comments: false,
+                regex:              r"—".to_string(),
+                message:            "em-dash".to_string(),
+                finding_kind:       Some("em-dash".to_string()),
+                ratio:              None,
+                strip_code_fences:  true,
+                strip_strings:      false,
+                strip_comments:     false,
                 strip_doc_comments: false,
-                replace_with: Some(".".to_string()),
+                replace_with:       Some(".".to_string()),
             }],
         };
-        let lint =
-            ContentRegexLint::new("writing-style", "", GateSeverity::uniform(Severity::Warn), config)
-                .unwrap();
+        let lint = ContentRegexLint::new(
+            "writing-style",
+            "",
+            GateSeverity::uniform(Severity::Warn),
+            config,
+        )
+        .unwrap();
         // Two em-dashes. The first is inside a fenced block (should be
         // skipped by the strip), the second is in prose (should emit).
         let source = "intro\n```\nfence — body\n```\nafter — end\n";
@@ -599,18 +612,22 @@ replace_with = "."
         );
         let suggestion = findings[0].suggestion.as_ref().expect("fix present");
         match suggestion.fix.as_ref().expect("Replace recipe") {
-            mockspace_core::lint::Fix::Replace { start, end, .. } => {
+            mockspace_core::lint::Fix::Replace {
+                start,
+                end,
+                ..
+            } => {
                 // The reported byte range must index into the ORIGINAL
                 // source, not the stripped view. Verify by slicing the
                 // original source: the em-dash bytes between `start` and
                 // `end` should be the literal em-dash sequence.
-                let slice = &source.as_bytes()[*start..*end];
+                let slice = &source.as_bytes()[*start .. *end];
                 assert_eq!(
                     slice,
                     "—".as_bytes(),
                     "Fix::Replace offsets must index the em-dash in the original source"
                 );
-            }
+            },
             other => panic!("expected Fix::Replace, got {other:?}"),
         }
     }
@@ -619,24 +636,28 @@ replace_with = "."
     fn bad_regex_surfaces_as_config_error() {
         let config = ContentRegexConfig {
             patterns: vec![ContentPattern {
-                regex: r"(unclosed".to_string(),
-                message: "x".to_string(),
-                finding_kind: None,
-                ratio: None,
-                strip_code_fences: false,
-                strip_strings: false,
-                strip_comments: false,
+                regex:              r"(unclosed".to_string(),
+                message:            "x".to_string(),
+                finding_kind:       None,
+                ratio:              None,
+                strip_code_fences:  false,
+                strip_strings:      false,
+                strip_comments:     false,
                 strip_doc_comments: false,
-                replace_with: None,
+                replace_with:       None,
             }],
         };
         let result =
             ContentRegexLint::new("broken", "", GateSeverity::uniform(Severity::Warn), config);
         match result {
             Ok(_) => panic!("expected ConfigError, got Ok"),
-            Err(e) => match e.kind {
-                ConfigErrorKind::UnparseableRegex { .. } => {}
-                other => panic!("unexpected: {other:?}"),
+            Err(e) => {
+                match e.kind {
+                    ConfigErrorKind::UnparseableRegex {
+                        ..
+                    } => {},
+                    other => panic!("unexpected: {other:?}"),
+                }
             },
         }
     }

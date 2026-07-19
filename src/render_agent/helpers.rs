@@ -55,7 +55,6 @@ _scope_or_allow() {
 }
 # --- End platform helpers ---"##;
 
-
 /// Platform-specific hook helpers injected into {{HOOK_HELPERS}} for Copilot.
 ///
 /// - _extract: reads fields from toolArgs (Copilot's stringified JSON format)
@@ -104,7 +103,6 @@ _scope_or_allow() {
 }
 # --- End platform helpers ---"##;
 
-
 /// Set the executable bit on a file.
 #[cfg(unix)]
 pub(crate) fn set_executable(path: &Path) {
@@ -119,15 +117,13 @@ pub(crate) fn set_executable(path: &Path) {
 // Hook metadata for settings generation (Phase 7)
 // ---------------------------------------------------------------------------
 
-
 /// Metadata collected from each hook for settings generation.
 pub(crate) struct HookMeta {
     /// Output file name (e.g. "check-byline.sh").
-    pub(crate) name: String,
+    pub(crate) name:     String,
     /// Tool matchers this hook should fire on (e.g. ["Bash", "Write", "Edit"]).
     pub(crate) matchers: Vec<String>,
 }
-
 
 /// Derive tool matchers from a hook file name using naming conventions.
 pub(crate) fn matchers_from_name(name: &str) -> Vec<String> {
@@ -141,7 +137,6 @@ pub(crate) fn matchers_from_name(name: &str) -> Vec<String> {
         vec!["Bash".into()]
     }
 }
-
 
 /// Parse `# @matchers:` frontmatter from the first 5 lines of a hook template.
 pub(crate) fn parse_hook_matchers(template: &str) -> Option<Vec<String>> {
@@ -165,7 +160,6 @@ pub(crate) fn parse_hook_matchers(template: &str) -> Option<Vec<String>> {
 // Phase 6: Builtin agent hooks
 // ---------------------------------------------------------------------------
 
-
 /// Derive the agent mode env var name from a project name.
 ///
 /// e.g. "saalis" -> "SAALIS_AGENT_MODE", "polka-dots" -> "POLKA_DOTS_AGENT_MODE"
@@ -174,9 +168,7 @@ pub(crate) fn agent_mode_var(project_name: &str) -> String {
     format!("{upper}_AGENT_MODE")
 }
 
-
 /// Quote a string as a bash single-quoted literal, escaping internal quotes.
 pub(crate) fn bash_literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
-

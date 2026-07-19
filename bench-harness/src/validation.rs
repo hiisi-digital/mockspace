@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::HarnessTuning;
 use crate::core::counter::Rng;
-use crate::core::{abi_hash, AbiHashFn, BenchEntryFn, BenchNameFn};
+use crate::core::{AbiHashFn, BenchEntryFn, BenchNameFn, abi_hash};
 use crate::error::BenchError;
 use crate::spec::RoutineSpec;
 
@@ -92,7 +92,7 @@ pub fn validate(
         };
 
     let mut rng = Rng::new(VALIDATION_ROOT_SEED);
-    let seeds: Vec<u64> = (0..validation_seeds).map(|_| rng.next()).collect();
+    let seeds: Vec<u64> = (0 .. validation_seeds).map(|_| rng.next()).collect();
 
     let mut variants: Vec<(String, BenchEntryFn)> = Vec::new();
     let mut _libs: Vec<libloading::Library> = Vec::new();
@@ -101,16 +101,17 @@ pub fn validate(
         let (name, entry) = unsafe {
             let lib = libloading::Library::new(path).map_err(|e| {
                 BenchError::DylibLoadFailed {
-                    path: path.into(),
+                    path:   path.into(),
                     reason: e.to_string(),
                 }
             })?;
 
-            let hash_fn: libloading::Symbol<AbiHashFn> = lib
-                .get(b"bench_abi_hash")
-                .map_err(|e| BenchError::DylibLoadFailed {
-                    path: path.into(),
-                    reason: format!("missing bench_abi_hash symbol: {e}"),
+            let hash_fn: libloading::Symbol<AbiHashFn> =
+                lib.get(b"bench_abi_hash").map_err(|e| {
+                    BenchError::DylibLoadFailed {
+                        path:   path.into(),
+                        reason: format!("missing bench_abi_hash symbol: {e}"),
+                    }
                 })?;
             let found = hash_fn();
             let expected = abi_hash();
@@ -122,20 +123,20 @@ pub fn validate(
                 });
             }
 
-            let entry: libloading::Symbol<BenchEntryFn> = lib
-                .get(b"bench_entry")
-                .map_err(|e| BenchError::DylibLoadFailed {
-                    path: path.into(),
+            let entry: libloading::Symbol<BenchEntryFn> = lib.get(b"bench_entry").map_err(|e| {
+                BenchError::DylibLoadFailed {
+                    path:   path.into(),
                     reason: format!("missing bench_entry symbol: {e}"),
-                })?;
+                }
+            })?;
             let entry_fn: BenchEntryFn = *entry;
 
-            let name_fn: libloading::Symbol<BenchNameFn> = lib
-                .get(b"bench_name")
-                .map_err(|e| BenchError::DylibLoadFailed {
-                    path: path.into(),
+            let name_fn: libloading::Symbol<BenchNameFn> = lib.get(b"bench_name").map_err(|e| {
+                BenchError::DylibLoadFailed {
+                    path:   path.into(),
                     reason: format!("missing bench_name symbol: {e}"),
-                })?;
+                }
+            })?;
             let name = std::ffi::CStr::from_ptr(name_fn() as *const i8)
                 .to_string_lossy()
                 .into_owned();
@@ -159,13 +160,20 @@ pub fn validate(
             let variant_path = &variant_paths[vi];
             let mut child = Command::new(&exe)
                 .args([
-                    "--worker", variant_path,
-                    "--bench-name", bench_name,
-                    "--mode", "warm",
-                    "--runs", "1",
-                    "--batch", "1",
-                    "--n", &n.to_string(),
-                    "--max-call-us", &limit_us.to_string(),
+                    "--worker",
+                    variant_path,
+                    "--bench-name",
+                    bench_name,
+                    "--mode",
+                    "warm",
+                    "--runs",
+                    "1",
+                    "--batch",
+                    "1",
+                    "--n",
+                    &n.to_string(),
+                    "--max-call-us",
+                    &limit_us.to_string(),
                 ])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -185,23 +193,20 @@ pub fn validate(
                             slow_variants.insert(vi);
                         }
                         break;
-                    }
+                    },
                     Ok(None) => {
                         if Instant::now() > deadline {
                             let _ = child.kill();
                             let _ = child.wait();
-                            eprintln!(
-                                "  SKIPPING {}: probe exceeded {}s",
-                                name, probe_timeout_s
-                            );
+                            eprintln!("  SKIPPING {}: probe exceeded {}s", name, probe_timeout_s);
                             slow_variants.insert(vi);
                             break;
                         }
                         std::thread::sleep(Duration::from_millis(5));
-                    }
+                    },
                     Err(e) => {
                         return Err(BenchError::io("waiting on validation probe", e));
-                    }
+                    },
                 }
             }
         }
@@ -221,12 +226,20 @@ pub fn validate(
             for &ps in &probe_seeds {
                 let out = Command::new(&exe)
                     .args([
-                        "--worker", variant_path,
-                        "--bench-name", bench_name,
-                        "--mode", "warm",
-                        "--runs", "1", "--batch", "1",
-                        "--n", &n.to_string(),
-                        "--seed", &ps.to_string(),
+                        "--worker",
+                        variant_path,
+                        "--bench-name",
+                        bench_name,
+                        "--mode",
+                        "warm",
+                        "--runs",
+                        "1",
+                        "--batch",
+                        "1",
+                        "--n",
+                        &n.to_string(),
+                        "--seed",
+                        &ps.to_string(),
                     ])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
@@ -276,10 +289,7 @@ pub fn validate(
                 if let Err(reason) = validator(&input, output) {
                     mismatches += 1;
                     if mismatches <= 3 {
-                        eprintln!(
-                            "  INVALID seed={} variant={}: {}",
-                            seed, names[i], reason
-                        );
+                        eprintln!("  INVALID seed={} variant={}: {}", seed, names[i], reason);
                     }
                     first_mismatch_reason
                         .get_or_insert((names[i].clone(), format!("invalid output: {reason}")));
@@ -287,7 +297,7 @@ pub fn validate(
             }
         } else if let Some(eps) = approx_eps {
             let baseline = &outputs[0];
-            for i in 1..outputs.len() {
+            for i in 1 .. outputs.len() {
                 if let Err(reason) = approx_comparator(baseline, &outputs[i], eps) {
                     mismatches += 1;
                     if mismatches <= 3 {
@@ -302,7 +312,7 @@ pub fn validate(
             }
         } else {
             let baseline = &outputs[0];
-            for i in 1..outputs.len() {
+            for i in 1 .. outputs.len() {
                 if outputs[i] != *baseline {
                     mismatches += 1;
                     if mismatches <= 3 {
@@ -326,7 +336,10 @@ pub fn validate(
 
     if mismatches > 0 {
         let (variant, reason) = first_mismatch_reason.unwrap_or_else(|| {
-            ("<unknown>".to_string(), "validation produced mismatches".to_string())
+            (
+                "<unknown>".to_string(),
+                "validation produced mismatches".to_string(),
+            )
         });
         return Err(BenchError::ValidationFailed {
             variant,
@@ -383,16 +396,17 @@ pub fn validate(
                         }
                     }
                 }
-                first_det_failure.get_or_insert((
-                    name.clone(),
-                    format!("non-deterministic on seed {seed}"),
-                ));
+                first_det_failure
+                    .get_or_insert((name.clone(), format!("non-deterministic on seed {seed}")));
             }
         }
     }
     if det_mismatches > 0 {
         let (variant, reason) = first_det_failure.unwrap_or_else(|| {
-            ("<unknown>".to_string(), "determinism check failed".to_string())
+            (
+                "<unknown>".to_string(),
+                "determinism check failed".to_string(),
+            )
         });
         return Err(BenchError::ValidationFailed {
             variant,
@@ -410,7 +424,7 @@ pub fn validate(
     let sanity_target_idx = if !slow_variants.contains(&0) {
         Some(0)
     } else {
-        (0..variant_paths.len()).find(|i| !slow_variants.contains(i))
+        (0 .. variant_paths.len()).find(|i| !slow_variants.contains(i))
     };
     if let Some(idx) = sanity_target_idx {
         subprocess_sanity_check(&variant_paths[idx], n, bench_name);
@@ -441,18 +455,24 @@ fn subprocess_sanity_check(variant_path: &str, n: usize, bench_name: &str) {
         Err(_) => {
             eprintln!("  Subprocess sanity: could not locate harness binary, skipping");
             return;
-        }
+        },
     };
 
     eprintln!("  Subprocess sanity: {} (1 run, warm)...", variant_path);
     let output = Command::new(&exe)
         .args([
-            "--worker", variant_path,
-            "--bench-name", bench_name,
-            "--mode", "warm",
-            "--runs", "1",
-            "--batch", "1",
-            "--n", &n.to_string(),
+            "--worker",
+            variant_path,
+            "--bench-name",
+            bench_name,
+            "--mode",
+            "warm",
+            "--runs",
+            "1",
+            "--batch",
+            "1",
+            "--n",
+            &n.to_string(),
         ])
         .output();
 
@@ -469,9 +489,9 @@ fn subprocess_sanity_check(variant_path: &str, n: usize, bench_name: &str) {
             } else {
                 eprintln!("  Subprocess sanity OK");
             }
-        }
+        },
         Err(e) => {
             eprintln!("  Subprocess sanity: spawn failed: {}", e);
-        }
+        },
     }
 }

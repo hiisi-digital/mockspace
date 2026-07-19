@@ -9,8 +9,11 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoRawErrorOutsidePrimitives;
 
 impl Lint for NoRawErrorOutsidePrimitives {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         "no-raw-error-outside-primitives"
     }
 

@@ -20,7 +20,7 @@ pub const KIND: &str = "file-metric";
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct FileMetricConfig {
-    pub metric: Metric,
+    pub metric:    Metric,
     pub threshold: u32,
     /// `true` fires when count >= threshold; `false` when count > threshold.
     #[serde(default = "default_true")]
@@ -43,10 +43,10 @@ pub enum Metric {
 }
 
 pub struct FileMetricLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: FileMetricConfig,
+    config:           FileMetricConfig,
 }
 
 impl FileMetricLint {
@@ -69,9 +69,11 @@ impl Lint for FileMetricLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
@@ -99,22 +101,22 @@ impl Lint for FileMetricLint {
             return Ok(());
         }
         sink.emit(Finding {
-            lint_name: Cow::Borrowed(self.name),
-            rule_id: None,
-            plugin_id: None,
-            severity: ctx.active_severity(),
-            impact: None,
-            category: None,
-            message: Cow::Owned(format!(
+            lint_name:     Cow::Borrowed(self.name),
+            rule_id:       None,
+            plugin_id:     None,
+            severity:      ctx.active_severity(),
+            impact:        None,
+            category:      None,
+            message:       Cow::Owned(format!(
                 "{:?} count {count} exceeds threshold {}",
                 self.config.metric, self.config.threshold
             )),
-            span: Span::single_line(doc.path(), 1, 1, 1),
-            hint: None,
-            help: None,
-            suggestion: None,
+            span:          Span::single_line(doc.path(), 1, 1, 1),
+            hint:          None,
+            help:          None,
+            suggestion:    None,
             related_spans: Vec::new(),
-            metadata: None,
+            metadata:      None,
         });
         Ok(())
     }
@@ -123,27 +125,31 @@ impl Lint for FileMetricLint {
 fn compute_metric(doc: &MockspaceDocument, metric: Metric) -> u32 {
     match metric {
         Metric::LineCount => doc.source().lines().count() as u32,
-        Metric::NonBlankLineCount => doc
-            .source()
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .count() as u32,
-        Metric::NonBlankNonCommentLineCount => doc
-            .source()
-            .lines()
-            .filter(|l| {
-                let t = l.trim();
-                !t.is_empty() && !t.starts_with("//")
-            })
-            .count() as u32,
-        Metric::PubItemCount => doc
-            .ast()
-            .map(|f| count_items(f, |it| is_pub_item(it)))
-            .unwrap_or(0),
-        Metric::PrivateItemCount => doc
-            .ast()
-            .map(|f| count_items(f, |it| !is_pub_item(it)))
-            .unwrap_or(0),
+        Metric::NonBlankLineCount => {
+            doc.source()
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count() as u32
+        },
+        Metric::NonBlankNonCommentLineCount => {
+            doc.source()
+                .lines()
+                .filter(|l| {
+                    let t = l.trim();
+                    !t.is_empty() && !t.starts_with("//")
+                })
+                .count() as u32
+        },
+        Metric::PubItemCount => {
+            doc.ast()
+                .map(|f| count_items(f, |it| is_pub_item(it)))
+                .unwrap_or(0)
+        },
+        Metric::PrivateItemCount => {
+            doc.ast()
+                .map(|f| count_items(f, |it| !is_pub_item(it)))
+                .unwrap_or(0)
+        },
         Metric::TotalItemCount => doc.ast().map(|f| f.items.len() as u32).unwrap_or(0),
     }
 }
@@ -173,17 +179,15 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: FileMetricConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("file-metric config: {e}"),
-                source_location: None,
-            })?;
+    let parsed: FileMetricConfig = config.clone().try_into().map_err(|e: toml::de::Error| {
+        ConfigError {
+            lint_name:       name.to_string(),
+            field_path:      String::new(),
+            kind:            ConfigErrorKind::InvalidValue,
+            message:         format!("file-metric config: {e}"),
+            source_location: None,
+        }
+    })?;
     Ok(Box::new(FileMetricLint::new(
         name,
         description,
@@ -194,11 +198,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, Severity};
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::{Gate, Severity};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -209,11 +215,11 @@ mod tests {
 
     fn make_ctx<'a>(root: &'a PathBuf, sev: GateSeverity, cfg: &'a EmptyCfg) -> LintContext<'a> {
         LintContext {
-            gate: Gate::Commit,
-            severities: sev,
-            surface: mockspace_core::lint::RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   sev,
+            surface:      mockspace_core::lint::RunSurface::Local,
             project_root: root,
-            config: cfg,
+            config:       cfg,
         }
     }
 
@@ -224,7 +230,7 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             FileMetricConfig {
-                metric: Metric::LineCount,
+                metric:    Metric::LineCount,
                 threshold: 3,
                 inclusive: true,
             },
@@ -247,7 +253,7 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             FileMetricConfig {
-                metric: Metric::PubItemCount,
+                metric:    Metric::PubItemCount,
                 threshold: 2,
                 inclusive: true,
             },
@@ -275,7 +281,7 @@ mod tests {
             "",
             GateSeverity::uniform(Severity::Warn),
             FileMetricConfig {
-                metric: Metric::LineCount,
+                metric:    Metric::LineCount,
                 threshold: 100,
                 inclusive: true,
             },

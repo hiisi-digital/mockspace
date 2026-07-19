@@ -80,28 +80,27 @@ impl fmt::Display for PresetRef {
 /// (the embedded preset tree) downstream of this parse.
 pub fn parse_preset_shorthand(input: &str) -> Result<PresetRef, PresetResolveError> {
     let trimmed = input.trim();
-    let (host, name) =
-        trimmed
-            .split_once("::")
-            .ok_or_else(|| PresetResolveError::MalformedShorthand {
-                input: input.to_string(),
-                reason: "missing `::` separator".to_string(),
-            })?;
+    let (host, name) = trimmed.split_once("::").ok_or_else(|| {
+        PresetResolveError::MalformedShorthand {
+            input:  input.to_string(),
+            reason: "missing `::` separator".to_string(),
+        }
+    })?;
     if host.is_empty() {
         return Err(PresetResolveError::MalformedShorthand {
-            input: input.to_string(),
+            input:  input.to_string(),
             reason: "empty host before `::`".to_string(),
         });
     }
     if name.is_empty() {
         return Err(PresetResolveError::MalformedShorthand {
-            input: input.to_string(),
+            input:  input.to_string(),
             reason: "empty preset name after `::`".to_string(),
         });
     }
     if name.contains("::") {
         return Err(PresetResolveError::MalformedShorthand {
-            input: input.to_string(),
+            input:  input.to_string(),
             reason: "shorthand contains more than one `::` separator".to_string(),
         });
     }
@@ -197,7 +196,10 @@ fn walk(
 pub enum PresetResolveError {
     /// The `<host>::<name>` shorthand was malformed (missing separator,
     /// empty parts, extra `::`).
-    MalformedShorthand { input: String, reason: String },
+    MalformedShorthand {
+        input:  String,
+        reason: String,
+    },
     /// An `extends` field on a preset carried a malformed shorthand.
     /// `parent` names the preset that owns the bad `extends`; `source`
     /// carries the underlying [`MalformedShorthand`].
@@ -208,29 +210,46 @@ pub enum PresetResolveError {
     /// A preset named in an `extends` chain was not findable through
     /// the source. The host has likely not been imported, or the
     /// import resolution failed.
-    NotFound { host: String, name: String },
+    NotFound {
+        host: String,
+        name: String,
+    },
     /// The `extends` chain cycles back on itself. `path` records every
     /// shorthand visited from the start of the chain to (and including)
     /// the re-entered preset.
-    Cycle { path: Vec<String> },
+    Cycle {
+        path: Vec<String>,
+    },
 }
 
 impl fmt::Display for PresetResolveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MalformedShorthand { input, reason } => write!(
-                f,
-                "malformed preset shorthand `{input}`: {reason} (expected `<host>::<name>`)"
-            ),
-            Self::MalformedExtends { parent, source } => write!(
-                f,
-                "while resolving extends of `{parent}`: {source}"
-            ),
-            Self::NotFound { host, name } => write!(
-                f,
-                "preset `{host}::{name}` not found; ensure `{host}` is in [imports] and the preset name is correct"
-            ),
-            Self::Cycle { path } => {
+            Self::MalformedShorthand {
+                input,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "malformed preset shorthand `{input}`: {reason} (expected `<host>::<name>`)"
+                )
+            },
+            Self::MalformedExtends {
+                parent,
+                source,
+            } => write!(f, "while resolving extends of `{parent}`: {source}"),
+            Self::NotFound {
+                host,
+                name,
+            } => {
+                write!(
+                    f,
+                    "preset `{host}::{name}` not found; ensure `{host}` is in [imports] and the preset name is correct"
+                )
+            },
+            Self::Cycle {
+                path,
+            } => {
                 writeln!(f, "preset cycle detected:")?;
                 for (i, step) in path.iter().enumerate() {
                     if i == 0 {
@@ -242,7 +261,7 @@ impl fmt::Display for PresetResolveError {
                     }
                 }
                 Ok(())
-            }
+            },
         }
     }
 }
@@ -251,19 +270,20 @@ impl std::error::Error for PresetResolveError {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::BTreeMap;
+
+    use super::*;
 
     fn preset(name: &str, extends: Option<&str>) -> PresetFile {
         PresetFile {
             schema_version: "1.0".to_string(),
-            name: name.to_string(),
-            primitive: "forbidden_imports".to_string(),
-            description: None,
-            extends: extends.map(String::from),
-            config: BTreeMap::new(),
-            severity: Default::default(),
-            scope: BTreeMap::new(),
+            name:           name.to_string(),
+            primitive:      "forbidden_imports".to_string(),
+            description:    None,
+            extends:        extends.map(String::from),
+            config:         BTreeMap::new(),
+            severity:       Default::default(),
+            scope:          BTreeMap::new(),
         }
     }
 
@@ -291,9 +311,11 @@ mod tests {
             self.files
                 .get(&preset_ref.shorthand())
                 .cloned()
-                .ok_or_else(|| PresetResolveError::NotFound {
-                    host: preset_ref.host.clone(),
-                    name: preset_ref.name.clone(),
+                .ok_or_else(|| {
+                    PresetResolveError::NotFound {
+                        host: preset_ref.host.clone(),
+                        name: preset_ref.name.clone(),
+                    }
                 })
         }
     }
@@ -446,9 +468,11 @@ mod tests {
         let start = parse_preset_shorthand("a::loop").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         match err {
-            PresetResolveError::Cycle { path } => {
+            PresetResolveError::Cycle {
+                path,
+            } => {
                 assert_eq!(path, vec!["a::loop", "a::loop"]);
-            }
+            },
             other => panic!("expected Cycle, got {other:?}"),
         }
     }
@@ -461,9 +485,11 @@ mod tests {
         let start = parse_preset_shorthand("a::first").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         match err {
-            PresetResolveError::Cycle { path } => {
+            PresetResolveError::Cycle {
+                path,
+            } => {
                 assert_eq!(path, vec!["a::first", "b::second", "a::first"]);
-            }
+            },
             other => panic!("expected Cycle, got {other:?}"),
         }
     }
@@ -477,9 +503,11 @@ mod tests {
         let start = parse_preset_shorthand("a::one").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         match err {
-            PresetResolveError::Cycle { path } => {
+            PresetResolveError::Cycle {
+                path,
+            } => {
                 assert_eq!(path, vec!["a::one", "b::two", "c::three", "a::one"]);
-            }
+            },
             other => panic!("expected Cycle, got {other:?}"),
         }
     }
@@ -490,13 +518,16 @@ mod tests {
         let start = parse_preset_shorthand("stack-lints::no-heap").unwrap();
         let err = resolve_preset_chain(&start, &source).unwrap_err();
         match err {
-            PresetResolveError::MalformedExtends { parent, source } => {
+            PresetResolveError::MalformedExtends {
+                parent,
+                source,
+            } => {
                 assert_eq!(parent.shorthand(), "stack-lints::no-heap");
                 assert!(matches!(
                     *source,
                     PresetResolveError::MalformedShorthand { .. }
                 ));
-            }
+            },
             other => panic!("expected MalformedExtends, got {other:?}"),
         }
     }
@@ -509,7 +540,7 @@ mod tests {
                 name: "no-heap".to_string(),
             },
             source: Box::new(PresetResolveError::MalformedShorthand {
-                input: "garbage".to_string(),
+                input:  "garbage".to_string(),
                 reason: "missing `::` separator".to_string(),
             }),
         };

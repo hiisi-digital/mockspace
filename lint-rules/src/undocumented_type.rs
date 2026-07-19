@@ -29,12 +29,17 @@ const LINT_NAME: &str = "undocumented-type";
 pub struct UndocumentedType;
 
 impl CrossCrateLint for UndocumentedType {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::BUILD_GATE }
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::BUILD_GATE
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
 
-    fn source_only(&self) -> bool { false }
+    fn source_only(&self) -> bool {
+        false
+    }
 
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         // Pass 1: collect all type names mentioned in ALL doc files.
@@ -169,8 +174,8 @@ fn collect_defs(node: Node, source: &str, out: &mut Vec<(String, usize)>) {
                         out.push((name, line));
                     }
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         if child.named_child_count() > 0 {
@@ -190,17 +195,11 @@ fn collect_defs(node: Node, source: &str, out: &mut Vec<(String, usize)>) {
 fn find_shame_entry<'a>(shame_content: &'a str, type_name: &str) -> Option<&'a str> {
     let header = format!("## {type_name}");
     let start = shame_content.find(&header)?;
-    let after_header = &shame_content[start + header.len()..];
+    let after_header = &shame_content[start + header.len() ..];
 
     // Find the next `## ` header or end of file.
-    let end = after_header
-        .find("\n## ")
-        .unwrap_or(after_header.len());
+    let end = after_header.find("\n## ").unwrap_or(after_header.len());
 
-    let entry = after_header[..end].trim();
-    if entry.is_empty() {
-        None
-    } else {
-        Some(entry)
-    }
+    let entry = after_header[.. end].trim();
+    if entry.is_empty() { None } else { Some(entry) }
 }

@@ -4,11 +4,10 @@
 //! filters, type-position enums, item-kind enums, language tags, etc.
 //! Per-primitive bespoke fields live in each primitive's own module.
 
-use serde::{Deserialize, Serialize};
-
 // Re-export language tag from mockspace-core so primitives can name it
 // without dragging in the core path everywhere.
 pub use mockspace_core::lint::Language;
+use serde::{Deserialize, Serialize};
 
 /// Type-bearing AST position. Used by `AstTypePosition` and `NoBareVec`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -111,9 +110,9 @@ pub struct GateConfig {
 impl Default for GateConfig {
     fn default() -> Self {
         Self {
-            severity: mockspace_core::lint::Severity::Off,
-            only_staged: false,
-            skip: false,
+            severity:      mockspace_core::lint::Severity::Off,
+            only_staged:   false,
+            skip:          false,
             finding_kinds: None,
         }
     }
@@ -122,6 +121,6 @@ impl Default for GateConfig {
 /// A simple match-count escalation rule reused across primitives.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EscalationRule {
-    pub threshold: u32,
+    pub threshold:          u32,
     pub escalated_severity: mockspace_core::lint::Severity,
 }

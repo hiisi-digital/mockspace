@@ -13,7 +13,6 @@ pub(crate) fn ascend_prefix(mock_rel: &str) -> String {
     "../".repeat(depth)
 }
 
-
 /// Write a `mock` alias into `<mock_dir>/.cargo/config.toml` whose
 /// `--manifest-path` climbs back to `<repo>/target/mockspace-proxy`, so
 /// `cargo mock` run from the mock dir resolves the proxy correctly. The
@@ -26,9 +25,8 @@ pub(crate) fn ensure_mock_local_alias(
     actions: &mut Vec<String>,
 ) {
     let up = ascend_prefix(mock_rel);
-    let alias_value = format!(
-        "run --manifest-path {up}target/mockspace-proxy/Cargo.toml -- --dir {mock_rel}"
-    );
+    let alias_value =
+        format!("run --manifest-path {up}target/mockspace-proxy/Cargo.toml -- --dir {mock_rel}");
     let alias_line = format!("mock = \"{alias_value}\"");
 
     let config_dir = mock_dir.join(".cargo");
@@ -46,13 +44,11 @@ pub(crate) fn ensure_mock_local_alias(
             }
             let updated: Vec<&str> = current
                 .lines()
-                .map(|l| {
-                    if is_mock_alias_line(l) {
-                        alias_line.as_str()
-                    } else {
-                        l
-                    }
-                })
+                .map(
+                    |l| {
+                        if is_mock_alias_line(l) { alias_line.as_str() } else { l }
+                    },
+                )
                 .collect();
             let _ = fs::write(&config_path, updated.join("\n") + "\n");
             actions.push("updated mock-dir cargo mock alias".into());
@@ -72,7 +68,6 @@ pub(crate) fn ensure_mock_local_alias(
         actions.push(format!("wrote mock-dir alias to {}", config_path.display()));
     }
 }
-
 
 pub(crate) fn ensure_cargo_alias(
     repo_root: &Path,
@@ -123,13 +118,11 @@ pub(crate) fn ensure_cargo_alias(
             // Stale: update in place.
             let updated: Vec<&str> = current
                 .lines()
-                .map(|l| {
-                    if is_mock_alias_line(l) {
-                        alias_line.as_str()
-                    } else {
-                        l
-                    }
-                })
+                .map(
+                    |l| {
+                        if is_mock_alias_line(l) { alias_line.as_str() } else { l }
+                    },
+                )
                 .collect();
             let _ = fs::write(&config_path, updated.join("\n") + "\n");
             actions.push(format!("updated cargo mock alias"));
@@ -165,7 +158,6 @@ pub(crate) fn ensure_cargo_alias(
 // Proxy crate (target/mockspace-proxy/)
 // ──────────────────────────────────────────────────────────────────────
 
-
 /// True when a config line defines the `mock` alias exactly, i.e. its key
 /// (the token before `=`) is `mock`. Guards against clobbering a different
 /// key that merely starts with `mock`, e.g. `mockfoo = "..."`.
@@ -174,4 +166,3 @@ pub(crate) fn is_mock_alias_line(line: &str) -> bool {
         .split_once('=')
         .map_or(false, |(k, _)| k.trim() == "mock")
 }
-

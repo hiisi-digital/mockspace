@@ -89,6 +89,7 @@ pub struct ContentHash(pub [u8; 32]);
 
 impl ContentHash {
     pub const ZERO: Self = Self([0u8; 32]);
+
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
@@ -149,9 +150,11 @@ impl Severity {
     pub const fn blocks(self) -> bool {
         matches!(self, Self::Error)
     }
+
     pub const fn visible(self) -> bool {
         matches!(self, Self::Error | Self::Warn | Self::Info | Self::Hint)
     }
+
     pub const fn silent(self) -> bool {
         matches!(self, Self::Off | Self::Skip)
     }
@@ -196,18 +199,19 @@ pub enum Gate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateSeverity {
     pub commit: Severity,
-    pub build: Severity,
-    pub push: Severity,
+    pub build:  Severity,
+    pub push:   Severity,
 }
 
 impl GateSeverity {
     pub const fn uniform(severity: Severity) -> Self {
         Self {
             commit: severity,
-            build: severity,
-            push: severity,
+            build:  severity,
+            push:   severity,
         }
     }
+
     pub const fn at(self, gate: Gate) -> Severity {
         match gate {
             Gate::Commit => self.commit,
@@ -215,6 +219,7 @@ impl GateSeverity {
             Gate::Push => self.push,
         }
     }
+
     pub const fn any_blocks(self) -> bool {
         self.commit.blocks() || self.build.blocks() || self.push.blocks()
     }
@@ -242,23 +247,24 @@ impl Default for GateSeverity {
 /// the total order to be a deterministic `BTreeMap` key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Span {
-    pub file: PathBuf,
-    pub start_line: u32,
+    pub file:         PathBuf,
+    pub start_line:   u32,
     pub start_column: u32,
-    pub end_line: u32,
-    pub end_column: u32,
+    pub end_line:     u32,
+    pub end_column:   u32,
 }
 
 impl Span {
     pub fn single_line(file: impl Into<PathBuf>, line: u32, column: u32, length: u32) -> Self {
         Self {
-            file: file.into(),
-            start_line: line,
+            file:         file.into(),
+            start_line:   line,
             start_column: column,
-            end_line: line,
-            end_column: column + length,
+            end_line:     line,
+            end_column:   column + length,
         }
     }
+
     pub fn range(
         file: impl Into<PathBuf>,
         start_line: u32,
@@ -274,9 +280,11 @@ impl Span {
             end_column,
         }
     }
+
     pub fn is_single_line(&self) -> bool {
         self.start_line == self.end_line
     }
+
     /// Whether `inner` is fully contained within `self`. Same-file plus
     /// half-open range containment. Used by [`SuppressionMap`].
     pub fn contains(&self, inner: &Self) -> bool {
@@ -293,7 +301,7 @@ impl Span {
 /// A labelled related span attached to a [`Finding`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedSpan {
-    pub span: Span,
+    pub span:  Span,
     pub label: Cow<'static, str>,
 }
 
@@ -303,7 +311,7 @@ pub struct RelatedSpan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MetadataBlob {
     pub schema: Cow<'static, str>,
-    pub bytes: Vec<u8>,
+    pub bytes:  Vec<u8>,
 }
 
 /// A structured suggestion attached to a finding. Carries human-readable
@@ -314,7 +322,7 @@ pub struct MetadataBlob {
 pub struct Suggestion {
     pub description: Cow<'static, str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fix: Option<Fix>,
+    pub fix:         Option<Fix>,
 }
 
 /// A mechanically applicable edit recipe.
@@ -353,8 +361,8 @@ pub enum Fix {
     /// Replace bytes `[start, end)` with `replacement`. Byte offsets are
     /// UTF-8 indices into the original (pre-strip) source.
     Replace {
-        start: usize,
-        end: usize,
+        start:       usize,
+        end:         usize,
         replacement: Cow<'static, str>,
     },
 
@@ -364,25 +372,32 @@ pub enum Fix {
     /// source.
     Insert {
         position: usize,
-        text: Cow<'static, str>,
+        text:     Cow<'static, str>,
     },
 
     /// Delete bytes `[start, end)`. Byte offsets are UTF-8 indices into
     /// the original (pre-strip) source.
-    Delete { start: usize, end: usize },
+    Delete {
+        start: usize,
+        end:   usize,
+    },
 
     /// Multiple sub-fixes applied atomically. Inner fixes may be any
     /// variant including nested `Multi`. The runner walks the tree,
     /// collects all leaf edits, and verifies no byte-range overlaps
     /// among byte-edit variants on the same file.
-    Multi { fixes: Vec<Fix> },
+    Multi {
+        fixes: Vec<Fix>,
+    },
 
     /// File-level operation (create, delete, rename). Distinct from
     /// the byte-range variants so the runner can dispatch to a
     /// filesystem path rather than an in-memory buffer. May appear at
     /// any nesting depth, including as a sibling of byte-edits inside
     /// a `Multi`.
-    File { op: FileOp },
+    File {
+        op: FileOp,
+    },
 }
 
 /// File-level operations a [`Fix::File`] can represent.
@@ -391,58 +406,60 @@ pub enum Fix {
 pub enum FileOp {
     /// Create `path` with `content`. Errors if path already exists.
     Create {
-        path: Cow<'static, str>,
+        path:    Cow<'static, str>,
         content: Cow<'static, str>,
     },
 
     /// Delete `path`. Errors if path does not exist.
-    Delete { path: Cow<'static, str> },
+    Delete {
+        path: Cow<'static, str>,
+    },
 
     /// Rename `from` to `to`. Errors if `to` exists or `from` does
     /// not.
     Rename {
         from: Cow<'static, str>,
-        to: Cow<'static, str>,
+        to:   Cow<'static, str>,
     },
 }
 
 /// A single lint finding. Strict superset of viola's `Diagnostic`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
-    pub lint_name: Cow<'static, str>,
+    pub lint_name:     Cow<'static, str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rule_id: Option<Cow<'static, str>>,
+    pub rule_id:       Option<Cow<'static, str>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plugin_id: Option<Cow<'static, str>>,
-    pub severity: Severity,
+    pub plugin_id:     Option<Cow<'static, str>>,
+    pub severity:      Severity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub impact: Option<Impact>,
+    pub impact:        Option<Impact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub category: Option<Category>,
-    pub message: Cow<'static, str>,
-    pub span: Span,
+    pub category:      Option<Category>,
+    pub message:       Cow<'static, str>,
+    pub span:          Span,
     /// Short hint pointing at what the author should consider. One
     /// line; not a full explanation. Example: "consider Maybe<T>,
     /// Just<T>, or Outcome<T, E>".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hint: Option<Cow<'static, str>>,
+    pub hint:          Option<Cow<'static, str>>,
     /// Broader help text explaining why the lint exists. May span
     /// multiple lines. Example: "arvo is the workspace's exclusive
     /// numeric substrate; bare primitives are forbidden in pub API
     /// per .claude/rules/no-bare-primitives.md".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub help: Option<Cow<'static, str>>,
+    pub help:          Option<Cow<'static, str>>,
     /// Optional structured suggestion. Carries a description and a
     /// possibly-mechanical [`Fix`] recipe. Replaces the older
     /// `fix_suggestion` shape; the new form expresses the same simple
     /// cases via `Suggestion { description, fix: Some(Fix::Replace {
     /// ... }) }` plus the richer multi-edit and file-level shapes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub suggestion: Option<Suggestion>,
+    pub suggestion:    Option<Suggestion>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_spans: Vec<RelatedSpan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<MetadataBlob>,
+    pub metadata:      Option<MetadataBlob>,
 }
 
 // =========================================================================
@@ -453,19 +470,19 @@ pub struct Finding {
 #[derive(Debug)]
 pub enum LintError {
     AnalysisFailure {
-        lint: Cow<'static, str>,
+        lint:   Cow<'static, str>,
         reason: Cow<'static, str>,
     },
     BadConfig {
-        lint: Cow<'static, str>,
+        lint:   Cow<'static, str>,
         reason: Cow<'static, str>,
     },
     Io {
-        lint: Cow<'static, str>,
+        lint:   Cow<'static, str>,
         source: std::io::Error,
     },
     Internal {
-        lint: Cow<'static, str>,
+        lint:    Cow<'static, str>,
         message: Cow<'static, str>,
     },
 }
@@ -473,18 +490,30 @@ pub enum LintError {
 impl fmt::Display for LintError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AnalysisFailure { lint, reason } => {
+            Self::AnalysisFailure {
+                lint,
+                reason,
+            } => {
                 write!(f, "analysis failure in lint `{lint}`: {reason}")
-            }
-            Self::BadConfig { lint, reason } => {
+            },
+            Self::BadConfig {
+                lint,
+                reason,
+            } => {
                 write!(f, "missing or invalid config for lint `{lint}`: {reason}")
-            }
-            Self::Io { lint, source } => {
+            },
+            Self::Io {
+                lint,
+                source,
+            } => {
                 write!(f, "io error in lint `{lint}`: {source}")
-            }
-            Self::Internal { lint, message } => {
+            },
+            Self::Internal {
+                lint,
+                message,
+            } => {
                 write!(f, "internal error in lint `{lint}`: {message}")
-            }
+            },
         }
     }
 }
@@ -492,7 +521,10 @@ impl fmt::Display for LintError {
 impl std::error::Error for LintError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io { source, .. } => Some(source),
+            Self::Io {
+                source,
+                ..
+            } => Some(source),
             _ => None,
         }
     }
@@ -557,11 +589,11 @@ pub trait LintCfgStore: Send + Sync {
 /// Per-lint dispatch context. Engines build this internally before
 /// invoking a lint; consumers do not construct it directly.
 pub struct LintContext<'ctx> {
-    pub gate: Gate,
-    pub severities: GateSeverity,
-    pub surface: RunSurface,
+    pub gate:         Gate,
+    pub severities:   GateSeverity,
+    pub surface:      RunSurface,
     pub project_root: &'ctx Path,
-    pub config: &'ctx dyn LintCfgStore,
+    pub config:       &'ctx dyn LintCfgStore,
 }
 
 impl<'ctx> LintContext<'ctx> {
@@ -601,8 +633,8 @@ pub enum Directive {
     /// parser.
     Allow {
         lint_name: String,
-        reason: Option<String>,
-        tracked: Option<String>,
+        reason:    Option<String>,
+        tracked:   Option<String>,
     },
 
     /// At a module or file boundary, extends a lint's scope along one
@@ -611,8 +643,8 @@ pub enum Directive {
     /// new axes through this directive.
     ScopeAdd {
         lint_name: String,
-        axis: ScopeAxis,
-        value: String,
+        axis:      ScopeAxis,
+        value:     String,
     },
 
     /// Acknowledges a known violation that will be fixed when the linked
@@ -622,8 +654,8 @@ pub enum Directive {
     /// distinguishes the two.
     Defer {
         lint_name: String,
-        until: String,
-        reason: Option<String>,
+        until:     String,
+        reason:    Option<String>,
     },
 
     /// File-level disable for the named lint. Placed at the top of a
@@ -633,8 +665,8 @@ pub enum Directive {
     /// not a scope extension.
     FileDisable {
         lint_name: String,
-        reason: Option<String>,
-        tracked: Option<String>,
+        reason:    Option<String>,
+        tracked:   Option<String>,
     },
 
     /// Lint-provided per-site property consumed by lints. Per the
@@ -649,8 +681,8 @@ pub enum Directive {
     /// / String literals. The optional `reason` clause attaches to
     /// any prop variant for human notes.
     Prop {
-        name: String,
-        value: PropValue,
+        name:   String,
+        value:  PropValue,
         reason: Option<String>,
     },
 }
@@ -713,8 +745,8 @@ pub enum SourceForm {
 /// the `directive-style-consistency` lint to read at finding time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectiveRecord {
-    pub directive: Directive,
-    pub span: Span,
+    pub directive:   Directive,
+    pub span:        Span,
     /// Which surface (`Comment` or `Attribute`) produced this record.
     /// Preprocessors set this when constructing the record; consumers
     /// (the consistency lint, debug-print formatters) read it.
@@ -784,14 +816,14 @@ pub struct SuppressionScope {
     /// The span this suppression covers. For an attribute on a fn, the
     /// fn's span. For a module-level allow, the module's span. For a
     /// crate-level allow, the crate root's span.
-    pub scope: Span,
+    pub scope:   Span,
     /// Lint names suppressed within this scope.
-    pub lints: BTreeSet<String>,
+    pub lints:   BTreeSet<String>,
     /// Whether the scope was created by `lint:allow` (long-lived policy)
     /// or `lint:defer` (expiring acknowledgement). Defaults to `Allow`
     /// so pre-existing callers that construct the struct field-by-field
     /// continue to compile.
-    pub kind: SuppressionKind,
+    pub kind:    SuppressionKind,
     /// Tracking task identifier. Mandatory per the
     /// `lint-allow-requires-task-id` workspace rule; engines emit a
     /// meta-finding if a scope is populated without one. For
@@ -799,7 +831,7 @@ pub struct SuppressionScope {
     /// argument.
     pub tracked: Option<String>,
     /// Optional human-readable reason.
-    pub reason: Option<String>,
+    pub reason:  Option<String>,
 }
 
 /// Project-level suppression resolver. Engines populate per-document and
@@ -818,12 +850,15 @@ impl SuppressionMap {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn push(&mut self, scope: SuppressionScope) {
         self.scopes.push(scope);
     }
+
     pub fn scopes(&self) -> &[SuppressionScope] {
         &self.scopes
     }
+
     /// Resolve whether `(lint_name, finding)` is suppressed. Returns the
     /// innermost enclosing scope that covers the finding; `None` if no
     /// scope suppresses.
@@ -913,9 +948,9 @@ pub struct PropMap {
 /// named shape eliminates the footgun. Lifetime ties to the `PropMap`.
 #[derive(Debug, Clone, Copy)]
 pub struct PropEntry<'a> {
-    pub span: &'a Span,
-    pub name: &'a str,
-    pub value: &'a PropValue,
+    pub span:   &'a Span,
+    pub name:   &'a str,
+    pub value:  &'a PropValue,
     pub reason: Option<&'a str>,
 }
 
@@ -949,11 +984,13 @@ impl PropMap {
             .get(name)
             .into_iter()
             .flat_map(|v| v.iter())
-            .map(move |(span, value, reason)| PropEntry {
-                span,
-                name,
-                value,
-                reason: reason.as_deref(),
+            .map(move |(span, value, reason)| {
+                PropEntry {
+                    span,
+                    name,
+                    value,
+                    reason: reason.as_deref(),
+                }
             })
     }
 
@@ -963,11 +1000,13 @@ impl PropMap {
             .get_key_value(span)
             .into_iter()
             .flat_map(|(span_ref, entries)| {
-                entries.iter().map(move |(name, value, reason)| PropEntry {
-                    span: span_ref,
-                    name: name.as_str(),
-                    value,
-                    reason: reason.as_deref(),
+                entries.iter().map(move |(name, value, reason)| {
+                    PropEntry {
+                        span: span_ref,
+                        name: name.as_str(),
+                        value,
+                        reason: reason.as_deref(),
+                    }
                 })
             })
     }
@@ -998,11 +1037,13 @@ impl PropMap {
             .iter()
             .filter(move |(span, _)| span.file == query.file && span.start_line < query.start_line)
             .flat_map(|(span, entries)| {
-                entries.iter().map(move |(name, value, reason)| PropEntry {
-                    span,
-                    name: name.as_str(),
-                    value,
-                    reason: reason.as_deref(),
+                entries.iter().map(move |(name, value, reason)| {
+                    PropEntry {
+                        span,
+                        name: name.as_str(),
+                        value,
+                        reason: reason.as_deref(),
+                    }
                 })
             })
     }
@@ -1030,13 +1071,13 @@ pub struct ScopeAddEntry {
     /// item-attached directive, the item's span; for a module-level
     /// directive, the module's span; for a file-level directive,
     /// the file's span.
-    pub scope: Span,
+    pub scope:     Span,
     /// Lint whose scope the directive extends.
     pub lint_name: String,
     /// Which axis of `ScopeConfig` is extended.
-    pub axis: ScopeAxis,
+    pub axis:      ScopeAxis,
     /// Value added to the named axis.
-    pub value: String,
+    pub value:     String,
 }
 
 /// Project-level collection of `lint:scope-add` directives. Engines
@@ -1101,11 +1142,11 @@ impl ScopeAddMap {
 /// comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDisableEntry {
-    pub file: PathBuf,
-    pub lint_name: String,
+    pub file:           PathBuf,
+    pub lint_name:      String,
     pub directive_span: Span,
-    pub tracked: Option<String>,
-    pub reason: Option<String>,
+    pub tracked:        Option<String>,
+    pub reason:         Option<String>,
 }
 
 /// Per-file lint-disable set. Engines consult before emitting a
@@ -1234,8 +1275,9 @@ pub trait LintEngine: 'static + Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashMap;
+
+    use super::*;
 
     // ---- Severity / Impact / Category ----
 
@@ -1279,7 +1321,10 @@ mod tests {
             Severity::Warn,
             Severity::Error,
         ] {
-            let s = toml::to_string(&Wrap { s: variant }).unwrap();
+            let s = toml::to_string(&Wrap {
+                s: variant,
+            })
+            .unwrap();
             let r: Wrap = toml::from_str(&s).unwrap();
             assert_eq!(r.s, variant);
         }
@@ -1300,7 +1345,10 @@ mod tests {
             (Impact::Minor, "minor"),
             (Impact::Trivial, "trivial"),
         ] {
-            let s = toml::to_string(&Wrap { i: variant }).unwrap();
+            let s = toml::to_string(&Wrap {
+                i: variant,
+            })
+            .unwrap();
             assert!(s.contains(marker), "missing marker `{marker}` in `{s}`");
             let r: Wrap = toml::from_str(&s).unwrap();
             assert_eq!(r.i, variant);
@@ -1324,7 +1372,10 @@ mod tests {
             (Category::Performance, "performance"),
             (Category::Style, "style"),
         ] {
-            let s = toml::to_string(&W { c: variant }).unwrap();
+            let s = toml::to_string(&W {
+                c: variant,
+            })
+            .unwrap();
             assert!(s.contains(marker), "missing `{marker}` in `{s}`");
             let r: W = toml::from_str(&s).unwrap();
             assert_eq!(r.c, variant);
@@ -1364,7 +1415,10 @@ mod tests {
             (Language::Shell, "shell"),
             (Language::Other, "other"),
         ] {
-            let s = toml::to_string(&W { l: variant }).unwrap();
+            let s = toml::to_string(&W {
+                l: variant,
+            })
+            .unwrap();
             assert!(
                 s.contains(marker),
                 "language `{variant:?}` missing marker `{marker}` in `{s}`"
@@ -1388,7 +1442,10 @@ mod tests {
             (RunSurface::Ci, "ci"),
             (RunSurface::Editor, "editor"),
         ] {
-            let s = toml::to_string(&W { s: variant }).unwrap();
+            let s = toml::to_string(&W {
+                s: variant,
+            })
+            .unwrap();
             assert!(s.contains(marker), "missing `{marker}` in `{s}`");
             let r: W = toml::from_str(&s).unwrap();
             assert_eq!(r.s, variant);
@@ -1447,8 +1504,8 @@ mod tests {
     fn gate_severity_at_selects_correct_gate() {
         let g = GateSeverity {
             commit: Severity::Error,
-            build: Severity::Warn,
-            push: Severity::Off,
+            build:  Severity::Warn,
+            push:   Severity::Off,
         };
         assert_eq!(g.at(Gate::Commit), Severity::Error);
         assert_eq!(g.at(Gate::Push), Severity::Off);
@@ -1460,33 +1517,33 @@ mod tests {
     #[test]
     fn finding_round_trips_with_full_payload() {
         let f = Finding {
-            lint_name: Cow::Borrowed("no-bare-numeric"),
-            rule_id: Some(Cow::Borrowed("rule-42")),
-            plugin_id: Some(Cow::Borrowed("viola-rust")),
-            severity: Severity::Error,
-            impact: Some(Impact::Major),
-            category: Some(Category::Correctness),
-            message: Cow::Borrowed("found `u32`"),
-            span: Span::single_line("a.rs", 10, 5, 3),
-            hint: Some(Cow::Borrowed("consider Uint32 or USize")),
-            help: Some(Cow::Borrowed(
+            lint_name:     Cow::Borrowed("no-bare-numeric"),
+            rule_id:       Some(Cow::Borrowed("rule-42")),
+            plugin_id:     Some(Cow::Borrowed("viola-rust")),
+            severity:      Severity::Error,
+            impact:        Some(Impact::Major),
+            category:      Some(Category::Correctness),
+            message:       Cow::Borrowed("found `u32`"),
+            span:          Span::single_line("a.rs", 10, 5, 3),
+            hint:          Some(Cow::Borrowed("consider Uint32 or USize")),
+            help:          Some(Cow::Borrowed(
                 "arvo is the workspace's exclusive numeric substrate",
             )),
-            suggestion: Some(Suggestion {
+            suggestion:    Some(Suggestion {
                 description: Cow::Borrowed("replace bare u32 with UFixed<32, 0, Hot>"),
-                fix: Some(Fix::Replace {
-                    start: 42,
-                    end: 45,
+                fix:         Some(Fix::Replace {
+                    start:       42,
+                    end:         45,
                     replacement: Cow::Borrowed("UFixed<32, 0, Hot>"),
                 }),
             }),
             related_spans: vec![RelatedSpan {
-                span: Span::single_line("a.rs", 8, 1, 6),
+                span:  Span::single_line("a.rs", 8, 1, 6),
                 label: Cow::Borrowed("def"),
             }],
-            metadata: Some(MetadataBlob {
+            metadata:      Some(MetadataBlob {
                 schema: Cow::Borrowed("viola/diag-meta/v1"),
-                bytes: vec![0xde, 0xad],
+                bytes:  vec![0xDE, 0xAD],
             }),
         };
         let s = toml::to_string(&f).unwrap();
@@ -1497,19 +1554,19 @@ mod tests {
     #[test]
     fn finding_minimal_form_omits_optional_fields() {
         let f = Finding {
-            lint_name: Cow::Borrowed("forbids-tab"),
-            rule_id: None,
-            plugin_id: None,
-            severity: Severity::Warn,
-            impact: None,
-            category: None,
-            message: Cow::Borrowed("tab"),
-            span: Span::single_line("a.rs", 1, 1, 1),
-            hint: None,
-            help: None,
-            suggestion: None,
+            lint_name:     Cow::Borrowed("forbids-tab"),
+            rule_id:       None,
+            plugin_id:     None,
+            severity:      Severity::Warn,
+            impact:        None,
+            category:      None,
+            message:       Cow::Borrowed("tab"),
+            span:          Span::single_line("a.rs", 1, 1, 1),
+            hint:          None,
+            help:          None,
+            suggestion:    None,
             related_spans: Vec::new(),
-            metadata: None,
+            metadata:      None,
         };
         let s = toml::to_string(&f).unwrap();
         assert!(!s.contains("rule_id"));
@@ -1528,12 +1585,12 @@ mod tests {
     fn directive_allow_round_trips() {
         let r = DirectiveRecord {
             source_form: crate::lint::SourceForm::Comment,
-            directive: Directive::Allow {
+            directive:   Directive::Allow {
                 lint_name: "no-bare-numeric".to_string(),
-                reason: Some("hardcoded constant per spec".to_string()),
-                tracked: Some("#427".to_string()),
+                reason:    Some("hardcoded constant per spec".to_string()),
+                tracked:   Some("#427".to_string()),
             },
-            span: Span::single_line("a.rs", 10, 5, 12),
+            span:        Span::single_line("a.rs", 10, 5, 12),
         };
         let s = toml::to_string(&r).unwrap();
         let back: DirectiveRecord = toml::from_str(&s).unwrap();
@@ -1552,12 +1609,12 @@ mod tests {
         ] {
             let r = DirectiveRecord {
                 source_form: crate::lint::SourceForm::Comment,
-                directive: Directive::ScopeAdd {
+                directive:   Directive::ScopeAdd {
                     lint_name: "no-bare-numeric".to_string(),
                     axis,
                     value: "ffi-boundary".to_string(),
                 },
-                span: Span::single_line("m.rs", 1, 1, 1),
+                span:        Span::single_line("m.rs", 1, 1, 1),
             };
             let s = toml::to_string(&r).unwrap();
             let back: DirectiveRecord = toml::from_str(&s).unwrap();
@@ -1569,12 +1626,12 @@ mod tests {
     fn directive_defer_round_trips() {
         let r = DirectiveRecord {
             source_form: crate::lint::SourceForm::Comment,
-            directive: Directive::Defer {
+            directive:   Directive::Defer {
                 lint_name: "no-bare-string".to_string(),
-                until: "#185".to_string(),
-                reason: Some("clause test rehab pending".to_string()),
+                until:     "#185".to_string(),
+                reason:    Some("clause test rehab pending".to_string()),
             },
-            span: Span::single_line("test.rs", 5, 1, 30),
+            span:        Span::single_line("test.rs", 5, 1, 30),
         };
         let s = toml::to_string(&r).unwrap();
         let back: DirectiveRecord = toml::from_str(&s).unwrap();
@@ -1585,12 +1642,12 @@ mod tests {
     fn directive_file_disable_round_trips() {
         let r = DirectiveRecord {
             source_form: crate::lint::SourceForm::Comment,
-            directive: Directive::FileDisable {
+            directive:   Directive::FileDisable {
                 lint_name: "writing-style".to_string(),
-                reason: Some("generated FFI binding file".to_string()),
-                tracked: Some("#207".to_string()),
+                reason:    Some("generated FFI binding file".to_string()),
+                tracked:   Some("#207".to_string()),
             },
-            span: Span::single_line("generated.rs", 1, 1, 1),
+            span:        Span::single_line("generated.rs", 1, 1, 1),
         };
         let s = toml::to_string(&r).unwrap();
         let back: DirectiveRecord = toml::from_str(&s).unwrap();
@@ -1601,12 +1658,12 @@ mod tests {
     fn directive_kind_tag_uses_kebab_case() {
         let r = DirectiveRecord {
             source_form: crate::lint::SourceForm::Comment,
-            directive: Directive::FileDisable {
+            directive:   Directive::FileDisable {
                 lint_name: "x".to_string(),
-                reason: None,
-                tracked: None,
+                reason:    None,
+                tracked:   None,
             },
-            span: Span::single_line("a.rs", 1, 1, 1),
+            span:        Span::single_line("a.rs", 1, 1, 1),
         };
         let s = toml::to_string(&r).unwrap();
         assert!(s.contains("kind = \"file-disable\""), "got: {s}");
@@ -1616,12 +1673,12 @@ mod tests {
     fn directive_prop_presence_round_trips() {
         let r = DirectiveRecord {
             source_form: crate::lint::SourceForm::Comment,
-            directive: Directive::Prop {
-                name: "audited".to_string(),
-                value: PropValue::Bool(true),
+            directive:   Directive::Prop {
+                name:   "audited".to_string(),
+                value:  PropValue::Bool(true),
                 reason: None,
             },
-            span: Span::single_line("a.rs", 1, 1, 1),
+            span:        Span::single_line("a.rs", 1, 1, 1),
         };
         let s = toml::to_string(&r).unwrap();
         let back: DirectiveRecord = toml::from_str(&s).unwrap();
@@ -1632,12 +1689,12 @@ mod tests {
     fn directive_prop_integer_round_trips() {
         let r = DirectiveRecord {
             source_form: crate::lint::SourceForm::Comment,
-            directive: Directive::Prop {
-                name: "arena_size".to_string(),
-                value: PropValue::Integer(4096),
+            directive:   Directive::Prop {
+                name:   "arena_size".to_string(),
+                value:  PropValue::Integer(4096),
                 reason: None,
             },
-            span: Span::single_line("a.rs", 1, 1, 1),
+            span:        Span::single_line("a.rs", 1, 1, 1),
         };
         let s = toml::to_string(&r).unwrap();
         let back: DirectiveRecord = toml::from_str(&s).unwrap();
@@ -1648,12 +1705,12 @@ mod tests {
     fn directive_prop_string_round_trips() {
         let r = DirectiveRecord {
             source_form: crate::lint::SourceForm::Comment,
-            directive: Directive::Prop {
-                name: "audit_id".to_string(),
-                value: PropValue::String("A-2026-04".to_string()),
+            directive:   Directive::Prop {
+                name:   "audit_id".to_string(),
+                value:  PropValue::String("A-2026-04".to_string()),
                 reason: Some("audit pass 2026-04".to_string()),
             },
-            span: Span::single_line("a.rs", 1, 1, 1),
+            span:        Span::single_line("a.rs", 1, 1, 1),
         };
         let s = toml::to_string(&r).unwrap();
         let back: DirectiveRecord = toml::from_str(&s).unwrap();
@@ -1667,12 +1724,12 @@ mod tests {
         // PropValue variant.
         let r = DirectiveRecord {
             source_form: crate::lint::SourceForm::Comment,
-            directive: Directive::Prop {
-                name: "x".to_string(),
-                value: PropValue::Integer(7),
+            directive:   Directive::Prop {
+                name:   "x".to_string(),
+                value:  PropValue::Integer(7),
                 reason: None,
             },
-            span: Span::single_line("a.rs", 1, 1, 1),
+            span:        Span::single_line("a.rs", 1, 1, 1),
         };
         let s = toml::to_string(&r).unwrap();
         // The directive carries `kind = "prop"` from Directive's
@@ -1872,12 +1929,12 @@ mod tests {
     fn scope_axis_serialises_snake_case() {
         let r = DirectiveRecord {
             source_form: crate::lint::SourceForm::Comment,
-            directive: Directive::ScopeAdd {
+            directive:   Directive::ScopeAdd {
                 lint_name: "x".to_string(),
-                axis: ScopeAxis::ExemptPaths,
-                value: "y".to_string(),
+                axis:      ScopeAxis::ExemptPaths,
+                value:     "y".to_string(),
             },
-            span: Span::single_line("a.rs", 1, 1, 1),
+            span:        Span::single_line("a.rs", 1, 1, 1),
         };
         let s = toml::to_string(&r).unwrap();
         assert!(s.contains("axis = \"exempt_paths\""), "got: {s}");
@@ -1910,7 +1967,9 @@ mod tests {
         tbl.insert("build".into(), toml::Value::String("warn".into()));
         tbl.insert("push".into(), toml::Value::String("error".into()));
         entries.insert("my-lint".to_owned(), tbl);
-        let cfg = StaticCfg { entries };
+        let cfg = StaticCfg {
+            entries,
+        };
         let g = cfg.resolve_severity("my-lint").unwrap();
         assert_eq!(g.commit, Severity::Error);
         assert_eq!(g.build, Severity::Warn);
@@ -1932,11 +1991,11 @@ mod tests {
         tracked: Option<&str>,
     ) -> SuppressionScope {
         SuppressionScope {
-            scope: Span::range(file, lines.0, 0, lines.1, 0),
-            lints: names.iter().map(|s| s.to_string()).collect(),
-            kind: SuppressionKind::Allow,
+            scope:   Span::range(file, lines.0, 0, lines.1, 0),
+            lints:   names.iter().map(|s| s.to_string()).collect(),
+            kind:    SuppressionKind::Allow,
             tracked: tracked.map(|s| s.to_string()),
-            reason: None,
+            reason:  None,
         }
     }
 
@@ -1976,11 +2035,11 @@ mod tests {
         // construct a Defer entry directly here.
         let mut map = SuppressionMap::new();
         map.push(SuppressionScope {
-            scope: Span::range("a.rs", 10, 0, 20, 0),
-            lints: ["no-foo".to_string()].into_iter().collect(),
-            kind: SuppressionKind::Defer,
+            scope:   Span::range("a.rs", 10, 0, 20, 0),
+            lints:   ["no-foo".to_string()].into_iter().collect(),
+            kind:    SuppressionKind::Defer,
             tracked: Some("#185".to_string()),
-            reason: None,
+            reason:  None,
         });
         let finding = Span::single_line("a.rs", 15, 0, 1);
         let resolved = map.resolves("no-foo", &finding).unwrap();
@@ -2042,16 +2101,16 @@ mod tests {
         let scope_a = Span::range("a.rs", 1, 0, 50, 0);
         let scope_b = Span::range("b.rs", 1, 0, 50, 0);
         map.push(ScopeAddEntry {
-            scope: scope_a.clone(),
+            scope:     scope_a.clone(),
             lint_name: "no-bare-numeric".to_string(),
-            axis: ScopeAxis::ExemptPaths,
-            value: "ffi".to_string(),
+            axis:      ScopeAxis::ExemptPaths,
+            value:     "ffi".to_string(),
         });
         map.push(ScopeAddEntry {
-            scope: scope_b.clone(),
+            scope:     scope_b.clone(),
             lint_name: "no-bare-numeric".to_string(),
-            axis: ScopeAxis::ExemptPaths,
-            value: "tests".to_string(),
+            axis:      ScopeAxis::ExemptPaths,
+            value:     "tests".to_string(),
         });
 
         let in_a = Span::single_line("a.rs", 25, 0, 1);
@@ -2070,11 +2129,11 @@ mod tests {
     fn file_disable_set_disabled_lookup() {
         let mut set = FileDisableSet::new();
         set.push(FileDisableEntry {
-            file: "a.rs".into(),
-            lint_name: "writing-style".to_string(),
+            file:           "a.rs".into(),
+            lint_name:      "writing-style".to_string(),
             directive_span: Span::single_line("a.rs", 1, 1, 35),
-            tracked: Some("#207".to_string()),
-            reason: Some("generated".to_string()),
+            tracked:        Some("#207".to_string()),
+            reason:         Some("generated".to_string()),
         });
         assert!(set.disabled(Path::new("a.rs"), "writing-style"));
         assert!(!set.disabled(Path::new("a.rs"), "no-bare-numeric"));
@@ -2090,11 +2149,11 @@ mod tests {
         // should be tested explicitly.
         let mut set = FileDisableSet::new();
         set.push(FileDisableEntry {
-            file: "a.rs".into(),
-            lint_name: "x".to_string(),
+            file:           "a.rs".into(),
+            lint_name:      "x".to_string(),
             directive_span: Span::single_line("a.rs", 1, 1, 10),
-            tracked: None,
-            reason: None,
+            tracked:        None,
+            reason:         None,
         });
         assert!(set.disabled_lints(Path::new("a.rs")).is_some());
         assert!(set.disabled_lints(Path::new("unknown.rs")).is_none());
@@ -2104,18 +2163,18 @@ mod tests {
     fn file_disable_set_multiple_lints_per_file() {
         let mut set = FileDisableSet::new();
         set.push(FileDisableEntry {
-            file: "a.rs".into(),
-            lint_name: "lint-a".to_string(),
+            file:           "a.rs".into(),
+            lint_name:      "lint-a".to_string(),
             directive_span: Span::single_line("a.rs", 1, 1, 25),
-            tracked: None,
-            reason: None,
+            tracked:        None,
+            reason:         None,
         });
         set.push(FileDisableEntry {
-            file: "a.rs".into(),
-            lint_name: "lint-b".to_string(),
+            file:           "a.rs".into(),
+            lint_name:      "lint-b".to_string(),
             directive_span: Span::single_line("a.rs", 2, 1, 25),
-            tracked: None,
-            reason: None,
+            tracked:        None,
+            reason:         None,
         });
         let disabled = set.disabled_lints(Path::new("a.rs")).unwrap();
         assert!(disabled.contains("lint-a"));
@@ -2138,11 +2197,9 @@ mod tests {
 
     #[test]
     fn matches_pattern_exempt_overrides_forbidden() {
-        assert!(!matches_pattern(
-            "AllowedManager",
-            &["Manager".into()],
-            &["AllowedManager".into()],
-        ));
+        assert!(!matches_pattern("AllowedManager", &["Manager".into()], &[
+            "AllowedManager".into()
+        ],));
     }
 
     #[test]
@@ -2162,17 +2219,19 @@ mod tests {
     /// lives in `mockspace-rs`.
     #[derive(Debug)]
     struct TinyProject {
-        root: PathBuf,
+        root:    PathBuf,
         surface: RunSurface,
-        docs: Vec<Box<dyn Document>>,
+        docs:    Vec<Box<dyn Document>>,
     }
     impl Project for TinyProject {
         fn root(&self) -> &Path {
             &self.root
         }
+
         fn surface(&self) -> RunSurface {
             self.surface
         }
+
         fn documents(&self) -> &[Box<dyn Document>] {
             &self.docs
         }
@@ -2189,16 +2248,17 @@ mod tests {
 
     struct TinyEngine;
     impl LintEngine for TinyEngine {
-        type Project = TinyProject;
-        type ParseError = TinyEngineError;
-        type LoadError = TinyEngineError;
         type DispatchError = TinyEngineError;
+        type LoadError = TinyEngineError;
+        type ParseError = TinyEngineError;
+        type Project = TinyProject;
 
         const HASH_ALGORITHM: HashAlgorithm = HashAlgorithm::Blake3;
 
         fn new() -> Result<Self, Self::LoadError> {
             Ok(Self)
         }
+
         fn scope_project(
             &self,
             root: &Path,
@@ -2210,6 +2270,7 @@ mod tests {
                 docs: Vec::new(),
             })
         }
+
         fn run(
             &self,
             _project: &Self::Project,

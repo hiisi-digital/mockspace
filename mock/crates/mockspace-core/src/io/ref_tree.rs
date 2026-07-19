@@ -21,34 +21,52 @@ use crate::ref_path::RefPath;
 #[derive(Debug)]
 pub enum RefTreeReadError {
     /// The named ref does not exist in the repository.
-    RefNotFound { ref_path: String },
+    RefNotFound {
+        ref_path: String,
+    },
     /// The ref exists but does not resolve to a commit (e.g. a tag
     /// or a tree without a commit wrapper). Orphan mock refs should
     /// always point at a commit per spec §25; encountering anything
     /// else is a data-integrity issue worth surfacing loudly.
-    NotACommit { ref_path: String },
+    NotACommit {
+        ref_path: String,
+    },
     /// The walker hit a tree entry that is neither a blob nor a
     /// subtree (e.g. a gitlink/submodule). Spec §25 expects the
     /// orphan ref tree to be flat blobs plus the anchor-blobs
     /// subtree only.
-    UnexpectedTreeEntry { path: String, kind: &'static str },
+    UnexpectedTreeEntry {
+        path: String,
+        kind: &'static str,
+    },
     /// gix returned an error reading objects out of the odb.
-    GixOdb { source: Box<dyn std::error::Error + Send + Sync> },
+    GixOdb {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 impl core::fmt::Display for RefTreeReadError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::RefNotFound { ref_path } => {
+            Self::RefNotFound {
+                ref_path,
+            } => {
                 write!(f, "ref `{ref_path}` not found")
-            }
-            Self::NotACommit { ref_path } => {
+            },
+            Self::NotACommit {
+                ref_path,
+            } => {
                 write!(f, "ref `{ref_path}` does not resolve to a commit")
-            }
-            Self::UnexpectedTreeEntry { path, kind } => {
+            },
+            Self::UnexpectedTreeEntry {
+                path,
+                kind,
+            } => {
                 write!(f, "unexpected tree entry `{path}` of kind `{kind}`")
-            }
-            Self::GixOdb { source } => write!(f, "object database read failed: {source}"),
+            },
+            Self::GixOdb {
+                source,
+            } => write!(f, "object database read failed: {source}"),
         }
     }
 }
@@ -76,7 +94,9 @@ impl RoundRefTree {
     /// higher-level seeding wrappers like the `seed_topic_round`
     /// helper in `mockspace-cli/tests/e2e_phase.rs` build on this.
     pub fn from_entries(entries: BTreeMap<String, Vec<u8>>) -> Self {
-        Self { entries }
+        Self {
+            entries,
+        }
     }
 
     /// Lookup the bytes at `path`. Returns None when the path is
@@ -110,30 +130,29 @@ impl RepoHandle {
     /// the tree (via [`read_ref_tree`](Self::read_ref_tree)) AND
     /// the OID, mutates the tree in memory, and writes back with
     /// the OID as the CAS expectation.
-    pub fn resolve_ref_oid(
-        &self,
-        ref_path: &RefPath,
-    ) -> Result<gix::ObjectId, RefTreeReadError> {
+    pub fn resolve_ref_oid(&self, ref_path: &RefPath) -> Result<gix::ObjectId, RefTreeReadError> {
         use gix::reference::find::existing::Error as ExistingErr;
         let repo = self.repo();
         let mut reference = match repo.find_reference(ref_path.as_str()) {
             Ok(r) => r,
-            Err(ExistingErr::NotFound { .. }) => {
+            Err(ExistingErr::NotFound {
+                ..
+            }) => {
                 return Err(RefTreeReadError::RefNotFound {
                     ref_path: ref_path.as_str().to_owned(),
                 });
-            }
+            },
             Err(e) => {
                 return Err(RefTreeReadError::GixOdb {
                     source: Box::new(e),
                 });
-            }
+            },
         };
-        let id = reference
-            .peel_to_id_in_place()
-            .map_err(|e| RefTreeReadError::GixOdb {
+        let id = reference.peel_to_id_in_place().map_err(|e| {
+            RefTreeReadError::GixOdb {
                 source: Box::new(e),
-            })?;
+            }
+        })?;
         Ok(id.detach())
     }
 
@@ -149,24 +168,28 @@ impl RepoHandle {
         let repo = self.repo();
         let mut reference = match repo.find_reference(ref_path.as_str()) {
             Ok(r) => r,
-            Err(ExistingErr::NotFound { .. }) => {
+            Err(ExistingErr::NotFound {
+                ..
+            }) => {
                 return Err(RefTreeReadError::RefNotFound {
                     ref_path: ref_path.as_str().to_owned(),
                 });
-            }
+            },
             Err(e) => {
                 return Err(RefTreeReadError::GixOdb {
                     source: Box::new(e),
                 });
-            }
+            },
         };
-        let id = reference
-            .peel_to_id_in_place()
-            .map_err(|e| RefTreeReadError::GixOdb {
+        let id = reference.peel_to_id_in_place().map_err(|e| {
+            RefTreeReadError::GixOdb {
                 source: Box::new(e),
-            })?;
-        let object = id.object().map_err(|e| RefTreeReadError::GixOdb {
-            source: Box::new(e),
+            }
+        })?;
+        let object = id.object().map_err(|e| {
+            RefTreeReadError::GixOdb {
+                source: Box::new(e),
+            }
         })?;
         let commit = match object.try_into_commit() {
             Ok(c) => c,
@@ -174,15 +197,19 @@ impl RepoHandle {
                 return Err(RefTreeReadError::NotACommit {
                     ref_path: ref_path.as_str().to_owned(),
                 });
-            }
+            },
         };
-        let tree = commit.tree().map_err(|e| RefTreeReadError::GixOdb {
-            source: Box::new(e),
+        let tree = commit.tree().map_err(|e| {
+            RefTreeReadError::GixOdb {
+                source: Box::new(e),
+            }
         })?;
 
         let mut entries = BTreeMap::new();
         walk_tree(repo, &tree, String::new(), &mut entries)?;
-        Ok(RoundRefTree { entries })
+        Ok(RoundRefTree {
+            entries,
+        })
     }
 }
 
@@ -193,21 +220,21 @@ fn walk_tree(
     out: &mut BTreeMap<String, Vec<u8>>,
 ) -> Result<(), RefTreeReadError> {
     for entry in tree.iter() {
-        let entry = entry.map_err(|e| RefTreeReadError::GixOdb {
-            source: Box::new(e),
+        let entry = entry.map_err(|e| {
+            RefTreeReadError::GixOdb {
+                source: Box::new(e),
+            }
         })?;
         let name_bstr = entry.filename();
         let name = name_bstr.to_string();
-        let child_path = if prefix.is_empty() {
-            name.clone()
-        } else {
-            format!("{prefix}/{name}")
-        };
+        let child_path = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
         let mode = entry.mode();
         if mode.is_tree() {
             let subtree_id = entry.id();
-            let subtree_obj = subtree_id.object().map_err(|e| RefTreeReadError::GixOdb {
-                source: Box::new(e),
+            let subtree_obj = subtree_id.object().map_err(|e| {
+                RefTreeReadError::GixOdb {
+                    source: Box::new(e),
+                }
             })?;
             let subtree = match subtree_obj.try_into_tree() {
                 Ok(t) => t,
@@ -216,16 +243,16 @@ fn walk_tree(
                         path: child_path,
                         kind: "tree-typed-entry-not-a-tree-object",
                     });
-                }
+                },
             };
             walk_tree(repo, &subtree, child_path, out)?;
         } else if mode.is_blob() {
             let blob_id = entry.id();
-            let blob = repo
-                .find_object(blob_id.detach())
-                .map_err(|e| RefTreeReadError::GixOdb {
+            let blob = repo.find_object(blob_id.detach()).map_err(|e| {
+                RefTreeReadError::GixOdb {
                     source: Box::new(e),
-                })?;
+                }
+            })?;
             out.insert(child_path, blob.data.clone());
         } else if mode.is_link() {
             // Symlinks in v2 orphan refs are unexpected; spec §25 lists
@@ -252,11 +279,13 @@ fn walk_tree(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::slug::Slug;
     use std::path::Path;
     use std::process::Command;
+
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::slug::Slug;
 
     fn run(args: &[&str], dir: &Path) {
         let output = Command::new("git")
@@ -332,15 +361,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let slug = Slug::new("test-round").unwrap();
         let ref_path = RefPath::round_mock(&slug);
-        author_orphan_ref(
-            dir.path(),
-            ref_path.as_str(),
-            &[
-                (".phase", "PLAN.DOC\n"),
-                ("manifest.doc.toml", "round_slug = \"test-round\"\n"),
-                ("round.toml", "slug = \"test-round\"\n"),
-            ],
-        );
+        author_orphan_ref(dir.path(), ref_path.as_str(), &[
+            (".phase", "PLAN.DOC\n"),
+            ("manifest.doc.toml", "round_slug = \"test-round\"\n"),
+            ("round.toml", "slug = \"test-round\"\n"),
+        ]);
 
         let handle = RepoHandle::open(dir.path()).expect("open repo");
         let tree = handle.read_ref_tree(&ref_path).expect("read ref tree");
@@ -360,16 +385,12 @@ mod tests {
         let slug = Slug::new("anchor-round").unwrap();
         let ref_path = RefPath::round_mock(&slug);
         // Mimic spec §25 anchor blob path: .anchor.doc.blobs/<2-hex>/<rest>.
-        author_orphan_ref(
-            dir.path(),
-            ref_path.as_str(),
-            &[
-                (".phase", "APPLY.DOC\n"),
-                (".anchor.doc.toml", "format = \"v1\"\n"),
-                (".anchor.doc.blobs/ab/cdef0123", "blob-bytes"),
-                (".anchor.doc.blobs/ab/feed4567", "more-blob-bytes"),
-            ],
-        );
+        author_orphan_ref(dir.path(), ref_path.as_str(), &[
+            (".phase", "APPLY.DOC\n"),
+            (".anchor.doc.toml", "format = \"v1\"\n"),
+            (".anchor.doc.blobs/ab/cdef0123", "blob-bytes"),
+            (".anchor.doc.blobs/ab/feed4567", "more-blob-bytes"),
+        ]);
 
         let handle = RepoHandle::open(dir.path()).expect("open repo");
         let tree = handle.read_ref_tree(&ref_path).expect("read ref tree");
@@ -390,11 +411,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let slug = Slug::new("order-round").unwrap();
         let ref_path = RefPath::round_mock(&slug);
-        author_orphan_ref(
-            dir.path(),
-            ref_path.as_str(),
-            &[("z.toml", "z"), ("a.toml", "a"), ("m.toml", "m")],
-        );
+        author_orphan_ref(dir.path(), ref_path.as_str(), &[
+            ("z.toml", "z"),
+            ("a.toml", "a"),
+            ("m.toml", "m"),
+        ]);
 
         let handle = RepoHandle::open(dir.path()).expect("open repo");
         let tree = handle.read_ref_tree(&ref_path).expect("read ref tree");
@@ -411,6 +432,9 @@ mod tests {
         let err = handle
             .read_ref_tree(&RefPath::round_mock(&slug))
             .unwrap_err();
-        assert!(matches!(err, RefTreeReadError::RefNotFound { .. }), "got {err:?}");
+        assert!(
+            matches!(err, RefTreeReadError::RefNotFound { .. }),
+            "got {err:?}"
+        );
     }
 }

@@ -40,9 +40,11 @@ pub fn scope_walk(root: &Path, surface: RunSurface) -> Result<MockspaceProject, 
         .into_iter()
         .filter_entry(|e| !is_skipped(e, root))
     {
-        let entry = entry.map_err(|e| ParseError::Io {
-            path: e.path().map(|p| p.to_path_buf()).unwrap_or_default(),
-            source: io_from_walkdir(e),
+        let entry = entry.map_err(|e| {
+            ParseError::Io {
+                path:   e.path().map(|p| p.to_path_buf()).unwrap_or_default(),
+                source: io_from_walkdir(e),
+            }
         })?;
         if !entry.file_type().is_file() {
             continue;
@@ -56,15 +58,21 @@ pub fn scope_walk(root: &Path, surface: RunSurface) -> Result<MockspaceProject, 
         // where a stray non-utf8 byte should not abort the whole project
         // scan. The lossy path replaces invalid sequences with U+FFFD, which
         // is fine for content-regex / token-scan / strip-based primitives.
-        let bytes = std::fs::read(path).map_err(|e| ParseError::Io {
-            path: path.to_path_buf(),
-            source: e,
+        let bytes = std::fs::read(path).map_err(|e| {
+            ParseError::Io {
+                path:   path.to_path_buf(),
+                source: e,
+            }
         })?;
         let source = match language {
-            Language::Rust => String::from_utf8(bytes).map_err(|e| ParseError::Io {
-                path: path.to_path_buf(),
-                source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
-            })?,
+            Language::Rust => {
+                String::from_utf8(bytes).map_err(|e| {
+                    ParseError::Io {
+                        path:   path.to_path_buf(),
+                        source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+                    }
+                })?
+            },
             _ => String::from_utf8_lossy(&bytes).into_owned(),
         };
         let content_hash = blake3_hash(&source);
@@ -203,9 +211,10 @@ fn io_from_walkdir(e: walkdir::Error) -> std::io::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
     use std::io::Write;
+
+    use super::*;
 
     fn write(p: &Path, contents: &str) {
         if let Some(parent) = p.parent() {

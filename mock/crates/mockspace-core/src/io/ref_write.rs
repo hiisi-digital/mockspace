@@ -15,10 +15,10 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gix::objs::tree::EntryKind;
 use gix::objs::Tree;
-use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog};
+use gix::objs::tree::EntryKind;
 use gix::refs::Target;
+use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog};
 
 use crate::io::ref_tree::RoundRefTree;
 use crate::io::repo::RepoHandle;
@@ -37,27 +37,35 @@ pub enum RefTreeWriteError {
     },
     /// Path in the tree contained an empty component (e.g. leading
     /// or doubled `/`). Git trees do not allow these.
-    EmptyPathComponent { path: String },
+    EmptyPathComponent {
+        path: String,
+    },
     /// gix returned an error writing objects to the odb or editing
     /// the ref.
-    GixOdb { source: Box<dyn std::error::Error + Send + Sync> },
+    GixOdb {
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 impl core::fmt::Display for RefTreeWriteError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::NonFastForward { ref_path, expected } => {
-                write!(
-                    f,
-                    "ref `{ref_path}` CAS failed; expected {expected:?}"
-                )
-            }
-            Self::EmptyPathComponent { path } => {
+            Self::NonFastForward {
+                ref_path,
+                expected,
+            } => {
+                write!(f, "ref `{ref_path}` CAS failed; expected {expected:?}")
+            },
+            Self::EmptyPathComponent {
+                path,
+            } => {
                 write!(f, "tree path `{path}` has an empty component")
-            }
-            Self::GixOdb { source } => {
+            },
+            Self::GixOdb {
+                source,
+            } => {
                 write!(f, "object database write failed: {source}")
-            }
+            },
         }
     }
 }
@@ -112,11 +120,11 @@ impl RepoHandle {
                     });
                 }
             }
-            let id = repo
-                .write_blob(bytes)
-                .map_err(|e| RefTreeWriteError::GixOdb {
+            let id = repo.write_blob(bytes).map_err(|e| {
+                RefTreeWriteError::GixOdb {
                     source: Box::new(e),
-                })?;
+                }
+            })?;
             blob_oids.insert(path.to_owned(), id.detach());
         }
 
@@ -129,23 +137,25 @@ impl RepoHandle {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let signature = gix::actor::Signature {
-            name: "mockspace".into(),
+            name:  "mockspace".into(),
             email: "noreply@mockspace.local".into(),
-            time: gix::date::Time::new(now, 0),
+            time:  gix::date::Time::new(now, 0),
         };
         let commit = gix::objs::Commit {
-            message: message.into(),
-            tree: tree_oid,
-            author: signature.clone(),
-            committer: signature,
-            encoding: None,
-            parents: Default::default(),
+            message:       message.into(),
+            tree:          tree_oid,
+            author:        signature.clone(),
+            committer:     signature,
+            encoding:      None,
+            parents:       Default::default(),
             extra_headers: Default::default(),
         };
         let commit_id = repo
             .write_object(&commit)
-            .map_err(|e| RefTreeWriteError::GixOdb {
-                source: Box::new(e),
+            .map_err(|e| {
+                RefTreeWriteError::GixOdb {
+                    source: Box::new(e),
+                }
             })?
             .detach();
 
@@ -158,20 +168,22 @@ impl RepoHandle {
         let edit = RefEdit {
             change: Change::Update {
                 log: LogChange {
-                    mode: RefLog::AndReference,
+                    mode:                RefLog::AndReference,
                     force_create_reflog: false,
-                    message: format!("mockspace: {message}").into(),
+                    message:             format!("mockspace: {message}").into(),
                 },
                 expected,
                 new: Target::Object(commit_id),
             },
-            name: ref_path
+            name:   ref_path
                 .as_str()
                 .try_into()
-                .map_err(|e: gix::refs::name::Error| RefTreeWriteError::GixOdb {
-                    source: Box::new(e),
+                .map_err(|e: gix::refs::name::Error| {
+                    RefTreeWriteError::GixOdb {
+                        source: Box::new(e),
+                    }
                 })?,
-            deref: false,
+            deref:  false,
         };
         repo.edit_reference(edit).map_err(|e| {
             // gix's ref-edit failures bubble up as a single
@@ -231,32 +243,29 @@ fn build_tree(
         match rel.split_once('/') {
             None => {
                 blob_children.insert(rel.to_owned(), *oid);
-            }
+            },
             Some((dir, _)) => {
                 subtree_names.insert(dir.to_owned(), ());
-            }
+            },
         }
     }
 
     let mut entries: Vec<gix::objs::tree::Entry> = Vec::new();
     for (name, oid) in &blob_children {
         entries.push(gix::objs::tree::Entry {
-            mode: EntryKind::Blob.into(),
+            mode:     EntryKind::Blob.into(),
             filename: name.as_str().into(),
-            oid: *oid,
+            oid:      *oid,
         });
     }
     for (name, _) in &subtree_names {
-        let child_prefix = if prefix.is_empty() {
-            name.clone()
-        } else {
-            format!("{prefix}/{name}")
-        };
+        let child_prefix =
+            if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
         let subtree_oid = build_tree(repo, blobs, &child_prefix)?;
         entries.push(gix::objs::tree::Entry {
-            mode: EntryKind::Tree.into(),
+            mode:     EntryKind::Tree.into(),
             filename: name.as_str().into(),
-            oid: subtree_oid,
+            oid:      subtree_oid,
         });
     }
     // git requires tree entries sorted by name (with trailing `/`
@@ -268,12 +277,14 @@ fn build_tree(
         a_name.cmp(&b_name)
     });
 
-    let tree = Tree { entries };
-    let id = repo
-        .write_object(&tree)
-        .map_err(|e| RefTreeWriteError::GixOdb {
+    let tree = Tree {
+        entries,
+    };
+    let id = repo.write_object(&tree).map_err(|e| {
+        RefTreeWriteError::GixOdb {
             source: Box::new(e),
-        })?;
+        }
+    })?;
     Ok(id.detach())
 }
 
@@ -289,11 +300,13 @@ fn sort_key(name: &[u8], is_tree: bool) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::slug::Slug;
     use std::path::Path;
     use std::process::Command;
+
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::slug::Slug;
 
     fn init_repo(dir: &Path) {
         let out = Command::new("git")
@@ -320,10 +333,8 @@ mod tests {
         let slug = Slug::new("write-create").unwrap();
         let ref_path = RefPath::round_mock(&slug);
 
-        let new_tree = tree_with(&[
-            (".phase", b"PLAN.DOC\n"),
-            ("manifest.doc.toml", b"hello = \"world\"\n"),
-        ]);
+        let new_tree =
+            tree_with(&[(".phase", b"PLAN.DOC\n"), ("manifest.doc.toml", b"hello = \"world\"\n")]);
         let _commit_id = handle
             .write_round_ref(&ref_path, &new_tree, "create round", None)
             .expect("write succeeds");
@@ -362,7 +373,10 @@ mod tests {
             read_back.get(".anchor.doc.blobs/ab/cdef0123").unwrap(),
             b"blob-a"
         );
-        assert_eq!(read_back.get(".anchor.doc.blobs/cd/9999").unwrap(), b"blob-c");
+        assert_eq!(
+            read_back.get(".anchor.doc.blobs/cd/9999").unwrap(),
+            b"blob-c"
+        );
     }
 
     #[test]

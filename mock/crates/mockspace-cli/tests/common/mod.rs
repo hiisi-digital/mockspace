@@ -40,7 +40,7 @@ pub fn scrub_oid_lines(s: &str, prefix: &str) -> String {
         .map(|line| {
             let trimmed = line.trim_start();
             if trimmed.starts_with(prefix) {
-                let indent = &line[..line.len() - trimmed.len()];
+                let indent = &line[.. line.len() - trimmed.len()];
                 format!("{indent}{prefix} <OID>")
             } else {
                 line.to_owned()
@@ -65,7 +65,6 @@ pub fn scrub_oid_lines(s: &str, prefix: &str) -> String {
 ///
 /// <path-2>:
 /// <blob-2 content>
-///
 /// ```
 ///
 /// Blob content is reproduced verbatim. Callers that need to scrub
@@ -82,15 +81,12 @@ pub fn scrub_oid_lines(s: &str, prefix: &str) -> String {
 /// test infrastructure error, not a snapshot drift.
 #[allow(dead_code)]
 pub fn snapshot_mock_refs(repo_root: &Path) -> String {
-    let listing = git_capture(
-        repo_root,
-        &[
-            "for-each-ref",
-            "refs/mock",
-            "--format=%(refname)",
-            "--sort=refname",
-        ],
-    );
+    let listing = git_capture(repo_root, &[
+        "for-each-ref",
+        "refs/mock",
+        "--format=%(refname)",
+        "--sort=refname",
+    ]);
     let mut out = String::new();
     for refname in listing.lines() {
         if refname.is_empty() {
@@ -99,10 +95,7 @@ pub fn snapshot_mock_refs(repo_root: &Path) -> String {
         out.push_str("=== ");
         out.push_str(refname);
         out.push_str(" ===\n");
-        let paths = git_capture(
-            repo_root,
-            &["ls-tree", "-r", "--name-only", refname],
-        );
+        let paths = git_capture(repo_root, &["ls-tree", "-r", "--name-only", refname]);
         for path in paths.lines() {
             if path.is_empty() {
                 continue;
@@ -156,11 +149,13 @@ pub fn assert_matches_golden(name: &str, actual: &str) {
 
     let expected = match std::fs::read_to_string(&path) {
         Ok(s) => s,
-        Err(e) => panic!(
-            "golden `{name}` missing at {}: {e}.\n\
+        Err(e) => {
+            panic!(
+                "golden `{name}` missing at {}: {e}.\n\
              To create it, rerun with MOCKSPACE_UPDATE_GOLDENS=1",
-            path.display()
-        ),
+                path.display()
+            )
+        },
     };
 
     if expected != actual {

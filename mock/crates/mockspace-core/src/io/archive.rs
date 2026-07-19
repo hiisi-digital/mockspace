@@ -49,16 +49,16 @@ use crate::slug::Slug;
 pub struct ArchiveReport {
     /// New commit OID on `refs/mock/round-archive` after this
     /// round was added.
-    pub archive_commit: gix::ObjectId,
+    pub archive_commit:      gix::ObjectId,
     /// Number of entries the round contributed to the archive
     /// tree (every entry from the round tree gets a `<slug>/`
     /// prefix in the merged archive).
-    pub entries_archived: usize,
+    pub entries_archived:    usize,
     /// Whether the source `refs/mock/round/<slug>` ref was
     /// successfully deleted. `false` indicates the archive write
     /// succeeded but the delete failed; re-run is idempotent and
     /// will retry the delete.
-    pub source_ref_deleted: bool,
+    pub source_ref_deleted:  bool,
     /// Underlying cause when `source_ref_deleted` is `false`. The
     /// archive write succeeded (see `archive_commit`) but the
     /// delete on `refs/mock/round/<slug>` failed with this error.
@@ -70,14 +70,20 @@ pub struct ArchiveReport {
 #[derive(Debug)]
 pub enum ArchiveError {
     /// The round ref does not exist; nothing to archive.
-    RoundRefMissing { slug: String },
+    RoundRefMissing {
+        slug: String,
+    },
     /// The round tree has no `.phase` blob.
     PhaseMarkerMissing,
     /// The `.phase` blob did not parse as a known phase.
-    PhaseMarkerInvalid { raw: String },
+    PhaseMarkerInvalid {
+        raw: String,
+    },
     /// The round is not in DONE phase. Archive only accepts
     /// rounds whose lifecycle is complete.
-    NotDone { current: Phase },
+    NotDone {
+        current: Phase,
+    },
     /// Reading either the source round ref or the prior archive
     /// ref failed.
     ReadFailed(RefTreeReadError),
@@ -88,16 +94,25 @@ pub enum ArchiveError {
 impl core::fmt::Display for ArchiveError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::RoundRefMissing { slug } => {
+            Self::RoundRefMissing {
+                slug,
+            } => {
                 write!(f, "round ref for slug `{slug}` does not exist")
-            }
+            },
             Self::PhaseMarkerMissing => write!(f, ".phase blob missing from round tree"),
-            Self::PhaseMarkerInvalid { raw } => {
+            Self::PhaseMarkerInvalid {
+                raw,
+            } => {
                 write!(f, "`.phase` blob did not parse: {raw:?}")
-            }
-            Self::NotDone { current } => {
-                write!(f, "round is in phase {current:?}; only DONE rounds may be archived")
-            }
+            },
+            Self::NotDone {
+                current,
+            } => {
+                write!(
+                    f,
+                    "round is in phase {current:?}; only DONE rounds may be archived"
+                )
+            },
             Self::ReadFailed(e) => write!(f, "ref read failed: {e}"),
             Self::WriteFailed(e) => write!(f, "archive write failed: {e}"),
         }
@@ -140,11 +155,13 @@ impl RepoHandle {
         // 1. Read the round ref + verify it is in DONE phase.
         let round_oid = match self.resolve_ref_oid(&round_ref) {
             Ok(oid) => oid,
-            Err(RefTreeReadError::RefNotFound { .. }) => {
+            Err(RefTreeReadError::RefNotFound {
+                ..
+            }) => {
                 return Err(ArchiveError::RoundRefMissing {
                     slug: slug.as_ref().to_owned(),
                 });
-            }
+            },
             Err(other) => return Err(other.into()),
         };
         let round_tree = self.read_ref_tree(&round_ref)?;
@@ -157,15 +174,16 @@ impl RepoHandle {
 
         // 2. Read the prior archive tree (if any) and pin its OID
         //    for CAS.
-        let (prior_archive_tree, prior_archive_oid) =
-            match self.resolve_ref_oid(&archive_ref) {
-                Ok(oid) => {
-                    let tree = self.read_ref_tree(&archive_ref)?;
-                    (tree, Some(oid))
-                }
-                Err(RefTreeReadError::RefNotFound { .. }) => (RoundRefTree::default(), None),
-                Err(other) => return Err(other.into()),
-            };
+        let (prior_archive_tree, prior_archive_oid) = match self.resolve_ref_oid(&archive_ref) {
+            Ok(oid) => {
+                let tree = self.read_ref_tree(&archive_ref)?;
+                (tree, Some(oid))
+            },
+            Err(RefTreeReadError::RefNotFound {
+                ..
+            }) => (RoundRefTree::default(), None),
+            Err(other) => return Err(other.into()),
+        };
 
         // 3. Build the new archive tree: existing entries +
         //    `<slug>/<entry>` for every entry in the round tree.
@@ -200,20 +218,20 @@ impl RepoHandle {
         //    archive write succeeded; the caller can retry and
         //    the second attempt is idempotent (we strip any
         //    `<slug>/` entries before re-inserting).
-        let (source_ref_deleted, source_delete_error) =
-            match self.delete_ref(&round_ref, round_oid) {
-                Ok(()) => (true, None),
-                Err(e) => {
-                    // Surface the partial-success outcome via the
-                    // report. The archive write IS persisted, so
-                    // returning an error variant here would
-                    // discard the archive_commit OID the caller
-                    // needs for retry decisions. The report shape
-                    // preserves both the OID and the underlying
-                    // delete error.
-                    (false, Some(e))
-                }
-            };
+        let (source_ref_deleted, source_delete_error) = match self.delete_ref(&round_ref, round_oid)
+        {
+            Ok(()) => (true, None),
+            Err(e) => {
+                // Surface the partial-success outcome via the
+                // report. The archive write IS persisted, so
+                // returning an error variant here would
+                // discard the archive_commit OID the caller
+                // needs for retry decisions. The report shape
+                // preserves both the OID and the underlying
+                // delete error.
+                (false, Some(e))
+            },
+        };
 
         Ok(ArchiveReport {
             archive_commit,
@@ -233,18 +251,15 @@ impl RepoHandle {
         let repo = self.repo();
         let edit = RefEdit {
             change: Change::Delete {
-                expected: PreviousValue::ExistingMustMatch(gix::refs::Target::Object(
-                    expected_oid,
-                )),
-                log: RefLog::AndReference,
+                expected: PreviousValue::ExistingMustMatch(gix::refs::Target::Object(expected_oid)),
+                log:      RefLog::AndReference,
             },
-            name: ref_path
-                .as_str()
-                .try_into()
-                .map_err(|e: gix::refs::name::Error| -> Box<dyn std::error::Error + Send + Sync> {
+            name:   ref_path.as_str().try_into().map_err(
+                |e: gix::refs::name::Error| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(e)
-                })?,
-            deref: false,
+                },
+            )?,
+            deref:  false,
         };
         repo.edit_reference(edit)
             .map(|_| ())
@@ -253,25 +268,29 @@ impl RepoHandle {
 }
 
 fn read_phase(tree: &RoundRefTree) -> Result<Phase, ArchiveError> {
-    let bytes = tree
-        .get(".phase")
-        .ok_or(ArchiveError::PhaseMarkerMissing)?;
+    let bytes = tree.get(".phase").ok_or(ArchiveError::PhaseMarkerMissing)?;
     let s = core::str::from_utf8(bytes)
-        .map_err(|_| ArchiveError::PhaseMarkerInvalid {
-            raw: format!("{bytes:?}"),
+        .map_err(|_| {
+            ArchiveError::PhaseMarkerInvalid {
+                raw: format!("{bytes:?}"),
+            }
         })?
         .trim();
-    Phase::from_marker(s).ok_or_else(|| ArchiveError::PhaseMarkerInvalid {
-        raw: s.to_owned(),
+    Phase::from_marker(s).ok_or_else(|| {
+        ArchiveError::PhaseMarkerInvalid {
+            raw: s.to_owned(),
+        }
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::Path;
     use std::process::Command;
+
     use tempfile::TempDir;
+
+    use super::*;
 
     fn run(args: &[&str], dir: &Path) -> std::process::Output {
         Command::new("git")
@@ -290,11 +309,7 @@ mod tests {
         assert!(out.status.success());
     }
 
-    fn seed_done_round(
-        repo_dir: &Path,
-        slug: &Slug,
-        extra: &[(&str, &[u8])],
-    ) {
+    fn seed_done_round(repo_dir: &Path, slug: &Slug, extra: &[(&str, &[u8])]) {
         let handle = RepoHandle::open(repo_dir).expect("open");
         let ref_path = RefPath::round_mock(slug);
         let mut entries: BTreeMap<String, Vec<u8>> = BTreeMap::new();
@@ -313,14 +328,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         let slug = Slug::new("done-round-a").unwrap();
-        seed_done_round(
-            dir.path(),
-            &slug,
-            &[
-                ("manifest.doc.locked.toml", b"doc-locked"),
-                ("manifest.src.locked.toml", b"src-locked"),
-            ],
-        );
+        seed_done_round(dir.path(), &slug, &[
+            ("manifest.doc.locked.toml", b"doc-locked"),
+            ("manifest.src.locked.toml", b"src-locked"),
+        ]);
 
         let handle = RepoHandle::open(dir.path()).expect("open");
         let lock = FlockTransitionLock::acquire(dir.path()).expect("acquire");
@@ -335,7 +346,9 @@ mod tests {
             .expect("read archive");
         assert_eq!(archive_tree.get("done-round-a/.phase").unwrap(), b"done\n");
         assert_eq!(
-            archive_tree.get("done-round-a/manifest.doc.locked.toml").unwrap(),
+            archive_tree
+                .get("done-round-a/manifest.doc.locked.toml")
+                .unwrap(),
             b"doc-locked"
         );
 
@@ -366,12 +379,9 @@ mod tests {
         let lock = FlockTransitionLock::acquire(dir.path()).expect("acquire");
         let err = handle.archive_round(&lock, &slug).unwrap_err();
         assert!(
-            matches!(
-                err,
-                ArchiveError::NotDone {
-                    current: Phase::PlanDoc
-                }
-            ),
+            matches!(err, ArchiveError::NotDone {
+                current: Phase::PlanDoc,
+            }),
             "got {err:?}"
         );
     }
@@ -384,7 +394,10 @@ mod tests {
         let lock = FlockTransitionLock::acquire(dir.path()).expect("acquire");
         let slug = Slug::new("nothing-there").unwrap();
         let err = handle.archive_round(&lock, &slug).unwrap_err();
-        assert!(matches!(err, ArchiveError::RoundRefMissing { .. }), "got {err:?}");
+        assert!(
+            matches!(err, ArchiveError::RoundRefMissing { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -396,13 +409,21 @@ mod tests {
 
         // First archive.
         let slug_a = Slug::new("first-done").unwrap();
-        seed_done_round(dir.path(), &slug_a, &[("manifest.doc.locked.toml", b"a-doc")]);
+        seed_done_round(dir.path(), &slug_a, &[(
+            "manifest.doc.locked.toml",
+            b"a-doc",
+        )]);
         handle.archive_round(&lock, &slug_a).expect("first archive");
 
         // Second archive must preserve the first.
         let slug_b = Slug::new("second-done").unwrap();
-        seed_done_round(dir.path(), &slug_b, &[("manifest.doc.locked.toml", b"b-doc")]);
-        let report = handle.archive_round(&lock, &slug_b).expect("second archive");
+        seed_done_round(dir.path(), &slug_b, &[(
+            "manifest.doc.locked.toml",
+            b"b-doc",
+        )]);
+        let report = handle
+            .archive_round(&lock, &slug_b)
+            .expect("second archive");
         assert!(report.source_ref_deleted);
 
         let archive_tree = handle
@@ -410,9 +431,17 @@ mod tests {
             .expect("read archive");
         // Both slugs present, each with their own entries.
         assert!(archive_tree.get("first-done/.phase").is_some());
-        assert!(archive_tree.get("first-done/manifest.doc.locked.toml").is_some());
+        assert!(
+            archive_tree
+                .get("first-done/manifest.doc.locked.toml")
+                .is_some()
+        );
         assert!(archive_tree.get("second-done/.phase").is_some());
-        assert!(archive_tree.get("second-done/manifest.doc.locked.toml").is_some());
+        assert!(
+            archive_tree
+                .get("second-done/manifest.doc.locked.toml")
+                .is_some()
+        );
     }
 
     #[test]

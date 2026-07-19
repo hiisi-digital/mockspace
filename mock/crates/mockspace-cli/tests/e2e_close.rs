@@ -11,11 +11,12 @@
 //! with seeded manifests + source-tip, which is its own future test
 //! slice).
 
+use std::collections::BTreeMap;
+use std::process::Command as StdCommand;
+
 use assert_cmd::Command;
 use mockspace_rs::{RefPath, RefTreeReadError, RepoHandle, RoundRefTree, Slug};
 use mockspace_test_fixtures::MockspaceFixture;
-use std::collections::BTreeMap;
-use std::process::Command as StdCommand;
 
 mod common;
 use common::{assert_matches_golden, scrub_oid_lines};
@@ -64,7 +65,6 @@ fn run_close(fixture: &MockspaceFixture, slug: &str) -> String {
     String::from_utf8(output.stdout).expect("close stdout is UTF-8")
 }
 
-
 #[test]
 fn close_archives_done_round_and_deletes_source() {
     let fixture = MockspaceFixture::new().build().expect("fixture");
@@ -96,8 +96,7 @@ fn close_archives_done_round_and_deletes_source() {
         .get(&expected_key)
         .unwrap_or_else(|| panic!("expected `{expected_key}` in archive tree"));
     assert_eq!(
-        phase_bytes,
-        b"done\n",
+        phase_bytes, b"done\n",
         "archived `.phase` entry must preserve the round's DONE marker"
     );
 }

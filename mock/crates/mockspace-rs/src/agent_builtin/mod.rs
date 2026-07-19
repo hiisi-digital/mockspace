@@ -36,14 +36,7 @@ pub const FILES: &[(&str, &str)] = &[
 /// File names only, derived from [`FILES`]. Provided as a const
 /// for callers that only need the directory listing.
 pub const FILE_NAMES: &[&str] = &[
-    FILES[0].0,
-    FILES[1].0,
-    FILES[2].0,
-    FILES[3].0,
-    FILES[4].0,
-    FILES[5].0,
-    FILES[6].0,
-    FILES[7].0,
+    FILES[0].0, FILES[1].0, FILES[2].0, FILES[3].0, FILES[4].0, FILES[5].0, FILES[6].0, FILES[7].0,
 ];
 
 /// Look up the embedded content for a builtin file name. Returns
@@ -80,7 +73,10 @@ mod tests {
     fn content_rejects_unknown_names() {
         assert!(content("nonexistent.md").is_none());
         assert!(content("").is_none());
-        assert!(content("phases").is_none(), "no `.md` suffix should not match");
+        assert!(
+            content("phases").is_none(),
+            "no `.md` suffix should not match"
+        );
     }
 
     /// Every builtin file starts with a top-level heading. The renderer

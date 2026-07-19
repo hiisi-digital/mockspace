@@ -132,7 +132,12 @@ fn check_field_list(node: Node, struct_name: &str, ctx: &LintContext, errors: &m
     }
 }
 
-fn check_single_field(field: Node, struct_name: &str, ctx: &LintContext, errors: &mut Vec<LintError>) {
+fn check_single_field(
+    field: Node,
+    struct_name: &str,
+    ctx: &LintContext,
+    errors: &mut Vec<LintError>,
+) {
     let field_text = &ctx.source[field.byte_range()];
     let line = field.start_position().row + 1;
 

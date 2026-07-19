@@ -106,25 +106,31 @@ pub fn try_render_svg(dot_source: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashMap;
+
+    use super::*;
 
     fn graph(members: &[(&str, bool, &[&str])]) -> CrateGraph {
         let crates: Vec<CrateInfo> = members
             .iter()
-            .map(|(name, is_proc_macro, deps)| CrateInfo {
-                name: (*name).to_string(),
-                root_path: std::path::PathBuf::from(*name),
-                is_proc_macro: *is_proc_macro,
-                is_workspace_member: true,
-                deps: deps.iter().map(|s| (*s).to_string()).collect(),
+            .map(|(name, is_proc_macro, deps)| {
+                CrateInfo {
+                    name:                (*name).to_string(),
+                    root_path:           std::path::PathBuf::from(*name),
+                    is_proc_macro:       *is_proc_macro,
+                    is_workspace_member: true,
+                    deps:                deps.iter().map(|s| (*s).to_string()).collect(),
+                }
             })
             .collect();
         let mut by_name = HashMap::new();
         for (i, c) in crates.iter().enumerate() {
             by_name.insert(c.name.clone(), i);
         }
-        CrateGraph { crates, by_name }
+        CrateGraph {
+            crates,
+            by_name,
+        }
     }
 
     #[test]
@@ -164,10 +170,7 @@ mod tests {
     #[test]
     fn render_dot_emits_edges_to_workspace_members_only() {
         // alpha -> beta (in-workspace); alpha -> external (out-of-workspace, dropped).
-        let g = graph(&[
-            ("alpha", false, &["beta", "external_crate"]),
-            ("beta", false, &[]),
-        ]);
+        let g = graph(&[("alpha", false, &["beta", "external_crate"]), ("beta", false, &[])]);
         let dot = render_dot(&g);
         assert!(dot.contains("\"alpha\" -> \"beta\";"));
         assert!(
@@ -194,7 +197,7 @@ mod tests {
         ]);
         let dot = render_dot(&g);
         let edges_section_start = dot.rfind("\n\n  \"alpha\"").unwrap();
-        let edges = &dot[edges_section_start..];
+        let edges = &dot[edges_section_start ..];
         let beta = edges.find("alpha\" -> \"beta\"").unwrap();
         let mango = edges.find("alpha\" -> \"mango\"").unwrap();
         let zeta = edges.find("alpha\" -> \"zeta\"").unwrap();

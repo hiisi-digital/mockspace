@@ -21,15 +21,15 @@ pub const KIND: &str = "registrable-completeness";
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct RegistrableCompletenessConfig {
-    pub trait_name: String,
+    pub trait_name:     String,
     pub required_items: Vec<RequiredItem>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct RequiredItem {
-    pub name: String,
-    pub kind: ItemKind,
+    pub name:                     String,
+    pub kind:                     ItemKind,
     /// Heuristic: minimum number of tokens in the impl body (proxy for
     /// "implementer actually filled this in").
     #[serde(default)]
@@ -37,10 +37,10 @@ pub struct RequiredItem {
 }
 
 pub struct RegistrableCompletenessLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: RegistrableCompletenessConfig,
+    config:           RegistrableCompletenessConfig,
 }
 
 impl RegistrableCompletenessLint {
@@ -63,12 +63,15 @@ impl Lint for RegistrableCompletenessLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_syn_ast(&self) -> bool {
         true
     }
@@ -153,17 +156,17 @@ fn impl_item_info(item: &syn::ImplItem) -> (String, ItemKind, u32) {
             let body = format!("{:?}", f.block);
             let complexity = body.split_whitespace().count() as u32;
             (f.sig.ident.to_string(), ItemKind::Fn, complexity)
-        }
+        },
         syn::ImplItem::Type(t) => {
             let ty_str = format!("{:?}", t.ty);
             let complexity = ty_str.split_whitespace().count() as u32;
             (t.ident.to_string(), ItemKind::TypeAlias, complexity)
-        }
+        },
         syn::ImplItem::Const(c) => {
             let ty_str = format!("{:?}", c.ty);
             let complexity = ty_str.split_whitespace().count() as u32;
             (c.ident.to_string(), ItemKind::Const, complexity)
-        }
+        },
         _ => (String::new(), ItemKind::Fn, 0),
     }
 }
@@ -188,16 +191,15 @@ pub fn instantiate_with(
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
     let parsed: RegistrableCompletenessConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("registrable-completeness config: {e}"),
+        config.clone().try_into().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       name.to_string(),
+                field_path:      String::new(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("registrable-completeness config: {e}"),
                 source_location: None,
-            })?;
+            }
+        })?;
     Ok(Box::new(RegistrableCompletenessLint::new(
         name,
         description,

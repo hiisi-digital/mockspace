@@ -2,9 +2,7 @@
 
 use std::fs;
 
-use mockspace_template::{
-    AgentRenderer, ClaudePlatform, CopilotPlatform, Platform, TemplateEnv,
-};
+use mockspace_template::{AgentRenderer, ClaudePlatform, CopilotPlatform, Platform, TemplateEnv};
 use serde::Serialize;
 use tempfile::tempdir;
 

@@ -30,26 +30,33 @@ pub const TASK_URI_PREFIX: &str = "mock://task/";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
     /// `mockspace_version` did not parse as `<major>.<minor>`.
-    VersionMalformed { version: String },
+    VersionMalformed {
+        version: String,
+    },
     /// `mockspace_version` major does not match what this loader supports.
     SchemaVersionMismatch {
         expected_major: u32,
-        found_major: u32,
+        found_major:    u32,
     },
     /// `phase` does not match the expected side (e.g. caller is sealing
     /// the doc manifest but parsed an `src` manifest).
     PhaseMismatch {
         expected: ManifestSide,
-        found: ManifestSide,
+        found:    ManifestSide,
     },
     /// `round_slug` was empty.
     EmptyRoundSlug,
     /// A `scope.in_scope_tasks` or `[[change]].task` URI failed grammar
     /// or the `mock://task/` prefix is missing.
-    InvalidTaskUri { uri: String, reason: TaskUriError },
+    InvalidTaskUri {
+        uri:    String,
+        reason: TaskUriError,
+    },
     /// `deprecated_accounting` does not cover every file from the
     /// deprecated predecessor.
-    DeprecatedAccountingIncomplete { missing_files: Vec<PathBuf> },
+    DeprecatedAccountingIncomplete {
+        missing_files: Vec<PathBuf>,
+    },
 }
 
 /// Why a `mock://task/...` URI rejected.
@@ -117,29 +124,33 @@ pub fn validate_structural(
     if major != SCHEMA_MAJOR {
         return Err(ValidationError::SchemaVersionMismatch {
             expected_major: SCHEMA_MAJOR,
-            found_major: major,
+            found_major:    major,
         });
     }
     if manifest.phase != expected_phase {
         return Err(ValidationError::PhaseMismatch {
             expected: expected_phase,
-            found: manifest.phase,
+            found:    manifest.phase,
         });
     }
     if manifest.round_slug.is_empty() {
         return Err(ValidationError::EmptyRoundSlug);
     }
     for uri in &manifest.scope.in_scope_tasks {
-        parse_task_uri(uri).map_err(|reason| ValidationError::InvalidTaskUri {
-            uri: uri.clone(),
-            reason,
+        parse_task_uri(uri).map_err(|reason| {
+            ValidationError::InvalidTaskUri {
+                uri: uri.clone(),
+                reason,
+            }
         })?;
     }
     for change in &manifest.changes {
         if let Some(uri) = &change.task {
-            parse_task_uri(uri).map_err(|reason| ValidationError::InvalidTaskUri {
-                uri: uri.clone(),
-                reason,
+            parse_task_uri(uri).map_err(|reason| {
+                ValidationError::InvalidTaskUri {
+                    uri: uri.clone(),
+                    reason,
+                }
             })?;
         }
     }
@@ -192,18 +203,18 @@ fn parse_major(version: &str) -> Option<u32> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
     /// Schema version. Loaders match on the major component.
-    pub mockspace_version: String,
+    pub mockspace_version:     String,
     /// Slug of the round this manifest belongs to.
-    pub round_slug: String,
+    pub round_slug:            String,
     /// Which side this manifest covers (`doc` or `src`).
-    pub phase: ManifestSide,
+    pub phase:                 ManifestSide,
     /// What is in scope; what is explicitly out.
-    pub scope: ScopeBlock,
+    pub scope:                 ScopeBlock,
     /// Completion criteria.
-    pub acceptance: AcceptanceBlock,
+    pub acceptance:            AcceptanceBlock,
     /// Per-file change blocks. Serialised under `[[change]]`.
     #[serde(default, rename = "change", skip_serializing_if = "Vec::is_empty")]
-    pub changes: Vec<ChangeBlock>,
+    pub changes:               Vec<ChangeBlock>,
     /// Accounting of files dropped from a previous, now-deprecated manifest.
     /// Required (and only meaningful) when superseding a deprecated manifest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -214,7 +225,7 @@ pub struct Manifest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScopeBlock {
     /// Prose summary of what is in scope.
-    pub description: String,
+    pub description:    String,
     /// Task or step URIs (`mock://task/<path>[#<step-key>]`) the manifest
     /// claims. A bare task URI scopes the manifest to the task as a whole;
     /// a step URI scopes to that step only.
@@ -222,7 +233,7 @@ pub struct ScopeBlock {
     pub in_scope_tasks: Vec<String>,
     /// Concerns explicitly excluded from this manifest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub out_of_scope: Vec<String>,
+    pub out_of_scope:   Vec<String>,
 }
 
 /// Completion criteria for the manifest.
@@ -237,14 +248,14 @@ pub struct AcceptanceBlock {
 pub struct ChangeBlock {
     /// Task or step URI this change resolves (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task: Option<String>,
+    pub task:        Option<String>,
     /// File path the change touches, relative to the source-side worktree root.
-    pub file: PathBuf,
+    pub file:        PathBuf,
     /// One-paragraph summary of the change.
     pub description: String,
     /// Structural verifier check that must pass against the source-side
     /// branch tip at seal time. See [`crate::verifier`].
-    pub verify: VerifierCheck,
+    pub verify:      VerifierCheck,
 }
 
 /// Accounting for a file present in a deprecated predecessor manifest but
@@ -252,7 +263,7 @@ pub struct ChangeBlock {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeprecatedAccounting {
     /// File path that appeared in the deprecated manifest.
-    pub file: PathBuf,
+    pub file:           PathBuf,
     /// Why the file is no longer claimed.
     pub omitted_reason: String,
 }
@@ -422,22 +433,22 @@ criteria = ""
     #[test]
     fn change_block_without_task_serialises_without_field() {
         let manifest = Manifest {
-            mockspace_version: "1.0".to_owned(),
-            round_slug: "test".to_owned(),
-            phase: ManifestSide::Src,
-            scope: ScopeBlock {
-                description: "".to_owned(),
+            mockspace_version:     "1.0".to_owned(),
+            round_slug:            "test".to_owned(),
+            phase:                 ManifestSide::Src,
+            scope:                 ScopeBlock {
+                description:    "".to_owned(),
                 in_scope_tasks: vec![],
-                out_of_scope: vec![],
+                out_of_scope:   vec![],
             },
-            acceptance: AcceptanceBlock {
+            acceptance:            AcceptanceBlock {
                 criteria: "".to_owned(),
             },
-            changes: vec![ChangeBlock {
-                task: None,
-                file: PathBuf::from("src/lib.rs"),
+            changes:               vec![ChangeBlock {
+                task:        None,
+                file:        PathBuf::from("src/lib.rs"),
                 description: "Just a change.".to_owned(),
-                verify: VerifierCheck::Kind(VerifierKind::PathExists {
+                verify:      VerifierCheck::Kind(VerifierKind::PathExists {
                     file: PathBuf::from("src/lib.rs"),
                 }),
             }],
@@ -480,25 +491,25 @@ file = "DESIGN.md"
     #[test]
     fn deprecated_accounting_round_trip() {
         let manifest = Manifest {
-            mockspace_version: "1.0".to_owned(),
-            round_slug: "test".to_owned(),
-            phase: ManifestSide::Doc,
-            scope: ScopeBlock {
-                description: "".to_owned(),
+            mockspace_version:     "1.0".to_owned(),
+            round_slug:            "test".to_owned(),
+            phase:                 ManifestSide::Doc,
+            scope:                 ScopeBlock {
+                description:    "".to_owned(),
                 in_scope_tasks: vec![],
-                out_of_scope: vec![],
+                out_of_scope:   vec![],
             },
-            acceptance: AcceptanceBlock {
+            acceptance:            AcceptanceBlock {
                 criteria: "".to_owned(),
             },
-            changes: vec![],
+            changes:               vec![],
             deprecated_accounting: vec![
                 DeprecatedAccounting {
-                    file: PathBuf::from("a.rs"),
+                    file:           PathBuf::from("a.rs"),
                     omitted_reason: "no longer applies".to_owned(),
                 },
                 DeprecatedAccounting {
-                    file: PathBuf::from("b.rs"),
+                    file:           PathBuf::from("b.rs"),
                     omitted_reason: "moved to other manifest".to_owned(),
                 },
             ],
@@ -554,13 +565,10 @@ file = "DESIGN.md"
     fn validate_structural_rejects_phase_mismatch() {
         let manifest = Manifest::from_toml(SPEC_EXAMPLE).unwrap();
         let err = validate_structural(&manifest, ManifestSide::Src).unwrap_err();
-        assert!(matches!(
-            err,
-            ValidationError::PhaseMismatch {
-                expected: ManifestSide::Src,
-                found: ManifestSide::Doc
-            }
-        ));
+        assert!(matches!(err, ValidationError::PhaseMismatch {
+            expected: ManifestSide::Src,
+            found:    ManifestSide::Doc,
+        }));
     }
 
     #[test]
@@ -584,13 +592,10 @@ file = "DESIGN.md"
         let mut manifest = Manifest::from_toml(SPEC_EXAMPLE).unwrap();
         manifest.mockspace_version = "99.0".to_owned();
         let err = validate_structural(&manifest, ManifestSide::Doc).unwrap_err();
-        assert!(matches!(
-            err,
-            ValidationError::SchemaVersionMismatch {
-                expected_major: 1,
-                found_major: 99
-            }
-        ));
+        assert!(matches!(err, ValidationError::SchemaVersionMismatch {
+            expected_major: 1,
+            found_major:    99,
+        }));
     }
 
     #[test]
@@ -599,10 +604,13 @@ file = "DESIGN.md"
         manifest.scope.in_scope_tasks = vec!["arvo::graph::csr-backend".to_owned()];
         let err = validate_structural(&manifest, ManifestSide::Doc).unwrap_err();
         match err {
-            ValidationError::InvalidTaskUri { uri, reason } => {
+            ValidationError::InvalidTaskUri {
+                uri,
+                reason,
+            } => {
                 assert_eq!(uri, "arvo::graph::csr-backend");
                 assert_eq!(reason, TaskUriError::MissingPrefix);
-            }
+            },
             other => panic!("expected invalid task URI, got {other:?}"),
         }
     }
@@ -613,9 +621,12 @@ file = "DESIGN.md"
         manifest.changes[0].task = Some("mock://task/".to_owned());
         let err = validate_structural(&manifest, ManifestSide::Doc).unwrap_err();
         match err {
-            ValidationError::InvalidTaskUri { reason, .. } => {
+            ValidationError::InvalidTaskUri {
+                reason,
+                ..
+            } => {
                 assert_eq!(reason, TaskUriError::EmptyIdentity);
-            }
+            },
             other => panic!("expected invalid task URI, got {other:?}"),
         }
     }
@@ -645,12 +656,13 @@ file = "DESIGN.md"
         ];
         let err = validate_deprecated_accounting(&manifest, &deprecated).unwrap_err();
         match err {
-            ValidationError::DeprecatedAccountingIncomplete { missing_files } => {
-                assert_eq!(
-                    missing_files,
-                    vec![PathBuf::from("crates/arvo-graph/src/forgotten.rs")]
-                );
-            }
+            ValidationError::DeprecatedAccountingIncomplete {
+                missing_files,
+            } => {
+                assert_eq!(missing_files, vec![PathBuf::from(
+                    "crates/arvo-graph/src/forgotten.rs"
+                )]);
+            },
             other => panic!("expected incomplete, got {other:?}"),
         }
     }
@@ -658,22 +670,22 @@ file = "DESIGN.md"
     #[test]
     fn build_manifest_programmatically() {
         let manifest = Manifest {
-            mockspace_version: "1.0".to_owned(),
-            round_slug: "abc".to_owned(),
-            phase: ManifestSide::Doc,
-            scope: ScopeBlock {
-                description: "test".to_owned(),
+            mockspace_version:     "1.0".to_owned(),
+            round_slug:            "abc".to_owned(),
+            phase:                 ManifestSide::Doc,
+            scope:                 ScopeBlock {
+                description:    "test".to_owned(),
                 in_scope_tasks: vec!["mock://task/foo".to_owned()],
-                out_of_scope: vec![],
+                out_of_scope:   vec![],
             },
-            acceptance: AcceptanceBlock {
+            acceptance:            AcceptanceBlock {
                 criteria: "ship it".to_owned(),
             },
-            changes: vec![ChangeBlock {
-                task: Some("mock://task/foo".to_owned()),
-                file: PathBuf::from("DESIGN.md"),
+            changes:               vec![ChangeBlock {
+                task:        Some("mock://task/foo".to_owned()),
+                file:        PathBuf::from("DESIGN.md"),
                 description: "doc edit".to_owned(),
-                verify: VerifierCheck::AllOf(VerifierAllOf {
+                verify:      VerifierCheck::AllOf(VerifierAllOf {
                     all_of: vec![VerifierCheck::Kind(VerifierKind::PathExists {
                         file: PathBuf::from("DESIGN.md"),
                     })],

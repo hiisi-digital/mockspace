@@ -20,18 +20,18 @@ pub enum Resolved {
     Table {
         namespace: String,
         /// Column headings, `id` first.
-        columns: Vec<String>,
+        columns:   Vec<String>,
         /// One entry per row, in the namespace's own order.
-        rows: Vec<Vec<String>>,
+        rows:      Vec<Vec<String>>,
     },
     /// One row: `law::keys`.
     Row {
         namespace: String,
-        slug: String,
+        slug:      String,
         /// Where the row's document is, and its anchor within it.
-        target: String,
+        target:    String,
         /// What the row says, for a reader who cannot follow the link.
-        fields: Vec<(String, String)>,
+        fields:    Vec<(String, String)>,
     },
     /// One field of a row: `law::keys::statement`.
     Field(String),
@@ -60,12 +60,25 @@ impl Resolved {
     /// How this appears in a generated document.
     pub fn to_markdown(&self) -> String {
         match self {
-            Resolved::Table { columns, rows, .. } => render_markdown_table(columns, rows),
-            Resolved::Row { slug, target, .. } => format!("[{slug}]({target})"),
+            Resolved::Table {
+                columns,
+                rows,
+                ..
+            } => render_markdown_table(columns, rows),
+            Resolved::Row {
+                slug,
+                target,
+                ..
+            } => format!("[{slug}]({target})"),
             Resolved::Field(v) => v.clone(),
-            Resolved::Citation { text, link } => match link {
-                Some(l) => format!("[{text}]({l})"),
-                None => text.clone(),
+            Resolved::Citation {
+                text,
+                link,
+            } => {
+                match link {
+                    Some(l) => format!("[{text}]({l})"),
+                    None => text.clone(),
+                }
             },
             Resolved::Path(p) => p.clone(),
             Resolved::List(items) => items.join(", "),
@@ -89,7 +102,7 @@ impl Resolved {
                 let mut out = render_aligned_table(columns, rows);
                 out.push_str(&format!("\n{} rows in {namespace}\n", rows.len()));
                 out
-            }
+            },
             Resolved::Row {
                 namespace,
                 slug,
@@ -103,22 +116,25 @@ impl Resolved {
                 }
                 out.push_str(&format!("\n  in {target}\n"));
                 out
-            }
+            },
             Resolved::Field(v) => format!("{v}\n"),
-            Resolved::Citation { text, link } => match link {
-                Some(l) => format!("{text}\n  {l}\n"),
-                None => format!("{text}\n"),
+            Resolved::Citation {
+                text,
+                link,
+            } => {
+                match link {
+                    Some(l) => format!("{text}\n  {l}\n"),
+                    None => format!("{text}\n"),
+                }
             },
             Resolved::Path(p) => format!("{p}\n"),
-            Resolved::List(items) => {
-                items.iter().map(|i| format!("{i}\n")).collect::<String>()
-            }
+            Resolved::List(items) => items.iter().map(|i| format!("{i}\n")).collect::<String>(),
             Resolved::Count(n) => format!("{n}\n"),
             // Say why nothing is shown. In a document the silence is the point;
             // at a prompt it reads as a broken query.
             Resolved::Hidden => {
                 "(resolves, and renders as nothing: it names an internal root)\n".to_string()
-            }
+            },
         }
     }
 
@@ -126,10 +142,16 @@ impl Resolved {
     /// the shape rather than read it.
     pub fn kind(&self) -> &'static str {
         match self {
-            Resolved::Table { .. } => "table",
-            Resolved::Row { .. } => "row",
+            Resolved::Table {
+                ..
+            } => "table",
+            Resolved::Row {
+                ..
+            } => "row",
             Resolved::Field(_) => "field",
-            Resolved::Citation { .. } => "citation",
+            Resolved::Citation {
+                ..
+            } => "citation",
             Resolved::Path(_) => "path",
             Resolved::List(_) => "list",
             Resolved::Count(_) => "count",
@@ -155,12 +177,12 @@ fn unlink(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(open) = rest.find('[') {
-        let Some(close) = rest[open..].find("](") else { break };
+        let Some(close) = rest[open ..].find("](") else { break };
         let close = open + close;
-        let Some(end) = rest[close..].find(')') else { break };
-        out.push_str(&rest[..open]);
-        out.push_str(&rest[open + 1..close]);
-        rest = &rest[close + end..][1..];
+        let Some(end) = rest[close ..].find(')') else { break };
+        out.push_str(&rest[.. open]);
+        out.push_str(&rest[open + 1 .. close]);
+        rest = &rest[close + end ..][1 ..];
     }
     out.push_str(rest);
     out
@@ -218,7 +240,11 @@ pub fn table_cells(ns: &RegistryNamespace, reg: &Registry) -> (Vec<String>, Vec<
 }
 
 fn render_markdown_table(columns: &[String], rows: &[Vec<String>]) -> String {
-    let mut out = format!("| {} |\n|{}\n", columns.join(" | "), "---|".repeat(columns.len()));
+    let mut out = format!(
+        "| {} |\n|{}\n",
+        columns.join(" | "),
+        "---|".repeat(columns.len())
+    );
     let id_col = columns.iter().position(|c| c == "id");
     for r in rows {
         let cells: Vec<String> = r
@@ -271,7 +297,14 @@ fn render_aligned_table(columns: &[String], rows: &[Vec<String>]) -> String {
         .map(|(i, c)| format!("{c:<w$}", w = widths[i]))
         .collect();
     out.push_str(&format!("{}\n", head.join("  ").trim_end()));
-    out.push_str(&format!("{}\n", widths.iter().map(|w| "-".repeat(*w)).collect::<Vec<_>>().join("  ")));
+    out.push_str(&format!(
+        "{}\n",
+        widths
+            .iter()
+            .map(|w| "-".repeat(*w))
+            .collect::<Vec<_>>()
+            .join("  ")
+    ));
     for r in rows {
         let cells: Vec<String> = r
             .iter()

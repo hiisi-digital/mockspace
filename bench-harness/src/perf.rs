@@ -18,9 +18,9 @@
 /// Hardware counter snapshot. Fields are zero when unavailable.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct PerfSnapshot {
-    pub instructions: u64,
-    pub cycles: u64,
-    pub cache_misses: u64,
+    pub instructions:  u64,
+    pub cycles:        u64,
+    pub cache_misses:  u64,
     pub branch_misses: u64,
 }
 
@@ -28,9 +28,9 @@ impl PerfSnapshot {
     /// Compute `self - start`, saturating at zero per field.
     pub fn delta(&self, start: &PerfSnapshot) -> PerfSnapshot {
         PerfSnapshot {
-            instructions: self.instructions.saturating_sub(start.instructions),
-            cycles: self.cycles.saturating_sub(start.cycles),
-            cache_misses: self.cache_misses.saturating_sub(start.cache_misses),
+            instructions:  self.instructions.saturating_sub(start.instructions),
+            cycles:        self.cycles.saturating_sub(start.cycles),
+            cache_misses:  self.cache_misses.saturating_sub(start.cache_misses),
             branch_misses: self.branch_misses.saturating_sub(start.branch_misses),
         }
     }
@@ -75,10 +75,11 @@ pub fn available() -> bool {
 
 #[cfg(all(feature = "perf-counters", target_os = "macos"))]
 mod macos {
-    use super::PerfSnapshot;
     use std::os::raw::c_int;
 
-    extern "C" {
+    use super::PerfSnapshot;
+
+    extern {
         fn kpc_set_counting(classes: u32) -> c_int;
         fn kpc_set_thread_counting(classes: u32) -> c_int;
         fn kpc_get_thread_counters(tid: u32, buf_count: u32, buf: *mut u64) -> c_int;
@@ -105,9 +106,9 @@ mod macos {
         // [1] = cycles
         // Configurable counters depend on PMU config.
         PerfSnapshot {
-            instructions: buf[0],
-            cycles: buf[1],
-            cache_misses: buf.get(2).copied().unwrap_or(0),
+            instructions:  buf[0],
+            cycles:        buf[1],
+            cache_misses:  buf.get(2).copied().unwrap_or(0),
             branch_misses: buf.get(3).copied().unwrap_or(0),
         }
     }

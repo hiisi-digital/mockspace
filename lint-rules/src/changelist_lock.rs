@@ -31,7 +31,9 @@ impl CrossCrateLint for ChangelistLock {
         LINT_NAME
     }
 
-    fn source_only(&self) -> bool { false }
+    fn source_only(&self) -> bool {
+        false
+    }
 
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         let workspace_root = match crates.first() {
@@ -51,10 +53,10 @@ impl CrossCrateLint for ChangelistLock {
         }
 
         // Identify the locked CL names for error messages.
-        let locked_doc_name = changelist_helpers::find_locked_doc_cl(&design_rounds)
-            .map(|cl| cl.filename);
-        let locked_src_name = changelist_helpers::find_locked_src_cl(&design_rounds)
-            .map(|cl| cl.filename);
+        let locked_doc_name =
+            changelist_helpers::find_locked_doc_cl(&design_rounds).map(|cl| cl.filename);
+        let locked_src_name =
+            changelist_helpers::find_locked_src_cl(&design_rounds).map(|cl| cl.filename);
 
         let mut errors = Vec::new();
 
@@ -64,8 +66,7 @@ impl CrossCrateLint for ChangelistLock {
             let cl_name = locked_doc_name.as_deref().unwrap_or("doc changelist");
 
             for (file, source) in doc_files {
-                let crate_name = extract_crate_name(&file)
-                    .unwrap_or_else(|| "unknown".to_string());
+                let crate_name = extract_crate_name(&file).unwrap_or_else(|| "unknown".to_string());
                 errors.push(LintError::error(
                     crate_name,
                     0,
@@ -88,8 +89,7 @@ impl CrossCrateLint for ChangelistLock {
             let cl_name = locked_src_name.as_deref().unwrap_or("src changelist");
 
             for (file, source) in src_files {
-                let crate_name = extract_crate_name(&file)
-                    .unwrap_or_else(|| "unknown".to_string());
+                let crate_name = extract_crate_name(&file).unwrap_or_else(|| "unknown".to_string());
                 errors.push(LintError::error(
                     crate_name,
                     0,
@@ -116,7 +116,12 @@ fn get_modified_crate_files(workspace_root: &Path, docs: bool) -> Vec<(String, S
 
     // Staged changes
     if let Some(output) = run_git(workspace_root, &[
-        "diff", "--cached", "--name-only", "--relative", "--", "crates/",
+        "diff",
+        "--cached",
+        "--name-only",
+        "--relative",
+        "--",
+        "crates/",
     ]) {
         for line in output.lines() {
             let file = line.trim();
@@ -128,7 +133,11 @@ fn get_modified_crate_files(workspace_root: &Path, docs: bool) -> Vec<(String, S
 
     // Unstaged tracked changes
     if let Some(output) = run_git(workspace_root, &[
-        "diff", "--name-only", "--relative", "--", "crates/",
+        "diff",
+        "--name-only",
+        "--relative",
+        "--",
+        "crates/",
     ]) {
         for line in output.lines() {
             let file = line.trim();
@@ -140,7 +149,11 @@ fn get_modified_crate_files(workspace_root: &Path, docs: bool) -> Vec<(String, S
 
     // Untracked files
     if let Some(output) = run_git(workspace_root, &[
-        "ls-files", "--others", "--exclude-standard", "--", "crates/",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "--",
+        "crates/",
     ]) {
         for line in output.lines() {
             let file = line.trim();
@@ -187,5 +200,5 @@ fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
 fn extract_crate_name(path: &str) -> Option<String> {
     let after_crates = path.strip_prefix("crates/")?;
     let end = after_crates.find('/')?;
-    Some(after_crates[..end].to_string())
+    Some(after_crates[.. end].to_string())
 }

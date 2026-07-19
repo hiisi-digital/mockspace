@@ -100,10 +100,7 @@ exempt_paths = ["**/golden_fixture/**"]
         .build()
         .expect("fixture");
     let stdout = capture_explain_stdout(&fixture, "no-bare-vec");
-    assert_matches_golden(
-        "explain_no_bare_vec_per_lint_toml_override",
-        &stdout,
-    );
+    assert_matches_golden("explain_no_bare_vec_per_lint_toml_override", &stdout);
 }
 
 // ---- explain Layer 3 (workspace defaults) --------------------------------

@@ -12,29 +12,35 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use mockspace_core::lint::{
-    DirectiveRecord, FileDisableSet, Gate, Project, RunSurface, ScopeAddMap, SuppressionMap,
+    DirectiveRecord,
+    FileDisableSet,
+    Gate,
+    Project,
+    RunSurface,
+    ScopeAddMap,
+    SuppressionMap,
 };
 
 use crate::document::MockspaceDocument;
 
 /// The concrete project handed to project-mode lints.
 pub struct MockspaceProject {
-    pub(crate) root: PathBuf,
-    pub(crate) documents: Vec<MockspaceDocument>,
-    pub(crate) staged_indices: Vec<usize>,
-    pub(crate) crate_graph: CrateGraph,
-    pub(crate) workspace: WorkspaceMetadata,
-    pub(crate) design_rounds: DesignRoundsView,
-    pub(crate) suppressions: SuppressionMap,
-    pub(crate) scope_adds: ScopeAddMap,
-    pub(crate) file_disables: FileDisableSet,
+    pub(crate) root:              PathBuf,
+    pub(crate) documents:         Vec<MockspaceDocument>,
+    pub(crate) staged_indices:    Vec<usize>,
+    pub(crate) crate_graph:       CrateGraph,
+    pub(crate) workspace:         WorkspaceMetadata,
+    pub(crate) design_rounds:     DesignRoundsView,
+    pub(crate) suppressions:      SuppressionMap,
+    pub(crate) scope_adds:        ScopeAddMap,
+    pub(crate) file_disables:     FileDisableSet,
     /// Raw `DirectiveRecord` inventory across every document, with
     /// `source_form` preserved. Cross-cutting lints read this; the
     /// per-kind maps (suppressions/scope_adds/file_disables) drop
     /// `source_form` when routing.
     pub(crate) directive_records: Vec<DirectiveRecord>,
-    pub(crate) surface: RunSurface,
-    pub(crate) gate: Gate,
+    pub(crate) surface:           RunSurface,
+    pub(crate) gate:              Gate,
 }
 
 impl std::fmt::Debug for MockspaceProject {
@@ -144,6 +150,7 @@ impl Project for MockspaceProject {
     fn root(&self) -> &Path {
         &self.root
     }
+
     fn surface(&self) -> RunSurface {
         self.surface
     }
@@ -161,17 +168,17 @@ impl Project for MockspaceProject {
 /// inspection of the workspace `Cargo.toml`).
 #[derive(Debug, Clone, Default)]
 pub struct CrateGraph {
-    pub crates: Vec<CrateInfo>,
+    pub crates:  Vec<CrateInfo>,
     pub by_name: HashMap<String, usize>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CrateInfo {
-    pub name: String,
-    pub root_path: PathBuf,
-    pub is_proc_macro: bool,
+    pub name:                String,
+    pub root_path:           PathBuf,
+    pub is_proc_macro:       bool,
     pub is_workspace_member: bool,
-    pub deps: Vec<String>,
+    pub deps:                Vec<String>,
 }
 
 impl CrateGraph {
@@ -190,16 +197,16 @@ impl CrateGraph {
 
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceMetadata {
-    pub root: PathBuf,
+    pub root:              PathBuf,
     pub proc_macro_crates: HashSet<String>,
-    pub task_state: TaskStateView,
+    pub task_state:        TaskStateView,
 }
 
 /// Engine-visible view of the workspace task tracker. Empty by default;
 /// populated by the engine when the consumer's mock/tasks tree is loaded.
 #[derive(Debug, Clone, Default)]
 pub struct TaskStateView {
-    pub open_tasks: HashSet<String>,
+    pub open_tasks:   HashSet<String>,
     pub closed_tasks: HashSet<String>,
 }
 
@@ -207,9 +214,11 @@ impl TaskStateView {
     pub fn is_open(&self, task_ref: &str) -> bool {
         self.open_tasks.contains(task_ref)
     }
+
     pub fn is_closed(&self, task_ref: &str) -> bool {
         self.closed_tasks.contains(task_ref)
     }
+
     pub fn is_known(&self, task_ref: &str) -> bool {
         self.is_open(task_ref) || self.is_closed(task_ref)
     }
@@ -224,17 +233,17 @@ impl TaskStateView {
 /// round's `round.toml` (when present).
 #[derive(Debug, Clone, Default)]
 pub struct DesignRoundsView {
-    pub root: PathBuf,
+    pub root:   PathBuf,
     pub rounds: Vec<DesignRound>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DesignRound {
     pub timestamp: String,
-    pub state: RoundState,
-    pub doc_cl: Option<PathBuf>,
-    pub src_cl: Option<PathBuf>,
-    pub locked: bool,
+    pub state:     RoundState,
+    pub doc_cl:    Option<PathBuf>,
+    pub src_cl:    Option<PathBuf>,
+    pub locked:    bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -253,15 +262,15 @@ pub enum RoundState {
 /// In-memory project builder. Today used by tests; the production
 /// `scope_project` walker uses the same set of setters.
 pub struct ProjectBuilder {
-    root: PathBuf,
-    documents: Vec<MockspaceDocument>,
+    root:           PathBuf,
+    documents:      Vec<MockspaceDocument>,
     staged_indices: Vec<usize>,
-    crate_graph: CrateGraph,
-    workspace: WorkspaceMetadata,
-    design_rounds: DesignRoundsView,
-    suppressions: SuppressionMap,
-    surface: RunSurface,
-    gate: Gate,
+    crate_graph:    CrateGraph,
+    workspace:      WorkspaceMetadata,
+    design_rounds:  DesignRoundsView,
+    suppressions:   SuppressionMap,
+    surface:        RunSurface,
+    gate:           Gate,
 }
 
 impl ProjectBuilder {
@@ -299,7 +308,7 @@ impl ProjectBuilder {
     /// Mark every document staged. Used in [`RunSurface::Editor`] and as
     /// the staging-filter `Full` fallback.
     pub fn mark_all_staged(&mut self) {
-        self.staged_indices = (0..self.documents.len()).collect();
+        self.staged_indices = (0 .. self.documents.len()).collect();
     }
 
     pub fn with_crate_graph(mut self, graph: CrateGraph) -> Self {
@@ -333,26 +342,27 @@ impl ProjectBuilder {
 
     pub fn build(self) -> MockspaceProject {
         MockspaceProject {
-            root: self.root,
-            documents: self.documents,
-            staged_indices: self.staged_indices,
-            crate_graph: self.crate_graph,
-            workspace: self.workspace,
-            design_rounds: self.design_rounds,
-            suppressions: self.suppressions,
-            scope_adds: ScopeAddMap::new(),
-            file_disables: FileDisableSet::new(),
+            root:              self.root,
+            documents:         self.documents,
+            staged_indices:    self.staged_indices,
+            crate_graph:       self.crate_graph,
+            workspace:         self.workspace,
+            design_rounds:     self.design_rounds,
+            suppressions:      self.suppressions,
+            scope_adds:        ScopeAddMap::new(),
+            file_disables:     FileDisableSet::new(),
             directive_records: Vec::new(),
-            surface: self.surface,
-            gate: self.gate,
+            surface:           self.surface,
+            gate:              self.gate,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use mockspace_core::lint::Language;
+
+    use super::*;
 
     #[test]
     fn builder_assembles_project() {

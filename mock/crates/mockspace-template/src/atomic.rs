@@ -121,11 +121,13 @@ pub fn write_atomic(content: &str, dest: &Path) -> Result<(), RenderError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::template::TemplateEnv;
     use std::collections::HashMap;
     use std::time::Duration;
+
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::template::TemplateEnv;
 
     fn env_with(name: &str, source: &str) -> TemplateEnv {
         let mut env = TemplateEnv::new();
@@ -134,7 +136,10 @@ mod tests {
     }
 
     fn ctx(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]

@@ -18,18 +18,18 @@ pub const CRATE_ROOT: &str = "crates";
 /// One field a namespace declares beyond the universal `id`.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct RegistryField {
-    pub name: String,
+    pub name:        String,
     /// `string`, `integer`, `boolean`, `string[]`. Anything richer belongs in
     /// a hand-written schema fragment rather than in a config language.
     #[serde(default = "default_field_type")]
-    pub r#type: String,
+    pub r#type:      String,
     #[serde(default)]
-    pub required: bool,
+    pub required:    bool,
     #[serde(default)]
     pub description: Option<String>,
     /// Whether this field reaches the generated documentation at all.
     #[serde(default)]
-    pub visibility: FieldVisibility,
+    pub visibility:  FieldVisibility,
 }
 
 /// Whether a field's values are for readers or only for the project itself.
@@ -80,9 +80,9 @@ impl RenderMode {
 pub struct RegistryNamespace {
     /// The array-of-tables key, singular: `spike` for `[[spike]]`. Also the
     /// first selector segment of every reference into it.
-    pub key: String,
+    pub key:         String,
     #[serde(default)]
-    pub title: Option<String>,
+    pub title:       Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     /// When set, a bare row reference renders this field's value instead of a
@@ -90,7 +90,7 @@ pub struct RegistryNamespace {
     #[serde(default)]
     pub value_field: Option<String>,
     #[serde(default)]
-    pub render: RenderMode,
+    pub render:      RenderMode,
     /// Render the table in sections, one per distinct value of this field.
     ///
     /// A flat table of every row is the wrong shape for a namespace whose rows
@@ -99,9 +99,9 @@ pub struct RegistryNamespace {
     /// maintained as a second list, so a row moves between sections by editing
     /// the field that says where it belongs.
     #[serde(default)]
-    pub group_by: Option<String>,
+    pub group_by:    Option<String>,
     #[serde(default, rename = "field")]
-    pub fields: Vec<RegistryField>,
+    pub fields:      Vec<RegistryField>,
 }
 
 impl RegistryNamespace {
@@ -140,11 +140,11 @@ pub fn is_valid_slug(s: &str) -> bool {
 #[derive(Debug, Clone)]
 pub struct RegistryRow {
     /// The slug, unique within its namespace.
-    pub slug: String,
+    pub slug:      String,
     pub namespace: String,
     /// Where it was declared, so an error can point at a file.
-    pub source: PathBuf,
-    pub fields: BTreeMap<String, String>,
+    pub source:    PathBuf,
+    pub fields:    BTreeMap<String, String>,
 }
 
 impl RegistryRow {
@@ -163,13 +163,13 @@ impl RegistryRow {
 #[derive(Debug, Default)]
 pub struct Registry {
     /// Keyed by `namespace::slug`.
-    pub rows: BTreeMap<String, RegistryRow>,
+    pub rows:         BTreeMap<String, RegistryRow>,
     pub by_namespace: BTreeMap<String, Vec<String>>,
     /// Slugs declared twice within one namespace, with every declaring file.
     /// An error rather than a warning: two rows for one identifier means a
     /// reference cannot be resolved. No per-file schema can catch it, because
     /// each file is valid on its own.
-    pub duplicates: BTreeMap<String, Vec<PathBuf>>,
+    pub duplicates:   BTreeMap<String, Vec<PathBuf>>,
 }
 
 impl Registry {
@@ -196,12 +196,14 @@ impl Registry {
 /// A project wanting different fields declares `key = "vocab"` itself and its
 /// declaration wins, so this is a default rather than a restriction.
 pub fn builtin_vocab() -> RegistryNamespace {
-    let f = |name: &str, required: bool, description: &str| RegistryField {
-        name: name.to_string(),
-        r#type: "string".to_string(),
-        required,
-        description: Some(description.to_string()),
-        visibility: FieldVisibility::Public,
+    let f = |name: &str, required: bool, description: &str| {
+        RegistryField {
+            name: name.to_string(),
+            r#type: "string".to_string(),
+            required,
+            description: Some(description.to_string()),
+            visibility: FieldVisibility::Public,
+        }
     };
     RegistryNamespace {
         key: "vocab".to_string(),
@@ -242,12 +244,14 @@ pub fn builtin_vocab() -> RegistryNamespace {
 /// all twenty, and "what does this design rest on" becomes a question with an
 /// answer rather than a grep.
 pub fn builtin_reference() -> RegistryNamespace {
-    let f = |name: &str, required: bool, description: &str| RegistryField {
-        name: name.to_string(),
-        r#type: "string".to_string(),
-        required,
-        description: Some(description.to_string()),
-        visibility: FieldVisibility::Public,
+    let f = |name: &str, required: bool, description: &str| {
+        RegistryField {
+            name: name.to_string(),
+            r#type: "string".to_string(),
+            required,
+            description: Some(description.to_string()),
+            visibility: FieldVisibility::Public,
+        }
     };
     RegistryNamespace {
         key: "reference".to_string(),

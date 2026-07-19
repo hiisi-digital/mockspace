@@ -1,5 +1,5 @@
+use super::resolved::{Resolved, row_fields, table_cells};
 use super::*;
-use super::resolved::{row_fields, table_cells, Resolved};
 
 /// Resolve every `{{ ... }}` reference in a rendered document.
 ///
@@ -56,9 +56,7 @@ fn resolve_once(
         let mut rewritten = line.to_string();
         let mut dropped_any = false;
         for (token, expr) in placeholder_exprs(line) {
-            if let Some(rep) =
-                resolve_expr(&expr, &by_key, reg, roots, repo_root, docs_dir, cfg)
-            {
+            if let Some(rep) = resolve_expr(&expr, &by_key, reg, roots, repo_root, docs_dir, cfg) {
                 if rep.is_empty() {
                     dropped_any = true;
                 }
@@ -187,21 +185,21 @@ fn split_methods(expr: &str) -> Option<(String, Vec<String>)> {
         match c {
             '(' => depth += 1,
             ')' => depth = depth.saturating_sub(1),
-            '.' if depth == 0 && looks_like_call(&chars[i + 1..]) => {
+            '.' if depth == 0 && looks_like_call(&chars[i + 1 ..]) => {
                 split_at = Some(i);
                 break;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     let at = split_at?;
-    let base = expr[..chars[..at].iter().map(|c| c.len_utf8()).sum::<usize>()]
+    let base = expr[.. chars[.. at].iter().map(|c| c.len_utf8()).sum::<usize>()]
         .trim()
         .to_string();
     if base.is_empty() {
         return None;
     }
-    let rest: String = chars[at + 1..].iter().collect();
+    let rest: String = chars[at + 1 ..].iter().collect();
     let verbs = split_calls(&rest)?;
     if verbs.is_empty() {
         return None;
@@ -228,7 +226,7 @@ fn split_calls(s: &str) -> Option<Vec<String>> {
             '(' => {
                 depth += 1;
                 cur.push(c);
-            }
+            },
             ')' => {
                 depth = depth.saturating_sub(1);
                 cur.push(c);
@@ -236,8 +234,8 @@ fn split_calls(s: &str) -> Option<Vec<String>> {
                     out.push(cur.trim().to_string());
                     cur.clear();
                 }
-            }
-            '.' if depth == 0 => {}
+            },
+            '.' if depth == 0 => {},
             _ => cur.push(c),
         }
     }
@@ -248,7 +246,6 @@ fn split_calls(s: &str) -> Option<Vec<String>> {
     }
     Some(out)
 }
-
 
 /// Narrow what an expression resolved to.
 ///
@@ -269,7 +266,14 @@ fn apply_methods(value: Resolved, methods: &[String]) -> Option<Resolved> {
         };
         v = match (name, &v) {
             // Table verbs.
-            ("where", Resolved::Table { namespace, columns, rows }) => {
+            (
+                "where",
+                Resolved::Table {
+                    namespace,
+                    columns,
+                    rows,
+                },
+            ) => {
                 let (field, want, exact) = parse_predicate(arg)?;
                 let col = columns.iter().position(|c| *c == field)?;
                 let kept: Vec<Vec<String>> = rows
@@ -280,53 +284,122 @@ fn apply_methods(value: Resolved, methods: &[String]) -> Option<Resolved> {
                     })
                     .cloned()
                     .collect();
-                Resolved::Table { namespace: namespace.clone(), columns: columns.clone(), rows: kept }
-            }
-            ("select", Resolved::Table { namespace, columns, rows }) => {
-                let wanted: Vec<&str> = arg.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+                Resolved::Table {
+                    namespace: namespace.clone(),
+                    columns:   columns.clone(),
+                    rows:      kept,
+                }
+            },
+            (
+                "select",
+                Resolved::Table {
+                    namespace,
+                    columns,
+                    rows,
+                },
+            ) => {
+                let wanted: Vec<&str> = arg
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 let idx: Vec<usize> = wanted
                     .iter()
                     .map(|w| columns.iter().position(|c| c == w))
                     .collect::<Option<Vec<_>>>()?;
                 Resolved::Table {
                     namespace: namespace.clone(),
-                    columns: wanted.iter().map(|w| w.to_string()).collect(),
-                    rows: rows.iter().map(|r| idx.iter().map(|i| r[*i].clone()).collect()).collect(),
+                    columns:   wanted.iter().map(|w| w.to_string()).collect(),
+                    rows:      rows
+                        .iter()
+                        .map(|r| idx.iter().map(|i| r[*i].clone()).collect())
+                        .collect(),
                 }
-            }
-            ("count", Resolved::Table { rows, .. }) => Resolved::Count(rows.len()),
+            },
+            (
+                "count",
+                Resolved::Table {
+                    rows,
+                    ..
+                },
+            ) => Resolved::Count(rows.len()),
             // A single row of a table stays a table, so it keeps its column
             // headings and composes with the same verbs the whole table takes.
-            ("first", Resolved::Table { namespace, columns, rows }) => Resolved::Table {
-                namespace: namespace.clone(),
-                columns: columns.clone(),
-                rows: rows.first().cloned().into_iter().collect(),
+            (
+                "first",
+                Resolved::Table {
+                    namespace,
+                    columns,
+                    rows,
+                },
+            ) => {
+                Resolved::Table {
+                    namespace: namespace.clone(),
+                    columns:   columns.clone(),
+                    rows:      rows.first().cloned().into_iter().collect(),
+                }
             },
-            ("last", Resolved::Table { namespace, columns, rows }) => Resolved::Table {
-                namespace: namespace.clone(),
-                columns: columns.clone(),
-                rows: rows.last().cloned().into_iter().collect(),
+            (
+                "last",
+                Resolved::Table {
+                    namespace,
+                    columns,
+                    rows,
+                },
+            ) => {
+                Resolved::Table {
+                    namespace: namespace.clone(),
+                    columns:   columns.clone(),
+                    rows:      rows.last().cloned().into_iter().collect(),
+                }
             },
 
             // Path verbs, on whatever the value reads as.
-            ("dir", _) => Resolved::Path(v.as_scalar().rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default()),
+            ("dir", _) => {
+                Resolved::Path(
+                    v.as_scalar()
+                        .rsplit_once('/')
+                        .map(|(d, _)| d.to_string())
+                        .unwrap_or_default(),
+                )
+            },
             ("filename", _) => {
                 let s = v.as_scalar();
                 Resolved::Path(s.rsplit_once('/').map(|(_, f)| f.to_string()).unwrap_or(s))
-            }
+            },
             ("stem", _) => {
                 let s = v.as_scalar();
                 let f = s.rsplit_once('/').map(|(_, f)| f.to_string()).unwrap_or(s);
-                Resolved::Path(f.rsplit_once('.').map(|(st, _)| st.to_string()).unwrap_or(f))
-            }
-            ("ext", _) => Resolved::Path(v.as_scalar().rsplit_once('.').map(|(_, e)| e.to_string()).unwrap_or_default()),
+                Resolved::Path(
+                    f.rsplit_once('.')
+                        .map(|(st, _)| st.to_string())
+                        .unwrap_or(f),
+                )
+            },
+            ("ext", _) => {
+                Resolved::Path(
+                    v.as_scalar()
+                        .rsplit_once('.')
+                        .map(|(_, e)| e.to_string())
+                        .unwrap_or_default(),
+                )
+            },
 
             // List verbs.
-            ("first", _) => Resolved::Field(v.as_scalar().split(", ").next().unwrap_or("").to_string()),
-            ("last", _) => Resolved::Field(v.as_scalar().split(", ").last().unwrap_or("").to_string()),
-            ("count", _) => Resolved::Count(
-                v.as_scalar().split(", ").filter(|s| !s.trim().is_empty()).count(),
-            ),
+            ("first", _) => {
+                Resolved::Field(v.as_scalar().split(", ").next().unwrap_or("").to_string())
+            },
+            ("last", _) => {
+                Resolved::Field(v.as_scalar().split(", ").last().unwrap_or("").to_string())
+            },
+            ("count", _) => {
+                Resolved::Count(
+                    v.as_scalar()
+                        .split(", ")
+                        .filter(|s| !s.trim().is_empty())
+                        .count(),
+                )
+            },
             _ => return None,
         };
     }
@@ -344,7 +417,6 @@ fn parse_predicate(arg: &str) -> Option<(String, String, bool)> {
     let (f, v) = arg.split_once('=')?;
     Some((f.trim().to_string(), v.trim().to_string(), true))
 }
-
 
 /// Where the named thing is declared: the file to open to change it.
 fn resolve_pathof(
@@ -478,14 +550,27 @@ pub fn resolve_typed(
     //
     // `sourcesof(x)` is what x RESTS ON: its provenance. Plural, because
     // provenance is an array and a claim usually has several sources.
-    if let Some(inner) = expr.strip_prefix("pathof(").and_then(|r| r.strip_suffix(')')) {
+    if let Some(inner) = expr
+        .strip_prefix("pathof(")
+        .and_then(|r| r.strip_suffix(')'))
+    {
         return resolve_pathof(inner.trim(), by_key, reg, repo_root, cfg).map(Resolved::Path);
     }
-    if let Some(inner) = expr.strip_prefix("sourcesof(").and_then(|r| r.strip_suffix(')')) {
-        return resolve_sourcesof(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg)
-            .map(|joined| Resolved::List(
-                joined.split(", ").filter(|s| !s.is_empty()).map(str::to_string).collect(),
-            ));
+    if let Some(inner) = expr
+        .strip_prefix("sourcesof(")
+        .and_then(|r| r.strip_suffix(')'))
+    {
+        return resolve_sourcesof(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg).map(
+            |joined| {
+                Resolved::List(
+                    joined
+                        .split(", ")
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                )
+            },
+        );
     }
 
     let parts: Vec<&str> = expr.split("::").map(str::trim).collect();
@@ -495,12 +580,14 @@ pub fn resolve_typed(
         // exist is reported rather than linked into nothing, which is what
         // turns a crate mention in prose from a string into something the
         // build verifies.
-        return resolve_crate_ref(parts[1], cfg, docs_dir).map(|link| Resolved::Citation {
-            text: parts[1].to_string(),
-            link: link
-                .rsplit_once('(')
-                .and_then(|(_, l)| l.strip_suffix(')'))
-                .map(str::to_string),
+        return resolve_crate_ref(parts[1], cfg, docs_dir).map(|link| {
+            Resolved::Citation {
+                text: parts[1].to_string(),
+                link: link
+                    .rsplit_once('(')
+                    .and_then(|(_, l)| l.strip_suffix(')'))
+                    .map(str::to_string),
+            }
         });
     }
 
@@ -551,16 +638,13 @@ pub fn resolve_typed(
                 // sources column carrying four hundred full citations is
                 // unreadable, while the same citation in prose wants its
                 // title. Default to the form that fits everywhere.
-                let text = if parts.len() == 4 {
-                    format_citation(row)
-                } else {
-                    short_citation(row)
-                };
+                let text =
+                    if parts.len() == 4 { format_citation(row) } else { short_citation(row) };
                 Some(Resolved::Citation {
                     text,
                     link: Some(target),
                 })
-            }
+            },
             3 | 4 => {
                 let qualified = format!("{}::{}", parts[1], parts[2]);
                 let row = reg.get(&qualified)?;
@@ -591,11 +675,11 @@ pub fn resolve_typed(
                 }
                 Some(Resolved::Row {
                     namespace: row.namespace.clone(),
-                    slug: row.slug.clone(),
-                    target: doc_target(ns, row, cfg),
-                    fields: row_fields(ns, row),
+                    slug:      row.slug.clone(),
+                    target:    doc_target(ns, row, cfg),
+                    fields:    row_fields(ns, row),
                 })
-            }
+            },
             _ => None,
         };
     }
@@ -633,16 +717,20 @@ pub fn resolve_typed(
         PathResolution::Found(target) => {
             let link = relative_from(docs_dir, &target);
             Some(match &r.anchor {
-                Anchor::Heading(h) => Resolved::Citation {
-                    text: format!("{}/{}#{h}", r.root, r.path),
-                    link: Some(format!("{link}#{h}")),
+                Anchor::Heading(h) => {
+                    Resolved::Citation {
+                        text: format!("{}/{}#{h}", r.root, r.path),
+                        link: Some(format!("{link}#{h}")),
+                    }
                 },
-                Anchor::Line(n) => Resolved::Citation {
-                    text: format!("{}/{}:{n}", r.root, r.path),
-                    link: Some(format!("{link}#L{n}")),
+                Anchor::Line(n) => {
+                    Resolved::Citation {
+                        text: format!("{}/{}:{n}", r.root, r.path),
+                        link: Some(format!("{link}#L{n}")),
+                    }
                 },
             })
-        }
+        },
         _ => None,
     }
 }
@@ -674,13 +762,24 @@ pub fn resolve_data(
 
     for id in reg.rows.keys() {
         let mut path = Vec::new();
-        resolve_row(id, reg, &by_key, roots, repo_root, docs_dir, cfg, &mut done, &mut path, &mut findings);
+        resolve_row(
+            id,
+            reg,
+            &by_key,
+            roots,
+            repo_root,
+            docs_dir,
+            cfg,
+            &mut done,
+            &mut path,
+            &mut findings,
+        );
     }
 
     let mut out = Registry {
-        rows: BTreeMap::new(),
+        rows:         BTreeMap::new(),
         by_namespace: reg.by_namespace.clone(),
-        duplicates: reg.duplicates.clone(),
+        duplicates:   reg.duplicates.clone(),
     };
     for (id, row) in &reg.rows {
         let mut r = row.clone();
@@ -712,7 +811,7 @@ fn resolve_row(
         // Name the whole cycle, not just the row we happened to re-enter: the
         // fix is to break the loop somewhere, and that needs all of it visible.
         let start = path.iter().position(|p| p == id).unwrap_or(0);
-        let mut cycle: Vec<String> = path[start..].to_vec();
+        let mut cycle: Vec<String> = path[start ..].to_vec();
         cycle.push(id.to_string());
         findings.push(RegistryFinding {
             kind: "reference-cycle",
@@ -732,7 +831,9 @@ fn resolve_row(
     path.push(id.to_string());
     for value in row.fields.values() {
         for (dep, _) in find_registry_refs(value, &ns_keys) {
-            resolve_row(&dep, reg, by_key, roots, repo_root, docs_dir, cfg, done, path, findings);
+            resolve_row(
+                &dep, reg, by_key, roots, repo_root, docs_dir, cfg, done, path, findings,
+            );
         }
     }
     path.pop();
@@ -741,9 +842,9 @@ fn resolve_row(
     // over those rather than cloning the whole registry per row. At the row
     // counts a real registry reaches, the whole-registry clone was quadratic.
     let mut settled = Registry {
-        rows: BTreeMap::new(),
+        rows:         BTreeMap::new(),
         by_namespace: reg.by_namespace.clone(),
-        duplicates: BTreeMap::new(),
+        duplicates:   BTreeMap::new(),
     };
     for value in row.fields.values() {
         for (dep, _) in find_registry_refs(value, &ns_keys) {

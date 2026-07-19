@@ -13,7 +13,12 @@ use super::*;
 /// generated with custom lint support. Each `.rs` file must define:
 /// - `pub fn lint() -> Box<dyn mockspace_lint_rules::Lint>` for per-crate lints
 /// - `pub fn cross_lint() -> Box<dyn mockspace_lint_rules::CrossCrateLint>` for cross-crate lints
-pub(crate) fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_dir: &Path, actions: &mut Vec<String>) {
+pub(crate) fn ensure_proxy_crate(
+    repo_root: &Path,
+    mock_dir: &Path,
+    mockspace_dir: &Path,
+    actions: &mut Vec<String>,
+) {
     let proxy_dir = repo_root.join("target").join("mockspace-proxy");
     let proxy_cargo = proxy_dir.join("Cargo.toml");
     let proxy_src = proxy_dir.join("src");
@@ -101,7 +106,8 @@ pub(crate) fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_di
     } else {
         "fn main() -> std::process::ExitCode {\n\
         \x20   mockspace::run()\n\
-        }\n".to_string()
+        }\n"
+        .to_string()
     };
 
     // Check if already up-to-date.
@@ -145,7 +151,6 @@ pub(crate) fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_di
     actions.push("generated target/mockspace-proxy/".into());
 }
 
-
 /// Remove the built proxy binary so the next run must rebuild it.
 ///
 /// Only the executable, never the whole target directory: the rest is
@@ -154,7 +159,10 @@ pub(crate) fn ensure_proxy_crate(repo_root: &Path, mock_dir: &Path, mockspace_di
 pub(crate) fn discard_proxy_binary(proxy_dir: &Path, actions: &mut Vec<String>) {
     let mut removed = false;
     for profile in ["debug", "release"] {
-        let bin = proxy_dir.join("target").join(profile).join("mockspace-proxy");
+        let bin = proxy_dir
+            .join("target")
+            .join(profile)
+            .join("mockspace-proxy");
         if bin.exists() && fs::remove_file(&bin).is_ok() {
             removed = true;
         }
@@ -164,20 +172,18 @@ pub(crate) fn discard_proxy_binary(proxy_dir: &Path, actions: &mut Vec<String>) 
     }
 }
 
-
 /// The `mockspace = { path = "..." }` value from a proxy Cargo.toml, if present.
 pub(crate) fn pinned_mockspace_path(cargo_toml: &str) -> Option<String> {
     for line in cargo_toml.lines() {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("mockspace = { path = \"") {
             if let Some(end) = rest.find('"') {
-                return Some(rest[..end].to_string());
+                return Some(rest[.. end].to_string());
             }
         }
     }
     None
 }
-
 
 /// The mockspace source path the proxy should pin.
 ///
@@ -189,7 +195,11 @@ pub(crate) fn pinned_mockspace_path(cargo_toml: &str) -> Option<String> {
 /// Falls back to `fallback` (the baked path) when the consumer uses a path or
 /// registry dependency (no git revision to track), when the lock cannot be
 /// read, or when the resolved checkout is not present on disk. Never fetches.
-pub(crate) fn resolve_mockspace_pin(mock_dir: &Path, fallback: &Path, actions: &mut Vec<String>) -> PathBuf {
+pub(crate) fn resolve_mockspace_pin(
+    mock_dir: &Path,
+    fallback: &Path,
+    actions: &mut Vec<String>,
+) -> PathBuf {
     let rev = match mockspace_rev_from_lock(&mock_dir.join("Cargo.lock")) {
         Some(r) => r,
         None => return fallback.to_path_buf(),
@@ -206,10 +216,9 @@ pub(crate) fn resolve_mockspace_pin(mock_dir: &Path, fallback: &Path, actions: &
                 "re-pin skipped: mockspace {short} checkout absent; keeping baked path"
             ));
             fallback.to_path_buf()
-        }
+        },
     }
 }
-
 
 /// The full git revision the mock-workspace lock resolved for `mockspace`.
 ///
@@ -233,16 +242,14 @@ pub(crate) fn mockspace_rev_from_lock(lock_path: &Path) -> Option<String> {
     None
 }
 
-
 /// A git dependency as the lock resolved it: the remote URL, the tracked
 /// branch (if the source pins one), and the locked revision.
 #[derive(Debug, PartialEq)]
 pub(crate) struct GitSource {
-    pub(crate) url: String,
+    pub(crate) url:    String,
     pub(crate) branch: Option<String>,
-    pub(crate) rev: String,
+    pub(crate) rev:    String,
 }
-
 
 /// Every package in the lock pinned to a git BRANCH, by name.
 ///
@@ -286,7 +293,6 @@ pub(crate) fn branch_tracked_git_deps(lock_path: &Path) -> Vec<(String, GitSourc
     out
 }
 
-
 /// Split a `git+<url>[?<query>]#<rev>` source into url, branch, and rev.
 pub(crate) fn parse_git_source(source: &str) -> Option<GitSource> {
     let body = source.strip_prefix("git+")?;
@@ -296,7 +302,8 @@ pub(crate) fn parse_git_source(source: &str) -> Option<GitSource> {
         None => (locator, None),
     };
     let branch = query.and_then(|q| {
-        q.split('&').find_map(|kv| kv.strip_prefix("branch=").map(str::to_string))
+        q.split('&')
+            .find_map(|kv| kv.strip_prefix("branch=").map(str::to_string))
     });
     Some(GitSource {
         url: url.to_string(),
@@ -304,7 +311,6 @@ pub(crate) fn parse_git_source(source: &str) -> Option<GitSource> {
         rev: rev.to_string(),
     })
 }
-
 
 /// Whether `cargo mock` may auto-advance a behind mockspace with `cargo update`.
 ///
@@ -324,7 +330,6 @@ pub(crate) fn proxy_auto_update(mockspace_toml: &Path) -> bool {
         .unwrap_or(true)
 }
 
-
 /// Locate the cargo git checkout for `name` whose directory matches `rev`.
 ///
 /// Cargo checks a git dependency out to
@@ -338,7 +343,6 @@ pub(crate) fn find_git_checkout(name: &str, rev: &str) -> Option<PathBuf> {
         .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))?;
     find_git_checkout_in(&cargo_home.join("git").join("checkouts"), name, rev)
 }
-
 
 /// [`find_git_checkout`] against an explicit `checkouts` root, so it is
 /// testable without mutating the process environment.
@@ -377,4 +381,3 @@ pub(crate) fn find_git_checkout_in(checkouts: &Path, name: &str, rev: &str) -> O
     }
     None
 }
-

@@ -13,5 +13,5 @@ pub use atomic::{render_atomic, write_atomic};
 pub use error::RenderError;
 pub use platform::{HookDecl, Platform};
 pub use platforms::{ClaudePlatform, CopilotPlatform};
-pub use renderer::{walk_template_tree, AgentRenderer, RenderReport, RenderedFile};
+pub use renderer::{AgentRenderer, RenderReport, RenderedFile, walk_template_tree};
 pub use template::{Template, TemplateEnv};

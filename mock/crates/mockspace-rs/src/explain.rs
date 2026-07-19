@@ -30,7 +30,7 @@ use std::fmt;
 use mockspace_config::{PresetFile, PresetResolveError, PresetSource};
 use mockspace_core::lint::Severity;
 
-use crate::catalog::{find_entry, CatalogEntry};
+use crate::catalog::{CatalogEntry, find_entry};
 use crate::config_loader::{LintsTomlFile, OverrideCascade};
 use crate::errors::{ConfigError, ConfigErrorKind};
 use crate::preset_source::parse_extends;
@@ -45,7 +45,7 @@ use crate::preset_source::parse_extends;
 #[derive(Debug, Clone)]
 pub struct LayerContribution {
     /// Human-readable layer name (`"Layer 1: catalog defaults"`).
-    pub label: String,
+    pub label:  String,
     /// Optional source hint (`"mock://@/export/lint-preset/no-heap"`,
     /// `"lints.toml"`, etc.).
     pub source: Option<String>,
@@ -54,7 +54,7 @@ pub struct LayerContribution {
     /// table paths surface in a follow-up if explain UX needs them.
     pub config: Vec<(String, toml::Value)>,
     /// Top-level scope entries this layer set.
-    pub scope: Vec<(String, toml::Value)>,
+    pub scope:  Vec<(String, toml::Value)>,
 }
 
 /// The "Final" section's per-field resolution: which value won, which
@@ -62,8 +62,8 @@ pub struct LayerContribution {
 #[derive(Debug, Clone)]
 pub struct FinalEntry {
     /// `"config.forbidden"` or `"scope.crates"`.
-    pub field_path: String,
-    pub value: toml::Value,
+    pub field_path:    String,
+    pub value:         toml::Value,
     /// 1-indexed layer that contributed the winning value.
     pub winning_layer: usize,
     /// `label` of the winning layer for direct rendering.
@@ -74,13 +74,13 @@ pub struct FinalEntry {
 #[derive(Debug, Clone)]
 pub struct ExplainReport {
     /// Lint name resolved against the catalog.
-    pub lint_name: String,
+    pub lint_name:        String,
     /// `CatalogEntry::kind`, the primitive backing the lint.
-    pub primitive_kind: String,
+    pub primitive_kind:   String,
     /// Per-layer contributions in cascade order.
-    pub layers: Vec<LayerContribution>,
+    pub layers:           Vec<LayerContribution>,
     /// Resolved final value per top-level config + scope key.
-    pub final_values: Vec<FinalEntry>,
+    pub final_values:     Vec<FinalEntry>,
     /// Default severity from the catalog. Severity overlays from
     /// presets / per-lint TOML are not yet plumbed (#566); when they
     /// land, this struct grows a per-layer severity contribution
@@ -99,18 +99,24 @@ pub struct ExplainReport {
 /// so call-sites can render the same diagnostic).
 #[derive(Debug)]
 pub enum ExplainError {
-    LintNotFound { name: String },
+    LintNotFound {
+        name: String,
+    },
     Config(ConfigError),
 }
 
 impl fmt::Display for ExplainError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LintNotFound { name } => write!(
-                f,
-                "lint `{name}` not found in the registered catalog; \
+            Self::LintNotFound {
+                name,
+            } => {
+                write!(
+                    f,
+                    "lint `{name}` not found in the registered catalog; \
                  check the spelling or ensure the lint pack is linked"
-            ),
+                )
+            },
             Self::Config(c) => write!(f, "{c}"),
         }
     }
@@ -146,8 +152,10 @@ pub fn explain_lint(
     overrides: &OverrideCascade,
     preset_source: &dyn PresetSource,
 ) -> Result<ExplainReport, ExplainError> {
-    let entry = find_entry(lint_name).ok_or_else(|| ExplainError::LintNotFound {
-        name: lint_name.to_string(),
+    let entry = find_entry(lint_name).ok_or_else(|| {
+        ExplainError::LintNotFound {
+            name: lint_name.to_string(),
+        }
     })?;
     explain_with_entry(entry, user_toml, overrides, preset_source)
 }
@@ -163,10 +171,10 @@ pub fn explain_with_entry(
     preset_source: &dyn PresetSource,
 ) -> Result<ExplainReport, ExplainError> {
     let mut report = ExplainReport {
-        lint_name: entry.name.to_string(),
-        primitive_kind: entry.kind.to_string(),
-        layers: Vec::new(),
-        final_values: Vec::new(),
+        lint_name:        entry.name.to_string(),
+        primitive_kind:   entry.kind.to_string(),
+        layers:           Vec::new(),
+        final_values:     Vec::new(),
         catalog_severity: entry.default_severity,
     };
 
@@ -177,13 +185,13 @@ pub fn explain_with_entry(
 
     // Layer 1: catalog defaults.
     let layer1 = LayerContribution {
-        label: "Layer 1: catalog defaults".to_string(),
+        label:  "Layer 1: catalog defaults".to_string(),
         source: Some(format!(
             "catalog entry `{}` (primitive `{}`)",
             entry.name, entry.kind
         )),
         config: table_to_sorted_entries(&merged_config),
-        scope: table_to_sorted_entries(&merged_scope),
+        scope:  table_to_sorted_entries(&merged_scope),
     };
     for (k, _) in &layer1.config {
         config_provenance.push((k.clone(), 1));
@@ -196,28 +204,30 @@ pub fn explain_with_entry(
     // Layer 2: preset chain.
     let user_block = user_toml.lints.get(entry.name);
     let mut layer2 = LayerContribution {
-        label: "Layer 2: preset chain".to_string(),
+        label:  "Layer 2: preset chain".to_string(),
         source: None,
         config: Vec::new(),
-        scope: Vec::new(),
+        scope:  Vec::new(),
     };
     if let Some(block) = user_block {
         if let Some(extends_ref) = parse_extends(block.get("extends")).map_err(|e| {
             ConfigError {
-                lint_name: entry.name.to_string(),
-                field_path: "extends".to_string(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("{e}"),
+                lint_name:       entry.name.to_string(),
+                field_path:      "extends".to_string(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("{e}"),
                 source_location: None,
             }
         })? {
             let chain = mockspace_config::resolve_preset_chain(&extends_ref, preset_source)
-                .map_err(|e: PresetResolveError| ConfigError {
-                    lint_name: entry.name.to_string(),
-                    field_path: "extends".to_string(),
-                    kind: ConfigErrorKind::InvalidValue,
-                    message: format!("{e}"),
-                    source_location: None,
+                .map_err(|e: PresetResolveError| {
+                    ConfigError {
+                        lint_name:       entry.name.to_string(),
+                        field_path:      "extends".to_string(),
+                        kind:            ConfigErrorKind::InvalidValue,
+                        message:         format!("{e}"),
+                        source_location: None,
+                    }
                 })?;
             layer2.source = Some(describe_chain(&chain));
             for preset in &chain {
@@ -227,7 +237,12 @@ pub fn explain_with_entry(
                         .iter()
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
-                    record_overlay(&mut merged_config, &overlay_table, 2, &mut config_provenance);
+                    record_overlay(
+                        &mut merged_config,
+                        &overlay_table,
+                        2,
+                        &mut config_provenance,
+                    );
                     for (k, v) in &overlay_table {
                         layer2.config.push((k.clone(), v.clone()));
                     }
@@ -257,14 +272,14 @@ pub fn explain_with_entry(
     // Layer 3: workspace defaults.
     let workspace_defaults = user_toml.defaults.clone().unwrap_or_default();
     let layer3 = LayerContribution {
-        label: "Layer 3: workspace defaults".to_string(),
+        label:  "Layer 3: workspace defaults".to_string(),
         source: if workspace_defaults.is_empty() {
             None
         } else {
             Some("`[defaults]` in lints.toml".to_string())
         },
         config: table_to_sorted_entries(&workspace_defaults),
-        scope: Vec::new(),
+        scope:  Vec::new(),
     };
     if !workspace_defaults.is_empty() {
         record_overlay(
@@ -278,10 +293,10 @@ pub fn explain_with_entry(
 
     // Layer 4: per-lint TOML.
     let mut layer4 = LayerContribution {
-        label: "Layer 4: per-lint TOML".to_string(),
+        label:  "Layer 4: per-lint TOML".to_string(),
         source: user_block.map(|_| format!("`[lints.{}]`", entry.name)),
         config: Vec::new(),
-        scope: Vec::new(),
+        scope:  Vec::new(),
     };
     if let Some(block) = user_block {
         if let Some(toml::Value::Table(t)) = block.get("config") {
@@ -300,10 +315,10 @@ pub fn explain_with_entry(
     // overrides walk a separate `LintCfgStore` channel and are noted
     // in the rendered output but not applied to the cascade here.
     let mut layer5 = LayerContribution {
-        label: "Layer 5: CLI overrides".to_string(),
+        label:  "Layer 5: CLI overrides".to_string(),
         source: None,
         config: Vec::new(),
-        scope: Vec::new(),
+        scope:  Vec::new(),
     };
     if !overrides.scope_intersection.is_empty() {
         let existing = merged_scope
@@ -315,8 +330,7 @@ pub fn explain_with_entry(
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .collect();
-        let cli_set: HashSet<String> =
-            overrides.scope_intersection.iter().cloned().collect();
+        let cli_set: HashSet<String> = overrides.scope_intersection.iter().cloned().collect();
         let intersected: Vec<toml::Value> =
             if existing_set.is_empty() || existing.iter().any(|v| v.as_str() == Some("*")) {
                 cli_set.iter().cloned().map(toml::Value::String).collect()
@@ -350,16 +364,31 @@ pub fn explain_with_entry(
             .map(|(k, v)| format!("{k}={}", severity_label(*v)))
             .collect();
         let combined = match &layer5.source {
-            Some(existing) => format!("{existing}; `--severity-override` (not applied here, see #566): {}", names.join(", ")),
-            None => format!("`--severity-override` (not applied here, see #566): {}", names.join(", ")),
+            Some(existing) => {
+                format!(
+                    "{existing}; `--severity-override` (not applied here, see #566): {}",
+                    names.join(", ")
+                )
+            },
+            None => {
+                format!(
+                    "`--severity-override` (not applied here, see #566): {}",
+                    names.join(", ")
+                )
+            },
         };
         layer5.source = Some(combined);
     }
     report.layers.push(layer5);
 
     // Compute final entries from the resolved tables + provenance.
-    report.final_values =
-        compose_finals(&merged_config, &merged_scope, &config_provenance, &scope_provenance, &report.layers);
+    report.final_values = compose_finals(
+        &merged_config,
+        &merged_scope,
+        &config_provenance,
+        &scope_provenance,
+        &report.layers,
+    );
 
     Ok(report)
 }
@@ -368,13 +397,19 @@ pub fn explain_with_entry(
 // Internal helpers.
 // =========================================================================
 
-fn parse_toml_block(raw: &str, lint_name: &str, field_path: &str) -> Result<toml::Table, ConfigError> {
-    raw.parse().map_err(|e: toml::de::Error| ConfigError {
-        lint_name: lint_name.to_string(),
-        field_path: field_path.to_string(),
-        kind: ConfigErrorKind::InvalidValue,
-        message: format!("{field_path} did not parse: {e}"),
-        source_location: None,
+fn parse_toml_block(
+    raw: &str,
+    lint_name: &str,
+    field_path: &str,
+) -> Result<toml::Table, ConfigError> {
+    raw.parse().map_err(|e: toml::de::Error| {
+        ConfigError {
+            lint_name:       lint_name.to_string(),
+            field_path:      field_path.to_string(),
+            kind:            ConfigErrorKind::InvalidValue,
+            message:         format!("{field_path} did not parse: {e}"),
+            source_location: None,
+        }
     })
 }
 
@@ -570,12 +605,14 @@ fn severity_label(s: Severity) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, HashMap};
+
+    use mockspace_config::{PresetFile, PresetRef, PresetResolveError};
+    use mockspace_core::lint::{GateSeverity, Severity};
+
     use super::*;
     use crate::config_loader::LintsTomlFile;
     use crate::lint::Lint;
-    use mockspace_config::{PresetFile, PresetRef, PresetResolveError};
-    use mockspace_core::lint::{GateSeverity, Severity};
-    use std::collections::{BTreeMap, HashMap};
 
     // ----- stub plumbing ----------------------------------------------------
 
@@ -585,9 +622,11 @@ mod tests {
         fn name(&self) -> &'static str {
             "explained"
         }
+
         fn description(&self) -> &'static str {
             "explain test stub"
         }
+
         fn default_severity(&self) -> GateSeverity {
             GateSeverity::uniform(Severity::Warn)
         }
@@ -602,20 +641,20 @@ mod tests {
 
     fn stub_entry() -> CatalogEntry {
         CatalogEntry {
-            name: "explained",
-            description: "test stub",
-            kind: "test-explained",
-            default_config: "level = \"catalog\"\nflag = false\n",
-            default_scope: "category = \"catalog\"\n",
+            name:             "explained",
+            description:      "test stub",
+            kind:             "test-explained",
+            default_config:   "level = \"catalog\"\nflag = false\n",
+            default_scope:    "category = \"catalog\"\n",
             default_severity: GateSeverity::uniform(Severity::Warn),
-            default_impact: None,
+            default_impact:   None,
             default_category: None,
-            doc_url: None,
-            mode: crate::lint::LintMode::PerDocument,
-            staging_aware: false,
-            editor_skip: false,
-            instantiate: stub_instantiate,
-            finding_kinds: &[],
+            doc_url:          None,
+            mode:             crate::lint::LintMode::PerDocument,
+            staging_aware:    false,
+            editor_skip:      false,
+            instantiate:      stub_instantiate,
+            finding_kinds:    &[],
         }
     }
 
@@ -629,6 +668,7 @@ mod tests {
                 presets: BTreeMap::new(),
             }
         }
+
         fn insert(mut self, host: &str, preset: PresetFile) -> Self {
             self.presets
                 .insert((host.to_string(), preset.name.clone()), preset);
@@ -641,19 +681,18 @@ mod tests {
             self.presets
                 .get(&(preset_ref.host.clone(), preset_ref.name.clone()))
                 .cloned()
-                .ok_or_else(|| PresetResolveError::NotFound {
-                    host: preset_ref.host.clone(),
-                    name: preset_ref.name.clone(),
+                .ok_or_else(|| {
+                    PresetResolveError::NotFound {
+                        host: preset_ref.host.clone(),
+                        name: preset_ref.name.clone(),
+                    }
                 })
         }
     }
 
     fn preset(name: &str, extends: Option<&str>, config: &str, scope: &str) -> PresetFile {
-        let config: BTreeMap<String, toml::Value> = config
-            .parse::<toml::Table>()
-            .unwrap()
-            .into_iter()
-            .collect();
+        let config: BTreeMap<String, toml::Value> =
+            config.parse::<toml::Table>().unwrap().into_iter().collect();
         let scope: BTreeMap<String, toml::Value> =
             scope.parse::<toml::Table>().unwrap().into_iter().collect();
         PresetFile {
@@ -689,7 +728,7 @@ mod tests {
         assert!(l1.scope.iter().any(|(k, _)| k == "category"));
         // Layers 2-5 should have no contribution since no preset, no
         // workspace defaults, no per-lint TOML, no CLI overrides.
-        for layer in &report.layers[1..] {
+        for layer in &report.layers[1 ..] {
             assert!(layer.config.is_empty());
             assert!(layer.scope.is_empty());
         }
@@ -710,10 +749,11 @@ mod tests {
         let user_block: toml::Table = "extends = \"mockspace::base\"\n".parse().unwrap();
         user_lints.insert("explained".to_string(), user_block);
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: None,
         };
-        let report = explain_with_entry(&entry, &user_toml, &OverrideCascade::default(), &source).unwrap();
+        let report =
+            explain_with_entry(&entry, &user_toml, &OverrideCascade::default(), &source).unwrap();
         // Layer 2 carries the preset's config keys.
         let l2 = &report.layers[1];
         assert_eq!(l2.source.as_deref().unwrap_or("").contains("base"), true);
@@ -739,10 +779,16 @@ mod tests {
         let user_block: toml::Table = "[config]\nlevel = \"user\"\n".parse().unwrap();
         user_lints.insert("explained".to_string(), user_block);
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: None,
         };
-        let report = explain_with_entry(&entry, &user_toml, &OverrideCascade::default(), &InMemorySource::new()).unwrap();
+        let report = explain_with_entry(
+            &entry,
+            &user_toml,
+            &OverrideCascade::default(),
+            &InMemorySource::new(),
+        )
+        .unwrap();
         let final_map: HashMap<&str, usize> = report
             .final_values
             .iter()
@@ -756,10 +802,16 @@ mod tests {
         let entry = stub_entry();
         let workspace_defaults: toml::Table = "flag = true\n".parse().unwrap();
         let user_toml = LintsTomlFile {
-            lints: HashMap::new(),
+            lints:    HashMap::new(),
             defaults: Some(workspace_defaults),
         };
-        let report = explain_with_entry(&entry, &user_toml, &OverrideCascade::default(), &InMemorySource::new()).unwrap();
+        let report = explain_with_entry(
+            &entry,
+            &user_toml,
+            &OverrideCascade::default(),
+            &InMemorySource::new(),
+        )
+        .unwrap();
         let final_map: HashMap<&str, usize> = report
             .final_values
             .iter()
@@ -775,25 +827,22 @@ mod tests {
         let entry = stub_entry();
         let source = InMemorySource::new().insert(
             "mockspace",
-            preset(
-                "stacked",
-                None,
-                "level = \"preset\"\nflag = false\n",
-                "",
-            ),
+            preset("stacked", None, "level = \"preset\"\nflag = false\n", ""),
         );
         let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
         // User TOML overrides config.level via per-lint block + sets workspace defaults too.
-        let user_block: toml::Table = "extends = \"mockspace::stacked\"\n[config]\nlevel = \"user\"\n"
-            .parse()
-            .unwrap();
+        let user_block: toml::Table =
+            "extends = \"mockspace::stacked\"\n[config]\nlevel = \"user\"\n"
+                .parse()
+                .unwrap();
         user_lints.insert("explained".to_string(), user_block);
         let workspace_defaults: toml::Table = "flag = true\n".parse().unwrap();
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: Some(workspace_defaults),
         };
-        let report = explain_with_entry(&entry, &user_toml, &OverrideCascade::default(), &source).unwrap();
+        let report =
+            explain_with_entry(&entry, &user_toml, &OverrideCascade::default(), &source).unwrap();
         let final_map: HashMap<&str, usize> = report
             .final_values
             .iter()
@@ -816,14 +865,19 @@ mod tests {
         let user_block: toml::Table = "extends = \"mockspace::absent\"\n".parse().unwrap();
         user_lints.insert("explained".to_string(), user_block);
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: None,
         };
-        match explain_with_entry(&entry, &user_toml, &OverrideCascade::default(), &InMemorySource::new()) {
+        match explain_with_entry(
+            &entry,
+            &user_toml,
+            &OverrideCascade::default(),
+            &InMemorySource::new(),
+        ) {
             Err(ExplainError::Config(c)) => {
                 assert_eq!(c.field_path, "extends");
                 assert!(c.message.contains("absent"));
-            }
+            },
             other => panic!("expected ExplainError::Config, got {other:?}"),
         }
     }
@@ -837,9 +891,11 @@ mod tests {
             &OverrideCascade::default(),
             &InMemorySource::new(),
         ) {
-            Err(ExplainError::LintNotFound { name }) => {
+            Err(ExplainError::LintNotFound {
+                name,
+            }) => {
                 assert_eq!(name, "definitely-not-a-real-lint");
-            }
+            },
             other => panic!("expected LintNotFound, got {other:?}"),
         }
     }
@@ -859,10 +915,11 @@ mod tests {
             "extends = \"mockspace::base\"\n".parse().unwrap(),
         );
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: None,
         };
-        let report = explain_with_entry(&entry, &user_toml, &OverrideCascade::default(), &source).unwrap();
+        let report =
+            explain_with_entry(&entry, &user_toml, &OverrideCascade::default(), &source).unwrap();
         let rendered = format!("{report}");
         // Headers and section markers all present.
         assert!(rendered.contains("Lint: explained (primitive: test-explained)"));
@@ -887,11 +944,10 @@ mod tests {
         // Per-lint TOML sets scope.crates = ["a", "b", "c"]; CLI
         // intersection narrows to ["b", "c"] (and a non-matching "z").
         let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
-        let user_block: toml::Table =
-            "[scope]\ncrates = [\"a\", \"b\", \"c\"]\n".parse().unwrap();
+        let user_block: toml::Table = "[scope]\ncrates = [\"a\", \"b\", \"c\"]\n".parse().unwrap();
         user_lints.insert("explained".to_string(), user_block);
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: None,
         };
         let overrides = OverrideCascade {
@@ -902,12 +958,7 @@ mod tests {
             explain_with_entry(&entry, &user_toml, &overrides, &InMemorySource::new()).unwrap();
         // Layer 5 surfaces the intersection in source + scope.
         let l5 = &report.layers[4];
-        assert!(
-            l5.source
-                .as_deref()
-                .unwrap_or("")
-                .contains("--scope")
-        );
+        assert!(l5.source.as_deref().unwrap_or("").contains("--scope"));
         assert!(l5.scope.iter().any(|(k, _)| k == "crates"));
         // Provenance: scope.crates final attributes to layer 5.
         let final_map: HashMap<&str, usize> = report

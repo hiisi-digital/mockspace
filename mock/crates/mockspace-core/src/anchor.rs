@@ -35,11 +35,19 @@ pub struct BlobSha(String);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlobShaError {
     /// Length is not 40 (SHA-1) or 64 (SHA-256).
-    BadLength { len: usize },
+    BadLength {
+        len: usize,
+    },
     /// A non-hex character appeared.
-    BadHexChar { position: usize, found: char },
+    BadHexChar {
+        position: usize,
+        found:    char,
+    },
     /// An uppercase hex character appeared. Lowercase is canonical (git's form).
-    UppercaseHex { position: usize, found: char },
+    UppercaseHex {
+        position: usize,
+        found:    char,
+    },
 }
 
 impl BlobSha {
@@ -48,23 +56,25 @@ impl BlobSha {
     pub fn parse(s: &str) -> Result<Self, BlobShaError> {
         let len = s.len();
         if len != SHA1_HEX_LEN && len != SHA256_HEX_LEN {
-            return Err(BlobShaError::BadLength { len });
+            return Err(BlobShaError::BadLength {
+                len,
+            });
         }
         for (position, ch) in s.chars().enumerate() {
             match ch {
-                '0'..='9' | 'a'..='f' => {}
-                'A'..='F' => {
+                '0' ..= '9' | 'a' ..= 'f' => {},
+                'A' ..= 'F' => {
                     return Err(BlobShaError::UppercaseHex {
                         position,
                         found: ch,
                     });
-                }
+                },
                 _ => {
                     return Err(BlobShaError::BadHexChar {
                         position,
                         found: ch,
                     });
-                }
+                },
             }
         }
         Ok(Self(s.to_owned()))
@@ -78,13 +88,13 @@ impl BlobSha {
     /// The two-character prefix used as the first directory level in blob
     /// storage (matches git's object-store layout).
     pub fn prefix(&self) -> &str {
-        &self.0[..2]
+        &self.0[.. 2]
     }
 
     /// The remaining hex characters after [`Self::prefix`], used as the
     /// blob's filename.
     pub fn rest(&self) -> &str {
-        &self.0[2..]
+        &self.0[2 ..]
     }
 
     /// The relative storage path within an `.anchor.<side>.blobs/` tree,
@@ -103,21 +113,29 @@ impl fmt::Display for BlobSha {
 impl fmt::Display for BlobShaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BadLength { len } => {
+            Self::BadLength {
+                len,
+            } => {
                 write!(
                     f,
                     "SHA length {len} is not {SHA1_HEX_LEN} (SHA-1) or {SHA256_HEX_LEN} (SHA-256)"
                 )
-            }
-            Self::BadHexChar { position, found } => {
+            },
+            Self::BadHexChar {
+                position,
+                found,
+            } => {
                 write!(f, "non-hex character {found:?} at position {position}")
-            }
-            Self::UppercaseHex { position, found } => {
+            },
+            Self::UppercaseHex {
+                position,
+                found,
+            } => {
                 write!(
                     f,
                     "uppercase hex character {found:?} at position {position}; use lowercase"
                 )
-            }
+            },
         }
     }
 }
@@ -140,7 +158,7 @@ impl<'de> Deserialize<'de> for BlobSha {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
     /// Source-side path (relative to repo root, forward-slash separated).
-    pub path: String,
+    pub path:     String,
     /// Hex SHA of the file's content at capture time.
     pub blob_sha: BlobSha,
 }
@@ -201,7 +219,9 @@ mod tests {
     #[test]
     fn rejects_bad_length() {
         match BlobSha::parse("a1b2") {
-            Err(BlobShaError::BadLength { len }) => assert_eq!(len, 4),
+            Err(BlobShaError::BadLength {
+                len,
+            }) => assert_eq!(len, 4),
             other => panic!("expected BadLength, got {other:?}"),
         }
     }
@@ -209,9 +229,12 @@ mod tests {
     #[test]
     fn rejects_uppercase() {
         let mut s = String::from(SHA1_EXAMPLE);
-        s.replace_range(3..4, "B");
+        s.replace_range(3 .. 4, "B");
         match BlobSha::parse(&s) {
-            Err(BlobShaError::UppercaseHex { position, .. }) => assert_eq!(position, 3),
+            Err(BlobShaError::UppercaseHex {
+                position,
+                ..
+            }) => assert_eq!(position, 3),
             other => panic!("expected UppercaseHex, got {other:?}"),
         }
     }
@@ -219,9 +242,12 @@ mod tests {
     #[test]
     fn rejects_non_hex() {
         let mut s = String::from(SHA1_EXAMPLE);
-        s.replace_range(5..6, "z");
+        s.replace_range(5 .. 6, "z");
         match BlobSha::parse(&s) {
-            Err(BlobShaError::BadHexChar { position, .. }) => assert_eq!(position, 5),
+            Err(BlobShaError::BadHexChar {
+                position,
+                ..
+            }) => assert_eq!(position, 5),
             other => panic!("expected BadHexChar, got {other:?}"),
         }
     }
@@ -234,11 +260,11 @@ mod tests {
             captured_from_source_branch_tip: "deadbeefcafebabe0000000000000000deadbeef".to_owned(),
             files: vec![
                 FileEntry {
-                    path: "crates/foo/src/lib.rs".to_owned(),
+                    path:     "crates/foo/src/lib.rs".to_owned(),
                     blob_sha: BlobSha::parse(SHA1_EXAMPLE).unwrap(),
                 },
                 FileEntry {
-                    path: "docs/DESIGN.md".to_owned(),
+                    path:     "docs/DESIGN.md".to_owned(),
                     blob_sha: BlobSha::parse(SHA256_EXAMPLE).unwrap(),
                 },
             ],

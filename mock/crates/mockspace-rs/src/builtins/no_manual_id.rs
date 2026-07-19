@@ -22,7 +22,7 @@ pub const KIND: &str = "no-manual-id";
 pub struct NoManualIdConfig {
     pub primitive_inner_types: Vec<String>,
     #[serde(default = "default_true")]
-    pub check_aliases: bool,
+    pub check_aliases:         bool,
 }
 
 fn default_true() -> bool {
@@ -30,11 +30,11 @@ fn default_true() -> bool {
 }
 
 pub struct NoManualIdLint {
-    name: &'static str,
-    description: &'static str,
+    name:             &'static str,
+    description:      &'static str,
     default_severity: GateSeverity,
-    config: NoManualIdConfig,
-    primitives: HashSet<String>,
+    config:           NoManualIdConfig,
+    primitives:       HashSet<String>,
 }
 
 impl NoManualIdLint {
@@ -73,12 +73,15 @@ impl Lint for NoManualIdLint {
     fn name(&self) -> &'static str {
         self.name
     }
+
     fn description(&self) -> &'static str {
         self.description
     }
+
     fn default_severity(&self) -> GateSeverity {
         self.default_severity
     }
+
     fn needs_syn_ast(&self) -> bool {
         true
     }
@@ -101,13 +104,13 @@ impl Lint for NoManualIdLint {
                             emit(self.name, doc.path(), &msg, active, sink);
                         }
                     }
-                }
+                },
                 syn::Item::Type(t) if self.config.check_aliases => {
                     if let Some(msg) = self.check_inner(&t.ident.to_string(), &t.ty) {
                         emit(self.name, doc.path(), &msg, active, sink);
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
         Ok(())
@@ -148,17 +151,15 @@ pub fn instantiate_with(
     config: &toml::Table,
     _scope: &toml::Table,
 ) -> Result<Box<dyn Lint>, ConfigError> {
-    let parsed: NoManualIdConfig =
-        config
-            .clone()
-            .try_into()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: name.to_string(),
-                field_path: String::new(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("no-manual-id config: {e}"),
-                source_location: None,
-            })?;
+    let parsed: NoManualIdConfig = config.clone().try_into().map_err(|e: toml::de::Error| {
+        ConfigError {
+            lint_name:       name.to_string(),
+            field_path:      String::new(),
+            kind:            ConfigErrorKind::InvalidValue,
+            message:         format!("no-manual-id config: {e}"),
+            source_location: None,
+        }
+    })?;
     Ok(Box::new(NoManualIdLint::new(
         name,
         description,
@@ -169,11 +170,13 @@ pub fn instantiate_with(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, RunSurface};
+
     use super::*;
     use crate::config_types::Language;
     use crate::finding_sink::VecFindingSink;
-    use mockspace_core::lint::{Gate, RunSurface};
-    use std::path::PathBuf;
 
     struct EmptyCfg;
     impl mockspace_core::lint::LintCfgStore for EmptyCfg {
@@ -190,7 +193,7 @@ mod tests {
             GateSeverity::uniform(Severity::Warn),
             NoManualIdConfig {
                 primitive_inner_types: vec!["u32".to_string(), "u64".to_string()],
-                check_aliases: true,
+                check_aliases:         true,
             },
         );
         let doc = MockspaceDocument::new(
@@ -203,11 +206,11 @@ mod tests {
         let root = PathBuf::from("/tmp");
         let cfg = EmptyCfg;
         let ctx = LintContext {
-            gate: Gate::Commit,
-            severities: GateSeverity::uniform(Severity::Warn),
-            surface: RunSurface::Local,
+            gate:         Gate::Commit,
+            severities:   GateSeverity::uniform(Severity::Warn),
+            surface:      RunSurface::Local,
             project_root: &root,
-            config: &cfg,
+            config:       &cfg,
         };
         lint.check_document(&ctx, &doc, &sink).unwrap();
         assert_eq!(sink.into_findings().len(), 2);

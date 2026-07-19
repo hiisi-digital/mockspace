@@ -12,16 +12,16 @@ use tree_sitter::Node;
 
 use crate::{Lint, LintContext, LintError};
 
-const BLESSED_TYPES: &[&str] = &[
-    "Outcome",
-    "Just",
-];
+const BLESSED_TYPES: &[&str] = &["Outcome", "Just"];
 
 pub struct NoBareResult;
 
 impl Lint for NoBareResult {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         "no-bare-result"
     }
 
@@ -43,12 +43,12 @@ fn visit_fns(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         match child.kind() {
             "function_item" | "function_signature_item" => {
                 check_fn_return(child, ctx, errors);
-            }
+            },
             _ => {
                 if child.named_child_count() > 0 {
                     visit_fns(child, ctx, errors);
                 }
-            }
+            },
         }
     }
 }

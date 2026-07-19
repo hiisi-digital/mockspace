@@ -16,8 +16,11 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoPoolAccess;
 
 impl Lint for NoPoolAccess {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         "no-pool-access"
     }
 
@@ -52,11 +55,13 @@ fn name(&self) -> &'static str {
                 }
                 if trimmed.contains(".resource(") || trimmed.contains(".resource::<") {
                     errors.push(LintError {
-                        crate_name: ctx.crate_name.to_string(),
-                        line: line_num + 1,
-                        lint_name: "no-pool-access",
-                        severity: crate::Severity::HARD_ERROR,
-                        message: "resource() is renamed to read(); declare reads(T) in define_behavior!".to_string(),
+                        crate_name:   ctx.crate_name.to_string(),
+                        line:         line_num + 1,
+                        lint_name:    "no-pool-access",
+                        severity:     crate::Severity::HARD_ERROR,
+                        message:
+                            "resource() is renamed to read(); declare reads(T) in define_behavior!"
+                                .to_string(),
                         finding_kind: None,
                     });
                 }

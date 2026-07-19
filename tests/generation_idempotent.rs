@@ -28,7 +28,10 @@ fn per_crate_doc_regeneration_is_timestamp_stable() {
     // mockspace.toml, and one crate with a DESIGN.md.tmpl to render.
     fs::create_dir_all(root.join(".git")).unwrap();
     let mock = root.join("mock");
-    write(&mock.join("mockspace.toml"), "project_name = \"fixture\"\ncrate_prefix = \"fixture\"\n");
+    write(
+        &mock.join("mockspace.toml"),
+        "project_name = \"fixture\"\ncrate_prefix = \"fixture\"\n",
+    );
     write(
         &mock.join("crates/fixture-one/src/lib.rs"),
         "//! fixture-one.\n",
@@ -202,9 +205,11 @@ fn per_crate_docs_expand_placeholders() {
         out.contains("Part of fixture-proj, sources under `mock/`."),
         "a crate template must expand the vocabulary, got:\n{out}"
     );
-    assert!(!out.contains("{{"), "no placeholder may survive, got:\n{out}");
+    assert!(
+        !out.contains("{{"),
+        "no placeholder may survive, got:\n{out}"
+    );
 }
-
 
 /// The link a summary emits must be the file the writer wrote.
 ///
@@ -222,10 +227,16 @@ fn summary_links_match_the_files_written() {
         &mock.join("mockspace.toml"),
         "project_name = \"fixture-proj\"\ncrate_prefix = \"fixture\"\nordered_docs = true\n",
     );
-    write(&mock.join("crates/fixture-one/src/lib.rs"), "//! one.\npub struct Thing;\n");
+    write(
+        &mock.join("crates/fixture-one/src/lib.rs"),
+        "//! one.\npub struct Thing;\n",
+    );
     write(&mock.join("crates/fixture-one/README.md.tmpl"), "one.\n");
     write(&mock.join("crates/fixture-one/DESIGN.md.tmpl"), "# one\n");
-    write(&mock.join("crates/fixture-one/DEEPDIVE_topic.md.tmpl"), "# deep\n");
+    write(
+        &mock.join("crates/fixture-one/DEEPDIVE_topic.md.tmpl"),
+        "# deep\n",
+    );
 
     let cfg = Config::from_dir(&mock);
     let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
@@ -240,16 +251,23 @@ fn summary_links_match_the_files_written() {
     let mut checked = 0;
     for line in summaries.lines() {
         let Some(open) = line.find("](") else { continue };
-        let Some(close) = line[open..].find(')') else { continue };
-        let target = &line[open + 2..open + close];
+        let Some(close) = line[open ..].find(')') else { continue };
+        let target = &line[open + 2 .. open + close];
         assert!(
             cfg.docs_dir.join(target).exists(),
             "summary links {target}, which was never written. Files: {:?}",
             std::fs::read_dir(&cfg.docs_dir)
-                .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name()).collect::<Vec<_>>())
+                .map(|d| {
+                    d.filter_map(|e| e.ok())
+                        .map(|e| e.file_name())
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default()
         );
         checked += 1;
     }
-    assert!(checked > 0, "no links in the summaries, so this proved nothing");
+    assert!(
+        checked > 0,
+        "no links in the summaries, so this proved nothing"
+    );
 }

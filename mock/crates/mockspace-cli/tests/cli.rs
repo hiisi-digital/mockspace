@@ -14,10 +14,11 @@
 //! when no user TOML is required) omit the flag and let the CLI
 //! default to cwd.
 
+use std::fs;
+
 use assert_cmd::Command;
 use mockspace_test_fixtures::MockspaceFixture;
 use predicates::prelude::*;
-use std::fs;
 
 fn mock() -> Command {
     Command::cargo_bin("mock").expect("cargo build provides the mock binary")
@@ -260,7 +261,9 @@ fn explain_unknown_lint_fails_with_clear_error() {
         .arg("no-such-lint-ever")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not found in the registered catalog"));
+        .stderr(predicate::str::contains(
+            "not found in the registered catalog",
+        ));
 }
 
 #[test]

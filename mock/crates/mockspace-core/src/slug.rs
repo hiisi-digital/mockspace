@@ -35,11 +35,18 @@ pub enum SlugError {
     /// Slug was empty.
     Empty,
     /// Slug exceeded [`MAX_SLUG_LEN`].
-    TooLong { len: usize },
+    TooLong {
+        len: usize,
+    },
     /// First character was not `[a-z]`.
-    BadLeadingChar { found: char },
+    BadLeadingChar {
+        found: char,
+    },
     /// A non-first character was outside `[a-z0-9-]`.
-    BadChar { position: usize, found: char },
+    BadChar {
+        position: usize,
+        found:    char,
+    },
 }
 
 impl Slug {
@@ -53,12 +60,16 @@ impl Slug {
             return Err(SlugError::Empty);
         }
         if s.len() > MAX_SLUG_LEN {
-            return Err(SlugError::TooLong { len: s.len() });
+            return Err(SlugError::TooLong {
+                len: s.len(),
+            });
         }
         let mut chars = s.chars().enumerate();
         let (_, first) = chars.next().expect("non-empty checked above");
         if !first.is_ascii_lowercase() {
-            return Err(SlugError::BadLeadingChar { found: first });
+            return Err(SlugError::BadLeadingChar {
+                found: first,
+            });
         }
         for (position, ch) in chars {
             let ok = ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-';
@@ -115,12 +126,21 @@ impl fmt::Display for SlugError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => f.write_str("slug is empty"),
-            Self::TooLong { len } => write!(f, "slug length {len} exceeds maximum {MAX_SLUG_LEN}"),
-            Self::BadLeadingChar { found } => write!(f, "leading character {found:?} is not [a-z]"),
-            Self::BadChar { position, found } => write!(
-                f,
-                "character {found:?} at position {position} is not [a-z0-9-]"
-            ),
+            Self::TooLong {
+                len,
+            } => write!(f, "slug length {len} exceeds maximum {MAX_SLUG_LEN}"),
+            Self::BadLeadingChar {
+                found,
+            } => write!(f, "leading character {found:?} is not [a-z]"),
+            Self::BadChar {
+                position,
+                found,
+            } => {
+                write!(
+                    f,
+                    "character {found:?} at position {position} is not [a-z0-9-]"
+                )
+            },
         }
     }
 }
@@ -153,7 +173,9 @@ mod tests {
     fn rejects_too_long() {
         let long = "a".repeat(MAX_SLUG_LEN + 1);
         match Slug::new(&long) {
-            Err(SlugError::TooLong { len }) => assert_eq!(len, MAX_SLUG_LEN + 1),
+            Err(SlugError::TooLong {
+                len,
+            }) => assert_eq!(len, MAX_SLUG_LEN + 1),
             other => panic!("expected TooLong, got {other:?}"),
         }
     }
@@ -172,9 +194,12 @@ mod tests {
     fn rejects_bad_inner_char() {
         for (input, want_pos) in [("a_b", 1), ("abc.def", 3), ("abc def", 3), ("abcD", 3)] {
             match Slug::new(input) {
-                Err(SlugError::BadChar { position, .. }) => {
+                Err(SlugError::BadChar {
+                    position,
+                    ..
+                }) => {
                     assert_eq!(position, want_pos, "input {input}");
-                }
+                },
                 other => panic!("expected BadChar for {input}, got {other:?}"),
             }
         }

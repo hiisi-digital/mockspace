@@ -31,12 +31,12 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
         "" => {
             print_help();
             ExitCode::SUCCESS
-        }
+        },
         other => {
             eprintln!("error: unknown bench subcommand `{other}`");
             print_help();
             ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -76,8 +76,16 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
 
     // Positional args are bench names: they restrict both the run
     // (forwarded as --only) and the variant builds.
-    let names: Vec<&str> = args.iter().copied().filter(|a| !a.starts_with("--")).collect();
-    let extra: Vec<&str> = args.iter().copied().filter(|a| a.starts_with("--")).collect();
+    let names: Vec<&str> = args
+        .iter()
+        .copied()
+        .filter(|a| !a.starts_with("--"))
+        .collect();
+    let extra: Vec<&str> = args
+        .iter()
+        .copied()
+        .filter(|a| a.starts_with("--"))
+        .collect();
 
     let dirs = if names.is_empty() {
         None
@@ -87,7 +95,7 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
             Err(e) => {
                 eprintln!("error: {e}");
                 return ExitCode::FAILURE;
-            }
+            },
         }
     };
     if let Err(e) = build_variants_and_bin_filtered(&bench_dir, dirs.as_deref()) {
@@ -100,7 +108,7 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
         Err(e) => {
             eprintln!("error: locating bench binary: {e}");
             return ExitCode::FAILURE;
-        }
+        },
     };
 
     let mut cmd = Command::new(&bin_path);
@@ -110,20 +118,18 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
     for e in &extra {
         cmd.arg(e);
     }
-    let status = cmd
-        .current_dir(&bench_dir)
-        .status();
+    let status = cmd.current_dir(&bench_dir).status();
 
     match status {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(s) => {
             eprintln!("bench binary exited with {:?}", s.code());
             ExitCode::FAILURE
-        }
+        },
         Err(e) => {
             eprintln!("error: failed to spawn {}: {e}", bin_path.display());
             ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -149,7 +155,7 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
         Err(e) => {
             eprintln!("error: locating bench binary: {e}");
             return ExitCode::FAILURE;
-        }
+        },
     };
 
     let mut cmd = Command::new(&bin_path);
@@ -157,20 +163,18 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
     for a in _args.iter().filter(|a| !a.starts_with("--")) {
         cmd.args(["--only", a]);
     }
-    let status = cmd
-        .current_dir(&bench_dir)
-        .status();
+    let status = cmd.current_dir(&bench_dir).status();
 
     match status {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(s) => {
             eprintln!("bench binary exited with {:?}", s.code());
             ExitCode::FAILURE
-        }
+        },
         Err(e) => {
             eprintln!("error: failed to spawn {}: {e}", bin_path.display());
             ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -207,7 +211,8 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
             }
         }
     };
-    let collect_array = |item: Option<&toml_edit::Item>, dirs: &mut Vec<String>,
+    let collect_array = |item: Option<&toml_edit::Item>,
+                         dirs: &mut Vec<String>,
                          push: &mut dyn FnMut(&str, &mut Vec<String>)| {
         if let Some(arr) = item.and_then(|v| v.as_array()) {
             for v in arr.iter() {
@@ -256,8 +261,8 @@ fn build_variants_and_bin_filtered(
 ) -> Result<(), String> {
     let variants_dir = bench_dir.join("variants");
     if variants_dir.exists() {
-        for entry in fs::read_dir(&variants_dir)
-            .map_err(|e| format!("reading variants dir: {e}"))?
+        for entry in
+            fs::read_dir(&variants_dir).map_err(|e| format!("reading variants dir: {e}"))?
         {
             let entry = entry.map_err(|e| format!("variants dir entry: {e}"))?;
             let path = entry.path();
@@ -275,11 +280,7 @@ fn build_variants_and_bin_filtered(
             if manifest.exists() {
                 eprintln!("  building variant {}...", path.display());
                 let status = Command::new("cargo")
-                    .args([
-                        "build",
-                        "--release",
-                        "--manifest-path",
-                    ])
+                    .args(["build", "--release", "--manifest-path"])
                     .arg(&manifest)
                     .status()
                     .map_err(|e| format!("spawning cargo for {}: {e}", path.display()))?;
@@ -365,7 +366,10 @@ fn cmd_init(cfg: &Config) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    eprintln!("scaffolded {} with starter bench binary + sample variant", bench_dir.display());
+    eprintln!(
+        "scaffolded {} with starter bench binary + sample variant",
+        bench_dir.display()
+    );
     eprintln!();
     eprintln!("next steps:");
     eprintln!("  1. edit src/main.rs: replace IdentityAdd with your Routine");
@@ -385,14 +389,14 @@ fn cmd_list(cfg: &Config) -> ExitCode {
         Err(e) => {
             eprintln!("error: reading bench.toml: {e}");
             return ExitCode::FAILURE;
-        }
+        },
     };
     let doc: toml_edit::DocumentMut = match text.parse() {
         Ok(d) => d,
         Err(e) => {
             eprintln!("error: parsing bench.toml: {e}");
             return ExitCode::FAILURE;
-        }
+        },
     };
     let Some(bench) = doc.get("bench").and_then(|b| b.as_table()) else {
         eprintln!("no [bench.*] sections in bench.toml");
@@ -402,10 +406,7 @@ fn cmd_list(cfg: &Config) -> ExitCode {
     names.sort();
     for name in names {
         let section = bench.get(name).unwrap();
-        let title = section
-            .get("title")
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
+        let title = section.get("title").and_then(|t| t.as_str()).unwrap_or("");
         let mut sizes: Vec<String> = Vec::new();
         if let Some(item) = section.get("sizes") {
             if let Some(arr) = item.as_array() {
@@ -424,7 +425,12 @@ fn cmd_list(cfg: &Config) -> ExitCode {
             }
         }
         let dirs = variant_dirs_for(&bench_dir, &[name]).unwrap_or_default();
-        println!("{name}  [{}]  variants: {}  {}", sizes.join(", "), dirs.join(", "), title);
+        println!(
+            "{name}  [{}]  variants: {}  {}",
+            sizes.join(", "),
+            dirs.join(", "),
+            title
+        );
     }
     println!();
     println!("run one with: mock bench run <name>");
@@ -475,7 +481,10 @@ fn write_starter_files(bench_dir: &Path) -> std::io::Result<()> {
         bench_dir.join("variants/sample/Cargo.toml"),
         STARTER_VARIANT_CARGO_TOML,
     )?;
-    fs::write(bench_dir.join("variants/sample/src/lib.rs"), STARTER_VARIANT_LIB)?;
+    fs::write(
+        bench_dir.join("variants/sample/src/lib.rs"),
+        STARTER_VARIANT_LIB,
+    )?;
     Ok(())
 }
 

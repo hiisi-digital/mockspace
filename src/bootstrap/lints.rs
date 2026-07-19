@@ -48,7 +48,6 @@ pub(crate) fn parse_lint_crates(mockspace_toml: &Path) -> Vec<(String, String)> 
     result
 }
 
-
 /// Discover `.rs` files in the custom lints directory.
 /// Returns a sorted list of file stems (e.g., "my_lint" from "my_lint.rs").
 pub(crate) fn discover_custom_lint_files(lints_dir: &Path) -> Vec<String> {
@@ -80,7 +79,6 @@ pub(crate) fn discover_custom_lint_files(lints_dir: &Path) -> Vec<String> {
     files
 }
 
-
 /// Check if a string is a valid Rust identifier (only `[a-z0-9_]`, must not start with a digit).
 pub(crate) fn is_valid_rust_ident(s: &str) -> bool {
     if s.is_empty() {
@@ -90,9 +88,9 @@ pub(crate) fn is_valid_rust_ident(s: &str) -> bool {
     if first.is_ascii_digit() {
         return false;
     }
-    s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    s.bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
-
 
 /// Scan a `.rs` file to determine which custom lint functions it defines.
 ///
@@ -106,7 +104,6 @@ pub(crate) fn scan_lint_functions(lints_dir: &Path, stem: &str) -> (bool, bool) 
 
     (has_lint, has_cross_lint)
 }
-
 
 /// Generate the proxy's main.rs with custom lint module includes.
 ///
@@ -130,9 +127,7 @@ pub(crate) fn generate_custom_lint_main(
     for name in lint_files {
         let abs_path = lints_dir.join(format!("{name}.rs"));
         let path_str = abs_path.display().to_string().replace('\\', "/");
-        out.push_str(&format!(
-            "#[path = \"{path_str}\"]\nmod {name};\n",
-        ));
+        out.push_str(&format!("#[path = \"{path_str}\"]\nmod {name};\n",));
     }
     out.push('\n');
 
@@ -190,4 +185,3 @@ pub(crate) fn generate_custom_lint_main(
 // ──────────────────────────────────────────────────────────────────────
 // Generated hooks (core.hooksPath target)
 // ──────────────────────────────────────────────────────────────────────
-

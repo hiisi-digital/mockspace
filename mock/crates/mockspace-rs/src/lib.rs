@@ -57,76 +57,141 @@ pub mod scope_filter;
 pub mod staging;
 pub mod strip;
 
-pub use catalog::{catalog_entries, find_entry, CatalogEntry};
+pub use catalog::{CatalogEntry, catalog_entries, find_entry};
 pub use config_loader::{
-    find_and_read_lints_toml, InstantiatedLint, LintsConfig, LintsTomlFile, OverrideCascade,
+    InstantiatedLint,
+    LintsConfig,
+    LintsTomlFile,
+    OverrideCascade,
+    find_and_read_lints_toml,
 };
 pub use config_types::{ItemKind, Language, TypePosition, Visibility};
 pub use document::{MockspaceDocument, StripOpts};
 pub use engine::MockspaceEngine;
-pub use fix::{
-    apply_plan, plan_fixes, render_unified_diff, ConflictReport, FileChange, FixError, FixOpts,
-    FixPlan,
-};
-pub use explain::{explain_lint, explain_with_entry, ExplainError, ExplainReport, FinalEntry, LayerContribution};
-pub use preset_source::{FirstPartyPresetSource, FIRST_PARTY_HOST};
-pub use render::{
-    check as render_check, regenerate as render_regenerate, CheckReport, RegenerateError,
-    RegenerateReport, RenderedFile, WriteState,
-};
 pub use errors::{
-    ConfigError, ConfigErrorKind, DirectiveValidationError, DispatchError, LintError, LoadError,
-    ParseError, StartupWarning,
+    ConfigError,
+    ConfigErrorKind,
+    DirectiveValidationError,
+    DispatchError,
+    LintError,
+    LoadError,
+    ParseError,
+    StartupWarning,
+};
+pub use explain::{
+    ExplainError,
+    ExplainReport,
+    FinalEntry,
+    LayerContribution,
+    explain_lint,
+    explain_with_entry,
 };
 pub use finding_sink::{FindingSink, RunReport, VecFindingSink};
-pub use lint::{Lint, LintMode};
-pub use preprocessor::{LanguagePreprocessor, RustPreprocessor};
-pub use project::{
-    CrateGraph, CrateInfo, DesignRound, DesignRoundsView, MockspaceProject, RoundState,
-    WorkspaceMetadata,
+pub use fix::{
+    ConflictReport,
+    FileChange,
+    FixError,
+    FixOpts,
+    FixPlan,
+    apply_plan,
+    plan_fixes,
+    render_unified_diff,
 };
-pub use scope::scope_walk;
-pub use staging::{StagedSet, StagingFilter, StagingFilterError};
-
+// Re-export gix's ObjectId so callers can parse user-supplied
+// hex OIDs (e.g. `--source-tip <hex>` on `mock phase apply`)
+// without taking a direct gix dep on top of mockspace-rs.
+pub use gix::ObjectId;
+pub use lint::{Lint, LintMode};
+pub use mockspace_core::branch_name::{BranchName, BranchNameError};
+pub use mockspace_core::entity::{Branch, GitRef, Instant, Round, Task};
+pub use mockspace_core::identity::{NamedRefTo, RefTo};
+// Re-export the Phase 5 IO surface (transition executors + the
+// types they operate on) so the `mock` binary composes them
+// without reaching into mockspace-core. Same indirection rule as
+// the lint-engine vocabulary above.
+pub use mockspace_core::io::{
+    AdvanceError,
+    AdvanceReport,
+    AdvanceVerb,
+    ArchiveError,
+    ArchiveReport,
+    CloseMetadata,
+    CreateTaskError,
+    CreateTaskReport,
+    FlockTransitionLock,
+    ListTasksError,
+    LockError,
+    MoveTaskError,
+    MoveTaskReport,
+    RefTreeReadError,
+    RepoError,
+    RepoHandle,
+    RoundRefTree,
+    SealError,
+    SealReport,
+    ShowTaskError,
+    TaskTransitionError,
+    TaskTransitionReport,
+};
+pub use mockspace_core::iso8601::{Iso8601Utc, Iso8601UtcError};
 // Re-export the lint-engine vocabulary from mockspace-core so
 // consumer crates (e.g. the `mock` binary) can import via this
 // crate rather than reaching into mockspace-core directly. Keeps
 // the dependency surface "consumer talks to mockspace-rs only";
 // substrate types stay one indirection away.
 pub use mockspace_core::lint::{
-    Finding, Gate, GateSeverity, LintCfgStore, LintEngine, RunSurface, Severity, Span,
+    Finding,
+    Gate,
+    GateSeverity,
+    LintCfgStore,
+    LintEngine,
+    RunSurface,
+    Severity,
+    Span,
 };
-
-// Re-export the Phase 5 IO surface (transition executors + the
-// types they operate on) so the `mock` binary composes them
-// without reaching into mockspace-core. Same indirection rule as
-// the lint-engine vocabulary above.
-pub use mockspace_core::io::{
-    AdvanceError, AdvanceReport, AdvanceVerb, ArchiveError, ArchiveReport, CloseMetadata,
-    CreateTaskError, CreateTaskReport, FlockTransitionLock, ListTasksError, LockError,
-    MoveTaskError, MoveTaskReport, RefTreeReadError, RepoError, RepoHandle, RoundRefTree,
-    SealError, SealReport, ShowTaskError, TaskTransitionError, TaskTransitionReport,
-};
-pub use mockspace_core::branch_name::{BranchName, BranchNameError};
-pub use mockspace_core::entity::{Branch, GitRef, Instant, Round, Task};
-pub use mockspace_core::identity::{NamedRefTo, RefTo};
-pub use mockspace_core::iso8601::{Iso8601Utc, Iso8601UtcError};
-pub use mockspace_core::namespace::{Namespace, NamespaceError};
 pub use mockspace_core::manifest::{
-    AcceptanceBlock, ChangeBlock, DeprecatedAccounting, Manifest, ScopeBlock,
+    AcceptanceBlock,
+    ChangeBlock,
+    DeprecatedAccounting,
+    Manifest,
+    ScopeBlock,
 };
+pub use mockspace_core::namespace::{Namespace, NamespaceError};
 pub use mockspace_core::phase::{ManifestSide, Phase};
-pub use mockspace_core::verifier::{VerifierAllOf, VerifierAnyOf, VerifierCheck, VerifierKind};
 pub use mockspace_core::ref_path::{RefPath, RefPathError};
 pub use mockspace_core::slug::{Slug, SlugError};
 pub use mockspace_core::task::{
-    TaskId, TaskIdError, TaskMeta, TaskRefs, TaskResolution, TaskState,
+    TaskId,
+    TaskIdError,
+    TaskMeta,
+    TaskRefs,
+    TaskResolution,
+    TaskState,
 };
 pub use mockspace_core::transition::ReplanMode;
-// Re-export gix's ObjectId so callers can parse user-supplied
-// hex OIDs (e.g. `--source-tip <hex>` on `mock phase apply`)
-// without taking a direct gix dep on top of mockspace-rs.
-pub use gix::ObjectId;
+pub use mockspace_core::verifier::{VerifierAllOf, VerifierAnyOf, VerifierCheck, VerifierKind};
+pub use preprocessor::{LanguagePreprocessor, RustPreprocessor};
+pub use preset_source::{FIRST_PARTY_HOST, FirstPartyPresetSource};
+pub use project::{
+    CrateGraph,
+    CrateInfo,
+    DesignRound,
+    DesignRoundsView,
+    MockspaceProject,
+    RoundState,
+    WorkspaceMetadata,
+};
+pub use render::{
+    CheckReport,
+    RegenerateError,
+    RegenerateReport,
+    RenderedFile,
+    WriteState,
+    check as render_check,
+    regenerate as render_regenerate,
+};
+pub use scope::scope_walk;
+pub use staging::{StagedSet, StagingFilter, StagingFilterError};
 
 /// The active engine on the host. Swap point: change this alias to switch
 /// engines workspace-wide (e.g. to a future viola-driven engine).

@@ -18,9 +18,8 @@
 //! Findings (about source code) and ConfigErrors (about configuration) are
 //! distinct diagnostic types. Mixing them pollutes both.
 
-use std::fmt;
-use std::io;
 use std::path::PathBuf;
+use std::{fmt, io};
 
 use mockspace_core::lint::Span;
 
@@ -59,7 +58,7 @@ pub enum ConfigErrorKind {
     /// TOML field type does not match the expected shape.
     TypeMismatch {
         expected: &'static str,
-        actual: &'static str,
+        actual:   &'static str,
     },
     /// Value is structurally valid but semantically rejected.
     InvalidValue,
@@ -72,9 +71,13 @@ pub enum ConfigErrorKind {
     /// `CatalogEntry::finding_kinds`.
     UnknownFindingKind,
     /// Regex did not compile.
-    UnparseableRegex { error: String },
+    UnparseableRegex {
+        error: String,
+    },
     /// Glob did not compile.
-    UnparseableGlob { error: String },
+    UnparseableGlob {
+        error: String,
+    },
     /// Two entries collide on lint name.
     Duplicate,
 }
@@ -88,19 +91,20 @@ impl fmt::Display for ConfigError {
         )?;
         match &self.kind {
             ConfigErrorKind::UnknownField => write!(f, "unknown field")?,
-            ConfigErrorKind::TypeMismatch { expected, actual } => {
-                write!(f, "type mismatch (expected {expected}, found {actual})")?
-            }
+            ConfigErrorKind::TypeMismatch {
+                expected,
+                actual,
+            } => write!(f, "type mismatch (expected {expected}, found {actual})")?,
             ConfigErrorKind::InvalidValue => write!(f, "invalid value")?,
             ConfigErrorKind::ContradictsCatalog => write!(f, "contradicts catalog metadata")?,
             ConfigErrorKind::UnknownKind => write!(f, "unknown lint kind")?,
             ConfigErrorKind::UnknownFindingKind => write!(f, "unknown finding kind")?,
-            ConfigErrorKind::UnparseableRegex { error } => {
-                write!(f, "regex did not compile: {error}")?
-            }
-            ConfigErrorKind::UnparseableGlob { error } => {
-                write!(f, "glob did not compile: {error}")?
-            }
+            ConfigErrorKind::UnparseableRegex {
+                error,
+            } => write!(f, "regex did not compile: {error}")?,
+            ConfigErrorKind::UnparseableGlob {
+                error,
+            } => write!(f, "glob did not compile: {error}")?,
             ConfigErrorKind::Duplicate => write!(f, "duplicate lint name")?,
         }
         if !self.message.is_empty() {
@@ -121,7 +125,7 @@ impl std::error::Error for ConfigError {}
 pub enum LintError {
     /// Source parse failure on a document the lint required.
     ParseFailure {
-        path: PathBuf,
+        path:   PathBuf,
         parser: &'static str,
         source: String,
     },
@@ -147,7 +151,7 @@ impl fmt::Display for LintError {
                 source,
             } => {
                 write!(f, "{parser} parse failure on {}: {source}", path.display())
-            }
+            },
             Self::Internal(msg) => write!(f, "internal lint error: {msg}"),
             Self::WorkflowIo(e) => write!(f, "workflow I/O: {e}"),
             Self::LateConfigError(c) => write!(f, "late config error: {c}"),
@@ -189,8 +193,8 @@ pub enum DirectiveValidationError {
     /// named a lint name not in the registered catalog.
     UnknownLintName {
         directive: &'static str,
-        name: String,
-        span: Span,
+        name:      String,
+        span:      Span,
     },
 }
 
@@ -201,12 +205,14 @@ impl fmt::Display for DirectiveValidationError {
                 directive,
                 name,
                 span,
-            } => write!(
-                f,
-                "`{directive}({name})` at {}:{} names a lint not in the catalog",
-                span.file.display(),
-                span.start_line
-            ),
+            } => {
+                write!(
+                    f,
+                    "`{directive}({name})` at {}:{} names a lint not in the catalog",
+                    span.file.display(),
+                    span.start_line
+                )
+            },
         }
     }
 }
@@ -215,15 +221,15 @@ impl fmt::Display for DirectiveValidationError {
 #[derive(Debug)]
 pub enum ParseError {
     Io {
-        path: PathBuf,
+        path:   PathBuf,
         source: io::Error,
     },
     Syntax {
-        path: PathBuf,
+        path:   PathBuf,
         errors: Vec<(Span, String)>,
     },
     UnsupportedLanguage {
-        path: PathBuf,
+        path:      PathBuf,
         extension: String,
     },
     /// Preprocessor failed while resolving directives at scope time.
@@ -245,30 +251,47 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => {
+            Self::Io {
+                path,
+                source,
+            } => {
                 write!(f, "io error reading {}: {source}", path.display())
-            }
-            Self::Syntax { path, errors } => write!(
-                f,
-                "syntax errors in {} ({} error(s))",
-                path.display(),
-                errors.len()
-            ),
-            Self::UnsupportedLanguage { path, extension } => write!(
-                f,
-                "no language adapter for extension `{extension}` ({})",
-                path.display()
-            ),
-            Self::Preprocessor { message } => {
+            },
+            Self::Syntax {
+                path,
+                errors,
+            } => {
+                write!(
+                    f,
+                    "syntax errors in {} ({} error(s))",
+                    path.display(),
+                    errors.len()
+                )
+            },
+            Self::UnsupportedLanguage {
+                path,
+                extension,
+            } => {
+                write!(
+                    f,
+                    "no language adapter for extension `{extension}` ({})",
+                    path.display()
+                )
+            },
+            Self::Preprocessor {
+                message,
+            } => {
                 write!(f, "preprocessor error during scope: {message}")
-            }
-            Self::DirectiveValidation { errors } => {
+            },
+            Self::DirectiveValidation {
+                errors,
+            } => {
                 writeln!(f, "{} directive validation error(s):", errors.len())?;
                 for e in errors {
                     writeln!(f, "  - {e}")?;
                 }
                 Ok(())
-            }
+            },
             Self::NotYetImplemented(msg) => write!(f, "not yet implemented: {msg}"),
         }
     }
@@ -277,7 +300,10 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io { source, .. } => Some(source),
+            Self::Io {
+                source,
+                ..
+            } => Some(source),
             _ => None,
         }
     }
@@ -293,9 +319,14 @@ pub enum LoadError {
     /// One or more `ConfigError`s during TOML load.
     Config(Vec<ConfigError>),
     /// Catalog duplicate-name detection.
-    DuplicateCatalogName { name: String },
+    DuplicateCatalogName {
+        name: String,
+    },
     /// I/O error reading config files.
-    Io { context: String, source: io::Error },
+    Io {
+        context: String,
+        source:  io::Error,
+    },
 }
 
 impl fmt::Display for LoadError {
@@ -307,11 +338,16 @@ impl fmt::Display for LoadError {
                     writeln!(f, "  - {e}")?;
                 }
                 Ok(())
-            }
-            Self::DuplicateCatalogName { name } => {
+            },
+            Self::DuplicateCatalogName {
+                name,
+            } => {
                 write!(f, "duplicate catalog entry name: `{name}`")
-            }
-            Self::Io { context, source } => write!(f, "io during {context}: {source}"),
+            },
+            Self::Io {
+                context,
+                source,
+            } => write!(f, "io during {context}: {source}"),
         }
     }
 }
@@ -319,7 +355,10 @@ impl fmt::Display for LoadError {
 impl std::error::Error for LoadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io { source, .. } => Some(source),
+            Self::Io {
+                source,
+                ..
+            } => Some(source),
             _ => None,
         }
     }
@@ -334,7 +373,7 @@ impl std::error::Error for LoadError {
 pub enum DispatchError {
     LintErrored {
         lint_name: String,
-        source: LintError,
+        source:    LintError,
     },
     RuntimeRefused {
         reason: String,
@@ -344,12 +383,17 @@ pub enum DispatchError {
 impl fmt::Display for DispatchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LintErrored { lint_name, source } => {
+            Self::LintErrored {
+                lint_name,
+                source,
+            } => {
                 write!(f, "lint `{lint_name}` errored: {source}")
-            }
-            Self::RuntimeRefused { reason } => {
+            },
+            Self::RuntimeRefused {
+                reason,
+            } => {
                 write!(f, "engine runtime refused dispatch: {reason}")
-            }
+            },
         }
     }
 }
@@ -357,7 +401,10 @@ impl fmt::Display for DispatchError {
 impl std::error::Error for DispatchError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::LintErrored { source, .. } => Some(source),
+            Self::LintErrored {
+                source,
+                ..
+            } => Some(source),
             _ => None,
         }
     }
@@ -389,20 +436,23 @@ pub enum StartupWarning {
     /// naming every lint that declared it.
     PropNameConflict {
         prop_name: String,
-        lints: Vec<String>,
+        lints:     Vec<String>,
     },
 }
 
 impl fmt::Display for StartupWarning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PropNameConflict { prop_name, lints } => {
+            Self::PropNameConflict {
+                prop_name,
+                lints,
+            } => {
                 write!(
                     f,
                     "prop `{prop_name}` declared by multiple lints: {}",
                     lints.join(", ")
                 )
-            }
+            },
         }
     }
 }

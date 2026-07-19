@@ -17,7 +17,9 @@ impl TemplateEnv {
         let mut inner = Environment::new();
         inner.set_undefined_behavior(UndefinedBehavior::Strict);
         inner.set_auto_escape_callback(|_name| minijinja::AutoEscape::None);
-        Self { inner }
+        Self {
+            inner,
+        }
     }
 
     /// Register a template under the given name. The source is copied.
@@ -33,15 +35,13 @@ impl TemplateEnv {
             .inner
             .get_template(name)
             .map_err(|_| RenderError::TemplateNotFound(name.to_string()))?;
-        Ok(Template { inner: t })
+        Ok(Template {
+            inner: t,
+        })
     }
 
     /// Render a one-off template string without registering it.
-    pub fn render_str<C: Serialize>(
-        &self,
-        source: &str,
-        ctx: &C,
-    ) -> Result<String, RenderError> {
+    pub fn render_str<C: Serialize>(&self, source: &str, ctx: &C) -> Result<String, RenderError> {
         Ok(self.inner.render_str(source, ctx)?)
     }
 

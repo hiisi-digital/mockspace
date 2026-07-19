@@ -43,10 +43,16 @@ pub enum BranchNameError {
     BareAt,
     /// Branch name contained a forbidden character: ASCII control,
     /// space, or one of `~ ^ : ? * [ \`.
-    ForbiddenChar { position: usize, found: char },
+    ForbiddenChar {
+        position: usize,
+        found:    char,
+    },
     /// A `/`-separated component began with `.` or ended with
     /// `.lock`.
-    BadComponent { component: String, reason: &'static str },
+    BadComponent {
+        component: String,
+        reason:    &'static str,
+    },
 }
 
 impl fmt::Display for BranchNameError {
@@ -61,15 +67,23 @@ impl fmt::Display for BranchNameError {
             Self::DoubleSlash => f.write_str("branch name must not contain `//`"),
             Self::ReflogSequence => {
                 f.write_str("branch name must not contain `@{` (reflog syntax)")
-            }
+            },
             Self::BareAt => f.write_str("branch name must not be a bare `@`"),
-            Self::ForbiddenChar { position, found } => write!(
-                f,
-                "branch name contains forbidden character {found:?} at byte position {position}"
-            ),
-            Self::BadComponent { component, reason } => {
+            Self::ForbiddenChar {
+                position,
+                found,
+            } => {
+                write!(
+                    f,
+                    "branch name contains forbidden character {found:?} at byte position {position}"
+                )
+            },
+            Self::BadComponent {
+                component,
+                reason,
+            } => {
                 write!(f, "branch name component `{component}` rejected: {reason}")
-            }
+            },
         }
     }
 }
@@ -129,13 +143,13 @@ impl BranchName {
             if component.starts_with('.') {
                 return Err(BranchNameError::BadComponent {
                     component: component.to_owned(),
-                    reason: "component must not begin with `.`",
+                    reason:    "component must not begin with `.`",
                 });
             }
             if component.ends_with(".lock") {
                 return Err(BranchNameError::BadComponent {
                     component: component.to_owned(),
-                    reason: "component must not end with `.lock`",
+                    reason:    "component must not end with `.lock`",
                 });
             }
         }
@@ -177,8 +191,12 @@ mod tests {
     #[test]
     fn accepts_canonical_shapes() {
         for input in [
-            "main", "dev", "feat/mock-task-slice-a",
-            "fix/type-harness/branch-name", "release/0.1.0", "user/alice/work",
+            "main",
+            "dev",
+            "feat/mock-task-slice-a",
+            "fix/type-harness/branch-name",
+            "release/0.1.0",
+            "user/alice/work",
         ] {
             assert!(BranchName::new(input).is_ok(), "rejected: {input}");
         }
@@ -209,12 +227,18 @@ mod tests {
     #[test]
     fn rejects_double_dot_slash() {
         assert_eq!(BranchName::new("foo..bar"), Err(BranchNameError::DoubleDot));
-        assert_eq!(BranchName::new("foo//bar"), Err(BranchNameError::DoubleSlash));
+        assert_eq!(
+            BranchName::new("foo//bar"),
+            Err(BranchNameError::DoubleSlash)
+        );
     }
 
     #[test]
     fn rejects_reflog_sequence() {
-        assert_eq!(BranchName::new("foo@{1}"), Err(BranchNameError::ReflogSequence));
+        assert_eq!(
+            BranchName::new("foo@{1}"),
+            Err(BranchNameError::ReflogSequence)
+        );
     }
 
     #[test]
@@ -222,7 +246,10 @@ mod tests {
         for ch in ['~', '^', ':', '?', '*', '[', '\\', ' '] {
             let input = format!("foo{ch}bar");
             assert!(
-                matches!(BranchName::new(&input), Err(BranchNameError::ForbiddenChar { .. })),
+                matches!(
+                    BranchName::new(&input),
+                    Err(BranchNameError::ForbiddenChar { .. })
+                ),
                 "expected ForbiddenChar for {input:?}"
             );
         }

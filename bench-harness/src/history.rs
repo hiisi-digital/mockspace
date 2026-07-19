@@ -17,19 +17,18 @@ pub const DEFAULT_HISTORY_DIR: &str = ".bench_history";
 /// One historical data point.
 #[derive(Clone, Debug)]
 pub struct HistoryEntry {
-    pub timestamp: u64,
+    pub timestamp:  u64,
     pub git_commit: String,
-    pub benchmark: String,
-    pub variant: String,
-    pub n: usize,
-    pub mode: String,
-    pub median_ns: f64,
-    pub ci_lo_ns: f64,
-    pub ci_hi_ns: f64,
+    pub benchmark:  String,
+    pub variant:    String,
+    pub n:          usize,
+    pub mode:       String,
+    pub median_ns:  f64,
+    pub ci_lo_ns:   f64,
+    pub ci_hi_ns:   f64,
 }
 
-const SCHEMA_HEADER: &str =
-    "# schema_v1\ttimestamp\tgit_commit\tbenchmark\tvariant\tn\tmode\tmedian_ns\tci_lo_ns\tci_hi_ns";
+const SCHEMA_HEADER: &str = "# schema_v1\ttimestamp\tgit_commit\tbenchmark\tvariant\tn\tmode\tmedian_ns\tci_lo_ns\tci_hi_ns";
 
 /// Append entries to the history log under
 /// [`DEFAULT_HISTORY_DIR`]`/<benchmark>.tsv` relative to cwd. Writes
@@ -40,16 +39,13 @@ pub fn append(benchmark: &str, entries: &[HistoryEntry]) -> Result<(), BenchErro
 }
 
 /// Append entries to a history log rooted at `root`.
-pub fn append_in(
-    root: &Path,
-    benchmark: &str,
-    entries: &[HistoryEntry],
-) -> Result<(), BenchError> {
-    std::fs::create_dir_all(root)
-        .map_err(|e| BenchError::io("creating history dir", e))?;
+pub fn append_in(root: &Path, benchmark: &str, entries: &[HistoryEntry]) -> Result<(), BenchError> {
+    std::fs::create_dir_all(root).map_err(|e| BenchError::io("creating history dir", e))?;
     let path = root.join(format!("{}.tsv", benchmark));
 
-    let is_new = std::fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(true);
+    let is_new = std::fs::metadata(&path)
+        .map(|m| m.len() == 0)
+        .unwrap_or(true);
 
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -66,8 +62,15 @@ pub fn append_in(
         writeln!(
             file,
             "{}\t{}\t{}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}",
-            e.timestamp, e.git_commit, e.benchmark, e.variant,
-            e.n, e.mode, e.median_ns, e.ci_lo_ns, e.ci_hi_ns
+            e.timestamp,
+            e.git_commit,
+            e.benchmark,
+            e.variant,
+            e.n,
+            e.mode,
+            e.median_ns,
+            e.ci_lo_ns,
+            e.ci_hi_ns
         )
         .map_err(|e| BenchError::io("writing history entry", e))?;
     }
@@ -98,15 +101,15 @@ pub fn load_in(root: &Path, benchmark: &str) -> Vec<HistoryEntry> {
         let p: Vec<&str> = line.split('\t').collect();
         if p.len() >= 9 {
             entries.push(HistoryEntry {
-                timestamp: p[0].parse().unwrap_or(0),
+                timestamp:  p[0].parse().unwrap_or(0),
                 git_commit: p[1].to_string(),
-                benchmark: p[2].to_string(),
-                variant: p[3].to_string(),
-                n: p[4].parse().unwrap_or(0),
-                mode: p[5].to_string(),
-                median_ns: p[6].parse().unwrap_or(0.0),
-                ci_lo_ns: p[7].parse().unwrap_or(0.0),
-                ci_hi_ns: p[8].parse().unwrap_or(0.0),
+                benchmark:  p[2].to_string(),
+                variant:    p[3].to_string(),
+                n:          p[4].parse().unwrap_or(0),
+                mode:       p[5].to_string(),
+                median_ns:  p[6].parse().unwrap_or(0.0),
+                ci_lo_ns:   p[7].parse().unwrap_or(0.0),
+                ci_hi_ns:   p[8].parse().unwrap_or(0.0),
             });
         }
     }
@@ -155,7 +158,7 @@ pub fn detect_regressions_window(
         if k == 0 {
             continue;
         }
-        let window = &prev_entries[prev_entries.len() - k..];
+        let window = &prev_entries[prev_entries.len() - k ..];
 
         let mut hist_medians: Vec<f64> = window.iter().map(|h| h.median_ns).collect();
         hist_medians.sort_by(|a, b| a.total_cmp(b));

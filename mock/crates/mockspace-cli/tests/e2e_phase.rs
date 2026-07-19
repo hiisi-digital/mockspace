@@ -13,15 +13,25 @@
 //! committer signature carries a wall-clock timestamp) and gets
 //! scrubbed before comparison.
 
-use assert_cmd::Command;
-use mockspace_rs::{
-    AcceptanceBlock, ChangeBlock, Manifest, ManifestSide, RefPath, RepoHandle, RoundRefTree,
-    ScopeBlock, Slug, VerifierCheck, VerifierKind,
-};
-use mockspace_test_fixtures::MockspaceFixture;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command as StdCommand;
+
+use assert_cmd::Command;
+use mockspace_rs::{
+    AcceptanceBlock,
+    ChangeBlock,
+    Manifest,
+    ManifestSide,
+    RefPath,
+    RepoHandle,
+    RoundRefTree,
+    ScopeBlock,
+    Slug,
+    VerifierCheck,
+    VerifierKind,
+};
+use mockspace_test_fixtures::MockspaceFixture;
 
 mod common;
 use common::{assert_matches_golden, scrub_oid_lines};
@@ -70,7 +80,6 @@ fn run_phase(fixture: &MockspaceFixture, args: &[&str]) -> String {
     );
     String::from_utf8(output.stdout).expect("phase stdout is UTF-8")
 }
-
 
 #[test]
 fn plan_verb_advances_topic_to_plan_doc() {
@@ -282,7 +291,16 @@ fn init_source_tip(fixture: &MockspaceFixture, filename: &str, content: &str) ->
         .expect("git add runs");
     assert!(add.success(), "git add failed");
     let commit_status = StdCommand::new("git")
-        .args(["-c", "user.email=t@t.local", "-c", "user.name=tester", "commit", "--quiet", "-m", "source tip"])
+        .args([
+            "-c",
+            "user.email=t@t.local",
+            "-c",
+            "user.name=tester",
+            "commit",
+            "--quiet",
+            "-m",
+            "source tip",
+        ])
         .current_dir(fixture.path())
         .status()
         .expect("git commit runs");
@@ -293,7 +311,10 @@ fn init_source_tip(fixture: &MockspaceFixture, filename: &str, content: &str) ->
         .output()
         .expect("git rev-parse runs");
     assert!(out.status.success(), "git rev-parse failed");
-    String::from_utf8(out.stdout).expect("rev-parse stdout is UTF-8").trim().to_owned()
+    String::from_utf8(out.stdout)
+        .expect("rev-parse stdout is UTF-8")
+        .trim()
+        .to_owned()
 }
 
 /// Construct a valid minimal doc-side manifest for `slug` and serialise
@@ -302,22 +323,22 @@ fn init_source_tip(fixture: &MockspaceFixture, filename: &str, content: &str) ->
 /// another crate's `#[cfg(test)]` module.
 fn doc_manifest_toml(slug: &str) -> String {
     Manifest {
-        mockspace_version: "1.0".to_owned(),
-        round_slug: slug.to_owned(),
-        phase: ManifestSide::Doc,
-        scope: ScopeBlock {
-            description: "test apply happy path".to_owned(),
+        mockspace_version:     "1.0".to_owned(),
+        round_slug:            slug.to_owned(),
+        phase:                 ManifestSide::Doc,
+        scope:                 ScopeBlock {
+            description:    "test apply happy path".to_owned(),
             in_scope_tasks: vec![],
-            out_of_scope: vec![],
+            out_of_scope:   vec![],
         },
-        acceptance: AcceptanceBlock {
+        acceptance:            AcceptanceBlock {
             criteria: "passes".to_owned(),
         },
-        changes: vec![ChangeBlock {
-            task: None,
-            file: PathBuf::from("README.md"),
+        changes:               vec![ChangeBlock {
+            task:        None,
+            file:        PathBuf::from("README.md"),
             description: "doc change".to_owned(),
-            verify: VerifierCheck::Kind(VerifierKind::PathExists {
+            verify:      VerifierCheck::Kind(VerifierKind::PathExists {
                 file: PathBuf::from("README.md"),
             }),
         }],
@@ -344,7 +365,12 @@ fn apply_verb_seals_doc_manifest_and_advances_to_apply_doc() {
     );
     let tree = RoundRefTree::from_entries(entries);
     handle
-        .write_round_ref(&RefPath::round_mock(&slug), &tree, "seed plan-doc round", None)
+        .write_round_ref(
+            &RefPath::round_mock(&slug),
+            &tree,
+            "seed plan-doc round",
+            None,
+        )
         .expect("seed round ref");
 
     // Act: mock phase apply --source-tip <oid>.
@@ -387,7 +413,6 @@ fn apply_verb_seals_doc_manifest_and_advances_to_apply_doc() {
         "expected locked doc manifest at manifest.doc.locked.toml"
     );
 }
-
 
 #[test]
 fn finish_verb_advances_apply_doc_to_plan_src() {
@@ -510,4 +535,3 @@ fn replan_verb_deprecates_locked_doc_manifest_and_returns_to_plan_doc() {
         "deprecated doc manifest must be present at iteration 1 slot",
     );
 }
-

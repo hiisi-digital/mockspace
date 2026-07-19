@@ -40,7 +40,7 @@ pub fn discover_design_rounds(root: &Path) -> DesignRoundsView {
                 root: rounds_root,
                 rounds,
             };
-        }
+        },
     };
 
     for entry in read.flatten() {
@@ -78,11 +78,7 @@ fn inspect_round(dir: &Path, timestamp: String, closed_from_name: bool) -> Desig
     let Ok(read) = std::fs::read_dir(dir) else {
         return DesignRound {
             timestamp,
-            state: if closed_from_name {
-                RoundState::Closed
-            } else {
-                RoundState::Topic
-            },
+            state: if closed_from_name { RoundState::Closed } else { RoundState::Topic },
             doc_cl: None,
             src_cl: None,
             locked: false,
@@ -185,9 +181,10 @@ fn inspect_round(dir: &Path, timestamp: String, closed_from_name: bool) -> Desig
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
     use std::io::Write;
+
+    use super::*;
 
     fn write(p: &Path, contents: &str) {
         if let Some(parent) = p.parent() {
@@ -254,10 +251,11 @@ mod tests {
         fs::create_dir_all(&r3).unwrap();
         let view = discover_design_rounds(tmp.path());
         let timestamps: Vec<_> = view.rounds.iter().map(|r| r.timestamp.clone()).collect();
-        assert_eq!(
-            timestamps,
-            vec!["202605211200", "202605211300", "202605211400"]
-        );
+        assert_eq!(timestamps, vec![
+            "202605211200",
+            "202605211300",
+            "202605211400"
+        ]);
     }
 
     #[test]

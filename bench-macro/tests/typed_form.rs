@@ -4,7 +4,7 @@
 //! in the variant crate. The macro reads input/output types from the
 //! function signature directly.
 
-use mockspace_bench_core::{timed, FfiBenchCall};
+use mockspace_bench_core::{FfiBenchCall, timed};
 use mockspace_bench_macro::bench_variant;
 
 #[bench_variant("identity-typed", sizes = [8, 16, 32])]

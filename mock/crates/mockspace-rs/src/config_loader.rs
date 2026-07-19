@@ -18,13 +18,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use mockspace_config::{PresetFile, PresetResolveError, PresetSource, resolve_preset_chain};
 use serde::Deserialize;
 
 use crate::catalog::CatalogEntry;
 use crate::errors::{ConfigError, ConfigErrorKind, LoadError, StartupWarning};
 use crate::lint::{Lint, LintMode};
-use crate::preset_source::{parse_extends, FirstPartyPresetSource};
-use mockspace_config::{resolve_preset_chain, PresetFile, PresetResolveError, PresetSource};
+use crate::preset_source::{FirstPartyPresetSource, parse_extends};
 
 /// Prop names with this prefix are reserved as the first-party namespace.
 /// Collisions among multiple lints declaring the same `mockspace::`-prefixed
@@ -50,7 +50,7 @@ pub struct OverrideCascade {
     pub scope_intersection: Vec<String>,
     /// `--lint <name>`: limits the active set to the named lint(s).
     /// `None` means "no filter; run every loaded lint".
-    pub lint_filter: Option<Vec<String>>,
+    pub lint_filter:        Option<Vec<String>>,
     /// `--severity-override <name>=<sev>`: bumps the named lint's
     /// effective severity (engine applies at the active gate).
     pub severity_overrides: HashMap<String, mockspace_core::lint::Severity>,
@@ -65,7 +65,7 @@ pub struct OverrideCascade {
 #[serde(rename_all = "snake_case")]
 pub struct LintsTomlFile {
     #[serde(default)]
-    pub lints: HashMap<String, toml::Table>,
+    pub lints:    HashMap<String, toml::Table>,
     /// Workspace-level defaults that apply to every lint unless its own
     /// block overrides them.
     #[serde(default)]
@@ -82,8 +82,8 @@ pub struct LintsTomlFile {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OnlyStaged {
     pub commit: bool,
-    pub build: bool,
-    pub push: bool,
+    pub build:  bool,
+    pub push:   bool,
 }
 
 impl OnlyStaged {
@@ -99,15 +99,15 @@ impl OnlyStaged {
 /// One instantiated lint plus the catalog metadata the engine needs at
 /// dispatch time.
 pub struct InstantiatedLint {
-    pub lint: Box<dyn Lint>,
-    pub mode: LintMode,
-    pub staging_aware: bool,
-    pub editor_skip: bool,
-    pub only_staged: OnlyStaged,
+    pub lint:              Box<dyn Lint>,
+    pub mode:              LintMode,
+    pub staging_aware:     bool,
+    pub editor_skip:       bool,
+    pub only_staged:       OnlyStaged,
     /// Pre-compiled scope filter (path globs, crate patterns, language
     /// whitelist, proc-macro exempt, category exempt). Consulted per
     /// document at dispatch.
-    pub scope_filter: crate::scope_filter::ScopeFilter,
+    pub scope_filter:      crate::scope_filter::ScopeFilter,
     /// Severity resolved through the cascade (preset chain plus user
     /// TOML plus CLI overrides, walked over the lint's catalog default).
     /// `None` means no overlay touched the severity at any cascade
@@ -124,8 +124,8 @@ pub struct InstantiatedLint {
 /// load, warnings surface non-fatal observations, entries are the
 /// dispatch set.
 pub struct LintsConfig {
-    pub entries: Vec<InstantiatedLint>,
-    pub config_errors: Vec<ConfigError>,
+    pub entries:          Vec<InstantiatedLint>,
+    pub config_errors:    Vec<ConfigError>,
     /// Non-fatal observations made at engine assembly. Populated after
     /// `entries` is built; see [`detect_prop_name_conflicts`].
     pub startup_warnings: Vec<StartupWarning>,
@@ -144,8 +144,8 @@ impl std::fmt::Debug for LintsConfig {
 impl LintsConfig {
     pub fn empty() -> Self {
         Self {
-            entries: Vec::new(),
-            config_errors: Vec::new(),
+            entries:          Vec::new(),
+            config_errors:    Vec::new(),
             startup_warnings: Vec::new(),
         }
     }
@@ -301,7 +301,7 @@ pub fn detect_prop_name_conflicts(entries: &[InstantiatedLint]) -> Vec<StartupWa
         }
         warnings.push(StartupWarning::PropNameConflict {
             prop_name: prop_name.to_string(),
-            lints: lints.into_iter().map(String::from).collect(),
+            lints:     lints.into_iter().map(String::from).collect(),
         });
     }
     warnings
@@ -332,10 +332,10 @@ fn extract_only_staged(
         };
         if *only_staged && !staging_aware {
             return Err(ConfigError {
-                lint_name: lint_name.to_string(),
-                field_path: format!("gate.{gate_name}.only_staged"),
-                kind: crate::errors::ConfigErrorKind::ContradictsCatalog,
-                message: format!(
+                lint_name:       lint_name.to_string(),
+                field_path:      format!("gate.{gate_name}.only_staged"),
+                kind:            crate::errors::ConfigErrorKind::ContradictsCatalog,
+                message:         format!(
                     "lint `{lint_name}` is not staging_aware; `only_staged = true` is invalid here"
                 ),
                 source_location: None,
@@ -347,13 +347,15 @@ fn extract_only_staged(
             "push" => out.push = *only_staged,
             other => {
                 return Err(ConfigError {
-                    lint_name: lint_name.to_string(),
-                    field_path: format!("gate.{other}"),
-                    kind: crate::errors::ConfigErrorKind::UnknownField,
-                    message: format!("unknown gate `{other}` (expected commit / build / push)"),
+                    lint_name:       lint_name.to_string(),
+                    field_path:      format!("gate.{other}"),
+                    kind:            crate::errors::ConfigErrorKind::UnknownField,
+                    message:         format!(
+                        "unknown gate `{other}` (expected commit / build / push)"
+                    ),
                     source_location: None,
                 });
-            }
+            },
         }
     }
     Ok(out)
@@ -376,16 +378,16 @@ fn extract_only_staged(
 /// covers only the borrowed context (user_block, workspace_defaults,
 /// overrides, preset_source).
 pub(crate) struct CascadeInputs<'a> {
-    pub lint_name: &'a str,
-    pub layer1_config: toml::Table,
-    pub layer1_scope: toml::Table,
-    pub layer1_severity: mockspace_core::lint::GateSeverity,
+    pub lint_name:          &'a str,
+    pub layer1_config:      toml::Table,
+    pub layer1_scope:       toml::Table,
+    pub layer1_severity:    mockspace_core::lint::GateSeverity,
     /// Optional per-lint user TOML block (`[lints.<name>]`). Carries
     /// `extends`, `config`, `scope`, `gate`.
-    pub user_block: Option<&'a toml::Table>,
+    pub user_block:         Option<&'a toml::Table>,
     pub workspace_defaults: &'a toml::Table,
-    pub overrides: &'a OverrideCascade,
-    pub preset_source: &'a dyn PresetSource,
+    pub overrides:          &'a OverrideCascade,
+    pub preset_source:      &'a dyn PresetSource,
 }
 
 /// Outputs of the cascade-math pass. The merged tables feed the
@@ -394,9 +396,9 @@ pub(crate) struct CascadeInputs<'a> {
 /// mismatch check; `resolved_severity` is the final
 /// post-cascade severity or `None` when no layer touched it.
 pub(crate) struct CascadeOutput {
-    pub merged_config: toml::Table,
-    pub merged_scope: toml::Table,
-    pub resolved_chain: Vec<PresetFile>,
+    pub merged_config:     toml::Table,
+    pub merged_scope:      toml::Table,
+    pub resolved_chain:    Vec<PresetFile>,
     pub resolved_severity: Option<mockspace_core::lint::GateSeverity>,
 }
 
@@ -418,9 +420,7 @@ pub(crate) struct CascadeOutput {
 /// resolved preset chain plus `user_block.gate.*.severity` plus
 /// `overrides.severity_overrides`. Unset axes inherit from the
 /// deeper layer.
-pub(crate) fn compute_cascade(
-    inputs: CascadeInputs<'_>,
-) -> Result<CascadeOutput, ConfigError> {
+pub(crate) fn compute_cascade(inputs: CascadeInputs<'_>) -> Result<CascadeOutput, ConfigError> {
     let CascadeInputs {
         lint_name,
         mut layer1_config,
@@ -538,17 +538,17 @@ fn synthesise_from_preset(
         Ok(Some(r)) => r,
         Ok(None) => {
             return Err(ConfigError {
-                lint_name: lint_name.to_string(),
-                field_path: "extends".to_string(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!(
+                lint_name:       lint_name.to_string(),
+                field_path:      "extends".to_string(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!(
                     "lint `{lint_name}` is not in the registered catalog; \
                      add `extends = \"<host>::<preset-name>\"` to reference \
                      a first-party or stack-lints preset"
                 ),
                 source_location: None,
             });
-        }
+        },
         Err(e) => return Err(preset_error_to_config_error(lint_name, "extends", e)),
     };
 
@@ -558,21 +558,23 @@ fn synthesise_from_preset(
     // The chain's last entry is the consumer's direct reference (the
     // "anchor"). Its primitive defines the synthesised lint's shape;
     // every other preset in the chain MUST agree on that primitive.
-    let anchor = chain.last().ok_or_else(|| ConfigError {
-        lint_name: lint_name.to_string(),
-        field_path: "extends".to_string(),
-        kind: ConfigErrorKind::InvalidValue,
-        message: "preset chain resolved to an empty list".to_string(),
-        source_location: None,
+    let anchor = chain.last().ok_or_else(|| {
+        ConfigError {
+            lint_name:       lint_name.to_string(),
+            field_path:      "extends".to_string(),
+            kind:            ConfigErrorKind::InvalidValue,
+            message:         "preset chain resolved to an empty list".to_string(),
+            source_location: None,
+        }
     })?;
 
     for preset in &chain {
         if preset.primitive != anchor.primitive {
             return Err(ConfigError {
-                lint_name: lint_name.to_string(),
-                field_path: format!("extends.chain.{}", preset.name),
-                kind: ConfigErrorKind::ContradictsCatalog,
-                message: format!(
+                lint_name:       lint_name.to_string(),
+                field_path:      format!("extends.chain.{}", preset.name),
+                kind:            ConfigErrorKind::ContradictsCatalog,
+                message:         format!(
                     "preset chain spans primitives: `{}` (anchor) vs `{}` (in chain via `{}`); \
                      one chain represents one lint's policy",
                     anchor.primitive, preset.primitive, preset.name
@@ -605,9 +607,8 @@ fn synthesise_from_preset(
     // `compute_cascade`'s internal walk.
     let layer1_config = toml::Table::new();
     let layer1_scope = toml::Table::new();
-    let layer1_severity = mockspace_core::lint::GateSeverity::uniform(
-        mockspace_core::lint::Severity::Warn,
-    );
+    let layer1_severity =
+        mockspace_core::lint::GateSeverity::uniform(mockspace_core::lint::Severity::Warn);
 
     let CascadeOutput {
         merged_config,
@@ -629,12 +630,14 @@ fn synthesise_from_preset(
 
     let scope_config: crate::config_types::ScopeConfig = toml::Value::Table(merged_scope.clone())
         .try_into()
-        .map_err(|e: toml::de::Error| ConfigError {
-            lint_name: lint_name.to_string(),
-            field_path: "scope".to_string(),
-            kind: ConfigErrorKind::InvalidValue,
-            message: format!("scope config parse failed: {e}"),
-            source_location: None,
+        .map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       lint_name.to_string(),
+                field_path:      "scope".to_string(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("scope config parse failed: {e}"),
+                source_location: None,
+            }
         })?;
     let scope_filter = crate::scope_filter::ScopeFilter::from_config(lint_name, &scope_config)?;
 
@@ -680,27 +683,24 @@ fn instantiate_with_cascade(
 ) -> Result<InstantiatedLint, ConfigError> {
     // Parse catalog-default tables from their `&'static str` form.
     let layer1_config: toml::Table =
-        entry
-            .default_config
-            .parse()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: entry.name.to_string(),
-                field_path: "default_config".to_string(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("default_config did not parse: {e}"),
+        entry.default_config.parse().map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       entry.name.to_string(),
+                field_path:      "default_config".to_string(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("default_config did not parse: {e}"),
                 source_location: None,
-            })?;
-    let layer1_scope: toml::Table =
-        entry
-            .default_scope
-            .parse()
-            .map_err(|e: toml::de::Error| ConfigError {
-                lint_name: entry.name.to_string(),
-                field_path: "default_scope".to_string(),
-                kind: ConfigErrorKind::InvalidValue,
-                message: format!("default_scope did not parse: {e}"),
-                source_location: None,
-            })?;
+            }
+        })?;
+    let layer1_scope: toml::Table = entry.default_scope.parse().map_err(|e: toml::de::Error| {
+        ConfigError {
+            lint_name:       entry.name.to_string(),
+            field_path:      "default_scope".to_string(),
+            kind:            ConfigErrorKind::InvalidValue,
+            message:         format!("default_scope did not parse: {e}"),
+            source_location: None,
+        }
+    })?;
 
     let user_block = user_lints.get(entry.name);
 
@@ -718,12 +718,12 @@ fn instantiate_with_cascade(
                                 && !declared.contains(kind_key.as_str())
                             {
                                 return Err(ConfigError {
-                                    lint_name: entry.name.to_string(),
-                                    field_path: format!(
+                                    lint_name:       entry.name.to_string(),
+                                    field_path:      format!(
                                         "gate.{gate_name}.finding_kinds.{kind_key}"
                                     ),
-                                    kind: ConfigErrorKind::UnknownFindingKind,
-                                    message: format!(
+                                    kind:            ConfigErrorKind::UnknownFindingKind,
+                                    message:         format!(
                                         "finding kind `{kind_key}` is not declared in catalog entry"
                                     ),
                                     source_location: None,
@@ -762,12 +762,14 @@ fn instantiate_with_cascade(
     // Compile per-document scope filter from the merged_scope table.
     let scope_config: crate::config_types::ScopeConfig = toml::Value::Table(merged_scope.clone())
         .try_into()
-        .map_err(|e: toml::de::Error| ConfigError {
-            lint_name: entry.name.to_string(),
-            field_path: "scope".to_string(),
-            kind: ConfigErrorKind::InvalidValue,
-            message: format!("scope config parse failed: {e}"),
-            source_location: None,
+        .map_err(|e: toml::de::Error| {
+            ConfigError {
+                lint_name:       entry.name.to_string(),
+                field_path:      "scope".to_string(),
+                kind:            ConfigErrorKind::InvalidValue,
+                message:         format!("scope config parse failed: {e}"),
+                source_location: None,
+            }
         })?;
     let scope_filter = crate::scope_filter::ScopeFilter::from_config(entry.name, &scope_config)?;
 
@@ -805,7 +807,7 @@ fn overlay(dst: &mut toml::Table, src: &toml::Table) {
             (Some(toml::Value::Table(d)), toml::Value::Table(s)) => overlay(d, s),
             _ => {
                 dst.insert(k.clone(), v.clone());
-            }
+            },
         }
     }
 }
@@ -819,9 +821,8 @@ fn overlay(dst: &mut toml::Table, src: &toml::Table) {
 /// to contain an `add` field are not misidentified.
 fn is_list_merge_op(t: &toml::Table) -> bool {
     !t.is_empty()
-        && t.iter().all(|(k, v)| {
-            (k == "add" || k == "remove") && matches!(v, toml::Value::Array(_))
-        })
+        && t.iter()
+            .all(|(k, v)| (k == "add" || k == "remove") && matches!(v, toml::Value::Array(_)))
 }
 
 /// Apply a list-merge op rooted at `key` in `dst`. If `dst[key]` is an
@@ -842,13 +843,13 @@ fn apply_list_merge_into(dst: &mut toml::Table, key: &str, op: &toml::Table) {
             } else {
                 dst.remove(key);
             }
-        }
+        },
         None => {
             if let Some(toml::Value::Array(add)) = op.get("add") {
                 dst.insert(key.to_string(), toml::Value::Array(add.clone()));
             }
             // `remove` against a missing key is a no-op.
-        }
+        },
     }
 }
 
@@ -882,8 +883,8 @@ fn apply_list_merge(dst: &mut Vec<toml::Value>, op: &toml::Table) {
 /// to lint authors through `default_severity` but are not selectable
 /// through the cascade overlay surface.
 fn convert_severity(s: mockspace_config::Severity) -> mockspace_core::lint::Severity {
-    use mockspace_core::lint::Severity as Core;
     use mockspace_config::Severity as Wire;
+    use mockspace_core::lint::Severity as Core;
     match s {
         Wire::Error => Core::Error,
         Wire::Warn => Core::Warn,
@@ -963,8 +964,8 @@ fn resolve_severity_cascade(
     if let Some(block) = user_block {
         let user_gs = mockspace_config::GateSeverities {
             commit: block.get("commit").and_then(parse_wire_severity),
-            build: block.get("build").and_then(parse_wire_severity),
-            push: block.get("push").and_then(parse_wire_severity),
+            build:  block.get("build").and_then(parse_wire_severity),
+            push:   block.get("push").and_then(parse_wire_severity),
         };
         if user_gs.commit.is_some() || user_gs.build.is_some() || user_gs.push.is_some() {
             touched = true;
@@ -1010,10 +1011,10 @@ fn preset_error_to_config_error(
     err: PresetResolveError,
 ) -> ConfigError {
     ConfigError {
-        lint_name: lint_name.to_string(),
-        field_path: field_path.to_string(),
-        kind: ConfigErrorKind::InvalidValue,
-        message: format!("{err}"),
+        lint_name:       lint_name.to_string(),
+        field_path:      field_path.to_string(),
+        kind:            ConfigErrorKind::InvalidValue,
+        message:         format!("{err}"),
         source_location: None,
     }
 }
@@ -1039,13 +1040,19 @@ fn apply_preset_chain(
 ) {
     for preset in chain {
         if !preset.config.is_empty() {
-            let overlay_table: toml::Table =
-                preset.config.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let overlay_table: toml::Table = preset
+                .config
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             overlay(merged_config, &overlay_table);
         }
         if !preset.scope.is_empty() {
-            let overlay_table: toml::Table =
-                preset.scope.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let overlay_table: toml::Table = preset
+                .scope
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             overlay(merged_scope, &overlay_table);
         }
     }
@@ -1074,16 +1081,18 @@ pub fn find_and_read_lints_toml(workspace_root: &Path) -> Result<LintsTomlFile, 
     ];
     for path in &candidates {
         if path.exists() {
-            let contents = std::fs::read_to_string(path).map_err(|e| LoadError::Io {
-                context: format!("reading {}", path.display()),
-                source: e,
+            let contents = std::fs::read_to_string(path).map_err(|e| {
+                LoadError::Io {
+                    context: format!("reading {}", path.display()),
+                    source:  e,
+                }
             })?;
             let parsed: LintsTomlFile = toml::from_str(&contents).map_err(|e| {
                 LoadError::Config(vec![ConfigError {
-                    lint_name: String::new(),
-                    field_path: path.display().to_string(),
-                    kind: ConfigErrorKind::InvalidValue,
-                    message: format!("parse {}: {e}", path.display()),
+                    lint_name:       String::new(),
+                    field_path:      path.display().to_string(),
+                    kind:            ConfigErrorKind::InvalidValue,
+                    message:         format!("parse {}: {e}", path.display()),
                     source_location: None,
                 }])
             })?;
@@ -1177,8 +1186,7 @@ mod tests {
              replacements = []\n"
             .parse()
             .unwrap();
-        let parsed: AstTypePositionConfig =
-            merged.try_into().expect("deserialize must succeed");
+        let parsed: AstTypePositionConfig = merged.try_into().expect("deserialize must succeed");
         assert_eq!(
             parsed.visibility,
             Visibility::Any,
@@ -1192,7 +1200,11 @@ mod tests {
     fn arr_strs(t: &toml::Table, key: &str) -> Vec<String> {
         t.get(key)
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -1216,10 +1228,9 @@ mod tests {
     fn list_merge_remove_runs_before_add() {
         // Same item removed and added: net add (remove first, then add).
         let mut dst: toml::Table = r#"forbidden = ["alloc"]"#.parse().unwrap();
-        let src: toml::Table =
-            r#"forbidden = { remove = ["alloc"], add = ["alloc", "std"] }"#
-                .parse()
-                .unwrap();
+        let src: toml::Table = r#"forbidden = { remove = ["alloc"], add = ["alloc", "std"] }"#
+            .parse()
+            .unwrap();
         overlay(&mut dst, &src);
         assert_eq!(arr_strs(&dst, "forbidden"), vec!["alloc", "std"]);
     }
@@ -1255,14 +1266,15 @@ mod tests {
         // table over dst[forbidden] (array-to-table type mismatch hits
         // the same `_` arm a scalar replace would).
         let mut dst: toml::Table = r#"forbidden = ["alloc"]"#.parse().unwrap();
-        let src: toml::Table = r#"forbidden = { add = ["dyn"], extra = "x" }"#
-            .parse()
-            .unwrap();
+        let src: toml::Table = r#"forbidden = { add = ["dyn"], extra = "x" }"#.parse().unwrap();
         overlay(&mut dst, &src);
         // dst[forbidden] becomes a clone of the src table; the list-merge
         // op was rejected so the table replaces the array verbatim.
         let result = dst.get("forbidden").unwrap();
-        assert!(result.is_table(), "expected table after fall-through, got {result:?}");
+        assert!(
+            result.is_table(),
+            "expected table after fall-through, got {result:?}"
+        );
     }
 
     #[test]
@@ -1309,16 +1321,24 @@ mod tests {
 
     use mockspace_config::{GateSeverities, Severity as WireSeverity};
 
-    fn preset_with_severity(commit: Option<WireSeverity>, build: Option<WireSeverity>, push: Option<WireSeverity>) -> PresetFile {
+    fn preset_with_severity(
+        commit: Option<WireSeverity>,
+        build: Option<WireSeverity>,
+        push: Option<WireSeverity>,
+    ) -> PresetFile {
         PresetFile {
             schema_version: "1.0".to_string(),
-            name: "test".to_string(),
-            primitive: "token-scan".to_string(),
-            description: None,
-            extends: None,
-            config: Default::default(),
-            severity: GateSeverities { commit, build, push },
-            scope: Default::default(),
+            name:           "test".to_string(),
+            primitive:      "token-scan".to_string(),
+            description:    None,
+            extends:        None,
+            config:         Default::default(),
+            severity:       GateSeverities {
+                commit,
+                build,
+                push,
+            },
+            scope:          Default::default(),
         }
     }
 
@@ -1370,15 +1390,23 @@ mod tests {
     fn severity_cascade_user_toml_wins_over_preset_chain() {
         let chain = vec![preset_with_severity(Some(WireSeverity::Warn), None, None)];
         let mut user_block = toml::Table::new();
-        user_block.insert("commit".to_string(), toml::Value::String("error".to_string()));
+        user_block.insert(
+            "commit".to_string(),
+            toml::Value::String("error".to_string()),
+        );
         let cli = HashMap::new();
-        let resolved = resolve_severity_cascade(DEFAULT_WARN, &chain, Some(&user_block), &cli, "x").unwrap();
+        let resolved =
+            resolve_severity_cascade(DEFAULT_WARN, &chain, Some(&user_block), &cli, "x").unwrap();
         assert_eq!(resolved.commit, mockspace_core::lint::Severity::Error);
     }
 
     #[test]
     fn severity_cascade_cli_override_wins_and_is_uniform() {
-        let chain = vec![preset_with_severity(Some(WireSeverity::Warn), Some(WireSeverity::Info), Some(WireSeverity::Info))];
+        let chain = vec![preset_with_severity(
+            Some(WireSeverity::Warn),
+            Some(WireSeverity::Info),
+            Some(WireSeverity::Info),
+        )];
         let mut cli = HashMap::new();
         cli.insert("x".to_string(), mockspace_core::lint::Severity::Error);
         let resolved = resolve_severity_cascade(DEFAULT_WARN, &chain, None, &cli, "x").unwrap();
@@ -1399,7 +1427,8 @@ mod tests {
         let mut user_block = toml::Table::new();
         user_block.insert("build".to_string(), toml::Value::String("info".to_string()));
         let cli = HashMap::new();
-        let resolved = resolve_severity_cascade(DEFAULT_WARN, &chain, Some(&user_block), &cli, "x").unwrap();
+        let resolved =
+            resolve_severity_cascade(DEFAULT_WARN, &chain, Some(&user_block), &cli, "x").unwrap();
         assert_eq!(resolved.commit, mockspace_core::lint::Severity::Error);
         assert_eq!(resolved.build, mockspace_core::lint::Severity::Info);
         assert_eq!(resolved.push, mockspace_core::lint::Severity::Warn);
@@ -1412,9 +1441,14 @@ mod tests {
         // cascade returns None if no other layer set anything.
         let chain: Vec<PresetFile> = Vec::new();
         let mut user_block = toml::Table::new();
-        user_block.insert("commit".to_string(), toml::Value::String("BANANA".to_string()));
+        user_block.insert(
+            "commit".to_string(),
+            toml::Value::String("BANANA".to_string()),
+        );
         let cli = HashMap::new();
-        assert!(resolve_severity_cascade(DEFAULT_WARN, &chain, Some(&user_block), &cli, "x").is_none());
+        assert!(
+            resolve_severity_cascade(DEFAULT_WARN, &chain, Some(&user_block), &cli, "x").is_none()
+        );
     }
 
     #[test]
@@ -1439,8 +1473,9 @@ mod tests {
 
     // ---- namespace-conflict detection (slice 5 of lint:prop) ------------
 
-    use crate::lint::Lint;
     use mockspace_core::lint::{GateSeverity, Severity};
+
+    use crate::lint::Lint;
 
     /// Build an `InstantiatedLint` carrying a stub `Lint` whose only
     /// non-default method is `declared_props`. The catalog metadata
@@ -1448,30 +1483,36 @@ mod tests {
     /// detector and use harmless defaults.
     fn stub_entry(name: &'static str, props: &'static [&'static str]) -> InstantiatedLint {
         struct StubLint {
-            name: &'static str,
+            name:  &'static str,
             props: &'static [&'static str],
         }
         impl Lint for StubLint {
             fn name(&self) -> &'static str {
                 self.name
             }
+
             fn description(&self) -> &'static str {
                 "stub"
             }
+
             fn default_severity(&self) -> GateSeverity {
                 GateSeverity::uniform(Severity::Warn)
             }
+
             fn declared_props(&self) -> &'static [&'static str] {
                 self.props
             }
         }
         InstantiatedLint {
-            lint: Box::new(StubLint { name, props }),
-            mode: crate::lint::LintMode::PerDocument,
-            staging_aware: false,
-            editor_skip: false,
-            only_staged: OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+            lint:              Box::new(StubLint {
+                name,
+                props,
+            }),
+            mode:              crate::lint::LintMode::PerDocument,
+            staging_aware:     false,
+            editor_skip:       false,
+            only_staged:       OnlyStaged::default(),
+            scope_filter:      crate::scope_filter::ScopeFilter::from_config(
                 name,
                 &crate::config_types::ScopeConfig::default(),
             )
@@ -1488,26 +1529,23 @@ mod tests {
 
     #[test]
     fn detector_silent_for_single_declaring_lint() {
-        let entries = vec![
-            stub_entry("a", &["audited"]),
-            stub_entry("b", &["other_prop"]),
-        ];
+        let entries = vec![stub_entry("a", &["audited"]), stub_entry("b", &["other_prop"])];
         assert!(detect_prop_name_conflicts(&entries).is_empty());
     }
 
     #[test]
     fn detector_warns_on_unqualified_collision() {
-        let entries = vec![
-            stub_entry("lint-a", &["audited"]),
-            stub_entry("lint-b", &["audited"]),
-        ];
+        let entries = vec![stub_entry("lint-a", &["audited"]), stub_entry("lint-b", &["audited"])];
         let warnings = detect_prop_name_conflicts(&entries);
         assert_eq!(warnings.len(), 1);
         match &warnings[0] {
-            StartupWarning::PropNameConflict { prop_name, lints } => {
+            StartupWarning::PropNameConflict {
+                prop_name,
+                lints,
+            } => {
                 assert_eq!(prop_name, "audited");
                 assert_eq!(lints, &vec!["lint-a".to_string(), "lint-b".to_string()]);
-            }
+            },
         }
     }
 
@@ -1532,17 +1570,17 @@ mod tests {
         let warnings = detect_prop_name_conflicts(&entries);
         assert_eq!(warnings.len(), 1);
         match &warnings[0] {
-            StartupWarning::PropNameConflict { prop_name, lints } => {
+            StartupWarning::PropNameConflict {
+                prop_name,
+                lints,
+            } => {
                 assert_eq!(prop_name, "arena_size");
-                assert_eq!(
-                    lints,
-                    &vec![
-                        "lint-a".to_string(),
-                        "lint-b".to_string(),
-                        "lint-c".to_string()
-                    ]
-                );
-            }
+                assert_eq!(lints, &vec![
+                    "lint-a".to_string(),
+                    "lint-b".to_string(),
+                    "lint-c".to_string()
+                ]);
+            },
         }
     }
 
@@ -1565,8 +1603,13 @@ mod tests {
         assert_eq!(warnings.len(), 2);
         let mut names: Vec<&str> = warnings
             .iter()
-            .map(|w| match w {
-                StartupWarning::PropNameConflict { prop_name, .. } => prop_name.as_str(),
+            .map(|w| {
+                match w {
+                    StartupWarning::PropNameConflict {
+                        prop_name,
+                        ..
+                    } => prop_name.as_str(),
+                }
             })
             .collect();
         names.sort();
@@ -1584,9 +1627,12 @@ mod tests {
         let warnings = detect_prop_name_conflicts(&entries);
         assert_eq!(warnings.len(), 1);
         match &warnings[0] {
-            StartupWarning::PropNameConflict { prop_name, .. } => {
+            StartupWarning::PropNameConflict {
+                prop_name,
+                ..
+            } => {
                 assert_eq!(prop_name, "audited");
-            }
+            },
         }
     }
 
@@ -1630,9 +1676,10 @@ mod tests {
 
     // ---- preset cascade integration (#539) ---------------------------------
 
-    use mockspace_config::{PresetFile, PresetRef, PresetResolveError, PresetSource};
     use std::cell::RefCell;
     use std::collections::BTreeMap;
+
+    use mockspace_config::{PresetFile, PresetRef, PresetResolveError, PresetSource};
 
     thread_local! {
         /// Most-recent `(config, scope)` pair the catalog stub's
@@ -1657,9 +1704,11 @@ mod tests {
         fn name(&self) -> &'static str {
             "captured"
         }
+
         fn description(&self) -> &'static str {
             "test stub; merged tables routed to CAPTURED"
         }
+
         fn default_severity(&self) -> GateSeverity {
             GateSeverity::uniform(Severity::Warn)
         }
@@ -1677,22 +1726,22 @@ mod tests {
 
     fn captured_entry() -> CatalogEntry {
         CatalogEntry {
-            name: "captured",
-            description: "test stub",
-            kind: "test-captured",
+            name:             "captured",
+            description:      "test stub",
+            kind:             "test-captured",
             // Default config seeds two fields the preset will overwrite + leave
             // alone so the assertions can distinguish overlay from replace.
-            default_config: "level = \"catalog\"\nuntouched = true\n",
-            default_scope: "category = \"catalog\"\n",
+            default_config:   "level = \"catalog\"\nuntouched = true\n",
+            default_scope:    "category = \"catalog\"\n",
             default_severity: GateSeverity::uniform(Severity::Warn),
-            default_impact: None,
+            default_impact:   None,
             default_category: None,
-            doc_url: None,
-            mode: crate::lint::LintMode::PerDocument,
-            staging_aware: false,
-            editor_skip: false,
-            instantiate: captured_instantiate,
-            finding_kinds: &[],
+            doc_url:          None,
+            mode:             crate::lint::LintMode::PerDocument,
+            staging_aware:    false,
+            editor_skip:      false,
+            instantiate:      captured_instantiate,
+            finding_kinds:    &[],
         }
     }
 
@@ -1710,6 +1759,7 @@ mod tests {
                 presets: BTreeMap::new(),
             }
         }
+
         fn insert(mut self, host: &str, preset: PresetFile) -> Self {
             self.presets
                 .insert((host.to_string(), preset.name.clone()), preset);
@@ -1722,19 +1772,18 @@ mod tests {
             self.presets
                 .get(&(preset_ref.host.clone(), preset_ref.name.clone()))
                 .cloned()
-                .ok_or_else(|| PresetResolveError::NotFound {
-                    host: preset_ref.host.clone(),
-                    name: preset_ref.name.clone(),
+                .ok_or_else(|| {
+                    PresetResolveError::NotFound {
+                        host: preset_ref.host.clone(),
+                        name: preset_ref.name.clone(),
+                    }
                 })
         }
     }
 
     fn preset(name: &str, extends: Option<&str>, config: &str, scope: &str) -> PresetFile {
-        let config: BTreeMap<String, toml::Value> = config
-            .parse::<toml::Table>()
-            .unwrap()
-            .into_iter()
-            .collect();
+        let config: BTreeMap<String, toml::Value> =
+            config.parse::<toml::Table>().unwrap().into_iter().collect();
         let scope: BTreeMap<String, toml::Value> =
             scope.parse::<toml::Table>().unwrap().into_iter().collect();
         PresetFile {
@@ -1778,9 +1827,14 @@ mod tests {
         user_lints.insert("captured".to_string(), user_block);
         let workspace_defaults = toml::Table::new();
         let overrides = OverrideCascade::default();
-        let result =
-            instantiate_with_cascade(&entry, &user_lints, &workspace_defaults, &overrides, &source)
-                .expect("cascade succeeds");
+        let result = instantiate_with_cascade(
+            &entry,
+            &user_lints,
+            &workspace_defaults,
+            &overrides,
+            &source,
+        )
+        .expect("cascade succeeds");
         let (config, scope) = extract_captured(result.lint);
         // Preset overlaid the catalog's `level = "catalog"`; the
         // catalog's `untouched = true` survived because the preset did
@@ -1799,16 +1853,20 @@ mod tests {
             preset("base", None, "level = \"preset\"\n", ""),
         );
         let mut user_lints: HashMap<String, toml::Table> = HashMap::new();
-        let user_block: toml::Table =
-            "extends = \"mockspace::base\"\n[config]\nlevel = \"user\"\n"
-                .parse()
-                .unwrap();
+        let user_block: toml::Table = "extends = \"mockspace::base\"\n[config]\nlevel = \"user\"\n"
+            .parse()
+            .unwrap();
         user_lints.insert("captured".to_string(), user_block);
         let workspace_defaults = toml::Table::new();
         let overrides = OverrideCascade::default();
-        let result =
-            instantiate_with_cascade(&entry, &user_lints, &workspace_defaults, &overrides, &source)
-                .expect("cascade succeeds");
+        let result = instantiate_with_cascade(
+            &entry,
+            &user_lints,
+            &workspace_defaults,
+            &overrides,
+            &source,
+        )
+        .expect("cascade succeeds");
         let (config, _scope) = extract_captured(result.lint);
         assert_eq!(config.get("level").unwrap().as_str(), Some("user"));
     }
@@ -1835,9 +1893,14 @@ mod tests {
         user_lints.insert("captured".to_string(), user_block);
         let workspace_defaults = toml::Table::new();
         let overrides = OverrideCascade::default();
-        let result =
-            instantiate_with_cascade(&entry, &user_lints, &workspace_defaults, &overrides, &source)
-                .expect("cascade succeeds");
+        let result = instantiate_with_cascade(
+            &entry,
+            &user_lints,
+            &workspace_defaults,
+            &overrides,
+            &source,
+        )
+        .expect("cascade succeeds");
         let (config, _scope) = extract_captured(result.lint);
         // Outer preset's `level` field wins over the inner preset's
         // (which would have been written first).
@@ -1863,11 +1926,19 @@ mod tests {
             &overrides,
             &source,
         ) {
-            Err(ConfigError { kind, field_path, message, .. }) => {
+            Err(ConfigError {
+                kind,
+                field_path,
+                message,
+                ..
+            }) => {
                 assert!(matches!(kind, ConfigErrorKind::InvalidValue));
                 assert_eq!(field_path, "extends");
-                assert!(message.contains("absent"), "diagnostic should name the missing preset; got `{message}`");
-            }
+                assert!(
+                    message.contains("absent"),
+                    "diagnostic should name the missing preset; got `{message}`"
+                );
+            },
             Ok(_) => panic!("expected ConfigError for missing extends target"),
         }
     }
@@ -1891,11 +1962,19 @@ mod tests {
             &overrides,
             &source,
         ) {
-            Err(ConfigError { kind, field_path, message, .. }) => {
+            Err(ConfigError {
+                kind,
+                field_path,
+                message,
+                ..
+            }) => {
                 assert!(matches!(kind, ConfigErrorKind::InvalidValue));
                 assert_eq!(field_path, "extends");
-                assert!(message.contains("cycle"), "diagnostic should name the cycle; got `{message}`");
-            }
+                assert!(
+                    message.contains("cycle"),
+                    "diagnostic should name the cycle; got `{message}`"
+                );
+            },
             Ok(_) => panic!("expected ConfigError for cyclic extends chain"),
         }
     }
@@ -1916,10 +1995,14 @@ mod tests {
             &overrides,
             &source,
         ) {
-            Err(ConfigError { kind, field_path, .. }) => {
+            Err(ConfigError {
+                kind,
+                field_path,
+                ..
+            }) => {
                 assert!(matches!(kind, ConfigErrorKind::InvalidValue));
                 assert_eq!(field_path, "extends");
-            }
+            },
             Ok(_) => panic!("expected ConfigError for non-string extends"),
         }
     }
@@ -1931,9 +2014,14 @@ mod tests {
         let user_lints: HashMap<String, toml::Table> = HashMap::new();
         let workspace_defaults = toml::Table::new();
         let overrides = OverrideCascade::default();
-        let result =
-            instantiate_with_cascade(&entry, &user_lints, &workspace_defaults, &overrides, &source)
-                .expect("cascade succeeds without extends");
+        let result = instantiate_with_cascade(
+            &entry,
+            &user_lints,
+            &workspace_defaults,
+            &overrides,
+            &source,
+        )
+        .expect("cascade succeeds without extends");
         let (config, scope) = extract_captured(result.lint);
         // Catalog defaults flow through unchanged.
         assert_eq!(config.get("level").unwrap().as_str(), Some("catalog"));
@@ -1995,14 +2083,11 @@ finding_kind = "todo"
         let user_block: toml::Table = "extends = \"mockspace::regex-probe\"\n".parse().unwrap();
         user_lints.insert("probe-lint".to_string(), user_block);
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: None,
         };
-        let cfg = LintsConfig::from_inputs_with_source(
-            user_toml,
-            OverrideCascade::default(),
-            &source,
-        );
+        let cfg =
+            LintsConfig::from_inputs_with_source(user_toml, OverrideCascade::default(), &source);
         assert!(
             cfg.config_errors.is_empty(),
             "expected no config errors, got: {:?}",
@@ -2012,14 +2097,14 @@ finding_kind = "todo"
         // Catalog-registered PerDocument lints (no-bare-vec, no-manual-id,
         // etc.) would satisfy a count-only check; the name probe pins
         // that the synthesis path actually constructed `probe-lint`.
-        let synthesised_present = cfg
-            .entries
-            .iter()
-            .any(|e| e.lint.name() == "probe-lint");
+        let synthesised_present = cfg.entries.iter().any(|e| e.lint.name() == "probe-lint");
         assert!(
             synthesised_present,
             "expected synthesised `probe-lint` in entries; got: {:?}",
-            cfg.entries.iter().map(|e| e.lint.name()).collect::<Vec<_>>()
+            cfg.entries
+                .iter()
+                .map(|e| e.lint.name())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -2033,14 +2118,11 @@ finding_kind = "todo"
         let user_block: toml::Table = "[config]\nfoo = 1\n".parse().unwrap();
         user_lints.insert("zzz-no-such-thing".to_string(), user_block);
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: None,
         };
-        let cfg = LintsConfig::from_inputs_with_source(
-            user_toml,
-            OverrideCascade::default(),
-            &source,
-        );
+        let cfg =
+            LintsConfig::from_inputs_with_source(user_toml, OverrideCascade::default(), &source);
         let found = cfg
             .config_errors
             .iter()
@@ -2061,14 +2143,11 @@ finding_kind = "todo"
         let user_block: toml::Table = "extends = \"mockspace::not-shipped\"\n".parse().unwrap();
         user_lints.insert("probe-lint".to_string(), user_block);
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: None,
         };
-        let cfg = LintsConfig::from_inputs_with_source(
-            user_toml,
-            OverrideCascade::default(),
-            &source,
-        );
+        let cfg =
+            LintsConfig::from_inputs_with_source(user_toml, OverrideCascade::default(), &source);
         let found = cfg
             .config_errors
             .iter()
@@ -2088,12 +2167,7 @@ finding_kind = "todo"
         let source = InMemorySource::new()
             .insert(
                 "mockspace",
-                preset_with_primitive(
-                    "token-probe",
-                    "token-scan",
-                    None,
-                    "tokens = [\"FOO\"]\n",
-                ),
+                preset_with_primitive("token-probe", "token-scan", None, "tokens = [\"FOO\"]\n"),
             )
             .insert(
                 "mockspace",
@@ -2113,14 +2187,11 @@ finding_kind = "bar"
         let user_block: toml::Table = "extends = \"mockspace::regex-probe\"\n".parse().unwrap();
         user_lints.insert("probe-lint".to_string(), user_block);
         let user_toml = LintsTomlFile {
-            lints: user_lints,
+            lints:    user_lints,
             defaults: None,
         };
-        let cfg = LintsConfig::from_inputs_with_source(
-            user_toml,
-            OverrideCascade::default(),
-            &source,
-        );
+        let cfg =
+            LintsConfig::from_inputs_with_source(user_toml, OverrideCascade::default(), &source);
         let found = cfg
             .config_errors
             .iter()

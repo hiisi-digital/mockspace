@@ -10,10 +10,9 @@
 //! through it.
 
 use core::fmt;
+use core::hash::Hash;
 
 use serde::{Deserialize, Serialize};
-
-use core::hash::Hash;
 
 use crate::namespace::Namespace;
 use crate::slug::{Slug, SlugError};
@@ -119,9 +118,9 @@ pub struct Step {
     /// Short description of what this step covers.
     pub description: String,
     /// Which manifest side(s) this step belongs to.
-    pub phase: StepPhase,
+    pub phase:       StepPhase,
     /// Current state of this step.
-    pub state: TaskState,
+    pub state:       TaskState,
 }
 
 /// Cross-references between tasks. Each entry is the prose form
@@ -130,7 +129,7 @@ pub struct Step {
 pub struct TaskRefs {
     /// Tasks this task blocks.
     #[serde(default)]
-    pub blocks: Vec<String>,
+    pub blocks:     Vec<String>,
     /// Tasks this task is blocked by.
     #[serde(default)]
     pub blocked_by: Vec<String>,
@@ -150,13 +149,13 @@ impl TaskRefs {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskClosure {
     /// Why the task closed.
-    pub resolution: TaskResolution,
+    pub resolution:         TaskResolution,
     /// ISO-8601 close timestamp.
-    pub closed_at: String,
+    pub closed_at:          String,
     /// The source-side branch that carried the closing work.
-    pub closed_branch: String,
+    pub closed_branch:      String,
     /// The phase marker at close time (e.g. `apply_src`).
-    pub closing_phase: String,
+    pub closing_phase:      String,
     /// The round slug that closed this task.
     pub closing_round_slug: String,
 }
@@ -167,28 +166,28 @@ pub struct TaskMeta {
     /// Schema version.
     pub mockspace_version: String,
     /// Leaf identifier.
-    pub slug: String,
+    pub slug:              String,
     /// Ref-path namespace form (e.g. `compiler/ir/lower-pass`).
-    pub namespace: String,
+    pub namespace:         String,
     /// One-line human-facing title.
-    pub title: String,
+    pub title:             String,
     /// ISO-8601 creation timestamp.
-    pub created: String,
+    pub created:           String,
     /// Coarse priority label (P0, P1, P2; project-defined).
     #[serde(default)]
-    pub priority: Option<String>,
+    pub priority:          Option<String>,
     /// Optional grouping label.
     #[serde(default)]
-    pub group: Option<String>,
+    pub group:             Option<String>,
     /// Sub-tasks keyed by step name.
     #[serde(default)]
-    pub steps: std::collections::BTreeMap<String, Step>,
+    pub steps:             std::collections::BTreeMap<String, Step>,
     /// Cross-references to other tasks.
     #[serde(default, rename = "refs", skip_serializing_if = "TaskRefs::is_empty")]
-    pub refs: TaskRefs,
+    pub refs:              TaskRefs,
     /// Closure block; present only when state == Closed.
     #[serde(default, rename = "closure")]
-    pub closure: Option<TaskClosure>,
+    pub closure:           Option<TaskClosure>,
 }
 
 impl TaskMeta {
@@ -236,7 +235,7 @@ pub struct TaskId {
     /// Namespace segments. Empty for top-level (no-namespace) tasks.
     namespace_segments: Vec<Slug>,
     /// Leaf slug.
-    slug: Slug,
+    slug:               Slug,
 }
 
 /// Why a [`TaskId`] string rejected at parse time.
@@ -247,9 +246,14 @@ pub enum TaskIdError {
     /// Identifier was empty.
     Empty,
     /// A `::` appears with no content on one side (leading, trailing, or doubled).
-    EmptySegment { position: usize },
+    EmptySegment {
+        position: usize,
+    },
     /// A segment failed slug validation; `index` counts from 0.
-    InvalidSegment { index: usize, error: SlugError },
+    InvalidSegment {
+        index: usize,
+        error: SlugError,
+    },
 }
 
 impl TaskId {
@@ -286,10 +290,16 @@ impl TaskId {
         let mut byte_pos: usize = 0;
         for (index, raw) in input.split("::").enumerate() {
             if raw.is_empty() {
-                return Err(TaskIdError::EmptySegment { position: byte_pos });
+                return Err(TaskIdError::EmptySegment {
+                    position: byte_pos,
+                });
             }
-            let slug = Slug::new(raw)
-                .map_err(|error| TaskIdError::InvalidSegment { index, error })?;
+            let slug = Slug::new(raw).map_err(|error| {
+                TaskIdError::InvalidSegment {
+                    index,
+                    error,
+                }
+            })?;
             segments.push(slug);
             byte_pos += raw.len() + 2;
         }
@@ -367,15 +377,20 @@ impl fmt::Display for TaskIdError {
                 "task identifier must not contain `#`; that separator is reserved for step refs",
             ),
             Self::Empty => f.write_str("task identifier is empty"),
-            Self::EmptySegment { position } => {
+            Self::EmptySegment {
+                position,
+            } => {
                 write!(
                     f,
                     "empty segment in task identifier at byte position {position}"
                 )
-            }
-            Self::InvalidSegment { index, error } => {
+            },
+            Self::InvalidSegment {
+                index,
+                error,
+            } => {
                 write!(f, "segment {index} is not a valid slug: {error}")
-            }
+            },
         }
     }
 }
@@ -410,7 +425,10 @@ impl StepRef {
     /// canonical step-key shape comes from `meta.toml`'s `[steps.<key>]`
     /// table and is project-defined (typically snake_case).
     pub fn new(task: TaskId, step: String) -> Self {
-        Self { task, step }
+        Self {
+            task,
+            step,
+        }
     }
 
     /// Parse `<task>#<step>`.
@@ -453,7 +471,7 @@ impl fmt::Display for StepRefError {
         match self {
             Self::MissingSeparator => {
                 f.write_str("step reference missing `#` between task path and step key")
-            }
+            },
             Self::DuplicateSeparator => f.write_str("step reference contains more than one `#`"),
             Self::EmptyStep => f.write_str("step key is empty after `#`"),
             Self::InvalidTask(e) => write!(f, "task half invalid: {e}"),
@@ -556,11 +574,15 @@ mod tests {
     #[test]
     fn task_id_rejects_empty_segment() {
         match TaskId::parse("::foo") {
-            Err(TaskIdError::EmptySegment { .. }) => {}
+            Err(TaskIdError::EmptySegment {
+                ..
+            }) => {},
             other => panic!("expected EmptySegment, got {other:?}"),
         }
         match TaskId::parse("foo::") {
-            Err(TaskIdError::EmptySegment { .. }) => {}
+            Err(TaskIdError::EmptySegment {
+                ..
+            }) => {},
             other => panic!("expected EmptySegment, got {other:?}"),
         }
     }
@@ -568,7 +590,10 @@ mod tests {
     #[test]
     fn task_id_rejects_invalid_segment() {
         match TaskId::parse("Bad::ns::slug") {
-            Err(TaskIdError::InvalidSegment { index: 0, .. }) => {}
+            Err(TaskIdError::InvalidSegment {
+                index: 0,
+                ..
+            }) => {},
             other => panic!("expected InvalidSegment(0), got {other:?}"),
         }
     }
@@ -625,22 +650,16 @@ mod tests {
     #[test]
     fn task_meta_round_trip() {
         let mut steps = std::collections::BTreeMap::new();
-        steps.insert(
-            "define_grammar".to_owned(),
-            Step {
-                description: "Specify the IR grammar in DESIGN.md.".to_owned(),
-                phase: StepPhase::Doc,
-                state: TaskState::Closed,
-            },
-        );
-        steps.insert(
-            "implement_parser".to_owned(),
-            Step {
-                description: "Implement the IR parser.".to_owned(),
-                phase: StepPhase::Src,
-                state: TaskState::Open,
-            },
-        );
+        steps.insert("define_grammar".to_owned(), Step {
+            description: "Specify the IR grammar in DESIGN.md.".to_owned(),
+            phase:       StepPhase::Doc,
+            state:       TaskState::Closed,
+        });
+        steps.insert("implement_parser".to_owned(), Step {
+            description: "Implement the IR parser.".to_owned(),
+            phase:       StepPhase::Src,
+            state:       TaskState::Open,
+        });
 
         let meta = TaskMeta {
             mockspace_version: "1.0".to_owned(),
@@ -652,7 +671,7 @@ mod tests {
             group: Some("ref-based-redesign".to_owned()),
             steps,
             refs: TaskRefs {
-                blocks: vec!["compiler::ir#lower-pass".to_owned()],
+                blocks:     vec!["compiler::ir#lower-pass".to_owned()],
                 blocked_by: vec![],
                 relates_to: vec!["compiler::ir::lower-pass#define-grammar".to_owned()],
             },
@@ -668,19 +687,19 @@ mod tests {
     fn task_meta_with_closure() {
         let meta = TaskMeta {
             mockspace_version: "1.0".to_owned(),
-            slug: "structural-robust-ir".to_owned(),
-            namespace: "compiler/ir".to_owned(),
-            title: "Define structural robust IR shape".to_owned(),
-            created: "2026-05-18T10:00:00Z".to_owned(),
-            priority: None,
-            group: None,
-            steps: std::collections::BTreeMap::new(),
-            refs: TaskRefs::default(),
-            closure: Some(TaskClosure {
-                resolution: TaskResolution::Completed,
-                closed_at: "2026-05-18T14:30:00Z".to_owned(),
-                closed_branch: "round/202605181400-arvo-graph-csr".to_owned(),
-                closing_phase: "apply_src".to_owned(),
+            slug:              "structural-robust-ir".to_owned(),
+            namespace:         "compiler/ir".to_owned(),
+            title:             "Define structural robust IR shape".to_owned(),
+            created:           "2026-05-18T10:00:00Z".to_owned(),
+            priority:          None,
+            group:             None,
+            steps:             std::collections::BTreeMap::new(),
+            refs:              TaskRefs::default(),
+            closure:           Some(TaskClosure {
+                resolution:         TaskResolution::Completed,
+                closed_at:          "2026-05-18T14:30:00Z".to_owned(),
+                closed_branch:      "round/202605181400-arvo-graph-csr".to_owned(),
+                closing_phase:      "apply_src".to_owned(),
                 closing_round_slug: "202605181400-arvo-graph-csr".to_owned(),
             }),
         };
@@ -696,8 +715,8 @@ mod tests {
     fn step_phase_serializes_doc_plus_src() {
         let step = Step {
             description: "cross-cutting work".to_owned(),
-            phase: StepPhase::DocSrc,
-            state: TaskState::Open,
+            phase:       StepPhase::DocSrc,
+            state:       TaskState::Open,
         };
         let serialized = toml::to_string(&step).unwrap();
         assert!(serialized.contains("phase = \"doc+src\""));

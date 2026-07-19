@@ -21,14 +21,14 @@ use std::collections::HashMap;
 use crate::{Lint, LintContext, LintError, Severity};
 
 pub struct FileSize {
-    max_lines: usize,
+    max_lines:       usize,
     exempt_suffixes: Vec<String>,
 }
 
 impl Default for FileSize {
     fn default() -> Self {
         Self {
-            max_lines: 500,
+            max_lines:       500,
             exempt_suffixes: Vec::new(),
         }
     }
@@ -60,7 +60,8 @@ impl Lint for FileSize {
             }
         }
         if let Some(val) = params.get("exempt") {
-            self.exempt_suffixes = val.split(',')
+            self.exempt_suffixes = val
+                .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
@@ -114,11 +115,11 @@ impl Lint for FileSize {
 
         if count > self.max_lines {
             vec![LintError {
-                crate_name: ctx.crate_name.to_string(),
-                line: 1,
-                lint_name: "file-size",
-                severity: self.default_severity(),
-                message: format!(
+                crate_name:   ctx.crate_name.to_string(),
+                line:         1,
+                lint_name:    "file-size",
+                severity:     self.default_severity(),
+                message:      format!(
                     "file has {count} non-blank, non-comment lines (limit: {}). Split into modules.",
                     self.max_lines
                 ),
@@ -132,8 +133,9 @@ impl Lint for FileSize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::BTreeSet;
+
+    use super::*;
 
     fn make_ctx(source: &str) -> LintContext {
         static EMPTY: &str = "";
@@ -205,9 +207,15 @@ mod tests {
     #[test]
     fn blanks_and_comments_not_counted() {
         let mut lines = Vec::new();
-        for _ in 0..300 { lines.push("let x = 1;"); }
-        for _ in 0..300 { lines.push(""); }
-        for _ in 0..300 { lines.push("// comment"); }
+        for _ in 0 .. 300 {
+            lines.push("let x = 1;");
+        }
+        for _ in 0 .. 300 {
+            lines.push("");
+        }
+        for _ in 0 .. 300 {
+            lines.push("// comment");
+        }
         let src = lines.join("\n");
         let ctx = make_ctx(&src);
         assert!(FileSize::new().check(&ctx).is_empty());
@@ -217,7 +225,9 @@ mod tests {
     fn block_comments_not_counted() {
         let mut lines = Vec::new();
         lines.push("/*");
-        for _ in 0..600 { lines.push(" * comment"); }
+        for _ in 0 .. 600 {
+            lines.push(" * comment");
+        }
         lines.push(" */");
         lines.push("fn main() {}");
         let src = lines.join("\n");

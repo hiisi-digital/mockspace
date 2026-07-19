@@ -26,6 +26,6 @@ mod tests {
         // Both pull from SystemTime::now() so they may differ by one
         // second on a clock-tick boundary. Compare only the prefix
         // (year-month-day) to avoid the race.
-        assert_eq!(&typed.as_str()[..10], &untyped[..10]);
+        assert_eq!(&typed.as_str()[.. 10], &untyped[.. 10]);
     }
 }

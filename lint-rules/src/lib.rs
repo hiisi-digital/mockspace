@@ -29,25 +29,25 @@
 //! pack's lints with any in-tree `mock/lints/*.rs` files and runs the union.
 
 mod actionable_errors;
-mod no_adhoc_framework;
-mod no_bare_string;
-pub mod changelist_helpers;
 mod changelist_doc_gate;
+pub mod changelist_helpers;
 mod changelist_immutability;
 mod changelist_lock;
 mod changelist_required;
 mod deprecation_comparison;
 mod design_doc_source_mismatch;
-pub mod type_scanner;
 mod export_count;
 mod file_size;
 mod forbidden_imports;
 mod no_adhoc_error_enum;
+mod no_adhoc_framework;
 mod no_bare_macro_types;
 mod no_bare_pub;
 mod no_bare_result;
+mod no_bare_string;
 mod no_bare_vec;
 mod no_box;
+mod no_duplicate_fn;
 mod no_empty_crate;
 mod no_entry_suffix;
 mod no_float;
@@ -58,10 +58,10 @@ mod no_primitive_key;
 mod no_raw_error_outside_primitives;
 mod no_self_define;
 mod no_todo;
-mod no_duplicate_fn;
 mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
+pub mod type_scanner;
 mod undocumented_type;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -88,41 +88,41 @@ pub struct CrateSourceFile {
     /// Crate-relative path (e.g. `src/lib.rs`, `src/bits.rs`).
     pub rel_path: std::path::PathBuf,
     /// Full file contents.
-    pub text: String,
+    pub text:     String,
 }
 
 /// Context provided to each lint for a single crate.
 pub struct LintContext<'a> {
     /// Directory name of the crate (e.g. "<prefix>-signal").
-    pub crate_name: &'a str,
+    pub crate_name:              &'a str,
     /// Short name (e.g. "signal").
-    pub short_name: &'a str,
+    pub short_name:              &'a str,
     /// The raw source text of `src/lib.rs` (back-compat; lints that
     /// want to scan every module file should use `all_sources`).
-    pub source: &'a str,
+    pub source:                  &'a str,
     /// The tree-sitter AST of `src/lib.rs`.
-    pub tree: &'a Tree,
+    pub tree:                    &'a Tree,
     /// Every `.rs` file under the crate's `src/**`, in path order.
     /// The first entry is always `src/lib.rs`. Lints that used to
     /// inspect only `source` should iterate over this to catch drift
     /// in module files (`bits.rs`, `prim.rs`, etc.).
-    pub all_sources: &'a [CrateSourceFile],
+    pub all_sources:             &'a [CrateSourceFile],
     /// Names of all crates this crate depends on (directory names).
-    pub deps: &'a [String],
+    pub deps:                    &'a [String],
     /// Set of all crate directory names in the workspace.
-    pub all_crates: &'a BTreeSet<String>,
+    pub all_crates:              &'a BTreeSet<String>,
     /// Content of DESIGN.md.tmpl for this crate, if it exists.
-    pub design_doc: Option<&'a str>,
+    pub design_doc:              Option<&'a str>,
     /// Concatenated content of ALL doc templates for this crate
     /// (README.md.tmpl + DESIGN.md.tmpl + DEEPDIVE_*.md.tmpl).
-    pub all_doc_content: &'a str,
+    pub all_doc_content:         &'a str,
     /// Content of SHAME.md.tmpl for this crate, if it exists.
-    pub shame_doc: Option<&'a str>,
+    pub shame_doc:               Option<&'a str>,
     /// Root directory of the mock workspace.
-    pub workspace_root: &'a Path,
+    pub workspace_root:          &'a Path,
     /// Crates exempt from collection/box/float lints (proc-macro crates).
     /// Falls back to PROC_MACRO_CRATES if empty.
-    pub proc_macro_crates: &'a [String],
+    pub proc_macro_crates:       &'a [String],
     /// Whether source-scanning lints should run against proc-macro crate
     /// source. Default false: skip source lints for proc-macro crates
     /// because their heap-using parsers do not ship with consumer binaries.
@@ -132,10 +132,10 @@ pub struct LintContext<'a> {
     /// Independent of expansion-based linting (future feature): what a
     /// macro emits must always satisfy consumer-crate rules because the
     /// emitted code compiles into consumer binaries.
-    pub lint_proc_macro_source: bool,
+    pub lint_proc_macro_source:  bool,
     /// Crate name prefix (e.g. "loimu"). Used to build expected crate
     /// names dynamically instead of hardcoding project-specific names.
-    pub crate_prefix: &'a str,
+    pub crate_prefix:            &'a str,
     /// Per-crate primitive-introductions map from mockspace.toml's
     /// `[primitive-introductions]` section. Key: crate directory
     /// name; value: list of primitive tokens the crate legitimately
@@ -252,35 +252,34 @@ pub enum LintMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Severity {
     pub on_commit: Level,
-    pub on_build: Level,
-    pub on_push: Level,
+    pub on_build:  Level,
+    pub on_push:   Level,
 }
 
 impl Severity {
-    #[must_use]
-    pub const fn new(on_commit: Level, on_build: Level, on_push: Level) -> Self {
-        Self { on_commit, on_build, on_push }
-    }
-
-    /// Completely disabled — not reported at any gate.
-    pub const OFF: Self = Self::new(Level::Pass, Level::Pass, Level::Pass);
-
-    /// Blocks commit, build, and push. For critical invariants.
-    pub const HARD_ERROR: Self = Self::new(Level::Error, Level::Error, Level::Error);
-
+    /// Warns everywhere, never blocks.
+    pub const ADVISORY: Self = Self::new(Level::Warn, Level::Warn, Level::Warn);
     /// Warns on commit, blocks build and push. For rules that need local
     /// iteration room but must be fixed before building.
     pub const BUILD_GATE: Self = Self::new(Level::Warn, Level::Error, Level::Error);
-
+    /// Blocks commit, build, and push. For critical invariants.
+    pub const HARD_ERROR: Self = Self::new(Level::Error, Level::Error, Level::Error);
+    /// Informational only.
+    pub const INFO_ONLY: Self = Self::new(Level::Info, Level::Info, Level::Info);
+    /// Completely disabled — not reported at any gate.
+    pub const OFF: Self = Self::new(Level::Pass, Level::Pass, Level::Pass);
     /// Warns on commit and build, blocks push only. For work-in-progress
     /// that must be clean before sharing.
     pub const PUSH_GATE: Self = Self::new(Level::Warn, Level::Warn, Level::Error);
 
-    /// Warns everywhere, never blocks.
-    pub const ADVISORY: Self = Self::new(Level::Warn, Level::Warn, Level::Warn);
-
-    /// Informational only.
-    pub const INFO_ONLY: Self = Self::new(Level::Info, Level::Info, Level::Info);
+    #[must_use]
+    pub const fn new(on_commit: Level, on_build: Level, on_push: Level) -> Self {
+        Self {
+            on_commit,
+            on_build,
+            on_push,
+        }
+    }
 
     /// Whether all gates are `Level::Pass` (i.e. the lint is effectively off).
     #[must_use]
@@ -307,18 +306,29 @@ impl Severity {
     /// Human-readable label based on the gate profile.
     #[must_use]
     pub fn label(&self) -> &'static str {
-        if *self == Self::OFF { "off" }
-        else if *self == Self::HARD_ERROR { "error" }
-        else if *self == Self::BUILD_GATE { "build-gate" }
-        else if *self == Self::PUSH_GATE { "push-gate" }
-        else if *self == Self::ADVISORY { "warn" }
-        else if *self == Self::INFO_ONLY { "info" }
-        else {
+        if *self == Self::OFF {
+            "off"
+        } else if *self == Self::HARD_ERROR {
+            "error"
+        } else if *self == Self::BUILD_GATE {
+            "build-gate"
+        } else if *self == Self::PUSH_GATE {
+            "push-gate"
+        } else if *self == Self::ADVISORY {
+            "warn"
+        } else if *self == Self::INFO_ONLY {
+            "info"
+        } else {
             // custom severity; label by strictest gate
-            if self.on_push == Level::Error { "push-gate" }
-            else if self.on_build == Level::Error { "build-gate" }
-            else if self.on_commit == Level::Error { "error" }
-            else { "warn" }
+            if self.on_push == Level::Error {
+                "push-gate"
+            } else if self.on_build == Level::Error {
+                "build-gate"
+            } else if self.on_commit == Level::Error {
+                "error"
+            } else {
+                "warn"
+            }
         }
     }
 }
@@ -339,15 +349,15 @@ pub fn line_lint_allowed(line: &str, rule_name: &str) -> bool {
     let mut search = line;
     let needle = "lint:allow(";
     while let Some(start) = search.find(needle) {
-        let after_open = &search[start + needle.len()..];
+        let after_open = &search[start + needle.len() ..];
         if let Some(close) = after_open.find(')') {
-            let names = &after_open[..close];
+            let names = &after_open[.. close];
             for name in names.split(',') {
                 if name.trim() == rule_name {
                     return true;
                 }
             }
-            search = &after_open[close..];
+            search = &after_open[close ..];
         } else {
             break;
         }
@@ -460,11 +470,11 @@ pub fn parse_severity(s: &str) -> Option<Severity> {
 #[derive(Debug, Clone)]
 pub struct LintConfig {
     /// Base severity overrides per lint name.
-    pub base: HashMap<String, Severity>,
+    pub base:     HashMap<String, Severity>,
     /// Per-finding-kind severity overrides: lint_name -> { finding_kind -> severity }.
     pub findings: HashMap<String, HashMap<String, Severity>>,
     /// Per-lint parameters: lint_name -> { key -> value }.
-    pub params: HashMap<String, HashMap<String, String>>,
+    pub params:   HashMap<String, HashMap<String, String>>,
 }
 
 impl LintConfig {
@@ -472,9 +482,9 @@ impl LintConfig {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            base: HashMap::new(),
+            base:     HashMap::new(),
             findings: HashMap::new(),
-            params: HashMap::new(),
+            params:   HashMap::new(),
         }
     }
 
@@ -497,11 +507,11 @@ impl LintConfig {
 /// A single lint violation.
 #[derive(Debug, Clone)]
 pub struct LintError {
-    pub crate_name: String,
-    pub line: usize,
-    pub lint_name: &'static str,
-    pub message: String,
-    pub severity: Severity,
+    pub crate_name:   String,
+    pub line:         usize,
+    pub lint_name:    &'static str,
+    pub message:      String,
+    pub severity:     Severity,
     /// Optional sub-category for per-finding severity overrides.
     pub finding_kind: Option<&'static str>,
 }
@@ -509,44 +519,126 @@ pub struct LintError {
 impl LintError {
     /// Create a violation that blocks all gates (commit, build, push).
     #[must_use]
-    pub fn error(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::HARD_ERROR, finding_kind: None }
+    pub fn error(
+        crate_name: String,
+        line: usize,
+        lint_name: &'static str,
+        message: String,
+    ) -> Self {
+        Self {
+            crate_name,
+            line,
+            lint_name,
+            message,
+            severity: Severity::HARD_ERROR,
+            finding_kind: None,
+        }
     }
 
     /// Create a violation that warns on commit, blocks build and push.
     #[must_use]
-    pub fn build_error(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::BUILD_GATE, finding_kind: None }
+    pub fn build_error(
+        crate_name: String,
+        line: usize,
+        lint_name: &'static str,
+        message: String,
+    ) -> Self {
+        Self {
+            crate_name,
+            line,
+            lint_name,
+            message,
+            severity: Severity::BUILD_GATE,
+            finding_kind: None,
+        }
     }
 
     /// Create a violation that warns on commit and build, blocks push.
     #[must_use]
-    pub fn push_error(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::PUSH_GATE, finding_kind: None }
+    pub fn push_error(
+        crate_name: String,
+        line: usize,
+        lint_name: &'static str,
+        message: String,
+    ) -> Self {
+        Self {
+            crate_name,
+            line,
+            lint_name,
+            message,
+            severity: Severity::PUSH_GATE,
+            finding_kind: None,
+        }
     }
 
     /// Create a warning-level violation (reported but never blocks).
     #[must_use]
-    pub fn warning(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::ADVISORY, finding_kind: None }
+    pub fn warning(
+        crate_name: String,
+        line: usize,
+        lint_name: &'static str,
+        message: String,
+    ) -> Self {
+        Self {
+            crate_name,
+            line,
+            lint_name,
+            message,
+            severity: Severity::ADVISORY,
+            finding_kind: None,
+        }
     }
 
     /// Create an info-level violation (informational, never blocks).
     #[must_use]
     pub fn info(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
-        Self { crate_name, line, lint_name, message, severity: Severity::INFO_ONLY, finding_kind: None }
+        Self {
+            crate_name,
+            line,
+            lint_name,
+            message,
+            severity: Severity::INFO_ONLY,
+            finding_kind: None,
+        }
     }
 
     /// Create a violation with custom per-gate severity.
     #[must_use]
-    pub fn with_severity(crate_name: String, line: usize, lint_name: &'static str, message: String, severity: Severity) -> Self {
-        Self { crate_name, line, lint_name, message, severity, finding_kind: None }
+    pub fn with_severity(
+        crate_name: String,
+        line: usize,
+        lint_name: &'static str,
+        message: String,
+        severity: Severity,
+    ) -> Self {
+        Self {
+            crate_name,
+            line,
+            lint_name,
+            message,
+            severity,
+            finding_kind: None,
+        }
     }
 
     /// Create a violation with a specific finding kind for per-finding severity overrides.
     #[must_use]
-    pub fn with_finding_kind(crate_name: String, line: usize, lint_name: &'static str, message: String, severity: Severity, finding_kind: &'static str) -> Self {
-        Self { crate_name, line, lint_name, message, severity, finding_kind: Some(finding_kind) }
+    pub fn with_finding_kind(
+        crate_name: String,
+        line: usize,
+        lint_name: &'static str,
+        message: String,
+        severity: Severity,
+        finding_kind: &'static str,
+    ) -> Self {
+        Self {
+            crate_name,
+            line,
+            lint_name,
+            message,
+            severity,
+            finding_kind: Some(finding_kind),
+        }
     }
 }
 
@@ -589,21 +681,29 @@ pub trait Lint {
     ///
     /// Source-only lints are skipped in `--doc-only` mode (when only
     /// doc templates are staged, no `.rs` files). Default: `true`.
-    fn source_only(&self) -> bool { true }
+    fn source_only(&self) -> bool {
+        true
+    }
 
     /// The default severity for this lint's violations.
     ///
     /// Used when no config override is present. Lints should override
     /// this to match what they currently hardcode.
-    fn default_severity(&self) -> Severity { Severity::HARD_ERROR }
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
 
     /// Sub-categories of findings this lint can produce.
     ///
     /// Used for per-finding-kind severity overrides in config.
-    fn finding_kinds(&self) -> &[&str] { &[] }
+    fn finding_kinds(&self) -> &[&str] {
+        &[]
+    }
 
     /// Configuration keys this lint accepts.
-    fn config_keys(&self) -> &[&str] { &[] }
+    fn config_keys(&self) -> &[&str] {
+        &[]
+    }
 
     /// Apply configuration parameters to this lint.
     fn configure(&mut self, _params: &HashMap<String, String>) {}
@@ -618,13 +718,17 @@ pub trait CrossCrateLint {
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError>;
 
     /// Whether this lint only inspects source code (not docs).
-    fn source_only(&self) -> bool { true }
+    fn source_only(&self) -> bool {
+        true
+    }
 
     /// The default severity for this lint's violations.
     ///
     /// Used when no config override is present. Lints should override
     /// this to match what they currently hardcode.
-    fn default_severity(&self) -> Severity { Severity::HARD_ERROR }
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -741,7 +845,11 @@ pub fn all_cross_crate_lints() -> Vec<Box<dyn CrossCrateLint>> {
 /// - If a lint name maps to a severity where all gates are `Pass`, the lint is skipped entirely.
 /// - If a lint name maps to another severity, all errors from that lint use the configured severity.
 /// - If a lint is not in the map, it uses its `default_severity()`.
-pub fn check_crate(ctx: &LintContext, doc_only: bool, overrides: Option<&LintConfig>) -> Vec<LintError> {
+pub fn check_crate(
+    ctx: &LintContext,
+    doc_only: bool,
+    overrides: Option<&LintConfig>,
+) -> Vec<LintError> {
     check_crate_with_extra(ctx, doc_only, overrides, &[])
 }
 
@@ -791,12 +899,10 @@ pub fn check_crate_with_extra(
         if let Some(cfg) = overrides {
             for err in &mut lint_errors {
                 // Check finding-specific override first
-                let effective = if let (Some(kind), Some(finding_map)) = (err.finding_kind, cfg.findings.get(lint.name())) {
-                    if let Some(sev) = finding_map.get(kind) {
-                        Some(*sev)
-                    } else {
-                        base_override
-                    }
+                let effective = if let (Some(kind), Some(finding_map)) =
+                    (err.finding_kind, cfg.findings.get(lint.name()))
+                {
+                    if let Some(sev) = finding_map.get(kind) { Some(*sev) } else { base_override }
                 } else {
                     base_override
                 };
@@ -827,7 +933,11 @@ pub fn check_crate_with_extra(
 ///
 /// When `overrides` is provided, lint severities can be overridden
 /// (same semantics as `check_crate`).
-pub fn check_cross_crate(crates: &[(&str, &LintContext)], doc_only: bool, overrides: Option<&LintConfig>) -> Vec<LintError> {
+pub fn check_cross_crate(
+    crates: &[(&str, &LintContext)],
+    doc_only: bool,
+    overrides: Option<&LintConfig>,
+) -> Vec<LintError> {
     check_cross_crate_with_extra(crates, doc_only, overrides, &[])
 }
 
@@ -865,12 +975,10 @@ pub fn check_cross_crate_with_extra(
         // Apply per-finding or base severity overrides
         if let Some(cfg) = overrides {
             for err in &mut lint_errors {
-                let effective = if let (Some(kind), Some(finding_map)) = (err.finding_kind, cfg.findings.get(lint.name())) {
-                    if let Some(sev) = finding_map.get(kind) {
-                        Some(*sev)
-                    } else {
-                        base_override
-                    }
+                let effective = if let (Some(kind), Some(finding_map)) =
+                    (err.finding_kind, cfg.findings.get(lint.name()))
+                {
+                    if let Some(sev) = finding_map.get(kind) { Some(*sev) } else { base_override }
                 } else {
                     base_override
                 };
@@ -900,18 +1008,28 @@ mod pack_tests {
 
     struct SmokeLint;
     impl Lint for SmokeLint {
-        fn name(&self) -> &'static str { "smoke-lint" }
-        fn check(&self, _ctx: &LintContext) -> Vec<LintError> { Vec::new() }
+        fn name(&self) -> &'static str {
+            "smoke-lint"
+        }
+
+        fn check(&self, _ctx: &LintContext) -> Vec<LintError> {
+            Vec::new()
+        }
     }
 
     struct SmokeCross;
     impl CrossCrateLint for SmokeCross {
-        fn name(&self) -> &'static str { "smoke-cross" }
-        fn check_all(&self, _crates: &[(&str, &LintContext)]) -> Vec<LintError> { Vec::new() }
+        fn name(&self) -> &'static str {
+            "smoke-cross"
+        }
+
+        fn check_all(&self, _crates: &[(&str, &LintContext)]) -> Vec<LintError> {
+            Vec::new()
+        }
     }
 
     mod full_pack {
-        use super::{SmokeLint, SmokeCross};
+        use super::{SmokeCross, SmokeLint};
         crate::lint_pack! {
             lints: [SmokeLint],
             cross_lints: [SmokeCross],

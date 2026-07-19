@@ -6,13 +6,13 @@
 //! mockspace-core [`mockspace_core::lint::Document`] trait impl carries
 //! the engine-internal foundation surfaces.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mockspace_core::lint::{ContentHash, Document, Language};
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
-use std::collections::HashMap;
 
 pub use crate::strip::StripOpts;
 
@@ -24,14 +24,14 @@ pub use crate::strip::StripOpts;
 /// `source_stripped` cache holds `Arc<str>` views keyed by [`StripOpts`];
 /// callers receive a cheap `Arc::clone`, not a fresh allocation.
 pub struct MockspaceDocument {
-    path: PathBuf,
-    crate_name: String,
-    language: Language,
-    source: String,
+    path:         PathBuf,
+    crate_name:   String,
+    language:     Language,
+    source:       String,
     content_hash: ContentHash,
 
-    syn_ast_cache: OnceCell<Option<syn::File>>,
-    tree_sitter_cache: OnceCell<Option<tree_sitter::Tree>>,
+    syn_ast_cache:         OnceCell<Option<syn::File>>,
+    tree_sitter_cache:     OnceCell<Option<tree_sitter::Tree>>,
     source_stripped_cache: RwLock<HashMap<StripOpts, Arc<str>>>,
 }
 
@@ -136,12 +136,15 @@ impl Document for MockspaceDocument {
     fn path(&self) -> &Path {
         &self.path
     }
+
     fn language(&self) -> Language {
         self.language
     }
+
     fn source(&self) -> &str {
         &self.source
     }
+
     fn content_hash(&self) -> &ContentHash {
         &self.content_hash
     }

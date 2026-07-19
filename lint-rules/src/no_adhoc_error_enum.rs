@@ -13,8 +13,11 @@ use crate::{Lint, LintContext, LintError};
 pub struct NoAdhocErrorEnum;
 
 impl Lint for NoAdhocErrorEnum {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         "no-adhoc-error-enum"
     }
 

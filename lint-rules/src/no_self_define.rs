@@ -60,8 +60,11 @@ const MACRO_OWNERS: &[(&str, &[&str])] = &[
 pub struct NoSelfDefine;
 
 impl Lint for NoSelfDefine {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         LINT_NAME
     }
 
@@ -181,7 +184,7 @@ fn extract_macro_name(raw: &str) -> &str {
 fn gather_context_lines(source: &str, target_line: usize, look_back: usize) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let start = target_line.saturating_sub(look_back);
-    lines[start..=target_line.min(lines.len().saturating_sub(1))].join("\n")
+    lines[start ..= target_line.min(lines.len().saturating_sub(1))].join("\n")
 }
 
 /// Extract the explanation text after `lint:allow(rule_name) —`.
@@ -193,13 +196,13 @@ fn gather_context_lines(source: &str, target_line: usize, look_back: usize) -> S
 fn extract_allow_explanation(context: &str, rule_name: &str) -> Option<String> {
     let marker = format!("lint:allow({rule_name})");
     let pos = context.find(&marker)?;
-    let after = &context[pos + marker.len()..];
+    let after = &context[pos + marker.len() ..];
 
     // Find the separator (em dash or hyphen).
     let rest = if let Some(dash_pos) = after.find('—') {
-        &after[dash_pos + '—'.len_utf8()..]
+        &after[dash_pos + '—'.len_utf8() ..]
     } else if let Some(dash_pos) = after.find(" - ") {
-        &after[dash_pos + 3..]
+        &after[dash_pos + 3 ..]
     } else {
         return Some(String::new()); // Marker found but no explanation.
     };

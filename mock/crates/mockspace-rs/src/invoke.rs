@@ -74,19 +74,21 @@ impl std::fmt::Display for ResolutionError {
                     ENV_VAR,
                     p.display()
                 )
-            }
+            },
             Self::TomlPathNotExecutable(p) => {
                 write!(
                     f,
                     "mockspace.toml `[mockspace] mock_bin_path` resolved to {} but no executable was found there",
                     p.display()
                 )
-            }
-            Self::NoUsablePath => write!(
-                f,
-                "could not locate the mock binary; set {} or add `mock_bin_path` to mockspace.toml",
-                ENV_VAR
-            ),
+            },
+            Self::NoUsablePath => {
+                write!(
+                    f,
+                    "could not locate the mock binary; set {} or add `mock_bin_path` to mockspace.toml",
+                    ENV_VAR
+                )
+            },
         }
     }
 }
@@ -181,7 +183,7 @@ pub fn command_for(invocation: ResolvedInvocation) -> Command {
             let mut cmd = Command::new("cargo");
             cmd.arg("mock");
             cmd
-        }
+        },
     }
 }
 
@@ -266,11 +268,7 @@ fn resolve_toml(start_dir: &std::path::Path) -> Result<Option<PathBuf>, Resoluti
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_default();
-    let resolved = if raw.is_absolute() {
-        raw.clone()
-    } else {
-        anchor.join(raw)
-    };
+    let resolved = if raw.is_absolute() { raw.clone() } else { anchor.join(raw) };
     if !is_executable_file(&resolved) {
         return Err(ResolutionError::TomlPathNotExecutable(resolved));
     }
@@ -331,8 +329,9 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Mutex;
+
+    use super::*;
 
     /// Serialises tests that mutate the process-wide env var so they
     /// do not race each other. `std::env::set_var` and `remove_var`
@@ -361,14 +360,18 @@ mod tests {
             let prior = std::env::var_os(ENV_VAR);
             // SAFETY: see EnvVarGuard struct docs.
             unsafe { std::env::set_var(ENV_VAR, value) };
-            Self { prior }
+            Self {
+                prior,
+            }
         }
 
         fn unset() -> Self {
             let prior = std::env::var_os(ENV_VAR);
             // SAFETY: see EnvVarGuard struct docs.
             unsafe { std::env::remove_var(ENV_VAR) };
-            Self { prior }
+            Self {
+                prior,
+            }
         }
     }
 
@@ -389,7 +392,7 @@ mod tests {
         let _lock = ENV_LOCK.lock().unwrap();
         let _g = EnvVarGuard::unset();
         match resolve_invocation() {
-            Err(ResolutionError::NoUsablePath) => {}
+            Err(ResolutionError::NoUsablePath) => {},
             other => panic!("expected NoUsablePath, got {other:?}"),
         }
     }
@@ -410,7 +413,7 @@ mod tests {
         match resolve_invocation() {
             Ok(ResolvedInvocation::Absolute(p)) => {
                 assert_eq!(p, PathBuf::from("/bin/sh"));
-            }
+            },
             other => panic!("expected Absolute(/bin/sh), got {other:?}"),
         }
     }
@@ -425,7 +428,7 @@ mod tests {
                     p,
                     PathBuf::from("/nonexistent/mock/binary/path/that/should/not/exist")
                 );
-            }
+            },
             other => panic!("expected EnvVarPathNotExecutable, got {other:?}"),
         }
     }
@@ -437,7 +440,7 @@ mod tests {
         // Empty value should not fire the "path not executable" error;
         // it should fall through to the next step (currently terminal).
         match resolve_invocation() {
-            Err(ResolutionError::NoUsablePath) => {}
+            Err(ResolutionError::NoUsablePath) => {},
             other => panic!("expected NoUsablePath for empty env var, got {other:?}"),
         }
     }
@@ -470,7 +473,7 @@ mod tests {
         match resolve_invocation() {
             Err(ResolutionError::EnvVarPathNotExecutable(p)) => {
                 assert_eq!(p, PathBuf::from("/tmp"));
-            }
+            },
             other => panic!("expected EnvVarPathNotExecutable for directory, got {other:?}"),
         }
     }
@@ -490,10 +493,12 @@ mod tests {
     /// callers can pass a relative or absolute string literal.
     fn write_mockspace_toml(path: &std::path::Path, mock_bin_path_value: Option<&str>) {
         let body = match mock_bin_path_value {
-            Some(v) => format!(
-                "[mockspace]\nversion = \"1.0\"\nmock_bin_path = \"{}\"\n",
-                v
-            ),
+            Some(v) => {
+                format!(
+                    "[mockspace]\nversion = \"1.0\"\nmock_bin_path = \"{}\"\n",
+                    v
+                )
+            },
             None => "[mockspace]\nversion = \"1.0\"\n".to_string(),
         };
         std::fs::create_dir_all(path.parent().expect("parent dir")).expect("mkdir -p");
@@ -527,7 +532,7 @@ mod tests {
             other => {
                 cleanup(&root);
                 panic!("expected Ok(Some(/bin/sh)), got {other:?}");
-            }
+            },
         }
         cleanup(&root);
     }
@@ -552,7 +557,7 @@ mod tests {
             other => {
                 cleanup(&root);
                 panic!("expected Ok(Some(bin/mock)), got {other:?}");
-            }
+            },
         }
         cleanup(&root);
     }
@@ -570,7 +575,7 @@ mod tests {
         let observed = resolve_toml(&root);
         cleanup(&root);
         match observed {
-            Ok(_) => {}
+            Ok(_) => {},
             Err(e) => panic!("expected Ok(_) for missing toml, got {e:?}"),
         }
     }
@@ -582,7 +587,7 @@ mod tests {
         let observed = resolve_toml(&root);
         cleanup(&root);
         match observed {
-            Ok(None) => {}
+            Ok(None) => {},
             other => panic!("expected Ok(None) for unset field, got {other:?}"),
         }
     }
@@ -600,7 +605,7 @@ mod tests {
             Err(ResolutionError::TomlPathNotExecutable(p)) => {
                 // The error carries the resolved (joined) path.
                 assert!(p.ends_with("does/not/exist/anywhere"));
-            }
+            },
             other => panic!("expected TomlPathNotExecutable, got {other:?}"),
         }
     }
@@ -613,10 +618,12 @@ mod tests {
         let observed = resolve_toml(&root);
         cleanup(&root);
         match observed {
-            Ok(None) => {}
+            Ok(None) => {},
             other => {
-                panic!("expected Ok(None) for unparseable TOML (silent fall-through), got {other:?}");
-            }
+                panic!(
+                    "expected Ok(None) for unparseable TOML (silent fall-through), got {other:?}"
+                );
+            },
         }
     }
 
@@ -696,14 +703,18 @@ mod tests {
             // SAFETY: caller holds ENV_LOCK; see EnvVarGuard docs for
             // the env-mutation safety invariant.
             unsafe { std::env::set_var("PATH", value) };
-            Self { prior }
+            Self {
+                prior,
+            }
         }
 
         fn unset() -> Self {
             let prior = std::env::var_os("PATH");
             // SAFETY: see EnvVarGuard docs.
             unsafe { std::env::remove_var("PATH") };
-            Self { prior }
+            Self {
+                prior,
+            }
         }
     }
 
@@ -832,7 +843,9 @@ mod tests {
 
     #[test]
     fn command_for_absolute_uses_resolved_path_as_program() {
-        let cmd = command_for(ResolvedInvocation::Absolute(PathBuf::from("/some/bin/mock")));
+        let cmd = command_for(ResolvedInvocation::Absolute(PathBuf::from(
+            "/some/bin/mock",
+        )));
         assert_eq!(cmd.get_program(), std::ffi::OsStr::new("/some/bin/mock"));
         assert_eq!(cmd.get_args().count(), 0);
     }
@@ -860,7 +873,9 @@ mod tests {
         fn enter(target: &std::path::Path) -> Self {
             let prior = std::env::current_dir().ok();
             std::env::set_current_dir(target).expect("chdir into cwd-guard target");
-            Self { prior }
+            Self {
+                prior,
+            }
         }
     }
 
@@ -887,7 +902,7 @@ mod tests {
         drop(_cwd);
         cleanup(&root);
         match observed {
-            Err(ResolutionError::NoUsablePath) => {}
+            Err(ResolutionError::NoUsablePath) => {},
             other => panic!("expected NoUsablePath, got {other:?}"),
         }
     }
@@ -938,10 +953,7 @@ mod tests {
         let _g = PathEnvGuard::set(&root);
         let observed = resolve_cargo_probe();
         cleanup(&root);
-        assert!(
-            !observed,
-            "expected probe to return false on nonzero exit"
-        );
+        assert!(!observed, "expected probe to return false on nonzero exit");
     }
 
     #[test]
@@ -1009,10 +1021,10 @@ mod tests {
         match observed {
             Err(ResolutionError::EnvVarPathNotExecutable(p)) => {
                 assert_eq!(p, path);
-            }
-            other => panic!(
-                "expected EnvVarPathNotExecutable for non-exec regular file, got {other:?}"
-            ),
+            },
+            other => {
+                panic!("expected EnvVarPathNotExecutable for non-exec regular file, got {other:?}")
+            },
         }
         #[cfg(not(unix))]
         {

@@ -9,7 +9,6 @@ use crate::config::Config;
 use crate::model::*;
 use crate::render_design;
 
-
 mod helpers;
 pub(crate) use helpers::*;
 mod builtins;
@@ -136,7 +135,8 @@ pub fn generate_agent_rules(
             "{copilot_fm}\n{}",
             format_with_bookends(&header_md, &preamble, &builtin_rule.body, &postamble)
         );
-        let copilot_path = copilot_instructions_dir.join(format!("{}.instructions.md", builtin_rule.name));
+        let copilot_path =
+            copilot_instructions_dir.join(format!("{}.instructions.md", builtin_rule.name));
         render_design::write_generated(&copilot_path, &copilot_content);
         eprintln!("  {} (builtin)", copilot_path.display());
         count += 1;
@@ -174,12 +174,7 @@ pub fn generate_agent_rules(
         let mut entries: Vec<_> = fs::read_dir(&rules_dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|x| x == "tmpl")
-                    .unwrap_or(false)
-            })
+            .filter(|e| e.path().extension().map(|x| x == "tmpl").unwrap_or(false))
             .collect();
         entries.sort_by_key(|e| e.file_name());
 
@@ -228,7 +223,10 @@ pub fn generate_agent_rules(
     for builtin_skill in &builtins.skills {
         // Skip if consumer has a skill with the same directory name
         if consumer_skill_names.contains(&builtin_skill.dir_name) {
-            eprintln!("  {} (builtin skill, overridden by consumer)", builtin_skill.dir_name);
+            eprintln!(
+                "  {} (builtin skill, overridden by consumer)",
+                builtin_skill.dir_name
+            );
             continue;
         }
 
@@ -278,10 +276,7 @@ pub fn generate_agent_rules(
                 continue;
             }
 
-            let skill_name = skill_entry
-                .file_name()
-                .to_string_lossy()
-                .to_string();
+            let skill_name = skill_entry.file_name().to_string_lossy().to_string();
 
             let raw = fs::read_to_string(&skill_path).expect("failed to read skill template");
             let (frontmatter, body) = split_frontmatter(&raw);
@@ -425,8 +420,8 @@ pub fn generate_agent_rules(
             let template = fs::read_to_string(&path).expect("failed to read hook template");
 
             // Parse matchers from frontmatter or fall back to naming convention
-            let matchers = parse_hook_matchers(&template)
-                .unwrap_or_else(|| matchers_from_name(out_name));
+            let matchers =
+                parse_hook_matchers(&template).unwrap_or_else(|| matchers_from_name(out_name));
 
             // substitute general template variables first
             let template = render_agent_body(&template, &vars, cfg, registry);
@@ -492,4 +487,3 @@ pub const BUILTIN_POSTAMBLE: &str = concat!(
     "Never edit `.claude/`/`.github/` directly. ",
     "Deprecate, never addendum.",
 );
-

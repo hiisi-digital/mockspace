@@ -26,17 +26,17 @@ use crate::project::MockspaceProject;
 /// only at instantiate time (one globset compile per filter).
 #[derive(Debug, Clone)]
 pub struct ScopeFilter {
-    paths: GlobSet,
-    paths_empty: bool,
-    exempt_paths: GlobSet,
+    paths:               GlobSet,
+    paths_empty:         bool,
+    exempt_paths:        GlobSet,
     /// Pre-compiled crate-name globset. `crates_accepts_all` short-circuits
     /// the common `*` / empty case.
-    crates: GlobSet,
-    crates_accepts_all: bool,
-    exempt_crates: GlobSet,
+    crates:              GlobSet,
+    crates_accepts_all:  bool,
+    exempt_crates:       GlobSet,
     exempt_crates_empty: bool,
-    languages: Vec<mockspace_core::lint::Language>,
-    proc_macro_exempt: bool,
+    languages:           Vec<mockspace_core::lint::Language>,
+    proc_macro_exempt:   bool,
 }
 
 impl ScopeFilter {
@@ -118,34 +118,40 @@ fn build_globset(
 ) -> Result<GlobSet, ConfigError> {
     let mut builder = GlobSetBuilder::new();
     for pat in patterns {
-        let glob = Glob::new(pat).map_err(|e| ConfigError {
-            lint_name: lint_name.to_string(),
-            field_path: format!("scope.{field}"),
-            kind: ConfigErrorKind::UnparseableGlob {
-                error: format!("{e}"),
-            },
-            message: format!("invalid glob `{pat}`: {e}"),
-            source_location: None,
+        let glob = Glob::new(pat).map_err(|e| {
+            ConfigError {
+                lint_name:       lint_name.to_string(),
+                field_path:      format!("scope.{field}"),
+                kind:            ConfigErrorKind::UnparseableGlob {
+                    error: format!("{e}"),
+                },
+                message:         format!("invalid glob `{pat}`: {e}"),
+                source_location: None,
+            }
         })?;
         builder.add(glob);
     }
-    builder.build().map_err(|e| ConfigError {
-        lint_name: lint_name.to_string(),
-        field_path: format!("scope.{field}"),
-        kind: ConfigErrorKind::UnparseableGlob {
-            error: format!("{e}"),
-        },
-        message: format!("globset build failed: {e}"),
-        source_location: None,
+    builder.build().map_err(|e| {
+        ConfigError {
+            lint_name:       lint_name.to_string(),
+            field_path:      format!("scope.{field}"),
+            kind:            ConfigErrorKind::UnparseableGlob {
+                error: format!("{e}"),
+            },
+            message:         format!("globset build failed: {e}"),
+            source_location: None,
+        }
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use mockspace_core::lint::{Gate, Language, RunSurface};
+
     use super::*;
     use crate::project::ProjectBuilder;
-    use mockspace_core::lint::{Gate, Language, RunSurface};
-    use std::path::PathBuf;
 
     fn make_doc(path: &str, crate_name: &str, lang: Language) -> MockspaceDocument {
         MockspaceDocument::new(PathBuf::from(path), crate_name, lang, "fn x() {}")
@@ -273,7 +279,7 @@ mod tests {
             Err(e) => {
                 assert!(matches!(e.kind, ConfigErrorKind::UnparseableGlob { .. }));
                 assert_eq!(e.field_path, "scope.crates");
-            }
+            },
             Ok(_) => panic!("expected UnparseableGlob on bad crate pattern"),
         }
     }
@@ -288,7 +294,7 @@ mod tests {
         match result {
             Err(e) => {
                 assert!(matches!(e.kind, ConfigErrorKind::UnparseableGlob { .. }));
-            }
+            },
             Ok(_) => panic!("expected UnparseableGlob"),
         }
     }

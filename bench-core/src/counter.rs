@@ -12,7 +12,9 @@ pub struct Rng {
 impl Rng {
     #[must_use]
     pub fn new(seed: u64) -> Self {
-        Rng { state: seed }
+        Rng {
+            state: seed,
+        }
     }
 
     pub fn next(&mut self) -> u64 {
@@ -27,7 +29,7 @@ impl Rng {
     #[cfg(feature = "std")]
     #[must_use = "seeds advances RNG state; the returned Vec contains the only record of the produced values"]
     pub fn seeds(&mut self, n: usize) -> std::vec::Vec<u64> {
-        (0..n).map(|_| self.next()).collect()
+        (0 .. n).map(|_| self.next()).collect()
     }
 }
 
@@ -139,7 +141,7 @@ pub fn pin_to_perf_cores() {
 
     // QoS class: USER_INTERACTIVE = 0x21, biases toward P-cores
     unsafe {
-        unsafe extern "C" {
+        unsafe extern {
             fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: c_int) -> c_int;
         }
         let ret = pthread_set_qos_class_self_np(0x21, 0);
@@ -150,7 +152,7 @@ pub fn pin_to_perf_cores() {
 
     // Thread affinity tag: keeps thread in same scheduling group
     unsafe {
-        unsafe extern "C" {
+        unsafe extern {
             fn mach_thread_self() -> u32;
             fn thread_policy_set(
                 thread: u32,

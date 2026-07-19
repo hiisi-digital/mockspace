@@ -10,27 +10,39 @@
 
 use std::path::Path;
 
-use crate::preprocessor::PreprocessorError;
 use mockspace_core::lint::{
-    FileDisableSet, Finding, Gate, HashAlgorithm, Language, LintCfgStore, LintContext, LintEngine,
-    RunSurface, ScopeAddMap, SuppressionMap,
+    FileDisableSet,
+    Finding,
+    Gate,
+    HashAlgorithm,
+    Language,
+    LintCfgStore,
+    LintContext,
+    LintEngine,
+    RunSurface,
+    ScopeAddMap,
+    SuppressionMap,
 };
 
-use crate::config_loader::{detect_prop_name_conflicts, InstantiatedLint, LintsConfig};
+use crate::config_loader::{InstantiatedLint, LintsConfig, detect_prop_name_conflicts};
 use crate::errors::{
-    DirectiveValidationError, DispatchError, LoadError, ParseError, StartupWarning,
+    DirectiveValidationError,
+    DispatchError,
+    LoadError,
+    ParseError,
+    StartupWarning,
 };
 use crate::finding_sink::VecFindingSink;
 use crate::lint::LintMode;
-use crate::preprocessor::{LanguagePreprocessor, RustPreprocessor};
+use crate::preprocessor::{LanguagePreprocessor, PreprocessorError, RustPreprocessor};
 use crate::project::MockspaceProject;
 use crate::scope::scope_walk;
 
 /// The Rust lint engine.
 pub struct MockspaceEngine {
-    lints: Vec<InstantiatedLint>,
+    lints:             Vec<InstantiatedLint>,
     rust_preprocessor: RustPreprocessor,
-    startup_warnings: Vec<StartupWarning>,
+    startup_warnings:  Vec<StartupWarning>,
 }
 
 impl std::fmt::Debug for MockspaceEngine {
@@ -67,9 +79,9 @@ impl MockspaceEngine {
             return Err(LoadError::Config(config.config_errors));
         }
         Ok(Self {
-            lints: config.entries,
+            lints:             config.entries,
             rust_preprocessor: RustPreprocessor,
-            startup_warnings: config.startup_warnings,
+            startup_warnings:  config.startup_warnings,
         })
     }
 
@@ -115,8 +127,8 @@ impl MockspaceEngine {
                 if !known_lints.contains(name.as_str()) {
                     errors.push(DirectiveValidationError::UnknownLintName {
                         directive: directive_label,
-                        name: name.clone(),
-                        span: scope.scope.clone(),
+                        name:      name.clone(),
+                        span:      scope.scope.clone(),
                     });
                 }
             }
@@ -127,8 +139,8 @@ impl MockspaceEngine {
             if !known_lints.contains(entry.lint_name.as_str()) {
                 errors.push(DirectiveValidationError::UnknownLintName {
                     directive: "lint:scope-add",
-                    name: entry.lint_name.clone(),
-                    span: entry.scope.clone(),
+                    name:      entry.lint_name.clone(),
+                    span:      entry.scope.clone(),
                 });
             }
         }
@@ -141,17 +153,13 @@ impl MockspaceEngine {
             if !known_lints.contains(entry.lint_name.as_str()) {
                 errors.push(DirectiveValidationError::UnknownLintName {
                     directive: "lint:file-disable",
-                    name: entry.lint_name.clone(),
-                    span: entry.directive_span.clone(),
+                    name:      entry.lint_name.clone(),
+                    span:      entry.directive_span.clone(),
                 });
             }
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 
     /// Walk every Rust document through the preprocessor and stash
@@ -207,10 +215,10 @@ impl MockspaceEngine {
 }
 
 impl LintEngine for MockspaceEngine {
-    type Project = MockspaceProject;
-    type ParseError = ParseError;
-    type LoadError = LoadError;
     type DispatchError = DispatchError;
+    type LoadError = LoadError;
+    type ParseError = ParseError;
+    type Project = MockspaceProject;
 
     const HASH_ALGORITHM: HashAlgorithm = HashAlgorithm::Blake3;
 
@@ -232,17 +240,21 @@ impl LintEngine for MockspaceEngine {
         // and silently produce no findings. Building this state in
         // `run` (the prior shape) hid the gap because tests injected
         // via `with_suppressions`. Resolving here is the contract.
-        self.populate_directives(&mut project)
-            .map_err(|e| ParseError::Preprocessor {
+        self.populate_directives(&mut project).map_err(|e| {
+            ParseError::Preprocessor {
                 message: e.to_string(),
-            })?;
+            }
+        })?;
         // Post-extraction validation gate (#547): reject the project
         // outright if any directive names an unknown lint or category.
         // Runs after population so every directive across every
         // document is visible at once and CI sees the full list of
         // failures rather than only the first.
-        self.validate_directives(&project)
-            .map_err(|errors| ParseError::DirectiveValidation { errors })?;
+        self.validate_directives(&project).map_err(|errors| {
+            ParseError::DirectiveValidation {
+                errors,
+            }
+        })?;
         Ok(project)
     }
 
@@ -317,9 +329,11 @@ impl LintEngine for MockspaceEngine {
                         entry
                             .lint
                             .check_document(&ctx, doc, &sink)
-                            .map_err(|source| DispatchError::LintErrored {
-                                lint_name: entry.lint.name().to_owned(),
-                                source,
+                            .map_err(|source| {
+                                DispatchError::LintErrored {
+                                    lint_name: entry.lint.name().to_owned(),
+                                    source,
+                                }
                             })
                     };
                     if only_staged_here {
@@ -331,16 +345,18 @@ impl LintEngine for MockspaceEngine {
                             dispatch(doc)?;
                         }
                     }
-                }
+                },
                 LintMode::ProjectScoped | LintMode::TwoPhaseProject => {
                     entry
                         .lint
                         .check_project(&ctx, project, &sink)
-                        .map_err(|source| DispatchError::LintErrored {
-                            lint_name: entry.lint.name().to_owned(),
-                            source,
+                        .map_err(|source| {
+                            DispatchError::LintErrored {
+                                lint_name: entry.lint.name().to_owned(),
+                                source,
+                            }
                         })?;
-                }
+                },
             }
         }
 
@@ -363,12 +379,13 @@ impl LintEngine for MockspaceEngine {
 
 #[cfg(test)]
 mod tests {
+    use mockspace_core::lint::{GateSeverity, Severity};
+
     use super::*;
     use crate::builtins::token_scan::{TokenScanConfig, TokenScanLint};
     use crate::config_loader::InstantiatedLint;
     use crate::document::MockspaceDocument;
     use crate::project::ProjectBuilder;
-    use mockspace_core::lint::{GateSeverity, Severity};
 
     struct EmptyCfg;
     impl LintCfgStore for EmptyCfg {
@@ -389,11 +406,11 @@ mod tests {
     #[test]
     fn engine_dispatches_per_document_lint() {
         let config = TokenScanConfig {
-            tokens: vec!["BANNED".to_string()],
-            word_boundary: true,
-            strip_strings: true,
-            strip_comments: true,
-            strip_doc_comments: true,
+            tokens:              vec!["BANNED".to_string()],
+            word_boundary:       true,
+            strip_strings:       true,
+            strip_comments:      true,
+            strip_doc_comments:  true,
             severity_escalation: None,
         };
         let lint = TokenScanLint::new(
@@ -403,12 +420,12 @@ mod tests {
             GateSeverity::uniform(Severity::Warn),
         );
         let entries = vec![InstantiatedLint {
-            lint: Box::new(lint),
-            mode: LintMode::PerDocument,
-            staging_aware: true,
-            editor_skip: false,
-            only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+            lint:              Box::new(lint),
+            mode:              LintMode::PerDocument,
+            staging_aware:     true,
+            editor_skip:       false,
+            only_staged:       crate::config_loader::OnlyStaged::default(),
+            scope_filter:      crate::scope_filter::ScopeFilter::from_config(
                 "test",
                 &crate::config_types::ScopeConfig::default(),
             )
@@ -449,12 +466,12 @@ mod tests {
             GateSeverity::uniform(Severity::Off),
         );
         let entries = vec![InstantiatedLint {
-            lint: Box::new(lint),
-            mode: LintMode::PerDocument,
-            staging_aware: false,
-            editor_skip: false,
-            only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+            lint:              Box::new(lint),
+            mode:              LintMode::PerDocument,
+            staging_aware:     false,
+            editor_skip:       false,
+            only_staged:       crate::config_loader::OnlyStaged::default(),
+            scope_filter:      crate::scope_filter::ScopeFilter::from_config(
                 "test",
                 &crate::config_types::ScopeConfig::default(),
             )
@@ -482,37 +499,47 @@ mod tests {
             fn name(&self) -> &'static str {
                 self.name
             }
+
             fn description(&self) -> &'static str {
                 "props stub"
             }
+
             fn default_severity(&self) -> GateSeverity {
                 GateSeverity::uniform(Severity::Warn)
             }
+
             fn declared_props(&self) -> &'static [&'static str] {
                 &["audited"]
             }
         }
-        let make = |name: &'static str| InstantiatedLint {
-            lint: Box::new(PropLint { name }),
-            mode: LintMode::PerDocument,
-            staging_aware: false,
-            editor_skip: false,
-            only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config(
-                name,
-                &crate::config_types::ScopeConfig::default(),
-            )
-            .unwrap(),
-            resolved_severity: None,
+        let make = |name: &'static str| {
+            InstantiatedLint {
+                lint:              Box::new(PropLint {
+                    name,
+                }),
+                mode:              LintMode::PerDocument,
+                staging_aware:     false,
+                editor_skip:       false,
+                only_staged:       crate::config_loader::OnlyStaged::default(),
+                scope_filter:      crate::scope_filter::ScopeFilter::from_config(
+                    name,
+                    &crate::config_types::ScopeConfig::default(),
+                )
+                .unwrap(),
+                resolved_severity: None,
+            }
         };
         let engine = MockspaceEngine::with_entries(vec![make("lint-a"), make("lint-b")]);
         let warnings = engine.startup_warnings();
         assert_eq!(warnings.len(), 1);
         match &warnings[0] {
-            StartupWarning::PropNameConflict { prop_name, lints } => {
+            StartupWarning::PropNameConflict {
+                prop_name,
+                lints,
+            } => {
                 assert_eq!(prop_name, "audited");
                 assert_eq!(lints, &vec!["lint-a".to_string(), "lint-b".to_string()]);
-            }
+            },
         }
     }
 
@@ -522,11 +549,11 @@ mod tests {
         // suppresses every `no-banned` finding emitted against that
         // file, regardless of where in the file the finding lands.
         let config = TokenScanConfig {
-            tokens: vec!["BANNED".to_string()],
-            word_boundary: true,
-            strip_strings: true,
-            strip_comments: true,
-            strip_doc_comments: true,
+            tokens:              vec!["BANNED".to_string()],
+            word_boundary:       true,
+            strip_strings:       true,
+            strip_comments:      true,
+            strip_doc_comments:  true,
             severity_escalation: None,
         };
         let lint = TokenScanLint::new(
@@ -536,12 +563,12 @@ mod tests {
             GateSeverity::uniform(Severity::Warn),
         );
         let entries = vec![InstantiatedLint {
-            lint: Box::new(lint),
-            mode: LintMode::PerDocument,
-            staging_aware: true,
-            editor_skip: false,
-            only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+            lint:              Box::new(lint),
+            mode:              LintMode::PerDocument,
+            staging_aware:     true,
+            editor_skip:       false,
+            only_staged:       crate::config_loader::OnlyStaged::default(),
+            scope_filter:      crate::scope_filter::ScopeFilter::from_config(
                 "test",
                 &crate::config_types::ScopeConfig::default(),
             )
@@ -599,11 +626,11 @@ mod tests {
         // isolates the engine's filter wiring from preprocessor
         // span shape.
         let config = TokenScanConfig {
-            tokens: vec!["BANNED".to_string()],
-            word_boundary: true,
-            strip_strings: true,
-            strip_comments: true,
-            strip_doc_comments: true,
+            tokens:              vec!["BANNED".to_string()],
+            word_boundary:       true,
+            strip_strings:       true,
+            strip_comments:      true,
+            strip_doc_comments:  true,
             severity_escalation: None,
         };
         let lint = TokenScanLint::new(
@@ -613,12 +640,12 @@ mod tests {
             GateSeverity::uniform(Severity::Warn),
         );
         let entries = vec![InstantiatedLint {
-            lint: Box::new(lint),
-            mode: LintMode::PerDocument,
-            staging_aware: true,
-            editor_skip: false,
-            only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+            lint:              Box::new(lint),
+            mode:              LintMode::PerDocument,
+            staging_aware:     true,
+            editor_skip:       false,
+            only_staged:       crate::config_loader::OnlyStaged::default(),
+            scope_filter:      crate::scope_filter::ScopeFilter::from_config(
                 "test",
                 &crate::config_types::ScopeConfig::default(),
             )
@@ -634,11 +661,11 @@ mod tests {
         let mut lints_set = std::collections::BTreeSet::new();
         lints_set.insert("no-banned".to_string());
         suppressions.push(mockspace_core::lint::SuppressionScope {
-            scope: mockspace_core::lint::Span::range("a.rs", 1, 0, 1, 1000),
-            lints: lints_set,
-            kind: mockspace_core::lint::SuppressionKind::Allow,
+            scope:   mockspace_core::lint::Span::range("a.rs", 1, 0, 1, 1000),
+            lints:   lints_set,
+            kind:    mockspace_core::lint::SuppressionKind::Allow,
             tracked: Some("#1".to_string()),
-            reason: Some("fixture".to_string()),
+            reason:  Some("fixture".to_string()),
         });
 
         let mut builder = ProjectBuilder::new("/tmp", RunSurface::Local, Gate::Commit);
@@ -687,20 +714,24 @@ mod tests {
             fn name(&self) -> &'static str {
                 self.name
             }
+
             fn description(&self) -> &'static str {
                 "stub"
             }
+
             fn default_severity(&self) -> GateSeverity {
                 GateSeverity::uniform(Severity::Warn)
             }
         }
         InstantiatedLint {
-            lint: Box::new(StubLint { name }),
-            mode: LintMode::PerDocument,
-            staging_aware: false,
-            editor_skip: false,
-            only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+            lint:              Box::new(StubLint {
+                name,
+            }),
+            mode:              LintMode::PerDocument,
+            staging_aware:     false,
+            editor_skip:       false,
+            only_staged:       crate::config_loader::OnlyStaged::default(),
+            scope_filter:      crate::scope_filter::ScopeFilter::from_config(
                 name,
                 &crate::config_types::ScopeConfig::default(),
             )
@@ -743,11 +774,13 @@ mod tests {
         assert_eq!(err.len(), 1);
         match &err[0] {
             DirectiveValidationError::UnknownLintName {
-                directive, name, ..
+                directive,
+                name,
+                ..
             } => {
                 assert_eq!(*directive, "lint:allow");
                 assert_eq!(name, "unknown-lint");
-            }
+            },
         }
     }
 
@@ -769,8 +802,13 @@ mod tests {
         let err = engine.validate_directives(&project).unwrap_err();
         let directives: Vec<&str> = err
             .iter()
-            .map(|e| match e {
-                DirectiveValidationError::UnknownLintName { directive, .. } => *directive,
+            .map(|e| {
+                match e {
+                    DirectiveValidationError::UnknownLintName {
+                        directive,
+                        ..
+                    } => *directive,
+                }
             })
             .collect();
         assert!(directives.contains(&"lint:defer"));
@@ -813,11 +851,16 @@ mod tests {
             .scope_project(root, RunSurface::Local)
             .expect_err("scope_project should reject project with unknown lint");
         match err {
-            ParseError::DirectiveValidation { errors } => {
+            ParseError::DirectiveValidation {
+                errors,
+            } => {
                 assert_eq!(errors.len(), 1);
-                let DirectiveValidationError::UnknownLintName { name, .. } = &errors[0];
+                let DirectiveValidationError::UnknownLintName {
+                    name,
+                    ..
+                } = &errors[0];
                 assert_eq!(name, "unknown-lint-name");
-            }
+            },
             other => panic!("expected DirectiveValidation, got {other:?}"),
         }
         // tmp drops here; the directory is removed automatically.
@@ -843,7 +886,10 @@ mod tests {
         engine.populate_directives(&mut project).unwrap();
         let err = engine.validate_directives(&project).unwrap_err();
         assert_eq!(err.len(), 1);
-        let DirectiveValidationError::UnknownLintName { span, .. } = &err[0];
+        let DirectiveValidationError::UnknownLintName {
+            span,
+            ..
+        } = &err[0];
         // The directive lives on line 2; the prior implementation
         // would have reported line 1.
         assert_eq!(
@@ -887,12 +933,12 @@ mod tests {
             GateSeverity::uniform(Severity::Warn),
         );
         let entries = vec![InstantiatedLint {
-            lint: Box::new(lint),
-            mode: LintMode::TwoPhaseProject,
-            staging_aware: false,
-            editor_skip: true,
-            only_staged: crate::config_loader::OnlyStaged::default(),
-            scope_filter: crate::scope_filter::ScopeFilter::from_config(
+            lint:              Box::new(lint),
+            mode:              LintMode::TwoPhaseProject,
+            staging_aware:     false,
+            editor_skip:       true,
+            only_staged:       crate::config_loader::OnlyStaged::default(),
+            scope_filter:      crate::scope_filter::ScopeFilter::from_config(
                 "test",
                 &crate::config_types::ScopeConfig::default(),
             )

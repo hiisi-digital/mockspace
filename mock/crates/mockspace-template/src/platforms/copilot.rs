@@ -59,7 +59,9 @@ impl Platform for CopilotPlatform {
     fn output_path(&self, repo_root: &Path, logical: &str) -> PathBuf {
         let gh = repo_root.join(".github");
         if let Some(rest) = logical.strip_prefix("rules/") {
-            return gh.join("instructions").join(format!("{rest}.instructions.md"));
+            return gh
+                .join("instructions")
+                .join(format!("{rest}.instructions.md"));
         }
         if let Some(rest) = logical.strip_prefix("skills/") {
             return gh.join("skills").join(rest).join("SKILL.md");
@@ -89,11 +91,7 @@ impl Platform for CopilotPlatform {
         COPILOT_HOOK_HELPERS.replace("{{REPO_ROOT}}", &repo_root.display().to_string())
     }
 
-    fn settings_file(
-        &self,
-        repo_root: &Path,
-        hooks: &[HookDecl],
-    ) -> Option<(PathBuf, String)> {
+    fn settings_file(&self, repo_root: &Path, hooks: &[HookDecl]) -> Option<(PathBuf, String)> {
         if hooks.is_empty() {
             return None;
         }
@@ -108,9 +106,18 @@ fn build_copilot_settings_json(hooks: &[HookDecl]) -> String {
     let n = hooks.len();
     for (i, h) in hooks.iter().enumerate() {
         s.push_str("    {\n");
-        s.push_str(&format!("      \"event\": \"{}\",\n", json_escape(&h.event)));
-        s.push_str(&format!("      \"matcher\": \"{}\",\n", json_escape(&h.matcher)));
-        s.push_str(&format!("      \"command\": \"{}\"\n", json_escape(&h.command)));
+        s.push_str(&format!(
+            "      \"event\": \"{}\",\n",
+            json_escape(&h.event)
+        ));
+        s.push_str(&format!(
+            "      \"matcher\": \"{}\",\n",
+            json_escape(&h.matcher)
+        ));
+        s.push_str(&format!(
+            "      \"command\": \"{}\"\n",
+            json_escape(&h.command)
+        ));
         if i + 1 < n {
             s.push_str("    },\n");
         } else {

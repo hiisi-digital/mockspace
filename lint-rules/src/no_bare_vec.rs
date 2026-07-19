@@ -73,7 +73,10 @@ const MACRO_FORBIDDEN: &[(&str, &str)] = &[
 pub struct NoBareVec;
 
 impl Lint for NoBareVec {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
@@ -120,8 +123,10 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     if is_item_node(node) {
         if let Some(explanation) = has_allow_bare_collection(node, ctx.source) {
             let (severity, message) = if explanation_is_sufficient(&explanation) {
-                (crate::Severity::ADVISORY,
-                 format!("suppressed by lint:allow(bare_collection) — {explanation}"))
+                (
+                    crate::Severity::ADVISORY,
+                    format!("suppressed by lint:allow(bare_collection) — {explanation}"),
+                )
             } else {
                 (crate::Severity::PUSH_GATE,
                  "lint:allow(bare_collection) requires an explanation (8+ words) — explain WHY this bare collection is justified".to_string())
@@ -148,8 +153,10 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 let source_line = ctx.source.lines().nth(line_idx).unwrap_or("");
                 if let Some(explanation) = line_allow_explanation(source_line) {
                     let (severity, message) = if explanation_is_sufficient(&explanation) {
-                        (crate::Severity::ADVISORY,
-                         format!("suppressed by lint:allow(bare_collection) — {explanation}"))
+                        (
+                            crate::Severity::ADVISORY,
+                            format!("suppressed by lint:allow(bare_collection) — {explanation}"),
+                        )
                     } else {
                         (crate::Severity::PUSH_GATE,
                          "lint:allow(bare_collection) requires an explanation (8+ words) — explain WHY this bare collection is justified".to_string())
@@ -167,8 +174,10 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 // Check preceding line of the field/variant for lint:allow
                 if let Some(explanation) = field_level_allow_explanation(node, ctx.source) {
                     let (severity, message) = if explanation_is_sufficient(&explanation) {
-                        (crate::Severity::ADVISORY,
-                         format!("suppressed by lint:allow(bare_collection) — {explanation}"))
+                        (
+                            crate::Severity::ADVISORY,
+                            format!("suppressed by lint:allow(bare_collection) — {explanation}"),
+                        )
                     } else {
                         (crate::Severity::PUSH_GATE,
                          "lint:allow(bare_collection) requires an explanation (8+ words) — explain WHY this bare collection is justified".to_string())
@@ -186,8 +195,12 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 // lint:allow(bare_collection) on enclosing item: explained → Warning, unexplained → PushError
                 if let Some(explanation) = enclosing_item_explanation(node, ctx.source) {
                     let (severity, message) = if explanation_is_sufficient(&explanation) {
-                        (crate::Severity::ADVISORY,
-                         format!("suppressed by lint:allow(bare_collection) on enclosing item — {explanation}"))
+                        (
+                            crate::Severity::ADVISORY,
+                            format!(
+                                "suppressed by lint:allow(bare_collection) on enclosing item — {explanation}"
+                            ),
+                        )
                     } else {
                         (crate::Severity::PUSH_GATE,
                          "lint:allow(bare_collection) on enclosing item requires an explanation (8+ words)".to_string())
@@ -231,23 +244,37 @@ fn is_type_position(node: Node) -> bool {
     while let Some(parent) = current {
         match parent.kind() {
             // Intermediate type nodes — keep walking up
-            "generic_type" | "reference_type" | "array_type" | "tuple_type"
-            | "pointer_type" | "scoped_type_identifier" | "type_arguments" => {}
+            "generic_type"
+            | "reference_type"
+            | "array_type"
+            | "tuple_type"
+            | "pointer_type"
+            | "scoped_type_identifier"
+            | "type_arguments" => {},
             // Definite type-annotation parents
-            "function_item" | "function_signature_item" | "parameter"
-            | "field_declaration" | "let_declaration" | "const_item"
-            | "static_item" | "type_item" | "return_type" | "closure_parameters"
-            | "impl_item" | "trait_item" | "where_predicate" | "type_bound" => {
+            "function_item"
+            | "function_signature_item"
+            | "parameter"
+            | "field_declaration"
+            | "let_declaration"
+            | "const_item"
+            | "static_item"
+            | "type_item"
+            | "return_type"
+            | "closure_parameters"
+            | "impl_item"
+            | "trait_item"
+            | "where_predicate"
+            | "type_bound" => {
                 return true;
-            }
+            },
             // Expression position — not a type annotation (e.g., Vec::new())
-            "call_expression" | "field_expression" | "scoped_identifier"
-            | "macro_invocation" => {
+            "call_expression" | "field_expression" | "scoped_identifier" | "macro_invocation" => {
                 return false;
-            }
+            },
             _ => {
                 // For other parent kinds, keep walking up
-            }
+            },
         }
         current = parent.parent();
     }
@@ -258,8 +285,13 @@ fn is_type_position(node: Node) -> bool {
 fn is_item_node(node: Node) -> bool {
     matches!(
         node.kind(),
-        "function_item" | "function_signature_item" | "struct_item"
-        | "enum_item" | "impl_item" | "const_item" | "static_item"
+        "function_item"
+            | "function_signature_item"
+            | "struct_item"
+            | "enum_item"
+            | "impl_item"
+            | "const_item"
+            | "static_item"
     )
 }
 
@@ -271,16 +303,24 @@ fn field_level_allow_explanation(node: Node, source: &str) -> Option<String> {
     let mut current = node.parent();
     while let Some(parent) = current {
         match parent.kind() {
-            "field_declaration" | "enum_variant" | "let_declaration" | "const_item" | "static_item" => {
+            "field_declaration" | "enum_variant" | "let_declaration" | "const_item"
+            | "static_item" => {
                 if let Some(explanation) = has_allow_bare_collection(parent, source) {
                     return Some(explanation);
                 }
                 // not found here; keep walking up (e.g. field inside enum variant)
-            }
+            },
             // Keep walking up through intermediate type/container nodes
-            "generic_type" | "reference_type" | "array_type" | "tuple_type"
-            | "pointer_type" | "scoped_type_identifier" | "type_arguments"
-            | "field_declaration_list" | "declaration_list" | "enum_variant_list" => {}
+            "generic_type"
+            | "reference_type"
+            | "array_type"
+            | "tuple_type"
+            | "pointer_type"
+            | "scoped_type_identifier"
+            | "type_arguments"
+            | "field_declaration_list"
+            | "declaration_list"
+            | "enum_variant_list" => {},
             _ => {
                 // Last resort: check the line before this parent for a comment
                 let start_row = parent.start_position().row;
@@ -292,7 +332,7 @@ fn field_level_allow_explanation(node: Node, source: &str) -> Option<String> {
                     }
                 }
                 break;
-            }
+            },
         }
         current = parent.parent();
     }
@@ -366,24 +406,24 @@ fn extract_explanation(comment: &str, rule_name: &str) -> String {
     let needle = "lint:allow(";
     let mut search = comment;
     while let Some(start) = search.find(needle) {
-        let after_open = &search[start + needle.len()..];
+        let after_open = &search[start + needle.len() ..];
         if let Some(close) = after_open.find(')') {
-            let names = &after_open[..close];
+            let names = &after_open[.. close];
             if names.split(',').any(|n| n.trim() == rule_name) {
-                let after = &after_open[close + 1..];
+                let after = &after_open[close + 1 ..];
                 let trimmed = after.trim();
                 let explanation = if trimmed.starts_with("—") || trimmed.starts_with("–") {
-                    trimmed[trimmed.char_indices().nth(1).map(|(i, _)| i).unwrap_or(1)..].trim()
+                    trimmed[trimmed.char_indices().nth(1).map(|(i, _)| i).unwrap_or(1) ..].trim()
                 } else if trimmed.starts_with('-') {
-                    trimmed[1..].trim()
+                    trimmed[1 ..].trim()
                 } else if trimmed.starts_with(':') {
-                    trimmed[1..].trim()
+                    trimmed[1 ..].trim()
                 } else {
                     trimmed
                 };
                 return explanation.to_string();
             }
-            search = &after_open[close + 1..];
+            search = &after_open[close + 1 ..];
         } else {
             break;
         }
@@ -511,8 +551,12 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                         prev_line_explanation.clone()
                     };
                     let (severity, message) = if explanation_is_sufficient(&explanation) {
-                        (crate::Severity::ADVISORY,
-                         format!("suppressed by lint:allow(bare_collection) in macro — {explanation}"))
+                        (
+                            crate::Severity::ADVISORY,
+                            format!(
+                                "suppressed by lint:allow(bare_collection) in macro — {explanation}"
+                            ),
+                        )
                     } else {
                         (crate::Severity::PUSH_GATE,
                          "lint:allow(bare_collection) in macro requires an explanation (8+ words)".to_string())

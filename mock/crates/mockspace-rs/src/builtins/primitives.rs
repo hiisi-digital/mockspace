@@ -18,27 +18,28 @@
 
 use mockspace_core::lint::GateSeverity;
 
+use super::{
+    ast_node_position,
+    ast_type_position,
+    content_regex,
+    cross_doc_symbol,
+    deprecation_comparison,
+    directive_style_consistency,
+    file_metric,
+    identifier_pattern,
+    no_adhoc_framework,
+    no_bare_vec,
+    no_manual_id,
+    no_manual_impl,
+    registrable_completeness,
+    suppression_meta,
+    term_replacement,
+    token_scan,
+    undocumented_item,
+    workflow_state,
+};
 use crate::errors::ConfigError;
 use crate::lint::{Lint, LintMode};
-
-use super::ast_node_position;
-use super::ast_type_position;
-use super::content_regex;
-use super::cross_doc_symbol;
-use super::deprecation_comparison;
-use super::directive_style_consistency;
-use super::file_metric;
-use super::identifier_pattern;
-use super::no_adhoc_framework;
-use super::no_bare_vec;
-use super::no_manual_id;
-use super::no_manual_impl;
-use super::registrable_completeness;
-use super::suppression_meta;
-use super::term_replacement;
-use super::token_scan;
-use super::undocumented_item;
-use super::workflow_state;
 
 /// Constructor signature shared by every primitive's `instantiate_with`.
 /// The cascade plumbing (existing entry path and the upcoming
@@ -59,11 +60,11 @@ pub type InstantiateFn = fn(
 /// `finding_kind` field) in the synthesis pass.
 #[derive(Clone, Copy)]
 pub struct PrimitiveDescriptor {
-    pub name: &'static str,
-    pub instantiate: InstantiateFn,
-    pub mode: LintMode,
+    pub name:          &'static str,
+    pub instantiate:   InstantiateFn,
+    pub mode:          LintMode,
     pub staging_aware: bool,
-    pub editor_skip: bool,
+    pub editor_skip:   bool,
 }
 
 impl PrimitiveDescriptor {
@@ -109,29 +110,14 @@ pub static PRIMITIVE_DESCRIPTORS: &[PrimitiveDescriptor] = &[
         "ast-node-position-match",
         ast_node_position::instantiate_with,
     ),
-    PrimitiveDescriptor::per_document(
-        "identifier-pattern",
-        identifier_pattern::instantiate_with,
-    ),
+    PrimitiveDescriptor::per_document("identifier-pattern", identifier_pattern::instantiate_with),
     PrimitiveDescriptor::per_document("content-regex", content_regex::instantiate_with),
-    PrimitiveDescriptor::per_document(
-        "term-replacement-table",
-        term_replacement::instantiate_with,
-    ),
+    PrimitiveDescriptor::per_document("term-replacement-table", term_replacement::instantiate_with),
     PrimitiveDescriptor::per_document("file-metric", file_metric::instantiate_with),
-    PrimitiveDescriptor::project_scoped(
-        "undocumented-item",
-        undocumented_item::instantiate_with,
-    ),
-    PrimitiveDescriptor::project_scoped(
-        "cross-doc-symbol",
-        cross_doc_symbol::instantiate_with,
-    ),
+    PrimitiveDescriptor::project_scoped("undocumented-item", undocumented_item::instantiate_with),
+    PrimitiveDescriptor::project_scoped("cross-doc-symbol", cross_doc_symbol::instantiate_with),
     PrimitiveDescriptor::project_scoped("workflow-state", workflow_state::instantiate_with),
-    PrimitiveDescriptor::project_scoped(
-        "suppression-meta",
-        suppression_meta::instantiate_with,
-    ),
+    PrimitiveDescriptor::project_scoped("suppression-meta", suppression_meta::instantiate_with),
     PrimitiveDescriptor::project_scoped(
         "directive-style-consistency",
         directive_style_consistency::instantiate_with,
@@ -144,11 +130,11 @@ pub static PRIMITIVE_DESCRIPTORS: &[PrimitiveDescriptor] = &[
     // registry entry sets staging_aware=true, so the descriptor
     // mirrors it instead of using the helper constructor.
     PrimitiveDescriptor {
-        name: "no-adhoc-framework",
-        instantiate: no_adhoc_framework::instantiate_with,
-        mode: LintMode::TwoPhaseProject,
+        name:          "no-adhoc-framework",
+        instantiate:   no_adhoc_framework::instantiate_with,
+        mode:          LintMode::TwoPhaseProject,
         staging_aware: true,
-        editor_skip: true,
+        editor_skip:   true,
     },
     PrimitiveDescriptor::two_phase_project(
         "registrable-completeness",
@@ -164,7 +150,9 @@ pub static PRIMITIVE_DESCRIPTORS: &[PrimitiveDescriptor] = &[
 /// once per preset reference in user TOML at engine startup, so a
 /// linear scan is the right shape.
 pub fn find_descriptor(primitive_name: &str) -> Option<&'static PrimitiveDescriptor> {
-    PRIMITIVE_DESCRIPTORS.iter().find(|d| d.name == primitive_name)
+    PRIMITIVE_DESCRIPTORS
+        .iter()
+        .find(|d| d.name == primitive_name)
 }
 
 #[cfg(test)]

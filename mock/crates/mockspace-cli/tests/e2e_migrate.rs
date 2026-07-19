@@ -10,9 +10,10 @@
 //! Complements `e2e_install.rs` (filesystem-footprint), `e2e_check.rs`
 //! (lint engine stdout), and `e2e_explain.rs` (cascade renderer).
 
+use std::fs;
+
 use assert_cmd::Command;
 use mockspace_test_fixtures::MockspaceFixture;
-use std::fs;
 
 mod common;
 use common::assert_matches_golden;
@@ -66,4 +67,3 @@ fn migrate_on_fixture_with_v1_round_describes_it() {
     let stdout = capture_migrate_stdout(&fixture);
     assert_matches_golden("migrate_fixture_with_v1_round", &stdout);
 }
-

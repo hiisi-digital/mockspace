@@ -9,9 +9,9 @@ pub enum ApiVisibility {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrateInfo {
-    pub short_name: String,
-    pub items: Vec<Item>,
-    pub deps: Vec<String>,
+    pub short_name:      String,
+    pub items:           Vec<Item>,
+    pub deps:            Vec<String>,
     /// Macro invocations found in this crate (e.g. `define_signal!(KeyPressed ...)`)
     /// Each entry: (macro_name, generated_item_name, source_crate_short)
     pub macro_generated: Vec<MacroGenerated>,
@@ -20,11 +20,11 @@ pub struct CrateInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroGenerated {
     /// The macro being invoked, e.g. "define_signal"
-    pub macro_name: String,
+    pub macro_name:     String,
     /// The item name it generates, e.g. "KeyPressed"
     pub generated_name: String,
     /// The short crate name where the macro is defined, e.g. "signal"
-    pub source_crate: String,
+    pub source_crate:   String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,55 +38,55 @@ pub enum Item {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitItem {
-    pub name: String,
-    pub generics: String,
-    pub bounds: String,
-    pub methods: Vec<FnSig>,
+    pub name:       String,
+    pub generics:   String,
+    pub bounds:     String,
+    pub methods:    Vec<FnSig>,
     pub visibility: ApiVisibility,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructItem {
-    pub name: String,
-    pub generics: String,
+    pub name:       String,
+    pub generics:   String,
     #[allow(dead_code)]
-    pub fields: Vec<Field>,
+    pub fields:     Vec<Field>,
     pub visibility: ApiVisibility,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumItem {
-    pub name: String,
+    pub name:       String,
     #[allow(dead_code)]
-    pub variants: Vec<String>,
+    pub variants:   Vec<String>,
     pub visibility: ApiVisibility,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnItem {
-    pub sig: FnSig,
+    pub sig:        FnSig,
     pub visibility: ApiVisibility,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroItem {
-    pub name: String,
+    pub name:    String,
     pub is_proc: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FnSig {
-    pub name: String,
+    pub name:     String,
     pub generics: String,
-    pub params: String,
-    pub ret: String,
+    pub params:   String,
+    pub ret:      String,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub name: String,
-    pub ty: String,
+    pub ty:   String,
 }
 
 impl Item {

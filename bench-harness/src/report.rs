@@ -9,7 +9,7 @@
 //! algo distribution per variant, and an automated diagnostic
 //! section.
 
-use crate::analysis::{bh_fdr_adjust, bootstrap_ci_median, compare, pct_delta, DataSet};
+use crate::analysis::{DataSet, bh_fdr_adjust, bootstrap_ci_median, compare, pct_delta};
 
 /// Generate a complete markdown report from a [`DataSet`].
 pub fn generate(ds: &DataSet, title: &str) -> String {
@@ -43,11 +43,8 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         let (fastest_idx, fastest_med) = by_median[0];
         let fastest = &ds.variants[fastest_idx];
         let base_med = base.algo_all.median;
-        let fastest_pct = if base_med > 0.0 {
-            (fastest_med - base_med) / base_med * 100.0
-        } else {
-            0.0
-        };
+        let fastest_pct =
+            if base_med > 0.0 { (fastest_med - base_med) / base_med * 100.0 } else { 0.0 };
 
         if fastest_idx == ds.baseline_idx {
             md.push_str(&format!(
@@ -97,7 +94,9 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         if fastest_med > 0.0 {
             md.push_str(&format!(
                 "- Spread: {:.2}x (fastest {:.1} ns, slowest {:.1} ns)\n",
-                slowest_med / fastest_med, fastest_med, slowest_med
+                slowest_med / fastest_med,
+                fastest_med,
+                slowest_med
             ));
         }
 
@@ -142,15 +141,15 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
     md.push_str("|---|---|---|---|---|---|---|\n");
     for v in &ds.variants {
         let d = pct_delta(v.e2e_all.mean, base.e2e_all.mean);
-        let label = if v.name == base.name {
-            "base".into()
-        } else {
-            format!("{:+.2}%", d)
-        };
+        let label = if v.name == base.name { "base".into() } else { format!("{:+.2}%", d) };
         md.push_str(&format!(
             "| {} | {:.0}ns | {:.0}ns | {:.0}ns | {:.0}ns | {:.0}ns | {} |\n",
-            v.name, v.e2e_all.mean, v.e2e_all.median,
-            v.e2e_all.best_20pct, v.e2e_all.mid_60pct, v.e2e_all.worst_20pct,
+            v.name,
+            v.e2e_all.mean,
+            v.e2e_all.median,
+            v.e2e_all.best_20pct,
+            v.e2e_all.mid_60pct,
+            v.e2e_all.worst_20pct,
             label
         ));
     }
@@ -163,22 +162,18 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         md.push_str("|---|---|---|---|---|---|\n");
         for v in &ds.variants {
             let d = pct_delta(v.algo_all.mean, base.algo_all.mean);
-            let label = if v.name == base.name {
-                "base".into()
-            } else {
-                format!("{:+.2}%", d)
-            };
+            let label = if v.name == base.name { "base".into() } else { format!("{:+.2}%", d) };
             // throughput in Gops/s = ops / algo_ns
-            let throughput_gops = if v.algo_all.mean > 0.0 {
-                ops as f64 / v.algo_all.mean
-            } else {
-                0.0
-            };
+            let throughput_gops =
+                if v.algo_all.mean > 0.0 { ops as f64 / v.algo_all.mean } else { 0.0 };
             md.push_str(&format!(
                 "| {} | {:.0}ns | {:.0}ns | {:.0}ns | {} | {:.3} |\n",
-                v.name, v.algo_all.mean,
-                v.algo_all.best_20pct, v.algo_all.worst_20pct,
-                label, throughput_gops
+                v.name,
+                v.algo_all.mean,
+                v.algo_all.best_20pct,
+                v.algo_all.worst_20pct,
+                label,
+                throughput_gops
             ));
         }
     } else {
@@ -187,16 +182,10 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         md.push_str("|---|---|---|---|---|\n");
         for v in &ds.variants {
             let d = pct_delta(v.algo_all.mean, base.algo_all.mean);
-            let label = if v.name == base.name {
-                "base".into()
-            } else {
-                format!("{:+.2}%", d)
-            };
+            let label = if v.name == base.name { "base".into() } else { format!("{:+.2}%", d) };
             md.push_str(&format!(
                 "| {} | {:.0}ns | {:.0}ns | {:.0}ns | {} |\n",
-                v.name, v.algo_all.mean,
-                v.algo_all.best_20pct, v.algo_all.worst_20pct,
-                label
+                v.name, v.algo_all.mean, v.algo_all.best_20pct, v.algo_all.worst_20pct, label
             ));
         }
     }
@@ -226,11 +215,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         for v in &ds.variants {
             if v.algo_all.median > 0.0 {
                 let gops = ops as f64 / v.algo_all.median;
-                let pct = if peak_gops > 0.0 {
-                    gops / peak_gops * 100.0
-                } else {
-                    0.0
-                };
+                let pct = if peak_gops > 0.0 { gops / peak_gops * 100.0 } else { 0.0 };
                 md.push_str(&format!("| {} | {:.3} | {:.1}% |\n", v.name, gops, pct));
             }
         }
@@ -267,17 +252,15 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             .sum::<f64>()
             / cds.len().max(1) as f64;
         let d = pct_delta(avg, base_avg);
-        let label = if v.name == base.name {
-            "base".into()
-        } else {
-            format!("{:+.2}%", d)
-        };
+        let label = if v.name == base.name { "base".into() } else { format!("{:+.2}%", d) };
         md.push_str(&format!(" | {:.0}ns | {} |\n", avg, label));
     }
 
     // ── Statistical comparison with BH-FDR correction ──
     md.push_str("\n## Statistical comparison (algo, 95% bootstrap CI)\n\n");
-    md.push_str("| Variant | median | Δ median | Δ CI | 95% CI | sig? | adj. p | sign p | ties |\n");
+    md.push_str(
+        "| Variant | median | Δ median | Δ CI | 95% CI | sig? | adj. p | sign p | ties |\n",
+    );
     md.push_str("|---|---|---|---|---|---|---|---|---|\n");
 
     let base_keyed = &ds.variants[ds.baseline_idx].keyed_algo;
@@ -285,15 +268,15 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
     let (base_ci_lo, base_med, base_ci_hi) = bootstrap_ci_median(&base_algo, 0xB007_5747);
 
     struct CmpRow {
-        variant_idx: usize,
-        v_med: f64,
-        v_ci_lo: f64,
-        v_ci_hi: f64,
-        diff_label: String,
+        variant_idx:    usize,
+        v_med:          f64,
+        v_ci_lo:        f64,
+        v_ci_hi:        f64,
+        diff_label:     String,
         ci_delta_label: String,
-        sig_label: &'static str,
-        sign_p: f64,
-        ties_label: String,
+        sig_label:      &'static str,
+        sign_p:         f64,
+        ties_label:     String,
     }
 
     let mut rows: Vec<CmpRow> = Vec::new();
@@ -320,13 +303,13 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
                         base_paired.push(bval);
                         vi += 1;
                         bi += 1;
-                    }
+                    },
                     std::cmp::Ordering::Less => {
                         vi += 1;
-                    }
+                    },
                     std::cmp::Ordering::Greater => {
                         bi += 1;
-                    }
+                    },
                 }
             }
         }
@@ -340,8 +323,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             (variant_paired, base_paired)
         };
 
-        let (v_ci_lo, v_med, v_ci_hi) =
-            bootstrap_ci_median(&variant_algo, 0xB007_5747 ^ i as u64);
+        let (v_ci_lo, v_med, v_ci_hi) = bootstrap_ci_median(&variant_algo, 0xB007_5747 ^ i as u64);
         let cmp = compare(&variant_algo, &base_algo_paired, 0xC0C0_CAFE ^ i as u64);
 
         let ci_delta_label = format!("[{:+.0}, {:+.0}]ns", cmp.ci_lo_ns, cmp.ci_hi_ns);
@@ -408,9 +390,16 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         let v = &ds.variants[row.variant_idx];
         md.push_str(&format!(
             "| {} | {:.0}ns | {} | {} | [{:.0}, {:.0}] | {} | {:.4} | {:.4} | {} |\n",
-            v.name, row.v_med, row.diff_label, row.ci_delta_label,
-            row.v_ci_lo, row.v_ci_hi, sig_display,
-            adj_p, row.sign_p, row.ties_label
+            v.name,
+            row.v_med,
+            row.diff_label,
+            row.ci_delta_label,
+            row.v_ci_lo,
+            row.v_ci_hi,
+            sig_display,
+            adj_p,
+            row.sign_p,
+            row.ties_label
         ));
     }
 
@@ -434,7 +423,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         }
         md.push('\n');
 
-        for p in 0..n_passes {
+        for p in 0 .. n_passes {
             let bval = base.nonstop_per_pass[p];
             md.push_str(&format!("| {} | {:.0}ns", p + 1, bval));
             for v in &ds.variants {
@@ -476,7 +465,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             }
             let mut wins = 0;
             let mut losses = 0;
-            for p in 0..n_passes.min(v.nonstop_per_pass.len()) {
+            for p in 0 .. n_passes.min(v.nonstop_per_pass.len()) {
                 let d = pct_delta(v.nonstop_per_pass[p], base.nonstop_per_pass[p]);
                 if d < -0.1 {
                     wins += 1;
@@ -499,11 +488,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
     for v in &ds.variants {
         let bridge_mean = v.bridge_all.mean;
         let algo_mean = v.algo_all.mean;
-        let pct = if algo_mean > 0.0 {
-            bridge_mean / algo_mean * 100.0
-        } else {
-            0.0
-        };
+        let pct = if algo_mean > 0.0 { bridge_mean / algo_mean * 100.0 } else { 0.0 };
         let flag = if pct > 5.0 { "HIGH" } else { "" };
         md.push_str(&format!(
             "| {} | {:.1}ns | {:.1}ns | {:.1}% | {} |\n",
@@ -528,11 +513,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             let min = s[0];
             let max = s[n - 1];
             let mean = s.iter().sum::<f64>() / n as f64;
-            let median = if n % 2 == 0 {
-                (s[n / 2 - 1] + s[n / 2]) / 2.0
-            } else {
-                s[n / 2]
-            };
+            let median = if n % 2 == 0 { (s[n / 2 - 1] + s[n / 2]) / 2.0 } else { s[n / 2] };
             md.push_str(&format!(
                 "| {} | {:.2} | {:.2} | {:.2} | {:.2} |\n",
                 v.name, min, mean, median, max
@@ -542,11 +523,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
 
     // ── Per-pattern breakdown (tagged routines) ──
     if !ds.tag_names.is_empty() {
-        let tags: Vec<(u8, &str)> = ds
-            .tag_names
-            .iter()
-            .map(|(&k, v)| (k, v.as_str()))
-            .collect();
+        let tags: Vec<(u8, &str)> = ds.tag_names.iter().map(|(&k, v)| (k, v.as_str())).collect();
 
         md.push_str("\n## Per-pattern algo timing (ns)\n\n");
         md.push_str("| Variant |");
@@ -563,11 +540,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             md.push_str(&format!("| {}", v.name));
             for &(tag, _) in &tags {
                 if let Some(s) = v.algo_per_tag.get(&tag) {
-                    let cv = if s.mean > 0.0 {
-                        s.std_dev / s.mean * 100.0
-                    } else {
-                        0.0
-                    };
+                    let cv = if s.mean > 0.0 { s.std_dev / s.mean * 100.0 } else { 0.0 };
                     md.push_str(&format!(" | {:.1} | {:.1}%", s.median, cv));
                 } else {
                     md.push_str(" | - | -");
@@ -596,11 +569,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             md.push_str(&format!("| {}", v.name));
             for cd in &nonzero_cds {
                 if let Some(s) = v.algo_per_cd.get(cd) {
-                    let cv = if s.mean > 0.0 {
-                        s.std_dev / s.mean * 100.0
-                    } else {
-                        0.0
-                    };
+                    let cv = if s.mean > 0.0 { s.std_dev / s.mean * 100.0 } else { 0.0 };
                     md.push_str(&format!(" | {:.1}%", cv));
                 } else {
                     md.push_str(" | -");
@@ -644,7 +613,10 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
 
         md.push_str(&format!(
             "{} (n={}, range {:.1}-{:.1} ns)\n",
-            v.name, vals.len(), lo, hi
+            v.name,
+            vals.len(),
+            lo,
+            hi
         ));
         for (i, &count) in bins.iter().enumerate() {
             let bar_len = (count as f64 / max_count as f64 * hist_width as f64) as usize;
@@ -667,11 +639,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             continue;
         }
 
-        let cv = if s.mean > 0.0 {
-            s.std_dev / s.mean * 100.0
-        } else {
-            0.0
-        };
+        let cv = if s.mean > 0.0 { s.std_dev / s.mean * 100.0 } else { 0.0 };
         if cv > 20.0 {
             anomalies.push(format!(
                 "**{}**: CV={:.1}% (high variance, measurements may be unstable)",

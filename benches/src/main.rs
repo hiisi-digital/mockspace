@@ -6,10 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use mockspace_bench_core::{routine_bridge, Routine};
-use mockspace_bench_harness::{
-    self as harness, BenchManifest, RoutineSpec, Workload,
-};
+use mockspace_bench_core::{Routine, routine_bridge};
+use mockspace_bench_harness::{self as harness, BenchManifest, RoutineSpec, Workload};
 
 /// Routine: u64 hash-mixing. Variants differ in how they scramble the
 /// input seed into a 64-bit digest.
@@ -47,7 +45,7 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
-        }
+        },
     };
 
     let mock_benches_dir = std::env::current_dir()
@@ -65,7 +63,7 @@ fn main() -> ExitCode {
                 Err(e) => {
                     eprintln!("error: {e}");
                     return ExitCode::FAILURE;
-                }
+                },
             };
             config.variant_paths = config
                 .variant_paths
@@ -73,7 +71,7 @@ fn main() -> ExitCode {
                 .map(shape_variant_path)
                 .collect();
             let routine = RoutineSpec {
-                name: section.workload.clone(),
+                name:   section.workload.clone(),
                 bridge: routine_bridge!(HashMix),
             };
 
@@ -90,7 +88,7 @@ fn main() -> ExitCode {
                         );
                         eprintln!("hint: run the bench first to produce the csv");
                         return ExitCode::FAILURE;
-                    }
+                    },
                 };
                 if samples.is_empty() {
                     eprintln!(
@@ -119,7 +117,7 @@ fn main() -> ExitCode {
                     Err(e) => {
                         eprintln!("error: bench `{bench_name}` n={}: {e}", config.n);
                         return ExitCode::FAILURE;
-                    }
+                    },
                 };
                 if let Err(e) = harness::write_csv(&result, &csv_path) {
                     eprintln!("error: writing csv: {e}");
@@ -164,7 +162,7 @@ fn run_worker(args: &[String]) -> ExitCode {
         None => {
             eprintln!("worker: missing --worker <path>");
             return ExitCode::FAILURE;
-        }
+        },
     };
     let bench_name = get("--bench-name").unwrap_or_default();
     let seed: u64 = get("--seed").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -179,7 +177,7 @@ fn run_worker(args: &[String]) -> ExitCode {
         .filter(|&v| v > 0);
 
     let routine = RoutineSpec {
-        name: bench_name.clone(),
+        name:   bench_name.clone(),
         bridge: routine_bridge!(HashMix),
     };
 

@@ -123,11 +123,7 @@ fn find_line_end(bytes: &[u8], from: usize) -> usize {
     while i < bytes.len() && bytes[i] != b'\n' {
         i += 1;
     }
-    if i < bytes.len() {
-        i + 1
-    } else {
-        i
-    }
+    if i < bytes.len() { i + 1 } else { i }
 }
 
 fn find_block_comment_end(bytes: &[u8], from: usize) -> usize {
@@ -247,7 +243,7 @@ fn blank_range(out: &mut [u8], start: usize, end: usize) {
     if start >= clamped_end {
         return;
     }
-    for byte in &mut out[start..clamped_end] {
+    for byte in &mut out[start .. clamped_end] {
         if *byte != b'\n' && *byte != b'\r' {
             *byte = b' ';
         }

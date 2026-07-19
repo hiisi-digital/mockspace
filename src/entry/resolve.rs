@@ -30,7 +30,6 @@ pub(crate) fn resolve_mock_dir(raw: &str) -> PathBuf {
     fs::canonicalize(&path).unwrap_or(path)
 }
 
-
 /// Walk up from CWD looking for a `.git` directory (repo root).
 pub(crate) fn find_repo_root_from_cwd() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
@@ -43,7 +42,6 @@ pub(crate) fn find_repo_root_from_cwd() -> Option<PathBuf> {
         }
     }
 }
-
 
 /// Walk up from the current directory looking for mockspace.toml.
 pub(crate) fn find_mockspace_root() -> Option<PathBuf> {
@@ -66,4 +64,3 @@ pub(crate) fn find_mockspace_root() -> Option<PathBuf> {
 // sync, cargo-check status, lint status, and the phase-specific
 // lock/close permission.
 // ──────────────────────────────────────────────────────────────────────
-

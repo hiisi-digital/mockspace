@@ -26,7 +26,7 @@ const EXEMPT_MACROS: &[&str] = &[
     "define_raw_error",
     "define_record",
     "define_registry",
-    "define_resource",       // generates StorageRecord, not Registrable directly
+    "define_resource", // generates StorageRecord, not Registrable directly
     "define_resource_inline",
 ];
 
@@ -93,9 +93,7 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     ctx.crate_name.to_string(),
                     line_idx + 1,
                     LINT_NAME,
-                    format!(
-                        "`{macro_name}!` suppressed by lint:allow — review periodically",
-                    ),
+                    format!("`{macro_name}!` suppressed by lint:allow — review periodically",),
                 ));
                 return;
             }
@@ -106,16 +104,15 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     let body_text = &ctx.source[node.byte_range()];
 
     // check that the macro body generates Registrable impl
-    let has_registrable = body_text.contains("Registrable")
-        || body_text.contains("registrable");
+    let has_registrable = body_text.contains("Registrable") || body_text.contains("registrable");
 
     if !has_registrable {
         errors.push(LintError {
-            crate_name: ctx.crate_name.to_string(),
-            line: line_idx + 1,
-            lint_name: LINT_NAME,
-            severity: crate::Severity::HARD_ERROR,
-            message: format!(
+            crate_name:   ctx.crate_name.to_string(),
+            line:         line_idx + 1,
+            lint_name:    LINT_NAME,
+            severity:     crate::Severity::HARD_ERROR,
+            message:      format!(
                 "`{macro_name}!` does not generate `impl Registrable` — \
                  every define_*! macro must produce a Registrable impl + inventory::submit!",
             ),

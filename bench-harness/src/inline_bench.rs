@@ -13,23 +13,22 @@
 //! `bench_entry`, register them with the inline harness via
 //! [`InlineVariant`], and call [`run_inline`].
 
-use crate::core::counter;
-use crate::core::FfiBenchCall;
+use crate::core::{FfiBenchCall, counter};
 
 /// An inlined variant: function pointer + name, compiled into the
 /// harness binary. No dylib boundary. LLVM can inline.
 pub struct InlineVariant {
-    pub name: &'static str,
+    pub name:  &'static str,
     pub entry: fn(*const u8, *mut u8, usize) -> FfiBenchCall,
 }
 
 /// One row of [`run_inline`]'s result table.
 #[derive(Clone, Debug)]
 pub struct InlineResult {
-    pub name: &'static str,
-    pub iterations: usize,
+    pub name:        &'static str,
+    pub iterations:  usize,
     pub per_call_ns: f64,
-    pub total_ns: f64,
+    pub total_ns:    f64,
 }
 
 /// Run a set of inlined variants for comparison. `black_box` is
@@ -60,14 +59,14 @@ pub fn run_inline(
     let mut results: Vec<InlineResult> = Vec::with_capacity(variants.len());
 
     for v in variants {
-        for _ in 0..iterations / 10 {
+        for _ in 0 .. iterations / 10 {
             let inp = std::hint::black_box(input.as_ptr());
             let out = std::hint::black_box(output.as_mut_ptr());
             (v.entry)(inp, out, n);
         }
 
         let start = counter::read_counter();
-        for _ in 0..iterations {
+        for _ in 0 .. iterations {
             let inp = std::hint::black_box(input.as_ptr());
             let out = std::hint::black_box(output.as_mut_ptr());
             std::hint::black_box((v.entry)(inp, out, n));

@@ -10,12 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use mockspace_lint_rules::changelist_helpers::{
-    self, ClKind, ClStatus, Phase, ParsedChangelist,
-};
+use mockspace_lint_rules::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist, Phase};
 
 use crate::config::Config;
-
 
 mod archive;
 pub(crate) use archive::*;
@@ -43,7 +40,7 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                 None => {
                     eprintln!("error: no active doc changelist found");
                     return ExitCode::FAILURE;
-                }
+                },
             };
             match rename_cl(&dr, &cl, ClStatus::Locked) {
                 Ok(r) => {
@@ -53,17 +50,20 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     let msg = format!("chore: lock doc changelist for {}", r.new_name);
                     commit_or_suggest(cfg, opts, &[r.old_path, r.new_path], &msg);
                     ExitCode::SUCCESS
-                }
-                Err(e) => { eprintln!("error: {e}"); ExitCode::FAILURE }
+                },
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                },
             }
-        }
+        },
         Phase::Src => {
             let cl = match changelist_helpers::find_active_src_cl(&dr) {
                 Some(cl) => cl,
                 None => {
                     eprintln!("error: no active src changelist found");
                     return ExitCode::FAILURE;
-                }
+                },
             };
             match rename_cl(&dr, &cl, ClStatus::Locked) {
                 Ok(r) => {
@@ -73,25 +73,28 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     let msg = format!("chore: lock src changelist for {}", r.new_name);
                     commit_or_suggest(cfg, opts, &[r.old_path, r.new_path], &msg);
                     ExitCode::SUCCESS
-                }
-                Err(e) => { eprintln!("error: {e}"); ExitCode::FAILURE }
+                },
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                },
             }
-        }
+        },
         Phase::Topic => {
             eprintln!("error: no changelist to lock (TOPIC phase)");
             eprintln!("  create a doc changelist first");
             ExitCode::FAILURE
-        }
+        },
         Phase::SrcPlan => {
             eprintln!("error: doc CL already locked, no src CL to lock (DRAFT phase)");
             eprintln!("  create a src changelist first");
             ExitCode::FAILURE
-        }
+        },
         Phase::Done => {
             eprintln!("error: both changelists already locked (CLOSED phase)");
             eprintln!("  use `cargo mock close` to archive the round");
             ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -110,27 +113,33 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                 None => {
                     eprintln!("error: no active doc changelist found");
                     return ExitCode::FAILURE;
-                }
+                },
             };
             match rename_cl(&dr, &cl, ClStatus::Deprecated) {
                 Ok(r) => {
-                    eprintln!("deprecated doc changelist: {} → {}", cl.filename, r.new_name);
+                    eprintln!(
+                        "deprecated doc changelist: {} → {}",
+                        cl.filename, r.new_name
+                    );
                     eprintln!("  phase transition: DOC → TOPIC");
                     eprintln!("  next: create new topic files, then a new changelist");
                     let msg = format!("chore: deprecate doc changelist {}", cl.filename);
                     commit_or_suggest(cfg, opts, &[r.old_path, r.new_path], &msg);
                     ExitCode::SUCCESS
-                }
-                Err(e) => { eprintln!("error: {e}"); ExitCode::FAILURE }
+                },
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                },
             }
-        }
+        },
         Phase::Src => {
             let cl = match changelist_helpers::find_active_src_cl(&dr) {
                 Some(cl) => cl,
                 None => {
                     eprintln!("error: no active src changelist found");
                     return ExitCode::FAILURE;
-                }
+                },
             };
 
             let mut touched = Vec::new();
@@ -138,45 +147,60 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             // Step 1: deprecate the src CL
             match rename_cl(&dr, &cl, ClStatus::Deprecated) {
                 Ok(r) => {
-                    eprintln!("deprecated src changelist: {} → {}", cl.filename, r.new_name);
+                    eprintln!(
+                        "deprecated src changelist: {} → {}",
+                        cl.filename, r.new_name
+                    );
                     touched.push(r.old_path);
                     touched.push(r.new_path);
-                }
-                Err(e) => { eprintln!("error: {e}"); return ExitCode::FAILURE; }
+                },
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                },
             }
 
             // Step 2: unlock the doc CL (DRAFT is a useless intermediate state)
             if let Some(doc_cl) = changelist_helpers::find_locked_doc_cl(&dr) {
                 match rename_cl(&dr, &doc_cl, ClStatus::Active) {
                     Ok(r) => {
-                        eprintln!("unlocked doc changelist: {} → {}", doc_cl.filename, r.new_name);
+                        eprintln!(
+                            "unlocked doc changelist: {} → {}",
+                            doc_cl.filename, r.new_name
+                        );
                         touched.push(r.old_path);
                         touched.push(r.new_path);
-                    }
-                    Err(e) => { eprintln!("error: {e}"); return ExitCode::FAILURE; }
+                    },
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::FAILURE;
+                    },
                 }
             }
 
             eprintln!("  phase transition: IMPL → DOC");
             eprintln!("  next: update doc templates, then lock and create new src changelist");
-            let msg = format!("chore: deprecate src changelist {} and unlock doc CL", cl.filename);
+            let msg = format!(
+                "chore: deprecate src changelist {} and unlock doc CL",
+                cl.filename
+            );
             commit_or_suggest(cfg, opts, &touched, &msg);
             ExitCode::SUCCESS
-        }
+        },
         Phase::Topic => {
             eprintln!("error: no changelist to deprecate (TOPIC phase)");
             ExitCode::FAILURE
-        }
+        },
         Phase::SrcPlan => {
             eprintln!("error: doc CL is locked (DRAFT phase)");
             eprintln!("  use `cargo mock unlock` to unlock it first");
             ExitCode::FAILURE
-        }
+        },
         Phase::Done => {
             eprintln!("error: both CLs locked (CLOSED phase)");
             eprintln!("  use `cargo mock unlock` to unlock the src CL first");
             ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -189,12 +213,15 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let phase = changelist_helpers::current_phase(&dr);
 
     match phase {
-        Phase::SrcPlan | Phase::Src | Phase::Done => {}
+        Phase::SrcPlan | Phase::Src | Phase::Done => {},
         _ => {
-            eprintln!("error: unlock requires a locked doc CL (current phase: {})", phase.label());
+            eprintln!(
+                "error: unlock requires a locked doc CL (current phase: {})",
+                phase.label()
+            );
             eprintln!("  unlock is only available in DRAFT, IMPL, or CLOSED phases");
             return ExitCode::FAILURE;
-        }
+        },
     }
 
     eprintln!("WARNING: `unlock` is destructive.");
@@ -212,8 +239,11 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                 eprintln!("  deprecated src CL: {} → {}", src_cl.filename, r.new_name);
                 touched.push(r.old_path);
                 touched.push(r.new_path);
-            }
-            Err(e) => { eprintln!("error: {e}"); return ExitCode::FAILURE; }
+            },
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            },
         }
     }
     if let Some(src_cl) = changelist_helpers::find_locked_src_cl(&dr) {
@@ -222,8 +252,11 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                 eprintln!("  deprecated src CL: {} → {}", src_cl.filename, r.new_name);
                 touched.push(r.old_path);
                 touched.push(r.new_path);
-            }
-            Err(e) => { eprintln!("error: {e}"); return ExitCode::FAILURE; }
+            },
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            },
         }
     }
 
@@ -234,8 +267,11 @@ pub fn cmd_unlock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                 eprintln!("  unlocked doc CL: {} → {}", doc_cl.filename, r.new_name);
                 touched.push(r.old_path);
                 touched.push(r.new_path);
-            }
-            Err(e) => { eprintln!("error: {e}"); return ExitCode::FAILURE; }
+            },
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            },
         }
     }
 
@@ -255,7 +291,10 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let phase = changelist_helpers::current_phase(&dr);
 
     if phase != Phase::Done {
-        eprintln!("error: can only close a round in CLOSED phase (current: {})", phase.label());
+        eprintln!(
+            "error: can only close a round in CLOSED phase (current: {})",
+            phase.label()
+        );
         eprintln!("  both doc and src changelists must be locked");
         eprintln!("  for an abandoned round, use `cargo mock archive` instead");
         return ExitCode::FAILURE;
@@ -264,13 +303,7 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let all_cls = changelist_helpers::find_changelists(&dr);
     let round_name = determine_round_name(&all_cls);
 
-    perform_archive(
-        cfg,
-        opts,
-        &dr,
-        &round_name,
-        ArchiveKind::Closed,
-    )
+    perform_archive(cfg, opts, &dr, &round_name, ArchiveKind::Closed)
 }
 
 pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
@@ -283,9 +316,11 @@ pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let round_name = match determine_round_name_from_dir(&dr) {
         Some(name) => name,
         None => {
-            eprintln!("error: no round files to archive (design_rounds/ has no timestamp-prefixed files)");
+            eprintln!(
+                "error: no round files to archive (design_rounds/ has no timestamp-prefixed files)"
+            );
             return ExitCode::FAILURE;
-        }
+        },
     };
 
     perform_archive(
@@ -335,7 +370,7 @@ pub fn cmd_migrate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                 eprintln!("  skip (unrecognized): {name}");
                 skipped += 1;
                 continue;
-            }
+            },
         };
 
         let old_path = entry.path();
@@ -366,4 +401,3 @@ pub fn cmd_migrate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     commit_or_suggest(cfg, opts, &touched, &msg);
     ExitCode::SUCCESS
 }
-

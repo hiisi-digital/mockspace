@@ -46,7 +46,9 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             notes.push("frozen, so line citations into it are honest".to_string());
         }
         if let Some(label) = cfg.prose_roots.get(name) {
-            notes.push(format!("renders as prose (\"{label}\"), never a link, so its path stays internal"));
+            notes.push(format!(
+                "renders as prose (\"{label}\"), never a link, so its path stays internal"
+            ));
         }
         if cfg.internal_roots.contains(name) {
             notes.push(
@@ -56,7 +58,11 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
                     .to_string(),
             );
         }
-        let suffix = if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) };
+        let suffix = if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", notes.join("; "))
+        };
         roots_doc.push_str(&format!("- `{name}::` -> `{path}`{suffix}\n"));
     }
 
@@ -429,7 +435,9 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "- This is not a rubber stamp. The user makes the design decisions. You\n",
             "  research, present options, and record.\n",
         ),
-        &mock_rel, project_name, crate_prefix,
+        &mock_rel,
+        project_name,
+        crate_prefix,
     );
 
     let mockup_workflow_body = substitute_builtin_vars(
@@ -586,7 +594,9 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "\n",
             "If you see this header, do not edit the file.\n",
         ),
-        &mock_rel, project_name, crate_prefix,
+        &mock_rel,
+        project_name,
+        crate_prefix,
     );
 
     let real_code_guard_body = substitute_builtin_vars(
@@ -669,7 +679,9 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "\n",
             "None. If you think you need an exception, you are wrong. Fix the mock.\n",
         ),
-        &mock_rel, project_name, crate_prefix,
+        &mock_rel,
+        project_name,
+        crate_prefix,
     );
 
     let skills = vec![
@@ -715,4 +727,3 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
-

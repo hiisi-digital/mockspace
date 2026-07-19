@@ -29,35 +29,60 @@ pub enum Iso8601UtcError {
     /// Empty input.
     Empty,
     /// Wrong length. Expected 20 characters: `YYYY-MM-DDTHH:MM:SSZ`.
-    BadLength { len: usize },
+    BadLength {
+        len: usize,
+    },
     /// Wrong separator at a fixed position in the format string.
-    BadSeparator { position: usize, expected: char, found: char },
+    BadSeparator {
+        position: usize,
+        expected: char,
+        found:    char,
+    },
     /// A digit position contained a non-digit.
-    BadDigit { position: usize, found: char },
+    BadDigit {
+        position: usize,
+        found:    char,
+    },
     /// Trailing character was not `Z`.
-    MissingTrailingZ { found: char },
+    MissingTrailingZ {
+        found: char,
+    },
 }
 
 impl fmt::Display for Iso8601UtcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => f.write_str("timestamp is empty"),
-            Self::BadLength { len } => write!(
-                f,
-                "timestamp length {len} does not match the expected 20-character `YYYY-MM-DDTHH:MM:SSZ` form"
-            ),
-            Self::BadSeparator { position, expected, found } => write!(
-                f,
-                "expected {expected:?} at byte position {position}, found {found:?}"
-            ),
-            Self::BadDigit { position, found } => write!(
-                f,
-                "expected digit at byte position {position}, found {found:?}"
-            ),
-            Self::MissingTrailingZ { found } => write!(
-                f,
-                "timestamp must end with `Z` (UTC), found {found:?}"
-            ),
+            Self::BadLength {
+                len,
+            } => {
+                write!(
+                    f,
+                    "timestamp length {len} does not match the expected 20-character `YYYY-MM-DDTHH:MM:SSZ` form"
+                )
+            },
+            Self::BadSeparator {
+                position,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "expected {expected:?} at byte position {position}, found {found:?}"
+                )
+            },
+            Self::BadDigit {
+                position,
+                found,
+            } => {
+                write!(
+                    f,
+                    "expected digit at byte position {position}, found {found:?}"
+                )
+            },
+            Self::MissingTrailingZ {
+                found,
+            } => write!(f, "timestamp must end with `Z` (UTC), found {found:?}"),
         }
     }
 }
@@ -119,26 +144,37 @@ impl NamedRefTo<Instant> for Iso8601Utc {
             return Err(Iso8601UtcError::Empty);
         }
         if s.len() != 20 {
-            return Err(Iso8601UtcError::BadLength { len: s.len() });
+            return Err(Iso8601UtcError::BadLength {
+                len: s.len(),
+            });
         }
         let bytes = s.as_bytes();
         let digit_positions = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
         for &pos in &digit_positions {
             let ch = bytes[pos] as char;
             if !ch.is_ascii_digit() {
-                return Err(Iso8601UtcError::BadDigit { position: pos, found: ch });
+                return Err(Iso8601UtcError::BadDigit {
+                    position: pos,
+                    found:    ch,
+                });
             }
         }
         let separators = [(4, '-'), (7, '-'), (10, 'T'), (13, ':'), (16, ':')];
         for (pos, expected) in separators {
             let found = bytes[pos] as char;
             if found != expected {
-                return Err(Iso8601UtcError::BadSeparator { position: pos, expected, found });
+                return Err(Iso8601UtcError::BadSeparator {
+                    position: pos,
+                    expected,
+                    found,
+                });
             }
         }
         let trailing = bytes[19] as char;
         if trailing != 'Z' {
-            return Err(Iso8601UtcError::MissingTrailingZ { found: trailing });
+            return Err(Iso8601UtcError::MissingTrailingZ {
+                found: trailing,
+            });
         }
         Ok(Self(s.to_owned()))
     }
@@ -191,8 +227,7 @@ mod tests {
     #[test]
     fn parse_round_trip() {
         let original = Iso8601Utc::from_unix_secs(1_779_494_400);
-        let parsed =
-            <Iso8601Utc as NamedRefTo<Instant>>::parse(original.as_str()).expect("parse");
+        let parsed = <Iso8601Utc as NamedRefTo<Instant>>::parse(original.as_str()).expect("parse");
         assert_eq!(original, parsed);
     }
 
@@ -210,26 +245,32 @@ mod tests {
 
     #[test]
     fn parse_rejects_missing_z() {
-        let err = <Iso8601Utc as NamedRefTo<Instant>>::parse("2026-05-22T00:00:00X")
-            .expect_err("reject");
-        assert!(matches!(err, Iso8601UtcError::MissingTrailingZ { found: 'X' }));
+        let err =
+            <Iso8601Utc as NamedRefTo<Instant>>::parse("2026-05-22T00:00:00X").expect_err("reject");
+        assert!(matches!(err, Iso8601UtcError::MissingTrailingZ {
+            found: 'X',
+        }));
     }
 
     #[test]
     fn parse_rejects_bad_separator() {
-        let err = <Iso8601Utc as NamedRefTo<Instant>>::parse("2026/05-22T00:00:00Z")
-            .expect_err("reject");
-        assert!(matches!(
-            err,
-            Iso8601UtcError::BadSeparator { position: 4, expected: '-', found: '/' }
-        ));
+        let err =
+            <Iso8601Utc as NamedRefTo<Instant>>::parse("2026/05-22T00:00:00Z").expect_err("reject");
+        assert!(matches!(err, Iso8601UtcError::BadSeparator {
+            position: 4,
+            expected: '-',
+            found:    '/',
+        }));
     }
 
     #[test]
     fn parse_rejects_non_digit() {
-        let err = <Iso8601Utc as NamedRefTo<Instant>>::parse("202X-05-22T00:00:00Z")
-            .expect_err("reject");
-        assert!(matches!(err, Iso8601UtcError::BadDigit { position: 3, .. }));
+        let err =
+            <Iso8601Utc as NamedRefTo<Instant>>::parse("202X-05-22T00:00:00Z").expect_err("reject");
+        assert!(matches!(err, Iso8601UtcError::BadDigit {
+            position: 3,
+            ..
+        }));
     }
 
     #[test]

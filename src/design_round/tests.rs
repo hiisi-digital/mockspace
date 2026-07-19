@@ -26,19 +26,31 @@ mod tests {
 
     #[test]
     fn rewrite_new_format_doc_to_locked() {
-        let result = rewrite_filename("202603071430_changelist.doc.md", ClKind::Doc, ClStatus::Locked);
+        let result = rewrite_filename(
+            "202603071430_changelist.doc.md",
+            ClKind::Doc,
+            ClStatus::Locked,
+        );
         assert_eq!(result.unwrap(), "202603071430_changelist.doc.lock.md");
     }
 
     #[test]
     fn rewrite_new_format_src_to_deprecated() {
-        let result = rewrite_filename("202603071430_changelist.src.md", ClKind::Src, ClStatus::Deprecated);
+        let result = rewrite_filename(
+            "202603071430_changelist.src.md",
+            ClKind::Src,
+            ClStatus::Deprecated,
+        );
         assert_eq!(result.unwrap(), "202603071430_changelist.src.deprecated.md");
     }
 
     #[test]
     fn rewrite_locked_to_active() {
-        let result = rewrite_filename("202603071430_changelist.doc.lock.md", ClKind::Doc, ClStatus::Active);
+        let result = rewrite_filename(
+            "202603071430_changelist.doc.lock.md",
+            ClKind::Doc,
+            ClStatus::Active,
+        );
         assert_eq!(result.unwrap(), "202603071430_changelist.doc.md");
     }
 
@@ -47,13 +59,13 @@ mod tests {
         let cls = vec![
             ParsedChangelist {
                 filename: "202603101430_changelist.doc.lock.md".to_string(),
-                kind: ClKind::Doc,
-                status: ClStatus::Locked,
+                kind:     ClKind::Doc,
+                status:   ClStatus::Locked,
             },
             ParsedChangelist {
                 filename: "202603101500_changelist.src.lock.md".to_string(),
-                kind: ClKind::Src,
-                status: ClStatus::Locked,
+                kind:     ClKind::Src,
+                status:   ClStatus::Locked,
             },
         ];
         assert_eq!(determine_round_name(&cls), "202603101430");
@@ -61,13 +73,11 @@ mod tests {
 
     #[test]
     fn round_name_from_legacy() {
-        let cls = vec![
-            ParsedChangelist {
-                filename: "2026-03-07_changelist.lock.md".to_string(),
-                kind: ClKind::Doc,
-                status: ClStatus::Locked,
-            },
-        ];
+        let cls = vec![ParsedChangelist {
+            filename: "2026-03-07_changelist.lock.md".to_string(),
+            kind:     ClKind::Doc,
+            status:   ClStatus::Locked,
+        }];
         assert_eq!(determine_round_name(&cls), "2026-03-07");
     }
 
@@ -76,7 +86,9 @@ mod tests {
     #[test]
     fn detect_legacy_filename() {
         assert!(is_legacy_filename("2026-03-07_corrections.md"));
-        assert!(is_legacy_filename("2026-03-06_source-doc-divergence-audit.md"));
+        assert!(is_legacy_filename(
+            "2026-03-06_source-doc-divergence-audit.md"
+        ));
         assert!(is_legacy_filename("2026-03-07_changelist.md"));
         assert!(is_legacy_filename("2026-03-07_changelist.lock.md"));
         assert!(!is_legacy_filename("202603070000_topic.corrections.md"));
@@ -93,7 +105,10 @@ mod tests {
     #[test]
     fn migrate_topic_hyphenated() {
         let result = legacy_to_new_filename("2026-03-06_source-doc-divergence-audit.md");
-        assert_eq!(result.unwrap(), "202603060000_topic.source-doc-divergence-audit.md");
+        assert_eq!(
+            result.unwrap(),
+            "202603060000_topic.source-doc-divergence-audit.md"
+        );
     }
 
     #[test]

@@ -25,7 +25,6 @@ pub(crate) fn detect_nuked_workspace(cfg: &Config) -> bool {
     })
 }
 
-
 /// Wipe all mock crate source code, leaving minimal lib.rs stubs.
 pub(crate) fn nuke_mock_sources(cfg: &Config) -> ExitCode {
     eprintln!("--- NUKE: wiping all mock crate source ---");
@@ -90,7 +89,6 @@ pub(crate) fn nuke_mock_sources(cfg: &Config) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-
 pub(crate) fn delete_non_lib_rs(dir: &Path) -> u32 {
     let mut count = 0;
     if let Ok(entries) = fs::read_dir(dir) {
@@ -111,7 +109,6 @@ pub(crate) fn delete_non_lib_rs(dir: &Path) -> u32 {
     count
 }
 
-
 pub(crate) fn delete_all_rs(dir: &Path) -> u32 {
     let mut count = 0;
     if let Ok(entries) = fs::read_dir(dir) {
@@ -128,7 +125,6 @@ pub(crate) fn delete_all_rs(dir: &Path) -> u32 {
     }
     count
 }
-
 
 /// Resolve a `--dir` argument to an absolute path containing `mockspace.toml`.
 ///
@@ -148,4 +144,3 @@ pub(crate) fn simple_hash(s: &str) -> u64 {
     }
     h
 }
-

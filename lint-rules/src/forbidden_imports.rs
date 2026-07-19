@@ -24,15 +24,15 @@ use crate::{Lint, LintContext, LintError, Severity};
 #[derive(Clone, Debug)]
 struct ForbiddenRule {
     /// Rule name (from the TOML key, e.g. "no-std-in-primitives").
-    name: String,
+    name:      String,
     /// Crate glob pattern, e.g., `"*-sdk"`, `"*"`, `"{prefix}-primitives"`.
-    scope: String,
+    scope:     String,
     /// Forbidden patterns: `"String"`, `"dyn *"`, `"std::*"`, etc.
     forbidden: Vec<String>,
     /// Human-readable reason.
-    reason: String,
+    reason:    String,
     /// Whether this rule is active.
-    enabled: bool,
+    enabled:   bool,
 }
 
 pub struct ForbiddenImports {
@@ -41,7 +41,9 @@ pub struct ForbiddenImports {
 
 impl ForbiddenImports {
     pub fn new() -> Self {
-        Self { rules: Vec::new() }
+        Self {
+            rules: Vec::new(),
+        }
     }
 }
 
@@ -158,7 +160,7 @@ fn scope_matches(scope: &str, crate_name: &str, crate_prefix: &str) -> bool {
 
     if scope.starts_with('*') && scope.ends_with('*') {
         // *pattern* — contains
-        let inner = &scope[1..scope.len() - 1];
+        let inner = &scope[1 .. scope.len() - 1];
         return crate_name.contains(inner);
     }
 
@@ -277,11 +279,7 @@ fn check_keyword_pattern(
                 ctx.crate_name.to_string(),
                 line_num + 1,
                 "forbidden-imports",
-                format!(
-                    "`{}` keyword forbidden — {}",
-                    keyword.trim(),
-                    rule.reason
-                ),
+                format!("`{}` keyword forbidden — {}", keyword.trim(), rule.reason),
                 Severity::HARD_ERROR,
                 leak_rule_name(&rule.name),
             ));
@@ -347,7 +345,7 @@ fn contains_type_name(line: &str, type_name: &str) -> bool {
 
     let mut i = 0;
     while i + pat_len <= bytes.len() {
-        if &bytes[i..i + pat_len] == pat_bytes {
+        if &bytes[i .. i + pat_len] == pat_bytes {
             // Check word boundary before
             let before_ok = if i == 0 {
                 true
@@ -367,7 +365,7 @@ fn contains_type_name(line: &str, type_name: &str) -> bool {
             if before_ok && after_ok {
                 // Make sure we're not inside a string literal
                 // (rough: count unescaped quotes before this position)
-                let prefix = &line[..i];
+                let prefix = &line[.. i];
                 let quote_count = prefix.chars().filter(|c| *c == '"').count();
                 if quote_count % 2 == 0 {
                     return true;
@@ -392,17 +390,13 @@ fn contains_keyword(line: &str, keyword: &str) -> bool {
 
     let mut i = 0;
     while i + pat_len <= bytes.len() {
-        if &bytes[i..i + pat_len] == pat_bytes {
+        if &bytes[i .. i + pat_len] == pat_bytes {
             // Check word boundary before
-            let before_ok = if i == 0 {
-                true
-            } else {
-                !is_ident_char(bytes[i - 1])
-            };
+            let before_ok = if i == 0 { true } else { !is_ident_char(bytes[i - 1]) };
 
             if before_ok {
                 // Check we're not inside a string literal
-                let prefix = &line[..i];
+                let prefix = &line[.. i];
                 let quote_count = prefix.chars().filter(|c| *c == '"').count();
                 if quote_count % 2 == 0 {
                     return true;
@@ -450,9 +444,17 @@ mod tests {
         assert!(scope_matches("*", "loimu-sdk", "loimu"));
         assert!(scope_matches("*-sdk", "loimu-sdk", "loimu"));
         assert!(!scope_matches("*-sdk", "loimu-core", "loimu"));
-        assert!(scope_matches("{prefix}-primitives", "loimu-primitives", "loimu"));
+        assert!(scope_matches(
+            "{prefix}-primitives",
+            "loimu-primitives",
+            "loimu"
+        ));
         assert!(!scope_matches("{prefix}-primitives", "loimu-sdk", "loimu"));
-        assert!(scope_matches("{prefix}-connector-*", "loimu-connector-igdb", "loimu"));
+        assert!(scope_matches(
+            "{prefix}-connector-*",
+            "loimu-connector-igdb",
+            "loimu"
+        ));
         assert!(!scope_matches("{prefix}-connector-*", "loimu-sdk", "loimu"));
         assert!(scope_matches("loimu-sdk", "loimu-sdk", "loimu"));
         assert!(!scope_matches("loimu-sdk", "loimu-core", "loimu"));

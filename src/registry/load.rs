@@ -30,15 +30,16 @@ fn value_to_string(v: &toml_edit::Item) -> String {
         toml_edit::Item::Value(toml_edit::Value::Integer(i)) => i.value().to_string(),
         toml_edit::Item::Value(toml_edit::Value::Boolean(b)) => b.value().to_string(),
         toml_edit::Item::Value(toml_edit::Value::Float(f)) => f.value().to_string(),
-        toml_edit::Item::Value(toml_edit::Value::Array(a)) => a
-            .iter()
-            .map(|e| {
-                e.as_str()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| e.to_string().trim().to_string())
-            })
-            .collect::<Vec<_>>()
-            .join(", "),
+        toml_edit::Item::Value(toml_edit::Value::Array(a)) => {
+            a.iter()
+                .map(|e| {
+                    e.as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| e.to_string().trim().to_string())
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
         other => other.to_string().trim().to_string(),
     }
 }
@@ -80,7 +81,10 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
             };
             for table in tables.iter() {
                 let Some(slug) = table.get("id").and_then(|v| v.as_str()) else {
-                    eprintln!("  registry: a [[{key}]] row in {} has no id, skipped", path.display());
+                    eprintln!(
+                        "  registry: a [[{key}]] row in {} has no id, skipped",
+                        path.display()
+                    );
                     continue;
                 };
                 let mut fields = BTreeMap::new();
@@ -101,7 +105,10 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
                         .push(path.clone());
                     continue;
                 }
-                reg.by_namespace.entry(key.to_string()).or_default().push(qualified.clone());
+                reg.by_namespace
+                    .entry(key.to_string())
+                    .or_default()
+                    .push(qualified.clone());
                 reg.rows.insert(qualified, row);
             }
         }

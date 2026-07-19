@@ -68,7 +68,7 @@ impl<const IN: usize, const OUT: usize, const MAY_DIFFER: bool> Routine
             x ^= x >> 30;
             x = x.wrapping_mul(0xBF58476D1CE4E5B9);
             let bytes = x.to_le_bytes();
-            chunk.copy_from_slice(&bytes[..chunk.len()]);
+            chunk.copy_from_slice(&bytes[.. chunk.len()]);
         }
         buf
     }
@@ -87,7 +87,7 @@ impl<const IN: usize, const OUT: usize, const MAY_DIFFER: bool> Routine
             x ^= x >> 30;
             x = x.wrapping_mul(0xBF58476D1CE4E5B9);
             let bytes = x.to_le_bytes();
-            chunk.copy_from_slice(&bytes[..chunk.len()]);
+            chunk.copy_from_slice(&bytes[.. chunk.len()]);
         }
         buf
     }
@@ -131,7 +131,6 @@ mod tests {
         assert!(ByteRoutine::<64, 8, true>::outputs_may_differ());
     }
 
-
     #[cfg(feature = "std")]
     #[test]
     fn heap_build_matches_typed_build() {
@@ -146,10 +145,12 @@ mod tests {
         let d = crate::byte_routine_dispatch!(out = 8, sizes = [64, 1024]);
         assert!((d.dispatch)(64, false).is_some());
         assert!((d.dispatch)(1024, true).is_some());
-        assert!((d.dispatch)(512, false).is_none(), "undeclared size rejects");
+        assert!(
+            (d.dispatch)(512, false).is_none(),
+            "undeclared size rejects"
+        );
         assert_eq!(d.sizes, &[64, 1024]);
     }
-
 
     #[test]
     fn timed_accepts_plain_and_wrapped_setup() {

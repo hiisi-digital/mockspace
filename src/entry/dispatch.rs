@@ -25,7 +25,7 @@ pub(crate) fn run_inner(
             None => {
                 eprintln!("error: --dir requires a path argument");
                 return ExitCode::FAILURE;
-            }
+            },
         }
     } else {
         match find_mockspace_root() {
@@ -35,10 +35,12 @@ pub(crate) fn run_inner(
                 if cwd.join("crates").is_dir() {
                     cwd
                 } else {
-                    eprintln!("error: no mockspace.toml found. Run from a mockspace directory or use --dir <path>");
+                    eprintln!(
+                        "error: no mockspace.toml found. Run from a mockspace directory or use --dir <path>"
+                    );
                     return ExitCode::FAILURE;
                 }
-            }
+            },
         }
     };
 
@@ -67,7 +69,7 @@ pub(crate) fn run_inner(
                 Err(e) => {
                     eprintln!("mock: custom lints unavailable: {e}");
                     None
-                }
+                },
             }
         })
     } else {
@@ -111,26 +113,26 @@ pub(crate) fn run_inner(
                         eprintln!("  user hooks in .git/hooks/ will still run");
                         eprintln!("  deactivate with: cargo mock deactivate");
                         return ExitCode::SUCCESS;
-                    }
+                    },
                     Err(e) => {
                         eprintln!("error: {e}");
                         return ExitCode::FAILURE;
-                    }
+                    },
                 }
-            }
+            },
             "deactivate" => {
                 match bootstrap::deactivate(&cfg.repo_root) {
                     Ok(()) => {
                         eprintln!("mockspace hooks deactivated (core.hooksPath unset)");
                         eprintln!("  git will use .git/hooks/ directly");
                         return ExitCode::SUCCESS;
-                    }
+                    },
                     Err(e) => {
                         eprintln!("error: {e}");
                         return ExitCode::FAILURE;
-                    }
+                    },
                 }
-            }
+            },
             "status" => {
                 if bootstrap::is_active(&cfg.repo_root) {
                     eprintln!("mockspace hooks: active");
@@ -139,7 +141,7 @@ pub(crate) fn run_inner(
                     eprintln!("  activate with: cargo mock activate");
                 }
                 return ExitCode::SUCCESS;
-            }
+            },
             "query" => {
                 // The argument after the subcommand, not a fixed position:
                 // `--dir` and friends may precede it.
@@ -150,13 +152,13 @@ pub(crate) fn run_inner(
                     .map(String::as_str)
                     .unwrap_or("");
                 return registry::cmd_query(&cfg, expr);
-            }
+            },
             "check" => {
                 return cmd_check(&cfg);
-            }
+            },
             "clean" => {
                 return cmd_clean(&cfg);
-            }
+            },
             "pdf" => {
                 // Forward all args that follow "pdf", dropping --dir <val>
                 // (already consumed above to determine cfg).
@@ -164,13 +166,24 @@ pub(crate) fn run_inner(
                 let mut found_pdf = false;
                 let mut skip_next = false;
                 for a in args.iter().skip(1) {
-                    if skip_next { skip_next = false; continue; }
-                    if a == "--dir" { skip_next = true; continue; }
-                    if !found_pdf { if a == "pdf" { found_pdf = true; } continue; }
+                    if skip_next {
+                        skip_next = false;
+                        continue;
+                    }
+                    if a == "--dir" {
+                        skip_next = true;
+                        continue;
+                    }
+                    if !found_pdf {
+                        if a == "pdf" {
+                            found_pdf = true;
+                        }
+                        continue;
+                    }
                     extra.push(a.as_str());
                 }
                 return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
-            }
+            },
             "lock" | "deprecate" | "unlock" | "close" | "archive" | "migrate" => {
                 let subcmd_opts = design_round::SubcmdOpts {
                     auto_commit: args.iter().any(|a| a == "--auto-commit"),
@@ -184,11 +197,11 @@ pub(crate) fn run_inner(
                     "migrate" => design_round::cmd_migrate(&cfg, &subcmd_opts),
                     _ => unreachable!(),
                 };
-            }
+            },
             "bench" => {
                 let bench_args: Vec<&str> = positional_args.iter().skip(1).copied().collect();
                 return bench::cmd(&cfg, &bench_args);
-            }
+            },
             other => {
                 // An unrecognised first positional is a mistyped subcommand,
                 // not a reason to silently run the default full regeneration
@@ -205,7 +218,7 @@ pub(crate) fn run_inner(
                     "\n(run `cargo mock` with no subcommand to regenerate docs and agent rules)"
                 );
                 return ExitCode::from(2);
-            }
+            },
         }
     }
 
@@ -250,13 +263,10 @@ pub(crate) fn run_inner(
     }
 
     // --scope restricts linting to specific crates
-    let scope_arg = args.iter()
+    let scope_arg = args
+        .iter()
         .position(|a| a == "--scope")
-        .map(|i| {
-            args.get(i + 1)
-                .map(|s| s.as_str())
-                .unwrap_or("")
-        });
+        .map(|i| args.get(i + 1).map(|s| s.as_str()).unwrap_or(""));
 
     let is_infra_only = scope_arg == Some("infra");
 
@@ -337,12 +347,8 @@ pub(crate) fn run_inner(
     let proxy_hash_after = fs::read_to_string(&proxy_toml_path)
         .map(|s| simple_hash(&s))
         .unwrap_or(0);
-    if proxy_hash_before != proxy_hash_after
-        && std::env::var("MOCKSPACE_REEXEC").is_err()
-    {
-        eprintln!(
-            "--- proxy refreshed against updated mockspace; re-running cargo mock ---"
-        );
+    if proxy_hash_before != proxy_hash_after && std::env::var("MOCKSPACE_REEXEC").is_err() {
+        eprintln!("--- proxy refreshed against updated mockspace; re-running cargo mock ---");
         let forwarded: Vec<String> = std::env::args().skip(1).collect();
         let status = Command::new("cargo")
             .arg("mock")
@@ -380,47 +386,69 @@ pub(crate) fn run_inner(
 
     match scope_arg {
         Some("") => {
-            eprintln!("error: --scope requires a value (use 'infra' for infrastructure-only commits)");
+            eprintln!(
+                "error: --scope requires a value (use 'infra' for infrastructure-only commits)"
+            );
             return ExitCode::FAILURE;
-        }
+        },
         Some("infra") => {
             eprintln!("  scope: infra (no crate lints)");
-        }
+        },
         Some(crate_list) => {
-            let names: Vec<String> = crate_list.split(',')
+            let names: Vec<String> = crate_list
+                .split(',')
                 .filter(|c| !c.is_empty())
                 .map(String::from)
                 .collect();
             if doc_only {
-                eprintln!("  scoped to: {} (doc-only: source lints skipped)", names.join(", "));
+                eprintln!(
+                    "  scoped to: {} (doc-only: source lints skipped)",
+                    names.join(", ")
+                );
             } else {
                 eprintln!("  scoped to: {}", names.join(", "));
             }
             let violations = lint::run_lints(
-                &crates, &cfg.crates_dir, mode, Some(&names), doc_only,
-                &cfg.proc_macro_crates, cfg.lint_proc_macro_source, &cfg.crate_prefix,
-                &cfg.lint_overrides, &cfg.primitive_introductions,
-                custom_lints, custom_cross_lints,
+                &crates,
+                &cfg.crates_dir,
+                mode,
+                Some(&names),
+                doc_only,
+                &cfg.proc_macro_crates,
+                cfg.lint_proc_macro_source,
+                &cfg.crate_prefix,
+                &cfg.lint_overrides,
+                &cfg.primitive_introductions,
+                custom_lints,
+                custom_cross_lints,
             );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;
             }
             eprintln!("  all lints passed");
-        }
+        },
         None => {
             let violations = lint::run_lints(
-                &crates, &cfg.crates_dir, mode, None, doc_only,
-                &cfg.proc_macro_crates, cfg.lint_proc_macro_source, &cfg.crate_prefix,
-                &cfg.lint_overrides, &cfg.primitive_introductions,
-                custom_lints, custom_cross_lints,
+                &crates,
+                &cfg.crates_dir,
+                mode,
+                None,
+                doc_only,
+                &cfg.proc_macro_crates,
+                cfg.lint_proc_macro_source,
+                &cfg.crate_prefix,
+                &cfg.lint_overrides,
+                &cfg.primitive_introductions,
+                custom_lints,
+                custom_cross_lints,
             );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;
             }
             eprintln!("  all lints passed");
-        }
+        },
     }
 
     if lint_only {
@@ -430,8 +458,10 @@ pub(crate) fn run_inner(
 
     // --- Dylib module loading check ---
     if is_infra_only || workspace_nuked {
-        eprintln!("--- dylib check skipped ({}) ---",
-            if workspace_nuked { "nuked" } else { "infra-only" });
+        eprintln!(
+            "--- dylib check skipped ({}) ---",
+            if workspace_nuked { "nuked" } else { "infra-only" }
+        );
     } else if !cfg.module_crates.is_empty() {
         eprintln!("--- checking dylib modules ---");
         let build_status = Command::new("cargo")
@@ -479,15 +509,18 @@ pub(crate) fn run_inner(
     let dot_body = render::generate_dot(&crates, &cfg);
     let dot = format!("{dot_header}{dot_body}");
 
-    let dot_path = cfg.docs_dir.join(render_design::ordered_doc_name("STRUCTURE.GRAPH.dot", &cfg));
+    let dot_path = cfg
+        .docs_dir
+        .join(render_design::ordered_doc_name("STRUCTURE.GRAPH.dot", &cfg));
     render_design::write_generated(&dot_path, &dot);
     eprintln!("  {}", dot_path.display());
 
     // Generate PNG and SVG from DOT
     for (ext, extra) in [("png", vec!["-Gdpi=150"]), ("svg", vec![])] {
-        let out = cfg
-            .docs_dir
-            .join(render_design::ordered_doc_name(&format!("STRUCTURE.GRAPH.{ext}"), &cfg));
+        let out = cfg.docs_dir.join(render_design::ordered_doc_name(
+            &format!("STRUCTURE.GRAPH.{ext}"),
+            &cfg,
+        ));
         // `dot -o` renders straight to the final path, so snapshot the previous
         // version before it is clobbered; otherwise the regeneration has nothing
         // to be compared against and every run rewrites the timestamp.
@@ -510,12 +543,11 @@ pub(crate) fn run_inner(
                         render_design::write_generated_vs(&out, &commented, previous.as_deref());
                     }
                 }
-            }
+            },
             Ok(_) => eprintln!("  dot failed for {ext} (is graphviz installed?)"),
             Err(e) => eprintln!("  dot not found for {ext}: {e}"),
         }
     }
-
 
     // --- Bench results documentation (opt in via bench.toml [docgen]) ---
     crate::bench_docs::generate(&cfg);
@@ -589,37 +621,52 @@ pub(crate) fn run_inner(
 
     if !cfg.registry_namespaces.is_empty() {
         eprintln!("--- registry ---");
-        let schemas = registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+        let schemas =
+            registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
         if schemas > 0 {
             eprintln!("  generated {schemas} schema files");
         }
-        eprintln!("  {} rows across {} namespaces", registry.rows.len(), registry.by_namespace.len());
+        eprintln!(
+            "  {} rows across {} namespaces",
+            registry.rows.len(),
+            registry.by_namespace.len()
+        );
         for f in &cycle_findings {
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
-        for f in registry::validate_provenance(&cfg.repo_root, &cfg.registry_roots, &cfg.frozen_roots, &registry) {
+        for f in registry::validate_provenance(
+            &cfg.repo_root,
+            &cfg.registry_roots,
+            &cfg.frozen_roots,
+            &registry,
+        ) {
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
-        for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots) {
+        for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots)
+        {
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         for f in registry::validate(&cfg.registry_namespaces, &registry) {
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
-            registry::SchemaCheck::Ran { failures } if failures.is_empty() => {
+            registry::SchemaCheck::Ran {
+                failures,
+            } if failures.is_empty() => {
                 eprintln!("  schema check passed");
-            }
-            registry::SchemaCheck::Ran { failures } => {
+            },
+            registry::SchemaCheck::Ran {
+                failures,
+            } => {
                 for f in failures {
                     eprintln!("  ERROR [schema]: {f}");
                 }
-            }
+            },
             registry::SchemaCheck::Unavailable => {
                 eprintln!(
                     "  schema check SKIPPED: taplo is not installed. Row shape is unverified; install taplo to close this gap."
                 );
-            }
+            },
         }
     }
 
@@ -682,5 +729,3 @@ pub(crate) fn run_inner(
 
     ExitCode::SUCCESS
 }
-
-

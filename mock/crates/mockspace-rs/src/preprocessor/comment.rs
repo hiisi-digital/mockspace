@@ -62,10 +62,10 @@ pub fn parse_directives(source: &str, path: &str) -> Vec<DirectiveRecord> {
         // succeed. Per design memo we don't enforce single-directive-
         // per-line.
         let mut cursor = 0;
-        while let Some(rel) = line[cursor..].find("lint:") {
+        while let Some(rel) = line[cursor ..].find("lint:") {
             let directive_start = cursor + rel;
             if is_in_comment_position(line, directive_start) {
-                let body = strip_trailing_block_close(&line[directive_start..]);
+                let body = strip_trailing_block_close(&line[directive_start ..]);
                 let body_byte_len = body.len() as u32;
                 if let Some(record) = parse_directive_body(
                     body,
@@ -87,7 +87,7 @@ pub fn parse_directives(source: &str, path: &str) -> Vec<DirectiveRecord> {
 /// recognised comment delimiter. Whitespace between the delimiter and
 /// `lint:` is permitted.
 fn is_in_comment_position(line: &str, idx: usize) -> bool {
-    let prefix = &line[..idx];
+    let prefix = &line[.. idx];
     let trimmed = prefix.trim_end();
     trimmed.ends_with("//")
         || trimmed.ends_with("///")
@@ -127,11 +127,11 @@ fn parse_directive_body(
 ) -> Option<DirectiveRecord> {
     let after_marker = body.strip_prefix("lint:")?;
     let paren_open = after_marker.find('(')?;
-    let keyword = &after_marker[..paren_open];
-    let after_keyword = &after_marker[paren_open + 1..];
+    let keyword = &after_marker[.. paren_open];
+    let after_keyword = &after_marker[paren_open + 1 ..];
     let paren_close = find_matching_paren(after_keyword)?;
-    let args = &after_keyword[..paren_close];
-    let tail = after_keyword[paren_close + 1..].trim_start();
+    let args = &after_keyword[.. paren_close];
+    let tail = after_keyword[paren_close + 1 ..].trim_start();
 
     // Span columns are 1-indexed; the marker starts at
     // (directive_byte_start + 1).
@@ -167,8 +167,8 @@ fn find_matching_paren(s: &str) -> Option<usize> {
                 if depth == 0 {
                     return Some(i);
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     None
@@ -236,11 +236,11 @@ fn parse_prop(args: &str, tail: &str) -> Option<Directive> {
             let name = trim_name(name_raw)?;
             let value = parse_prop_value(value_raw.trim())?;
             (name, value)
-        }
+        },
         None => {
             let name = trim_name(args)?;
             (name, PropValue::Bool(true))
-        }
+        },
     };
     let (reason, _) = parse_reason_tracked_tail(tail);
     Some(Directive::Prop {
@@ -263,7 +263,7 @@ fn parse_prop_value(s: &str) -> Option<PropValue> {
     }
     if let Some(rest) = s.strip_prefix('"') {
         let close = rest.find('"')?;
-        return Some(PropValue::String(rest[..close].to_string()));
+        return Some(PropValue::String(rest[.. close].to_string()));
     }
     // Bare integer: optionally signed, decimal digits only. The bare
     // numeric form lets authors write `arena_size = 4096` without
@@ -327,22 +327,18 @@ fn parse_scope_axis(s: &str) -> Option<ScopeAxis> {
 /// `#5"` as a tracked value.
 fn parse_keyed_value(text: &str, key: &str) -> Option<String> {
     let start = find_key_outside_strings(text, key)?;
-    let after = &text[start + key.len()..];
+    let after = &text[start + key.len() ..];
     let after = after.trim_start();
     if let Some(rest) = after.strip_prefix('"') {
         let close = rest.find('"')?;
-        Some(rest[..close].to_string())
+        Some(rest[.. close].to_string())
     } else {
         // Bare token: read until whitespace or known delimiter.
         let end = after
             .find(|c: char| c.is_whitespace() || c == ',')
             .unwrap_or(after.len());
-        let value = after[..end].trim();
-        if value.is_empty() {
-            None
-        } else {
-            Some(value.to_string())
-        }
+        let value = after[.. end].trim();
+        if value.is_empty() { None } else { Some(value.to_string()) }
     }
 }
 
@@ -361,7 +357,7 @@ fn find_key_outside_strings(text: &str, key: &str) -> Option<usize> {
             i += 1;
             continue;
         }
-        if !in_string && &bytes[i..i + key_bytes.len()] == key_bytes {
+        if !in_string && &bytes[i .. i + key_bytes.len()] == key_bytes {
             return Some(i);
         }
         i += 1;
@@ -380,8 +376,9 @@ fn parse_reason_tracked_tail(tail: &str) -> (Option<String>, Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use mockspace_core::lint::Directive;
+
+    use super::*;
 
     #[test]
     fn parses_lint_allow_with_reason_and_tracked() {
@@ -400,7 +397,7 @@ const FNV_PRIME: u64 = 0x100000001b3;
                 assert_eq!(lint_name, "no-bare-numeric");
                 assert_eq!(reason.as_deref(), Some("spec-fixed constant"));
                 assert_eq!(tracked.as_deref(), Some("#427"));
-            }
+            },
             other => panic!("expected Allow, got {other:?}"),
         }
     }
@@ -419,7 +416,7 @@ const FNV_PRIME: u64 = 0x100000001b3;
                 assert_eq!(lint_name, "no-bare-numeric");
                 assert_eq!(*axis, ScopeAxis::ExemptPaths);
                 assert_eq!(value, "tests/**");
-            }
+            },
             other => panic!("expected ScopeAdd, got {other:?}"),
         }
     }
@@ -461,7 +458,7 @@ fn legacy(name: String) {}
                 assert_eq!(lint_name, "no-bare-string");
                 assert_eq!(until, "#185");
                 assert_eq!(reason.as_deref(), Some("clause test rehab pending"));
-            }
+            },
             other => panic!("expected Defer, got {other:?}"),
         }
     }
@@ -481,7 +478,7 @@ fn legacy(name: String) {}
                 assert_eq!(lint_name, "writing-style");
                 assert_eq!(reason.as_deref(), Some("generated FFI bindings"));
                 assert_eq!(tracked.as_deref(), Some("#207"));
-            }
+            },
             other => panic!("expected FileDisable, got {other:?}"),
         }
     }
@@ -493,11 +490,13 @@ fn legacy(name: String) {}
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
             Directive::Allow {
-                reason, tracked, ..
+                reason,
+                tracked,
+                ..
             } => {
                 assert!(reason.is_none());
                 assert!(tracked.is_none());
-            }
+            },
             other => panic!("expected Allow, got {other:?}"),
         }
     }
@@ -521,9 +520,14 @@ fn legacy(name: String) {}
         assert_eq!(recs.len(), 2);
         let lint_names: Vec<&str> = recs
             .iter()
-            .map(|r| match &r.directive {
-                Directive::Allow { lint_name, .. } => lint_name.as_str(),
-                other => panic!("expected Allow, got {other:?}"),
+            .map(|r| {
+                match &r.directive {
+                    Directive::Allow {
+                        lint_name,
+                        ..
+                    } => lint_name.as_str(),
+                    other => panic!("expected Allow, got {other:?}"),
+                }
             })
             .collect();
         assert!(lint_names.contains(&"no-bare-numeric"));
@@ -595,13 +599,15 @@ fn legacy(name: String) {}
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
             Directive::Allow {
-                reason, tracked, ..
+                reason,
+                tracked,
+                ..
             } => {
                 assert_eq!(reason.as_deref(), Some("see tracked: #5 for context"));
                 // tracked: appears only inside the reason string, so
                 // the directive's tracked field should be None.
                 assert!(tracked.is_none(), "got tracked: {tracked:?}");
-            }
+            },
             other => panic!("expected Allow, got {other:?}"),
         }
     }
@@ -668,7 +674,7 @@ fn legacy(name: String) {}
                 assert_eq!(name, "audited");
                 assert_eq!(*value, PropValue::Bool(true));
                 assert!(reason.is_none());
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -679,10 +685,14 @@ fn legacy(name: String) {}
         let recs = parse_directives(src, "x.rs");
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { name, value, .. } => {
+            Directive::Prop {
+                name,
+                value,
+                ..
+            } => {
                 assert_eq!(name, "arena_size");
                 assert_eq!(*value, PropValue::Integer(4096));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -693,10 +703,14 @@ fn legacy(name: String) {}
         let recs = parse_directives(src, "x.rs");
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { name, value, .. } => {
+            Directive::Prop {
+                name,
+                value,
+                ..
+            } => {
                 assert_eq!(name, "audit_id");
                 assert_eq!(*value, PropValue::String("A-2026-04".to_string()));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -707,10 +721,14 @@ fn legacy(name: String) {}
         let recs = parse_directives(src, "x.rs");
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { name, value, .. } => {
+            Directive::Prop {
+                name,
+                value,
+                ..
+            } => {
                 assert_eq!(name, "enabled");
                 assert_eq!(*value, PropValue::Bool(false));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -721,9 +739,12 @@ fn legacy(name: String) {}
         let recs = parse_directives(src, "x.rs");
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { reason, .. } => {
+            Directive::Prop {
+                reason,
+                ..
+            } => {
                 assert_eq!(reason.as_deref(), Some("audit pass 2026-04"));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -734,9 +755,12 @@ fn legacy(name: String) {}
         let recs = parse_directives(src, "x.rs");
         assert_eq!(recs.len(), 1);
         match &recs[0].directive {
-            Directive::Prop { value, .. } => {
+            Directive::Prop {
+                value,
+                ..
+            } => {
                 assert_eq!(*value, PropValue::Integer(-42));
-            }
+            },
             other => panic!("expected Prop, got {other:?}"),
         }
     }
@@ -762,7 +786,10 @@ fn legacy(name: String) {}
         assert_eq!(recs.len(), 2);
         for rec in &recs {
             match &rec.directive {
-                Directive::Prop { name, .. } => assert_eq!(name, "allowed_import"),
+                Directive::Prop {
+                    name,
+                    ..
+                } => assert_eq!(name, "allowed_import"),
                 other => panic!("expected Prop, got {other:?}"),
             }
         }

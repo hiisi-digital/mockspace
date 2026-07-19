@@ -21,8 +21,11 @@ const LINT_NAME: &str = "no-box";
 pub struct NoBox;
 
 impl Lint for NoBox {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
+    }
+
+    fn name(&self) -> &'static str {
         LINT_NAME
     }
 
@@ -54,8 +57,8 @@ fn name(&self) -> &'static str {
                                 in_cfg_test = false;
                             }
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
 
@@ -108,8 +111,7 @@ fn name(&self) -> &'static str {
                     ctx.crate_name.to_string(),
                     line_num,
                     LINT_NAME,
-                    "Box<T> usage — acceptable for recursive types, flag for review"
-                        .to_string(),
+                    "Box<T> usage — acceptable for recursive types, flag for review".to_string(),
                 ));
             }
         }
@@ -126,7 +128,7 @@ fn contains_box(line: &str) -> bool {
         if pos > 0 {
             let prev = search.as_bytes()[pos - 1];
             if prev.is_ascii_alphanumeric() || prev == b'_' {
-                search = &search[pos + 4..];
+                search = &search[pos + 4 ..];
                 continue;
             }
         }
@@ -142,7 +144,7 @@ fn contains_box_dyn(line: &str) -> bool {
         if pos > 0 {
             let prev = search.as_bytes()[pos - 1];
             if prev.is_ascii_alphanumeric() || prev == b'_' {
-                search = &search[pos + 8..];
+                search = &search[pos + 8 ..];
                 continue;
             }
         }
@@ -153,8 +155,9 @@ fn contains_box_dyn(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::BTreeSet;
+
+    use super::*;
 
     fn make_ctx(source: &str) -> (tree_sitter::Tree, LintContext<'static>) {
         let mut parser = crate::make_parser();
@@ -189,33 +192,40 @@ mod tests {
 
     #[test]
     fn box_dyn_is_error() {
-        let (_tree, ctx) = make_ctx(
-            "pub struct Pipeline {\n    passes: Vec<Box<dyn Pass>>,\n}\n",
-        );
+        let (_tree, ctx) = make_ctx("pub struct Pipeline {\n    passes: Vec<Box<dyn Pass>>,\n}\n");
         let errors = NoBox.check(&ctx);
         assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.severity == crate::Severity::HARD_ERROR));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.severity == crate::Severity::HARD_ERROR)
+        );
     }
 
     #[test]
     fn box_concrete_is_warning() {
-        let (_tree, ctx) = make_ctx(
-            "pub enum Tree {\n    Leaf(u32),\n    Node(Box<Tree>),\n}\n",
-        );
+        let (_tree, ctx) = make_ctx("pub enum Tree {\n    Leaf(u32),\n    Node(Box<Tree>),\n}\n");
         let errors = NoBox.check(&ctx);
         assert!(!errors.is_empty());
-        assert!(errors.iter().all(|e| e.severity == crate::Severity::ADVISORY));
+        assert!(
+            errors
+                .iter()
+                .all(|e| e.severity == crate::Severity::ADVISORY)
+        );
     }
 
     #[test]
     fn lint_allow_emits_warning() {
-        let (_tree, ctx) = make_ctx(
-            "pub struct Pool {\n    entries: Box<dyn Any>, // lint:allow(no_box)\n}\n",
-        );
+        let (_tree, ctx) =
+            make_ctx("pub struct Pool {\n    entries: Box<dyn Any>, // lint:allow(no_box)\n}\n");
         let errors = NoBox.check(&ctx);
         // Allow suppresses the error but emits a warning for transparency
         assert!(!errors.is_empty());
-        assert!(errors.iter().all(|e| e.severity == crate::Severity::ADVISORY));
+        assert!(
+            errors
+                .iter()
+                .all(|e| e.severity == crate::Severity::ADVISORY)
+        );
     }
 
     #[test]
@@ -224,7 +234,8 @@ mod tests {
         let source = "pub struct E { col: Box<dyn Any> }";
         let tree = parser.parse(source, None).unwrap();
         let tree = Box::leak(Box::new(tree));
-        let proc_macro_crates: &'static Vec<String> = Box::leak(Box::new(vec!["test-dsl".to_string()]));
+        let proc_macro_crates: &'static Vec<String> =
+            Box::leak(Box::new(vec!["test-dsl".to_string()]));
         let ctx = LintContext {
             crate_name: "test-dsl",
             short_name: "dsl",
@@ -270,7 +281,11 @@ mod tests {
         };
         let errors = NoBox.check(&ctx);
         assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.severity == crate::Severity::HARD_ERROR));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.severity == crate::Severity::HARD_ERROR)
+        );
     }
 
     #[test]

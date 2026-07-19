@@ -50,7 +50,7 @@ fn normalize_disasm(text: &str) -> String {
             continue;
         }
         if let Some(pos) = trimmed.find('\t') {
-            lines.push(trimmed[pos + 1..].to_string());
+            lines.push(trimmed[pos + 1 ..].to_string());
         } else {
             lines.push(trimmed.to_string());
         }
@@ -76,11 +76,7 @@ fn extract_symbol_range(text: &str, symbol: &str) -> Option<String> {
             lines.push(line.to_string());
         }
     }
-    if lines.is_empty() {
-        None
-    } else {
-        Some(lines.join("\n"))
-    }
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
 }
 
 /// Compare `bench_entry` disassembly across all variant dylibs.
@@ -100,8 +96,8 @@ pub fn check_duplicates(variant_paths: &[String]) {
     }
 
     let mut dupes = Vec::new();
-    for i in 0..entries.len() {
-        for j in (i + 1)..entries.len() {
+    for i in 0 .. entries.len() {
+        for j in (i + 1) .. entries.len() {
             if entries[i].1 == entries[j].1 {
                 dupes.push((entries[i].0.clone(), entries[j].0.clone()));
             }

@@ -29,10 +29,10 @@ pub fn cmd_pdf(docs_dir: &Path, repo_root: &Path, extra_args: &[&str]) -> ExitCo
                 eprintln!("error: pdf generation failed (exit {code})");
             }
             ExitCode::FAILURE
-        }
+        },
         Err(e) => {
             eprintln!("error: failed to run pdf.sh: {e}");
             ExitCode::FAILURE
-        }
+        },
     }
 }

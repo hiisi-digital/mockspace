@@ -30,12 +30,12 @@ use std::time::{Duration, Instant};
 
 use crate::config::BenchConfig;
 use crate::core::counter::{self, Rng};
-use crate::core::{abi_hash, AbiHashFn, BenchEntryFn, BenchNameFn};
-use crate::env::{collect_env_meta, EnvMeta};
+use crate::core::{AbiHashFn, BenchEntryFn, BenchNameFn, abi_hash};
+use crate::env::{EnvMeta, collect_env_meta};
 use crate::error::BenchError;
 use crate::sample::{BenchResult, Sample};
 use crate::spec::RoutineSpec;
-use crate::workload::{mix, Workload};
+use crate::workload::{Workload, mix};
 
 // ── Environment metadata helpers ──
 
@@ -112,8 +112,8 @@ unsafe fn load_variant(dylib_path: &str) -> Result<(String, BenchEntryFn), Strin
         .map_err(|e| format!("missing bench_entry symbol: {e}"))?;
     let entry_fn: BenchEntryFn = *entry;
 
-    let name_fn: libloading::Symbol<BenchNameFn> = unsafe { lib.get(b"bench_name") }
-        .map_err(|e| format!("missing bench_name symbol: {e}"))?;
+    let name_fn: libloading::Symbol<BenchNameFn> =
+        unsafe { lib.get(b"bench_name") }.map_err(|e| format!("missing bench_name symbol: {e}"))?;
     let name = unsafe { std::ffi::CStr::from_ptr(name_fn() as *const i8) }
         .to_string_lossy()
         .into_owned();
@@ -168,7 +168,7 @@ pub fn run_worker(
                 eprintln!("  WORKER LOAD FAIL: {} :: {}", dylib_path, reason);
                 println!("TIMEOUT\t<load-fail>\t{}\t0", mode);
                 return;
-            }
+            },
         }
     };
 
@@ -176,10 +176,8 @@ pub fn run_worker(
     let output_size = routine.bridge.output_size;
     // Use the routine's scorer iff the routine declared a score label
     // (presence of label is the consent signal that scoring is meaningful).
-    let output_scorer: Option<fn(&[u8], &[u8]) -> Option<f64>> = routine
-        .bridge
-        .score_label
-        .map(|_| routine.bridge.scorer);
+    let output_scorer: Option<fn(&[u8], &[u8]) -> Option<f64>> =
+        routine.bridge.score_label.map(|_| routine.bridge.scorer);
 
     // At least one warmup call always runs, so lazy per-process state
     // (a variant caching an expensive structure across calls) is built
@@ -196,7 +194,7 @@ pub fn run_worker(
     let mut warm_output = vec![0u8; output_size];
 
     // Warmup
-    for i in 0..warmup {
+    for i in 0 .. warmup {
         let s = sub_seeds[i];
         if mode == "warm" {
             workload.run_program(s, &mut |_| unsafe {
@@ -235,17 +233,17 @@ pub fn run_worker(
     let mut last_cold_input: Option<Vec<u8>> = None;
     let mut last_cold_output: Option<Vec<u8>> = None;
 
-    for b in 0..batches {
+    for b in 0 .. batches {
         let base = warmup + b * batch_size;
         let mut batch_e2e_ticks = 0u64;
         let mut batch_algo_ticks = 0u64;
         let mut batch_bridge_ticks = 0u64;
 
         if batch_k > 1 {
-            for i in 0..batch_size {
+            for i in 0 .. batch_size {
                 let fw_start = counter::read_counter();
                 if mode == "warm" {
-                    for _ in 0..batch_k {
+                    for _ in 0 .. batch_k {
                         unsafe {
                             entry(warm_input.as_ptr(), warm_output.as_mut_ptr(), n);
                         }
@@ -254,7 +252,7 @@ pub fn run_worker(
                     let s = sub_seeds[base + i];
                     let input = input_builder(s);
                     let mut output = vec![0u8; output_size];
-                    for _ in 0..batch_k {
+                    for _ in 0 .. batch_k {
                         unsafe {
                             entry(input.as_ptr(), output.as_mut_ptr(), n);
                         }
@@ -268,7 +266,7 @@ pub fn run_worker(
                 batch_e2e_ticks += per_call;
             }
         } else {
-            for i in 0..batch_size {
+            for i in 0 .. batch_size {
                 let s = sub_seeds[base + i];
                 let fw_start = counter::read_counter();
                 let wall_start = Instant::now();
@@ -279,9 +277,8 @@ pub fn run_worker(
                 if mode == "warm" {
                     workload.run_program(s, &mut |_| {
                         let call_start = counter::read_counter();
-                        let result = unsafe {
-                            entry(warm_input.as_ptr(), warm_output.as_mut_ptr(), n)
-                        };
+                        let result =
+                            unsafe { entry(warm_input.as_ptr(), warm_output.as_mut_ptr(), n) };
                         let call_end = counter::read_counter();
                         algo_accum += result.run_ticks;
                         call_accum += call_end - call_start;
@@ -464,7 +461,7 @@ pub fn run_orchestrator(
     let _ = (routine, workload);
     let input_tagger = routine.bridge.input_tagger;
 
-    for hr in 0..config.harness_runs {
+    for hr in 0 .. config.harness_runs {
         eprintln!("  ── Harness run {}/{} ──", hr + 1, config.harness_runs);
 
         let seed_source = if config.master_seed != 0 {
@@ -481,18 +478,18 @@ pub fn run_orchestrator(
         let mut rng = Rng::new(seed_source.wrapping_add(hr as u64 * 0xDEADBEEF));
 
         let total_passes = config.passes * nc;
-        let seeds: Vec<u64> = (0..total_passes).map(|_| rng.next()).collect();
+        let seeds: Vec<u64> = (0 .. total_passes).map(|_| rng.next()).collect();
 
-        for pass_idx in 0..total_passes {
+        for pass_idx in 0 .. total_passes {
             let ci = pass_idx % nc;
             let cd = config.cooldowns_ms[ci];
             let seed = seeds[pass_idx];
             let pass_num = pass_idx / nc + 1;
 
             // Randomise variant order
-            let mut variant_order: Vec<usize> = (0..nv).collect();
+            let mut variant_order: Vec<usize> = (0 .. nv).collect();
             let mut h = mix(seed);
-            for i in (1..nv).rev() {
+            for i in (1 .. nv).rev() {
                 h = mix(h);
                 let j = (h as usize) % (i + 1);
                 variant_order.swap(i, j);
@@ -567,10 +564,10 @@ pub fn run_orchestrator(
                                     break;
                                 }
                                 std::thread::sleep(Duration::from_millis(10));
-                            }
+                            },
                             Err(e) => {
                                 return Err(BenchError::io("waiting on worker subprocess", e));
-                            }
+                            },
                         }
                     }
 
@@ -598,18 +595,18 @@ pub fn run_orchestrator(
                         let parts: Vec<&str> = line.split('\t').collect();
                         if parts.len() >= 7 {
                             all_samples.push(Sample {
-                                run: hr + 1,
-                                pass: pass_num,
+                                run:         hr + 1,
+                                pass:        pass_num,
                                 cooldown_ms: cd,
-                                mode: parts[1].to_string(),
-                                variant: parts[0].to_string(),
-                                batch_idx: parts[2].parse().unwrap_or(0),
-                                e2e_ns: parts[3].parse().unwrap_or(0.0),
-                                algo_ns: parts[4].parse().unwrap_or(0.0),
-                                bridge_ns: parts[5].parse().unwrap_or(0.0),
+                                mode:        parts[1].to_string(),
+                                variant:     parts[0].to_string(),
+                                batch_idx:   parts[2].parse().unwrap_or(0),
+                                e2e_ns:      parts[3].parse().unwrap_or(0.0),
+                                algo_ns:     parts[4].parse().unwrap_or(0.0),
+                                bridge_ns:   parts[5].parse().unwrap_or(0.0),
                                 batch_count: parts[6].parse().unwrap_or(0),
-                                score: parts.get(7).and_then(|s| s.parse().ok()),
-                                input_tag: input_tagger.map(|f| f(seed).1),
+                                score:       parts.get(7).and_then(|s| s.parse().ok()),
+                                input_tag:   input_tagger.map(|f| f(seed).1),
                             });
                         }
                     }
@@ -627,10 +624,10 @@ pub fn run_orchestrator(
     eprintln!("  Total: {:.1}s", total_secs);
 
     Ok(BenchResult {
-        title: config.title.clone(),
-        env: collect_env_meta(),
-        samples: all_samples,
-        cache_path: String::new(),
+        title:       config.title.clone(),
+        env:         collect_env_meta(),
+        samples:     all_samples,
+        cache_path:  String::new(),
         report_path: String::new(),
     })
 }
@@ -648,9 +645,18 @@ pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
         let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
         csv.push_str(&format!(
             "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{}\n",
-            s.run, s.pass, s.cooldown_ms, s.mode, s.variant,
-            s.batch_idx, s.e2e_ns, s.algo_ns, s.bridge_ns,
-            s.batch_count, score_str, tag_str
+            s.run,
+            s.pass,
+            s.cooldown_ms,
+            s.mode,
+            s.variant,
+            s.batch_idx,
+            s.e2e_ns,
+            s.algo_ns,
+            s.bridge_ns,
+            s.batch_count,
+            score_str,
+            tag_str
         ));
     }
     std::fs::write(path, &csv).map_err(|e| BenchError::io("writing csv", e))?;
@@ -658,8 +664,7 @@ pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
 
     let json = env_meta_to_json(&result.env);
     let meta_path = meta_json_path(path);
-    std::fs::write(&meta_path, &json)
-        .map_err(|e| BenchError::io("writing meta.json", e))?;
+    std::fs::write(&meta_path, &json).map_err(|e| BenchError::io("writing meta.json", e))?;
     eprintln!("  Meta: {}", meta_path);
     Ok(())
 }
