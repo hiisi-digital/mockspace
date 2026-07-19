@@ -1,5 +1,6 @@
-//! Locating the repo and the mock subdir from any working directory. All
-//! discovery uses absolute paths so cwd never matters.
+//! Locating the repo, the `mockspace.toml`, and the mock dir from any working
+//! directory. All discovery uses absolute paths so cwd never matters, and it
+//! is strictly read-only: nothing is moved or written during resolution.
 //!
 //! The launcher is deliberately workflow-schema-agnostic. The workflow schema
 //! is not a separate axis it detects: it is a function of the pinned engine
@@ -9,6 +10,14 @@
 //! branches on it.
 
 use std::path::{Path, PathBuf};
+
+/// A located mockspace config and the mock dir it maps.
+pub struct Located {
+    /// The `mockspace.toml` to read the pin from.
+    pub config_path: PathBuf,
+    /// The absolute v0.1 mock workspace dir the engine runs against.
+    pub mock_dir: PathBuf,
+}
 
 /// The repo root.
 ///
@@ -33,21 +42,69 @@ pub fn repo_root() -> Option<PathBuf> {
     }
 }
 
-/// The v0.1 filesystem mock-dir *name*, mapped by the root `mockspace.toml`
-/// `mock_dir` key, defaulting to `mock` (what almost every consumer uses).
+/// Resolve the `mockspace.toml` and the mock dir it maps, flexibly.
 ///
-/// v0.2 keeps its round state in git refs, so there is no mock dir; the field
-/// is a v0.1 concern only, and the default keeps existing repos working
-/// without stating it.
-pub fn mock_dir_name(root: &Path) -> String {
-    if let Ok(s) = std::fs::read_to_string(root.join("mockspace.toml")) {
-        if let Some(name) = top_level_string(&s, "mock_dir") {
-            if !name.is_empty() {
-                return name;
-            }
+/// The repo root is checked first: a `mockspace.toml` there maps its mock dir
+/// via the `mock_dir` key, defaulting to `mock` (what almost every consumer
+/// uses). Otherwise the immediate subdirs are scanned, hidden ones (`.config`,
+/// `.mockspace`, ...) first, and the first that holds a `mockspace.toml` wins;
+/// there the `mock_dir` key defaults to `.`, so the config's own dir is the
+/// mock workspace. This keeps every existing `mock/mockspace.toml` working
+/// with no move, while a clean root placement points at `mock` explicitly.
+pub fn locate(root: &Path) -> Option<Located> {
+    let root_cfg = root.join("mockspace.toml");
+    if root_cfg.is_file() {
+        let md = mock_dir_field(&root_cfg).unwrap_or_else(|| "mock".to_string());
+        return Some(Located {
+            config_path: root_cfg,
+            mock_dir: normalize(root.join(md)),
+        });
+    }
+    for sub in ordered_subdirs(root) {
+        let cfg = sub.join("mockspace.toml");
+        if cfg.is_file() {
+            let md = mock_dir_field(&cfg).unwrap_or_else(|| ".".to_string());
+            return Some(Located {
+                config_path: cfg,
+                mock_dir: normalize(sub.join(md)),
+            });
         }
     }
-    "mock".to_string()
+    None
+}
+
+/// Immediate subdirs of `root`, hidden (dotfile) ones first, each group sorted,
+/// skipping dirs that never hold a mock workspace (`.git`, `target`,
+/// `node_modules`).
+fn ordered_subdirs(root: &Path) -> Vec<PathBuf> {
+    let mut hidden = Vec::new();
+    let mut plain = Vec::new();
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    for e in rd.flatten() {
+        if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = e.file_name().to_string_lossy().to_string();
+        if matches!(name.as_str(), ".git" | "target" | "node_modules") {
+            continue;
+        }
+        if name.starts_with('.') {
+            hidden.push((name, e.path()));
+        } else {
+            plain.push((name, e.path()));
+        }
+    }
+    hidden.sort_by(|a, b| a.0.cmp(&b.0));
+    plain.sort_by(|a, b| a.0.cmp(&b.0));
+    hidden.into_iter().chain(plain).map(|(_, p)| p).collect()
+}
+
+/// A top-level (section-less) `mock_dir = "..."` string from a mockspace.toml.
+fn mock_dir_field(config_path: &Path) -> Option<String> {
+    let toml = std::fs::read_to_string(config_path).ok()?;
+    top_level_string(&toml, "mock_dir").filter(|s| !s.is_empty())
 }
 
 /// A top-level (section-less) `key = "value"` string from a mockspace.toml.
@@ -66,9 +123,18 @@ fn top_level_string(toml: &str, key: &str) -> Option<String> {
     None
 }
 
+/// Collapse a trailing `/.` (from the `.` mock_dir default) so paths stay tidy.
+fn normalize(p: PathBuf) -> PathBuf {
+    if p.file_name().map(|n| n == ".").unwrap_or(false) {
+        return p.parent().map(Path::to_path_buf).unwrap_or(p);
+    }
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn mock_root_env_wins() {
@@ -80,15 +146,75 @@ mod tests {
     }
 
     #[test]
-    fn mock_root_ignored_when_not_a_dir() {
-        std::env::set_var("MOCK_ROOT", "/definitely/not/a/real/dir/xyzzy");
-        let got = repo_root();
-        std::env::remove_var("MOCK_ROOT");
-        // falls through to the .git walk (this test tree is a git repo, so it
-        // resolves to *something*, just not the bogus MOCK_ROOT).
-        assert_ne!(
-            got.as_deref(),
-            Some(Path::new("/definitely/not/a/real/dir/xyzzy"))
-        );
+    fn locates_root_config_defaulting_mock() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("mockspace.toml"), "project_name = \"x\"\n").unwrap();
+        let loc = locate(d.path()).unwrap();
+        assert_eq!(loc.config_path, d.path().join("mockspace.toml"));
+        assert_eq!(loc.mock_dir, d.path().join("mock"));
+    }
+
+    #[test]
+    fn root_config_explicit_mock_dir() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("mockspace.toml"), "mock_dir = \"design\"\n").unwrap();
+        let loc = locate(d.path()).unwrap();
+        assert_eq!(loc.mock_dir, d.path().join("design"));
+    }
+
+    #[test]
+    fn locates_subdir_config_defaulting_self() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("mock")).unwrap();
+        fs::write(
+            d.path().join("mock/mockspace.toml"),
+            "project_name = \"x\"\n",
+        )
+        .unwrap();
+        let loc = locate(d.path()).unwrap();
+        assert_eq!(loc.config_path, d.path().join("mock/mockspace.toml"));
+        // subdir default is `.` -> the config's own dir is the mock dir
+        assert_eq!(loc.mock_dir, d.path().join("mock"));
+    }
+
+    #[test]
+    fn hidden_subdir_wins_over_plain() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir(d.path().join("mock")).unwrap();
+        fs::write(
+            d.path().join("mock/mockspace.toml"),
+            "project_name = \"p\"\n",
+        )
+        .unwrap();
+        fs::create_dir(d.path().join(".config")).unwrap();
+        fs::write(
+            d.path().join(".config/mockspace.toml"),
+            "project_name = \"h\"\n",
+        )
+        .unwrap();
+        let loc = locate(d.path()).unwrap();
+        assert_eq!(loc.config_path, d.path().join(".config/mockspace.toml"));
+        assert_eq!(loc.mock_dir, d.path().join(".config"));
+    }
+
+    #[test]
+    fn root_wins_over_subdir() {
+        let d = tempfile::tempdir().unwrap();
+        fs::write(d.path().join("mockspace.toml"), "project_name = \"root\"\n").unwrap();
+        fs::create_dir(d.path().join("mock")).unwrap();
+        fs::write(
+            d.path().join("mock/mockspace.toml"),
+            "project_name = \"sub\"\n",
+        )
+        .unwrap();
+        let loc = locate(d.path()).unwrap();
+        assert_eq!(loc.config_path, d.path().join("mockspace.toml"));
+        assert_eq!(loc.mock_dir, d.path().join("mock"));
+    }
+
+    #[test]
+    fn none_when_no_config() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(locate(d.path()).is_none());
     }
 }

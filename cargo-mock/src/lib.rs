@@ -83,18 +83,24 @@ fn run(args: &[String]) -> Result<(), String> {
     let root = discover::repo_root().ok_or_else(|| {
         "not inside a git repository (no .git found, and MOCK_ROOT is unset)".to_string()
     })?;
-    let mock_abs = root.join(discover::mock_dir_name(&root));
+    let located = discover::locate(&root);
+    // fall back to the conventional mock dir for a repo that has only a legacy
+    // Cargo.lock pin and no mockspace.toml yet.
+    let mock_abs = located
+        .as_ref()
+        .map(|l| l.mock_dir.clone())
+        .unwrap_or_else(|| root.join("mock"));
 
-    if !mock_abs.join("mockspace.toml").exists() && !mock_abs.join("Cargo.lock").exists() {
+    if located.is_none() && !mock_abs.join("Cargo.lock").exists() {
         return Err(format!(
-            "no mock workspace at {} (expected mockspace.toml or Cargo.lock)",
-            mock_abs.display()
+            "no mockspace.toml found under {} and no legacy Cargo.lock pin",
+            root.display()
         ));
     }
 
     // v0.1: repo-specific lints are compiled into a keyed binary; that build
     // is a follow-up. Refuse rather than silently run a lint-blind engine.
-    if let Some(reason) = custom_lints_present(&root, &mock_abs) {
+    if let Some(reason) = custom_lints_present(located.as_ref(), &mock_abs) {
         return Err(format!(
             "{reason}\n  the launcher's custom-lint build is not implemented yet.\n  \
              until it lands, run this repo through its existing proxy (`cargo check` in \
@@ -102,7 +108,7 @@ fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
-    let pin = resolve_pin(&root, &mock_abs)?;
+    let pin = resolve_pin(located.as_ref(), &root, &mock_abs)?;
     let cache_root = cache::cache_root()?;
     let resolved = pin.resolve(&cache_root)?;
     let key = cache::compute_key(&pin.url, &resolved.key_rev, &[]);
@@ -112,13 +118,16 @@ fn run(args: &[String]) -> Result<(), String> {
     cache::exec_engine(&bin, &mock_abs, args).map(|_never| ())
 }
 
-/// The pin: the `mockspace_version` key in the root `mockspace.toml` (its home
-/// after migration), then the pre-migration `<mockdir>/mockspace.toml`, then
-/// the legacy mockspace rev in the mock workspace's `Cargo.lock`. The last two
-/// keep an un-migrated repo running until the engine relocates its config.
-fn resolve_pin(root: &Path, mock_abs: &Path) -> Result<Pin, String> {
-    for toml in [root.join("mockspace.toml"), mock_abs.join("mockspace.toml")] {
-        if let Ok(s) = std::fs::read_to_string(&toml) {
+/// The pin: the `mockspace_version` key in the located `mockspace.toml`
+/// (wherever it sits), then the legacy mockspace rev in the mock workspace's
+/// `Cargo.lock`, which keeps an un-pinned repo running until it adds one.
+fn resolve_pin(
+    located: Option<&discover::Located>,
+    root: &Path,
+    mock_abs: &Path,
+) -> Result<Pin, String> {
+    if let Some(l) = located {
+        if let Ok(s) = std::fs::read_to_string(&l.config_path) {
             if let Some(p) = Pin::from_mockspace_toml(&s) {
                 return Ok(p);
             }
@@ -129,17 +138,20 @@ fn resolve_pin(root: &Path, mock_abs: &Path) -> Result<Pin, String> {
             return Ok(p);
         }
     }
+    let where_to = located
+        .map(|l| l.config_path.clone())
+        .unwrap_or_else(|| root.join("mockspace.toml"));
     Err(format!(
         "no mockspace pin found. add one to {}:\n\n    \
          mockspace_version = \"0.0.0-d05\"   # the released engine version\n",
-        root.join("mockspace.toml").display()
+        where_to.display()
     ))
 }
 
 /// Whether the repo ships custom lints the cached bare-engine would not carry:
-/// `<mockdir>/lints/*.rs`, or a non-empty `[lint-crates]` table. Returns a
-/// human reason when present.
-fn custom_lints_present(_root: &Path, mock_abs: &Path) -> Option<String> {
+/// `<mockdir>/lints/*.rs`, or a non-empty `[lint-crates]` table in the located
+/// config. Returns a human reason when present.
+fn custom_lints_present(located: Option<&discover::Located>, mock_abs: &Path) -> Option<String> {
     let lints_dir = mock_abs.join("lints");
     if let Ok(rd) = std::fs::read_dir(&lints_dir) {
         for e in rd.flatten() {
@@ -151,9 +163,11 @@ fn custom_lints_present(_root: &Path, mock_abs: &Path) -> Option<String> {
             }
         }
     }
-    if let Ok(s) = std::fs::read_to_string(mock_abs.join("mockspace.toml")) {
-        if has_lint_crates(&s) {
-            return Some("this repo declares [lint-crates]".to_string());
+    if let Some(l) = located {
+        if let Ok(s) = std::fs::read_to_string(&l.config_path) {
+            if has_lint_crates(&s) {
+                return Some("this repo declares [lint-crates]".to_string());
+            }
         }
     }
     None
