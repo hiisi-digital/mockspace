@@ -246,9 +246,9 @@ fn render_item_list(md: &mut String, items: &[&&Item]) {
     if !traits.is_empty() {
         for item in &traits {
             if let Item::Trait(t) = **item {
-                let gen = if t.generics.is_empty() { String::new() } else { t.generics.clone() };
+                let gen_str = if t.generics.is_empty() { String::new() } else { t.generics.clone() };
                 let bounds = if t.bounds.is_empty() { String::new() } else { format!(": {}", t.bounds) };
-                writeln!(md, "- `{}{gen}`{bounds}", t.name).unwrap();
+                writeln!(md, "- `{}{gen_str}`{bounds}", t.name).unwrap();
                 for m in &t.methods {
                     let params = if m.params.is_empty() { String::new() } else { m.params.clone() };
                     let ret = if m.ret.is_empty() { String::new() } else { format!(" → {}", m.ret) };
@@ -262,8 +262,8 @@ fn render_item_list(md: &mut String, items: &[&&Item]) {
     if !structs.is_empty() {
         for item in &structs {
             if let Item::Struct(s) = **item {
-                let gen = if s.generics.is_empty() { String::new() } else { s.generics.clone() };
-                writeln!(md, "- `{}{gen}`", s.name).unwrap();
+                let gen_str = if s.generics.is_empty() { String::new() } else { s.generics.clone() };
+                writeln!(md, "- `{}{gen_str}`", s.name).unwrap();
             }
         }
     }
@@ -281,8 +281,8 @@ fn render_item_list(md: &mut String, items: &[&&Item]) {
             if let Item::Fn(f) = **item {
                 let params = if f.sig.params.is_empty() { String::new() } else { f.sig.params.clone() };
                 let ret = if f.sig.ret.is_empty() { String::new() } else { format!(" → {}", f.sig.ret) };
-                let gen = if f.sig.generics.is_empty() { String::new() } else { f.sig.generics.clone() };
-                writeln!(md, "- `fn {}{gen}({params}){ret}`", f.sig.name).unwrap();
+                let gen_str = if f.sig.generics.is_empty() { String::new() } else { f.sig.generics.clone() };
+                writeln!(md, "- `fn {}{gen_str}({params}){ret}`", f.sig.name).unwrap();
             }
         }
     }

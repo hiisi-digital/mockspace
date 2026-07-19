@@ -252,14 +252,29 @@ mod tests {
 
     #[test]
     fn rename_uses_new_path() {
+        // a rename that is NOT the lock/deprecate status-suffix transition is a
+        // real modification of a frozen changelist, collected under its new path.
+        let mut out = Vec::new();
+        collect_non_additions(
+            "R100\tdesign_rounds/foo.doc.md\tdesign_rounds/bar.doc.md\n",
+            "staged",
+            &mut out,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "design_rounds/bar.doc.md");
+    }
+
+    #[test]
+    fn lock_transition_rename_is_allowed() {
+        // `cargo mock lock` renames `<cl>.md` -> `<cl>.lock.md` at full
+        // similarity; that transition is the documented flow, not a violation.
         let mut out = Vec::new();
         collect_non_additions(
             "R100\tdesign_rounds/foo.doc.md\tdesign_rounds/foo.doc.lock.md\n",
             "staged",
             &mut out,
         );
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].0, "design_rounds/foo.doc.lock.md");
+        assert!(out.is_empty());
     }
 
     #[test]

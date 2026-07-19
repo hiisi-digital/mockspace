@@ -19,12 +19,22 @@ use crate::pin::Resolved;
 
 /// `$XDG_CACHE_HOME/mockspace` or `~/.cache/mockspace`.
 pub fn cache_root() -> Result<PathBuf, String> {
-    if let Some(x) = std::env::var_os("XDG_CACHE_HOME") {
+    cache_root_from(std::env::var_os("XDG_CACHE_HOME"), std::env::var_os("HOME"))
+}
+
+/// Pure core of [`cache_root`]: env values passed in so it is testable without
+/// mutating process env (cargo runs tests in parallel threads, where `set_var`
+/// is a data race).
+fn cache_root_from(
+    xdg: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Result<PathBuf, String> {
+    if let Some(x) = xdg {
         if !x.is_empty() {
             return Ok(PathBuf::from(x).join("mockspace"));
         }
     }
-    let home = std::env::var_os("HOME")
+    let home = home
         .filter(|h| !h.is_empty())
         .ok_or_else(|| "neither XDG_CACHE_HOME nor HOME is set".to_string())?;
     Ok(PathBuf::from(home).join(".cache").join("mockspace"))
@@ -129,12 +139,24 @@ mod tests {
 
     #[test]
     fn cache_root_prefers_xdg() {
-        // isolate: set XDG_CACHE_HOME explicitly.
-        let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("XDG_CACHE_HOME", dir.path());
-        let r = cache_root().unwrap();
-        std::env::remove_var("XDG_CACHE_HOME");
-        assert_eq!(r, dir.path().join("mockspace"));
+        let xdg = std::path::Path::new("/x/cache");
+        let r =
+            cache_root_from(Some(xdg.as_os_str().to_os_string()), Some("/home/u".into())).unwrap();
+        assert_eq!(r, xdg.join("mockspace"));
+    }
+
+    #[test]
+    fn cache_root_falls_back_to_home() {
+        let r = cache_root_from(None, Some("/home/u".into())).unwrap();
+        assert_eq!(r, std::path::Path::new("/home/u/.cache/mockspace"));
+        // empty XDG is ignored
+        let r2 = cache_root_from(Some("".into()), Some("/home/u".into())).unwrap();
+        assert_eq!(r2, std::path::Path::new("/home/u/.cache/mockspace"));
+    }
+
+    #[test]
+    fn cache_root_errors_without_home() {
+        assert!(cache_root_from(None, None).is_err());
     }
 
     #[test]
