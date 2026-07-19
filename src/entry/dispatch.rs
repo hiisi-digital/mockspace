@@ -44,6 +44,16 @@ pub(crate) fn run_inner(
 
     let cfg = Config::from_dir(&mock_dir);
 
+    // Launcher-era startup parity: keep the durable gate installed and active
+    // with no user involvement, replacing what the build.rs bootstrap did.
+    // Skip inside hook validation (`--lint-only`) and for the explicit
+    // activate/deactivate commands, which manage the gate themselves.
+    if !args.iter().any(|a| a == "--lint-only")
+        && !args.iter().any(|a| a == "activate" || a == "deactivate")
+    {
+        bootstrap::ensure_gate(&cfg.repo_root, &cfg.mock_dir);
+    }
+
     // Effective custom lints. The old proxy statically links them in and passes
     // them here; a launcher-run engine instead gets the pin-matched
     // `mockspace-lint-rules` dep via `--mockspace-lint-rules-dep` and loads this
