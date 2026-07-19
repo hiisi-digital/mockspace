@@ -157,6 +157,7 @@ install_agent_files = "replace"
 
 auto_fmt = true                       # cargo fmt staged workspace roots pre-commit
 auto_clippy_fix = true                # cargo clippy --fix staged workspace roots pre-commit
+deny_check = true                     # cargo deny check on push (needs a deny.toml)
 ```
 
 Install modes (applied when generated content overwrites existing files):
@@ -187,6 +188,18 @@ are left untouched so a re-stage never sweeps in withheld edits. A fixer may sti
 rewrite other files within a changed package (fmt and clippy operate per package, not
 per file); only the staged files are re-staged, so the commit records just those. Set
 either key to `false` to opt out per-repo.
+
+### Dependency gate (cargo-deny)
+
+On push, `deny_check` (default `true`) runs `cargo deny check` against a `deny.toml` at
+the repo root, in every workspace root the repo contains (each pointed at the one config
+via `--config`, so a nested `mock/` workspace and its transitive graph are covered too).
+It gates advisories (RustSec), license compatibility across the whole transitive
+dependency graph, dependency bans, and source registries, and blocks the push on a
+violation.
+
+It is skipped (never blocking) when there is no `deny.toml` or cargo-deny is not
+installed (`cargo install cargo-deny`). Set `deny_check = false` to opt out.
 
 ### Lints
 

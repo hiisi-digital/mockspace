@@ -3,6 +3,7 @@ name = "mockspace-lint-rules"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "MPL-2.0"
 description = "AST lint rules for mockspace workspaces"
 
 [dependencies]
