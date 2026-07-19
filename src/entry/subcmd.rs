@@ -1,0 +1,58 @@
+#![allow(unused_imports)]
+use super::*;
+
+/// Every subcommand `run_inner` dispatches on. Single source of truth for
+/// the dispatch match, the unknown-subcommand help, and the suggestion.
+pub(crate) const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "activate",
+    "deactivate",
+    "status",
+    "query",
+    "check",
+    "clean",
+    "pdf",
+    "lock",
+    "deprecate",
+    "unlock",
+    "close",
+    "archive",
+    "migrate",
+    "bench",
+];
+
+
+/// Classic Levenshtein edit distance between two ASCII-ish words. Small
+/// inputs (subcommand names), so the simple two-row DP is more than enough.
+pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
+
+/// Nearest known subcommand to `input`, when close enough to be a likely
+/// typo. The threshold scales with word length so short words need a close
+/// match and longer ones tolerate a little more.
+pub(crate) fn suggest_subcommand(input: &str) -> Option<&'static str> {
+    let mut best: Option<(&'static str, usize)> = None;
+    for &name in KNOWN_SUBCOMMANDS {
+        let d = levenshtein(input, name);
+        if best.map_or(true, |(_, bd)| d < bd) {
+            best = Some((name, d));
+        }
+    }
+    let (name, dist) = best?;
+    let threshold = (input.len() / 2).max(2);
+    (dist <= threshold).then_some(name)
+}
+
