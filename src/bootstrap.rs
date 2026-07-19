@@ -309,6 +309,77 @@ pub fn is_active(repo_root: &Path) -> bool {
 // Cargo alias
 // ──────────────────────────────────────────────────────────────────────
 
+/// The `..`-prefix that climbs from the mock dir back to the repo root,
+/// one segment per component of the repo-root-relative mock path. Pure so
+/// the depth arithmetic is testable. `"mock"` -> `"../"`, `"a/b"` -> `"../../"`.
+fn ascend_prefix(mock_rel: &str) -> String {
+    let depth = Path::new(mock_rel)
+        .components()
+        .filter(|c| matches!(c, std::path::Component::Normal(_)))
+        .count()
+        .max(1);
+    "../".repeat(depth)
+}
+
+/// Write a `mock` alias into `<mock_dir>/.cargo/config.toml` whose
+/// `--manifest-path` climbs back to `<repo>/target/mockspace-proxy`, so
+/// `cargo mock` run from the mock dir resolves the proxy correctly. The
+/// `--dir` value stays the repo-root-relative mock path, which
+/// `resolve_mock_dir` handles from either cwd.
+fn ensure_mock_local_alias(
+    _repo_root: &Path,
+    mock_dir: &Path,
+    mock_rel: &str,
+    actions: &mut Vec<String>,
+) {
+    let up = ascend_prefix(mock_rel);
+    let alias_value = format!(
+        "run --manifest-path {up}target/mockspace-proxy/Cargo.toml -- --dir {mock_rel}"
+    );
+    let alias_line = format!("mock = \"{alias_value}\"");
+
+    let config_dir = mock_dir.join(".cargo");
+    let config_path = config_dir.join("config.toml");
+    let current = fs::read_to_string(&config_path).unwrap_or_default();
+
+    // Idempotent: leave a healthy alias alone.
+    for line in current.lines() {
+        let t = line.trim();
+        if t.starts_with("mock") && t.contains('=') {
+            if let Some((_, val)) = t.split_once('=') {
+                if val.trim().trim_matches('"') == alias_value {
+                    return;
+                }
+            }
+            let updated: Vec<&str> = current
+                .lines()
+                .map(|l| {
+                    if l.trim().starts_with("mock") && l.contains('=') {
+                        alias_line.as_str()
+                    } else {
+                        l
+                    }
+                })
+                .collect();
+            let _ = fs::write(&config_path, updated.join("\n") + "\n");
+            actions.push("updated mock-dir cargo mock alias".into());
+            return;
+        }
+    }
+
+    let _ = fs::create_dir_all(&config_dir);
+    let new_content = if current.is_empty() {
+        format!("[alias]\n{alias_line}\n")
+    } else if current.contains("[alias]") {
+        current.replacen("[alias]", &format!("[alias]\n{alias_line}"), 1) + ""
+    } else {
+        format!("{current}\n[alias]\n{alias_line}\n")
+    };
+    if fs::write(&config_path, &new_content).is_ok() {
+        actions.push(format!("wrote mock-dir alias to {}", config_path.display()));
+    }
+}
+
 fn ensure_cargo_alias(
     repo_root: &Path,
     mock_dir: &Path,
@@ -326,6 +397,13 @@ fn ensure_cargo_alias(
         .strip_prefix(repo_root)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| mock_dir.display().to_string());
+
+    // A second alias config under the mock dir, so `cargo mock` also works
+    // when run from there. Cargo resolves `--manifest-path` relative to cwd,
+    // so the repo-root alias fails from `mock/`; the mock-local alias points
+    // back up to the proxy with the right depth. Config merge picks the
+    // closer file, so each cwd gets the alias that resolves for it.
+    ensure_mock_local_alias(repo_root, mock_dir, &mock_rel, actions);
 
     // Both paths are relative to repo root: fully portable.
     // The machine-specific mockspace path lives inside the generated
@@ -2116,6 +2194,16 @@ mod proxy_freshness_tests {
 mod bootstrap_guard_tests {
     use super::is_inside_cargo_home;
     use std::path::Path;
+
+    #[test]
+    fn bootstrap_ascend_prefix_by_depth() {
+        assert_eq!(super::ascend_prefix("mock"), "../");
+        assert_eq!(super::ascend_prefix("a/b"), "../../");
+        assert_eq!(super::ascend_prefix("x/y/z"), "../../../");
+        assert_eq!(super::ascend_prefix("mock/"), "../");
+        assert_eq!(super::ascend_prefix("./mock"), "../");
+        assert_eq!(super::ascend_prefix(""), "../");
+    }
 
     #[test]
     fn bootstrap_guard_skips_inside_cargo_home() {
