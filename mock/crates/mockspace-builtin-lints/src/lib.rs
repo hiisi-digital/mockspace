@@ -41,7 +41,7 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 // unwind; the symbol name is fixed by the Rust ABI.
 #[cfg(not(test))]
 #[unsafe(no_mangle)]
-pub extern fn rust_eh_personality() {}
+pub extern "C" fn rust_eh_personality() {}
 
 use core::ffi::c_void;
 
@@ -105,7 +105,7 @@ const MESSAGE: &[u8] = b"todo marker found in shipped source";
 /// SAFETY: the host upholds the `LintEvaluateVtable` contract. `nam` is a
 /// valid v1.x payload or null; `out_entries` addresses `out_capacity`
 /// writable `Diagnostic` slots; `out_len` is a valid writable pointer.
-unsafe extern fn no_todo_evaluate(
+unsafe extern "C" fn no_todo_evaluate(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     _lint_config_bytes: *const u8,
@@ -308,7 +308,7 @@ pub struct FileSizeConfig {
 /// identical to [`no_todo_evaluate`].
 ///
 /// SAFETY: the host upholds the `LintEvaluateVtable` contract.
-unsafe extern fn file_size_evaluate(
+unsafe extern "C" fn file_size_evaluate(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     lint_config_bytes: *const u8,
@@ -658,7 +658,7 @@ const MAX_FORBIDDEN: usize = 32;
 /// [`no_todo_evaluate`].
 ///
 /// SAFETY: the host upholds the `LintEvaluateVtable` contract.
-unsafe extern fn ast_type_position_evaluate(
+unsafe extern "C" fn ast_type_position_evaluate(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     lint_config_bytes: *const u8,
@@ -974,7 +974,7 @@ struct TokenScanFlags {
 /// their own wrapper + provider and reuse the core.
 ///
 /// SAFETY: the host upholds the `LintEvaluateVtable` contract.
-unsafe extern fn no_std_evaluate(
+unsafe extern "C" fn no_std_evaluate(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     lint_config_bytes: *const u8,
@@ -1474,7 +1474,7 @@ fn sig_hash_of(nodes: &[NamNode], fn_idx: usize, source: &[u8]) -> u64 {
 /// `nam` is a valid full-project v1.x payload or null; `out_index` is a
 /// valid writable pointer whose `entries` field addresses `capacity`
 /// writable [`IndexRecord`] slots.
-unsafe extern fn no_duplicate_fn_index_phase(
+unsafe extern "C" fn no_duplicate_fn_index_phase(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     _lint_config_bytes: *const u8,
@@ -1576,7 +1576,7 @@ unsafe extern fn no_duplicate_fn_index_phase(
 /// SAFETY: the host upholds the `LintEvaluateProjectIndexVtable` contract.
 /// `nam` is the full-project payload `index_phase` saw; `file_idx` selects
 /// the file to evaluate; `index` is the [`IndexBatch`] `index_phase` filled.
-unsafe extern fn no_duplicate_fn_evaluate_phase(
+unsafe extern "C" fn no_duplicate_fn_evaluate_phase(
     _host_ctx: *mut c_void,
     nam: *const NamPayload,
     file_idx: arvo::USize,
@@ -1841,7 +1841,7 @@ macro_rules! token_scan_lint {
 
         /// SAFETY: the host upholds the `LintEvaluateVtable` contract;
         /// delegates to the shared token-scan core with this lint's rule id.
-        unsafe extern fn $eval(
+        unsafe extern "C" fn $eval(
             _host_ctx: *mut c_void,
             nam: *const NamPayload,
             lint_config_bytes: *const u8,
@@ -2846,7 +2846,7 @@ mod tests {
     fn token_scan_family_bakes_distinct_rule_ids() {
         // the four remaining token-scan wrappers differ only by baked rule
         // id; verify each emits its own, sharing the same core + config.
-        type Eval = unsafe extern fn(
+        type Eval = unsafe extern "C" fn(
             *mut c_void,
             *const NamPayload,
             *const u8,

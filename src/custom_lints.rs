@@ -235,7 +235,7 @@ unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
     // when the cdylib's `mockspace-lint-rules` pin matches ours (the caller
     // invariant), which the type system cannot check. Marking it unsafe forces
     // the `unsafe {}` + SAFETY at the call, reflecting the real contract.
-    type Collect = unsafe extern fn(&mut Vec<Box<dyn Lint>>, &mut Vec<Box<dyn CrossCrateLint>>);
+    type Collect = unsafe extern "C" fn(&mut Vec<Box<dyn Lint>>, &mut Vec<Box<dyn CrossCrateLint>>);
     let mut lints: Vec<Box<dyn Lint>> = Vec::new();
     let mut cross: Vec<Box<dyn CrossCrateLint>> = Vec::new();
     {

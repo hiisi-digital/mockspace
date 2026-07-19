@@ -141,7 +141,7 @@ pub fn pin_to_perf_cores() {
 
     // QoS class: USER_INTERACTIVE = 0x21, biases toward P-cores
     unsafe {
-        unsafe extern {
+        unsafe extern "C" {
             fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: c_int) -> c_int;
         }
         let ret = pthread_set_qos_class_self_np(0x21, 0);
@@ -152,7 +152,7 @@ pub fn pin_to_perf_cores() {
 
     // Thread affinity tag: keeps thread in same scheduling group
     unsafe {
-        unsafe extern {
+        unsafe extern "C" {
             fn mach_thread_self() -> u32;
             fn thread_policy_set(
                 thread: u32,

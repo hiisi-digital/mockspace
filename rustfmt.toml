@@ -63,7 +63,9 @@ format_generated_files = true
 merge_derives = true
 use_try_shorthand = true
 use_field_init_shorthand = false
-force_explicit_abi = false
+# true (rustfmt's default): edition 2024 deprecates bare `extern` without an
+# explicit ABI, so rustfmt must add "C" rather than strip it.
+force_explicit_abi = true
 condense_wildcard_suffixes = true
 color = "Auto"
 disable_all_formatting = false
