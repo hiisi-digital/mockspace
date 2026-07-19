@@ -668,3 +668,58 @@ pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
     eprintln!("  Meta: {}", meta_path);
     Ok(())
 }
+
+/// Validation worker: run the variant once per seed (twice, for the
+/// determinism pair) in THIS subprocess and emit outputs on stdout as
+/// `VOUT\t<seed>\t<hex_first>\t<hex_second>` lines. The variant's
+/// cached per-process state (the setup-once pattern) lives and dies
+/// with this process, so orchestrator memory stays bounded no matter
+/// how many variants or sizes a run visits.
+pub fn run_worker_validate(
+    routine: &RoutineSpec,
+    dylib_path: &str,
+    seeds: &[u64],
+    n: usize,
+    threaded: bool,
+) {
+    if !threaded {
+        counter::pin_to_perf_cores();
+    }
+    let (_name, entry) = unsafe {
+        match load_variant(dylib_path) {
+            Ok(pair) => pair,
+            Err(reason) => {
+                // Zero VOUT lines already read as a skip in the
+                // orchestrator; no protocol token needed.
+                eprintln!("  WORKER LOAD FAIL: {} :: {}", dylib_path, reason);
+                return;
+            },
+        }
+    };
+    let input_builder = routine.bridge.input_builder;
+    let output_size = routine.bridge.output_size;
+    for &seed in seeds {
+        let input = input_builder(seed);
+        let mut out_first = vec![0u8; output_size];
+        let mut out_second = vec![0u8; output_size];
+        unsafe {
+            entry(input.as_ptr(), out_first.as_mut_ptr(), n);
+            entry(input.as_ptr(), out_second.as_mut_ptr(), n);
+        }
+        println!(
+            "VOUT\t{}\t{}\t{}",
+            seed,
+            to_hex(&out_first),
+            to_hex(&out_second)
+        );
+    }
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}

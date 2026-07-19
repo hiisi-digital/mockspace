@@ -74,6 +74,14 @@ pub(super) fn drive_worker(registry: &DriverRegistry, cli: &Cli) -> ExitCode {
     };
     let workload = (registry.build_workload)(&workload_name, n);
 
+    if mode == "validate" {
+        let seeds: Vec<u64> = get("--seeds")
+            .map(|s| s.split(',').filter_map(|t| t.parse().ok()).collect())
+            .unwrap_or_default();
+        harness::run_worker_validate(&routine, &dylib_path, &seeds, n, threaded);
+        return ExitCode::SUCCESS;
+    }
+
     harness::run_worker(
         &routine,
         &workload,

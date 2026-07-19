@@ -1,6 +1,12 @@
-//! Validation pass: load all variant dylibs in-process, run with
-//! deterministic seeds, compare outputs. Runs before any timing.
-//! Returns [`BenchError::ValidationFailed`] on mismatch.
+//! Validation pass: run every variant across deterministic seeds and
+//! compare outputs. Runs before any timing. Each variant executes in
+//! its own worker subprocess (`--mode validate`), so a variant's
+//! cached per-process state (the setup-once pattern) lives and dies
+//! with its worker; the orchestrator's memory stays bounded no matter
+//! how many variants and sizes a run visits. The driver only dlopens
+//! variants briefly for the ABI-hash and name checks, never calling
+//! `bench_entry` in-process. Returns
+//! [`BenchError::ValidationFailed`] on mismatch.
 //!
 //! Three modes:
 //!
@@ -22,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::HarnessTuning;
 use crate::core::counter::Rng;
-use crate::core::{AbiHashFn, BenchEntryFn, BenchNameFn, abi_hash};
+use crate::core::{AbiHashFn, BenchNameFn, abi_hash};
 use crate::error::BenchError;
 use crate::spec::RoutineSpec;
 
@@ -94,11 +100,12 @@ pub fn validate(
     let mut rng = Rng::new(VALIDATION_ROOT_SEED);
     let seeds: Vec<u64> = (0 .. validation_seeds).map(|_| rng.next()).collect();
 
-    let mut variants: Vec<(String, BenchEntryFn)> = Vec::new();
-    let mut _libs: Vec<libloading::Library> = Vec::new();
+    // ABI-hash and name checks only: the library is dropped right
+    // after, and `bench_entry` is never called in this process.
+    let mut names: Vec<String> = Vec::new();
 
     for path in variant_paths {
-        let (name, entry) = unsafe {
+        let name = unsafe {
             let lib = libloading::Library::new(path).map_err(|e| {
                 BenchError::DylibLoadFailed {
                     path:   path.into(),
@@ -123,14 +130,6 @@ pub fn validate(
                 });
             }
 
-            let entry: libloading::Symbol<BenchEntryFn> = lib.get(b"bench_entry").map_err(|e| {
-                BenchError::DylibLoadFailed {
-                    path:   path.into(),
-                    reason: format!("missing bench_entry symbol: {e}"),
-                }
-            })?;
-            let entry_fn: BenchEntryFn = *entry;
-
             let name_fn: libloading::Symbol<BenchNameFn> = lib.get(b"bench_name").map_err(|e| {
                 BenchError::DylibLoadFailed {
                     path:   path.into(),
@@ -141,13 +140,11 @@ pub fn validate(
                 .to_string_lossy()
                 .into_owned();
 
-            _libs.push(lib);
-            (name, entry_fn)
+            drop(lib);
+            name
         };
-        variants.push((name, entry));
+        names.push(name);
     }
-
-    let names: Vec<String> = variants.iter().map(|(n, _)| n.clone()).collect();
 
     // Pre-flight: probe each variant via a subprocess worker call.
     // Catches exponential-time variants before the full validation
@@ -156,7 +153,7 @@ pub fn validate(
     if let Some(limit_us) = max_call_us {
         let probe_timeout_s = ((limit_us as f64 * 10.0) / 1_000_000.0).max(2.0).ceil() as u64;
         let exe = std::env::current_exe().unwrap_or_default();
-        for (vi, (name, _entry)) in variants.iter().enumerate() {
+        for (vi, name) in names.iter().enumerate() {
             let variant_path = &variant_paths[vi];
             let mut child = Command::new(&exe)
                 .args([
@@ -218,7 +215,7 @@ pub fn validate(
             .step_by((validation_seeds / 20).max(1))
             .cloned()
             .collect();
-        for (vi, (name, _entry)) in variants.iter().enumerate() {
+        for (vi, name) in names.iter().enumerate() {
             if slow_variants.contains(&vi) {
                 continue;
             }
@@ -255,37 +252,104 @@ pub fn validate(
         }
     }
 
-    let active_count = variants.len() - slow_variants.len();
+    let active_count = names.len() - slow_variants.len();
     eprintln!(
         "  Validating {} variants × {} seeds...",
         active_count, validation_seeds
     );
 
-    let mut mismatches = 0usize;
-    let mut first_mismatch_reason: Option<(String, String)> = None;
-
-    for (si, &seed) in seeds.iter().enumerate() {
-        let input = input_builder(seed);
-
-        let mut outputs: Vec<Vec<u8>> = Vec::new();
-
-        for (vi, (_name, entry)) in variants.iter().enumerate() {
-            if slow_variants.contains(&vi) {
-                outputs.push(vec![0u8; output_size]);
+    // One validate worker per variant runs ALL seeds: the expensive
+    // per-process state builds once per variant, inside a process
+    // that exits afterwards. Each VOUT line carries the seed's output
+    // twice (the entry is called twice per seed), which doubles as
+    // the determinism pair checked below.
+    let exe = std::env::current_exe().unwrap_or_default();
+    let seeds_arg = seeds
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut collected: Vec<Vec<(Vec<u8>, Vec<u8>)>> = Vec::new();
+    for (vi, name) in names.iter().enumerate() {
+        if slow_variants.contains(&vi) {
+            collected.push(Vec::new());
+            continue;
+        }
+        let out = Command::new(&exe)
+            .args([
+                "--worker",
+                &variant_paths[vi],
+                "--bench-name",
+                bench_name,
+                "--mode",
+                "validate",
+                "--n",
+                &n.to_string(),
+                "--seeds",
+                &seeds_arg,
+            ])
+            .stderr(std::process::Stdio::inherit())
+            .output()
+            .map_err(|e| BenchError::io("spawning validation worker", e))?;
+        if !out.status.success() {
+            eprintln!(
+                "  SKIPPING {}: validation worker crashed (exit {:?})",
+                name,
+                out.status.code()
+            );
+            slow_variants.insert(vi);
+            collected.push(Vec::new());
+            continue;
+        }
+        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let mut parts = line.split('\t');
+            if parts.next() != Some("VOUT") {
                 continue;
             }
-            let mut output = vec![0u8; output_size];
-            unsafe {
-                entry(input.as_ptr(), output.as_mut_ptr(), n);
+            let _seed = parts.next();
+            let a = parts.next().and_then(from_hex);
+            let b = parts.next().and_then(from_hex);
+            if let (Some(a), Some(b)) = (a, b) {
+                if a.len() == output_size && b.len() == output_size {
+                    rows.push((a, b));
+                }
             }
-            outputs.push(output);
         }
+        if rows.len() != seeds.len() {
+            eprintln!(
+                "  SKIPPING {}: validation worker returned {} of {} outputs",
+                name,
+                rows.len(),
+                seeds.len()
+            );
+            slow_variants.insert(vi);
+            collected.push(Vec::new());
+            continue;
+        }
+        collected.push(rows);
+    }
 
+    // Recount after collection: worker crashes and truncated output
+    // above grow `slow_variants`, and the OK summaries below must not
+    // claim a skipped variant validated.
+    let active_count = names.len() - slow_variants.len();
+
+    let mut mismatches = 0usize;
+    let mut first_mismatch_reason: Option<(String, String)> = None;
+    // Baseline for cross-variant comparison: the first variant that
+    // survived (previously index 0 unconditionally, which compared
+    // zero-filled placeholder output when variant 0 had been skipped).
+    let base_idx = (0 .. names.len()).find(|i| !slow_variants.contains(i));
+
+    for (si, &seed) in seeds.iter().enumerate() {
         if let Some(validator) = &validator {
-            for (i, output) in outputs.iter().enumerate() {
+            let input = input_builder(seed);
+            for i in 0 .. names.len() {
                 if slow_variants.contains(&i) {
                     continue;
                 }
+                let output = &collected[i][si].0;
                 if let Err(reason) = validator(&input, output) {
                     mismatches += 1;
                     if mismatches <= 3 {
@@ -296,29 +360,37 @@ pub fn validate(
                 }
             }
         } else if let Some(eps) = approx_eps {
-            let baseline = &outputs[0];
-            for i in 1 .. outputs.len() {
-                if let Err(reason) = approx_comparator(baseline, &outputs[i], eps) {
+            let Some(b0) = base_idx else { break };
+            let baseline = &collected[b0][si].0;
+            for i in (b0 + 1) .. names.len() {
+                if slow_variants.contains(&i) {
+                    continue;
+                }
+                if let Err(reason) = approx_comparator(baseline, &collected[i][si].0, eps) {
                     mismatches += 1;
                     if mismatches <= 3 {
                         eprintln!("  APPROX MISMATCH seed={} (#{}):", seed, si);
-                        eprintln!("    {} vs {}: {}", names[0], names[i], reason);
+                        eprintln!("    {} vs {}: {}", names[b0], names[i], reason);
                     }
                     first_mismatch_reason.get_or_insert((
                         names[i].clone(),
-                        format!("approx mismatch vs {}: {reason}", names[0]),
+                        format!("approx mismatch vs {}: {reason}", names[b0]),
                     ));
                 }
             }
         } else {
-            let baseline = &outputs[0];
-            for i in 1 .. outputs.len() {
-                if outputs[i] != *baseline {
+            let Some(b0) = base_idx else { break };
+            let baseline = &collected[b0][si].0;
+            for i in (b0 + 1) .. names.len() {
+                if slow_variants.contains(&i) {
+                    continue;
+                }
+                if collected[i][si].0 != *baseline {
                     mismatches += 1;
                     if mismatches <= 3 {
                         eprintln!("  MISMATCH seed={} (#{}):", seed, si);
-                        eprintln!("    {} vs {}", names[0], names[i]);
-                        for (j, (a, b)) in baseline.iter().zip(outputs[i].iter()).enumerate() {
+                        eprintln!("    {} vs {}", names[b0], names[i]);
+                        for (j, (a, b)) in baseline.iter().zip(collected[i][si].0.iter()).enumerate() {
                             if a != b {
                                 eprintln!("    first diff at byte {}: {} vs {}", j, a, b);
                                 break;
@@ -327,7 +399,7 @@ pub fn validate(
                     }
                     first_mismatch_reason.get_or_insert((
                         names[i].clone(),
-                        format!("byte mismatch vs {}", names[0]),
+                        format!("byte mismatch vs {}", names[b0]),
                     ));
                 }
             }
@@ -352,12 +424,12 @@ pub fn validate(
     if validator.is_some() {
         eprintln!(
             "  Validation OK: all {} variants produce valid output",
-            variants.len()
+            active_count
         );
     } else {
         eprintln!(
             "  Validation OK: all {} variants produce identical output",
-            variants.len()
+            active_count
         );
     }
 
@@ -365,23 +437,16 @@ pub fn validate(
     // and verify both outputs are identical.
     eprintln!(
         "  Determinism check: {} variants × {} seeds...",
-        variants.len(),
-        determinism_check_seeds
+        active_count, determinism_check_seeds
     );
     let mut det_mismatches = 0u32;
     let mut first_det_failure: Option<(String, String)> = None;
-    for &seed in seeds.iter().take(determinism_check_seeds) {
-        let input = input_builder(seed);
-        for (vi, (name, entry)) in variants.iter().enumerate() {
+    for (si, &seed) in seeds.iter().take(determinism_check_seeds).enumerate() {
+        for (vi, name) in names.iter().enumerate() {
             if slow_variants.contains(&vi) {
                 continue;
             }
-            let mut out1 = vec![0u8; output_size];
-            let mut out2 = vec![0u8; output_size];
-            unsafe {
-                entry(input.as_ptr(), out1.as_mut_ptr(), n);
-                entry(input.as_ptr(), out2.as_mut_ptr(), n);
-            }
+            let (out1, out2) = &collected[vi][si];
             if out1 != out2 {
                 det_mismatches += 1;
                 if det_mismatches <= 3 {
@@ -415,7 +480,7 @@ pub fn validate(
     }
     eprintln!(
         "  Determinism OK: all {} variants are deterministic",
-        variants.len()
+        active_count
     );
 
     // Subprocess sanity check: run one variant through the worker
@@ -493,5 +558,32 @@ fn subprocess_sanity_check(variant_path: &str, n: usize, bench_name: &str) {
         Err(e) => {
             eprintln!("  Subprocess sanity: spawn failed: {}", e);
         },
+    }
+}
+
+/// Decode a lowercase hex string into bytes; `None` on malformed input.
+fn from_hex(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0 .. s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[2 * i .. 2 * i + 2], 16).ok())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::from_hex;
+
+    #[test]
+    fn from_hex_round_trips() {
+        assert_eq!(from_hex("00ff10"), Some(vec![0x00, 0xff, 0x10]));
+        assert_eq!(from_hex(""), Some(Vec::new()));
+    }
+
+    #[test]
+    fn from_hex_rejects_malformed() {
+        assert_eq!(from_hex("0"), None);
+        assert_eq!(from_hex("zz"), None);
     }
 }
