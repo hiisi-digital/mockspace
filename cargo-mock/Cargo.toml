@@ -19,12 +19,17 @@ keywords = ["mockspace", "cargo-subcommand", "design-rounds", "workflow"]
 # the library, so the two binaries share one implementation without cargo's
 # "same file in multiple targets" warning.
 
-# Deliberately zero dependencies. The pin table is a small format written by
-# our own `migrate`, so hand-parsing is safe; cargo's own install-root lock
-# and atomic binary install cover concurrency; the cache key uses a vendored
-# stable FNV hash. A published launcher stays fast to install and tiny to
-# audit.
+# Curated-minimal dependencies only. The pin table is still hand-parsed (a
+# handful of top-level keys), cargo's own install-root lock and atomic binary
+# install cover concurrency, and the cache key uses a vendored stable FNV hash.
+# The one structured file the launcher owns, the global registry, is real TOML
+# with several tables, so it uses serde + toml rather than a hand-rolled parser;
+# both are pulled `default-features = false` with only the features the registry
+# needs, keeping the published launcher fast to install and tiny to audit.
 [dependencies]
+mockspace-manifest = { path = "../mockspace-manifest" }
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
 
 [dev-dependencies]
 tempfile = "3"

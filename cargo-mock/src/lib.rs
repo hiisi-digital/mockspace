@@ -16,11 +16,22 @@ mod cache;
 mod discover;
 mod hash;
 mod pin;
+mod registry;
+mod selfupdate;
 
 use std::path::Path;
 use std::process::ExitCode;
 
-use pin::Pin;
+use pin::{Pin, Reference};
+
+/// Where a resolved pin came from, so the registry can tell a repo that has
+/// adopted an explicit `mockspace_*` pin from one still on the legacy
+/// `Cargo.lock` fallback (the migration-detection signal).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PinSource {
+    Toml,
+    Legacy,
+}
 
 /// The launcher entry, shared by both installed binaries (`cargo-mock` and
 /// `mock`). Each bin is a two-line shim over this.
@@ -80,6 +91,12 @@ fn strip_dir_flag(args: Vec<String>) -> Vec<String> {
 }
 
 fn run(args: &[String]) -> Result<(), String> {
+    // First, keep the launcher itself current (branch installs only, hourly,
+    // opt-out). May reinstall and re-exec into the new binary, never returning.
+    if let Ok(cache_root) = cache::cache_root() {
+        selfupdate::maybe_self_update(&cache_root);
+    }
+
     let root = discover::repo_root().ok_or_else(|| {
         "not inside a git repository (no .git found, and MOCK_ROOT is unset)".to_string()
     })?;
@@ -98,17 +115,120 @@ fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
-    let pin = resolve_pin(located.as_ref(), &root, &mock_abs)?;
+    let (pin, source) = resolve_pin(located.as_ref(), &root, &mock_abs)?;
     let cache_root = cache::cache_root()?;
-    let resolved = pin.resolve(&cache_root)?;
-    let key = cache::compute_key(&pin.url, &resolved.key_rev, &cache::rustc_fingerprint(), &[
-    ]);
+    let resolved = pin::resolve(&pin, &cache_root)?;
+    let toolchain = cache::rustc_fingerprint();
+    let key = cache::compute_key(&pin.url, &resolved.key_rev, &toolchain, &[]);
     let bin = cache::ensure_built(&cache_root, &key, &resolved)?;
+
+    // Record this repo + build in the global registry and, at most once a day,
+    // garbage-collect engine builds nothing pins anymore. Best-effort: the
+    // registry is a cache, never a reason to fail a `mock` run.
+    record_and_gc(
+        &cache_root,
+        &root,
+        &mock_abs,
+        &pin,
+        source,
+        &resolved,
+        &toolchain,
+        &key,
+    );
+
+    // A concurrent launcher's GC pass protects only *its own* resolved key, so
+    // it could have evicted this build in the window between our build and this
+    // exec. Re-materialise it if so, so a background GC never fails a `mock`
+    // run (the best-effort registry invariant).
+    let bin = if bin.is_file() {
+        bin
+    } else {
+        cache::ensure_built(&cache_root, &key, &resolved)?
+    };
 
     // The engine builds and loads this repo's custom lints itself (into its own
     // target/), using the pin-matched lint-rules dep we pass along; the
     // launcher no longer needs to know about lints.
     cache::exec_engine(&bin, &mock_abs, &resolved.lint_rules_dep, args).map(|_never| ())
+}
+
+/// Unix seconds now, or 0 if the clock is before the epoch (impossible in
+/// practice; the registry treats 0 as "very old").
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// The registry pin form and value for a resolved pin. Legacy overrides the
+/// reference variant, since a legacy pin is always a `Cargo.lock` rev but must
+/// register as `legacy` for migration detection.
+fn pin_form_and_value(pin: &Pin, source: PinSource) -> (registry::PinForm, String) {
+    let value = match &pin.reference {
+        Reference::Version(v) | Reference::Branch(v) | Reference::Rev(v) | Reference::Tag(v) => {
+            v.clone()
+        },
+    };
+    let form = match source {
+        PinSource::Legacy => registry::PinForm::Legacy,
+        PinSource::Toml => {
+            match &pin.reference {
+                Reference::Version(_) => registry::PinForm::Version,
+                Reference::Branch(_) => registry::PinForm::Branch,
+                Reference::Rev(_) => registry::PinForm::Rev,
+                Reference::Tag(_) => registry::PinForm::Tag,
+            }
+        },
+    };
+    (form, value)
+}
+
+/// Record this repo + its resolved build in the global registry, then run a
+/// throttled GC pass protecting the just-resolved key. Every step is
+/// best-effort; a registry failure never blocks the engine exec.
+#[allow(clippy::too_many_arguments)]
+fn record_and_gc(
+    cache_root: &Path,
+    root: &Path,
+    mock_abs: &Path,
+    pin: &Pin,
+    source: PinSource,
+    resolved: &pin::Resolved,
+    toolchain: &str,
+    key: &str,
+) {
+    let path = registry::registry_path(cache_root);
+    let mut reg = registry::Registry::load(&path);
+    let now = now_secs();
+    let name = root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let (form, value) = pin_form_and_value(pin, source);
+    reg.record(
+        &root.display().to_string(),
+        &name,
+        &mock_abs.display().to_string(),
+        &pin.url,
+        form,
+        &value,
+        key,
+        &resolved.key_rev,
+        toolchain,
+        now,
+    );
+    if reg.gc_due(now) {
+        let removed = reg.gc(cache_root, key, now);
+        if !removed.is_empty() {
+            eprintln!(
+                "mock: cache gc removed {} unused engine build(s)",
+                removed.len()
+            );
+        }
+    }
+    reg.save(&path);
 }
 
 /// The pin: the `mockspace_version` key in the located `mockspace.toml`
@@ -118,17 +238,17 @@ fn resolve_pin(
     located: Option<&discover::Located>,
     root: &Path,
     mock_abs: &Path,
-) -> Result<Pin, String> {
+) -> Result<(Pin, PinSource), String> {
     if let Some(l) = located
         && let Ok(s) = std::fs::read_to_string(&l.config_path)
-        && let Some(p) = Pin::from_mockspace_toml(&s)
+        && let Some(p) = mockspace_manifest::pin_from_mockspace_toml(&s)
     {
-        return Ok(p);
+        return Ok((p, PinSource::Toml));
     }
     if let Ok(s) = std::fs::read_to_string(mock_abs.join("Cargo.lock"))
-        && let Some(p) = Pin::from_legacy_lock(&s)
+        && let Some(p) = mockspace_manifest::pin_from_legacy_lock(&s)
     {
-        return Ok(p);
+        return Ok((p, PinSource::Legacy));
     }
     let where_to = located
         .map(|l| l.config_path.clone())

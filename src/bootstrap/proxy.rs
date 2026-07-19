@@ -223,23 +223,15 @@ pub(crate) fn resolve_mockspace_pin(
 /// The full git revision the mock-workspace lock resolved for `mockspace`.
 ///
 /// Returns `None` for a path or registry source (no git revision), or when the
-/// lock is absent or unparseable.
+/// lock is absent or unparseable. Parses through the shared `mockspace-manifest`
+/// crate, the one reader of this format, so the launcher and the engine never
+/// drift on how a legacy `Cargo.lock` pin is read.
 pub(crate) fn mockspace_rev_from_lock(lock_path: &Path) -> Option<String> {
     let content = fs::read_to_string(lock_path).ok()?;
-    let doc = content.parse::<toml_edit::DocumentMut>().ok()?;
-    let packages = doc.get("package")?.as_array_of_tables()?;
-    for pkg in packages.iter() {
-        let name = pkg.get("name").and_then(|n| n.as_str());
-        if name != Some("mockspace") {
-            continue;
-        }
-        let source = pkg.get("source").and_then(|s| s.as_str())?;
-        // Shape: "git+<url>?<query>#<full-rev>". No '#' means a path/registry
-        // source, which this resolver does not track.
-        let rev = source.rsplit_once('#').map(|(_, r)| r.to_string());
-        return rev.filter(|_| source.starts_with("git+"));
+    match mockspace_manifest::pin_from_legacy_lock(&content)?.reference {
+        mockspace_manifest::Reference::Rev(rev) => Some(rev),
+        _ => None,
     }
-    None
 }
 
 /// A git dependency as the lock resolved it: the remote URL, the tracked

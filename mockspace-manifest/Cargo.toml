@@ -1,0 +1,20 @@
+[package]
+name = "mockspace-manifest"
+version = "0.1.0"
+edition = "2024"
+# The one shared reader of a repo's mockspace.toml header and its engine pin,
+# so the launcher and the engine parse the same format exactly once instead of
+# each hand-rolling it. Published because the launcher (cargo-mock) is
+# published and depends on it; kept tiny (serde + toml only) so the launcher
+# stays fast to install.
+publish = true
+description = "Shared mockspace.toml manifest header + engine-pin schema, parsed once for the mockspace launcher and engine."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+
+[dev-dependencies]
+tempfile = "3"

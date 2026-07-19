@@ -34,7 +34,10 @@ dependencies = [
 name = "cargo-mock"
 version = "0.1.0"
 dependencies = [
+ "mockspace-manifest",
+ "serde",
  "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -191,6 +194,7 @@ version = "0.1.0"
 dependencies = [
  "libloading",
  "mockspace-lint-rules",
+ "mockspace-manifest",
  "serde",
  "tempfile",
  "toml_edit",
@@ -229,6 +233,15 @@ dependencies = [
  "tempfile",
  "tree-sitter",
  "tree-sitter-rust",
+]
+
+[[package]]
+name = "mockspace-manifest"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
