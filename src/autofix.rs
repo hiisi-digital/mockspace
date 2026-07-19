@@ -273,17 +273,6 @@ fn git_lines(repo_root: &Path, args: &[&str]) -> Vec<PathBuf> {
     }
 }
 
-/// Display `path` relative to `repo_root`, falling back to the full path.
-fn rel(repo_root: &Path, path: &Path) -> String {
-    path.strip_prefix(repo_root)
-        .ok()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| {
-            if path == repo_root { ".".to_string() } else { path.display().to_string() }
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,13 +333,6 @@ mod tests {
         assert_eq!(changed_package_dirs(&staged, repo, has), vec![
             PathBuf::from("/repo")
         ]);
-    }
-
-    #[test]
-    fn rel_renders_root_as_dot() {
-        let repo = Path::new("/repo");
-        assert_eq!(rel(repo, repo), ".");
-        assert_eq!(rel(repo, &repo.join("mock")), "mock");
     }
 
     #[test]
