@@ -148,8 +148,14 @@ pub fn run_worker(
     n: usize,
     batch_k: usize,
     max_call_us: Option<u64>,
+    threaded: bool,
 ) {
-    counter::pin_to_perf_cores();
+    // A threaded bench's spawned workers never inherit the pin, and
+    // pinning only the coordinating thread skews the workload; the
+    // manifest's `threaded = true` opts out of the self-pin entirely.
+    if !threaded {
+        counter::pin_to_perf_cores();
+    }
 
     // Worker mode emits structured failure on stderr + a TIMEOUT-shaped
     // line on stdout so the orchestrator can categorise the failure
@@ -175,7 +181,10 @@ pub fn run_worker(
         .score_label
         .map(|_| routine.bridge.scorer);
 
-    let warmup = runs / 5;
+    // At least one warmup call always runs, so lazy per-process state
+    // (a variant caching an expensive structure across calls) is built
+    // outside the preflight probe and the timed batches.
+    let warmup = (runs / 5).max(1);
     let mut rng = Rng::new(seed);
     let sub_seeds = rng.seeds(warmup + runs);
     let sleep_dur = Duration::from_millis(cooldown_ms);
@@ -461,7 +470,13 @@ pub fn run_orchestrator(
         let seed_source = if config.master_seed != 0 {
             config.master_seed
         } else {
-            Instant::now().elapsed().as_nanos() as u64
+            // Wall-clock entropy; the prior `Instant::now().elapsed()`
+            // form measured a freshly created Instant and was near-zero
+            // (and thus near-constant) every run.
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x9E37_79B9)
         };
         let mut rng = Rng::new(seed_source.wrapping_add(hr as u64 * 0xDEADBEEF));
 
@@ -502,7 +517,11 @@ pub fn run_orchestrator(
                         })
                         .unwrap_or(300);
 
-                    let mut child = Command::new(&exe)
+                    let mut cmd = Command::new(&exe);
+                    if config.threaded {
+                        cmd.arg("--threaded");
+                    }
+                    let mut child = cmd
                         .args([
                             "--worker",
                             variant_path,
@@ -596,7 +615,11 @@ pub fn run_orchestrator(
                     }
                 }
             }
-            eprintln!(" done");
+            let done_passes = hr * total_passes + pass_idx + 1;
+            let all_passes = config.harness_runs * total_passes;
+            let el = total_start.elapsed().as_secs_f64();
+            let eta = el / done_passes as f64 * (all_passes - done_passes) as f64;
+            eprintln!(" done ({el:.0}s elapsed, ~{eta:.0}s left)");
         }
     }
 

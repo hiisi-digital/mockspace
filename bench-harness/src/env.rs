@@ -47,7 +47,22 @@ pub fn collect_env_meta() -> EnvMeta {
         cpu: collect_cpu(),
         os: collect_os(),
         rustc: collect_rustc(),
-        git_commit: collect_git_commit(),
+        git_commit: {
+            // A dirty tree suffix keeps every recorded number traceable
+            // to an exact source state, not just a nearby commit.
+            let mut c = collect_git_commit();
+            if !c.is_empty() {
+                let dirty = std::process::Command::new("git")
+                    .args(["status", "--porcelain"])
+                    .output()
+                    .map(|o| !o.stdout.is_empty())
+                    .unwrap_or(false);
+                if dirty {
+                    c.push_str("-dirty");
+                }
+            }
+            c
+        },
         timestamp: collect_timestamp(),
         counter_freq: mockspace_bench_core::counter::counter_frequency(),
     }

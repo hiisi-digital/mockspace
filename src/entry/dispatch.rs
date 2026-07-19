@@ -475,6 +475,9 @@ pub(crate) fn run_inner(
     }
 
 
+    // --- Bench results documentation (opt in via bench.toml [docgen]) ---
+    crate::bench_docs::generate(&cfg);
+
     // STRUCTURE.md is markdown, so it goes through the same pipeline as every
     // other document rather than being written here. Computed now because it
     // reads the crate graph; rendered below with the rest.

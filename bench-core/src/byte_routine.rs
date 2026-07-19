@@ -73,6 +73,25 @@ impl<const IN: usize, const OUT: usize, const MAY_DIFFER: bool> Routine
         buf
     }
 
+    /// Heap-filling override of the bridge path: fill a Vec of
+    /// exactly IN bytes directly, never materialising `[u8; IN]` on
+    /// the stack. This removes the practical ceiling on IN (a
+    /// multi-megabyte input would otherwise be a stack overflow
+    /// hazard at build time) while staying fully const-generic: the
+    /// size is still a compile-time constant per monomorphisation.
+    #[cfg(feature = "std")]
+    fn build_input_bytes(seed: u64) -> std::vec::Vec<u8> {
+        let mut buf = std::vec![0u8; IN];
+        let mut x = seed.wrapping_mul(0x9E3779B97F4A7C15);
+        for chunk in buf.chunks_mut(8) {
+            x ^= x >> 30;
+            x = x.wrapping_mul(0xBF58476D1CE4E5B9);
+            let bytes = x.to_le_bytes();
+            chunk.copy_from_slice(&bytes[..chunk.len()]);
+        }
+        buf
+    }
+
     fn ops_per_call(_input: &Self::Input) -> u64 {
         IN as u64
     }
@@ -110,6 +129,23 @@ mod tests {
     fn may_differ_flag_propagates() {
         assert!(!ByteRoutine::<64, 8, false>::outputs_may_differ());
         assert!(ByteRoutine::<64, 8, true>::outputs_may_differ());
+    }
+
+
+    #[test]
+    fn heap_build_matches_typed_build() {
+        let typed = ByteRoutine::<64, 8, false>::build_input(7);
+        let heaped = <ByteRoutine<64, 8, false> as Routine>::build_input_bytes(7);
+        assert_eq!(&typed[..], &heaped[..]);
+    }
+
+    #[test]
+    fn dispatch_macro_declared_sizes_only() {
+        let d = crate::byte_routine_dispatch!(out = 8, sizes = [64, 1024]);
+        assert!((d.dispatch)(64, false).is_some());
+        assert!((d.dispatch)(1024, true).is_some());
+        assert!((d.dispatch)(512, false).is_none(), "undeclared size rejects");
+        assert_eq!(d.sizes, &[64, 1024]);
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub mod analysis;
 pub mod cache;
 pub mod config;
 pub mod disasm;
+pub mod driver;
 pub mod env;
 pub mod error;
 pub mod harness;
@@ -58,6 +59,7 @@ pub use analysis::{
     pct_delta, sign_test, Comparison, DataSet, DataSetMeta, Stats, VariantAnalysis,
 };
 pub use disasm::check_duplicates as check_disasm_duplicates;
+pub use driver::{drive, DriverRegistry};
 pub use history::{
     append as append_history, append_in as append_history_in, detect_regressions,
     detect_regressions_window, git_commit, load as load_history, load_in as load_history_in,

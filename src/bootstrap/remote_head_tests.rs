@@ -1,5 +1,8 @@
 #![allow(unused_imports)]
     use super::*;
+    use crate::bootstrap::remote::{
+        git_ls_remote_head, remote_check_due, touch, REMOTE_CHECK_TTL,
+    };
 
     #[test]
     fn parses_branch_source() {

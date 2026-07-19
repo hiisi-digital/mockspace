@@ -247,6 +247,7 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
             None
         }
     });
+
     let Some(const_param_ident) = const_param else {
         return syn::Error::new_spanned(
             &func.sig.ident,

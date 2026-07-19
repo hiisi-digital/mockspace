@@ -19,6 +19,31 @@
 //! mockspace consumer gets the canonical surface instead of re-rolling
 //! it.
 
+//!
+//! ## Threading contract
+//!
+//! The worker pins only its own thread to a performance core
+//! (`pin_to_perf_cores` uses self-thread QoS and affinity calls);
+//! threads a variant spawns inside its run block are NOT pinned and
+//! do not inherit the QoS class. Timing uses free-running counters,
+//! so a run block that spawns work and joins it is measured correctly
+//! as wall-clock elapsed time for the block. A bench whose variants
+//! spawn threads declares `threaded = true` in its manifest section,
+//! which disables the coordinating thread's self-pin (pinning only
+//! the coordinator skews a threaded workload). What per-thread
+//! counters would report for spawned threads is out of scope: only
+//! the calling thread is instrumented.
+//!
+//! ## Heavyweight per-process state
+//!
+//! Each worker is a dedicated subprocess per (variant, mode, pass),
+//! so a variant may cache expensive state (a built scheduler, a
+//! loaded dataset) in a process-local static keyed by `n`: the cache
+//! is naturally per-variant and per-run, and at least one warmup call
+//! always executes before the preflight probe and the timed batches,
+//! so lazy initialisation lands in untimed territory. Build such
+//! state on first call; never rebuild it per timed call.
+
 #![no_std]
 
 #[cfg(feature = "std")]
@@ -313,6 +338,56 @@ macro_rules! routine_bridge {
             },
         }
     }};
+}
+
+/// Generate the `n -> RoutineSpec` dispatch for [`ByteRoutine`]
+/// benches from ONE declared const sizes list.
+///
+/// Every size stays its own monomorphisation (the input shape is a
+/// compile-time constant per N, which is the framework's stability
+/// guarantee: the set of inputs a bench accepts is strictly
+/// controlled and statically known). What this macro removes is the
+/// hand-managed match in every consumer driver: declare the sizes
+/// once, get the whole dispatch, and a manifest size outside the
+/// list is a targeted error naming this declaration instead of a
+/// silent gap.
+///
+/// ```ignore
+/// let dispatch = byte_routine_dispatch!(out = 8, sizes = [64, 256, 1024, 16384]);
+/// // dispatch(n, may_differ) -> Option<RoutineBridge>
+/// ```
+#[cfg(feature = "std")]
+#[macro_export]
+macro_rules! byte_routine_dispatch {
+    (out = $out:literal, sizes = [ $( $n:literal ),* $(,)? ]) => {{
+        fn __dispatch(n: usize, may_differ: bool) -> Option<$crate::RoutineBridge> {
+            if may_differ {
+                match n {
+                    $( $n => Some($crate::routine_bridge!($crate::ByteRoutine<$n, $out, true>)), )*
+                    _ => None,
+                }
+            } else {
+                match n {
+                    $( $n => Some($crate::routine_bridge!($crate::ByteRoutine<$n, $out, false>)), )*
+                    _ => None,
+                }
+            }
+        }
+        /// The declared sizes, for diagnostics.
+        const __SIZES: &[usize] = &[$( $n ),*];
+        ($crate::ByteDispatch { dispatch: __dispatch, sizes: __SIZES })
+    }};
+}
+
+/// A generated size dispatch: see [`byte_routine_dispatch!`].
+#[cfg(feature = "std")]
+#[derive(Clone, Copy)]
+pub struct ByteDispatch {
+    /// Resolve `(n, may_differ)` to a monomorphised bridge, or `None`
+    /// when `n` is not in the declared list.
+    pub dispatch: fn(usize, bool) -> Option<RoutineBridge>,
+    /// The declared sizes (for error messages).
+    pub sizes: &'static [usize],
 }
 
 /// Timing result returned across the dylib boundary.

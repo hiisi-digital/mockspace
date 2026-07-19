@@ -12,6 +12,7 @@
 //! - **Bootstrap**: auto-setup of cargo alias and git hooks via `build.rs`
 
 pub mod bench;
+pub mod bench_docs;
 pub mod bootstrap;
 pub mod config;
 pub mod design_round;
