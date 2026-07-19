@@ -14,11 +14,23 @@
 //!   lints, which the engine feeds to `run_with_custom_lints`.
 //!
 //! ABI: `Box<dyn Lint>` crosses the cdylib boundary. This is sound only when
-//! both sides resolve `mockspace-lint-rules` at the *same* pin and build with
-//! the same toolchain, so the trait's vtable layout is identical. The launcher
-//! enforces that by passing the pin-matched dep spec (`lint_rules_dep`), the
-//! same version it built the engine from. Validated experimentally (identical
-//! trait source compiled separately still dispatches correctly).
+//! both sides resolve `mockspace-lint-rules` at the *same* pin AND build with
+//! the same toolchain, so the trait's vtable layout is identical. Two things
+//! back that: the launcher passes the pin-matched dep spec (`lint_rules_dep`,
+//! the same version it built the engine from), and it folds `rustc -vV` into
+//! the engine's cache key, so a toolchain change re-keys and rebuilds the
+//! engine rather than pairing a frozen binary with a differently-compiled
+//! cdylib. Validated experimentally (identical trait source compiled
+//! separately still dispatches correctly).
+//!
+//! FIXME: one residual is unenforced. The cached engine is built by `cargo
+//! install --git mockspace` under mockspace's own `rust-toolchain.toml`, while
+//! this cdylib is built by `cargo build` under the consumer repo's toolchain.
+//! They match today because the whole workspace pins one nightly, but a repo
+//! pinning a different toolchain than the engine's would desync the vtable
+//! layout with no signal. The complete fix builds the cdylib under the engine's
+//! toolchain (capture it at engine-build time, pin it in the generated crate).
+//! Tracked as a follow-up.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -126,7 +126,10 @@ read_mock_dir() {
 }
 
 # flexibly locate mockspace.toml + the mock dir (root first, then subdirs
-# hidden-first), mirroring the launcher.
+# hidden-first). This is a shell reimplementation of the launcher's
+# `discover::locate` (cargo-mock/src/discover.rs); the two MUST stay in sync.
+# It exists only for the no-launcher fallback path; when the launcher is
+# present, `locate` is authoritative and this block is bypassed.
 cfg=""; mockdir=""
 if [ -f "$root/mockspace.toml" ]; then
     cfg="$root/mockspace.toml"

@@ -6,8 +6,8 @@
 //! FNV-1a is trivial, deterministic forever, and collision-resistant enough
 //! to distinguish compilation inputs for a cache directory name.
 
-const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const PRIME: u64 = 0x0000_0100_0000_01b3;
+const OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
+const PRIME: u64 = 0x0000_0100_0000_01B3;
 
 /// An FNV-1a 64-bit accumulator.
 pub struct Fnv(u64);

@@ -54,7 +54,7 @@ pub enum Reference {
 /// A resolved source for the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pin {
-    pub url: String,
+    pub url:       String,
     pub reference: Reference,
 }
 
@@ -62,12 +62,12 @@ pub struct Pin {
 pub struct Resolved {
     /// The stable component of the cache key: `v:<version>` for a release,
     /// the concrete rev for a rev/branch pin, `tag:<t>` for a git tag.
-    pub key_rev: String,
+    pub key_rev:        String,
     /// One or more `cargo install` argument lists (source selectors, package
     /// name included; `--root`/`--force` are added by the cache), tried in
     /// order until one succeeds. A `version` pin tries crates.io first, then
     /// the matching git tag.
-    pub attempts: Vec<Vec<String>>,
+    pub attempts:       Vec<Vec<String>>,
     /// The cargo dependency *value* for `mockspace-lint-rules`, renamed to the
     /// package `mockspace`, pinned to the same source the engine is built
     /// from. Passed to the engine so a custom-lint cdylib links the identical
@@ -110,7 +110,7 @@ impl Pin {
                     "mockspace_rev" => rev = Some(val),
                     "mockspace_branch" => branch = Some(val),
                     "mockspace_tag" => tag = Some(val),
-                    _ => {}
+                    _ => {},
                 }
             }
         }
@@ -127,7 +127,10 @@ impl Pin {
             // and its absence means there is no mockspace_* pin key at all.
             Reference::Branch(nonempty(branch)?)
         };
-        Some(Pin { url, reference })
+        Some(Pin {
+            url,
+            reference,
+        })
     }
 
     /// The legacy pin: the mockspace git rev recorded in the mock workspace's
@@ -164,35 +167,46 @@ impl Pin {
             )
         };
         match &self.reference {
-            Reference::Version(v) => Ok(Resolved {
-                key_rev: format!("v:{v}"),
-                attempts: vec![
-                    // crates.io release first ("maps to crates.io directly").
-                    vec![ENGINE_CRATE.into(), "--version".into(), v.clone()],
-                    // then the matching git tag, so it works before the engine
-                    // is published (and for git-only consumers).
-                    git(&["--tag", v]),
-                ],
-                lint_rules_dep: lint_dep("tag", v),
-            }),
-            Reference::Rev(r) => Ok(Resolved {
-                key_rev: r.clone(),
-                attempts: vec![git(&["--rev", r])],
-                lint_rules_dep: lint_dep("rev", r),
-            }),
-            Reference::Tag(t) => Ok(Resolved {
-                key_rev: format!("tag:{t}"),
-                attempts: vec![git(&["--tag", t])],
-                lint_rules_dep: lint_dep("tag", t),
-            }),
+            Reference::Version(v) => {
+                Ok(Resolved {
+                    key_rev:        format!("v:{v}"),
+                    attempts:       vec![
+                        // crates.io release first ("maps to crates.io directly").
+                        // Forward-looking: the engine is `publish = false` today, so
+                        // this attempt currently fails on a cold build and falls
+                        // through to the git tag below (silently, since ensure_built
+                        // only reports failure when every attempt fails). It becomes
+                        // the fast path once the engine publishes.
+                        vec![ENGINE_CRATE.into(), "--version".into(), v.clone()],
+                        // the matching git tag: works before the engine is published
+                        // and for git-only consumers.
+                        git(&["--tag", v]),
+                    ],
+                    lint_rules_dep: lint_dep("tag", v),
+                })
+            },
+            Reference::Rev(r) => {
+                Ok(Resolved {
+                    key_rev:        r.clone(),
+                    attempts:       vec![git(&["--rev", r])],
+                    lint_rules_dep: lint_dep("rev", r),
+                })
+            },
+            Reference::Tag(t) => {
+                Ok(Resolved {
+                    key_rev:        format!("tag:{t}"),
+                    attempts:       vec![git(&["--tag", t])],
+                    lint_rules_dep: lint_dep("tag", t),
+                })
+            },
             Reference::Branch(b) => {
                 let sha = self.resolve_branch(b, cache_root)?;
                 Ok(Resolved {
-                    key_rev: sha.clone(),
-                    attempts: vec![git(&["--rev", &sha])],
+                    key_rev:        sha.clone(),
+                    attempts:       vec![git(&["--rev", &sha])],
                     lint_rules_dep: lint_dep("rev", &sha),
                 })
-            }
+            },
         }
     }
 
@@ -281,7 +295,7 @@ fn mockspace_source_in_lock(lock: &str) -> Option<String> {
             match k {
                 "name" => in_mockspace = v == "mockspace",
                 "source" if in_mockspace => return Some(v),
-                _ => {}
+                _ => {},
             }
         }
     }
@@ -294,17 +308,21 @@ fn section_header(line: &str) -> Option<&str> {
         return None;
     }
     let end = line.find(']')?;
-    Some(line[..end].trim())
+    Some(line[.. end].trim())
 }
 
 fn strip_comment(line: &str) -> &str {
-    // good enough for our own controlled files: a `#` preceded by space and
-    // not inside the quoted value. Values are simple version strings, URLs,
-    // and shas without embedded `#`.
-    match line.find(" #") {
-        Some(i) => &line[..i],
-        None => line,
+    // strip a `#` comment that is not inside a quoted value, with or without a
+    // leading space (`x = "v" # c` and `x = "v"# c` both work).
+    let mut in_quote = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' | '\'' => in_quote = !in_quote,
+            '#' if !in_quote => return &line[.. i],
+            _ => {},
+        }
     }
+    line
 }
 
 fn unquote(s: &str) -> String {
@@ -333,10 +351,13 @@ mod tests {
         // crates.io attempt first
         assert_eq!(r.attempts[0], vec!["mockspace", "--version", "0.0.0-d05"]);
         // git tag fallback
-        assert_eq!(
-            r.attempts[1],
-            vec!["--git", CANONICAL_URL, "--tag", "0.0.0-d05", "mockspace"]
-        );
+        assert_eq!(r.attempts[1], vec![
+            "--git",
+            CANONICAL_URL,
+            "--tag",
+            "0.0.0-d05",
+            "mockspace"
+        ]);
     }
 
     #[test]
@@ -395,30 +416,36 @@ source = \"git+ssh://git@github.com/hiisi-digital/mockspace.git?branch=dev#deadb
     fn rev_resolves_to_single_git_attempt() {
         let dir = tempfile::tempdir().unwrap();
         let pin = Pin {
-            url: "u".into(),
+            url:       "u".into(),
             reference: Reference::Rev("sha1".into()),
         };
         let r = pin.resolve(dir.path()).unwrap();
         assert_eq!(r.key_rev, "sha1");
-        assert_eq!(
-            r.attempts,
-            vec![vec!["--git", "u", "--rev", "sha1", "mockspace"]]
-        );
+        assert_eq!(r.attempts, vec![vec![
+            "--git",
+            "u",
+            "--rev",
+            "sha1",
+            "mockspace"
+        ]]);
     }
 
     #[test]
     fn tag_resolves_to_git_tag_only() {
         let dir = tempfile::tempdir().unwrap();
         let pin = Pin {
-            url: "u".into(),
+            url:       "u".into(),
             reference: Reference::Tag("nightly".into()),
         };
         let r = pin.resolve(dir.path()).unwrap();
         assert_eq!(r.key_rev, "tag:nightly");
-        assert_eq!(
-            r.attempts,
-            vec![vec!["--git", "u", "--tag", "nightly", "mockspace"]]
-        );
+        assert_eq!(r.attempts, vec![vec![
+            "--git",
+            "u",
+            "--tag",
+            "nightly",
+            "mockspace"
+        ]]);
     }
 
     #[test]
