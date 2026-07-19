@@ -1,6 +1,14 @@
 #![allow(unused_imports)]
 use super::*;
 
+/// The value following `flag` in `args`, if present.
+fn arg_value(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
 pub(crate) fn run_inner(
     custom_lints: &[Box<dyn Lint>],
     custom_cross_lints: &[Box<dyn CrossCrateLint>],
@@ -36,6 +44,40 @@ pub(crate) fn run_inner(
 
     let cfg = Config::from_dir(&mock_dir);
 
+    // Launcher-era startup parity: keep the durable gate installed and active
+    // with no user involvement, replacing what the build.rs bootstrap did.
+    // Skip inside hook validation (`--lint-only`) and for the explicit
+    // activate/deactivate commands, which manage the gate themselves.
+    if !args.iter().any(|a| a == "--lint-only")
+        && !args.iter().any(|a| a == "activate" || a == "deactivate")
+    {
+        bootstrap::ensure_gate(&cfg.repo_root, &cfg.mock_dir);
+    }
+
+    // Effective custom lints. The old proxy statically links them in and passes
+    // them here; a launcher-run engine instead gets the pin-matched
+    // `mockspace-lint-rules` dep via `--mockspace-lint-rules-dep` and loads this
+    // repo's lints from a runtime cdylib. `loaded` holds the library so the
+    // boxed lints' vtables outlive every use below; the shadowing binds the
+    // effective slices for the rest of the function.
+    let loaded = if custom_lints.is_empty() && custom_cross_lints.is_empty() {
+        arg_value(&args, "--mockspace-lint-rules-dep").and_then(|dep| {
+            match crate::custom_lints::load(&cfg, &cfg.config_path, &dep) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("mock: custom lints unavailable: {e}");
+                    None
+                }
+            }
+        })
+    } else {
+        None
+    };
+    let (custom_lints, custom_cross_lints) = match &loaded {
+        Some(l) => (l.lints.as_slice(), l.cross.as_slice()),
+        None => (custom_lints, custom_cross_lints),
+    };
+
     // Subcommands: positional args that aren't flags or value-flag values.
     // `--dir` and `--scope` both take a value; their values must not be read
     // as a subcommand (a `--scope arvo` from a hook would otherwise look like
@@ -48,7 +90,7 @@ pub(crate) fn run_inner(
                 skip_next = false;
                 continue;
             }
-            if arg == "--dir" || arg == "--scope" {
+            if arg == "--dir" || arg == "--scope" || arg == "--mockspace-lint-rules-dep" {
                 skip_next = true; // skip the value that follows
                 continue;
             }

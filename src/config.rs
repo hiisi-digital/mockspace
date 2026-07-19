@@ -37,6 +37,10 @@ impl InstallMode {
 pub struct Config {
     // --- Core fields ---
     pub mock_dir: PathBuf,
+    /// The `mockspace.toml` this config was read from (in the mock dir or at
+    /// the repo root). Needed by callers that re-read the raw config, such as
+    /// the runtime custom-lint loader reading `[lint-crates]`.
+    pub config_path: PathBuf,
     pub crates_dir: PathBuf,
     pub repo_root: PathBuf,
     pub docs_dir: PathBuf,
@@ -463,7 +467,20 @@ impl Config {
             .unwrap_or_else(|| mock_dir.clone());
         let docs_dir = repo_root.join("docs");
 
-        let toml_path = mock_dir.join("mockspace.toml");
+        // The config sits either in the mock dir (in place, the historical
+        // location) or at the repo root (its home once relocated). Prefer the
+        // in-place one so an un-relocated repo is unchanged; else read the
+        // root one. The mock dir itself always comes from the caller (the
+        // launcher resolves it), so only the config's read location varies.
+        let in_mock = mock_dir.join("mockspace.toml");
+        let at_root = repo_root.join("mockspace.toml");
+        let toml_path = if in_mock.is_file() {
+            in_mock
+        } else if at_root.is_file() {
+            at_root
+        } else {
+            in_mock
+        };
         let toml_content = fs::read_to_string(&toml_path).unwrap_or_default();
 
         let raw: RawConfig = toml_edit::de::from_str(&toml_content)
@@ -524,6 +541,7 @@ impl Config {
         }
         Config {
             mock_dir, crates_dir, repo_root, docs_dir,
+            config_path: toml_path,
             project_name, crate_prefix,
             doc_link_prefix: String::new(),
             doc_index: crate::document::DocIndex::default(),

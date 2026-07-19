@@ -1,0 +1,30 @@
+[package]
+name = "cargo-mock"
+version = "0.1.0"
+edition = "2024"
+# The one crate in this repo that publishes. The engine (`mockspace`) stays
+# `publish = false`; this thin launcher git-installs the per-repo pinned
+# engine itself, so it needs no version relationship to it.
+publish = true
+description = "Launcher for the mockspace design-round workflow engine: resolves the per-repo pinned mockspace, builds it once per version into a shared cache, and runs it from any working directory."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+readme = "README.md"
+categories = ["development-tools", "command-line-utilities"]
+keywords = ["mockspace", "cargo-subcommand", "design-rounds", "workflow"]
+
+# Installed as both the cargo external subcommand (`cargo mock ...` runs
+# `cargo-mock`) and the short direct form (`mock ...`). `cargo install
+# cargo-mock` installs both bins. Each `src/bin/*.rs` is a two-line shim over
+# the library, so the two binaries share one implementation without cargo's
+# "same file in multiple targets" warning.
+
+# Deliberately zero dependencies. The pin table is a small format written by
+# our own `migrate`, so hand-parsing is safe; cargo's own install-root lock
+# and atomic binary install cover concurrency; the cache key uses a vendored
+# stable FNV hash. A published launcher stays fast to install and tiny to
+# audit.
+[dependencies]
+
+[dev-dependencies]
+tempfile = "3"

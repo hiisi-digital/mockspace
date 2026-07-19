@@ -14,7 +14,7 @@ fn mix(input: u64) -> u64 {
     x ^ x.rotate_left(13)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn bench_entry(
     input_ptr: *const u8,
     output_ptr: *mut u8,
@@ -27,12 +27,12 @@ pub unsafe extern "C" fn bench_entry(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bench_name() -> *const u8 {
     b"bitwise-rotate\0".as_ptr()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn bench_abi_hash() -> u64 {
     abi_hash()
 }

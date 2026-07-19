@@ -317,7 +317,7 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #func
 
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn bench_entry(
             input_ptr: *const u8,
             output_ptr: *mut u8,
@@ -334,12 +334,12 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub extern "C" fn bench_name() -> *const u8 {
             #name_with_nul.as_ptr()
         }
 
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub extern "C" fn bench_abi_hash() -> u64 {
             ::mockspace_bench_core::abi_hash()
         }
