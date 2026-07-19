@@ -249,6 +249,38 @@ pub fn run(
     actions
 }
 
+/// The slim, launcher-era setup the engine runs on a normal invocation,
+/// replacing what the `build.rs` bootstrap did: ensure the durable hooks
+/// exist, point `core.hooksPath` at them (with no user involvement), and keep
+/// `target/` gitignored. None of the dissolved plumbing (proxy, `.cargo`
+/// alias, launcher install, generated-hooks layer, build-cache guard).
+///
+/// Best-effort and quiet: setup failures never block the command the user
+/// actually ran. Idempotent and cheap on the common path (fingerprint-guarded
+/// hook writes, a single `git config` read).
+pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
+    let mut actions = Vec::new();
+    let target = hooks_path_target(mock_dir);
+    let want = target.to_string_lossy();
+    let current = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["config", "--local", "core.hooksPath"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if current.as_deref() != Some(want.as_ref()) {
+        // not pointing at the durable gate yet: activate (also (re)writes the
+        // durable hooks and records the mock-dir locator).
+        let _ = activate(repo_root, mock_dir);
+    } else {
+        // already active: just keep the hook content current.
+        ensure_durable_hooks(&mut actions);
+    }
+    ensure_gitignore(repo_root, &mut actions);
+}
+
 /// Where `core.hooksPath` should point: the durable home dir when a
 /// config home exists, otherwise the generated (non-durable) dir. The
 /// single source of truth so `activate` and `check_activation` agree.
