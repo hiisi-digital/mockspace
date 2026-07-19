@@ -483,6 +483,58 @@ allow
 }
 
 /// Generate the no-yagni-guard.sh hook content.
+/// The durable agent-side gate. Fires on Bash; for a git commit or push,
+/// it refuses to let the agent proceed unless the mockspace validation
+/// machinery is intact (the generated validator exists and core.hooksPath
+/// is wired to it). If broken by a `target/` clean it self-heals via a
+/// `cargo check`, and blocks hard if that fails. Native mockspace, so it
+/// travels with `.claude/hooks/` and survives independently of git config.
+fn builtin_mockspace_gate() -> String {
+    r##"#!/usr/bin/env bash
+# Built-in mockspace hook: block agent git commit/push when the gate is broken
+set -uo pipefail
+__INPUT=$(cat)
+{{HOOK_HELPERS}}
+FILE_PATH=""
+COMMAND=$(_extract "command")
+_scope_or_allow
+
+# Only gate git commit / git push; everything else passes through. Anchor
+# the verb to the git subcommand position (allowing a leading `-C <dir>`)
+# so read-only commands like `git log --grep=commit` or `git help commit`
+# are not mistaken for a write.
+if ! echo "$COMMAND" | grep -qE '\bgit[[:space:]]+(commit|push)\b' \
+   && ! echo "$COMMAND" | grep -qE '\bgit[[:space:]]+-C[[:space:]]+[^[:space:]]+[[:space:]]+(commit|push)\b'; then
+    allow
+fi
+
+root="$__HOOK_REPO_ROOT"
+mockdir=$(git -C "$root" config --local mockspace.mockdir 2>/dev/null || true)
+[ -z "$mockdir" ] && mockdir="mock"
+validator="$root/$mockdir/target/hooks/pre-commit"
+
+_gate_intact() {
+    [ -x "$validator" ] || return 1
+    local hp
+    hp=$(git -C "$root" config --local core.hooksPath 2>/dev/null || true)
+    case "$hp" in
+        *mockspace*|*target/hooks*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+if _gate_intact; then allow; fi
+
+# Gate broken: validator cleaned away, or core.hooksPath not wired. Self-heal
+# by rebuilding (build.rs re-runs the bootstrap and re-activates), then retry.
+( cd "$root/$mockdir" && cargo check --quiet --locked ) >/dev/null 2>&1 || true
+if _gate_intact; then allow; fi
+
+deny "mockspace gate is broken and self-heal failed: the git validator at $validator is missing or core.hooksPath is not wired to mockspace. Agent commits and pushes are blocked until it is restored. Run 'cargo mock' from $root, then retry."
+"##
+    .to_string()
+}
+
 fn builtin_no_yagni() -> String {
     r##"#!/usr/bin/env bash
 # Built-in mockspace hook: flag YAGNI reasoning in commit messages
@@ -543,11 +595,12 @@ fn write_builtin_hook(
 
 /// Generate all builtin agent hooks.
 ///
-/// Writes 4 hooks to both `.claude/hooks/` and `.github/hooks/`:
+/// Writes 5 hooks to both `.claude/hooks/` and `.github/hooks/`:
 /// - check-byline.sh
 /// - mockspace-write-guard.sh
 /// - mockspace-reminder.sh
 /// - no-yagni-guard.sh
+/// - mockspace-gate.sh
 fn generate_builtin_hooks(
     cfg: &Config,
     claude_hooks_dir: &Path,
@@ -557,6 +610,15 @@ fn generate_builtin_hooks(
     let mut hooks = Vec::new();
 
     let repo_root = cfg.repo_root.to_string_lossy().to_string();
+
+    hooks.push(write_builtin_hook(
+        "mockspace-gate.sh",
+        &builtin_mockspace_gate(),
+        &repo_root,
+        claude_hooks_dir,
+        copilot_hooks_dir,
+        count,
+    ));
 
     hooks.push(write_builtin_hook(
         "check-byline.sh",
@@ -2820,5 +2882,41 @@ mod tests {
             !hook.contains("\ngit diff "),
             "found bare `git diff` (cwd-sensitive); switch to `git -C \"$REPO_ROOT\" diff`"
         );
+    }
+
+    #[test]
+    fn agent_gate_hook_self_heals_then_blocks() {
+        let hook = builtin_mockspace_gate();
+        // gates only git commit/push, anchored to the subcommand verb so
+        // read-only commands are not caught
+        assert!(hook.contains(r"\bgit[[:space:]]+(commit|push)\b"));
+        assert!(!hook.contains(r"\bgit\b.*\b(commit|push)\b"));
+        // checks both the validator and that core.hooksPath is wired
+        assert!(hook.contains("target/hooks/pre-commit"));
+        assert!(hook.contains("core.hooksPath"));
+        assert!(hook.contains("mockspace.mockdir"));
+        // self-heals with a locked check so it cannot dirty Cargo.lock
+        assert!(hook.contains("cargo check --quiet --locked"));
+        // fails closed via the deny helper
+        assert!(hook.contains("deny \"mockspace gate is broken"));
+        // scoped to this repo like the other builtins
+        assert!(hook.contains("_scope_or_allow"));
+    }
+
+    #[test]
+    fn agent_gate_is_a_generated_builtin() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let claude = tmp.path().join(".claude/hooks");
+        let copilot = tmp.path().join(".github/hooks");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::create_dir_all(&copilot).unwrap();
+        let cfg = Config::from_dir(&tmp.path().join("mock"));
+        let mut count = 0;
+        let metas = generate_builtin_hooks(&cfg, &claude, &copilot, &mut count);
+        assert!(metas.iter().any(|m| m.name == "mockspace-gate.sh"));
+        assert!(claude.join("mockspace-gate.sh").exists());
+        // matched on Bash so it fires on the agent's git commands
+        let gate = metas.iter().find(|m| m.name == "mockspace-gate.sh").unwrap();
+        assert!(gate.matchers.iter().any(|s| s == "Bash"));
     }
 }

@@ -202,10 +202,26 @@ pub fn run(
 
     ensure_cargo_alias(repo_root, mock_dir, mockspace_manifest_dir, &mut actions);
     ensure_generated_hooks(repo_root, mock_dir, &mut actions);
+    ensure_durable_hooks(&mut actions);
     ensure_gitignore(repo_root, &mut actions);
     check_activation(repo_root, mock_dir, &mut actions);
 
     actions
+}
+
+/// Where `core.hooksPath` should point: the durable home dir when a
+/// config home exists, otherwise the generated (non-durable) dir. The
+/// single source of truth so `activate` and `check_activation` agree.
+fn hooks_path_target(mock_dir: &Path) -> PathBuf {
+    // The durable dir only when it actually exists (was created by
+    // `ensure_durable_hooks`). Resolvable-but-unwritable must fall back to
+    // the generated dir, and `activate` must make the same choice, or
+    // `check_activation` will re-activate every build chasing a target
+    // `activate` never set.
+    match durable_hooks_dir() {
+        Some(d) if d.exists() => d,
+        _ => generated_hooks_dir(mock_dir),
+    }
 }
 
 /// Ensure the repo-root `.gitignore` ignores every cargo `target/` build dir.
@@ -248,15 +264,32 @@ target/
     }
 }
 
-/// Set `core.hooksPath` to mockspace's generated hooks directory.
+/// Point `core.hooksPath` at the durable fallback hooks and record the
+/// mock-dir locator the durable hook needs to find this repo's validator.
+///
+/// The durable dir lives in the user config home, so the gate survives a
+/// `target/` clean that deletes the generated validator. Requires the
+/// generated validator to exist (it is what the durable hook execs).
 pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
-    let hooks_dir = generated_hooks_dir(mock_dir);
-    if !hooks_dir.exists() {
+    let generated = generated_hooks_dir(mock_dir);
+    if !generated.exists() {
         return Err(format!(
             "generated hooks not found at {}. Run `cargo mock` first.",
-            hooks_dir.display()
+            generated.display()
         ));
     }
+
+    // Make sure the durable fallback exists before pointing git at it, and
+    // surface any write diagnostics rather than swallowing them.
+    let mut actions = Vec::new();
+    ensure_durable_hooks(&mut actions);
+    for msg in &actions {
+        eprintln!("--- bootstrap: {msg} ---");
+    }
+    // Point at whatever `ensure_durable_hooks` actually produced: the same
+    // choice `hooks_path_target` reports to `check_activation`, so the two
+    // never disagree. `generated` remains the guaranteed floor.
+    let hooks_dir = hooks_path_target(mock_dir);
 
     let status = std::process::Command::new("git")
         .args(["config", "--local", "core.hooksPath"])
@@ -264,9 +297,24 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
         .current_dir(repo_root)
         .status()
         .map_err(|e| format!("git config failed: {e}"))?;
-
     if !status.success() {
         return Err("git config core.hooksPath failed".into());
+    }
+
+    // Record where this repo's mock workspace lives so the generic durable
+    // hook can locate the live validator at `<root>/<mockdir>/target/hooks`.
+    let mock_rel = mock_dir
+        .strip_prefix(repo_root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| mock_dir.display().to_string());
+    let status = std::process::Command::new("git")
+        .args(["config", "--local", "mockspace.mockdir"])
+        .arg(&mock_rel)
+        .current_dir(repo_root)
+        .status()
+        .map_err(|e| format!("git config failed: {e}"))?;
+    if !status.success() {
+        return Err("git config mockspace.mockdir failed".into());
     }
 
     Ok(())
@@ -1214,6 +1262,119 @@ fn generated_hooks_dir(mock_dir: &Path) -> PathBuf {
     mock_dir.join("target").join("hooks")
 }
 
+/// The durable hooks directory in the user config home. This survives a
+/// `target/` clean, so `core.hooksPath` points here rather than at the
+/// generated (and cleanable) `<mock>/target/hooks`. Version-keyed so
+/// several mockspace versions coexist without clobbering each other.
+///
+/// `<XDG_CONFIG_HOME | $HOME/.config>/mockspace/hooks-v<HOOK_VERSION>`.
+/// Returns `None` when neither env var is set (no durable home to use).
+fn durable_hooks_dir() -> Option<PathBuf> {
+    durable_hooks_dir_from(env::var_os("XDG_CONFIG_HOME"), env::var_os("HOME"))
+}
+
+/// Pure core of [`durable_hooks_dir`]: resolves the config base from the
+/// two env values so the resolution is testable without touching process
+/// env. `XDG_CONFIG_HOME` (when non-empty) wins, else `$HOME/.config`.
+fn durable_hooks_dir_from(
+    xdg: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let base = xdg
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("mockspace").join(format!("hooks-v{HOOK_VERSION}")))
+}
+
+/// Write the durable fallback hooks into the user config home. Idempotent
+/// by fingerprint, executable, one dir shared by every repo on this
+/// mockspace version. Best-effort: a failure here leaves the generated
+/// in-repo hooks as the gate and is reported, never fatal.
+fn ensure_durable_hooks(actions: &mut Vec<String>) -> Option<PathBuf> {
+    let dir = durable_hooks_dir()?;
+    if let Err(e) = fs::create_dir_all(&dir) {
+        actions.push(format!("could not create durable hooks dir {}: {e}", dir.display()));
+        return None;
+    }
+
+    for hook_name in HOOK_NAMES {
+        let path = dir.join(hook_name);
+        let content = gen_durable_hook(hook_name);
+        let fingerprint = content_fingerprint(&content);
+        let fp_line = format!("{MANAGED_MARKER} v{HOOK_VERSION} fp:{fingerprint:016x}");
+
+        if path.exists() {
+            if let Ok(current) = fs::read_to_string(&path) {
+                if current.contains(&fp_line) {
+                    continue;
+                }
+            }
+        }
+
+        let final_content = content.replacen(MANAGED_MARKER, &fp_line, 1);
+        if let Err(e) = fs::write(&path, &final_content) {
+            actions.push(format!("failed to write durable {hook_name}: {e}"));
+            continue;
+        }
+
+        #[cfg(unix)]
+        if let Ok(meta) = fs::metadata(&path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&path, perms);
+        }
+        actions.push(format!("wrote durable {hook_name} to {}", dir.display()));
+    }
+
+    Some(dir)
+}
+
+/// The durable fallback hook: generic across every repo, so it locates
+/// the repo's live validator at runtime rather than baking a path in.
+/// If the validator is gone (a `target/` clean), it rebuilds it via a
+/// `cargo check`, then blocks hard if that fails. Fail closed, never open.
+fn gen_durable_hook(name: &str) -> String {
+    format!(
+        r##"#!/usr/bin/env bash
+{MANAGED_MARKER}
+# mockspace durable gate. Do not edit; rewritten by the bootstrap.
+# core.hooksPath points here so the gate survives a `target/` clean.
+set -u
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || {{
+    echo "mockspace gate: not inside a git repository; refusing to proceed." >&2
+    exit 1
+}}
+
+mockdir=$(git -C "$root" config --local mockspace.mockdir 2>/dev/null || true)
+[ -z "$mockdir" ] && mockdir="mock"
+
+live="$root/$mockdir/target/hooks/{name}"
+
+if [ -x "$live" ]; then
+    exec "$live" "$@"
+fi
+
+# The generated validator is missing: target/ was cleaned. Self-heal by
+# rebuilding it (build.rs re-runs the bootstrap), then retry.
+echo "mockspace gate: validator missing at $live" >&2
+echo "mockspace gate: self-healing (cargo check in $mockdir/ regenerates it)..." >&2
+if ( cd "$root/$mockdir" && cargo check --quiet --locked ) >/dev/null 2>&1 && [ -x "$live" ]; then
+    echo "mockspace gate: restored." >&2
+    exec "$live" "$@"
+fi
+
+echo "" >&2
+echo "mockspace gate: BLOCKED. the validator could not be restored." >&2
+echo "  run from the repo root:  cargo mock" >&2
+echo "  (or:  cd $mockdir && cargo check )" >&2
+echo "ALL {name} OPERATIONS BLOCKED until the mockspace validator is restored." >&2
+exit 1
+"##
+    )
+}
+
 /// Resolve the actual .git directory (handles worktrees).
 fn resolve_git_dir(repo_root: &Path) -> PathBuf {
     let git_path = repo_root.join(".git");
@@ -1291,7 +1452,7 @@ fn check_activation(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>
         // place when it differs from the canonical generated_hooks_dir.
         // Respects MOCKSPACE_NO_AUTO_ACTIVATE the same way as initial
         // activation: if the user opted out, just warn.
-        let expected = generated_hooks_dir(mock_dir);
+        let expected = hooks_path_target(mock_dir);
         let output = std::process::Command::new("git")
             .args(["config", "--local", "core.hooksPath"])
             .current_dir(repo_root)
@@ -2338,6 +2499,60 @@ mod bootstrap_guard_tests {
         let meta = std::fs::metadata(root).unwrap();
         super::repair_ownership(root, &mock, meta.uid(), meta.gid())
             .expect("repair over own files succeeds");
+    }
+
+    // durable hooks
+
+    fn dur(xdg: Option<&str>, home: Option<&str>) -> Option<std::path::PathBuf> {
+        super::durable_hooks_dir_from(xdg.map(Into::into), home.map(Into::into))
+    }
+
+    #[test]
+    fn bootstrap_durable_dir_prefers_xdg() {
+        let d = dur(Some("/x/cfg"), Some("/home/u")).unwrap();
+        assert_eq!(
+            d,
+            std::path::PathBuf::from(format!("/x/cfg/mockspace/hooks-v{}", super::HOOK_VERSION))
+        );
+    }
+
+    #[test]
+    fn bootstrap_durable_dir_falls_back_to_home() {
+        let d = dur(None, Some("/home/u")).unwrap();
+        assert_eq!(
+            d,
+            std::path::PathBuf::from(format!(
+                "/home/u/.config/mockspace/hooks-v{}",
+                super::HOOK_VERSION
+            ))
+        );
+    }
+
+    #[test]
+    fn bootstrap_durable_dir_empty_xdg_falls_back() {
+        let d = dur(Some(""), Some("/home/u")).unwrap();
+        assert!(d.starts_with("/home/u/.config"));
+    }
+
+    #[test]
+    fn bootstrap_durable_dir_none_without_home() {
+        assert!(dur(None, None).is_none());
+    }
+
+    #[test]
+    fn bootstrap_durable_hook_self_heals_then_blocks() {
+        let h = super::gen_durable_hook("pre-commit");
+        // locates the repo and the live validator
+        assert!(h.contains("git rev-parse --show-toplevel"));
+        assert!(h.contains("mockspace.mockdir"));
+        assert!(h.contains("target/hooks/pre-commit"));
+        // execs the live validator when present
+        assert!(h.contains(r#"exec "$live" "$@""#));
+        // self-heals before blocking
+        assert!(h.contains("cargo check"));
+        // fails closed
+        assert!(h.contains("BLOCKED"));
+        assert!(h.contains("exit 1"));
     }
 
     #[cfg(unix)]
