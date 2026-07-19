@@ -154,6 +154,9 @@ layers = ["Layer0", "Layer1", ...]    # labels by depth index for the graph
 install_git_hooks = "replace"
 install_cargo_config = "merge-append"
 install_agent_files = "replace"
+
+auto_fmt = true                       # cargo fmt staged workspace roots pre-commit
+auto_clippy_fix = true                # cargo clippy --fix staged workspace roots pre-commit
 ```
 
 Install modes (applied when generated content overwrites existing files):
@@ -161,6 +164,29 @@ Install modes (applied when generated content overwrites existing files):
 - `replace`: always overwrite.
 - `merge-append` / `merge-prepend`: preserve other sections.
 - `skip` / `skip-if-exists`: never overwrite an existing file.
+
+### Pre-commit auto-fix
+
+Before a commit is linted, mockspace can run the repo's own formatter and clippy
+fixer, re-staging the results so the commit lands already-fixed:
+
+- `auto_fmt` (default `true`): runs `cargo fmt` in each package the staged changes
+  touch. Uses the repo's own `rustfmt.toml` (rustfmt resolves it by walking the
+  directory tree upward, so one config at the repo root also governs a nested `mock/`
+  workspace).
+- `auto_clippy_fix` (default `true`): runs `cargo clippy --fix` in the same packages,
+  respecting the clippy lints the entrypoint crates declare.
+
+The fixers are scoped to the packages a commit actually touches (each staged file's
+nearest `Cargo.toml`), not the whole workspace, so the cost stays proportional to the
+change: `cargo clippy --fix` only compiles the changed packages.
+
+Both are best-effort: a fixer that fails (unparseable source, code that does not yet
+compile) is skipped and never blocks the commit. Files staged partially (`git add -p`)
+are left untouched so a re-stage never sweeps in withheld edits. A fixer may still
+rewrite other files within a changed package (fmt and clippy operate per package, not
+per file); only the staged files are re-staged, so the commit records just those. Set
+either key to `false` to opt out per-repo.
 
 ### Lints
 

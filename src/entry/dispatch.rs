@@ -237,6 +237,17 @@ pub(crate) fn run_inner(
         LintMode::Build
     };
 
+    // Pre-commit auto-fix: before a commit is linted, run the repo's own
+    // `cargo fmt` and (optionally) `cargo clippy --fix` across every workspace
+    // root the staged changes touch, then re-stage, so the commit lands
+    // already-fixed. Config-gated (auto_fmt / auto_clippy_fix, both default
+    // true) and best-effort: a fixer failure never blocks the commit.
+    if mode == LintMode::Commit && (cfg.auto_fmt || cfg.auto_clippy_fix) {
+        for action in crate::autofix::run(&cfg.repo_root, cfg.auto_fmt, cfg.auto_clippy_fix) {
+            eprintln!("--- autofix: {action} ---");
+        }
+    }
+
     // Keep the locked mockspace current with its branch's remote head, but only
     // in an interactive `cargo mock` (not a git hook, where it must not mutate
     // Cargo.lock mid-commit, and not a build script). `--lint-only` marks the

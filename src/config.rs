@@ -113,6 +113,14 @@ pub struct Config {
     pub install_cargo_config: InstallMode,
     pub install_agent_files:  InstallMode,
 
+    /// Run `cargo fmt` on the staged workspace roots before a commit is linted,
+    /// re-staging the result. Uses the repo's own `rustfmt.toml`. Default true.
+    pub auto_fmt:        bool,
+    /// Run `cargo clippy --fix` on the staged workspace roots before a commit is
+    /// linted, re-staging the result. Uses the repo's own clippy config (the
+    /// entrypoint `#![warn(clippy::…)]` attributes). Best-effort. Default true.
+    pub auto_clippy_fix: bool,
+
     /// Agent integration config from `mock/agent/config.toml` if present.
     /// Empty defaults when the file is absent.
     pub attribution: AttributionConfig,
@@ -357,6 +365,11 @@ struct RawConfig {
     install_git_hooks:      Option<String>,
     install_cargo_config:   Option<String>,
     install_agent_files:    Option<String>,
+
+    #[serde(default)]
+    auto_fmt:        Option<bool>,
+    #[serde(default)]
+    auto_clippy_fix: Option<bool>,
 
     // Sections (simple key=value maps)
     domain_kinds:   Option<BTreeMap<String, String>>,
@@ -606,6 +619,8 @@ impl Config {
             install_git_hooks,
             install_cargo_config,
             install_agent_files,
+            auto_fmt: raw.auto_fmt.unwrap_or(true),
+            auto_clippy_fix: raw.auto_clippy_fix.unwrap_or(true),
             attribution,
             lint_overrides,
             domain_kinds,
