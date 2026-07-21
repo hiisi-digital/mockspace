@@ -111,6 +111,49 @@ pub struct BenchSection {
     /// the global `[timing]` section.
     #[serde(default)]
     pub timing:      Option<TimingOverride>,
+    /// Optional differential-analysis config. When present, the
+    /// findings report is normalised against a named baseline variant
+    /// so the shared common cost (interpreter overhead, fixed sibling
+    /// work) cancels and each variant's attributable delta is
+    /// surfaced. See [`NormaliseSection`].
+    #[serde(default)]
+    pub normalise:   Option<NormaliseSection>,
+}
+
+/// Differential-analysis config: declare a baseline VARIANT to
+/// normalise the bench against.
+///
+/// When present, report generation selects `baseline` as the analysis
+/// baseline (instead of the default first variant), so every variant
+/// is measured against it via the harness's paired-sample comparison
+/// (same seed/input, subtract, then the delta distribution + CI).
+/// This is the statistically-correct way to remove a shared common
+/// cost that would otherwise swamp the variant-to-variant signal.
+///
+/// The raw per-variant columns are kept; `mode` selects which
+/// normalised column(s) to add alongside them.
+///
+/// TODO(post_process symbol): the declarative baseline here covers the
+/// common "normalise against a named variant" case. For arbitrary
+/// derived metrics (composite scores, cross-N regressions, custom
+/// transforms), add an optional `post_process` code symbol to the
+/// `DriverRegistry`, symmetric with `build_workload` / `dispatch`,
+/// receiving the collected `BenchResult` and returning extra findings.
+/// It must NOT live in the `timed!` macro: normalisation is a
+/// cross-variant, post-collection operation and the timing macro has
+/// no visibility across variants.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct NormaliseSection {
+    /// Variant short name used as the analysis baseline.
+    pub baseline: String,
+    /// Which normalised column(s) to add to the report table:
+    /// `"subtract"` (paired `variant - baseline` in ns, the default
+    /// when the block is present), `"ratio"` (`variant / baseline`),
+    /// or `"percent"` (the relative % already shown). `"none"` keeps
+    /// the declared baseline for the existing columns without adding a
+    /// new one (some benches want the baseline choice but raw framing).
+    #[serde(default)]
+    pub mode:     Option<String>,
 }
 
 /// One `(N, [variants])` pair inside a [`BenchSection`].
@@ -348,6 +391,11 @@ impl BenchManifest {
             batch_k: 1,
             max_call_us: None,
             tuning: HarnessTuning::default(),
+            normalise_baseline: section.normalise.as_ref().map(|nz| nz.baseline.clone()),
+            normalise_mode: section
+                .normalise
+                .as_ref()
+                .map(|nz| nz.mode.clone().unwrap_or_else(|| "subtract".to_string())),
         })
     }
 
@@ -409,6 +457,14 @@ pub struct BenchConfig {
     /// Tunable iteration counts and on-disk roots; see
     /// [`HarnessTuning`] for individual knobs and defaults.
     pub tuning:        HarnessTuning,
+    /// Optional analysis-baseline variant name (from the manifest's
+    /// `[bench.<name>.normalise]`). When set, report generation
+    /// normalises against this variant. `None` = default baseline
+    /// (first variant).
+    pub normalise_baseline: Option<String>,
+    /// Which normalised column(s) to add (from `normalise.mode`);
+    /// `None` = the default (`subtract`) when a baseline is set.
+    pub normalise_mode:     Option<String>,
 }
 
 /// Tunable iteration counts. Defaults match the polka-dots
@@ -473,6 +529,8 @@ impl Default for BenchConfig {
             batch_k:       1,
             max_call_us:   None,
             tuning:        HarnessTuning::default(),
+            normalise_baseline: None,
+            normalise_mode:     None,
         }
     }
 }
@@ -521,6 +579,48 @@ mod tests {
         let c = m.for_size("b", 0, Path::new("/root")).unwrap();
         assert_eq!(c.variant_paths.len(), 1);
         assert!(c.variant_paths[0].display().to_string().contains("gamma"));
+    }
+
+    #[test]
+    fn normalise_section_parses_and_flows_to_config() {
+        let m = manifest(
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            variants = ["alpha", "beta", "gamma"]
+            sizes = [64]
+            [bench.b.normalise]
+            baseline = "beta"
+            mode = "subtract"
+        "#,
+        );
+        let nz = m.bench["b"].normalise.as_ref().expect("normalise parsed");
+        assert_eq!(nz.baseline, "beta");
+        assert_eq!(nz.mode.as_deref(), Some("subtract"));
+        let cfg = m.for_size("b", 0, Path::new(".")).expect("for_size");
+        assert_eq!(cfg.normalise_baseline.as_deref(), Some("beta"));
+        assert_eq!(cfg.normalise_mode.as_deref(), Some("subtract"));
+    }
+
+    #[test]
+    fn normalise_defaults_to_subtract_and_absent_is_none() {
+        let m = manifest(
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            variants = ["alpha", "beta"]
+            sizes = [64]
+            [bench.b.normalise]
+            baseline = "alpha"
+        "#,
+        );
+        let cfg = m.for_size("b", 0, Path::new(".")).expect("for_size");
+        assert_eq!(cfg.normalise_mode.as_deref(), Some("subtract"));
+        // a bench with no normalise block => None (default baseline behaviour)
+        let plain = manifest(BASE).for_size("b", 0, Path::new(".")).expect("for_size");
+        assert!(plain.normalise_baseline.is_none());
     }
 
     #[test]

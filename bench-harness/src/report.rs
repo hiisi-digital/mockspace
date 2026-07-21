@@ -29,6 +29,15 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         md.push_str(&format!("> **WARNING:** {}\n\n", ds.drift_note));
     }
 
+    // ── Procedural highlights (shared with the stdout summary) ──
+    // The same detector engine that produces the terminal one-liners renders
+    // here in full: each fired highlight expanded with how it composed and why
+    // it matters, so the findings analyse the data rather than only tabulate it.
+    if ds.variants.len() > 1 {
+        let rs = crate::summary::summarise(ds, title, ds.meta.master_seed);
+        md.push_str(&rs.render_markdown());
+    }
+
     // ── Executive summary ──
     if ds.variants.len() > 1 {
         md.push_str("## Key findings\n\n");

@@ -441,9 +441,30 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             eprintln!("error: writing csv: {e}");
             return ExitCode::FAILURE;
         }
-        if let Err(e) = crate::write_report_for_routine(&result, &routine, "warm", &findings_path) {
-            eprintln!("error: writing report: {e}");
-            return ExitCode::FAILURE;
+        {
+            // Report generation, normalised against the declared baseline
+            // variant when `[bench.<name>.normalise]` is set (otherwise the
+            // default first-variant baseline). Selecting the baseline makes
+            // every rendered delta (the % column and the paired absolute
+            // Δ-median-ns + CI in the statistical comparison table) relative
+            // to it, which cancels the shared common cost.
+            let mut ds = result.dataset_for_routine(&routine, "warm");
+            if let Some(bl) = config.normalise_baseline.as_deref() {
+                ds = ds.with_baseline(bl);
+            }
+            let md = crate::generate_report(&ds, &result.title);
+            if let Err(e) = std::fs::write(&findings_path, md) {
+                eprintln!("error: writing report: {e}");
+                return ExitCode::FAILURE;
+            }
+            // Per-bench stdout highlights: the same detector engine as the
+            // report, but headlines-only, naming the baseline and ending by
+            // directing the reader to the full findings file. Readers who see
+            // only stdout still get the computed verdict, not swamped raw rows.
+            if ds.variants.len() > 1 {
+                let rs = crate::summary::summarise(&ds, &result.title, config.master_seed);
+                eprint!("{}", rs.render_terminal(&findings_path));
+            }
         }
 
         // ── history + regressions + summary rows ──
