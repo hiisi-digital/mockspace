@@ -50,6 +50,12 @@ pub struct Sample {
     /// Optional input tag for per-pattern breakdown (e.g. sparsity
     /// pattern). Tag values are routine-defined.
     pub input_tag:   Option<u8>,
+    /// Hardware instructions retired for this batch's measured region (per call,
+    /// mean over the batch). Zero when perf counters are unavailable / off.
+    pub instructions: u64,
+    /// Hardware cycles for this batch's measured region (per call, mean). Zero
+    /// when perf counters are unavailable / off.
+    pub cycles:       u64,
 }
 
 /// What [`crate::run`] returns on success.
@@ -104,7 +110,70 @@ pub fn load_samples_csv(path: &Path) -> Result<Vec<Sample>, BenchError> {
             batch_count: p[9].parse().unwrap_or(0),
             score:       p.get(10).and_then(|s| s.parse().ok()),
             input_tag:   p.get(11).and_then(|s| s.parse().ok()),
+            // appended columns; absent in older CSVs, default 0.
+            instructions: p.get(12).and_then(|s| s.parse().ok()).unwrap_or(0),
+            cycles:       p.get(13).and_then(|s| s.parse().ok()).unwrap_or(0),
         });
     }
     Ok(samples)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_parses_perf_columns_and_is_backward_compatible() {
+        let dir = std::env::temp_dir().join(format!("perf_csv_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // new format: 14 columns including the appended instructions,cycles.
+        let newp = dir.join("new.csv");
+        std::fs::write(
+            &newp,
+            "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles\n\
+             1,1,0,warm,switch,0,120.0,100.0,20.0,64,,,4200,900\n",
+        )
+        .unwrap();
+        let s = load_samples_csv(&newp).unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].instructions, 4200);
+        assert_eq!(s[0].cycles, 900);
+
+        // old format: 12 columns, no perf; must still load, perf defaulting 0.
+        let oldp = dir.join("old.csv");
+        std::fs::write(
+            &oldp,
+            "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag\n\
+             1,1,0,warm,switch,0,120.0,100.0,20.0,64,,\n",
+        )
+        .unwrap();
+        let so = load_samples_csv(&oldp).unwrap();
+        assert_eq!(so.len(), 1);
+        assert_eq!(so[0].instructions, 0);
+        assert_eq!(so[0].cycles, 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn worker_line_positional_contract() {
+        // The worker emits instructions/cycles at tab columns 7,8 (before the
+        // optional score at 9); the orchestrator parser (harness.rs) reads those
+        // exact positions. This guards the emitter and parser against drift.
+        let with_score = format!(
+            "switch\twarm\t0\t120.0\t100.0\t20.0\t64\t{}\t{}\t42.00",
+            4200u64, 900u64
+        );
+        let p: Vec<&str> = with_score.split('\t').collect();
+        assert_eq!(p[7], "4200", "instructions at col 7");
+        assert_eq!(p[8], "900", "cycles at col 8");
+        assert_eq!(p[9], "42.00", "score at col 9");
+
+        let no_score =
+            format!("switch\twarm\t0\t120.0\t100.0\t20.0\t64\t{}\t{}", 4200u64, 900u64);
+        let q: Vec<&str> = no_score.split('\t').collect();
+        assert_eq!(q.len(), 9, "no-score line has exactly the 9 fixed columns");
+        assert!(q.get(9).is_none(), "no score column when absent");
+    }
 }

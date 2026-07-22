@@ -217,6 +217,28 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         }
     }
 
+    // ── Hardware counters (rendered only when perf counters were captured) ──
+    if ds.variants.iter().any(|v| v.mean_instructions > 0.0) {
+        md.push_str("\n## Hardware counters (per call)\n\n");
+        md.push_str("| Variant | instructions | cycles | IPC | × base instr |\n");
+        md.push_str("|---|---|---|---|---|\n");
+        let base_instr = base.mean_instructions;
+        for v in &ds.variants {
+            let ipc = if v.mean_cycles > 0.0 { v.mean_instructions / v.mean_cycles } else { 0.0 };
+            let ratio = if base_instr > 0.0 { v.mean_instructions / base_instr } else { 0.0 };
+            let rlabel = if v.name == base.name { "1.00×".to_string() } else { format!("{:.2}×", ratio) };
+            md.push_str(&format!(
+                "| {} | {:.0} | {:.0} | {:.3} | {} |\n",
+                v.name, v.mean_instructions, v.mean_cycles, ipc, rlabel
+            ));
+        }
+        md.push_str(
+            "\nInstructions and cycles are the mean over the variant's samples for the measured region. \
+             IPC is instructions per cycle. The instruction ratio isolates whether a variant wins by \
+             retiring fewer instructions or by executing the same instructions more efficiently.\n",
+        );
+    }
+
     // ── Performance model (roofline) ──
     if ops > 0 {
         md.push_str("\n## Performance model\n\n");
@@ -730,6 +752,8 @@ mod tests {
             batch_count: 1,
             score:       None,
             input_tag:   None,
+            instructions: 0,
+            cycles:       0,
         }
     }
 
@@ -767,5 +791,34 @@ mod tests {
         let md = generate(&ds_with("ratio", [0.0, 0.0, 0.0]), "t");
         assert!(md.contains("1.00\u{00d7}"), "base still 1.00x");
         assert!(md.contains("0.00\u{00d7}"), "guarded ratio renders 0.00x");
+    }
+
+    #[test]
+    fn hardware_counters_section_renders_only_when_present() {
+        // samples carrying perf counts produce the Hardware counters section with
+        // IPC and the instruction ratio; zero counts omit it entirely.
+        let mk = |variant: &str, instr: u64, cyc: u64| {
+            let mut s = sample(variant, 100.0);
+            s.instructions = instr;
+            s.cycles = cyc;
+            s
+        };
+        // switch: 200/100 = IPC 2.0; threaded: 150/50 = IPC 3.0; instr ratio 0.75.
+        let samples = vec![
+            mk("switch", 200, 100),
+            mk("switch", 200, 100),
+            mk("threaded", 150, 50),
+            mk("threaded", 150, 50),
+        ];
+        let md = generate(&DataSet::from_samples(&samples, "warm"), "t");
+        assert!(md.contains("## Hardware counters"), "section renders when counters present");
+        assert!(md.contains("| instructions | cycles | IPC"), "counter columns present");
+        assert!(md.contains("2.000"), "switch IPC 2.0");
+        assert!(md.contains("3.000"), "threaded IPC 3.0");
+        assert!(md.contains("0.75\u{00d7}"), "instruction ratio threaded/switch = 0.75x");
+
+        // no counters -> no section.
+        let md0 = generate(&ds_with("subtract", [100.0, 100.0, 100.0]), "t");
+        assert!(!md0.contains("## Hardware counters"), "section omitted when counters are zero");
     }
 }

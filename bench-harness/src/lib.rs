@@ -100,7 +100,10 @@ pub use history::{
 };
 pub use inline_bench::{InlineResult, InlineVariant, run_inline};
 pub use meta_report::{VariantResult, classify_family, generate as generate_meta_report};
-pub use perf::{PerfSnapshot, available as perf_available, read as perf_read, setup as perf_setup};
+pub use perf::{
+    PerfSnapshot, available as perf_available, read as perf_read, read_all_raw as perf_read_all_raw,
+    setup as perf_setup, teardown as perf_teardown,
+};
 pub use quality::{VariantQuality, measure as measure_quality};
 pub use report::generate as generate_report;
 pub use sample::{BenchResult, Sample, load_samples_csv};
