@@ -186,16 +186,34 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             ));
         }
     } else {
+        // The `ratio` normalise mode adds a `× base` column: variant / baseline,
+        // the reference-floor lens (with the baseline set to a native-ceiling or
+        // null-dispatch variant, this reads as "how many times the floor").
+        let ratio_mode = ds.meta.normalise_mode == "ratio";
         md.push_str("\n## Function-under-test only (all cooldowns combined)\n\n");
-        md.push_str("| Variant | mean | best 20% | worst 20% | Δ mean |\n");
-        md.push_str("|---|---|---|---|---|\n");
+        if ratio_mode {
+            md.push_str("| Variant | mean | best 20% | worst 20% | Δ mean | × base |\n");
+            md.push_str("|---|---|---|---|---|---|\n");
+        } else {
+            md.push_str("| Variant | mean | best 20% | worst 20% | Δ mean |\n");
+            md.push_str("|---|---|---|---|---|\n");
+        }
         for v in &ds.variants {
             let d = pct_delta(v.algo_all.mean, base.algo_all.mean);
             let label = if v.name == base.name { "base".into() } else { format!("{:+.2}%", d) };
-            md.push_str(&format!(
-                "| {} | {:.0}ns | {:.0}ns | {:.0}ns | {} |\n",
-                v.name, v.algo_all.mean, v.algo_all.best_20pct, v.algo_all.worst_20pct, label
-            ));
+            if ratio_mode {
+                let ratio = if base.algo_all.mean > 0.0 { v.algo_all.mean / base.algo_all.mean } else { 0.0 };
+                let rlabel = if v.name == base.name { "1.00×".into() } else { format!("{:.2}×", ratio) };
+                md.push_str(&format!(
+                    "| {} | {:.0}ns | {:.0}ns | {:.0}ns | {} | {} |\n",
+                    v.name, v.algo_all.mean, v.algo_all.best_20pct, v.algo_all.worst_20pct, label, rlabel
+                ));
+            } else {
+                md.push_str(&format!(
+                    "| {} | {:.0}ns | {:.0}ns | {:.0}ns | {} |\n",
+                    v.name, v.algo_all.mean, v.algo_all.best_20pct, v.algo_all.worst_20pct, label
+                ));
+            }
         }
     }
 

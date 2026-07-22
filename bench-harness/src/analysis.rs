@@ -130,6 +130,13 @@ pub struct DataSetMeta {
     /// Ops per algorithm call. When > 0, the report shows a
     /// throughput column.
     pub ops_per_call:     u64,
+    /// How the baseline-relative column is framed: `"subtract"` (the Δ ns in
+    /// the statistical table, always shown), `"percent"` (the Δ mean %, always
+    /// shown), or `"ratio"` (a `× base` column, `variant / baseline`, added only
+    /// in this mode). The ratio framing is the reference-floor lens: with the
+    /// baseline set to a native-ceiling or null-dispatch floor variant, `× base`
+    /// reads directly as "how many times the floor" each variant costs.
+    pub normalise_mode:   String,
 }
 
 impl DataSet {
@@ -241,6 +248,14 @@ impl DataSet {
         self
     }
 
+    /// Set the baseline-relative framing (`"subtract"` / `"percent"` / `"ratio"`)
+    /// the report renders. See [`DataSetMeta::normalise_mode`].
+    #[must_use]
+    pub fn with_normalise_mode(mut self, mode: &str) -> Self {
+        self.meta.normalise_mode = mode.to_string();
+        self
+    }
+
     pub fn baseline(&self) -> &VariantAnalysis {
         &self.variants[self.baseline_idx]
     }
@@ -258,6 +273,7 @@ impl Default for DataSetMeta {
             counter_freq:     0,
             drift_correction: "none".into(),
             ops_per_call:     0,
+            normalise_mode:   "subtract".into(),
         }
     }
 }
