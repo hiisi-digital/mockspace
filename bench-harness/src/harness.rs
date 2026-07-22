@@ -292,6 +292,7 @@ pub fn run_worker(
 
         if batch_k > 1 {
             for i in 0 .. batch_size {
+                let pf_start = crate::perf::read();
                 let fw_start = counter::read_counter();
                 if mode == "warm" {
                     for _ in 0 .. batch_k {
@@ -312,7 +313,14 @@ pub fn run_worker(
                     last_cold_output = Some(output);
                 }
                 let fw_end = counter::read_counter();
-                let per_call = (fw_end - fw_start) / batch_k as u64;
+                // bracket PMU symmetrically with the timer and divide by batch_k
+                // for a per-call count, so amortized-batch samples carry real
+                // counters too (not zeros that would dilute the per-variant mean).
+                let pd = crate::perf::read().delta(&pf_start);
+                let bk = batch_k as u64;
+                batch_instructions += pd.instructions / bk;
+                batch_cycles += pd.cycles / bk;
+                let per_call = (fw_end - fw_start) / bk;
                 batch_algo_ticks += per_call;
                 batch_e2e_ticks += per_call;
             }
