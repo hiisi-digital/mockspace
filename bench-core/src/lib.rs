@@ -429,6 +429,30 @@ pub const fn abi_hash() -> u64 {
     h
 }
 
+/// The counter-quantization floor: the minimum tick span a timed region should
+/// cover so the counter's `+/- 1` tick quantization is a negligible fraction of
+/// the measurement. 2048 ticks holds the quantization error under about 0.05%.
+pub const CALIBRATION_FLOOR_TICKS: u64 = 2048;
+
+/// How many repetitions of a run make its total exceed `floor_ticks`, given one
+/// run measured `probe_ticks`. So the per-run time (total / reps) is measured
+/// above the counter's resolution instead of being dominated by quantization.
+///
+/// Always at least 1 (a run already above the floor needs no repetition), and
+/// capped at 2^20 so a near-zero probe cannot request an unbounded loop. This is
+/// the duration-floor calibration a variant applies itself (via
+/// [`timed_calibrated!`]), because the timed region lives inside the variant and
+/// only the variant can repeat it.
+#[must_use]
+pub const fn calibrate_reps(probe_ticks: u64, floor_ticks: u64) -> u64 {
+    if probe_ticks >= floor_ticks {
+        return 1;
+    }
+    let p = if probe_ticks == 0 { 1 } else { probe_ticks };
+    let reps = floor_ticks.div_ceil(p);
+    if reps > (1 << 20) { 1 << 20 } else { reps }
+}
+
 /// Time a block and return FfiBenchCall. Use inside `#[bench_variant]`
 /// functions (or hand-written variant entry points):
 ///
@@ -479,4 +503,86 @@ macro_rules! __bench_expand_body {
     ( $( $tokens:tt )* ) => {
         $crate::__bench_expand_body!( @setup [] $( $tokens )* )
     };
+}
+
+/// Like [`timed!`], but auto-calibrates: it probes one execution of the `run`
+/// block to size a repetition count (via [`calibrate_reps`]), then times that
+/// many repetitions and reports the per-repetition time. So a run whose single
+/// pass is below the counter quantum is measured above the counter's resolution
+/// without the variant author hand-tuning an iteration constant. The `run` block
+/// must be safe to execute several times (it is: the probe pass plus the timed
+/// passes), which every fold-the-input interpreter loop already is.
+///
+/// ```ignore
+/// fn variant<const N: usize>(input: &Input<N>, output: &mut Output<N>) -> FfiBenchCall {
+///     mockspace_bench_core::timed_calibrated! {
+///         setup { let d = decode(input); }
+///         run { interpret(&d, output); }
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! timed_calibrated {
+    ( $( $tokens:tt )* ) => {
+        $crate::__bench_calibrated_body!( @setup [] $( $tokens )* )
+    };
+}
+
+#[macro_export]
+macro_rules! __bench_calibrated_body {
+    ( @setup [ $( $setup:tt )* ] setup { $( $s:tt )* } $( $rest:tt )* ) => {
+        $crate::__bench_calibrated_body!( @setup [ $( $setup )* $( $s )* ] $( $rest )* )
+    };
+
+    ( @setup [ $( $setup:tt )* ] run { $( $run:tt )* } $( $teardown:tt )* ) => {{
+        $( $setup )*
+        // Probe one pass to size the calibration (also a real execution).
+        let __p0 = $crate::counter::read_counter();
+        { $( $run )* }
+        let __p1 = $crate::counter::read_counter();
+        let __reps = $crate::calibrate_reps(__p1 - __p0, $crate::CALIBRATION_FLOOR_TICKS);
+        // Time __reps passes, report the per-pass tick span.
+        let __start = $crate::counter::read_counter();
+        let mut __r: u64 = 0;
+        while __r < __reps {
+            { $( $run )* }
+            __r += 1;
+        }
+        let __end = $crate::counter::read_counter();
+        $( $teardown )*
+        $crate::FfiBenchCall { run_ticks: (__end - __start) / __reps }
+    }};
+
+    ( @setup [ $( $setup:tt )* ] $next:tt $( $rest:tt )* ) => {
+        $crate::__bench_calibrated_body!( @setup [ $( $setup )* $next ] $( $rest )* )
+    };
+}
+
+#[cfg(test)]
+mod calibration_tests {
+    use super::{calibrate_reps, CALIBRATION_FLOOR_TICKS};
+
+    #[test]
+    fn above_floor_needs_one_rep() {
+        assert_eq!(calibrate_reps(5000, 2048), 1);
+        assert_eq!(calibrate_reps(2048, 2048), 1, "exactly at floor");
+    }
+
+    #[test]
+    fn below_floor_scales_to_exceed_it() {
+        // 100-tick pass, 2048 floor -> ceil(2048/100) = 21 reps; 21*100 >= 2048.
+        let reps = calibrate_reps(100, 2048);
+        assert_eq!(reps, 21);
+        assert!(reps * 100 >= 2048);
+        // 1-tick pass -> 2048 reps.
+        assert_eq!(calibrate_reps(1, 2048), 2048);
+    }
+
+    #[test]
+    fn zero_probe_is_bounded() {
+        // A zero probe is treated as one tick, capped at 2^20 for the default floor.
+        assert_eq!(calibrate_reps(0, CALIBRATION_FLOOR_TICKS), 2048);
+        // A pathological huge floor still caps the rep count.
+        assert_eq!(calibrate_reps(0, u64::MAX), 1 << 20);
+    }
 }
