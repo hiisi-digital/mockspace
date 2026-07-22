@@ -47,6 +47,7 @@ pub mod workload;
 
 pub use analysis::{
     Comparison,
+    CostModel,
     DataSet,
     DataSetMeta,
     Stats,
@@ -55,6 +56,7 @@ pub use analysis::{
     bootstrap_ci_diff,
     bootstrap_ci_median,
     compare,
+    fit_cost_model,
     lag1_autocorrelation,
     pct_delta,
     sign_test,

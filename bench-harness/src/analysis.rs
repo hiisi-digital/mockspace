@@ -410,6 +410,76 @@ pub fn bootstrap_ci_diff(a: &[f64], b: &[f64], seed: u64) -> (f64, f64, f64) {
     bootstrap_ci_median(&diffs, seed)
 }
 
+/// A fitted `total(k) = S + k * I` cost model for a variant across program
+/// sizes. `S` is the size-independent setup cost (the intercept: decode,
+/// allocation, warmup that does not scale with the item count), `I` is the
+/// per-item cost (the slope: the cost of one node/record/element), and `r2` is
+/// the coefficient of determination (fit quality, 1.0 is a perfect line).
+///
+/// This is the cost-model lens on a variant: instead of one opaque time at one
+/// size, the variant is two numbers (a fixed cost and a marginal cost) plus a
+/// confidence that the linear model holds. Two variants compare on `I` (which
+/// dispatches/represents/accesses a node faster) independently of `S` (which has
+/// the cheaper setup), and a poor `r2` is the signal that the cost is not linear
+/// in the item count and the single-size comparison was hiding a regime change.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CostModel {
+    pub setup:    f64, // S: intercept, size-independent cost
+    pub per_item: f64, // I: slope, cost per item (node/record/element)
+    pub r2:       f64, // coefficient of determination in [0, 1]
+    pub points:   usize,
+}
+
+/// Fit `total(k) = S + k * I` by ordinary least squares over `(k, total)`
+/// points, where `k` is the program size (item count) and `total` is the
+/// measured time (or any additive cost) at that size. Returns `None` if there
+/// are fewer than two distinct `k` values (a line needs two points and a nonzero
+/// spread in `k`).
+///
+/// The points are typically one representative time (the median or best-20pct of
+/// the samples) per size, across the size sweep the harness already runs. The fit
+/// is the honest way to separate a variant's fixed overhead from its marginal
+/// cost, which a single size conflates.
+pub fn fit_cost_model(points: &[(f64, f64)]) -> Option<CostModel> {
+    let n = points.len();
+    if n < 2 {
+        return None;
+    }
+    let nf = n as f64;
+    let sum_k: f64 = points.iter().map(|p| p.0).sum();
+    let sum_t: f64 = points.iter().map(|p| p.1).sum();
+    let sum_kk: f64 = points.iter().map(|p| p.0 * p.0).sum();
+    let sum_kt: f64 = points.iter().map(|p| p.0 * p.1).sum();
+    let denom = nf * sum_kk - sum_k * sum_k;
+    if denom.abs() < f64::EPSILON {
+        return None; // all k identical: slope undefined
+    }
+    let per_item = (nf * sum_kt - sum_k * sum_t) / denom;
+    let setup = (sum_t - per_item * sum_k) / nf;
+
+    // R^2 = 1 - SS_res / SS_tot.
+    let mean_t = sum_t / nf;
+    let mut ss_res = 0.0;
+    let mut ss_tot = 0.0;
+    for &(k, t) in points {
+        let pred = setup + per_item * k;
+        ss_res += (t - pred) * (t - pred);
+        ss_tot += (t - mean_t) * (t - mean_t);
+    }
+    let r2 = if ss_tot < f64::EPSILON {
+        // No spread in the times: a flat line fits perfectly.
+        1.0
+    } else {
+        1.0 - ss_res / ss_tot
+    };
+    Some(CostModel {
+        setup,
+        per_item,
+        r2,
+        points: n,
+    })
+}
+
 /// Pairwise comparison result.
 #[derive(Debug, Clone, Copy)]
 pub struct Comparison {
@@ -543,5 +613,38 @@ impl BenchResult {
         let probe_input = (routine.bridge.input_builder)(0);
         ds.meta.ops_per_call = (routine.bridge.ops_per_call)(&probe_input);
         ds
+    }
+}
+
+#[cfg(test)]
+mod cost_model_tests {
+    use super::*;
+
+    #[test]
+    fn fits_a_clean_line() {
+        // total = 100 + 3*k exactly; the fit recovers S=100, I=3, R2=1.
+        let pts: Vec<(f64, f64)> = [64.0, 256.0, 1024.0, 4096.0]
+            .iter()
+            .map(|&k| (k, 100.0 + 3.0 * k))
+            .collect();
+        let m = fit_cost_model(&pts).expect("two+ distinct k");
+        assert!((m.setup - 100.0).abs() < 1e-6, "setup {}", m.setup);
+        assert!((m.per_item - 3.0).abs() < 1e-9, "per_item {}", m.per_item);
+        assert!((m.r2 - 1.0).abs() < 1e-9, "r2 {}", m.r2);
+    }
+
+    #[test]
+    fn noisy_line_has_high_but_imperfect_r2() {
+        // A line with small perturbations: slope/intercept close, R2 below 1.
+        let pts = vec![(64.0, 292.5), (256.0, 868.0), (1024.0, 3172.0), (4096.0, 12388.5)];
+        let m = fit_cost_model(&pts).unwrap();
+        assert!(m.per_item > 2.9 && m.per_item < 3.1, "per_item {}", m.per_item);
+        assert!(m.r2 > 0.999, "r2 {}", m.r2);
+    }
+
+    #[test]
+    fn declines_without_spread() {
+        assert!(fit_cost_model(&[(512.0, 10.0)]).is_none(), "single point");
+        assert!(fit_cost_model(&[(512.0, 10.0), (512.0, 20.0)]).is_none(), "no k spread");
     }
 }
