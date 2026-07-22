@@ -131,7 +131,7 @@ unsafe fn load_variant(dylib_path: &str) -> Result<(String, BenchEntryFn), Strin
 /// Output format on stdout, one line per batch:
 ///
 /// ```text
-/// <name>\t<mode>\t<batch_idx>\t<e2e_ns>\t<algo_ns>\t<bridge_ns>\t<batch_count>[\t<score>]
+/// <name>\t<mode>\t<batch_idx>\t<e2e_ns>\t<algo_ns>\t<bridge_ns>\t<batch_count>\t<instructions>\t<cycles>[\t<score>]
 /// ```
 ///
 /// Or `TIMEOUT\t<name>\t<mode>\t<value>` on early abort.
@@ -155,6 +155,53 @@ pub fn run_worker(
     // manifest's `threaded = true` opts out of the self-pin entirely.
     if !threaded {
         counter::pin_to_perf_cores();
+    }
+
+    // Optional hardware perf counters: arm on this worker thread when the env
+    // opts in (set by running the bench with `--perf-counters`, which requires
+    // sudo; the env inherits to each serially-spawned worker). The RAII guard
+    // releases the PMU on every exit path, including early returns and panics,
+    // so the exclusive claim is never left for the next worker.
+    struct PerfGuard;
+    impl Drop for PerfGuard {
+        fn drop(&mut self) {
+            crate::perf::teardown();
+        }
+    }
+    if std::env::var("MOCKSPACE_BENCH_PERF").is_ok() {
+        crate::perf::setup();
+    }
+    let _perf_guard = PerfGuard;
+
+    // One-shot validation diagnostic: with MOCKSPACE_BENCH_PERF_DIAG set (and the
+    // PMU armed), run a known ~1e6-iteration loop and dump the raw per-slot
+    // counter deltas to stderr. The slot whose delta is ~a few million is the
+    // instructions counter; the larger one is cycles. This is the single command
+    // that confirms (or corrects) the FIXED_*_SUBINDEX guesses in perf.rs.
+    if std::env::var("MOCKSPACE_BENCH_PERF_DIAG").is_ok() && crate::perf::available() {
+        let before = crate::perf::read_all_raw();
+        let mut acc = 0u64;
+        for i in 0 .. 1_000_000u64 {
+            acc = acc.wrapping_add(std::hint::black_box(i));
+        }
+        std::hint::black_box(acc);
+        let after = crate::perf::read_all_raw();
+        let deltas: Vec<i128> = after
+            .iter()
+            .zip(before.iter())
+            .map(|(a, b)| *a as i128 - *b as i128)
+            .collect();
+        eprintln!("PERF_DIAG raw before: {:?}", before);
+        eprintln!("PERF_DIAG raw after:  {:?}", after);
+        eprintln!(
+            "PERF_DIAG deltas (1e6-iter loop): {:?} -- the slot ~a few million is instructions, the larger is cycles",
+            deltas
+        );
+        let snap = crate::perf::read();
+        eprintln!(
+            "PERF_DIAG current perf.rs mapping reads: instructions={} cycles={} ipc={:.3}",
+            snap.instructions, snap.cycles, snap.ipc()
+        );
     }
 
     // Worker mode emits structured failure on stderr + a TIMEOUT-shaped
@@ -238,6 +285,10 @@ pub fn run_worker(
         let mut batch_e2e_ticks = 0u64;
         let mut batch_algo_ticks = 0u64;
         let mut batch_bridge_ticks = 0u64;
+        // host-side PMU deltas over the measured region, accumulated per batch.
+        // Zero when perf counters are unavailable / off (the reads return zeros).
+        let mut batch_instructions = 0u64;
+        let mut batch_cycles = 0u64;
 
         if batch_k > 1 {
             for i in 0 .. batch_size {
@@ -268,6 +319,7 @@ pub fn run_worker(
         } else {
             for i in 0 .. batch_size {
                 let s = sub_seeds[base + i];
+                let pf_start = crate::perf::read();
                 let fw_start = counter::read_counter();
                 let wall_start = Instant::now();
                 let mut algo_accum = 0u64;
@@ -314,6 +366,9 @@ pub fn run_worker(
                 }
 
                 let fw_end = counter::read_counter();
+                let pd = crate::perf::read().delta(&pf_start);
+                batch_instructions += pd.instructions;
+                batch_cycles += pd.cycles;
                 batch_algo_ticks += algo_accum;
                 // bridge = conversion overhead = (outer algo - inner algo)
                 let bridge = call_accum.saturating_sub(algo_accum);
@@ -362,16 +417,22 @@ pub fn run_worker(
             }
         });
 
-        // One line per batch
+        // per-call PMU means for this batch (0 when counters are off).
+        let bs = batch_size.max(1) as u64;
+        let instr_per_call = batch_instructions / bs;
+        let cycles_per_call = batch_cycles / bs;
+
+        // One line per batch. instructions/cycles sit at fixed columns 7,8
+        // (before the optional score at 9) so the parser reads them positionally.
         if let Some(s) = batch_score {
             println!(
-                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{:.2}",
-                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size, s
+                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{:.2}",
+                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size, instr_per_call, cycles_per_call, s
             );
         } else {
             println!(
-                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}",
-                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size
+                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}",
+                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size, instr_per_call, cycles_per_call
             );
         }
 
@@ -593,7 +654,7 @@ pub fn run_orchestrator(
                             continue;
                         }
                         let parts: Vec<&str> = line.split('\t').collect();
-                        if parts.len() >= 7 {
+                        if parts.len() >= 9 {
                             all_samples.push(Sample {
                                 run:         hr + 1,
                                 pass:        pass_num,
@@ -605,7 +666,10 @@ pub fn run_orchestrator(
                                 algo_ns:     parts[4].parse().unwrap_or(0.0),
                                 bridge_ns:   parts[5].parse().unwrap_or(0.0),
                                 batch_count: parts[6].parse().unwrap_or(0),
-                                score:       parts.get(7).and_then(|s| s.parse().ok()),
+                                // instructions/cycles at fixed 7,8; optional score at 9.
+                                instructions: parts.get(7).and_then(|s| s.parse().ok()).unwrap_or(0),
+                                cycles:       parts.get(8).and_then(|s| s.parse().ok()).unwrap_or(0),
+                                score:       parts.get(9).and_then(|s| s.parse().ok()),
                                 input_tag:   input_tagger.map(|f| f(seed).1),
                             });
                         }
@@ -638,13 +702,13 @@ pub fn run_orchestrator(
 /// `<path>.meta.json` carrying [`EnvMeta`].
 pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
     let mut csv = String::from(
-        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag\n",
+        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles\n",
     );
     for s in &result.samples {
         let score_str = s.score.map(|v| format!("{:.2}", v)).unwrap_or_default();
         let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{}\n",
+            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{},{},{}\n",
             s.run,
             s.pass,
             s.cooldown_ms,
@@ -656,7 +720,9 @@ pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
             s.bridge_ns,
             s.batch_count,
             score_str,
-            tag_str
+            tag_str,
+            s.instructions,
+            s.cycles
         ));
     }
     std::fs::write(path, &csv).map_err(|e| BenchError::io("writing csv", e))?;

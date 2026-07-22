@@ -217,6 +217,28 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         }
     }
 
+    // ── Hardware counters (rendered only when perf counters were captured) ──
+    if ds.variants.iter().any(|v| v.mean_instructions > 0.0) {
+        md.push_str("\n## Hardware counters (per call)\n\n");
+        md.push_str("| Variant | instructions | cycles | IPC | × base instr |\n");
+        md.push_str("|---|---|---|---|---|\n");
+        let base_instr = base.mean_instructions;
+        for v in &ds.variants {
+            let ipc = if v.mean_cycles > 0.0 { v.mean_instructions / v.mean_cycles } else { 0.0 };
+            let ratio = if base_instr > 0.0 { v.mean_instructions / base_instr } else { 0.0 };
+            let rlabel = if v.name == base.name { "1.00×".to_string() } else { format!("{:.2}×", ratio) };
+            md.push_str(&format!(
+                "| {} | {:.0} | {:.0} | {:.3} | {} |\n",
+                v.name, v.mean_instructions, v.mean_cycles, ipc, rlabel
+            ));
+        }
+        md.push_str(
+            "\nInstructions and cycles are the mean over the variant's samples for the measured region. \
+             IPC is instructions per cycle. The instruction ratio isolates whether a variant wins by \
+             retiring fewer instructions or by executing the same instructions more efficiently.\n",
+        );
+    }
+
     // ── Performance model (roofline) ──
     if ops > 0 {
         md.push_str("\n## Performance model\n\n");
@@ -730,6 +752,8 @@ mod tests {
             batch_count: 1,
             score:       None,
             input_tag:   None,
+            instructions: 0,
+            cycles:       0,
         }
     }
 
