@@ -87,6 +87,44 @@ pub struct MatrixSpec {
     pub axes:               Vec<AxisSpec>,
 }
 
+/// Keys the generator injects itself; an axis name or a value `subst` key that
+/// collides with one of these would be silently overwritten (or overwrite it),
+/// so `validate` rejects the spec instead. `n` is left for the bench framework's
+/// per-size dispatch, so a template's `{n}` must survive to the generated crate.
+const RESERVED_KEYS: &[&str] = &["name", "carrier_features", "n"];
+
+impl MatrixSpec {
+    /// Reject a spec that would expand to nonsense: no axes (the product is one
+    /// empty composition, leaving `{axis}` braces in the rendered name), an axis
+    /// with no values (the product collapses to zero variants), or a name that
+    /// collides with a generator-injected key. Callers that expand or generate a
+    /// spec should validate it first; `generate` does so before writing anything.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.axes.is_empty() {
+            return Err("matrix has no axes; the product is a single empty composition".into());
+        }
+        for axis in &self.axes {
+            if axis.values.is_empty() {
+                return Err(format!("axis `{}` has no values; the product collapses to zero variants", axis.name));
+            }
+            if RESERVED_KEYS.contains(&axis.name.as_str()) {
+                return Err(format!("axis name `{}` collides with a generator-injected key", axis.name));
+            }
+            for val in &axis.values {
+                for key in val.subst.keys() {
+                    if RESERVED_KEYS.contains(&key.as_str()) {
+                        return Err(format!("value `{}` subst key `{}` collides with a generator-injected key", val.tag, key));
+                    }
+                    if self.axes.iter().any(|a| &a.name == key) {
+                        return Err(format!("value `{}` subst key `{}` collides with axis name `{}`", val.tag, key, key));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// One expanded point in the matrix: the chosen value per axis, the resolved
 /// variant name, the union of required features, and the substitution map.
 #[derive(Clone, Debug, PartialEq)]
@@ -169,8 +207,13 @@ pub fn render(template: &str, subst: &BTreeMap<String, String>) -> String {
                 i += 1;
             }
         } else {
-            out.push(bytes[i] as char);
-            i += 1;
+            // copy the whole UTF-8 char; `bytes[i] as char` corrupts multibyte.
+            // the brace branches above stay byte-indexed safely: `{`/`}` are
+            // ASCII, and a multibyte char's bytes are all >= 0x80, so they never
+            // match those branches.
+            let ch = template[i ..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
         }
     }
     out
@@ -255,6 +298,7 @@ pub fn render_bench_section(spec: &MatrixSpec, comps: &[Composition]) -> String 
 /// Generate every variant crate under `out_dir/variants/<name>/` and return the
 /// `bench.toml` section. Writes `Cargo.toml` and `src/lib.rs` per variant.
 pub fn generate(spec: &MatrixSpec, out_dir: &Path) -> std::io::Result<String> {
+    spec.validate().map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let comps = expand(spec);
     for c in &comps {
         let v = render_variant(spec, c);
@@ -361,6 +405,70 @@ mod tests {
         assert_eq!(render("a{x}b", &s), "aXb");
         assert_eq!(render("{{lit}}", &s), "{lit}");
         assert_eq!(render("{unknown}", &s), "{unknown}", "unknown left verbatim");
+    }
+
+    #[test]
+    fn render_preserves_multibyte() {
+        // regression: `bytes[i] as char` corrupted non-ASCII literal text. A
+        // template carrying `x base` in its title, an em-dash-free arrow, or any
+        // UTF-8 must round-trip, including a multibyte char adjacent to a key.
+        let s = BTreeMap::from([("v".to_string(), "V".to_string())]);
+        assert_eq!(render("ratio x\u{00d7} base", &s), "ratio x\u{00d7} base");
+        assert_eq!(render("\u{00d7}{v}\u{00d7}", &s), "\u{00d7}V\u{00d7}");
+        assert_eq!(render("caf\u{00e9} {v} r\u{00e9}sum\u{00e9}", &s), "caf\u{00e9} V r\u{00e9}sum\u{00e9}");
+    }
+
+    #[test]
+    fn validate_accepts_a_well_formed_spec() {
+        assert!(dispatch_spec().validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty_axes() {
+        let mut spec = dispatch_spec();
+        spec.axes.clear();
+        assert!(spec.validate().unwrap_err().contains("no axes"));
+    }
+
+    #[test]
+    fn validate_rejects_axis_with_no_values() {
+        let mut spec = dispatch_spec();
+        spec.axes[0].values.clear();
+        let e = spec.validate().unwrap_err();
+        assert!(e.contains("no values") && e.contains("vocab"), "{e}");
+    }
+
+    #[test]
+    fn validate_rejects_reserved_axis_name() {
+        let mut spec = dispatch_spec();
+        spec.axes[0].name = "name".into();
+        assert!(spec.validate().unwrap_err().contains("collides"));
+    }
+
+    #[test]
+    fn validate_rejects_reserved_subst_key() {
+        let mut spec = dispatch_spec();
+        spec.axes[0].values[0].subst.insert("carrier_features".into(), "oops".into());
+        assert!(spec.validate().unwrap_err().contains("carrier_features"));
+    }
+
+    #[test]
+    fn validate_rejects_subst_key_colliding_with_axis_name() {
+        let mut spec = dispatch_spec();
+        // a value on `shape` binds a subst key named `vocab`, an existing axis.
+        spec.axes[1].values[0].subst.insert("vocab".into(), "clash".into());
+        let e = spec.validate().unwrap_err();
+        assert!(e.contains("axis name") && e.contains("vocab"), "{e}");
+    }
+
+    #[test]
+    fn generate_errors_on_invalid_spec() {
+        let mut spec = dispatch_spec();
+        spec.axes[1].values.clear();
+        let dir = std::env::temp_dir().join(format!("mx_bad_{}", std::process::id()));
+        let err = generate(&spec, &dir).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!dir.join("variants").exists(), "nothing written for an invalid spec");
     }
 
     #[test]

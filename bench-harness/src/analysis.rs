@@ -466,9 +466,15 @@ pub fn fit_cost_model(points: &[(f64, f64)]) -> Option<CostModel> {
     let sum_t: f64 = points.iter().map(|p| p.1).sum();
     let sum_kk: f64 = points.iter().map(|p| p.0 * p.0).sum();
     let sum_kt: f64 = points.iter().map(|p| p.0 * p.1).sum();
+    // denom = n*Sigma(k^2) - (Sigma k)^2 = Sigma_{i<j}(k_i - k_j)^2 (Lagrange
+    // identity), so it is >= 0 and zero iff all k are identical. Test it relative
+    // to its own scale (n*Sigma(k^2)) rather than an absolute epsilon: at large k
+    // the raw denom is huge even for near-collinear points, so an absolute floor
+    // would pass a numerically unstable slope. The relative floor catches
+    // near-collinear k at any magnitude.
     let denom = nf * sum_kk - sum_k * sum_k;
-    if denom.abs() < f64::EPSILON {
-        return None; // all k identical: slope undefined
+    if denom <= f64::EPSILON * (nf * sum_kk).max(1.0) {
+        return None; // no (or negligible) spread in k: slope undefined
     }
     let per_item = (nf * sum_kt - sum_k * sum_t) / denom;
     let setup = (sum_t - per_item * sum_k) / nf;

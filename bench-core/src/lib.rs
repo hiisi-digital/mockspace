@@ -585,4 +585,23 @@ mod calibration_tests {
         // A pathological huge floor still caps the rep count.
         assert_eq!(calibrate_reps(0, u64::MAX), 1 << 20);
     }
+
+    // Exercise the `timed_calibrated!` expansion end to end: the setup/run token
+    // muncher, the probe pass, the calibrated repetition loop, and the per-pass
+    // division. Compiling it at all proves setup tokens are hoisted before the
+    // probe (the run block reads `acc`, declared in setup); running it proves the
+    // division never divides by zero (calibrate_reps floors reps at 1).
+    #[test]
+    fn timed_calibrated_expands_and_runs() {
+        let call = crate::timed_calibrated! {
+            setup { let mut acc: u64 = 0; }
+            run {
+                acc = acc.wrapping_add(core::hint::black_box(3));
+                core::hint::black_box(acc);
+            }
+        };
+        // run_ticks is a per-pass tick span (may be 0 on a very fast pass, but is
+        // a well-formed u64 produced without panicking).
+        let _ticks: u64 = call.run_ticks;
+    }
 }
