@@ -255,6 +255,49 @@ mod tests {
         assert_eq!(PerfSnapshot::default().ipc(), 0.0);
     }
 
+    /// The privileged validation. Ignored by default; run it deliberately under
+    /// sudo with the feature on to confirm (or correct) the FIXED_*_SUBINDEX
+    /// mapping in this module against a known workload:
+    ///
+    ///   sudo cargo test -p mockspace-bench-harness --features perf-counters \
+    ///        perf_validate_counter_mapping -- --ignored --nocapture
+    ///
+    /// The slot whose delta is ~a few million (the loop's retired instructions)
+    /// is the instructions counter; the larger is cycles. If the "current mapping
+    /// reads" line already shows instructions ~= the loop size, the guesses are
+    /// right; otherwise adjust FIXED_CYCLES_SUBINDEX / FIXED_INSTRS_SUBINDEX.
+    #[test]
+    #[ignore = "needs sudo + the perf-counters feature; see the doc comment for the command"]
+    fn perf_validate_counter_mapping() {
+        assert!(
+            setup(),
+            "PMU setup failed: need sudo, an Apple-Silicon Mac, and --features perf-counters"
+        );
+        let before = read_all_raw();
+        let mut acc = 0u64;
+        for i in 0 .. 1_000_000u64 {
+            acc = acc.wrapping_add(std::hint::black_box(i));
+        }
+        std::hint::black_box(acc);
+        let after = read_all_raw();
+        let deltas: Vec<i128> = after
+            .iter()
+            .zip(before.iter())
+            .map(|(a, b)| *a as i128 - *b as i128)
+            .collect();
+        println!("raw before: {before:?}");
+        println!("raw after:  {after:?}");
+        println!("deltas (1e6-iter loop): {deltas:?}");
+        let s = read();
+        println!(
+            "current perf.rs mapping reads: instructions={} cycles={} ipc={:.3}",
+            s.instructions,
+            s.cycles,
+            s.ipc()
+        );
+        teardown();
+    }
+
     #[test]
     fn unavailable_without_feature_reads_zero() {
         // With the perf-counters feature off (the default test build), reads are
