@@ -165,9 +165,10 @@ mod macos {
     static FIXED_OFFSET: AtomicU32 = AtomicU32::new(0);
 
     pub fn setup() -> bool {
-        // total counters across fixed + configurable, and how many are fixed; the
-        // fixed block sits at the end of the buffer, so its offset is the count of
-        // configurable counters (total - fixed).
+        // total counters across fixed + configurable, and how many are fixed. The
+        // fixed block is at the START of the buffer (FIXED_OFFSET = 0, set below,
+        // per the M1 validation); n_fixed is used only for the sanity check that at
+        // least the two fixed counters exist.
         let total = unsafe { kpc_get_counter_count(KPC_CLASS_FIXED_MASK | KPC_CLASS_CONFIGURABLE_MASK) };
         let n_fixed = unsafe { kpc_get_counter_count(KPC_CLASS_FIXED_MASK) };
         if total == 0 || n_fixed < 2 || total < n_fixed {
@@ -211,14 +212,18 @@ mod macos {
         ACTIVE.load(Ordering::Relaxed)
     }
 
+    // A stack buffer sized well above any real PMU (M1 exposes 10 counters), so
+    // the per-call `read` needs no heap allocation.
+    const MAX_COUNTERS: usize = 32;
+
     #[inline]
     pub fn read() -> PerfSnapshot {
         if !ACTIVE.load(Ordering::Relaxed) {
             return PerfSnapshot::default();
         }
-        let total = TOTAL_COUNT.load(Ordering::Relaxed) as usize;
+        let total = (TOTAL_COUNT.load(Ordering::Relaxed) as usize).min(MAX_COUNTERS);
         let off = FIXED_OFFSET.load(Ordering::Relaxed) as usize;
-        let mut buf = vec![0u64; total.max(2)];
+        let mut buf = [0u64; MAX_COUNTERS];
         let rc = unsafe { kpc_get_thread_counters(0, total as u32, buf.as_mut_ptr()) };
         if rc != 0 {
             return PerfSnapshot::default();
