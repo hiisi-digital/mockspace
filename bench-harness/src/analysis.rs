@@ -101,6 +101,11 @@ pub struct VariantAnalysis {
     /// Per-input-tag algo Stats (e.g. per sparsity pattern). Empty if
     /// no samples have `input_tag`.
     pub algo_per_tag:     BTreeMap<u8, Stats>,
+    /// Mean hardware instructions retired per call across this variant's
+    /// samples, and mean cycles. Zero when perf counters were off. `ipc` is the
+    /// derived instructions/cycles ratio (0 when cycles is 0).
+    pub mean_instructions: f64,
+    pub mean_cycles:       f64,
 }
 
 /// Full dataset with per-variant analysis.
@@ -199,6 +204,12 @@ impl DataSet {
                 .map(|(k, mut v)| (k, Stats::from_values(&mut v)))
                 .collect();
 
+            // mean PMU counts across this variant's samples (0 when perf was off).
+            let nsamp = vsamples.len().max(1) as f64;
+            let mean_instructions =
+                vsamples.iter().map(|s| s.instructions as f64).sum::<f64>() / nsamp;
+            let mean_cycles = vsamples.iter().map(|s| s.cycles as f64).sum::<f64>() / nsamp;
+
             variants.push(VariantAnalysis {
                 name: name.clone(),
                 algo_all: Stats::from_values(&mut algo_vals),
@@ -211,6 +222,8 @@ impl DataSet {
                 keyed_algo,
                 scores,
                 algo_per_tag,
+                mean_instructions,
+                mean_cycles,
             });
         }
 

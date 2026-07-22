@@ -50,6 +50,12 @@ pub struct Sample {
     /// Optional input tag for per-pattern breakdown (e.g. sparsity
     /// pattern). Tag values are routine-defined.
     pub input_tag:   Option<u8>,
+    /// Hardware instructions retired for this batch's measured region (per call,
+    /// mean over the batch). Zero when perf counters are unavailable / off.
+    pub instructions: u64,
+    /// Hardware cycles for this batch's measured region (per call, mean). Zero
+    /// when perf counters are unavailable / off.
+    pub cycles:       u64,
 }
 
 /// What [`crate::run`] returns on success.
@@ -104,6 +110,9 @@ pub fn load_samples_csv(path: &Path) -> Result<Vec<Sample>, BenchError> {
             batch_count: p[9].parse().unwrap_or(0),
             score:       p.get(10).and_then(|s| s.parse().ok()),
             input_tag:   p.get(11).and_then(|s| s.parse().ok()),
+            // appended columns; absent in older CSVs, default 0.
+            instructions: p.get(12).and_then(|s| s.parse().ok()).unwrap_or(0),
+            cycles:       p.get(13).and_then(|s| s.parse().ok()).unwrap_or(0),
         });
     }
     Ok(samples)
