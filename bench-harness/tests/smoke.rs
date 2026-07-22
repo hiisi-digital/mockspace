@@ -43,6 +43,8 @@ fn synthetic_samples() -> Vec<Sample> {
                         batch_count: 100,
                         score: Some(42.0),
                         input_tag: Some(0),
+                        instructions: 0,
+                        cycles: 0,
                     });
                     samples.push(Sample {
                         run,
@@ -57,6 +59,8 @@ fn synthetic_samples() -> Vec<Sample> {
                         batch_count: 100,
                         score: Some(40.0),
                         input_tag: Some(0),
+                        instructions: 0,
+                        cycles: 0,
                     });
                 }
             }
