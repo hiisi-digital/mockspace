@@ -139,13 +139,16 @@ mod macos {
     // We count fixed only in this cut.
     const COUNT_MASK: u32 = KPC_CLASS_FIXED_MASK;
 
-    // FIXME (joint validation): the order of the two fixed counters in the buffer.
-    // Apple Silicon has two fixed counters, cycles and instructions; which slot is
-    // which is confirmed by the privileged `read_all_raw` diagnostic against a
-    // known workload. These are the current best-guess; the validation run adjusts
-    // them if the raw dump shows the other order.
-    const FIXED_CYCLES_SUBINDEX: usize = 0;
-    const FIXED_INSTRS_SUBINDEX: usize = 1;
+    // Validated 2026-07-22 on M1 (Firestorm) via the privileged diagnostic: under
+    // FIXED counting only slots 0 and 1 of the kpc_get_thread_counters buffer are
+    // active, so the fixed counters sit at the START of the buffer (FIXED_OFFSET
+    // = 0, below), NOT at the end. Against a 1e6-iteration debug loop slot 0 held
+    // the smaller delta (~22.1M) and slot 1 the larger (~113.1M); the only
+    // assignment consistent with unoptimized code's sub-1 IPC is slot 0 =
+    // instructions, slot 1 = cycles (the reverse would imply IPC ~5.1, impossible
+    // for a debug build). So:
+    const FIXED_INSTRS_SUBINDEX: usize = 0;
+    const FIXED_CYCLES_SUBINDEX: usize = 1;
 
     #[link(name = "kperf", kind = "framework")]
     unsafe extern "C" {
@@ -185,7 +188,11 @@ mod macos {
             return false;
         }
         TOTAL_COUNT.store(total, Ordering::Relaxed);
-        FIXED_OFFSET.store(total - n_fixed, Ordering::Relaxed);
+        // Fixed counters are at the START of the buffer on Apple Silicon (slots
+        // 0,1), confirmed by the privileged validation diagnostic (only slots 0,1
+        // were active under FIXED counting). An earlier `total - n_fixed` guess
+        // (fixed-at-end) read the inactive tail slots and reported zeros.
+        FIXED_OFFSET.store(0, Ordering::Relaxed);
         ACTIVE.store(true, Ordering::Relaxed);
         true
     }
