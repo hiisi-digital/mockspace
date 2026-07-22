@@ -709,3 +709,63 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
 
     md
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::DataSet;
+    use crate::sample::Sample;
+
+    fn sample(variant: &str, algo: f64) -> Sample {
+        Sample {
+            run:         0,
+            pass:        0,
+            cooldown_ms: 0,
+            mode:        "warm".into(),
+            variant:     variant.into(),
+            e2e_ns:      algo + 10.0,
+            algo_ns:     algo,
+            bridge_ns:   10.0,
+            batch_idx:   0,
+            batch_count: 1,
+            score:       None,
+            input_tag:   None,
+        }
+    }
+
+    // two variants, "switch" (baseline, mean ~100) and "threaded" (mean ~50), so
+    // the ratio is a clean 0.50x. from_samples sorts by name and defaults
+    // baseline_idx to 0, so "switch" (< "threaded") is the baseline.
+    fn ds_with(mode: &str, switch_algo: [f64; 3]) -> DataSet {
+        let samples: Vec<Sample> = switch_algo
+            .iter()
+            .flat_map(|&s| [sample("switch", s), sample("threaded", s / 2.0)])
+            .collect();
+        let mut ds = DataSet::from_samples(&samples, "warm");
+        ds.meta.normalise_mode = mode.into();
+        ds
+    }
+
+    #[test]
+    fn ratio_mode_adds_base_column() {
+        let md = generate(&ds_with("ratio", [90.0, 100.0, 110.0]), "t");
+        assert!(md.contains("| \u{0394} mean | \u{00d7} base |"), "ratio header present");
+        assert!(md.contains("1.00\u{00d7}"), "baseline row reads 1.00x");
+        assert!(md.contains("0.50\u{00d7}"), "threaded is half the baseline");
+    }
+
+    #[test]
+    fn subtract_mode_omits_base_column() {
+        let md = generate(&ds_with("subtract", [90.0, 100.0, 110.0]), "t");
+        assert!(!md.contains("\u{00d7} base"), "no ratio column outside ratio mode");
+    }
+
+    #[test]
+    fn ratio_mode_zero_base_does_not_panic() {
+        // an all-zero baseline (e.g. a degenerate floor variant) must render
+        // 0.00x for the others without a divide-by-zero panic.
+        let md = generate(&ds_with("ratio", [0.0, 0.0, 0.0]), "t");
+        assert!(md.contains("1.00\u{00d7}"), "base still 1.00x");
+        assert!(md.contains("0.00\u{00d7}"), "guarded ratio renders 0.00x");
+    }
+}
