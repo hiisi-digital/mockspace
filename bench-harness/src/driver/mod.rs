@@ -381,6 +381,14 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect();
+            // Disassembly dup-check before timing: two variants that compile to
+            // identical machine code will benchmark identically, so a measured
+            // "difference" between them would be pure noise. This is a fairness
+            // guard (it catches a comparison that is secretly against itself, e.g.
+            // an axis value that the optimizer collapsed into another), and it is
+            // cheap (one objdump per variant, once, before the run). Warn-only: a
+            // legitimately-identical pair is the bench's call, not a hard error.
+            crate::disasm::check_duplicates(&path_strings);
             match validation::validate(
                 &routine,
                 &path_strings,
@@ -451,6 +459,9 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             let mut ds = result.dataset_for_routine(&routine, "warm");
             if let Some(bl) = config.normalise_baseline.as_deref() {
                 ds = ds.with_baseline(bl);
+            }
+            if let Some(mode) = config.normalise_mode.as_deref() {
+                ds = ds.with_normalise_mode(mode);
             }
             let md = crate::generate_report(&ds, &result.title);
             if let Err(e) = std::fs::write(&findings_path, md) {
