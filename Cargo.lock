@@ -230,6 +230,7 @@ dependencies = [
 name = "mockspace-bench-matrix"
 version = "0.1.0"
 dependencies = [
+ "libloading",
  "mockspace-bench-core",
  "mockspace-bench-harness",
  "paste",

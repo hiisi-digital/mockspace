@@ -19,6 +19,11 @@ categories = ["development-tools", "development-tools::profiling"]
 # module lives in a crate rebuilt per variant.
 default = ["generate"]
 generate = ["dep:mockspace-bench-harness"]
+# `boundary` pulls `libloading` for the `boundary::Runtime` helper: a dlopen'd
+# sibling runtime cdylib a boundary bench crosses into so the crossing is a real
+# cross-object call the optimizer cannot inline. Opt-in, since only boundary
+# benches need it and it adds a std dep to the per-variant-rebuilt cell crate.
+boundary = ["dep:libloading"]
 # demo-only features named by the `tests/macro_expansion.rs` fixtures, which
 # exercise a cell carrying `#[feature = "ft"]` and a cell + per-cell-setup
 # carrying `#[feature = "jit"]`. The macro cfg-gates a feature-carrying cell on
@@ -31,6 +36,9 @@ jit = []
 [dependencies]
 mockspace-bench-core = { path = "../bench-core", features = ["std"] }
 mockspace-bench-harness = { path = "../bench-harness", optional = true }
+# dlopen for the `boundary::Runtime` helper (the `boundary` feature). The harness
+# already pins the same version for its variant-loading path.
+libloading = { version = "0.8", optional = true }
 # used only by the bench_matrix! macro to concatenate `cell_<tag>` fn names,
 # which macro_rules cannot do natively. Re-exported so consumers need no direct
 # dep. Compile-time only, zero transitive deps.
