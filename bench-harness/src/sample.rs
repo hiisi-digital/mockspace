@@ -56,6 +56,21 @@ pub struct Sample {
     /// Hardware cycles for this batch's measured region (per call, mean). Zero
     /// when perf counters are unavailable / off.
     pub cycles:       u64,
+    /// One-time setup cost S in nanoseconds (per call, mean over the batch).
+    /// Populated only by the matrix scaffold, which times setup on every call;
+    /// zero for plain `timed!` / `timed_calibrated!` variants that measure only
+    /// the run block. With this alongside [`Self::algo_ns`], the tier breakeven
+    /// `k* = (S_b - S_a) / (I_a - I_b)` is computable directly from the samples.
+    pub setup_ns:     f64,
+    /// Cold first-touch cost in nanoseconds (per call, mean): the first run pass
+    /// before the calibrated loop warms caches and the branch predictor. Matrix
+    /// scaffold only; zero otherwise.
+    pub first_ns:     f64,
+    /// Reps-invariant fidelity digest for cross-variant validation. Computed on a
+    /// fixed-seed, fixed-init single pass, so it is comparable across variants
+    /// under calibration where the run-block output bytes are not. Matrix
+    /// scaffold only; zero otherwise.
+    pub digest:       u64,
 }
 
 /// What [`crate::run`] returns on success.
@@ -113,6 +128,10 @@ pub fn load_samples_csv(path: &Path) -> Result<Vec<Sample>, BenchError> {
             // appended columns; absent in older CSVs, default 0.
             instructions: p.get(12).and_then(|s| s.parse().ok()).unwrap_or(0),
             cycles:       p.get(13).and_then(|s| s.parse().ok()).unwrap_or(0),
+            // matrix-scaffold columns, appended after perf; absent in older CSVs.
+            setup_ns:     p.get(14).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            first_ns:     p.get(15).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            digest:       p.get(16).and_then(|s| s.parse().ok()).unwrap_or(0),
         });
     }
     Ok(samples)
@@ -127,20 +146,40 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("perf_csv_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
-        // new format: 14 columns including the appended instructions,cycles.
+        // newest format: 17 columns including the appended matrix columns
+        // setup_ns,first_ns,digest after instructions,cycles.
         let newp = dir.join("new.csv");
         std::fs::write(
             &newp,
-            "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles\n\
-             1,1,0,warm,switch,0,120.0,100.0,20.0,64,,,4200,900\n",
+            "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n\
+             1,1,0,warm,switch,0,120.0,100.0,20.0,64,,,4200,900,555.5,180.0,987654321\n",
         )
         .unwrap();
         let s = load_samples_csv(&newp).unwrap();
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].instructions, 4200);
         assert_eq!(s[0].cycles, 900);
+        assert_eq!(s[0].setup_ns, 555.5);
+        assert_eq!(s[0].first_ns, 180.0);
+        assert_eq!(s[0].digest, 987654321);
 
-        // old format: 12 columns, no perf; must still load, perf defaulting 0.
+        // 14-column format (perf but no matrix columns) must still load, matrix
+        // columns defaulting to 0.
+        let perfp = dir.join("perf.csv");
+        std::fs::write(
+            &perfp,
+            "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles\n\
+             1,1,0,warm,switch,0,120.0,100.0,20.0,64,,,4200,900\n",
+        )
+        .unwrap();
+        let sp = load_samples_csv(&perfp).unwrap();
+        assert_eq!(sp.len(), 1);
+        assert_eq!(sp[0].instructions, 4200);
+        assert_eq!(sp[0].setup_ns, 0.0);
+        assert_eq!(sp[0].digest, 0);
+
+        // old format: 12 columns, no perf; must still load, all appended
+        // columns defaulting to 0.
         let oldp = dir.join("old.csv");
         std::fs::write(
             &oldp,
@@ -152,28 +191,38 @@ mod tests {
         assert_eq!(so.len(), 1);
         assert_eq!(so[0].instructions, 0);
         assert_eq!(so[0].cycles, 0);
+        assert_eq!(so[0].setup_ns, 0.0);
+        assert_eq!(so[0].digest, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn worker_line_positional_contract() {
-        // The worker emits instructions/cycles at tab columns 7,8 (before the
-        // optional score at 9); the orchestrator parser (harness.rs) reads those
-        // exact positions. This guards the emitter and parser against drift.
+        // The worker emits instructions/cycles at tab columns 7,8, then the
+        // always-present matrix columns setup_ns/first_ns/digest at 9,10,11, then
+        // the optional score at 12; the orchestrator parser (harness.rs) reads
+        // those exact positions. This guards the emitter and parser against drift.
         let with_score = format!(
-            "switch\twarm\t0\t120.0\t100.0\t20.0\t64\t{}\t{}\t42.00",
-            4200u64, 900u64
+            "switch\twarm\t0\t120.0\t100.0\t20.0\t64\t{}\t{}\t{:.1}\t{:.1}\t{}\t42.00",
+            4200u64, 900u64, 555.5, 180.0, 987654321u64
         );
         let p: Vec<&str> = with_score.split('\t').collect();
         assert_eq!(p[7], "4200", "instructions at col 7");
         assert_eq!(p[8], "900", "cycles at col 8");
-        assert_eq!(p[9], "42.00", "score at col 9");
+        assert_eq!(p[9], "555.5", "setup_ns at col 9");
+        assert_eq!(p[10], "180.0", "first_ns at col 10");
+        assert_eq!(p[11], "987654321", "digest at col 11");
+        assert_eq!(p[12], "42.00", "score at col 12");
 
-        let no_score =
-            format!("switch\twarm\t0\t120.0\t100.0\t20.0\t64\t{}\t{}", 4200u64, 900u64);
+        // The matrix columns are always emitted (zero when unmeasured), so a
+        // score-less line has exactly the 12 fixed columns and no col 12.
+        let no_score = format!(
+            "switch\twarm\t0\t120.0\t100.0\t20.0\t64\t{}\t{}\t{:.1}\t{:.1}\t{}",
+            4200u64, 900u64, 0.0, 0.0, 0u64
+        );
         let q: Vec<&str> = no_score.split('\t').collect();
-        assert_eq!(q.len(), 9, "no-score line has exactly the 9 fixed columns");
-        assert!(q.get(9).is_none(), "no score column when absent");
+        assert_eq!(q.len(), 12, "no-score line has exactly the 12 fixed columns");
+        assert!(q.get(12).is_none(), "no score column when absent");
     }
 }

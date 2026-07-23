@@ -1,0 +1,41 @@
+[package]
+name = "mockspace-bench-matrix"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Opinionated semantic-matrix layer on the mockspace bench harness: declare cells, sweep them across axes, get isolated per-cell timing with the measurement discipline provided"
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+readme = "README.md"
+keywords = ["benchmarking", "performance", "mockspace"]
+categories = ["development-tools", "development-tools::profiling"]
+
+[features]
+# `generate` pulls the harness transport (the sibling-crate + bench.toml
+# codegen). Default-on so the generator binary works unchanged. A consumer that
+# only AUTHORS cells (the `bench_matrix!` macro + the `decl` data + the
+# `scaffold` the variants call) opts out with `default-features = false` and
+# avoids the whole bench-harness dependency tree, which matters when the cell
+# module lives in a crate rebuilt per variant.
+default = ["generate"]
+generate = ["dep:mockspace-bench-harness"]
+# demo-only features named by the `tests/macro_expansion.rs` fixtures, which
+# exercise a cell carrying `#[feature = "ft"]` and a cell + per-cell-setup
+# carrying `#[feature = "jit"]`. The macro cfg-gates a feature-carrying cell on
+# its feature, so these must be declared for the gate to typecheck and for
+# `cargo test --features ft,jit` to compile those cells. They gate nothing in
+# real consumer code; a consumer names its own carrier features.
+ft = []
+jit = []
+
+[dependencies]
+mockspace-bench-core = { path = "../bench-core", features = ["std"] }
+mockspace-bench-harness = { path = "../bench-harness", optional = true }
+# used only by the bench_matrix! macro to concatenate `cell_<tag>` fn names,
+# which macro_rules cannot do natively. Re-exported so consumers need no direct
+# dep. Compile-time only, zero transitive deps.
+paste = "1"
+
+[lib]
+name = "mockspace_bench_matrix"
+path = "src/lib.rs"

@@ -422,6 +422,9 @@ fn load_csv(path: &str) -> Result<Vec<Sample>, std::io::Error> {
                 input_tag:   p.get(11).and_then(|s| s.parse().ok()),
                 instructions: p.get(12).and_then(|s| s.parse().ok()).unwrap_or(0),
                 cycles:       p.get(13).and_then(|s| s.parse().ok()).unwrap_or(0),
+                setup_ns:     p.get(14).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+                first_ns:     p.get(15).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+                digest:       p.get(16).and_then(|s| s.parse().ok()).unwrap_or(0),
             });
         }
     }
@@ -430,13 +433,13 @@ fn load_csv(path: &str) -> Result<Vec<Sample>, std::io::Error> {
 
 fn write_csv(path: &str, samples: &[Sample]) {
     let mut csv = String::from(
-        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles\n",
+        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n",
     );
     for s in samples {
         let score_str = s.score.map(|v| format!("{:.2}", v)).unwrap_or_default();
         let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{}\n",
             s.run,
             s.pass,
             s.cooldown_ms,
@@ -450,7 +453,10 @@ fn write_csv(path: &str, samples: &[Sample]) {
             score_str,
             tag_str,
             s.instructions,
-            s.cycles
+            s.cycles,
+            s.setup_ns,
+            s.first_ns,
+            s.digest
         ));
     }
     let _ = std::fs::write(path, &csv);

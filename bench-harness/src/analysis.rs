@@ -106,6 +106,13 @@ pub struct VariantAnalysis {
     /// derived instructions/cycles ratio (0 when cycles is 0).
     pub mean_instructions: f64,
     pub mean_cycles:       f64,
+    /// Mean one-time setup cost S (ns) and mean cold first-touch cost (ns) across
+    /// this variant's samples. Populated only by matrix-scaffold benches; zero for
+    /// plain timed! variants. `mean_setup_ns` is the term the review panel found
+    /// hidden in untimed prep; with `algo_all.mean` it gives the per-variant
+    /// (S, I) pair the tier-breakeven `k*` is computed from.
+    pub mean_setup_ns:     f64,
+    pub mean_first_ns:     f64,
 }
 
 /// Full dataset with per-variant analysis.
@@ -142,6 +149,13 @@ pub struct DataSetMeta {
     /// baseline set to a native-ceiling or null-dispatch floor variant, `× base`
     /// reads directly as "how many times the floor" each variant costs.
     pub normalise_mode:   String,
+    /// Null-floor differencing target: a variant name whose per-call algo time is
+    /// subtracted from every variant (including the baseline) before ratios, so the
+    /// ratio isolates pure dispatch cost above the null-dispatch floor. Empty = no
+    /// floor differencing. Distinct from `normalise_mode` (a baseline-relative
+    /// framing): the floor is subtracted from all variants first, THEN the ratio is
+    /// taken against the floor-differenced baseline.
+    pub floor_variant:    String,
 }
 
 impl DataSet {
@@ -209,6 +223,9 @@ impl DataSet {
             let mean_instructions =
                 vsamples.iter().map(|s| s.instructions as f64).sum::<f64>() / nsamp;
             let mean_cycles = vsamples.iter().map(|s| s.cycles as f64).sum::<f64>() / nsamp;
+            // mean matrix-scaffold costs (0 for plain timed! variants).
+            let mean_setup_ns = vsamples.iter().map(|s| s.setup_ns).sum::<f64>() / nsamp;
+            let mean_first_ns = vsamples.iter().map(|s| s.first_ns).sum::<f64>() / nsamp;
 
             variants.push(VariantAnalysis {
                 name: name.clone(),
@@ -224,6 +241,8 @@ impl DataSet {
                 algo_per_tag,
                 mean_instructions,
                 mean_cycles,
+                mean_setup_ns,
+                mean_first_ns,
             });
         }
 
@@ -269,6 +288,27 @@ impl DataSet {
         self
     }
 
+    /// Set the null-floor differencing target (a variant name). See
+    /// [`DataSetMeta::floor_variant`]. A name not among the variants is ignored by
+    /// the reporter (it falls back to raw ratios).
+    #[must_use]
+    pub fn with_floor(mut self, name: &str) -> Self {
+        self.meta.floor_variant = name.to_string();
+        self
+    }
+
+    /// The floor variant's mean per-call algo time, if a floor is set and present.
+    /// `None` = no floor differencing (the reporter uses raw times).
+    pub fn floor_mean(&self) -> Option<f64> {
+        if self.meta.floor_variant.is_empty() {
+            return None;
+        }
+        self.variants
+            .iter()
+            .find(|v| v.name == self.meta.floor_variant)
+            .map(|v| v.algo_all.mean)
+    }
+
     pub fn baseline(&self) -> &VariantAnalysis {
         &self.variants[self.baseline_idx]
     }
@@ -287,6 +327,7 @@ impl Default for DataSetMeta {
             drift_correction: "none".into(),
             ops_per_call:     0,
             normalise_mode:   "subtract".into(),
+            floor_variant:    String::new(),
         }
     }
 }

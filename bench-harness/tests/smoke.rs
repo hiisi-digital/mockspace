@@ -45,6 +45,9 @@ fn synthetic_samples() -> Vec<Sample> {
                         input_tag: Some(0),
                         instructions: 0,
                         cycles: 0,
+                        setup_ns: 0.0,
+                        first_ns: 0.0,
+                        digest: 0,
                     });
                     samples.push(Sample {
                         run,
@@ -61,6 +64,9 @@ fn synthetic_samples() -> Vec<Sample> {
                         input_tag: Some(0),
                         instructions: 0,
                         cycles: 0,
+                        setup_ns: 0.0,
+                        first_ns: 0.0,
+                        digest: 0,
                     });
                 }
             }
