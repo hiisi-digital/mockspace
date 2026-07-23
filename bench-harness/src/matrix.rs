@@ -79,6 +79,13 @@ pub struct MatrixSpec {
     /// `[bench.<bench>.normalise]` block.
     #[serde(default)]
     pub normalise_mode:    Option<String>,
+    /// Null-floor differencing: the generated variant whose name contains this
+    /// substring is the floor (a null-dispatch cell), whose per-call time is
+    /// subtracted from every variant before ratios, isolating pure dispatch cost.
+    /// Emitted as `floor = "<variant>"` in the `[bench.<bench>.normalise]` block.
+    /// `None` = no floor differencing.
+    #[serde(default)]
+    pub floor_contains:    Option<String>,
     /// The variant-name template. `{axis}` for each axis binds to that axis
     /// value's tag; a common form is `carrier_{shape}_{layout}`.
     pub name_template:      String,
@@ -282,6 +289,13 @@ pub fn render_bench_section(spec: &MatrixSpec, comps: &[Composition]) -> String 
     out.push_str(&format!("[bench.{}.normalise]\n", spec.bench));
     out.push_str(&format!("baseline = \"{baseline}\"\n"));
     out.push_str(&format!("mode = \"{}\"\n", spec.normalise_mode.as_deref().unwrap_or("subtract")));
+    // null-floor differencing target: resolve the floor tag to its variant name
+    // the same way the baseline is resolved, and emit it for the reporter.
+    if let Some(needle) = spec.floor_contains.as_deref() {
+        if let Some(floor) = names.iter().find(|n| n.contains(needle)).copied() {
+            out.push_str(&format!("floor = \"{floor}\"\n"));
+        }
+    }
     let paths = comps
         .iter()
         .map(|c| format!("\"variants/{0}/target/release/{0}\"", c.name))
@@ -334,6 +348,7 @@ mod tests {
             sizes: vec![64, 256],
             baseline_contains: Some("switch".into()),
             normalise_mode: None,
+            floor_contains: None,
             name_template: "carrier_{shape}_{vocab}".into(),
             lib_template: "// {shape} over {vocab_num}; calls {fn_name}; name {name}".into(),
             axes: vec![
@@ -397,6 +412,22 @@ mod tests {
         assert!(section.contains("baseline = \"carrier_switch_v4\""), "switch is baseline");
         assert!(section.contains("mode = \"subtract\""));
         assert!(section.contains("n = 64") && section.contains("n = 256"));
+        // no floor declared -> no floor line.
+        assert!(!section.contains("floor ="), "no floor line without floor_contains");
+    }
+
+    #[test]
+    fn bench_section_emits_resolved_floor() {
+        // floor_contains resolves to the matching variant name (like baseline).
+        let mut spec = dispatch_spec();
+        spec.floor_contains = Some("switch".into());
+        let comps = expand(&spec);
+        let section = render_bench_section(&spec, &comps);
+        assert!(section.contains("floor = \"carrier_switch_v4\""), "floor resolves to variant, got:\n{section}");
+        // a floor tag matching no variant emits no floor line (rather than a dangling ref).
+        spec.floor_contains = Some("does_not_exist".into());
+        let section2 = render_bench_section(&spec, &comps);
+        assert!(!section2.contains("floor ="), "unmatched floor tag emits nothing");
     }
 
     #[test]

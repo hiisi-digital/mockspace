@@ -154,6 +154,11 @@ pub struct NormaliseSection {
     /// new one (some benches want the baseline choice but raw framing).
     #[serde(default)]
     pub mode:     Option<String>,
+    /// Null-floor differencing target: a variant short name whose per-call time
+    /// is subtracted from every variant (including the baseline) before ratios,
+    /// isolating pure dispatch cost above the null-dispatch floor. `None` = raw.
+    #[serde(default)]
+    pub floor:    Option<String>,
 }
 
 /// One `(N, [variants])` pair inside a [`BenchSection`].
@@ -396,6 +401,7 @@ impl BenchManifest {
                 .normalise
                 .as_ref()
                 .map(|nz| nz.mode.clone().unwrap_or_else(|| "subtract".to_string())),
+            normalise_floor: section.normalise.as_ref().and_then(|nz| nz.floor.clone()),
         })
     }
 
@@ -465,6 +471,10 @@ pub struct BenchConfig {
     /// Which normalised column(s) to add (from `normalise.mode`);
     /// `None` = the default (`subtract`) when a baseline is set.
     pub normalise_mode:     Option<String>,
+    /// Null-floor differencing target variant (from `normalise.floor`); when set,
+    /// the report subtracts this variant's per-call time from every variant before
+    /// ratios, isolating pure dispatch cost. `None` = no floor differencing.
+    pub normalise_floor:    Option<String>,
 }
 
 /// Tunable iteration counts. Defaults match the polka-dots
@@ -531,6 +541,7 @@ impl Default for BenchConfig {
             tuning:        HarnessTuning::default(),
             normalise_baseline: None,
             normalise_mode:     None,
+            normalise_floor:    None,
         }
     }
 }

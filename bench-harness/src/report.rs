@@ -188,8 +188,13 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
     } else {
         // The `ratio` normalise mode adds a `× base` column: variant / baseline,
         // the reference-floor lens (with the baseline set to a native-ceiling or
-        // null-dispatch variant, this reads as "how many times the floor").
+        // null-dispatch variant, this reads as "how many times the floor"). When a
+        // null-floor cell is declared (`floor:`), the ratio is floor-differenced:
+        // `(variant - floor) / (baseline - floor)`, isolating pure dispatch cost
+        // above the null-dispatch floor rather than including the shared common
+        // cost the floor cell measures.
         let ratio_mode = ds.meta.normalise_mode == "ratio";
+        let floor = ds.floor_mean();
         md.push_str("\n## Function-under-test only (all cooldowns combined)\n\n");
         if ratio_mode {
             md.push_str("| Variant | mean | best 20% | worst 20% | Δ mean | × base |\n");
@@ -202,7 +207,12 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             let d = pct_delta(v.algo_all.mean, base.algo_all.mean);
             let label = if v.name == base.name { "base".into() } else { format!("{:+.2}%", d) };
             if ratio_mode {
-                let ratio = if base.algo_all.mean > 0.0 { v.algo_all.mean / base.algo_all.mean } else { 0.0 };
+                // difference both sides against the floor cell when one is declared.
+                let (v_adj, base_adj) = match floor {
+                    Some(f) => ((v.algo_all.mean - f).max(0.0), (base.algo_all.mean - f).max(0.0)),
+                    None => (v.algo_all.mean, base.algo_all.mean),
+                };
+                let ratio = if base_adj > 0.0 { v_adj / base_adj } else { 0.0 };
                 let rlabel = if v.name == base.name { "1.00×".into() } else { format!("{:.2}×", ratio) };
                 md.push_str(&format!(
                     "| {} | {:.0}ns | {:.0}ns | {:.0}ns | {} | {} |\n",
@@ -214,6 +224,14 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
                     v.name, v.algo_all.mean, v.algo_all.best_20pct, v.algo_all.worst_20pct, label
                 ));
             }
+        }
+        if ratio_mode && floor.is_some() {
+            md.push_str(&format!(
+                "\nThe `× base` column is floor-differenced against the `{}` cell: \
+                 `(variant - floor) / (baseline - floor)`, so it isolates dispatch cost above \
+                 the null-dispatch floor rather than the shared common cost.\n",
+                ds.meta.floor_variant
+            ));
         }
     }
 
@@ -236,6 +254,45 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             "\nInstructions and cycles are the mean over the variant's samples for the measured region. \
              IPC is instructions per cycle. The instruction ratio isolates whether a variant wins by \
              retiring fewer instructions or by executing the same instructions more efficiently.\n",
+        );
+    }
+
+    // ── Setup / iteration split (rendered only for matrix-scaffold benches) ──
+    // This surfaces the one-time setup cost S that the review panel found hidden
+    // in untimed prep, alongside the per-iteration run cost I, and computes the
+    // tier breakeven k* = (S_v - S_base) / (I_base - I_v): the number of
+    // iterations at which paying variant v's higher setup is repaid by its lower
+    // per-iteration cost. A blank k* means v does not trade setup against
+    // iteration cost against the baseline (it is dominant or dominated on both).
+    if ds.variants.iter().any(|v| v.mean_setup_ns > 0.0) {
+        md.push_str("\n## Setup vs iteration cost (per call)\n\n");
+        md.push_str("| Variant | setup S (ns) | first-touch (ns) | run I (ns) | k* vs base |\n");
+        md.push_str("|---|---|---|---|---|\n");
+        let base_s = base.mean_setup_ns;
+        let base_i = base.algo_all.mean;
+        for v in &ds.variants {
+            let ds_setup = v.mean_setup_ns - base_s;
+            let di = base_i - v.algo_all.mean;
+            // k* is a real crossover only when the setup delta and the
+            // iteration-cost delta point the same way (v pays more setup to save
+            // per iteration, or the reverse); otherwise there is no break-even.
+            let kstar = if v.name == base.name {
+                "n/a".to_string()
+            } else if di.abs() > f64::EPSILON && (ds_setup / di) > 0.0 {
+                format!("{:.0}", ds_setup / di)
+            } else {
+                "n/a".to_string()
+            };
+            md.push_str(&format!(
+                "| {} | {:.1} | {:.1} | {:.1} | {} |\n",
+                v.name, v.mean_setup_ns, v.mean_first_ns, v.algo_all.mean, kstar
+            ));
+        }
+        md.push_str(
+            "\nSetup S is the one-time build cost (timed on every call by the matrix scaffold, so it \
+             cannot hide in untimed prep). Run I is the calibrated per-iteration cost. First-touch is \
+             the cold first pass before caches and the predictor warm. k* is the iteration count at \
+             which a higher-setup, lower-per-iteration variant repays its setup against the baseline.\n",
         );
     }
 
@@ -754,6 +811,9 @@ mod tests {
             input_tag:   None,
             instructions: 0,
             cycles:       0,
+            setup_ns:    0.0,
+            first_ns:    0.0,
+            digest:      0,
         }
     }
 
@@ -782,6 +842,31 @@ mod tests {
     fn subtract_mode_omits_base_column() {
         let md = generate(&ds_with("subtract", [90.0, 100.0, 110.0]), "t");
         assert!(!md.contains("\u{00d7} base"), "no ratio column outside ratio mode");
+    }
+
+    #[test]
+    fn floor_differences_the_ratio_against_the_named_cell() {
+        // switch (baseline) 100, threaded 50, nullfloor 20. With floor = nullfloor
+        // the ratio is floor-differenced: threaded = (50-20)/(100-20) = 0.375x, not
+        // the raw 0.50x; the floor cell itself reads (20-20)/(100-20) = 0.00x.
+        let samples: Vec<Sample> = [100.0, 100.0, 100.0]
+            .iter()
+            .flat_map(|_| {
+                [sample("switch", 100.0), sample("threaded", 50.0), sample("nullfloor", 20.0)]
+            })
+            .collect();
+        let mut ds = DataSet::from_samples(&samples, "warm").with_baseline("switch");
+        ds.meta.normalise_mode = "ratio".into();
+        ds = ds.with_floor("nullfloor");
+        let md = generate(&ds, "t");
+        assert!(md.contains("0.38\u{00d7}"), "threaded floor-differenced ratio ~0.375x, got:\n{md}");
+        assert!(md.contains("0.00\u{00d7}"), "floor cell differences to 0.00x");
+        assert!(md.contains("floor-differenced against the `nullfloor` cell"), "note present");
+        // without the floor the same data gives the raw 0.50x.
+        let mut ds_raw = DataSet::from_samples(&samples, "warm").with_baseline("switch");
+        ds_raw.meta.normalise_mode = "ratio".into();
+        let md_raw = generate(&ds_raw, "t");
+        assert!(md_raw.contains("0.50\u{00d7}"), "raw ratio is 0.50x without a floor");
     }
 
     #[test]
@@ -820,5 +905,34 @@ mod tests {
         // no counters -> no section.
         let md0 = generate(&ds_with("subtract", [100.0, 100.0, 100.0]), "t");
         assert!(!md0.contains("## Hardware counters"), "section omitted when counters are zero");
+    }
+
+    #[test]
+    fn setup_iteration_section_renders_with_correct_kstar() {
+        // switch (baseline): setup 100, run 100. threaded: setup 300, run 50.
+        // k* = (S_v - S_base) / (I_base - I_v) = (300-100)/(100-50) = 4: threaded's
+        // extra 200ns setup is repaid by its 50ns/iter saving after 4 iterations.
+        let mk = |variant: &str, setup: f64, algo: f64| {
+            let mut s = sample(variant, algo);
+            s.setup_ns = setup;
+            s.first_ns = algo * 1.5;
+            s
+        };
+        let samples = vec![
+            mk("switch", 100.0, 100.0),
+            mk("switch", 100.0, 100.0),
+            mk("threaded", 300.0, 50.0),
+            mk("threaded", 300.0, 50.0),
+        ];
+        let md = generate(&DataSet::from_samples(&samples, "warm"), "t");
+        assert!(md.contains("## Setup vs iteration cost"), "section renders when setup present");
+        assert!(md.contains("| setup S (ns) | first-touch (ns) | run I (ns) | k* vs base |"), "columns present");
+        // threaded's k* row: setup 300.0, run 50.0, k* = 4.
+        assert!(md.contains("| threaded | 300.0 | 75.0 | 50.0 | 4 |"), "threaded k* is 4");
+        assert!(md.contains("| switch | 100.0 | 150.0 | 100.0 | n/a |"), "baseline row has no k*");
+
+        // no setup measured -> no section (plain timed! benches).
+        let md0 = generate(&ds_with("subtract", [100.0, 100.0, 100.0]), "t");
+        assert!(!md0.contains("## Setup vs iteration cost"), "section omitted when setup is zero");
     }
 }

@@ -392,13 +392,35 @@ pub struct ByteDispatch {
 
 /// Timing result returned across the dylib boundary.
 ///
-/// `run_ticks` is the duration of the run-block in hardware counter
-/// ticks. The harness subtracts this from its own measurement to
-/// compute bridge overhead.
+/// `run_ticks` is the per-call run cost in hardware counter ticks (for a
+/// calibrated variant, the per-repetition span). The harness subtracts it
+/// from its own measurement to compute bridge overhead.
+///
+/// The remaining three fields carry the honest-measurement data the
+/// hand-rolled matrix hid, and are populated by the matrix scaffold
+/// ([`mockspace-bench-matrix`]); the plain `timed!` / `timed_calibrated!`
+/// constructors measure only `run_ticks` and leave them zero:
+///
+/// - `setup_ticks` is the one-time build cost S, the term that used to hide
+///   in untimed prep (the review panel's number-one finding). With it
+///   reported alongside the per-iteration I term, the tier breakeven
+///   `k* = (S_b - S_a) / (I_a - I_b)` is computable from the matrix directly.
+/// - `first_ticks` is the cold first-touch pass, before the calibrated loop
+///   warms caches and the branch predictor.
+/// - `digest` is a reps-invariant fidelity witness. Under calibration the
+///   reps count is timing-dependent, so the run-block's output bytes are
+///   reps-variant and cannot cross-validate variants; the digest is computed
+///   on a fixed-seed, fixed-init single pass instead.
+///
+/// A zero in any of the three latter fields means "not measured by this
+/// constructor", never a measured zero.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct FfiBenchCall {
-    pub run_ticks: u64,
+    pub run_ticks:   u64,
+    pub setup_ticks: u64,
+    pub first_ticks: u64,
+    pub digest:      u64,
 }
 
 /// Function signature exported by each variant dylib.
@@ -422,10 +444,17 @@ pub const fn abi_hash() -> u64 {
     let size = core::mem::size_of::<FfiBenchCall>() as u64;
     h ^= size;
     h = h.wrapping_mul(0x100000001B3);
-    h ^= 1u64; // field count: run_ticks
+    h ^= 4u64; // field count: run_ticks, setup_ticks, first_ticks, digest
     h = h.wrapping_mul(0x100000001B3);
-    h ^= 8u64; // run_ticks size
-    h = h.wrapping_mul(0x100000001B3);
+    // each field is a u64 (8 bytes); fold the four field widths so a layout
+    // change (a field added, removed, or retyped) shifts the hash and the
+    // load-time check on `harness.rs` rejects a stale variant dylib.
+    let mut i = 0u64;
+    while i < 4 {
+        h ^= 8u64;
+        h = h.wrapping_mul(0x100000001B3);
+        i += 1;
+    }
     h
 }
 
@@ -493,7 +522,9 @@ macro_rules! __bench_expand_body {
         $( $run )*
         let __end = $crate::counter::read_counter();
         $( $teardown )*
-        $crate::FfiBenchCall { run_ticks: __end - __start }
+        // This constructor measures only the run block; the matrix scaffold
+        // fills setup_ticks / first_ticks / digest.
+        $crate::FfiBenchCall { run_ticks: __end - __start, setup_ticks: 0, first_ticks: 0, digest: 0 }
     }};
 
     ( @setup [ $( $setup:tt )* ] $next:tt $( $rest:tt )* ) => {
@@ -550,12 +581,52 @@ macro_rules! __bench_calibrated_body {
         }
         let __end = $crate::counter::read_counter();
         $( $teardown )*
-        $crate::FfiBenchCall { run_ticks: (__end - __start) / __reps }
+        // Per-pass tick span; only run_ticks is measured here (the matrix
+        // scaffold fills setup_ticks / first_ticks / digest).
+        $crate::FfiBenchCall {
+            run_ticks: (__end - __start) / __reps,
+            setup_ticks: 0,
+            first_ticks: 0,
+            digest: 0,
+        }
     }};
 
     ( @setup [ $( $setup:tt )* ] $next:tt $( $rest:tt )* ) => {
         $crate::__bench_calibrated_body!( @setup [ $( $setup )* $next ] $( $rest )* )
     };
+}
+
+#[cfg(test)]
+mod abi_tests {
+    use super::{abi_hash, FfiBenchCall};
+
+    // The FFI wire struct is four u64 fields; pin the size so an accidental
+    // field change forces a deliberate abi_hash() update and a variant rebuild.
+    #[test]
+    fn ffi_bench_call_is_four_u64() {
+        assert_eq!(core::mem::size_of::<FfiBenchCall>(), 32);
+        assert_eq!(core::mem::align_of::<FfiBenchCall>(), 8);
+    }
+
+    // The hash must be deterministic and must actually reflect the current
+    // four-field layout (not the retired single-field one). This is the value
+    // the harness compiles into every variant and checks on load.
+    #[test]
+    fn abi_hash_reflects_four_field_layout() {
+        // recompute the expected fold for {32-byte size, 4 fields, 4x8-byte}.
+        let mut h: u64 = 0xCBF29CE484222325;
+        h ^= 32u64;
+        h = h.wrapping_mul(0x100000001B3);
+        h ^= 4u64;
+        h = h.wrapping_mul(0x100000001B3);
+        let mut i = 0u64;
+        while i < 4 {
+            h ^= 8u64;
+            h = h.wrapping_mul(0x100000001B3);
+            i += 1;
+        }
+        assert_eq!(abi_hash(), h);
+    }
 }
 
 #[cfg(test)]

@@ -463,6 +463,9 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             if let Some(mode) = config.normalise_mode.as_deref() {
                 ds = ds.with_normalise_mode(mode);
             }
+            if let Some(floor) = config.normalise_floor.as_deref() {
+                ds = ds.with_floor(floor);
+            }
             let md = crate::generate_report(&ds, &result.title);
             if let Err(e) = std::fs::write(&findings_path, md) {
                 eprintln!("error: writing report: {e}");

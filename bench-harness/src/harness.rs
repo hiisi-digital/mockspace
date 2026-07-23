@@ -131,8 +131,12 @@ unsafe fn load_variant(dylib_path: &str) -> Result<(String, BenchEntryFn), Strin
 /// Output format on stdout, one line per batch:
 ///
 /// ```text
-/// <name>\t<mode>\t<batch_idx>\t<e2e_ns>\t<algo_ns>\t<bridge_ns>\t<batch_count>\t<instructions>\t<cycles>[\t<score>]
+/// <name>\t<mode>\t<batch_idx>\t<e2e_ns>\t<algo_ns>\t<bridge_ns>\t<batch_count>\t<instructions>\t<cycles>\t<setup_ns>\t<first_ns>\t<digest>[\t<score>]
 /// ```
+///
+/// `setup_ns`/`first_ns`/`digest` are always present (zero when a variant
+/// does not measure them, e.g. plain `timed!` variants); `score` is the
+/// optional trailing column.
 ///
 /// Or `TIMEOUT\t<name>\t<mode>\t<value>` on early abort.
 #[allow(clippy::too_many_arguments)]
@@ -289,6 +293,15 @@ pub fn run_worker(
         // Zero when perf counters are unavailable / off (the reads return zeros).
         let mut batch_instructions = 0u64;
         let mut batch_cycles = 0u64;
+        // matrix-scaffold data carried on the FfiBenchCall: the one-time setup
+        // cost S and the cold first-touch pass (both summed per program like the
+        // algo ticks, then meaned over the batch), plus the reps-invariant
+        // fidelity digest (a witness, captured not summed). All zero for plain
+        // timed! variants and in the amortised-batch path, which does not capture
+        // the call result.
+        let mut batch_setup_ticks = 0u64;
+        let mut batch_first_ticks = 0u64;
+        let mut batch_digest = 0u64;
 
         if batch_k > 1 {
             for i in 0 .. batch_size {
@@ -333,6 +346,10 @@ pub fn run_worker(
                 let mut algo_accum = 0u64;
                 // outer timer around entry()
                 let mut call_accum = 0u64;
+                // matrix-scaffold fields off the FfiBenchCall, per program.
+                let mut setup_accum = 0u64;
+                let mut first_accum = 0u64;
+                let mut digest_last = 0u64;
 
                 if mode == "warm" {
                     workload.run_program(s, &mut |_| {
@@ -341,6 +358,9 @@ pub fn run_worker(
                             unsafe { entry(warm_input.as_ptr(), warm_output.as_mut_ptr(), n) };
                         let call_end = counter::read_counter();
                         algo_accum += result.run_ticks;
+                        setup_accum += result.setup_ticks;
+                        first_accum += result.first_ticks;
+                        digest_last = result.digest;
                         call_accum += call_end - call_start;
                         result
                     });
@@ -352,6 +372,9 @@ pub fn run_worker(
                         let result = unsafe { entry(input.as_ptr(), output.as_mut_ptr(), n) };
                         let call_end = counter::read_counter();
                         algo_accum += result.run_ticks;
+                        setup_accum += result.setup_ticks;
+                        first_accum += result.first_ticks;
+                        digest_last = result.digest;
                         call_accum += call_end - call_start;
                         result
                     });
@@ -378,6 +401,11 @@ pub fn run_worker(
                 batch_instructions += pd.instructions;
                 batch_cycles += pd.cycles;
                 batch_algo_ticks += algo_accum;
+                batch_setup_ticks += setup_accum;
+                batch_first_ticks += first_accum;
+                // digest is a fidelity witness, reps-invariant and identical
+                // across programs; the last one seen represents the batch.
+                batch_digest = digest_last;
                 // bridge = conversion overhead = (outer algo - inner algo)
                 let bridge = call_accum.saturating_sub(algo_accum);
                 // e2e = program time minus conversion overhead
@@ -391,6 +419,9 @@ pub fn run_worker(
         let e2e_ns = (batch_e2e_ticks as f64 / count) * ticks_to_ns;
         let algo_ns = (batch_algo_ticks as f64 / count) * ticks_to_ns;
         let bridge_ns = (batch_bridge_ticks as f64 / count) * ticks_to_ns;
+        // matrix-scaffold means (0 for plain timed! variants / amortised path).
+        let setup_ns = (batch_setup_ticks as f64 / count) * ticks_to_ns;
+        let first_ns = (batch_first_ticks as f64 / count) * ticks_to_ns;
 
         // Score at multiple evenly-spaced points within each batch in
         // normal (non-batch-amortised) warm mode, average the scores.
@@ -430,17 +461,20 @@ pub fn run_worker(
         let instr_per_call = batch_instructions / bs;
         let cycles_per_call = batch_cycles / bs;
 
-        // One line per batch. instructions/cycles sit at fixed columns 7,8
-        // (before the optional score at 9) so the parser reads them positionally.
+        // One line per batch. instructions/cycles sit at fixed columns 7,8; the
+        // always-present matrix columns setup_ns/first_ns/digest at 9,10,11; and
+        // the optional score at 12. The parser reads them positionally.
         if let Some(s) = batch_score {
             println!(
-                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{:.2}",
-                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size, instr_per_call, cycles_per_call, s
+                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{:.2}",
+                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size,
+                instr_per_call, cycles_per_call, setup_ns, first_ns, batch_digest, s
             );
         } else {
             println!(
-                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}",
-                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size, instr_per_call, cycles_per_call
+                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}",
+                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size,
+                instr_per_call, cycles_per_call, setup_ns, first_ns, batch_digest
             );
         }
 
@@ -674,10 +708,15 @@ pub fn run_orchestrator(
                                 algo_ns:     parts[4].parse().unwrap_or(0.0),
                                 bridge_ns:   parts[5].parse().unwrap_or(0.0),
                                 batch_count: parts[6].parse().unwrap_or(0),
-                                // instructions/cycles at fixed 7,8; optional score at 9.
+                                // instructions/cycles at fixed 7,8; matrix
+                                // setup_ns/first_ns/digest at 9,10,11; optional
+                                // score at 12.
                                 instructions: parts.get(7).and_then(|s| s.parse().ok()).unwrap_or(0),
                                 cycles:       parts.get(8).and_then(|s| s.parse().ok()).unwrap_or(0),
-                                score:       parts.get(9).and_then(|s| s.parse().ok()),
+                                setup_ns:    parts.get(9).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+                                first_ns:    parts.get(10).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+                                digest:      parts.get(11).and_then(|s| s.parse().ok()).unwrap_or(0),
+                                score:       parts.get(12).and_then(|s| s.parse().ok()),
                                 input_tag:   input_tagger.map(|f| f(seed).1),
                             });
                         }
@@ -710,13 +749,13 @@ pub fn run_orchestrator(
 /// `<path>.meta.json` carrying [`EnvMeta`].
 pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
     let mut csv = String::from(
-        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles\n",
+        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n",
     );
     for s in &result.samples {
         let score_str = s.score.map(|v| format!("{:.2}", v)).unwrap_or_default();
         let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{}\n",
             s.run,
             s.pass,
             s.cooldown_ms,
@@ -730,7 +769,10 @@ pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
             score_str,
             tag_str,
             s.instructions,
-            s.cycles
+            s.cycles,
+            s.setup_ns,
+            s.first_ns,
+            s.digest
         ));
     }
     std::fs::write(path, &csv).map_err(|e| BenchError::io("writing csv", e))?;
