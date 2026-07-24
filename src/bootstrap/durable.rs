@@ -91,11 +91,6 @@ pub(crate) fn ensure_durable_hooks(actions: &mut Vec<String>) -> Option<PathBuf>
 ///    a commit touching the mock dir or the config is blocked with an install
 ///    hint, and everything outside the surface passes freely.
 pub(crate) fn gen_durable_hook(name: &str) -> String {
-    let body = match name {
-        "pre-commit" => DURABLE_PRECOMMIT_BODY,
-        "pre-push" => DURABLE_PREPUSH_BODY,
-        _ => "\"$launcher\" --lint-only --strict 2>&1 || exit 1\n",
-    };
     let mut s = String::new();
     s.push_str("#!/usr/bin/env bash\n");
     s.push_str(MANAGED_MARKER);
@@ -104,6 +99,32 @@ pub(crate) fn gen_durable_hook(name: &str) -> String {
         "# mockspace durable gate ({name}). Do not edit; rewritten on each `mock` run.\n\
          # core.hooksPath points here: invisible to the repo, survives a target/ clean.\n"
     ));
+
+    // commit-msg is a standalone byline gate. The launcher / mock-surface logic
+    // does not apply to it, and byline enforcement must hold regardless of
+    // install state, so it skips the shared prelude entirely.
+    if name == "commit-msg" {
+        s.push_str("set -u\n\n");
+        s.push_str(&byline_commit_msg_body());
+        s.push_str("exit 0\n");
+        return s;
+    }
+
+    // pre-push: capture the pushed-ref lines once and run the byline scan
+    // before the prelude, so byline enforcement holds even with no launcher
+    // installed. The crate-diff loop in the body reads the same captured lines.
+    if name == "pre-push" {
+        s.push_str("set -u\nPREPUSH_STDIN=$(cat)\n\n");
+        s.push_str(&byline_prepush_scan_body());
+        s.push_str(DURABLE_PRELUDE);
+        s.push_str(DURABLE_PREPUSH_BODY);
+        return s;
+    }
+
+    let body = match name {
+        "pre-commit" => DURABLE_PRECOMMIT_BODY,
+        _ => "\"$launcher\" --lint-only --strict 2>&1 || exit 1\n",
+    };
     s.push_str(DURABLE_PRELUDE);
     s.push_str(body);
     s
@@ -233,7 +254,7 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     PUSH_CHANGED=$(git diff --name-only "$remote_sha".."$local_sha" -- "$MOCK_DIR/crates/" 2>/dev/null | sed "s|^$MOCK_DIR/crates/||" | cut -d/ -f1 | sort -u | tr '\n' ',' | sed 's/,$//' || true)
     [ -z "$PUSH_CHANGED" ] && continue
     if [ -z "$CHANGED_CRATES" ]; then CHANGED_CRATES="$PUSH_CHANGED"; else CHANGED_CRATES="$CHANGED_CRATES,$PUSH_CHANGED"; fi
-done
+done <<< "$PREPUSH_STDIN"
 if [ -n "$CHANGED_CRATES" ]; then
     CHANGED_CRATES=$(echo "$CHANGED_CRATES" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
 fi
