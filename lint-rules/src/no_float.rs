@@ -268,3 +268,59 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
 fn txt<'a>(node: Node<'a>, src: &'a str) -> &'a str {
     &src[node.byte_range()]
 }
+
+#[cfg(test)]
+mod cfg_test_module_tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::*;
+
+    fn ctx_for(source: &'static str) -> LintContext<'static> {
+        let mut parser = crate::make_parser();
+        let tree = parser.parse(source, None).unwrap();
+        LintContext {
+            crate_name:              "test-crate",
+            short_name:              "test-crate",
+            source,
+            tree:                    Box::leak(Box::new(tree)),
+            all_sources:             &[],
+            deps:                    &[],
+            all_crates:              Box::leak(Box::new(BTreeSet::new())),
+            design_doc:              None,
+            all_doc_content:         "",
+            shame_doc:               None,
+            workspace_root:          std::path::Path::new("/tmp"),
+            proc_macro_crates:       &[],
+            crate_prefix:            "test",
+            lint_proc_macro_source:  false,
+            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
+        }
+    }
+
+    fn reported(source: &'static str) -> usize {
+        NoFloat.check(&ctx_for(source)).len()
+    }
+
+    #[test]
+    fn a_float_inside_a_test_module_is_not_reported() {
+        // The lint has claimed to skip test modules since it was written. Its
+        // private predicate looked for the attribute among the module's
+        // children, where it never is, so the skip never happened and this is
+        // the first thing to establish that it does.
+        assert_eq!(
+            reported("#[cfg(test)]\nmod tests {\n    fn f() { let x: f64 = 1.0; }\n}\n"),
+            0,
+        );
+    }
+
+    #[test]
+    fn a_float_outside_a_test_module_is_still_reported() {
+        // The control: a lint that reported nothing would pass the test above.
+        assert!(reported("pub fn f(x: f64) -> f64 { x }\n") > 0);
+    }
+
+    #[test]
+    fn a_float_in_a_module_that_is_not_test_only_is_still_reported() {
+        assert!(reported("#[cfg(not(test))]\nmod real {\n    pub fn f(x: f64) -> f64 { x }\n}\n") > 0);
+    }
+}

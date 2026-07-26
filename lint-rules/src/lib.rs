@@ -365,36 +365,155 @@ pub fn line_lint_allowed(line: &str, rule_name: &str) -> bool {
     false
 }
 
-/// Whether a `mod_item` node carries a `#[cfg(test)]` attribute.
+/// Whether a `mod_item` node is compiled only under `cfg(test)`.
 ///
-/// The canonical test-module predicate for every lint in this crate. A lint
-/// that walks the whole tree and does not call this reports on test fixtures,
-/// which is wrong for any lint whose subject is the public surface: a fixture
-/// is not API, has no consumer, and cannot be documented or annotated the way
-/// the rule wants.
+/// The canonical test-module predicate for this crate. A lint that walks the
+/// whole tree and does not call this reports on test fixtures, which is wrong
+/// for any lint whose subject is the public surface: a fixture is not API, has
+/// no consumer, and cannot be documented or annotated the way the rule wants.
 ///
-/// The attribute is a **preceding sibling** of the module, not a child of it.
-/// Looking among the children instead is a silent no-op that leaves the lint
-/// reporting on every test module, which is what `no-float`'s own private copy
-/// of this predicate did from the day it was written. Attributes stack, so the
-/// walk continues back over a run of them rather than checking only the nearest.
+/// Two things make this harder than it looks, and every private copy of it in
+/// this crate got at least one of them wrong.
+///
+/// The attribute is a **preceding sibling** of the module, not a child of it,
+/// and the run of siblings can include doc comments, so the walk continues
+/// over comments and stops only at a real item.
+///
+/// The predicate is **parsed rather than searched**. Asking whether the text
+/// contains "cfg" and "test" answers yes for `#[cfg(not(test))]`, which is the
+/// exact opposite of the question, and for `#[cfg(feature = "latest")]`,
+/// because "latest" contains "test". Both would delete an ordinary module from
+/// the lint's view and neither would ever be noticed, since the symptom is a
+/// lint that quietly stops reporting.
+///
+/// Known limit: for `#[cfg(test)] mod tests;` the answer is right but does
+/// nothing useful, because the module's body is a separate file that gets
+/// linted on its own and never passes through this node.
 #[must_use]
 pub fn is_cfg_test_mod(node: tree_sitter::Node, source: &str) -> bool {
     if node.kind() != "mod_item" {
         return false;
     }
+    if mod_body_has_inner_cfg_test(node, source) {
+        return true;
+    }
     let mut prev = node.prev_named_sibling();
     while let Some(sibling) = prev {
-        if sibling.kind() != "attribute_item" {
-            return false;
-        }
-        let text = &source[sibling.byte_range()];
-        if text.contains("cfg") && text.contains("test") {
-            return true;
+        match sibling.kind() {
+            // Doc comments sit between an attribute and the item it applies
+            // to, so they continue the run rather than ending it.
+            "line_comment" | "block_comment" => {},
+            "attribute_item" => {
+                if attribute_is_cfg_test(&source[sibling.byte_range()]) {
+                    return true;
+                }
+            },
+            // Any real item ends the run. Without this the walk would keep
+            // going back and could find a `cfg(test)` belonging to something
+            // else entirely.
+            _ => return false,
         }
         prev = sibling.prev_named_sibling();
     }
     false
+}
+
+/// Whether a module declares `#![cfg(test)]` as the first thing in its body.
+///
+/// The inner form is equivalent to the outer one and appears in real code, so
+/// a predicate that only looks outside the module misses it.
+fn mod_body_has_inner_cfg_test(node: tree_sitter::Node, source: &str) -> bool {
+    let Some(body) = node.child_by_field_name("body") else {
+        return false;
+    };
+    let mut cursor = body.walk();
+    body.children(&mut cursor).any(|child| {
+        child.kind() == "inner_attribute_item" && attribute_is_cfg_test(&source[child.byte_range()])
+    })
+}
+
+/// Whether one attribute's source text is a `cfg` that holds only under test.
+///
+/// Takes the whole attribute including its delimiters, in either the outer
+/// (`#[...]`) or inner (`#![...]`) form.
+fn attribute_is_cfg_test(text: &str) -> bool {
+    let text = text.trim();
+    let Some(inner) = text
+        .strip_prefix("#![")
+        .or_else(|| text.strip_prefix("#["))
+        .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let inner = inner.trim();
+    // `cfg_attr` survives the prefix strip as `_attr(..)`, which then fails to
+    // start with the open paren, so it is rejected here rather than by name.
+    let Some(rest) = inner.strip_prefix("cfg") else {
+        return false;
+    };
+    let Some(predicate) = rest
+        .trim_start()
+        .strip_prefix('(')
+        .and_then(|p| p.strip_suffix(')'))
+    else {
+        return false;
+    };
+    cfg_predicate_is_test_only(predicate.trim())
+}
+
+/// Whether a `cfg` predicate can only hold when `test` is set.
+///
+/// `test` and `all(test, ..)` qualify, because both require `test`. `any(..)`
+/// does not, even with `test` among its options, since the module still exists
+/// in a build where one of the others is set. `not(..)` never qualifies.
+fn cfg_predicate_is_test_only(predicate: &str) -> bool {
+    if predicate == "test" {
+        return true;
+    }
+    let Some(inner) = predicate
+        .strip_prefix("all")
+        .map(str::trim_start)
+        .and_then(|rest| rest.strip_prefix('('))
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    split_top_level(inner)
+        .into_iter()
+        .any(|part| cfg_predicate_is_test_only(part.trim()))
+}
+
+/// Split a comma-separated predicate list at nesting depth zero, leaving
+/// commas inside nested calls and inside string literals alone.
+fn split_top_level(input: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut start = 0usize;
+    for (idx, ch) in input.char_indices() {
+        if in_string {
+            match ch {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {},
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&input[start .. idx]);
+                start = idx + ch.len_utf8();
+            },
+            _ => {},
+        }
+    }
+    parts.push(&input[start ..]);
+    parts
 }
 
 #[cfg(test)]
@@ -424,9 +543,8 @@ mod cfg_test_mod_tests {
 
     #[test]
     fn the_attribute_is_found_as_a_preceding_sibling() {
-        // The case that matters, and the one the private copy in `no_float`
-        // never matched: tree-sitter puts the attribute beside the module,
-        // not inside it.
+        // The case that matters, and the one the private copies never matched:
+        // tree-sitter puts the attribute beside the module, not inside it.
         assert!(first_mod_is_test("#[cfg(test)]\nmod tests { fn f() {} }"));
     }
 
@@ -442,18 +560,26 @@ mod cfg_test_mod_tests {
 
     #[test]
     fn the_walk_continues_past_a_stack_of_attributes() {
-        // Attributes stack, so checking only the nearest one misses the
-        // `cfg(test)` sitting behind an unrelated attribute.
         assert!(first_mod_is_test(
             "#[cfg(test)]\n#[allow(dead_code)]\nmod tests { fn f() {} }"
         ));
     }
 
     #[test]
+    fn the_walk_continues_past_a_comment() {
+        // A doc comment between the attribute and the module is ordinary
+        // formatting. Stopping on it made the predicate answer no for a module
+        // that is plainly test-only.
+        assert!(first_mod_is_test(
+            "#[cfg(test)]\n// the unit tests\nmod tests { fn f() {} }"
+        ));
+        assert!(first_mod_is_test(
+            "#[cfg(test)]\n/* the unit tests */\nmod tests { fn f() {} }"
+        ));
+    }
+
+    #[test]
     fn a_preceding_item_that_is_not_an_attribute_stops_the_walk() {
-        // Without the early return, the walk would keep going back over
-        // whatever precedes the module and could find a `cfg(test)` belonging
-        // to something else entirely.
         assert!(!first_mod_is_test(
             "#[cfg(test)]\nfn unrelated() {}\nmod real { fn f() {} }"
         ));
@@ -471,6 +597,61 @@ mod cfg_test_mod_tests {
             .find(|n| n.kind() == "struct_item")
             .expect("no struct_item in fixture");
         assert!(!is_cfg_test_mod(struct_node, src));
+    }
+
+    #[test]
+    fn a_negated_test_cfg_is_not_a_test_module() {
+        // `not(test)` is the exact opposite of the question. A substring search
+        // for "cfg" and "test" answers yes here and deletes a module that
+        // exists in every non-test build.
+        assert!(!first_mod_is_test("#[cfg(not(test))]\nmod real { fn f() {} }"));
+    }
+
+    #[test]
+    fn a_feature_whose_name_contains_test_is_not_a_test_module() {
+        // "latest" contains "test". So does "fastest", and any feature someone
+        // names later.
+        assert!(!first_mod_is_test(
+            "#[cfg(feature = \"latest\")]\nmod real { fn f() {} }"
+        ));
+    }
+
+    #[test]
+    fn a_cfg_attr_is_not_a_cfg() {
+        assert!(!first_mod_is_test(
+            "#[cfg_attr(test, allow(dead_code))]\nmod real { fn f() {} }"
+        ));
+    }
+
+    #[test]
+    fn an_all_predicate_requiring_test_is_a_test_module() {
+        // `all(..)` cannot hold without every member, so a `test` anywhere in
+        // it makes the module test-only.
+        assert!(first_mod_is_test("#[cfg(all(test, unix))]\nmod tests { fn f() {} }"));
+        assert!(first_mod_is_test("#[cfg(all(unix, test))]\nmod tests { fn f() {} }"));
+    }
+
+    #[test]
+    fn an_any_predicate_offering_test_is_not_a_test_module() {
+        // The module still exists in a build where the other option is set, so
+        // it is public surface.
+        assert!(!first_mod_is_test(
+            "#[cfg(any(test, feature = \"x\"))]\nmod real { fn f() {} }"
+        ));
+    }
+
+    #[test]
+    fn a_comma_inside_a_string_does_not_split_the_predicate() {
+        assert!(!first_mod_is_test(
+            "#[cfg(all(feature = \"a,test\", unix))]\nmod real { fn f() {} }"
+        ));
+    }
+
+    #[test]
+    fn an_inner_attribute_marks_the_module_too() {
+        // `mod tests { #![cfg(test)] .. }` is equivalent to the outer form and
+        // appears in real code.
+        assert!(first_mod_is_test("mod tests { #![cfg(test)]\n fn f() {} }"));
     }
 }
 
