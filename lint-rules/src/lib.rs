@@ -365,6 +365,115 @@ pub fn line_lint_allowed(line: &str, rule_name: &str) -> bool {
     false
 }
 
+/// Whether a `mod_item` node carries a `#[cfg(test)]` attribute.
+///
+/// The canonical test-module predicate for every lint in this crate. A lint
+/// that walks the whole tree and does not call this reports on test fixtures,
+/// which is wrong for any lint whose subject is the public surface: a fixture
+/// is not API, has no consumer, and cannot be documented or annotated the way
+/// the rule wants.
+///
+/// The attribute is a **preceding sibling** of the module, not a child of it.
+/// Looking among the children instead is a silent no-op that leaves the lint
+/// reporting on every test module, which is what `no-float`'s own private copy
+/// of this predicate did from the day it was written. Attributes stack, so the
+/// walk continues back over a run of them rather than checking only the nearest.
+#[must_use]
+pub fn is_cfg_test_mod(node: tree_sitter::Node, source: &str) -> bool {
+    if node.kind() != "mod_item" {
+        return false;
+    }
+    let mut prev = node.prev_named_sibling();
+    while let Some(sibling) = prev {
+        if sibling.kind() != "attribute_item" {
+            return false;
+        }
+        let text = &source[sibling.byte_range()];
+        if text.contains("cfg") && text.contains("test") {
+            return true;
+        }
+        prev = sibling.prev_named_sibling();
+    }
+    false
+}
+
+#[cfg(test)]
+mod cfg_test_mod_tests {
+    use super::*;
+
+    /// Find the first `mod_item` anywhere in the tree and ask the predicate
+    /// about it.
+    fn first_mod_is_test(src: &str) -> bool {
+        let mut parser = make_parser();
+        let tree = parser.parse(src, None).unwrap();
+        fn find<'a>(n: tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+            let mut cursor = n.walk();
+            for child in n.children(&mut cursor) {
+                if child.kind() == "mod_item" {
+                    return Some(child);
+                }
+                if let Some(found) = find(child) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        let node = find(tree.root_node()).expect("no mod_item in fixture");
+        is_cfg_test_mod(node, src)
+    }
+
+    #[test]
+    fn the_attribute_is_found_as_a_preceding_sibling() {
+        // The case that matters, and the one the private copy in `no_float`
+        // never matched: tree-sitter puts the attribute beside the module,
+        // not inside it.
+        assert!(first_mod_is_test("#[cfg(test)]\nmod tests { fn f() {} }"));
+    }
+
+    #[test]
+    fn a_plain_module_is_not_a_test_module() {
+        assert!(!first_mod_is_test("mod real { fn f() {} }"));
+    }
+
+    #[test]
+    fn an_unrelated_attribute_does_not_make_a_module_a_test_module() {
+        assert!(!first_mod_is_test("#[allow(dead_code)]\nmod real { fn f() {} }"));
+    }
+
+    #[test]
+    fn the_walk_continues_past_a_stack_of_attributes() {
+        // Attributes stack, so checking only the nearest one misses the
+        // `cfg(test)` sitting behind an unrelated attribute.
+        assert!(first_mod_is_test(
+            "#[cfg(test)]\n#[allow(dead_code)]\nmod tests { fn f() {} }"
+        ));
+    }
+
+    #[test]
+    fn a_preceding_item_that_is_not_an_attribute_stops_the_walk() {
+        // Without the early return, the walk would keep going back over
+        // whatever precedes the module and could find a `cfg(test)` belonging
+        // to something else entirely.
+        assert!(!first_mod_is_test(
+            "#[cfg(test)]\nfn unrelated() {}\nmod real { fn f() {} }"
+        ));
+    }
+
+    #[test]
+    fn a_node_that_is_not_a_module_is_never_a_test_module() {
+        let src = "#[cfg(test)]\nstruct S;";
+        let mut parser = make_parser();
+        let tree = parser.parse(src, None).unwrap();
+        let mut cursor = tree.root_node().walk();
+        let struct_node = tree
+            .root_node()
+            .children(&mut cursor)
+            .find(|n| n.kind() == "struct_item")
+            .expect("no struct_item in fixture");
+        assert!(!is_cfg_test_mod(struct_node, src));
+    }
+}
+
 #[cfg(test)]
 mod line_lint_allowed_tests {
     use super::line_lint_allowed;

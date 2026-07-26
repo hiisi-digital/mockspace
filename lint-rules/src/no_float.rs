@@ -61,7 +61,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     }
 
     // Skip #[cfg(test)] modules
-    if node.kind() == "mod_item" && has_cfg_test_attr(node, ctx.source) {
+    if crate::is_cfg_test_mod(node, ctx.source) {
         return;
     }
 
@@ -171,20 +171,6 @@ fn is_type_position(node: Node) -> bool {
     }
     // primitive_type at top level is still a type annotation
     true
-}
-
-/// Check whether a mod_item has a `#[cfg(test)]` attribute.
-fn has_cfg_test_attr(node: Node, source: &str) -> bool {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "attribute_item" || child.kind() == "attribute" {
-            let attr_text = txt(child, source);
-            if attr_text.contains("cfg") && attr_text.contains("test") {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 // ---------------------------------------------------------------------------

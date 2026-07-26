@@ -162,6 +162,14 @@ fn collect_defs(node: Node, source: &str, out: &mut Vec<(String, usize)>) {
             continue;
         }
 
+        // Skip test modules. A fixture declared to exercise a trait is not
+        // public surface: it has no consumer, and demanding it appear in a
+        // design document would put test scaffolding in the shipping
+        // contract.
+        if crate::is_cfg_test_mod(child, source) {
+            continue;
+        }
+
         match child.kind() {
             "struct_item" | "enum_item" | "trait_item" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
