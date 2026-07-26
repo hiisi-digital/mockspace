@@ -161,16 +161,55 @@ fn get_modified_in_design_rounds(workspace_root: &Path) -> Vec<(String, String)>
     files
 }
 
-/// Whether `new` is `old` with a lifecycle status suffix added.
+/// The lifecycle status a changelist filename carries, paired with the
+/// stem the status suffix sits on.
 ///
-/// `202607180723_changelist.doc.md` to `202607180723_changelist.doc.lock.md`
-/// is the lock transition; the same shape with `.deprecated` is the deprecate
-/// transition. Both rename without touching content.
+/// `foo.doc.md` is `("foo.doc", Active)`, `foo.doc.lock.md` is
+/// `("foo.doc", Locked)`, `foo.doc.deprecated.md` is
+/// `("foo.doc", Deprecated)`.
+fn split_status(name: &str) -> Option<(&str, ClStatus)> {
+    let stem = name.strip_suffix(".md")?;
+    if let Some(base) = stem.strip_suffix(".lock") {
+        Some((base, ClStatus::Locked))
+    } else if let Some(base) = stem.strip_suffix(".deprecated") {
+        Some((base, ClStatus::Deprecated))
+    } else {
+        Some((stem, ClStatus::Active))
+    }
+}
+
+/// Whether renaming `old` to `new` is one of the lifecycle transitions the
+/// mockspace subcommands perform.
+///
+/// The subcommands move a changelist between statuses by renaming it, leaving
+/// the content untouched. Four transitions are reachable:
+///
+/// - `lock` renames active to locked.
+/// - `deprecate` renames active to deprecated.
+/// - `unlock` renames locked back to active.
+/// - `unlock` followed by `deprecate` composes, in one staged diff, to locked
+///   renamed straight to deprecated.
+///
+/// Nothing leads out of deprecated: a deprecated changelist is frozen forever,
+/// so a rename that would resurrect one is a violation and not a transition.
+/// The stem must be identical either way, since a transition never renames the
+/// changelist itself.
 fn is_status_suffix_rename(old: &str, new: &str) -> bool {
-    let Some(stem) = old.strip_suffix(".md") else {
+    let (Some((old_stem, old_status)), Some((new_stem, new_status))) =
+        (split_status(old), split_status(new))
+    else {
         return false;
     };
-    new == format!("{stem}.lock.md") || new == format!("{stem}.deprecated.md")
+    if old_stem != new_stem {
+        return false;
+    }
+    matches!(
+        (old_status, new_status),
+        (ClStatus::Active, ClStatus::Locked)
+            | (ClStatus::Active, ClStatus::Deprecated)
+            | (ClStatus::Locked, ClStatus::Active)
+            | (ClStatus::Locked, ClStatus::Deprecated)
+    )
 }
 
 /// Parse `git diff --name-status` output and append non-A entries.
@@ -271,17 +310,80 @@ mod tests {
         assert_eq!(out[0].0, "design_rounds/bar.doc.md");
     }
 
+    /// Every ordered pair of the three statuses, so no direction is left
+    /// unnamed. A transition the subcommands perform is allowed; every other
+    /// pair is a modification of a frozen changelist and is collected.
+    ///
+    /// Reading the table: the four allowed rows are `lock`, `deprecate`,
+    /// `unlock`, and `unlock` composed with `deprecate` in one staged diff.
+    /// The three rows out of deprecated are the ones that matter, because a
+    /// deprecated changelist is frozen forever and resurrecting it must not
+    /// pass as a lifecycle move.
     #[test]
-    fn lock_transition_rename_is_allowed() {
-        // `cargo mock lock` renames `<cl>.md` -> `<cl>.lock.md` at full
-        // similarity; that transition is the documented flow, not a violation.
+    fn every_status_transition_is_classified() {
+        const SUFFIXES: [&str; 3] = ["", ".lock", ".deprecated"];
+        // (old_index, new_index) -> allowed
+        const ALLOWED: [[bool; 3]; 3] = [
+            //  ->active  ->lock  ->deprecated
+            [false, true, true],   // from active
+            [true, false, true],   // from locked
+            [false, false, false], // from deprecated
+        ];
+
+        for (oi, old_suffix) in SUFFIXES.iter().enumerate() {
+            for (ni, new_suffix) in SUFFIXES.iter().enumerate() {
+                let old = format!("design_rounds/foo.doc{old_suffix}.md");
+                let new = format!("design_rounds/foo.doc{new_suffix}.md");
+                let mut out = Vec::new();
+                collect_non_additions(
+                    &format!("R100\t{old}\t{new}\n"),
+                    "staged",
+                    &mut out,
+                );
+                if ALLOWED[oi][ni] {
+                    assert!(
+                        out.is_empty(),
+                        "{old} -> {new} is a lifecycle transition and must not be \
+                         reported as a modification",
+                    );
+                } else {
+                    assert_eq!(
+                        out.len(),
+                        1,
+                        "{old} -> {new} is not a lifecycle transition and must be \
+                         reported",
+                    );
+                }
+            }
+        }
+    }
+
+    /// A stem rename carrying a status suffix change at the same time is still
+    /// a rename of the changelist, not a transition of it.
+    #[test]
+    fn stem_rename_with_status_change_is_reported() {
         let mut out = Vec::new();
         collect_non_additions(
-            "R100\tdesign_rounds/foo.doc.md\tdesign_rounds/foo.doc.lock.md\n",
+            "R100\tdesign_rounds/foo.doc.md\tdesign_rounds/bar.doc.lock.md\n",
             "staged",
             &mut out,
         );
-        assert!(out.is_empty());
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "design_rounds/bar.doc.lock.md");
+    }
+
+    /// Below full similarity the content changed, so it is an edit wearing a
+    /// transition's filename.
+    #[test]
+    fn partial_similarity_rename_is_reported() {
+        let mut out = Vec::new();
+        collect_non_additions(
+            "R087\tdesign_rounds/foo.doc.md\tdesign_rounds/foo.doc.lock.md\n",
+            "staged",
+            &mut out,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "design_rounds/foo.doc.lock.md");
     }
 
     #[test]
