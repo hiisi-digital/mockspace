@@ -4,7 +4,7 @@
 //! the diagnostics crate (i.e. `<prefix>-error-primitives`, `<prefix>-registry`).
 //! Everything else must use `define_error!` from the diagnostics crate.
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoRawErrorOutsidePrimitives;
 
@@ -12,11 +12,12 @@ impl Lint for NoRawErrorOutsidePrimitives {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
-
     fn name(&self) -> &'static str {
         "no-raw-error-outside-primitives"
     }
+}
 
+impl CrateLint for NoRawErrorOutsidePrimitives {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();

@@ -10,7 +10,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const BLESSED_TYPES: &[&str] = &["Outcome", "Just"];
 
@@ -24,11 +24,12 @@ impl Lint for NoBareResult {
         // declaration entirely.
         crate::Severity::ADVISORY
     }
-
     fn name(&self) -> &'static str {
         "no-bare-result"
     }
+}
 
+impl CrateLint for NoBareResult {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();

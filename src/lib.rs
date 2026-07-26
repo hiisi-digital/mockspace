@@ -51,9 +51,17 @@ pub use entry::run;
 /// Called by proxy crates that define custom lints in `mock/lints/`.
 pub use entry::run_with_custom_lints;
 pub use mockspace_lint_rules::{
-    CrossCrateLint,
+    CrateLint,
+    Invocation,
     Level,
     Lint,
+    LintPack,
+    MessageContext,
+    MessageDomain,
+    MessageLint,
+    RepoContext,
+    RepoLint,
+    WorkspaceLint,
     LintConfig,
     LintContext,
     LintError,

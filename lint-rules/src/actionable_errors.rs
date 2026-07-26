@@ -6,7 +6,7 @@
 //!
 //! Also checks `define_warning!` and `define_hint!` invocations the same way.
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const TRACKED_MACROS: &[&str] = &["define_error!", "define_warning!", "define_hint!"];
 
@@ -16,7 +16,9 @@ impl Lint for ActionableErrors {
     fn name(&self) -> &'static str {
         "actionable-errors"
     }
+}
 
+impl CrateLint for ActionableErrors {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();

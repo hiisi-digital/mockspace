@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use mockspace_lint_rules::{
     self,
     CrateSourceFile,
-    CrossCrateLint,
+    LintPack,
+    RepoContext,
     Level,
-    Lint,
     LintConfig,
     LintContext,
     LintError,
@@ -120,8 +120,7 @@ pub fn run_lints(
     crate_prefix: &str,
     lint_overrides: &LintConfig,
     primitive_introductions: &std::collections::BTreeMap<String, Vec<String>>,
-    custom_lints: &[Box<dyn Lint>],
-    custom_cross_lints: &[Box<dyn CrossCrateLint>],
+    pack: &LintPack,
 ) -> usize {
     let all_crate_names: BTreeSet<String> = crates.keys().cloned().collect();
     let workspace_root = crates_dir.parent().unwrap_or(crates_dir);
@@ -189,7 +188,7 @@ pub fn run_lints(
             &ctx,
             doc_only,
             overrides,
-            custom_lints,
+            &pack.crate_lints,
         ));
 
         parsed.push(ParsedCrate {
@@ -234,11 +233,27 @@ pub fn run_lints(
         .map(|(name, ctx)| (*name, ctx))
         .collect();
 
-    all_errors.extend(mockspace_lint_rules::check_cross_crate_with_extra(
+    all_errors.extend(mockspace_lint_rules::check_workspace_with_extra(
         &cross_refs,
         doc_only,
         overrides,
-        custom_cross_lints,
+        &pack.workspace_lints,
+    ));
+
+    // Repo lints take no crates at all, so they run even when the workspace has
+    // none. They used to be cross-crate lints that stole a path from the first
+    // crate, which made them silently inert in exactly that case.
+    let repo_ctx = RepoContext {
+        mock_dir:   workspace_root,
+        repo_root:  workspace_root.parent().unwrap_or(workspace_root),
+        all_crates: &all_crate_names,
+        invocation: None,
+    };
+    all_errors.extend(mockspace_lint_rules::check_repo_with_extra(
+        &repo_ctx,
+        doc_only,
+        overrides,
+        &pack.repo_lints,
     ));
 
     // Partition by effective severity

@@ -6,7 +6,7 @@
 //!
 //! Exempt: the ID infrastructure crate (it IS the ID infrastructure).
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const MAP_TYPES: &[&str] = &["HashMap", "BTreeMap"];
 
@@ -21,11 +21,12 @@ impl Lint for NoPrimitiveKey {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
-
     fn name(&self) -> &'static str {
         "no-primitive-key"
     }
+}
 
+impl CrateLint for NoPrimitiveKey {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();

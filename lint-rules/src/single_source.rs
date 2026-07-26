@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use tree_sitter::Node;
 
-use crate::{CrossCrateLint, LintContext, LintError};
+use crate::{Lint, WorkspaceLint, LintContext, LintError};
 
 /// Pairs of crate suffixes where duplicate type names are expected.
 /// Macro-util crates and their parent crates often define matching types
@@ -21,11 +21,13 @@ const EXEMPT_PAIRS: &[(&str, &str)] =
 
 pub struct SingleSource;
 
-impl CrossCrateLint for SingleSource {
+impl Lint for SingleSource {
     fn name(&self) -> &'static str {
         "single-source"
     }
+}
 
+impl WorkspaceLint for SingleSource {
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         // Get crate prefix from the first context (all share the same prefix).
         let prefix = crates

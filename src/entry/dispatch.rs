@@ -1,6 +1,17 @@
 #![allow(unused_imports)]
 use super::*;
 
+/// Whether a pack contributes no lints of any kind.
+///
+/// The statically-linked path passes lints in directly; only an empty pack means
+/// the engine should try loading this repo's cdylib instead.
+fn pack_is_empty(pack: &LintPack) -> bool {
+    pack.crate_lints.is_empty()
+        && pack.workspace_lints.is_empty()
+        && pack.repo_lints.is_empty()
+        && pack.message_lints.is_empty()
+}
+
 /// The value following `flag` in `args`, if present.
 fn arg_value(args: &[String], flag: &str) -> Option<String> {
     args.iter()
@@ -9,10 +20,7 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
-pub(crate) fn run_inner(
-    custom_lints: &[Box<dyn Lint>],
-    custom_cross_lints: &[Box<dyn CrossCrateLint>],
-) -> ExitCode {
+pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
 
     // Determine mock directory:
@@ -64,7 +72,7 @@ pub(crate) fn run_inner(
     // repo's lints from a runtime cdylib. `loaded` holds the library so the
     // boxed lints' vtables outlive every use below; the shadowing binds the
     // effective slices for the rest of the function.
-    let loaded = if custom_lints.is_empty() && custom_cross_lints.is_empty() {
+    let loaded = if pack_is_empty(pack) {
         arg_value(&args, "--mockspace-lint-rules-dep").and_then(|dep| {
             match crate::custom_lints::load(&cfg, &cfg.config_path, &dep) {
                 Ok(l) => l,
@@ -77,9 +85,9 @@ pub(crate) fn run_inner(
     } else {
         None
     };
-    let (custom_lints, custom_cross_lints) = match &loaded {
-        Some(l) => (l.lints.as_slice(), l.cross.as_slice()),
-        None => (custom_lints, custom_cross_lints),
+    let pack = match &loaded {
+        Some(l) => &l.pack,
+        None => pack,
     };
 
     // Subcommands: positional args that aren't flags or value-flag values.
@@ -422,9 +430,8 @@ pub(crate) fn run_inner(
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
                 &cfg.primitive_introductions,
-                custom_lints,
-                custom_cross_lints,
-            );
+                pack,
+                );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;
@@ -443,9 +450,8 @@ pub(crate) fn run_inner(
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
                 &cfg.primitive_introductions,
-                custom_lints,
-                custom_cross_lints,
-            );
+                pack,
+                );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;

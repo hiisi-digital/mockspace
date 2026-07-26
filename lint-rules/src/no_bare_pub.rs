@@ -11,7 +11,7 @@
 //! Exempt: items inside macro definitions, test modules, and the visibility
 //! macros crate itself.
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoBarePublic;
 
@@ -19,11 +19,12 @@ impl Lint for NoBarePublic {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
-
     fn name(&self) -> &'static str {
         "no-bare-pub"
     }
+}
 
+impl CrateLint for NoBarePublic {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();

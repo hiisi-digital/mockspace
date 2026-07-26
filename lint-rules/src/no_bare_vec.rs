@@ -27,7 +27,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "no-bare-vec";
 
@@ -101,11 +101,12 @@ impl Lint for NoBareVec {
         // declaration entirely.
         crate::Severity::PUSH_GATE
     }
-
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+}
 
+impl CrateLint for NoBareVec {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();

@@ -15,7 +15,7 @@
 //! 3. `OnceLock<Mutex<` or `OnceLock<RwLock<` pattern (global mutable singleton) → Warning
 //! 4. `HashMap<&str, usize>` or `HashMap<String, usize>` (index-lookup map) → Error
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoAdhocFramework;
 
@@ -23,11 +23,12 @@ impl Lint for NoAdhocFramework {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
-
     fn name(&self) -> &'static str {
         "no-adhoc-framework"
     }
+}
 
+impl CrateLint for NoAdhocFramework {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
 

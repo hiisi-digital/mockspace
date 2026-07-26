@@ -16,7 +16,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 /// (type_or_call pattern, crate suffixes that are allowed to use it)
 /// At check time, full crate names are built as `<prefix>-<suffix>`.
@@ -45,11 +45,12 @@ impl Lint for NoBareMacroTypes {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
-
     fn name(&self) -> &'static str {
         "no-bare-macro-types"
     }
+}
 
+impl CrateLint for NoBareMacroTypes {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
         visit_nodes(ctx.tree.root_node(), ctx, &mut errors);

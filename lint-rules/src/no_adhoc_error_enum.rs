@@ -8,7 +8,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoAdhocErrorEnum;
 
@@ -16,11 +16,12 @@ impl Lint for NoAdhocErrorEnum {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
-
     fn name(&self) -> &'static str {
         "no-adhoc-error-enum"
     }
+}
 
+impl CrateLint for NoAdhocErrorEnum {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();

@@ -9,7 +9,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const MAX_EXPORTS: usize = 5;
 
@@ -36,11 +36,12 @@ impl Lint for ExportCount {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::ADVISORY
     }
-
     fn name(&self) -> &'static str {
         "export-count"
     }
+}
 
+impl CrateLint for ExportCount {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let root = ctx.tree.root_node();
         let count = count_pub_exports(root, ctx.source);

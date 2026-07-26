@@ -10,7 +10,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const FLOAT_TYPES: &[&str] = &["f32", "f64"];
 
@@ -26,11 +26,12 @@ impl Lint for NoFloat {
         // declaration entirely.
         crate::Severity::ADVISORY
     }
-
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+}
 
+impl CrateLint for NoFloat {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();

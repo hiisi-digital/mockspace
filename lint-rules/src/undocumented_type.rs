@@ -22,25 +22,25 @@ use std::collections::HashSet;
 
 use tree_sitter::Node;
 
-use crate::{CrossCrateLint, LintContext, LintError};
+use crate::{Lint, WorkspaceLint, LintContext, LintError};
 
 const LINT_NAME: &str = "undocumented-type";
 
 pub struct UndocumentedType;
 
-impl CrossCrateLint for UndocumentedType {
+impl Lint for UndocumentedType {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::BUILD_GATE
     }
-
     fn name(&self) -> &'static str {
         LINT_NAME
     }
-
     fn source_only(&self) -> bool {
         false
     }
+}
 
+impl WorkspaceLint for UndocumentedType {
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         // Pass 1: collect all type names mentioned in ALL doc files.
         let mut documented_types: HashSet<String> = HashSet::new();

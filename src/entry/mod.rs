@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use mockspace_lint_rules::{CrossCrateLint, Lint};
+use mockspace_lint_rules::LintPack;
 
 use crate::config::Config;
 use crate::{
@@ -37,12 +37,9 @@ pub(crate) use check::*;
 mod clean_tests;
 
 pub fn run() -> ExitCode {
-    run_inner(&[], &[])
+    run_inner(&LintPack::default())
 }
 
-pub fn run_with_custom_lints(
-    custom_lints: Vec<Box<dyn Lint>>,
-    custom_cross_lints: Vec<Box<dyn CrossCrateLint>>,
-) -> ExitCode {
-    run_inner(&custom_lints, &custom_cross_lints)
+pub fn run_with_custom_lints(pack: LintPack) -> ExitCode {
+    run_inner(&pack)
 }

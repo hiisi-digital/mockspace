@@ -14,7 +14,7 @@
 //! (defines framework type erasure primitives), the ID crate (defines
 //! collection wrappers).
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "no-box";
 
@@ -28,11 +28,12 @@ impl Lint for NoBox {
         // declaration entirely.
         crate::Severity::HARD_ERROR
     }
-
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+}
 
+impl CrateLint for NoBox {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();

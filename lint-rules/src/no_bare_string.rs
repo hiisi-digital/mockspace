@@ -14,7 +14,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoBareString;
 
@@ -22,11 +22,12 @@ impl Lint for NoBareString {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::PUSH_GATE
     }
-
     fn name(&self) -> &'static str {
         "no-bare-string"
     }
+}
 
+impl CrateLint for NoBareString {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
         let root = ctx.tree.root_node();
