@@ -75,21 +75,31 @@ pub(crate) fn ensure_durable_hooks(actions: &mut Vec<String>) -> Option<PathBuf>
     Some(dir)
 }
 
-/// The durable gate: a self-contained hook in the user config home that
+/// The durable gate: a machine-global hook in the user config home that
 /// `core.hooksPath` points at, so it is invisible to the repo and survives a
-/// `target/` clean. Under the dissolved-proxy model there is no generated
-/// `mock/target/hooks/` layer to delegate to, so the durable hook does the
-/// whole job itself:
+/// `target/` clean.
 ///
-/// 1. resolves the repo root and, flexibly (root first, then subdirs hidden
-///    first), the `mockspace.toml` and mock dir, mirroring the launcher;
-/// 2. discovers the `mock` / `cargo-mock` launcher on PATH;
-/// 3. with the launcher present, runs the same staged-scope validation the
-///    generated hooks did, calling the launcher instead of the `cargo mock`
-///    alias;
-/// 4. with NO launcher installed, fails closed for the design surface only:
-///    a commit touching the mock dir or the config is blocked with an install
-///    hint, and everything outside the surface passes freely.
+/// One body serves every repo on this mockspace version, which is what fixes its
+/// responsibilities. It carries **no policy of its own**, because policy is
+/// per-repo and this file is not. It does exactly three things:
+///
+/// 1. **Not a mockspace project** (no `mockspace.toml` anywhere): exit 0. The
+///    gate has no opinion about a repo it does not govern.
+/// 2. **Initialised** (the generated per-repo hook exists and is executable):
+///    delegate to it and exit with its status. The generated hook is the one
+///    that knows this repo's attribution policy, lint tiers and scope, because
+///    those were baked into it when it was written.
+/// 3. **Not initialised**: block, at the scope the repo configures via the
+///    top-level `uninitialised_blocks` key (`surface`, the default, blocks only
+///    changes touching the mock dir or `mockspace.toml`; `all` blocks every
+///    commit and push).
+///
+/// Delegating rather than re-implementing is the point. An earlier shape carried
+/// a second copy of the staged-scope validation and of the byline check, with a
+/// comment conceding the two copies "MUST stay in sync". They could not, and the
+/// byline copy was hardcoded where the generated one was configurable, so a repo
+/// configured for autonomous work had its commits demanded by one layer and
+/// rejected by the other.
 pub(crate) fn gen_durable_hook(name: &str) -> String {
     let mut s = String::new();
     s.push_str("#!/usr/bin/env bash\n");
@@ -97,45 +107,99 @@ pub(crate) fn gen_durable_hook(name: &str) -> String {
     s.push('\n');
     s.push_str(&format!(
         "# mockspace durable gate ({name}). Do not edit; rewritten on each `mock` run.\n\
-         # core.hooksPath points here: invisible to the repo, survives a target/ clean.\n"
+         # core.hooksPath points here: invisible to the repo, survives a target/ clean.\n\
+         # Carries no policy. Delegates to the generated per-repo hook when mockspace\n\
+         # is initialised, and blocks at the configured scope when it is not.\n"
     ));
 
-    // commit-msg is a standalone byline gate. The launcher / mock-surface logic
-    // does not apply to it, and byline enforcement must hold regardless of
-    // install state, so it skips the shared prelude entirely.
-    if name == "commit-msg" {
-        s.push_str("set -u\n\n");
-        s.push_str(&byline_commit_msg_body());
-        s.push_str("exit 0\n");
-        return s;
-    }
-
-    // pre-push: capture the pushed-ref lines once and run the byline scan
-    // before the prelude, so byline enforcement holds even with no launcher
-    // installed. The crate-diff loop in the body reads the same captured lines.
+    s.push_str("set -u\n");
+    // pre-push receives its ref lines on stdin. Capture them before anything
+    // else, so both the block path and the delegation can replay them.
     if name == "pre-push" {
-        s.push_str("set -u\nPREPUSH_STDIN=$(cat)\n\n");
-        s.push_str(&byline_prepush_scan_body());
-        s.push_str(DURABLE_PRELUDE);
-        s.push_str(DURABLE_PREPUSH_BODY);
-        return s;
+        s.push_str("PREPUSH_STDIN=$(cat)\n");
     }
-
-    let body = match name {
-        "pre-commit" => DURABLE_PRECOMMIT_BODY,
-        _ => "\"$launcher\" --lint-only --strict 2>&1 || exit 1\n",
-    };
-    s.push_str(DURABLE_PRELUDE);
-    s.push_str(body);
+    s.push('\n');
+    s.push_str(DURABLE_DISCOVERY);
+    s.push_str(&durable_delegate_or_block(name));
     s
 }
 
-/// Shared prelude: resolve root + config + mock dir, discover the launcher,
-/// and handle the no-launcher fail-closed-for-the-surface case. Ends with the
-/// launcher present and `MOCK_DIR` set to the mock dir relative to the root.
-const DURABLE_PRELUDE: &str = r##"set -u
+/// The delegate-or-block decision, per hook name.
+///
+/// `$1..` are the hook's own arguments (the message-file path for `commit-msg`,
+/// the remote name and URL for `pre-push`), forwarded verbatim so the generated
+/// hook sees exactly what git passed.
+fn durable_delegate_or_block(name: &str) -> String {
+    // How to detect that this hook's own concern is in play, for the `surface`
+    // scope. commit-msg has no staged-file notion of its own, so it defers to
+    // the same staged-surface test the pre-commit hook uses.
+    let stdin_replay = if name == "pre-push" {
+        "printf '%s\\n' \"$PREPUSH_STDIN\" | "
+    } else {
+        ""
+    };
+    format!(
+        r##"
+# --- initialised? then the generated per-repo hook owns this ---
+generated="$mockdir/target/hooks/{name}"
+if [ -x "$generated" ]; then
+    {stdin_replay}"$generated" "$@"
+    exit $?
+fi
 
-# resolve the repo root (MOCK_ROOT wins, else the .git ancestor)
+# --- not initialised: block at the configured scope ---
+scope=$(ms_read_key "$cfg" uninitialised_blocks)
+[ -z "$scope" ] && scope="surface"
+
+if [ "$scope" != "all" ]; then
+    # `surface` scope: only changes to the design surface are the gate's
+    # business. Work elsewhere in the repo passes untouched.
+    surface=""
+    [ -n "$mockrel" ] && surface=$(git diff --cached --name-only -- "$mockrel" 2>/dev/null || true)
+    if [ -z "$surface" ] && [ -n "$cfgrel" ]; then
+        surface=$(git diff --cached --name-only -- "$cfgrel" 2>/dev/null || true)
+    fi
+    [ -z "$surface" ] && exit 0
+fi
+
+echo "" >&2
+echo "BLOCKED: mockspace is not initialised in this repo, so the {name} gate cannot run." >&2
+echo "" >&2
+echo "  expected the generated hook at:" >&2
+echo "    $generated" >&2
+echo "" >&2
+if [ "$scope" = "all" ]; then
+    echo "  scope: all (uninitialised_blocks = \"all\"), so every commit and push" >&2
+    echo "  is blocked until mockspace is initialised." >&2
+else
+    echo "  scope: surface (the default), so this is blocked because it changes" >&2
+    echo "  \${{mockrel:-mock}} or the mockspace config. Work outside that passes." >&2
+fi
+echo "" >&2
+echo "  to initialise:  mock" >&2
+echo "  if the launcher is missing:  cargo install cargo-mock" >&2
+exit 1
+"##
+    )
+}
+
+/// The one shell implementation of mockspace-project discovery.
+///
+/// Resolves, in order, `root`, `cfg`, `mockdir`, and their repo-relative forms
+/// `cfgrel` and `mockrel`, then exits 0 when the repo is not a mockspace project
+/// at all. Also defines `ms_read_key`, which reads a top-level scalar from a
+/// `mockspace.toml`.
+///
+/// This mirrors the launcher's `discover::locate`
+/// (`cargo-mock/src/discover.rs`), including the single-config rule: a repo has
+/// exactly one `mockspace.toml`, and more than one is a hard error. The two are
+/// separate implementations in separate languages, so the invariant is stated
+/// here and covered by tests rather than by a comment asking a reader to keep
+/// them aligned by hand.
+///
+/// Emitted once and shared by every durable hook, so the walk cannot drift
+/// between them.
+pub(crate) const DURABLE_DISCOVERY: &str = r##"# resolve the repo root (MOCK_ROOT wins, else the .git ancestor)
 root="${MOCK_ROOT:-}"
 if [ -z "$root" ] || [ ! -d "$root" ]; then
     root=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -144,23 +208,26 @@ if [ -z "$root" ] || [ ! -d "$root" ]; then
     }
 fi
 
-# a top-level `mock_dir = "..."` from a mockspace.toml (stops at the first table)
-read_mock_dir() {
-    awk '/^[[:space:]]*\[/{exit} /^[[:space:]]*mock_dir[[:space:]]*=/{sub(/^[^=]*=[[:space:]]*/,""); gsub(/"/,""); sub(/[[:space:]].*$/,""); print; exit}' "$1" 2>/dev/null
+# Read a top-level scalar key from a mockspace.toml. $1 = file, $2 = key.
+# Stops at the first table header, so a same-named key inside a [table] is not
+# mistaken for the top-level one.
+ms_read_key() {
+    [ -f "$1" ] || return 0
+    awk -v key="$2" '
+        /^[[:space:]]*\[/ { exit }
+        $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+            sub(/^[^=]*=[[:space:]]*/, ""); gsub(/"/, ""); sub(/[[:space:]].*$/, "");
+            print; exit
+        }' "$1" 2>/dev/null
 }
 
-# locate the one mockspace.toml + the mock dir (root, then subdirs hidden-first).
-# This is a shell reimplementation of the launcher's `discover::locate`
-# (cargo-mock/src/discover.rs); the two MUST stay in sync, including the
-# single-config rule: a repo has exactly one mockspace.toml, and more than one
-# (root plus subdirs) is a hard error. It exists only for the no-launcher
-# fallback path; when the launcher is present, `locate` is authoritative.
+# Locate the one mockspace.toml + the mock dir (root first, then subdirs).
 cfg=""; mockdir=""; cfgcount=0; cfglist=""
 if [ -f "$root/mockspace.toml" ]; then
     cfgcount=$((cfgcount + 1)); cfglist="${cfglist}  $root/mockspace.toml
 "
     cfg="$root/mockspace.toml"
-    md=$(read_mock_dir "$cfg"); [ -z "$md" ] && md="mock"
+    md=$(ms_read_key "$cfg" mock_dir); [ -z "$md" ] && md="mock"
     mockdir="$root/$md"
 fi
 for d in "$root"/.*/ "$root"/*/; do
@@ -172,7 +239,7 @@ for d in "$root"/.*/ "$root"/*/; do
 "
         if [ -z "$cfg" ]; then
             cfg="${d}mockspace.toml"
-            md=$(read_mock_dir "$cfg"); [ -z "$md" ] && md="."
+            md=$(ms_read_key "$cfg" mock_dir); [ -z "$md" ] && md="."
             if [ "$md" = "." ]; then mockdir="${d%/}"; else mockdir="${d%/}/$md"; fi
         fi
     fi
@@ -182,96 +249,10 @@ if [ "$cfgcount" -gt 1 ]; then
     printf '%s' "$cfglist" >&2
     exit 1
 fi
+
+# Not a mockspace project: the gate governs nothing here.
+[ -z "$cfg" ] && exit 0
+
 mockrel="${mockdir#"$root"/}"
 cfgrel="${cfg#"$root"/}"
-
-# discover the launcher (direct `mock` preferred; bypasses any stale alias)
-launcher=""
-if command -v mock >/dev/null 2>&1; then launcher="mock"
-elif command -v cargo-mock >/dev/null 2>&1; then launcher="cargo-mock"
-fi
-
-if [ -z "$launcher" ]; then
-    # no launcher installed: fail closed for the design surface only.
-    surface=""
-    [ -n "$mockrel" ] && surface=$(git diff --cached --name-only -- "$mockrel" 2>/dev/null || true)
-    if [ -z "$surface" ] && [ -n "$cfgrel" ]; then
-        surface=$(git diff --cached --name-only -- "$cfgrel" 2>/dev/null || true)
-    fi
-    if [ -n "$surface" ]; then
-        echo "mockspace gate: this changes the mockspace surface (${mockrel:-mock}), which the gate governs." >&2
-        echo "  install the launcher:  cargo install cargo-mock" >&2
-        echo "  (changes outside the mockspace surface are unaffected.)" >&2
-        exit 1
-    fi
-    exit 0
-fi
-
-MOCK_DIR="$mockrel"
-"##;
-
-/// pre-commit validation body (launcher present): scope to the changed crates
-/// and run the commit-tier lints. Mirrors the generated pre-commit hook.
-const DURABLE_PRECOMMIT_BODY: &str = r##"
-STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
-[ -z "$STAGED" ] && exit 0
-echo "pre-commit: mockspace changes detected, running validation..."
-CHANGED_CRATES=$(echo "$STAGED" | grep "^$MOCK_DIR/crates/" | sed "s|^$MOCK_DIR/crates/||" | cut -d/ -f1 | sort -u | tr '\n' ',' | sed 's/,$//' || true)
-ARGS=(--lint-only --commit)
-if [ -n "$CHANGED_CRATES" ]; then
-    STAGED_RS=$(echo "$STAGED" | grep "^$MOCK_DIR/crates/.*\.rs$" || true)
-    if [ -z "$STAGED_RS" ]; then
-        echo "  crates: $CHANGED_CRATES (doc-only)"
-        ARGS+=(--scope "$CHANGED_CRATES" --doc-only)
-    else
-        echo "  crates: $CHANGED_CRATES"
-        ARGS+=(--scope "$CHANGED_CRATES")
-    fi
-else
-    echo "  infrastructure-only (no crate files staged)"
-    ARGS+=(--scope infra)
-fi
-if ! "$launcher" "${ARGS[@]}" 2>&1; then
-    echo "" >&2
-    echo "BLOCKED: mockspace validation failed." >&2
-    exit 1
-fi
-echo "pre-commit: validation passed."
-"##;
-
-/// pre-push validation body (launcher present): compute changed crates across
-/// every pushed ref from stdin, then run the strict-tier lints. Mirrors the
-/// generated pre-push hook.
-const DURABLE_PREPUSH_BODY: &str = r##"
-echo "pre-push: running mockspace validation..."
-NEW_BRANCH=0
-CHANGED_CRATES=""
-while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
-    [ -z "$local_sha" ] && continue
-    [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
-    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then NEW_BRANCH=1; break; fi
-    if ! git cat-file -e "$remote_sha" 2>/dev/null; then NEW_BRANCH=1; break; fi
-    PUSH_CHANGED=$(git diff --name-only "$remote_sha".."$local_sha" -- "$MOCK_DIR/crates/" 2>/dev/null | sed "s|^$MOCK_DIR/crates/||" | cut -d/ -f1 | sort -u | tr '\n' ',' | sed 's/,$//' || true)
-    [ -z "$PUSH_CHANGED" ] && continue
-    if [ -z "$CHANGED_CRATES" ]; then CHANGED_CRATES="$PUSH_CHANGED"; else CHANGED_CRATES="$CHANGED_CRATES,$PUSH_CHANGED"; fi
-done <<< "$PREPUSH_STDIN"
-if [ -n "$CHANGED_CRATES" ]; then
-    CHANGED_CRATES=$(echo "$CHANGED_CRATES" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
-fi
-if grep -rq "Nuked by" "$MOCK_DIR/crates/"*/src/lib.rs 2>/dev/null; then
-    echo "  nuked workspace: skipping source checks"
-    ARGS=(--lint-only --strict --doc-only)
-elif [ "$NEW_BRANCH" = "1" ] || [ -z "$CHANGED_CRATES" ]; then
-    echo "  scope: full project"
-    ARGS=(--lint-only --strict)
-else
-    echo "  scope: $CHANGED_CRATES"
-    ARGS=(--lint-only --strict --scope "$CHANGED_CRATES")
-fi
-if ! "$launcher" "${ARGS[@]}" 2>&1; then
-    echo "" >&2
-    echo "BLOCKED: mockspace validation failed." >&2
-    exit 1
-fi
-echo "pre-push: validation passed."
 "##;

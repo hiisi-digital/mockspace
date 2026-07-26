@@ -416,15 +416,26 @@ mod byline_hook_tests {
 
     /// Run `msg` through BOTH the generated and the durable commit-msg hooks,
     /// assert they agree (both layers must enforce), return the shared code.
+    /// Run `msg` through the generated commit-msg hook.
+    ///
+    /// The generated hook is the byline authority. The durable hook no longer
+    /// duplicates the check: it delegates to this one when the repo is
+    /// initialised and blocks when it is not, which `durable_gate_tests` covers.
+    /// Comparing the two layers, as this helper used to, asserted a duplication
+    /// that was itself the problem.
     fn run_commit_msg(msg: &str) -> i32 {
         let dir = scratch("msg");
         let msgfile = dir.join("COMMIT_EDITMSG");
         std::fs::write(&msgfile, msg).unwrap();
-        let generated = run_script(&gen_commit_msg(&dir.join("no-user-hook")), &[&msgfile], "", None, None);
-        let durable = run_script(&gen_durable_hook("commit-msg"), &[&msgfile], "", None, None);
+        let code = run_script(
+            &gen_commit_msg(&dir.join("no-user-hook")),
+            &[&msgfile],
+            "",
+            None,
+            None,
+        );
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(generated, durable, "generated and durable commit-msg disagree on {msg:?}");
-        generated
+        code
     }
 
     /// A PATH with git + coreutils but WITHOUT the cargo bin, so the durable
@@ -531,19 +542,73 @@ mod byline_hook_tests {
         );
     }
 
+    // The durable gate's own contract: discover, then delegate or block. It
+    // carries no policy of its own, so none of these assert on byline content.
+
     #[test]
-    fn durable_pre_push_rejects_byline() {
-        assert_eq!(
-            run_durable_pre_push("feat: x\n\nCo-Authored-By: Claude <noreply@anthropic.com>"),
-            1
+    fn durable_ignores_a_repo_it_does_not_govern() {
+        // No mockspace.toml. The gate must not block, or it would hijack every
+        // unrelated repo on the machine that ever had core.hooksPath set.
+        assert_eq!(run_durable_pre_push("fix: normal commit"), 0);
+    }
+
+    /// A repo with a `mockspace.toml`, optionally with an executable generated
+    /// hook stub, run through the durable pre-push. Returns the exit code.
+    fn durable_in_project(config: &str, stub: Option<&str>) -> i32 {
+        let (repo, sha) = repo_with_commit("fix: whatever");
+        std::fs::write(repo.join("mockspace.toml"), config).unwrap();
+        if let Some(body) = stub {
+            let hooks = repo.join("mock/target/hooks");
+            std::fs::create_dir_all(&hooks).unwrap();
+            let path = hooks.join("pre-push");
+            std::fs::write(&path, body).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut p = std::fs::metadata(&path).unwrap().permissions();
+                p.set_mode(0o755);
+                std::fs::set_permissions(&path, p).unwrap();
+            }
+        }
+        let zero = "0".repeat(40);
+        let stdin = format!("refs/heads/main {sha} refs/heads/main {zero}\n");
+        let code = run_script(
+            &gen_durable_hook("pre-push"),
+            &[],
+            &stdin,
+            Some(&repo),
+            Some(&launcher_free_path()),
         );
+        let _ = std::fs::remove_dir_all(&repo);
+        code
     }
 
     #[test]
-    fn durable_pre_push_accepts_clean() {
-        // Clean message, no launcher on PATH: the byline scan passes, then the
-        // prelude takes the no-launcher / no-surface branch and exits 0.
-        assert_eq!(run_durable_pre_push("fix: normal commit"), 0);
+    fn durable_delegates_to_the_generated_hook_when_initialised() {
+        // A stub exiting 42 proves the delegation actually happened rather than
+        // the durable hook deciding for itself.
+        let code = durable_in_project(
+            "mock_dir = \"mock\"\n",
+            Some("#!/usr/bin/env bash\nexit 42\n"),
+        );
+        assert_eq!(code, 42, "durable pre-push did not delegate");
+    }
+
+    #[test]
+    fn durable_blocks_an_uninitialised_project_at_all_scope() {
+        let code = durable_in_project(
+            "mock_dir = \"mock\"\nuninitialised_blocks = \"all\"\n",
+            None,
+        );
+        assert_eq!(code, 1, "expected a block at 'all' scope");
+    }
+
+    #[test]
+    fn durable_passes_an_uninitialised_project_outside_the_surface() {
+        // Default `surface` scope with nothing staged under mock/: the gate
+        // governs the design surface, so unrelated work passes.
+        let code = durable_in_project("mock_dir = \"mock\"\n", None);
+        assert_eq!(code, 0, "surface scope must not block work outside it");
     }
 
     #[test]

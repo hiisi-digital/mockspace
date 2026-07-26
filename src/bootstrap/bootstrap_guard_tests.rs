@@ -229,23 +229,27 @@ fn bootstrap_durable_dir_none_without_home() {
 }
 
 #[test]
-fn bootstrap_durable_hook_gates_via_launcher_or_blocks_surface() {
+fn bootstrap_durable_hook_delegates_or_blocks() {
     let h = super::gen_durable_hook("pre-commit");
     // resolves the repo root (MOCK_ROOT or the .git ancestor)
     assert!(h.contains("git rev-parse --show-toplevel"));
     assert!(h.contains("MOCK_ROOT"));
-    // flexibly resolves the config + mock dir (no baked mockdir, no git config)
-    assert!(h.contains("read_mock_dir"));
+    // resolves the config + mock dir through the one shared reader
+    assert!(h.contains("ms_read_key"));
     assert!(!h.contains("mockspace.mockdir"));
-    // discovers the launcher and calls it, not the `cargo mock` alias
-    assert!(h.contains("command -v mock"));
-    assert!(h.contains("command -v cargo-mock"));
-    assert!(h.contains(r#""$launcher""#));
-    assert!(!h.contains("cargo mock"));
-    // no launcher: fail closed for the design surface only, install hint
-    assert!(h.contains("cargo install cargo-mock"));
-    assert!(h.contains("git diff --cached --name-only -- \"$mockrel\""));
+    // a repo with no mockspace.toml is not this gate's business
+    assert!(h.contains("[ -z \"$cfg\" ] && exit 0"));
+    // initialised: delegate to the generated per-repo hook and return its status
+    assert!(h.contains("$mockdir/target/hooks/pre-commit"));
+    assert!(h.contains("exit $?"));
+    // not initialised: block at the configured scope, with an init hint
+    assert!(h.contains("uninitialised_blocks"));
+    assert!(h.contains("to initialise:  mock"));
     assert!(h.contains("exit 1"));
+    // carries no policy of its own: no byline scan, no lint invocation
+    assert!(!h.contains("co-authored-by"));
+    assert!(!h.contains("--lint-only"));
+    assert!(!h.contains("cargo mock"));
     // and the generated shell is syntactically valid
     assert_bash_ok(&h);
 }
@@ -253,8 +257,9 @@ fn bootstrap_durable_hook_gates_via_launcher_or_blocks_surface() {
 #[test]
 fn bootstrap_durable_pre_push_hook_valid() {
     let h = super::gen_durable_hook("pre-push");
-    assert!(h.contains("pre-push: running mockspace validation"));
-    assert!(h.contains(r#""$launcher""#));
+    // captures stdin once, so both the block path and the delegation can use it
+    assert!(h.contains("PREPUSH_STDIN=$(cat)"));
+    assert!(h.contains("$mockdir/target/hooks/pre-push"));
     assert!(!h.contains("cargo mock"));
     assert_bash_ok(&h);
 }
