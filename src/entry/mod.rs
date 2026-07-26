@@ -23,6 +23,7 @@ use crate::{
 };
 
 mod cargo_gate;
+pub(crate) mod escape_hatch;
 mod message;
 mod dispatch;
 pub(crate) use dispatch::*;

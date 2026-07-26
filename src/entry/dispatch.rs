@@ -341,6 +341,31 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     let is_infra_only = scope_arg == Some("infra");
 
     // --- Detect nuked workspace ---
+    // Verify the claims the narrowing flags make. Each exists to skip work that
+    // cannot matter, and each was trusted rather than checked, which made both an
+    // unintended bypass: --doc-only skips source lints, --scope skips whole
+    // crates, and neither asked whether its premise held.
+    let mock_rel_for_hatch = cfg
+        .mock_dir
+        .strip_prefix(&cfg.repo_root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "mock".to_string());
+    // Only the explicit flag is verified. A nuked workspace derives doc-only
+    // internally below, and that derivation is the engine's own, not a claim a
+    // caller made about what is staged.
+    if doc_only {
+        if let Some(r) = escape_hatch::verify_doc_only(&cfg.repo_root, &mock_rel_for_hatch) {
+            eprintln!("BLOCKED: {}", r.explain());
+            return ExitCode::FAILURE;
+        }
+    }
+    if let Some(s) = scope_arg {
+        if let Some(r) = escape_hatch::verify_scope(&cfg.repo_root, &mock_rel_for_hatch, s) {
+            eprintln!("BLOCKED: {}", r.explain());
+            return ExitCode::FAILURE;
+        }
+    }
+
     let workspace_nuked = detect_nuked_workspace(&cfg);
 
     let doc_only = if workspace_nuked {
