@@ -119,7 +119,7 @@ pub(crate) fn set_executable(path: &Path) {
 
 /// Metadata collected from each hook for settings generation.
 pub(crate) struct HookMeta {
-    /// Output file name (e.g. "check-byline.sh").
+    /// Output file name (e.g. "check-message.sh").
     pub(crate) name:     String,
     /// Tool matchers this hook should fire on (e.g. ["Bash", "Write", "Edit"]).
     pub(crate) matchers: Vec<String>,
@@ -132,7 +132,11 @@ pub(crate) fn matchers_from_name(name: &str) -> Vec<String> {
     } else if name.ends_with("-reminder.sh") {
         vec!["Bash".into()]
     } else if name.starts_with("check-") {
-        vec!["Bash".into()]
+        // Every tool, not just Bash. A git-commit or pull-request MCP tool is
+        // not Bash, and scoping these to Bash is precisely why authored-message
+        // violations went unnoticed once such tools existed. The hook decides
+        // relevance itself, from the tool name and the whole input.
+        vec!["*".into()]
     } else {
         vec!["Bash".into()]
     }
