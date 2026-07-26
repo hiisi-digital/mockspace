@@ -23,6 +23,7 @@ mod selfupdate;
 use std::path::Path;
 use std::process::ExitCode;
 
+use mockspace_manifest::gate::HOOK_VERSION;
 use pin::{Pin, Reference};
 
 /// Where a resolved pin came from, so the registry can tell a repo that has
@@ -177,6 +178,22 @@ fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    // Plant the durable gate BEFORE building the engine.
+    //
+    // The engine used to be the only thing that installed it, which leaves a
+    // window nothing covers: every way the engine can fail to run also leaves the
+    // repo ungated, silently. Its build can fail on a bad pin, on no network, or
+    // on a compile error in the pinned revision, and it can fail on the repo's own
+    // contents, which is not hypothetical: a workspace with no members exited
+    // non-zero before reaching any setup. The launcher cannot fail for any of
+    // those reasons, so it plants the gate and the engine keeps it current.
+    //
+    // Best-effort and quiet on success: a gate that cannot be written is worth
+    // reporting, but it must not stop the command the user actually ran.
+    if located.is_some() {
+        plant_gate(&root);
+    }
+
     let cache_root = cache::cache_root()?;
 
     // The scratch path: build the engine from a checkout on disk and run this
@@ -229,6 +246,22 @@ fn run(args: &[String]) -> Result<(), String> {
     // target/), using the pin-matched lint-rules dep we pass along; the
     // launcher no longer needs to know about lints.
     cache::exec_engine(&bin, &mock_abs, &resolved.lint_rules_dep, args).map(|_never| ())
+}
+
+/// Install the durable hooks and point `core.hooksPath` at them.
+///
+/// The hook version is the launcher's own, and is deliberately shared with the
+/// engine through `mockspace-manifest` rather than duplicated: two copies of a
+/// version number is how a repo ends up with hooks from one era wired by another.
+fn plant_gate(root: &Path) {
+    let Some(dir) = mockspace_manifest::gate::durable_hooks_dir(HOOK_VERSION) else {
+        return; // no home directory to write into; nothing to do
+    };
+    let mut actions = mockspace_manifest::gate::install_durable_hooks(&dir, HOOK_VERSION);
+    actions.extend(mockspace_manifest::gate::activate(root, &dir));
+    for a in actions {
+        eprintln!("mock: {a}");
+    }
 }
 
 /// Unix seconds now, or 0 if the clock is before the epoch (impossible in

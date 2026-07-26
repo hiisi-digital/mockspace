@@ -26,6 +26,8 @@
 //! `mockspace_tag` overrides against an optional `mockspace_git = <url>`.
 //! Precedence when several are present: `rev` > `tag` > `version` > `branch`.
 
+pub mod gate;
+
 use serde::Deserialize;
 
 /// The canonical mockspace repository: the default engine source url when a

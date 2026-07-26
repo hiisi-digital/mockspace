@@ -99,7 +99,7 @@ mod remote_head_tests;
 const MANAGED_MARKER: &str = "# mockspace-managed";
 
 /// Bump when hook templates change → triggers regeneration.
-const HOOK_VERSION: u32 = 2;
+use mockspace_manifest::gate::HOOK_VERSION;
 
 /// Hook names that mockspace generates.
 const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push", "commit-msg"];
