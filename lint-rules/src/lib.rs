@@ -1563,6 +1563,34 @@ pub fn check_workspace_with_extra(
     errors
 }
 
+/// Run all message lints plus any custom ones, returning violations.
+///
+/// A lint declaring domains runs only for those; declaring none runs for all, so
+/// an attribution rule covers every surface without enumerating them.
+///
+/// mockspace ships no message lints of its own: a commit convention is not
+/// something an engine should impose, so every one arrives from a pack the project
+/// chose to import.
+pub fn check_message_with_extra(
+    ctx: &MessageContext,
+    overrides: Option<&LintConfig>,
+    extra_lints: &[Box<dyn MessageLint>],
+) -> Vec<LintError> {
+    let mut errors = Vec::new();
+    for lint in extra_lints.iter().map(Box::as_ref) {
+        let domains = lint.domains();
+        if !domains.is_empty() && !domains.contains(&ctx.domain) {
+            continue;
+        }
+        // `doc_only` is false: a message is never a doc template, so the
+        // source-only skip does not apply to this domain.
+        run_with_overrides(lint, false, overrides, &mut errors, || {
+            lint.check_message(ctx)
+        });
+    }
+    errors
+}
+
 /// Run all repo lints plus any custom ones, returning violations.
 ///
 /// Takes no crates, by design. These lints inspect repository state, so they

@@ -116,6 +116,61 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
 
     if let Some(&subcmd) = positional_args.first() {
         match subcmd {
+            // Lint one authored message. The commit-msg and pre-push hooks call
+            // this, and so will the agent hooks, so every surface reaches the
+            // same configured policy instead of each carrying its own copy.
+            "check-message" => {
+                let domain_arg = arg_value(&args, "--domain").unwrap_or_default();
+                let Some(domain) = message::parse_domain(&domain_arg) else {
+                    eprintln!(
+                        "mock check-message: --domain must be one of: {}",
+                        message::DOMAIN_TOKENS.join(", ")
+                    );
+                    return ExitCode::FAILURE;
+                };
+                let (text, origin) = match arg_value(&args, "--file") {
+                    Some(f) => {
+                        match message::read_message_file(std::path::Path::new(&f)) {
+                            Ok(t) => (t, f),
+                            Err(e) => {
+                                eprintln!("mock check-message: {e}");
+                                return ExitCode::FAILURE;
+                            },
+                        }
+                    },
+                    None => {
+                        // No `--file`: read the message from stdin, which is how
+                        // an agent hook passes text it extracted from a command.
+                        let mut buf = String::new();
+                        if let Err(e) = std::io::Read::read_to_string(
+                            &mut std::io::stdin(),
+                            &mut buf,
+                        ) {
+                            eprintln!("mock check-message: could not read stdin: {e}");
+                            return ExitCode::FAILURE;
+                        }
+                        (buf, "<stdin>".to_string())
+                    },
+                };
+                // Which gate tier applies. A commit-msg hook is the commit
+                // gate, pre-push the push gate, so a project can warn locally
+                // and block before sharing, as the severity tiers intend.
+                let gate = match arg_value(&args, "--gate").as_deref() {
+                    Some("push") => LintMode::Push,
+                    Some("build") => LintMode::Build,
+                    _ => LintMode::Commit,
+                };
+                let command = arg_value(&args, "--command");
+                let tool = arg_value(&args, "--tool");
+                let req = message::Request {
+                    domain,
+                    message: text,
+                    origin,
+                    command: command.as_deref(),
+                    tool: tool.as_deref(),
+                };
+                return message::run(&cfg, pack, gate, &req);
+            },
             "activate" => {
                 match bootstrap::activate(&cfg.repo_root, &cfg.mock_dir) {
                     Ok(()) => {

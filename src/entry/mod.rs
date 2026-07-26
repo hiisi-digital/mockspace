@@ -23,6 +23,7 @@ use crate::{
 };
 
 mod cargo_gate;
+mod message;
 mod dispatch;
 pub(crate) use dispatch::*;
 mod nuke;
