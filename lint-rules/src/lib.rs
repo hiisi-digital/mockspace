@@ -1169,19 +1169,15 @@ pub fn check_crate_with_extra(
             return;
         }
 
-        // Check if there's a base severity override
-        let base_override = if let Some(cfg) = overrides {
-            if let Some(sev) = cfg.base.get(lint.name()) {
-                if sev.is_off() {
-                    return; // skip entirely
-                }
-                Some(*sev)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // A configured override wins; absent one, the lint's own declared
+        // default decides whether it runs at all. Without that second half a
+        // lint declaring `Severity::OFF` ran anyway, which made
+        // `default_severity` decorative for every lint no consumer had named
+        // in its config, and shipped opt-in lints as blocking errors.
+        let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
+        if base_override.unwrap_or_else(|| lint.default_severity()).is_off() {
+            return;
+        }
 
         let mut lint_errors = lint.check(ctx);
 
@@ -1246,19 +1242,15 @@ pub fn check_cross_crate_with_extra(
             return;
         }
 
-        // Check if there's a base severity override
-        let base_override = if let Some(cfg) = overrides {
-            if let Some(sev) = cfg.base.get(lint.name()) {
-                if sev.is_off() {
-                    return; // skip entirely
-                }
-                Some(*sev)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // A configured override wins; absent one, the lint's own declared
+        // default decides whether it runs at all. Without that second half a
+        // lint declaring `Severity::OFF` ran anyway, which made
+        // `default_severity` decorative for every lint no consumer had named
+        // in its config, and shipped opt-in lints as blocking errors.
+        let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
+        if base_override.unwrap_or_else(|| lint.default_severity()).is_off() {
+            return;
+        }
 
         let mut lint_errors = lint.check_all(crates);
 
@@ -1355,5 +1347,151 @@ mod pack_tests {
     fn empty_pack_empty_both() {
         assert_eq!(empty_pack::lints().len(), 0);
         assert_eq!(empty_pack::cross_lints().len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod declared_default_severity_tests {
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+    use super::*;
+
+    /// A lint that always reports once, so whether it ran is observable.
+    struct AlwaysFires(&'static str, Severity);
+
+    impl Lint for AlwaysFires {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+
+        fn default_severity(&self) -> Severity {
+            self.1
+        }
+
+        fn check(&self, ctx: &LintContext) -> Vec<LintError> {
+            vec![LintError::error(ctx.crate_name.to_string(), 1, self.0, "fired".to_string())]
+        }
+    }
+
+    struct AlwaysFiresAcross(&'static str, Severity);
+
+    impl CrossCrateLint for AlwaysFiresAcross {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+
+        fn default_severity(&self) -> Severity {
+            self.1
+        }
+
+        fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
+            crates
+                .iter()
+                .map(|(name, _)| {
+                    LintError::error((*name).to_string(), 1, self.0, "fired".to_string())
+                })
+                .collect()
+        }
+    }
+
+    fn ctx() -> LintContext<'static> {
+        let mut parser = make_parser();
+        let tree = parser.parse("", None).unwrap();
+        LintContext {
+            crate_name:              "test-crate",
+            short_name:              "test-crate",
+            source:                  "",
+            tree:                    Box::leak(Box::new(tree)),
+            all_sources:             &[],
+            deps:                    &[],
+            all_crates:              Box::leak(Box::new(BTreeSet::new())),
+            design_doc:              None,
+            all_doc_content:         "",
+            shame_doc:               None,
+            workspace_root:          std::path::Path::new("/tmp"),
+            proc_macro_crates:       &[],
+            crate_prefix:            "test",
+            lint_proc_macro_source:  false,
+            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
+        }
+    }
+
+    fn config_of(name: &str, severity: Severity) -> LintConfig {
+        let mut base = HashMap::new();
+        base.insert(name.to_string(), severity);
+        LintConfig { base, findings: HashMap::new(), params: HashMap::new() }
+    }
+
+    /// Count findings from one extra lint, ignoring whatever the builtin set
+    /// makes of an empty crate.
+    fn fired(lint: AlwaysFires, overrides: Option<&LintConfig>) -> usize {
+        let name = lint.0;
+        let ctx = ctx();
+        check_crate_with_extra(&ctx, false, overrides, &[Box::new(lint)])
+            .into_iter()
+            .filter(|e| e.lint_name == name)
+            .count()
+    }
+
+    fn fired_across(lint: AlwaysFiresAcross, overrides: Option<&LintConfig>) -> usize {
+        let name = lint.0;
+        let ctx = ctx();
+        check_cross_crate_with_extra(&[("test-crate", &ctx)], false, overrides, &[Box::new(lint)])
+            .into_iter()
+            .filter(|e| e.lint_name == name)
+            .count()
+    }
+
+    #[test]
+    fn a_lint_declaring_off_does_not_run_without_a_config() {
+        // The bug this fixes. `no-bare-pub` and `no-adhoc-error-enum` both
+        // declare OFF because they presume machinery a project opts into, and
+        // both fired as hard errors in a project that had never named them.
+        assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), None), 0);
+    }
+
+    #[test]
+    fn a_lint_declaring_a_real_severity_still_runs_without_a_config() {
+        // The control. A resolver that skipped everything would satisfy the
+        // test above.
+        assert_eq!(fired(AlwaysFires("declares-error", Severity::HARD_ERROR), None), 1);
+    }
+
+    #[test]
+    fn a_config_can_turn_on_a_lint_that_declares_off() {
+        // Opting in is the whole point of declaring OFF rather than deleting
+        // the lint, so the default must not be a floor.
+        let cfg = config_of("declares-off", Severity::HARD_ERROR);
+        assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 1);
+    }
+
+    #[test]
+    fn a_config_can_turn_off_a_lint_that_declares_a_real_severity() {
+        // Pre-existing behaviour, kept.
+        let cfg = config_of("declares-error", Severity::OFF);
+        assert_eq!(fired(AlwaysFires("declares-error", Severity::HARD_ERROR), Some(&cfg)), 0);
+    }
+
+    #[test]
+    fn a_config_for_another_lint_does_not_reach_this_one() {
+        let cfg = config_of("some-other-lint", Severity::HARD_ERROR);
+        assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 0);
+    }
+
+    #[test]
+    fn cross_crate_lints_honour_the_declared_default_too() {
+        // The same resolver is written twice, so it can be fixed once and
+        // still be wrong in the other half.
+        assert_eq!(fired_across(AlwaysFiresAcross("declares-off", Severity::OFF), None), 0);
+        assert_eq!(
+            fired_across(AlwaysFiresAcross("declares-error", Severity::HARD_ERROR), None),
+            1
+        );
+    }
+
+    #[test]
+    fn cross_crate_config_can_turn_on_a_lint_that_declares_off() {
+        let cfg = config_of("declares-off", Severity::HARD_ERROR);
+        assert_eq!(fired_across(AlwaysFiresAcross("declares-off", Severity::OFF), Some(&cfg)), 1);
     }
 }
