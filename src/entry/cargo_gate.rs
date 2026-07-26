@@ -41,7 +41,11 @@ pub(crate) fn is_memberless_virtual_workspace(mock_dir: &Path) -> bool {
     if doc.get("package").is_some() {
         return false;
     }
-    let Some(workspace) = doc.get("workspace").and_then(|w| w.as_table()) else {
+    // `as_table_like` rather than `as_table`: an inline
+    // `workspace = { members = [] }` is a manifest cargo accepts and which
+    // produces exactly the diagnostic below, so rejecting it here would fail the
+    // gate on a repo that is legitimately memberless.
+    let Some(workspace) = doc.get("workspace").and_then(|w| w.as_table_like()) else {
         return false;
     };
     match workspace.get("members") {
@@ -71,6 +75,13 @@ pub(crate) fn forgives_failure(mock_dir: &Path, args: &[&str]) -> bool {
 /// A cargo command against the mock workspace, with the inherited rustup env
 /// stripped so `mock/rust-toolchain.toml` wins over the toolchain the outer
 /// process already resolved.
+///
+/// The stripping is load-bearing. When the engine is launched from the repo
+/// root, the outer cargo has already resolved a toolchain (the repo-root
+/// default, typically stable) and propagates `RUSTUP_TOOLCHAIN` to children.
+/// That env var beats the file-based override in `mock/rust-toolchain.toml`, so
+/// an inner cargo would silently run under the outer toolchain. Removing these
+/// lets rustup re-detect from the working directory instead.
 pub(crate) fn cargo(mock_dir: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new("cargo");
     cmd.args(args)
@@ -177,5 +188,49 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         manifest(tmp.path(), "[workspace]\nmembers = [\"crates/foo\"]\n");
         assert!(!forgives_failure(tmp.path(), &["check"]));
+    }
+
+    #[test]
+    fn an_inline_workspace_table_is_memberless() {
+        // `workspace = { members = [] }` is a manifest cargo accepts, and it
+        // produces the same no-members diagnostic. Matching only on a
+        // dotted-header table would fail the gate on a legitimately memberless
+        // repo.
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "workspace = { resolver = \"2\", members = [] }\n");
+        assert!(is_memberless_virtual_workspace(tmp.path()));
+    }
+
+    #[test]
+    fn forgives_failure_actually_forgives_a_memberless_workspace() {
+        // The behaviour the whole module exists to deliver, asserted against a
+        // real cargo invocation. Every other test here covers the refusing
+        // side; without this one, nothing proves forgiveness ever happens, and
+        // a predicate that always returned false would still pass the suite.
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "[workspace]\nresolver = \"2\"\nmembers = []\n");
+        assert!(
+            forgives_failure(tmp.path(), &["check"]),
+            "a memberless virtual workspace must be forgiven"
+        );
+    }
+
+    #[test]
+    #[ignore = "catalogue: members globbing to nothing yields a different cargo \
+                diagnostic, so a pre-first-round repo seeding a glob member list \
+                is still blocked; needs its own tolerated diagnostic"]
+    fn a_members_glob_matching_nothing_is_also_a_pre_taxonomy_state() {
+        // `members = ["crates/*"]` with an empty crates/ dir is the same
+        // situation as an empty list from the repo's point of view, but cargo
+        // reports it as a failed member load rather than as no members, so the
+        // gate does not tolerate it. Asserting the intended behaviour, red until
+        // that diagnostic is handled.
+        let tmp = tempfile::tempdir().unwrap();
+        manifest(tmp.path(), "[workspace]\nmembers = [\"crates/*\"]\n");
+        std::fs::create_dir_all(tmp.path().join("crates")).unwrap();
+        assert!(
+            forgives_failure(tmp.path(), &["check"]),
+            "a members glob matching nothing is the same pre-taxonomy state"
+        );
     }
 }

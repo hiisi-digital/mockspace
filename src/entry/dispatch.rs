@@ -324,14 +324,7 @@ pub(crate) fn run_inner(
         // revisit if pre-commit-only-flow becomes a real complaint.
     } else {
         eprintln!("--- cargo check ---");
-        // Strip inherited rustup env vars so the mock/ dir's own
-        // rust-toolchain.toml wins. When cargo mock is launched from the
-        // repo root, the outer cargo already resolved a toolchain (the
-        // repo-root default, typically stable) and propagates
-        // RUSTUP_TOOLCHAIN to children. That env var beats the file-based
-        // override in mock/rust-toolchain.toml, so the inner check would
-        // run with the outer toolchain. Removing these vars lets rustup
-        // re-detect based on cwd (= mock/).
+        // `cargo_gate::cargo` owns the rustup env stripping; see its docs.
         let status = cargo_gate::cargo(&cfg.mock_dir, &["check"])
             .status()
             .expect("failed to run cargo check");
@@ -474,9 +467,7 @@ pub(crate) fn run_inner(
         );
     } else if !cfg.module_crates.is_empty() {
         eprintln!("--- checking dylib modules ---");
-        let build_status = Command::new("cargo")
-            .args(["build", "--lib"])
-            .current_dir(&cfg.mock_dir)
+        let build_status = cargo_gate::cargo(&cfg.mock_dir, &["build", "--lib"])
             .status()
             .expect("failed to run cargo build");
 

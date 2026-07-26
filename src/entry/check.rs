@@ -141,7 +141,7 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
             if memberless
                 && cargo_gate::diagnostic_is_no_members(&String::from_utf8_lossy(&o.stderr)) =>
         {
-            print_row("build", CheckResult::Pass, "no workspace members yet");
+            print_row("build", CheckResult::Warn, "no workspace members yet");
         },
         Ok(_) => {
             print_row(
@@ -171,7 +171,7 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
             if memberless
                 && cargo_gate::diagnostic_is_no_members(&String::from_utf8_lossy(&o.stderr)) =>
         {
-            print_row("tests", CheckResult::Pass, "no workspace members yet");
+            print_row("tests", CheckResult::Warn, "no workspace members yet");
         },
         Ok(_) => {
             print_row(
