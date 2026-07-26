@@ -162,6 +162,14 @@ fn collect_defs(node: Node, source: &str, out: &mut Vec<(String, usize)>) {
             continue;
         }
 
+        // Skip test modules. A fixture declared to exercise a trait is not
+        // public surface: it has no consumer, and demanding it appear in a
+        // design document would put test scaffolding in the shipping
+        // contract.
+        if crate::is_cfg_test_mod(child, source) {
+            continue;
+        }
+
         match child.kind() {
             "struct_item" | "enum_item" | "trait_item" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
@@ -202,4 +210,92 @@ fn find_shame_entry<'a>(shame_content: &'a str, type_name: &str) -> Option<&'a s
 
     let entry = after_header[.. end].trim();
     if entry.is_empty() { None } else { Some(entry) }
+}
+
+#[cfg(test)]
+mod cfg_test_module_tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::*;
+
+    /// Build a context whose tree is parsed from the source under test.
+    /// `file_size`'s helper parses an empty string, which is fine for a lint
+    /// that only counts lines and useless for one that walks the AST.
+    fn ctx_for(source: &'static str, design: &'static str) -> LintContext<'static> {
+        let mut parser = crate::make_parser();
+        let tree = parser.parse(source, None).unwrap();
+        LintContext {
+            crate_name:              "test-crate",
+            short_name:              "test-crate",
+            source,
+            tree:                    Box::leak(Box::new(tree)),
+            all_sources:             &[],
+            deps:                    &[],
+            all_crates:              Box::leak(Box::new(BTreeSet::new())),
+            design_doc:              Some(design),
+            all_doc_content:         design,
+            shame_doc:               None,
+            workspace_root:          std::path::Path::new("/tmp"),
+            proc_macro_crates:       &[],
+            crate_prefix:            "test",
+            lint_proc_macro_source:  false,
+            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
+        }
+    }
+
+    fn reported(source: &'static str, design: &'static str) -> Vec<String> {
+        let ctx = ctx_for(source, design);
+        UndocumentedType
+            .check_all(&[("test-crate", &ctx)])
+            .into_iter()
+            .map(|e| e.message)
+            .collect()
+    }
+
+    #[test]
+    fn a_fixture_inside_a_test_module_is_not_public_surface() {
+        // The case kolli hit: two structs implementing a trait so the type-level
+        // list could be exercised. Neither has a consumer, and the only ways to
+        // satisfy the lint were to put test scaffolding in a design document or
+        // to write a SHAME entry for it.
+        let reports = reported(
+            "#[cfg(test)]\nmod tests {\n    struct Fixture;\n    enum Shape { A }\n}\n",
+            "# test-crate\n\nNothing documented here.\n",
+        );
+        assert!(
+            reports.is_empty(),
+            "test fixtures were reported as undocumented public types: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn an_undocumented_type_outside_a_test_module_is_still_reported() {
+        // The control. Without it, a lint that reported nothing at all would
+        // satisfy the test above.
+        let reports = reported("pub struct Real;\n", "# test-crate\n\nNothing documented here.\n");
+        assert!(
+            reports.iter().any(|m| m.contains("Real")),
+            "the lint stopped reporting real undocumented types: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_module_that_is_not_test_only_is_still_walked() {
+        // `not(test)` reads as a test module to a substring search, which would
+        // hide every type in an ordinary module behind it.
+        let reports = reported(
+            "#[cfg(not(test))]\nmod real {\n    pub struct Hidden;\n}\n",
+            "# test-crate\n\nNothing documented here.\n",
+        );
+        assert!(
+            reports.iter().any(|m| m.contains("Hidden")),
+            "a `cfg(not(test))` module was skipped as if it were a test module: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_documented_type_is_not_reported() {
+        let reports = reported("pub struct Real;\n", "# test-crate\n\nThe `Real` type.\n");
+        assert!(reports.is_empty(), "a documented type was reported: {reports:?}");
+    }
 }
