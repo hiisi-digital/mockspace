@@ -324,26 +324,22 @@ pub(crate) fn run_inner(
         // revisit if pre-commit-only-flow becomes a real complaint.
     } else {
         eprintln!("--- cargo check ---");
-        // Strip inherited rustup env vars so the mock/ dir's own
-        // rust-toolchain.toml wins. When cargo mock is launched from the
-        // repo root, the outer cargo already resolved a toolchain (the
-        // repo-root default, typically stable) and propagates
-        // RUSTUP_TOOLCHAIN to children. That env var beats the file-based
-        // override in mock/rust-toolchain.toml, so the inner check would
-        // run with the outer toolchain. Removing these vars lets rustup
-        // re-detect based on cwd (= mock/).
-        let status = Command::new("cargo")
-            .arg("check")
-            .current_dir(&cfg.mock_dir)
-            .env_remove("RUSTUP_TOOLCHAIN")
-            .env_remove("RUSTC")
-            .env_remove("RUSTDOC")
+        // `cargo_gate::cargo` owns the rustup env stripping; see its docs.
+        let status = cargo_gate::cargo(&cfg.mock_dir, &["check"])
             .status()
             .expect("failed to run cargo check");
 
         if !status.success() {
-            eprintln!("cargo check failed");
-            return ExitCode::FAILURE;
+            // A repo whose taxonomy is still a design round's subject has no
+            // workspace members, which cargo cannot check at all. Forgiven only
+            // on cargo's own no-members diagnostic against a confirmed
+            // memberless manifest; every other failure still fails the gate.
+            if cargo_gate::forgives_failure(&cfg.mock_dir, &["check"]) {
+                eprintln!("--- cargo check skipped (workspace has no members yet) ---");
+            } else {
+                eprintln!("cargo check failed");
+                return ExitCode::FAILURE;
+            }
         }
     }
 
@@ -471,9 +467,7 @@ pub(crate) fn run_inner(
         );
     } else if !cfg.module_crates.is_empty() {
         eprintln!("--- checking dylib modules ---");
-        let build_status = Command::new("cargo")
-            .args(["build", "--lib"])
-            .current_dir(&cfg.mock_dir)
+        let build_status = cargo_gate::cargo(&cfg.mock_dir, &["build", "--lib"])
             .status()
             .expect("failed to run cargo build");
 
