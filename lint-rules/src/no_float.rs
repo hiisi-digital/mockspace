@@ -20,7 +20,11 @@ pub struct NoFloat;
 
 impl Lint for NoFloat {
     fn default_severity(&self) -> crate::Severity {
-        crate::Severity::OFF
+        // Declared to match what this lint emits, since every finding it produces is a warning.
+        // Declaring OFF while emitting findings is incoherent, and it
+        // only looked harmless while the resolver ignored the
+        // declaration entirely.
+        crate::Severity::ADVISORY
     }
 
     fn name(&self) -> &'static str {

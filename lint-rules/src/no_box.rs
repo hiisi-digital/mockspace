@@ -22,7 +22,11 @@ pub struct NoBox;
 
 impl Lint for NoBox {
     fn default_severity(&self) -> crate::Severity {
-        crate::Severity::OFF
+        // Declared to match what this lint emits, since it produces hard errors.
+        // Declaring OFF while emitting findings is incoherent, and it
+        // only looked harmless while the resolver ignored the
+        // declaration entirely.
+        crate::Severity::HARD_ERROR
     }
 
     fn name(&self) -> &'static str {
