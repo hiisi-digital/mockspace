@@ -115,7 +115,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     }
 
     // Skip #[cfg(test)] modules
-    if node.kind() == "mod_item" && has_cfg_test_attr(node, ctx.source) {
+    if crate::is_cfg_test_mod(node, ctx.source) {
         return;
     }
 
@@ -445,48 +445,6 @@ fn line_allow_explanation(line: &str) -> Option<String> {
     } else {
         None
     }
-}
-
-/// Check whether a mod_item has a `#[cfg(test)]` attribute.
-/// Checks both children and preceding siblings (tree-sitter-rust puts attributes
-/// as preceding sibling nodes).
-fn has_cfg_test_attr(node: Node, source: &str) -> bool {
-    // Check children
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "attribute_item" || child.kind() == "attribute" {
-            let attr_text = txt(child, source);
-            if attr_text.contains("cfg") && attr_text.contains("test") {
-                return true;
-            }
-        }
-    }
-
-    // Check preceding siblings
-    if let Some(parent) = node.parent() {
-        let mut sibling_cursor = parent.walk();
-        let mut found_cfg_test = false;
-        for child in parent.children(&mut sibling_cursor) {
-            if child.id() == node.id() {
-                break;
-            }
-            if child.kind() == "attribute_item" {
-                let attr_text = txt(child, source);
-                if attr_text.contains("cfg") && attr_text.contains("test") {
-                    found_cfg_test = true;
-                } else {
-                    found_cfg_test = false;
-                }
-            } else if child.kind() != "line_comment" && child.kind() != "block_comment" {
-                found_cfg_test = false;
-            }
-        }
-        if found_cfg_test {
-            return true;
-        }
-    }
-
-    false
 }
 
 // ---------------------------------------------------------------------------
