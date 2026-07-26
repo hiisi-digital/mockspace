@@ -1494,11 +1494,24 @@ pub fn check_repo(
 /// Decide whether a lint runs, and apply the configured severity overrides to
 /// whatever it found.
 ///
-/// `run` is only called when the lint is not skipped, so a lint configured
-/// `off` costs nothing. Shared by every runner below: expressible only because
+/// `run` is only called when the lint is not skipped, so a lint that is off
+/// costs nothing. Shared by every runner below: expressible only because
 /// the [`Lint`] supertrait now carries `name` and `source_only` for all of them,
 /// where previously each trait declared its own copy and each runner its own
 /// duplicate of this logic.
+///
+/// Enablement resolves config first, then the lint's own declared default. That
+/// second half was missing and made [`Lint::default_severity`] decorative for
+/// the `off` case: fourteen loimu-specific lints declared `OFF`, stamped
+/// `HARD_ERROR` onto their findings anyway, and fired as hard errors in every
+/// repo that had not explicitly overridden them. A fresh repo with no `[lints]`
+/// section therefore inherited a framework's house rules (`define_error!`,
+/// `#[public_api]`, `Collection<T>`) it had never opted into.
+///
+/// Only an explicit override restamps a finding's severity. A lint's own
+/// per-finding levels are deliberate gradation, a build gate and an advisory
+/// coming out of one lint, and flattening them onto the lint's default would
+/// erase it.
 fn run_with_overrides(
     lint: &dyn Lint,
     doc_only: bool,
@@ -1510,16 +1523,10 @@ fn run_with_overrides(
         return;
     }
 
-    let base_override = match overrides {
-        Some(cfg) => {
-            match cfg.base.get(lint.name()) {
-                Some(sev) if sev.is_off() => return, // configured off: skip entirely
-                Some(sev) => Some(*sev),
-                None => None,
-            }
-        },
-        None => None,
-    };
+    let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
+    if base_override.unwrap_or_else(|| lint.default_severity()).is_off() {
+        return;
+    }
 
     let mut lint_errors = run();
 
@@ -1790,6 +1797,124 @@ mod repo_lint_tests {
             "a repo lint must run with an empty crate set; it received none and reported nothing"
         );
         assert_eq!(errors[0].lint_name, "always-reports");
+    }
+
+    /// A lint that is off unless a repo asks for it, and that stamps a hard
+    /// error onto its finding. The combination is not contrived: fourteen
+    /// registered lints have exactly this shape.
+    struct OffByDefault;
+
+    impl Lint for OffByDefault {
+        fn name(&self) -> &'static str {
+            "off-by-default"
+        }
+
+        fn default_severity(&self) -> Severity {
+            Severity::OFF
+        }
+
+        fn source_only(&self) -> bool {
+            false
+        }
+    }
+
+    impl RepoLint for OffByDefault {
+        fn check_repo(&self, _ctx: &RepoContext) -> Vec<LintError> {
+            vec![LintError::error(
+                "unknown".to_string(),
+                0,
+                "off-by-default",
+                "invoked".to_string(),
+            )]
+        }
+    }
+
+    /// Run one repo lint against a throwaway directory.
+    fn run_one(lint: Box<dyn RepoLint>, cfg: Option<&LintConfig>) -> Vec<LintError> {
+        let tmp = std::env::temp_dir().join(format!(
+            "ms_sev_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let no_crates = BTreeSet::new();
+        let ctx = RepoContext {
+            mock_dir:   &tmp,
+            repo_root:  &tmp,
+            all_crates: &no_crates,
+            invocation: None,
+        };
+        let extra: Vec<Box<dyn RepoLint>> = vec![lint];
+        let errors = check_repo_with_extra(&ctx, false, cfg, &extra);
+        let _ = std::fs::remove_dir_all(&tmp);
+        errors
+    }
+
+    #[test]
+    fn a_lint_that_declares_itself_off_does_not_run() {
+        // Severity resolution consulted config and never the lint's own default,
+        // so `default_severity() == OFF` meant nothing and the lint fired at
+        // whatever level its findings stamped. That is how a fresh repo with no
+        // `[lints]` section inherited a framework's house rules.
+        let errors = run_one(Box::new(OffByDefault), None);
+        assert!(
+            errors.is_empty(),
+            "an off-by-default lint ran anyway and reported {errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_lint_that_declares_a_real_default_still_runs() {
+        // The permit path. Without this, a resolution bug that skips every lint
+        // passes the test above and disarms the whole gate silently.
+        let errors = run_one(Box::new(AlwaysReports), None);
+        assert_eq!(errors.len(), 1, "an on-by-default lint must still run");
+        assert_eq!(errors[0].severity, Severity::HARD_ERROR);
+    }
+
+    #[test]
+    fn a_repo_can_opt_into_a_lint_that_is_off_by_default() {
+        // Off by default is not off for good: a repo that does follow the
+        // convention names the lint and gets it.
+        let mut base = HashMap::new();
+        base.insert("off-by-default".to_string(), Severity::HARD_ERROR);
+        let cfg = LintConfig::from_base(base);
+        let errors = run_one(Box::new(OffByDefault), Some(&cfg));
+        assert_eq!(errors.len(), 1, "an opted-into lint must run");
+        assert_eq!(errors[0].severity, Severity::HARD_ERROR);
+    }
+
+    #[test]
+    fn an_off_override_silences_a_lint_that_is_on_by_default() {
+        let mut base = HashMap::new();
+        base.insert("always-reports".to_string(), Severity::OFF);
+        let cfg = LintConfig::from_base(base);
+        let errors = run_one(Box::new(AlwaysReports), Some(&cfg));
+        assert!(errors.is_empty(), "an off override must silence the lint");
+    }
+
+    #[test]
+    fn a_findings_own_severity_survives_when_no_override_names_the_lint() {
+        // A lint may grade its own findings, a build gate here and an advisory
+        // there. Resolution must not flatten that onto the lint's default.
+        let cfg = LintConfig::empty();
+        let errors = run_one(Box::new(AlwaysReports), Some(&cfg));
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].severity,
+            Severity::HARD_ERROR,
+            "the finding's own level was overwritten by the lint's default"
+        );
+    }
+
+    #[test]
+    fn an_explicit_base_override_restamps_the_finding() {
+        let mut base = HashMap::new();
+        base.insert("always-reports".to_string(), Severity::ADVISORY);
+        let cfg = LintConfig::from_base(base);
+        let errors = run_one(Box::new(AlwaysReports), Some(&cfg));
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].severity, Severity::ADVISORY);
     }
 
     #[test]
