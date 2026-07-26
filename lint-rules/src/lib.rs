@@ -1134,7 +1134,10 @@ pub fn all_cross_crate_lints() -> Vec<Box<dyn CrossCrateLint>> {
 /// When `overrides` is provided, lint severities can be overridden:
 /// - If a lint name maps to a severity where all gates are `Pass`, the lint is skipped entirely.
 /// - If a lint name maps to another severity, all errors from that lint use the configured severity.
-/// - If a lint is not in the map, it uses its `default_severity()`.
+/// - If a lint is not in the map, its `default_severity()` decides whether it
+///   runs at all. It does not yet decide what its findings mean: each finding
+///   keeps the severity its constructor chose, so a declared default is
+///   honoured as on or off rather than per gate. See task #28.
 pub fn check_crate(
     ctx: &LintContext,
     doc_only: bool,
@@ -1174,8 +1177,21 @@ pub fn check_crate_with_extra(
         // lint declaring `Severity::OFF` ran anyway, which made
         // `default_severity` decorative for every lint no consumer had named
         // in its config, and shipped opt-in lints as blocking errors.
+        //
+        // Naming a lint in any section counts as asking for it. A consumer can
+        // configure only `findings` or only `rules`, which populates neither
+        // `base` nor anything else this looks at, and reading that as silence
+        // would make the configuration inert without saying so.
         let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
-        if base_override.unwrap_or_else(|| lint.default_severity()).is_off() {
+        let named_in_config = overrides.is_some_and(|cfg| {
+            cfg.base.contains_key(lint.name())
+                || cfg.findings.contains_key(lint.name())
+                || cfg.params.contains_key(lint.name())
+        });
+        if !named_in_config && lint.default_severity().is_off() {
+            return;
+        }
+        if base_override.is_some_and(|sev| sev.is_off()) {
             return;
         }
 
@@ -1247,8 +1263,21 @@ pub fn check_cross_crate_with_extra(
         // lint declaring `Severity::OFF` ran anyway, which made
         // `default_severity` decorative for every lint no consumer had named
         // in its config, and shipped opt-in lints as blocking errors.
+        //
+        // Naming a lint in any section counts as asking for it. A consumer can
+        // configure only `findings` or only `rules`, which populates neither
+        // `base` nor anything else this looks at, and reading that as silence
+        // would make the configuration inert without saying so.
         let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
-        if base_override.unwrap_or_else(|| lint.default_severity()).is_off() {
+        let named_in_config = overrides.is_some_and(|cfg| {
+            cfg.base.contains_key(lint.name())
+                || cfg.findings.contains_key(lint.name())
+                || cfg.params.contains_key(lint.name())
+        });
+        if !named_in_config && lint.default_severity().is_off() {
+            return;
+        }
+        if base_override.is_some_and(|sev| sev.is_off()) {
             return;
         }
 
@@ -1476,6 +1505,49 @@ mod declared_default_severity_tests {
     fn a_config_for_another_lint_does_not_reach_this_one() {
         let cfg = config_of("some-other-lint", Severity::HARD_ERROR);
         assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 0);
+    }
+
+    #[test]
+    fn configuring_only_finding_severities_turns_an_off_lint_on() {
+        // A consumer can write `[lints.X] findings = {..}` with no severity or
+        // gate key at all. That populates `findings` and leaves `base` empty,
+        // so reading only `base` would make the whole configuration inert and
+        // say nothing about it.
+        let mut findings = HashMap::new();
+        findings.insert("declares-off".to_string(), {
+            let mut kinds = HashMap::new();
+            kinds.insert("some-kind".to_string(), Severity::HARD_ERROR);
+            kinds
+        });
+        let cfg = LintConfig { base: HashMap::new(), findings, params: HashMap::new() };
+        assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 1);
+    }
+
+    #[test]
+    fn configuring_only_parameters_turns_an_off_lint_on() {
+        // The same shape for rule-driven lints. `forbidden-imports` is entirely
+        // rules-driven and is one keystroke from this.
+        let mut params = HashMap::new();
+        params.insert("declares-off".to_string(), {
+            let mut keys = HashMap::new();
+            keys.insert("rules".to_string(), "something".to_string());
+            keys
+        });
+        let cfg = LintConfig { base: HashMap::new(), findings: HashMap::new(), params };
+        assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 1);
+    }
+
+    #[test]
+    #[ignore = "catalogue: a partially-off declared default runs at every gate; tracked #28"]
+    fn a_partially_off_default_does_not_run_at_its_passing_gates() {
+        // `is_off` is all or nothing, so a default of (Pass, Pass, Error) is
+        // not off and the lint runs everywhere, with each finding carrying
+        // whatever severity its constructor chose rather than the declared
+        // per-gate shape. Asserting the intended behaviour rather than the
+        // current one, so this flips to green when the gate-aware resolution
+        // lands.
+        let partial = Severity::new(Level::Pass, Level::Pass, Level::Error);
+        assert_eq!(fired(AlwaysFires("partly-off", partial), None), 0);
     }
 
     #[test]

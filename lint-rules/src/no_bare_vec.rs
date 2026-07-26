@@ -74,7 +74,11 @@ pub struct NoBareVec;
 
 impl Lint for NoBareVec {
     fn default_severity(&self) -> crate::Severity {
-        crate::Severity::OFF
+        // Declared to match what this lint emits, since it produces push-gate findings.
+        // Declaring OFF while emitting findings is incoherent, and it
+        // only looked harmless while the resolver ignored the
+        // declaration entirely.
+        crate::Severity::PUSH_GATE
     }
 
     fn name(&self) -> &'static str {
