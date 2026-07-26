@@ -11,6 +11,7 @@
 //! - Nuke/restore for reproducibility testing
 //! - **Bootstrap**: auto-setup of cargo alias and git hooks via `build.rs`
 
+pub mod agent_mode;
 pub mod autofix;
 pub mod bench;
 pub mod bench_docs;
@@ -51,6 +52,7 @@ pub use entry::run;
 /// Called by proxy crates that define custom lints in `mock/lints/`.
 pub use entry::run_with_custom_lints;
 pub use mockspace_lint_rules::{
+    AgentMode,
     CrateLint,
     Invocation,
     Level,

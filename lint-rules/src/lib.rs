@@ -1154,10 +1154,50 @@ pub enum MessageDomain {
     ReviewComment,
 }
 
+/// Which ruleset applies to a run: was a human in the loop, or not.
+///
+/// The distinction is the whole basis of attribution policy. A commit made under
+/// human direction is the human's work through a tool they ran, so it carries no
+/// agent byline. A commit made with no human in the chain has no other record of
+/// who produced it, so provenance is wanted. Resolved from configured signals
+/// rather than from one hardcoded environment variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentMode {
+    /// A human was in the loop, reading and redirecting. The default, because
+    /// assuming the safer of the two is what a missing signal should mean.
+    #[default]
+    Assistant,
+    /// Genuinely headless: no human in the chain at the time of the work.
+    Autonomous,
+}
+
+impl AgentMode {
+    /// The token this mode is written as in configuration and environment.
+    #[must_use]
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Self::Assistant => "assistant",
+            Self::Autonomous => "autonomous",
+        }
+    }
+
+    /// Parse a mode token, `None` when it names neither mode.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "assistant" | "assisted" | "human" => Some(Self::Assistant),
+            "autonomous" | "headless" | "unattended" => Some(Self::Autonomous),
+            _ => None,
+        }
+    }
+}
+
 /// Context for a [`MessageLint`].
 pub struct MessageContext<'a> {
     /// Which kind of message this is.
     pub domain:     MessageDomain,
+    /// Which ruleset applies, resolved from the configured signals.
+    pub mode:       AgentMode,
     /// The authored text itself.
     pub message:    &'a str,
     /// Where the text came from, for error reporting: a file path, `-m`, a
