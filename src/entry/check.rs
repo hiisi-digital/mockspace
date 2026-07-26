@@ -130,17 +130,19 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
     print_row("phase", CheckResult::Pass, phase.label());
 
     // --- cargo check ---
-    let check_status = Command::new("cargo")
-        .arg("check")
-        .current_dir(&cfg.mock_dir)
-        .env_remove("RUSTUP_TOOLCHAIN")
-        .env_remove("RUSTC")
-        .env_remove("RUSTDOC")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    match check_status {
-        Ok(s) if s.success() => print_row("build", CheckResult::Pass, "cargo check green"),
+    // A repo whose taxonomy is still a design round's subject has no workspace
+    // members, which cargo cannot check at all. That failure is forgiven (see
+    // `cargo_gate`); every other one fails the row.
+    let memberless = cargo_gate::is_memberless_virtual_workspace(&cfg.mock_dir);
+    let check_out = cargo_gate::cargo(&cfg.mock_dir, &["check"]).output();
+    match check_out {
+        Ok(o) if o.status.success() => print_row("build", CheckResult::Pass, "cargo check green"),
+        Ok(o)
+            if memberless
+                && cargo_gate::diagnostic_is_no_members(&String::from_utf8_lossy(&o.stderr)) =>
+        {
+            print_row("build", CheckResult::Pass, "no workspace members yet");
+        },
         Ok(_) => {
             print_row(
                 "build",
@@ -162,17 +164,15 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
     // --- cargo test ---
     // Tests in this repo exercise the designed API surface. If the CL
     // promises functionality and tests assert it, missing impl fails here.
-    let test_status = Command::new("cargo")
-        .arg("test")
-        .current_dir(&cfg.mock_dir)
-        .env_remove("RUSTUP_TOOLCHAIN")
-        .env_remove("RUSTC")
-        .env_remove("RUSTDOC")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    match test_status {
-        Ok(s) if s.success() => print_row("tests", CheckResult::Pass, "cargo test green"),
+    let test_out = cargo_gate::cargo(&cfg.mock_dir, &["test"]).output();
+    match test_out {
+        Ok(o) if o.status.success() => print_row("tests", CheckResult::Pass, "cargo test green"),
+        Ok(o)
+            if memberless
+                && cargo_gate::diagnostic_is_no_members(&String::from_utf8_lossy(&o.stderr)) =>
+        {
+            print_row("tests", CheckResult::Pass, "no workspace members yet");
+        },
         Ok(_) => {
             print_row(
                 "tests",

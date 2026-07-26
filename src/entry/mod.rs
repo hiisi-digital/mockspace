@@ -22,6 +22,7 @@ use crate::{
     render_md,
 };
 
+mod cargo_gate;
 mod dispatch;
 pub(crate) use dispatch::*;
 mod nuke;
