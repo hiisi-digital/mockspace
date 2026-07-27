@@ -33,6 +33,11 @@ const EXEMPT_MACROS: &[&str] = &[
 pub struct RegistrableCompleteness;
 
 impl Lint for RegistrableCompleteness {
+    /// Crate-scoped. Completeness is a property of the crate's registrations taken together.
+    fn per_file(&self) -> bool {
+        false
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }

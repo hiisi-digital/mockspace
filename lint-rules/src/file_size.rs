@@ -41,6 +41,11 @@ impl FileSize {
 }
 
 impl Lint for FileSize {
+    /// Crate-scoped. It walks `all_sources` itself, so running it per file would measure every file once per file.
+    fn per_file(&self) -> bool {
+        false
+    }
+
     fn name(&self) -> &'static str {
         "file-size"
     }

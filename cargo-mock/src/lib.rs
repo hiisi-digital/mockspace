@@ -14,6 +14,7 @@
 
 mod cache;
 mod discover;
+mod engine;
 mod hash;
 mod pin;
 mod registry;
@@ -130,6 +131,11 @@ fn strip_dir_flag(args: Vec<String>) -> Vec<String> {
 }
 
 fn run(args: &[String]) -> Result<(), String> {
+    // `--engine <path>` is the launcher's, so it comes off before anything reads
+    // the arguments, the same as `--dir`.
+    let (engine_override, args) = engine::take_flag(args.to_vec());
+    let args = args.as_slice();
+
     // Answered before anything else: it is a question about this checkout, not
     // a run of the engine, so it skips the self-update and the pin resolution
     // and the build. Anything that needs to know where the mockspace is asks
@@ -139,9 +145,15 @@ fn run(args: &[String]) -> Result<(), String> {
         return locate_query();
     }
 
-    // First, keep the launcher itself current (branch installs only, hourly,
-    // opt-out). May reinstall and re-exec into the new binary, never returning.
-    if let Ok(cache_root) = cache::cache_root() {
+    // Keep the launcher itself current (branch installs only, hourly, opt-out).
+    // May reinstall and re-exec into the new binary, never returning.
+    //
+    // Skipped under `--engine`: that flag says which engine to run, and
+    // replacing the launcher underneath a deliberate override is the one moment
+    // an automatic update is unwelcome.
+    if engine_override.is_none()
+        && let Ok(cache_root) = cache::cache_root()
+    {
         selfupdate::maybe_self_update(&cache_root);
     }
 
@@ -165,8 +177,20 @@ fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
-    let (pin, source) = resolve_pin(located.as_ref(), &root, &mock_abs)?;
     let cache_root = cache::cache_root()?;
+
+    // The scratch path: build the engine from a checkout on disk and run this
+    // repo's gate against it. No pin is resolved, nothing is recorded in the
+    // registry, and nothing is keyed by revision, because the source is a
+    // working tree and the question being asked is what it does right now.
+    if let Some(raw) = engine_override {
+        let source = engine::locate(&raw)?;
+        let bin = engine::build(&cache_root, &source)?;
+        let dep = engine::lint_rules_dep(&source);
+        return cache::exec_engine(&bin, &mock_abs, &dep, args).map(|_never| ());
+    }
+
+    let (pin, source) = resolve_pin(located.as_ref(), &root, &mock_abs)?;
     let resolved = pin::resolve(&pin, &cache_root)?;
     let toolchain = cache::rustc_fingerprint();
     let key = cache::compute_key(&pin.url, &resolved.key_rev, &toolchain, &[]);
