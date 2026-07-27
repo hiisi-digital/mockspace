@@ -23,6 +23,15 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
 pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
 
+    // Help resolves before anything else, and in particular before project
+    // discovery. `mock --help` outside a project used to answer "no mockspace.toml
+    // found", which is the right answer to "run the workflow here" and the wrong
+    // answer to "what does this tool do" -- the question a reader outside a project
+    // is most likely to be asking, and often the first thing anyone types.
+    if args.iter().skip(1).any(|a| help::is_help_request(a)) {
+        return help::print_help();
+    }
+
     // Determine mock directory:
     // 1. --dir <path> explicit override
     // 2. Search upward from cwd for mockspace.toml
@@ -276,7 +285,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     eprintln!("  did you mean `{guess}`?");
                 }
                 eprintln!("\navailable subcommands:");
-                for name in KNOWN_SUBCOMMANDS {
+                for name in known_subcommands() {
                     eprintln!("  {name}");
                 }
                 eprintln!(

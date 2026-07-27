@@ -3,22 +3,15 @@ use super::*;
 
 /// Every subcommand `run_inner` dispatches on. Single source of truth for
 /// the dispatch match, the unknown-subcommand help, and the suggestion.
-pub(crate) const KNOWN_SUBCOMMANDS: &[&str] = &[
-    "activate",
-    "deactivate",
-    "status",
-    "query",
-    "check",
-    "clean",
-    "pdf",
-    "lock",
-    "deprecate",
-    "unlock",
-    "close",
-    "archive",
-    "migrate",
-    "bench",
-];
+/// Every known subcommand.
+///
+/// Derived from the one table that also carries each summary, in
+/// [`super::help`], so a subcommand cannot exist in the dispatch and be missing
+/// from help, or be suggestible and undocumented. The previous hand-maintained
+/// copy had already drifted: it was missing `check-message`.
+pub(crate) fn known_subcommands() -> Vec<&'static str> {
+    super::help::known_commands()
+}
 
 /// Classic Levenshtein edit distance between two ASCII-ish words. Small
 /// inputs (subcommand names), so the simple two-row DP is more than enough.
@@ -43,7 +36,7 @@ pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
 /// match and longer ones tolerate a little more.
 pub(crate) fn suggest_subcommand(input: &str) -> Option<&'static str> {
     let mut best: Option<(&'static str, usize)> = None;
-    for &name in KNOWN_SUBCOMMANDS {
+    for name in known_subcommands() {
         let d = levenshtein(input, name);
         if best.map_or(true, |(_, bd)| d < bd) {
             best = Some((name, d));
