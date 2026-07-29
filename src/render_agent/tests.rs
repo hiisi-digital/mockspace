@@ -335,3 +335,27 @@ fn design_talk_skill_ships_its_script_executable_and_its_manifest() {
         "the script uses mockspace::mock, so the unit declares it"
     );
 }
+
+#[test]
+fn sketching_and_benchmarking_are_unconditional_builtins() {
+    // Unlike design-talk, these are not opt-in: the mistake they prevent is
+    // made in the first thirty seconds of a task, by every consumer, whether
+    // or not a human is in the loop.
+    for declared in [None, Some(false), Some(true)] {
+        let cfg = crate::config::Config::from_dir(&skill_fixture(declared));
+        let builtins = generate_builtin_templates(&cfg);
+        for want in ["sketching", "benchmarking"] {
+            let skill = builtins
+                .skills
+                .iter()
+                .find(|s| s.dir_name == want)
+                .unwrap_or_else(|| panic!("{want} is a builtin regardless of config ({declared:?})"));
+            assert!(
+                skill.skill_description.contains("BEFORE"),
+                "{want}'s description must say when to invoke it, since that is what makes a \
+                 skill discoverable at the moment it is needed"
+            );
+            assert!(!skill.body.is_empty());
+        }
+    }
+}
