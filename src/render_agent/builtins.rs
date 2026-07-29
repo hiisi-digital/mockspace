@@ -8,8 +8,8 @@ use super::*;
 /// (empty = no byline permitted / autonomous-mode config error).
 pub(crate) fn builtin_check_byline(cfg: &Config) -> String {
     let mode_var = agent_mode_var(&cfg.project_name);
-    let non_auto = bash_literal(&cfg.attribution.non_autonomous);
-    let auto = bash_literal(&cfg.attribution.autonomous);
+    let non_auto = bash_literal(&cfg.agent.attribution.non_autonomous);
+    let auto = bash_literal(&cfg.agent.attribution.autonomous);
     format!(
         r##"#!/usr/bin/env bash
 # Built-in mockspace hook: enforce commit authorship policy.

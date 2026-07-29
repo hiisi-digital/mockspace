@@ -241,6 +241,51 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             ),
         },
         BuiltinRule {
+            name: "design-round-consumes-its-inheritance".to_string(),
+            apply_to: vec![format!("{mock_rel}/design_rounds/**")],
+            body: substitute_builtin_vars(
+                concat!(
+                    "## A round consumes what was filed for it, and never sheds it\n",
+                    "\n",
+                    "A topic file left open in TOPIC phase is a filing: somebody found something while working ",
+                    "elsewhere and left it in the way so the next round would have to address it. This round is that ",
+                    "next round. Every flat topic in `{mock_dir}/design_rounds/` is this round's work, whoever wrote it ",
+                    "and whenever.\n",
+                    "\n",
+                    "**Every open topic is named in this round's changelists.** Say what it changes, or say why it ",
+                    "needs nothing. A topic that turns out to be out of scope still gets that written down, with the ",
+                    "reason. Silence is indistinguishable from having missed it.\n",
+                    "\n",
+                    "**Never shed one.** Do not stash it, do not delete it, do not move it to another branch, and do ",
+                    "not close the round leaving it unmentioned. If it genuinely belongs to later work it is re-filed ",
+                    "as a fresh flat topic after this round closes, so the next round inherits it the same way.\n",
+                    "\n",
+                    "### Three ways a filing disappears, all observed\n",
+                    "\n",
+                    "**A topic on a branch that never merged.** The next round branches from trunk, cannot see it, and ",
+                    "reports the question as still open because the files say so. Starting a round by branching fresh ",
+                    "from trunk drops every filing that has not landed there.\n",
+                    "\n",
+                    "**A topic swept into somebody else's archive.** `close` sweeps every loose flat file into the one ",
+                    "subdirectory it is building, regardless of which round the file belonged to. A topic filed while ",
+                    "another round is in flight is archived by that round's close, under that round's name.\n",
+                    "\n",
+                    "**An archive missing from a branch.** A closed round's directory is finished history and belongs ",
+                    "on every branch. When it exists only on a branch that never merged, the entire paper trail for ",
+                    "that design conversation is absent from trunk, and nothing reports it.\n",
+                    "\n",
+                    "### Before opening a changelist\n",
+                    "\n",
+                    "Check every ref for flat topics and archived round directories this branch cannot see, and pull ",
+                    "in what it finds. Do this while still in TOPIC: consuming a topic into a round whose changelist is ",
+                    "already written adds work the changelist does not cover, which is the failure this prevents rather ",
+                    "than a way around it. If the round has moved past TOPIC, deprecate the changelist and return to ",
+                    "TOPIC first.\n",
+                ),
+                &mock_rel, project_name, crate_prefix,
+            ),
+        },
+        BuiltinRule {
             name: "readmes".to_string(),
             apply_to: vec![
                 "**/README.md".to_string(),
@@ -684,26 +729,54 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
         crate_prefix,
     );
 
-    let skills = vec![
+    let mut skills = vec![
         BuiltinSkill {
             dir_name: "design-round".to_string(),
             skill_name: "design-round".to_string(),
             skill_description: "Guide for running design round conversations. Use this when starting a new design round, discussing design topics with the user, or when the user asks to brainstorm or design a new subsystem, feature, or architectural change.".to_string(),
             body: design_round_body,
+            files: vec![],
         },
         BuiltinSkill {
             dir_name: "mockup-workflow".to_string(),
             skill_name: "mockup-workflow".to_string(),
             skill_description: "Guide for the mockup-first design and documentation workflow. Use this skill whenever changing framework design, adding or modifying traits, types, crate structure, or regenerating documentation. Also use when asked to implement features in real crates -- the mock must be updated first.".to_string(),
             body: mockup_workflow_body,
+            files: vec![],
         },
         BuiltinSkill {
             dir_name: "real-code-guard".to_string(),
             skill_name: "real-code-guard".to_string(),
             skill_description: "Enforces mock-first workflow when implementing features in real crates. Use this whenever modifying, creating, or refactoring code in the crates/ directory, examples/ directory, or any Rust source file outside the mock workspace. Also use when asked to implement a feature or make a change to the framework.".to_string(),
             body: real_code_guard_body,
+            files: vec![],
         },
     ];
+
+    // Opt-in, from `mock/agent/config.toml`. The flow presumes a human
+    // answering design questions in the loop, and a skill that leads a
+    // conversation nobody is having is noise in the agent's context.
+    if cfg.agent.accelerated_interactive_design_talks {
+        skills.push(BuiltinSkill {
+            dir_name: "design-talk".to_string(),
+            skill_name: "design-talk".to_string(),
+            skill_description: "Use when open design questions must be resolved before implementation begins (for example \"let's discuss the design\", \"talk it through with me first\", or resolving parked design decisions). Leads the conversation, consumes topics filed for this round from every ref before starting, writes one topic file per topic as each settles, and re-presents everything for one confirmation before any changelist opens.".to_string(),
+            body: include_str!("skills/design-talk/SKILL.md").to_string(),
+            files: vec![
+                SkillFile {
+                    rel_path:   "scripts/consume-strays".to_string(),
+                    contents:   include_str!("skills/design-talk/scripts/consume-strays")
+                        .to_string(),
+                    executable: true,
+                },
+                SkillFile {
+                    rel_path:   "nut.toml".to_string(),
+                    contents:   include_str!("skills/design-talk/nut.toml").to_string(),
+                    executable: false,
+                },
+            ],
+        });
+    }
 
     // --- Builtin Preamble ---
     //

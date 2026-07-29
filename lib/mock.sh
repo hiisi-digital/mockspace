@@ -55,60 +55,59 @@ mock_reset() {
 # Prints: an absolute path
 #[pub]
 mock_root() {
-    [[ -n "$_MOCK_ROOT" ]] && { printf '%s' "$_MOCK_ROOT"; return 0; }
-    local root
-    root="$(git_root)" || return 1
-    [[ -z "$root" ]] && return 1
-    _MOCK_ROOT="$root"
+    _mock_resolve || return 1
     printf '%s' "$_MOCK_ROOT"
+}
+
+# _mock_launcher
+#
+# The launcher binary, preferring the direct `mock` over the cargo subcommand
+# form so a stale cargo alias cannot shadow it.
+_mock_launcher() {
+    if command -v mock >/dev/null 2>&1; then
+        printf 'mock'
+    elif command -v cargo-mock >/dev/null 2>&1; then
+        printf 'cargo-mock mock'
+    else
+        return 1
+    fi
 }
 
 # _mock_resolve
 #
-# Find the mock directory and the config that governs it, in the three shapes
-# that exist. Sets _MOCK_DIR and _MOCK_CONFIG, both absolute.
+# Ask the launcher where this checkout keeps its mockspace, and cache the
+# answer. Sets _MOCK_ROOT, _MOCK_DIR and _MOCK_CONFIG, all absolute, with
+# _MOCK_CONFIG empty when the repository has a mock directory and no config.
 #
-#   1. Config at the repo root, naming the directory: the relocated shape.
-#   2. Config inside the directory it governs: the historical in-place shape,
-#      where the containing directory IS the mock directory.
-#   3. Config at the root naming nothing: conventional `mock/`.
-#   4. A `mock/` directory and no config at all. mockspace's own repository is
-#      this shape, and a reader that only wants design_rounds is served by it,
-#      so the directory is reported and the config is left empty rather than
-#      failing the whole resolution.
+# The search is deliberately NOT reimplemented here. `mock locate` prints what
+# `discover::locate` decides, which is the authority: it searches the root and
+# then subdirectories hidden-first, handles `mock_dir = "."`, reads the key
+# with a parser that stops at the first table so a sectioned `mock_dir` is not
+# mistaken for the top-level one, and hard-errors when a repository has more
+# than one `mockspace.toml`. The git hooks already carry one shell
+# reimplementation of that which has to be kept in step; a second copy here is
+# how the three drift apart.
 _mock_resolve() {
-    [[ -n "$_MOCK_DIR" ]] && return 0
+    [[ -n "$_MOCK_DIR" || -n "$_MOCK_ROOT" ]] && return 0
 
-    local root at_root named candidate
-    root="$(mock_root)" || return 1
-    at_root="${root}/mockspace.toml"
+    local launcher out line
+    launcher="$(_mock_launcher)" || {
+        log_error "mockspace launcher not found on PATH (install \`mock\`)"
+        return 1
+    }
 
-    if [[ -f "$at_root" ]]; then
-        named="$(toml_get_or "$at_root" "mock_dir" "")"
-        if [[ -n "$named" && -d "${root}/${named}" ]]; then
-            _MOCK_DIR="${root}/${named}"
-            _MOCK_CONFIG="$at_root"
-            return 0
-        fi
-    fi
+    out="$($launcher locate 2>/dev/null)" || return 1
 
-    # In place: the config sits inside the workspace it governs. Only one level
-    # down is searched, because a deeper hit would be some other repository's
-    # vendored copy rather than this one's.
-    for candidate in "${root}"/*/mockspace.toml; do
-        [[ -f "$candidate" ]] || continue
-        _MOCK_DIR="${candidate%/mockspace.toml}"
-        _MOCK_CONFIG="$candidate"
-        return 0
-    done
+    while IFS= read -r line; do
+        case "$line" in
+            root=*)     _MOCK_ROOT="${line#root=}" ;;
+            config=*)   _MOCK_CONFIG="${line#config=}" ;;
+            mock_dir=*) _MOCK_DIR="${line#mock_dir=}" ;;
+        esac
+    done <<< "$out"
 
-    if [[ -d "${root}/mock" ]]; then
-        _MOCK_DIR="${root}/mock"
-        [[ -f "$at_root" ]] && _MOCK_CONFIG="$at_root"
-        return 0
-    fi
-
-    return 1
+    [[ -n "$_MOCK_ROOT" ]] || return 1
+    return 0
 }
 
 # mock_dir
@@ -120,6 +119,9 @@ _mock_resolve() {
 #[pub]
 mock_dir() {
     _mock_resolve || return 1
+    # Empty when the repository has no mock directory at all, which is a repo
+    # that does not run mockspace rather than one configured oddly.
+    [[ -n "$_MOCK_DIR" ]] || return 1
     printf '%s' "$_MOCK_DIR"
 }
 
@@ -146,7 +148,8 @@ mock_config() {
 # Usage: mock_is_mockspace || { log_info "not a mockspace repo"; exit 0; }
 #[pub]
 mock_is_mockspace() {
-    _mock_resolve
+    _mock_resolve || return 1
+    [[ -n "$_MOCK_DIR" ]]
 }
 
 # mock_get <key> [default]

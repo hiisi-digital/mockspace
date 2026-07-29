@@ -258,6 +258,30 @@ pub fn generate_agent_rules(
         render_design::write_generated(&copilot_path, &copilot_content);
         eprintln!("  {} (builtin)", copilot_path.display());
         count += 1;
+
+        // Anything runnable the skill ships, into both surfaces so either agent
+        // can invoke it. Written verbatim rather than through write_generated:
+        // that prepends an auto-generated banner, which would sit above the
+        // shebang and stop a script being a script.
+        for file in &builtin_skill.files {
+            for skill_dir in [&claude_skill_dir, &copilot_skill_dir] {
+                let dest = skill_dir.join(&file.rel_path);
+                if let Some(parent) = dest.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if fs::write(&dest, &file.contents).is_err() {
+                    eprintln!("  warning: could not write {}", dest.display());
+                    continue;
+                }
+                #[cfg(unix)]
+                if file.executable {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(0o755));
+                }
+                eprintln!("  {} (builtin)", dest.display());
+                count += 1;
+            }
+        }
     }
 
     // --- Consumer skills/*/SKILL.md.tmpl -> .claude/skills/*/SKILL.md + .github/skills/*/SKILL.md ---

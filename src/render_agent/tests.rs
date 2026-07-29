@@ -252,3 +252,86 @@ fn agent_gate_is_a_generated_builtin() {
         .unwrap();
     assert!(gate.matchers.iter().any(|s| s == "Bash"));
 }
+
+// ---------------------------------------------------------------------------
+// The design-talk skill and the files it ships
+// ---------------------------------------------------------------------------
+//
+// A skill that only tells an agent what to do is a rule with extra steps. This
+// one carries a script, so the shipping of files is part of the contract, and
+// the gate is opt-in because the flow presumes a human answering in the loop.
+
+/// A throwaway repository with a mockspace.toml and an agent config, so the
+/// gate is exercised through the config that actually declares it rather than
+/// through a hand-built struct that could drift from it.
+fn skill_fixture(design_talks: Option<bool>) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "mockspace-skilltest-{}-{:?}",
+        std::process::id(),
+        design_talks
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let mock = root.join("mock");
+    std::fs::create_dir_all(mock.join("agent")).unwrap();
+    std::fs::write(
+        root.join("mockspace.toml"),
+        "project_name = \"fixture\"\ncrate_prefix = \"fixture\"\nmock_dir = \"mock\"\n",
+    )
+    .unwrap();
+    if let Some(on) = design_talks {
+        std::fs::write(
+            mock.join("agent").join("config.toml"),
+            format!("agent_accelerated_interactive_design_talks = {on}\n"),
+        )
+        .unwrap();
+    }
+    mock
+}
+
+#[test]
+fn design_talk_skill_is_absent_unless_opted_in() {
+    for declared in [None, Some(false)] {
+        let cfg = crate::config::Config::from_dir(&skill_fixture(declared));
+        let builtins = generate_builtin_templates(&cfg);
+        assert!(
+            !builtins.skills.iter().any(|s| s.dir_name == "design-talk"),
+            "off by default, and off when declared false ({declared:?})"
+        );
+    }
+}
+
+#[test]
+fn design_talk_skill_ships_its_script_executable_and_its_manifest() {
+    let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
+    let builtins = generate_builtin_templates(&cfg);
+
+    let skill = builtins
+        .skills
+        .iter()
+        .find(|s| s.dir_name == "design-talk")
+        .expect("opted in, so the skill is generated");
+
+    let script = skill
+        .files
+        .iter()
+        .find(|f| f.rel_path == "scripts/consume-strays")
+        .expect("the skill ships its script");
+    assert!(
+        script.executable,
+        "a script without the executable bit cannot be run, which is the whole point"
+    );
+    assert!(
+        script.contents.starts_with("#!/usr/bin/env nutshell"),
+        "shipped verbatim, so the shebang is still the first line"
+    );
+
+    let manifest = skill
+        .files
+        .iter()
+        .find(|f| f.rel_path == "nut.toml")
+        .expect("the script's dependencies are declared beside it");
+    assert!(
+        manifest.contents.contains("[deps.mockspace]"),
+        "the script uses mockspace::mock, so the unit declares it"
+    );
+}

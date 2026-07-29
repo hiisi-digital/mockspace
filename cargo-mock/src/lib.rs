@@ -47,6 +47,45 @@ pub fn run_cli() -> ExitCode {
     }
 }
 
+/// Print where this checkout keeps its mockspace, as shell-assignable lines.
+///
+/// `discover::locate` is the authority on the search, including the rule that a
+/// repository has exactly one `mockspace.toml`. Every other consumer of that
+/// answer should ask here instead of walking the tree itself: the git hooks
+/// already carry a shell reimplementation that has to be kept in step, and a
+/// third copy is how the three drift apart.
+///
+/// Output is `key=value`, one per line, absolute paths, safe to `eval`:
+///
+/// ```text
+/// root=/path/to/repo
+/// config=/path/to/repo/mockspace.toml
+/// mock_dir=/path/to/repo/mock
+/// ```
+///
+/// `config` is empty when the repository has a mock directory but no config,
+/// which is a real shape: mockspace's own repository is one.
+fn locate_query() -> Result<(), String> {
+    let root = discover::repo_root().ok_or_else(|| {
+        "not inside a git repository (no .git found, and MOCK_ROOT is unset)".to_string()
+    })?;
+    let located = discover::locate(&root)?;
+    let (config, mock_dir) = match located {
+        Some(l) => (l.config_path.display().to_string(), l.mock_dir),
+        // No config, so the conventional directory if it is there at all. The
+        // caller distinguishes by the empty `config`.
+        None => (String::new(), root.join("mock")),
+    };
+    println!("root={}", root.display());
+    println!("config={config}");
+    if mock_dir.is_dir() {
+        println!("mock_dir={}", mock_dir.display());
+    } else {
+        println!("mock_dir=");
+    }
+    Ok(())
+}
+
 /// The user-facing arguments to forward to the engine.
 ///
 /// Two invocation shapes collapse to one: `mock <args...>` passes `<args...>`;
@@ -91,6 +130,15 @@ fn strip_dir_flag(args: Vec<String>) -> Vec<String> {
 }
 
 fn run(args: &[String]) -> Result<(), String> {
+    // Answered before anything else: it is a question about this checkout, not
+    // a run of the engine, so it skips the self-update and the pin resolution
+    // and the build. Anything that needs to know where the mockspace is asks
+    // this rather than reimplementing the search, which has already been
+    // reimplemented once in the git hooks and must stay in sync there.
+    if args.first().map(String::as_str) == Some("locate") {
+        return locate_query();
+    }
+
     // First, keep the launcher itself current (branch installs only, hourly,
     // opt-out). May reinstall and re-exec into the new binary, never returning.
     if let Ok(cache_root) = cache::cache_root() {
