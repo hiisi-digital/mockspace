@@ -24,7 +24,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "no-self-define";
 
@@ -63,11 +63,12 @@ impl Lint for NoSelfDefine {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
-
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+}
 
+impl CrateLint for NoSelfDefine {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         // Find which macros this crate owns or re-exports.
         let owned: Vec<&str> = MACRO_OWNERS

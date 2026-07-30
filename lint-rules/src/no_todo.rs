@@ -7,7 +7,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "no-todo";
 
@@ -17,11 +17,12 @@ impl Lint for NoTodo {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::PUSH_GATE
     }
-
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+}
 
+impl CrateLint for NoTodo {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
         let root = ctx.tree.root_node();

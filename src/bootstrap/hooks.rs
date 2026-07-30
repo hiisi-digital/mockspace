@@ -66,57 +66,64 @@ pub(crate) fn gen_hook(name: &str, mock_rel: &str, user_hook: &Path) -> String {
     }
 }
 
-/// The grep pattern that identifies an agent authorship byline or a
-/// tool-advertising trailer. Case-insensitive.
+/// The commit-msg body: hand the message to the configured message lints.
 ///
-/// A `Co-Authored-By` line is a violation only when it names an agent or a
-/// bot account; a human co-author (a real person) is kept. The `Claude-Session`
-/// trailer and the "Generated with [Claude Code]" advertising line are always
-/// violations. Contains no `{`/`}`, so it embeds verbatim in a `format!`.
-const BYLINE_RE: &str = "co-authored-by:.*(claude|anthropic|opus|copilot|swe-agent|\\[bot\\])|claude-session:|generated with \\[?claude|generated with claude code";
-
-/// The commit-msg byline-check body. Expects the message file path in `$1`.
+/// Replaces a hardcoded `grep -E` that was baked into two hook layers under a
+/// comment conceding the copies "MUST stay in sync". They could not, and the
+/// baked pattern contradicted configuration outright, rejecting unconditionally
+/// what `[attribution] autonomous` was meant to require. Policy now lives in one
+/// place and every surface reaches it through the same command.
 ///
-/// Self-contained (no `cargo mock`, no launcher, no mock-dir dependency) so it
-/// holds regardless of install state. Shared by the generated hook here and the
-/// durable hook in `durable.rs` so the two layers cannot drift.
-pub(crate) fn byline_commit_msg_body() -> String {
-    format!(
-        r##"MSG_FILE="$1"
+/// With no launcher installed this fails closed and says how to install one,
+/// rather than falling back to a second policy that can disagree with the first.
+pub(crate) fn message_commit_msg_body() -> String {
+    r##"MSG_FILE="$1"
 [ -z "$MSG_FILE" ] && exit 0
 [ -f "$MSG_FILE" ] || exit 0
 
-# Check only the authored body: drop comment lines and everything from git's
-# verbose-diff scissors marker onward, so an example byline in the commented
-# help text or diff cannot false-trigger.
-BODY=$(sed '/^# ------------------------ >8/,$d' "$MSG_FILE" 2>/dev/null | grep -v '^#' || true)
+launcher=""
+if command -v mock >/dev/null 2>&1; then launcher="mock"
+elif command -v cargo-mock >/dev/null 2>&1; then launcher="cargo-mock"
+fi
 
-HITS=$(printf '%s\n' "$BODY" | grep -inE "{BYLINE_RE}" || true)
-
-if [ -n "$HITS" ]; then
-    echo ""
-    echo "BLOCKED: agent authorship byline / tool-advertising trailer in commit message:"
-    echo ""
-    printf '%s\n' "$HITS" | sed 's/^/  /'
-    echo ""
-    echo "  A Co-Authored-By byline (or a Generated-with trailer) marks HEADLESS"
-    echo "  autonomous work: an agent acting with no human in the loop. A commit"
-    echo "  made under human direction is the human's work through a tool it ran,"
-    echo "  and carries no byline. Remove the trailer and re-commit."
-    echo "  Human co-authors (real people) are fine."
+if [ -z "$launcher" ]; then
+    echo "" >&2
+    echo "BLOCKED: the message gate cannot run: no mockspace launcher on PATH." >&2
+    echo "" >&2
+    echo "  commit-message policy (authorship trailers, commit style) is configured" >&2
+    echo "  in mock/agent/config.toml and enforced by the engine, so it needs the" >&2
+    echo "  launcher. Guessing a weaker policy here would contradict the configured" >&2
+    echo "  one, so the gate refuses instead." >&2
+    echo "" >&2
+    echo "  install it:  cargo install cargo-mock" >&2
     exit 1
 fi
+
+"$launcher" check-message --domain commit-message --gate commit --file "$MSG_FILE" || exit 1
 "##
-    )
+    .to_string()
 }
 
-/// The pre-push byline-scan body. Expects `$PREPUSH_STDIN` to already hold the
-/// captured `<local-ref> <local-sha> <remote-ref> <remote-sha>` lines (a
-/// here-string keeps the loop in the calling shell). Self-contained; shared by
-/// the generated and durable pre-push hooks so the two layers cannot drift.
-pub(crate) fn byline_prepush_scan_body() -> String {
-    format!(
-        r##"PUSH_MSGS=""
+/// The pre-push message-scan body. Expects `$PREPUSH_STDIN` to hold the captured
+/// `<local-ref> <local-sha> <remote-ref> <remote-sha>` lines.
+///
+/// Every message being pushed goes through the same configured lints the
+/// commit-msg gate uses, at the push tier, so a project can warn locally and
+/// block before anything is shared.
+pub(crate) fn message_prepush_scan_body() -> String {
+    r##"launcher=""
+if command -v mock >/dev/null 2>&1; then launcher="mock"
+elif command -v cargo-mock >/dev/null 2>&1; then launcher="cargo-mock"
+fi
+
+if [ -z "$launcher" ]; then
+    echo "" >&2
+    echo "BLOCKED: the message gate cannot run: no mockspace launcher on PATH." >&2
+    echo "  install it:  cargo install cargo-mock" >&2
+    exit 1
+fi
+
+PUSH_MSGS=""
 while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
     if [ -z "$bl_local" ]; then
         continue
@@ -128,7 +135,7 @@ while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
         # New branch or unknown remote: scan commits not already on any remote.
         # Bounded by `--not --remotes`; when the remote has never been fetched
         # this widens to all local history, which is the safe (over-)inclusive
-        # direction for a byline gate.
+        # direction for a gate of this kind.
         RANGE_MSGS=$(git log --format=%B "$bl_local" --not --remotes 2>/dev/null || true)
     else
         RANGE_MSGS=$(git log --format=%B "$bl_remote".."$bl_local" 2>/dev/null || true)
@@ -137,20 +144,12 @@ while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
 $RANGE_MSGS"
 done <<< "$PREPUSH_STDIN"
 
-BYLINE_HITS=$(printf '%s\n' "$PUSH_MSGS" | grep -inE "{BYLINE_RE}" || true)
-if [ -n "$BYLINE_HITS" ]; then
-    echo ""
-    echo "BLOCKED: agent authorship byline / tool-advertising trailer in a pushed commit:"
-    echo ""
-    printf '%s\n' "$BYLINE_HITS" | sed 's/^/  /'
-    echo ""
-    echo "  These trailers mark HEADLESS autonomous work (no human in the loop)."
-    echo "  Commits made under human direction carry none. Rewrite the offending"
-    echo "  messages before pushing. Human co-authors (real people) are fine."
-    exit 1
+if [ -n "$(printf '%s' "$PUSH_MSGS" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "$PUSH_MSGS" \
+        | "$launcher" check-message --domain commit-message --gate push || exit 1
 fi
 "##
-    )
+    .to_string()
 }
 
 /// Generate the commit-msg hook: rejects agent authorship bylines and
@@ -163,7 +162,7 @@ fi
 /// co-authors are kept.
 pub(crate) fn gen_commit_msg(user_hook: &Path) -> String {
     let user_section = source_user_hook(user_hook);
-    let byline = byline_commit_msg_body();
+    let byline = message_commit_msg_body();
 
     format!(
         r##"#!/usr/bin/env bash
@@ -255,7 +254,7 @@ echo "pre-commit: validation passed."
 
 pub(crate) fn gen_pre_push(mock_rel: &str, user_hook: &Path) -> String {
     let user_section = source_user_hook(user_hook);
-    let byline = byline_prepush_scan_body();
+    let byline = message_prepush_scan_body();
 
     format!(
         r##"#!/usr/bin/env bash
@@ -416,15 +415,26 @@ mod byline_hook_tests {
 
     /// Run `msg` through BOTH the generated and the durable commit-msg hooks,
     /// assert they agree (both layers must enforce), return the shared code.
+    /// Run `msg` through the generated commit-msg hook.
+    ///
+    /// The generated hook is the byline authority. The durable hook no longer
+    /// duplicates the check: it delegates to this one when the repo is
+    /// initialised and blocks when it is not, which `durable_gate_tests` covers.
+    /// Comparing the two layers, as this helper used to, asserted a duplication
+    /// that was itself the problem.
     fn run_commit_msg(msg: &str) -> i32 {
         let dir = scratch("msg");
         let msgfile = dir.join("COMMIT_EDITMSG");
         std::fs::write(&msgfile, msg).unwrap();
-        let generated = run_script(&gen_commit_msg(&dir.join("no-user-hook")), &[&msgfile], "", None, None);
-        let durable = run_script(&gen_durable_hook("commit-msg"), &[&msgfile], "", None, None);
+        let code = run_script(
+            &gen_commit_msg(&dir.join("no-user-hook")),
+            &[&msgfile],
+            "",
+            None,
+            None,
+        );
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(generated, durable, "generated and durable commit-msg disagree on {msg:?}");
-        generated
+        code
     }
 
     /// A PATH with git + coreutils but WITHOUT the cargo bin, so the durable
@@ -465,102 +475,182 @@ mod byline_hook_tests {
         let (repo, sha) = repo_with_commit(msg);
         let zero = "0".repeat(40);
         let stdin = format!("refs/heads/main {sha} refs/heads/main {zero}\n");
-        let code = run_script(&gen_durable_hook("pre-push"), &[], &stdin, Some(&repo), Some(&launcher_free_path()));
+        let code = run_script(&mockspace_manifest::gate::durable_hook("pre-push", HOOK_VERSION), &[], &stdin, Some(&repo), Some(&launcher_free_path()));
         let _ = std::fs::remove_dir_all(&repo);
         code
     }
 
-    #[test]
-    fn rejects_claude_coauthor() {
-        assert_eq!(
-            run_commit_msg("feat: x\n\nCo-Authored-By: Claude <noreply@anthropic.com>"),
-            1
+    // The hook's contract is now that it delegates to the configured message
+    // lints. What those lints decide is their own concern and is tested where
+    // they live, in the pack; duplicating policy assertions here would recreate
+    // the very drift this change removed.
+
+    /// Run the generated commit-msg hook with `launcher` first on PATH.
+    ///
+    /// `launcher` is a stub script standing in for `mock`, so the hook's own
+    /// behaviour is observable without building or invoking the real engine.
+    fn run_commit_msg_with_launcher(msg: &str, stub: Option<&str>) -> i32 {
+        let dir = scratch("msg");
+        let msgfile = dir.join("COMMIT_EDITMSG");
+        std::fs::write(&msgfile, msg).unwrap();
+
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        if let Some(body) = stub {
+            let mock = bin.join("mock");
+            std::fs::write(&mock, body).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&mock).unwrap().permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&mock, perms).unwrap();
+            }
+        }
+        // Only the stub dir plus the bare minimum, so a real `mock` installed on
+        // this machine cannot leak into the test.
+        let path = format!("{}:/usr/bin:/bin", bin.display());
+        let code = run_script(
+            &gen_commit_msg(&dir.join("no-user-hook")),
+            &[&msgfile],
+            "",
+            None,
+            Some(&path),
         );
+        let _ = std::fs::remove_dir_all(&dir);
+        code
     }
 
     #[test]
-    fn rejects_generated_with_trailer() {
-        assert_eq!(
-            run_commit_msg(
-                "feat: x\n\n\u{1f916} Generated with [Claude Code](https://claude.com/claude-code)"
-            ),
-            1
+    fn the_commit_msg_hook_hands_the_message_to_the_launcher() {
+        // The stub records its arguments and passes, so this asserts the exact
+        // command shape the engine is invoked with.
+        let dir = scratch("args");
+        let out = dir.join("args.txt");
+        let stub = format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" > {}\nexit 0\n",
+            out.display()
         );
+        assert_eq!(run_commit_msg_with_launcher("feat: x", Some(&stub)), 0);
+        let recorded = std::fs::read_to_string(&out).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(recorded.contains("check-message"), "got: {recorded}");
+        assert!(recorded.contains("--domain commit-message"), "got: {recorded}");
+        assert!(recorded.contains("--gate commit"), "got: {recorded}");
+        assert!(recorded.contains("--file"), "got: {recorded}");
     }
 
     #[test]
-    fn rejects_claude_session() {
-        assert_eq!(
-            run_commit_msg("feat: x\n\nClaude-Session: https://claude.ai/code/session_abc"),
-            1
+    fn the_commit_msg_hook_fails_when_the_lints_reject() {
+        let stub = "#!/usr/bin/env bash\nexit 1\n";
+        assert_eq!(run_commit_msg_with_launcher("feat: x", Some(stub)), 1);
+    }
+
+    #[test]
+    fn the_commit_msg_hook_fails_closed_with_no_launcher() {
+        // Guessing a weaker policy here would contradict the configured one, so
+        // the gate refuses and says how to install the launcher instead. Same
+        // treatment every other anomalous state gets.
+        assert_eq!(run_commit_msg_with_launcher("feat: x", None), 1);
+    }
+
+    #[test]
+    fn an_empty_or_missing_message_file_is_not_the_hooks_business() {
+        // git calls commit-msg with a path; if there is nothing there, there is
+        // nothing to lint, and erroring would block on git's own behaviour.
+        let dir = scratch("nofile");
+        let missing = dir.join("does-not-exist");
+        let code = run_script(
+            &gen_commit_msg(&dir.join("no-user-hook")),
+            &[&missing],
+            "",
+            None,
+            Some("/usr/bin:/bin"),
         );
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(code, 0);
     }
 
-    #[test]
-    fn rejects_copilot_bot_coauthor() {
-        assert_eq!(
-            run_commit_msg(
-                "feat: x\n\nCo-authored-by: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>"
-            ),
-            1
-        );
-    }
+    // The durable gate's own contract: discover, then delegate or block. It
+    // carries no policy of its own, so none of these assert on byline content.
 
     #[test]
-    fn accepts_human_coauthor() {
-        assert_eq!(
-            run_commit_msg("feat: x\n\nCo-authored-by: orgrinrt <ort@hiisi.digital>"),
-            0
-        );
-    }
-
-    #[test]
-    fn accepts_plain_message() {
-        assert_eq!(run_commit_msg("fix: normal commit\n\nexplains why"), 0);
-    }
-
-    #[test]
-    fn ignores_byline_inside_comment_and_scissors() {
-        // git's commented help text and the verbose-diff scissors region must
-        // not false-trigger: a byline there is not part of the authored body.
-        assert_eq!(
-            run_commit_msg(
-                "feat: x\n\nbody\n# Co-Authored-By: Claude <x>\n# ------------------------ >8 ------------------------\ndiff --git a/x b/x\nCo-Authored-By: Claude <x>"
-            ),
-            0
-        );
-    }
-
-    #[test]
-    fn durable_pre_push_rejects_byline() {
-        assert_eq!(
-            run_durable_pre_push("feat: x\n\nCo-Authored-By: Claude <noreply@anthropic.com>"),
-            1
-        );
-    }
-
-    #[test]
-    fn durable_pre_push_accepts_clean() {
-        // Clean message, no launcher on PATH: the byline scan passes, then the
-        // prelude takes the no-launcher / no-surface branch and exits 0.
+    fn durable_ignores_a_repo_it_does_not_govern() {
+        // No mockspace.toml. The gate must not block, or it would hijack every
+        // unrelated repo on the machine that ever had core.hooksPath set.
         assert_eq!(run_durable_pre_push("fix: normal commit"), 0);
     }
 
-    #[test]
-    fn generated_pre_push_rejects_byline() {
-        // The byline scan runs before the cargo-mock tail, so it rejects even
-        // with no mock workspace present.
-        let (repo, sha) = repo_with_commit("feat: x\n\nCo-Authored-By: Claude <x@anthropic.com>");
+    /// A repo with a `mockspace.toml`, optionally with an executable generated
+    /// hook stub, run through the durable pre-push. Returns the exit code.
+    fn durable_in_project(config: &str, stub: Option<&str>) -> i32 {
+        let (repo, sha) = repo_with_commit("fix: whatever");
+        std::fs::write(repo.join("mockspace.toml"), config).unwrap();
+        if let Some(body) = stub {
+            let hooks = repo.join("mock/target/hooks");
+            std::fs::create_dir_all(&hooks).unwrap();
+            let path = hooks.join("pre-push");
+            std::fs::write(&path, body).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut p = std::fs::metadata(&path).unwrap().permissions();
+                p.set_mode(0o755);
+                std::fs::set_permissions(&path, p).unwrap();
+            }
+        }
         let zero = "0".repeat(40);
         let stdin = format!("refs/heads/main {sha} refs/heads/main {zero}\n");
         let code = run_script(
-            &gen_pre_push("mock", &repo.join("no-user-hook")),
+            &mockspace_manifest::gate::durable_hook("pre-push", HOOK_VERSION),
             &[],
             &stdin,
             Some(&repo),
             Some(&launcher_free_path()),
         );
         let _ = std::fs::remove_dir_all(&repo);
-        assert_eq!(code, 1);
+        code
     }
+
+    #[test]
+    fn durable_delegates_to_the_generated_hook_when_initialised() {
+        // A stub exiting 42 proves the delegation actually happened rather than
+        // the durable hook deciding for itself.
+        let code = durable_in_project(
+            "mock_dir = \"mock\"\n",
+            Some("#!/usr/bin/env bash\nexit 42\n"),
+        );
+        assert_eq!(code, 42, "durable pre-push did not delegate");
+    }
+
+    #[test]
+    fn durable_blocks_an_uninitialised_project_at_all_scope() {
+        let code = durable_in_project(
+            "mock_dir = \"mock\"\nuninitialised_blocks = \"all\"\n",
+            None,
+        );
+        assert_eq!(code, 1, "expected a block at 'all' scope");
+    }
+
+    #[test]
+    fn durable_passes_an_uninitialised_project_outside_the_surface() {
+        // Default `surface` scope with nothing staged under mock/: the gate
+        // governs the design surface, so unrelated work passes.
+        let code = durable_in_project("mock_dir = \"mock\"\n", None);
+        assert_eq!(code, 0, "surface scope must not block work outside it");
+    }
+
+    #[test]
+    fn the_generated_pre_push_hook_pipes_messages_to_the_launcher() {
+        // Asserted on the generated text rather than by running it: the body
+        // needs a real repo with pushable refs, which the durable tests cover.
+        let h = gen_pre_push("mock", std::path::Path::new("/dev/null"));
+        assert!(h.contains("check-message"));
+        assert!(h.contains("--domain commit-message"));
+        assert!(h.contains("--gate push"));
+        // fails closed rather than guessing a policy
+        assert!(h.contains("no mockspace launcher on PATH"));
+        assert!(!h.contains("co-authored-by"), "policy must not be baked into the hook");
+    }
+
 }

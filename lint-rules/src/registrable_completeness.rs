@@ -13,7 +13,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "registrable-completeness";
 
@@ -41,7 +41,9 @@ impl Lint for RegistrableCompleteness {
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+}
 
+impl CrateLint for RegistrableCompleteness {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.should_skip_proc_macro_source_lint() {
             return Vec::new();

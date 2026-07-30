@@ -4,7 +4,7 @@
 //! Using `*Entry` or other suffixes is inconsistent. This lint scans for
 //! `define_registry!` invocations and checks the entry type name.
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoEntrySuffix;
 
@@ -12,11 +12,12 @@ impl Lint for NoEntrySuffix {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
-
     fn name(&self) -> &'static str {
         "no-entry-suffix"
     }
+}
 
+impl CrateLint for NoEntrySuffix {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
 

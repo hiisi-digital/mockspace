@@ -20,26 +20,28 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::changelist_helpers::{self, Phase};
-use crate::{CrossCrateLint, LintContext, LintError};
+use crate::{Lint, RepoLint, LintError, RepoContext};
 
 const LINT_NAME: &str = "changelist-lock";
 
 pub struct ChangelistLock;
 
-impl CrossCrateLint for ChangelistLock {
+impl Lint for ChangelistLock {
     fn name(&self) -> &'static str {
         LINT_NAME
     }
-
     fn source_only(&self) -> bool {
         false
     }
+}
 
-    fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
-        let workspace_root = match crates.first() {
-            Some((_, ctx)) => ctx.workspace_root,
-            None => return Vec::new(),
-        };
+impl RepoLint for ChangelistLock {
+    fn check_repo(&self, ctx: &RepoContext) -> Vec<LintError> {
+        // The mock dir comes straight from the context. Previously this stole a
+        // `workspace_root` from `crates.first()` and returned no findings when
+        // there were no crates, which silently disabled the gate in a repo whose
+        // taxonomy had not been settled yet.
+        let workspace_root = ctx.mock_dir;
 
         let design_rounds = workspace_root.join("design_rounds");
         let phase = changelist_helpers::current_phase(&design_rounds);

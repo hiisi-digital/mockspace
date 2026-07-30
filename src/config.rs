@@ -74,7 +74,6 @@ pub struct Config {
     pub unprefixed_crates:      Vec<String>,
     pub abi_version:            u32,
     pub nuke_marker:            String,
-    pub commit_style:           CommitStyle,
     /// Declared registry namespaces. Empty when the project declares none, and
     /// every registry code path is a no-op in that case.
     pub registry_namespaces:    Vec<crate::registry::RegistryNamespace>,
@@ -261,6 +260,19 @@ pub struct AttributionConfig {
     /// Must be non-empty at commit time; otherwise the hook fails with a config error.
     /// Commits must carry at least one byline matching this pattern.
     pub autonomous: String,
+
+    /// Tool-advertising-trailer policy, in every mode and on every surface.
+    ///
+    /// Its own axis, because an advert is not provenance: it is injected by a
+    /// tool's defaults rather than chosen, and says nothing about who did the
+    /// work. Empty (the default) permits none.
+    pub adverts: String,
+
+    /// Ordered signals deciding which ruleset a run falls under. Empty means the
+    /// historical behaviour: read `<PROJECT>_AGENT_MODE` and nothing else.
+    ///
+    /// See [`crate::agent_mode`] for resolution and the available presets.
+    pub mode_signals: Vec<crate::agent_mode::RawModeSignal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,28 +294,6 @@ impl MacroStyle {
             icon:  "\u{2699}".to_string(),
             bg:    "#F5F5F5".to_string(),
             fg:    "#616161".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitStyle {
-    pub types:  Vec<String>,
-    pub format: String,
-}
-
-impl Default for CommitStyle {
-    fn default() -> Self {
-        Self {
-            types:  vec![
-                "feat".into(),
-                "fix".into(),
-                "refactor".into(),
-                "docs".into(),
-                "test".into(),
-                "chore".into(),
-            ],
-            format: "type: lowercase imperative message".into(),
         }
     }
 }
@@ -334,6 +324,20 @@ struct RawAgentConfig {
 struct RawAttribution {
     non_autonomous: Option<String>,
     autonomous:     Option<String>,
+    adverts:        Option<String>,
+    #[serde(default)]
+    mode_signal:    Vec<RawModeSignalToml>,
+}
+
+/// One `[[attribution.mode_signal]]` entry, as written.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawModeSignalToml {
+    preset: Option<String>,
+    env:    Option<String>,
+    equals: Option<String>,
+    exists: Option<bool>,
+    mode:   Option<String>,
 }
 
 /// One declared reference root. A table rather than a bare string so a root
@@ -595,16 +599,32 @@ impl Config {
         let agent_config_content = fs::read_to_string(&agent_config_path).unwrap_or_default();
         let raw_agent: RawAgentConfig =
             toml_edit::de::from_str(&agent_config_content).unwrap_or_default();
+        let attribution = raw_agent
+            .attribution
+            .map(|a| {
+                AttributionConfig {
+                    non_autonomous: a.non_autonomous.unwrap_or_default(),
+                    autonomous:     a.autonomous.unwrap_or_default(),
+                    adverts:        a.adverts.unwrap_or_default(),
+                    mode_signals:   a
+                        .mode_signal
+                        .into_iter()
+                        .map(|s| {
+                            crate::agent_mode::RawModeSignal {
+                                preset: s.preset,
+                                env:    s.env,
+                                equals: s.equals,
+                                exists: s.exists,
+                                mode:   s.mode,
+                            }
+                        })
+                        .collect(),
+                }
+            })
+            .unwrap_or_default();
+
         let agent = AgentConfig {
-            attribution: raw_agent
-                .attribution
-                .map(|a| {
-                    AttributionConfig {
-                        non_autonomous: a.non_autonomous.unwrap_or_default(),
-                        autonomous:     a.autonomous.unwrap_or_default(),
-                    }
-                })
-                .unwrap_or_default(),
+            attribution,
             accelerated_interactive_design_talks: raw_agent
                 .agent_accelerated_interactive_design_talks
                 .unwrap_or(false),
@@ -641,7 +661,6 @@ impl Config {
             unprefixed_crates: raw.unprefixed_crates,
             abi_version: raw.abi_version.unwrap_or(1),
             nuke_marker: "Nuked by `cargo mock --nuke`".to_string(),
-            commit_style: CommitStyle::default(),
             registry_namespaces: crate::registry::with_builtins(
                 &raw.registry.map(|r| r.namespace).unwrap_or_default(),
             ),

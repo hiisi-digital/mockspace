@@ -11,7 +11,7 @@
 //! This lint uses line-level text matching inside `define_behavior!` macro
 //! invocations, since tree-sitter sees macro bodies as token trees.
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoPoolAccess;
 
@@ -19,11 +19,12 @@ impl Lint for NoPoolAccess {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
-
     fn name(&self) -> &'static str {
         "no-pool-access"
     }
+}
 
+impl CrateLint for NoPoolAccess {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
         let mut in_behavior = false;

@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use crate::{CrateSourceFile, Lint, LintContext, LintError, Severity};
+use crate::{CrateLint, CrateSourceFile, Lint, LintContext, LintError, Severity};
 
 pub struct FileSize {
     max_lines:       usize,
@@ -49,15 +49,12 @@ impl Lint for FileSize {
     fn name(&self) -> &'static str {
         "file-size"
     }
-
     fn default_severity(&self) -> Severity {
         Severity::ADVISORY
     }
-
     fn config_keys(&self) -> &[&str] {
         &["max_lines", "exempt"]
     }
-
     fn configure(&mut self, params: &HashMap<String, String>) {
         if let Some(val) = params.get("max_lines") {
             if let Ok(n) = val.parse::<usize>() {
@@ -72,7 +69,9 @@ impl Lint for FileSize {
                 .collect();
         }
     }
+}
 
+impl CrateLint for FileSize {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let is_exempt = self.exempt_suffixes.iter().any(|s| {
             let full = format!("{}-{}", ctx.crate_prefix, s);

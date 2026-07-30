@@ -1,6 +1,17 @@
 #![allow(unused_imports)]
 use super::*;
 
+/// Whether a pack contributes no lints of any kind.
+///
+/// The statically-linked path passes lints in directly; only an empty pack means
+/// the engine should try loading this repo's cdylib instead.
+fn pack_is_empty(pack: &LintPack) -> bool {
+    pack.crate_lints.is_empty()
+        && pack.workspace_lints.is_empty()
+        && pack.repo_lints.is_empty()
+        && pack.message_lints.is_empty()
+}
+
 /// The value following `flag` in `args`, if present.
 fn arg_value(args: &[String], flag: &str) -> Option<String> {
     args.iter()
@@ -9,11 +20,17 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
-pub(crate) fn run_inner(
-    custom_lints: &[Box<dyn Lint>],
-    custom_cross_lints: &[Box<dyn CrossCrateLint>],
-) -> ExitCode {
+pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
+
+    // Help resolves before anything else, and in particular before project
+    // discovery. `mock --help` outside a project used to answer "no mockspace.toml
+    // found", which is the right answer to "run the workflow here" and the wrong
+    // answer to "what does this tool do" -- the question a reader outside a project
+    // is most likely to be asking, and often the first thing anyone types.
+    if args.iter().skip(1).any(|a| help::is_help_request(a)) {
+        return help::print_help();
+    }
 
     // Determine mock directory:
     // 1. --dir <path> explicit override
@@ -64,7 +81,7 @@ pub(crate) fn run_inner(
     // repo's lints from a runtime cdylib. `loaded` holds the library so the
     // boxed lints' vtables outlive every use below; the shadowing binds the
     // effective slices for the rest of the function.
-    let loaded = if custom_lints.is_empty() && custom_cross_lints.is_empty() {
+    let loaded = if pack_is_empty(pack) {
         arg_value(&args, "--mockspace-lint-rules-dep").and_then(|dep| {
             match crate::custom_lints::load(&cfg, &cfg.config_path, &dep) {
                 Ok(l) => l,
@@ -77,9 +94,9 @@ pub(crate) fn run_inner(
     } else {
         None
     };
-    let (custom_lints, custom_cross_lints) = match &loaded {
-        Some(l) => (l.lints.as_slice(), l.cross.as_slice()),
-        None => (custom_lints, custom_cross_lints),
+    let pack = match &loaded {
+        Some(l) => &l.pack,
+        None => pack,
     };
 
     // Subcommands: positional args that aren't flags or value-flag values.
@@ -108,6 +125,61 @@ pub(crate) fn run_inner(
 
     if let Some(&subcmd) = positional_args.first() {
         match subcmd {
+            // Lint one authored message. The commit-msg and pre-push hooks call
+            // this, and so will the agent hooks, so every surface reaches the
+            // same configured policy instead of each carrying its own copy.
+            "check-message" => {
+                let domain_arg = arg_value(&args, "--domain").unwrap_or_default();
+                let Some(domain) = message::parse_domain(&domain_arg) else {
+                    eprintln!(
+                        "mock check-message: --domain must be one of: {}",
+                        message::DOMAIN_TOKENS.join(", ")
+                    );
+                    return ExitCode::FAILURE;
+                };
+                let (text, origin) = match arg_value(&args, "--file") {
+                    Some(f) => {
+                        match message::read_message_file(std::path::Path::new(&f)) {
+                            Ok(t) => (t, f),
+                            Err(e) => {
+                                eprintln!("mock check-message: {e}");
+                                return ExitCode::FAILURE;
+                            },
+                        }
+                    },
+                    None => {
+                        // No `--file`: read the message from stdin, which is how
+                        // an agent hook passes text it extracted from a command.
+                        let mut buf = String::new();
+                        if let Err(e) = std::io::Read::read_to_string(
+                            &mut std::io::stdin(),
+                            &mut buf,
+                        ) {
+                            eprintln!("mock check-message: could not read stdin: {e}");
+                            return ExitCode::FAILURE;
+                        }
+                        (buf, "<stdin>".to_string())
+                    },
+                };
+                // Which gate tier applies. A commit-msg hook is the commit
+                // gate, pre-push the push gate, so a project can warn locally
+                // and block before sharing, as the severity tiers intend.
+                let gate = match arg_value(&args, "--gate").as_deref() {
+                    Some("push") => LintMode::Push,
+                    Some("build") => LintMode::Build,
+                    _ => LintMode::Commit,
+                };
+                let command = arg_value(&args, "--command");
+                let tool = arg_value(&args, "--tool");
+                let req = message::Request {
+                    domain,
+                    message: text,
+                    origin,
+                    command: command.as_deref(),
+                    tool: tool.as_deref(),
+                };
+                return message::run(&cfg, pack, gate, &req);
+            },
             "activate" => {
                 match bootstrap::activate(&cfg.repo_root, &cfg.mock_dir) {
                     Ok(()) => {
@@ -208,18 +280,7 @@ pub(crate) fn run_inner(
                 // An unrecognised first positional is a mistyped subcommand,
                 // not a reason to silently run the default full regeneration
                 // (slow, and not what was asked). Report and exit non-zero.
-                eprintln!("error: unknown subcommand `{other}`");
-                if let Some(guess) = suggest_subcommand(other) {
-                    eprintln!("  did you mean `{guess}`?");
-                }
-                eprintln!("\navailable subcommands:");
-                for name in KNOWN_SUBCOMMANDS {
-                    eprintln!("  {name}");
-                }
-                eprintln!(
-                    "\n(run `cargo mock` with no subcommand to regenerate docs and agent rules)"
-                );
-                return ExitCode::from(2);
+                return super::help::unknown_subcommand(other);
             },
         }
     }
@@ -278,6 +339,31 @@ pub(crate) fn run_inner(
     let is_infra_only = scope_arg == Some("infra");
 
     // --- Detect nuked workspace ---
+    // Verify the claims the narrowing flags make. Each exists to skip work that
+    // cannot matter, and each was trusted rather than checked, which made both an
+    // unintended bypass: --doc-only skips source lints, --scope skips whole
+    // crates, and neither asked whether its premise held.
+    let mock_rel_for_hatch = cfg
+        .mock_dir
+        .strip_prefix(&cfg.repo_root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "mock".to_string());
+    // Only the explicit flag is verified. A nuked workspace derives doc-only
+    // internally below, and that derivation is the engine's own, not a claim a
+    // caller made about what is staged.
+    if doc_only {
+        if let Some(r) = escape_hatch::verify_doc_only(&cfg.repo_root, &mock_rel_for_hatch) {
+            eprintln!("BLOCKED: {}", r.explain());
+            return ExitCode::FAILURE;
+        }
+    }
+    if let Some(s) = scope_arg {
+        if let Some(r) = escape_hatch::verify_scope(&cfg.repo_root, &mock_rel_for_hatch, s) {
+            eprintln!("BLOCKED: {}", r.explain());
+            return ExitCode::FAILURE;
+        }
+    }
+
     let workspace_nuked = detect_nuked_workspace(&cfg);
 
     let doc_only = if workspace_nuked {
@@ -422,9 +508,8 @@ pub(crate) fn run_inner(
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
                 &cfg.primitive_introductions,
-                custom_lints,
-                custom_cross_lints,
-            );
+                pack,
+                );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;
@@ -443,9 +528,8 @@ pub(crate) fn run_inner(
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
                 &cfg.primitive_introductions,
-                custom_lints,
-                custom_cross_lints,
-            );
+                pack,
+                );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;

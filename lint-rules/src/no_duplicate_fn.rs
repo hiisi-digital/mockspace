@@ -10,15 +10,17 @@ use std::collections::HashMap;
 
 use tree_sitter::Node;
 
-use crate::{CrossCrateLint, LintContext, LintError};
+use crate::{Lint, WorkspaceLint, LintContext, LintError};
 
 pub struct NoDuplicateFn;
 
-impl CrossCrateLint for NoDuplicateFn {
+impl Lint for NoDuplicateFn {
     fn name(&self) -> &'static str {
         "no-duplicate-fn"
     }
+}
 
+impl WorkspaceLint for NoDuplicateFn {
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         // Collect all public function signatures from all crates
         let mut all_fns: Vec<FnSig> = Vec::new();
