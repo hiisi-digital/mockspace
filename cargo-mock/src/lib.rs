@@ -38,6 +38,14 @@ enum PinSource {
 /// The launcher entry, shared by both installed binaries (`cargo-mock` and
 /// `mock`). Each bin is a two-line shim over this.
 pub fn run_cli() -> ExitCode {
+    // The launcher runs as a child of git hooks, whose exported repo-location
+    // GIT_* variables poison every `git` this process (and the engine it
+    // spawns) invokes from a different working directory. Drop them first.
+    //
+    // SAFETY: this is the first statement of both installed binaries' mains;
+    // no thread has been spawned yet.
+    unsafe { mockspace_manifest::gate::sanitize_git_env() };
+
     let raw: Vec<String> = std::env::args().collect();
     let forwarded = normalize_args(&raw);
     match run(&forwarded) {

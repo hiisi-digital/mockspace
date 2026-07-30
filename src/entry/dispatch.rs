@@ -21,6 +21,15 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
 }
 
 pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
+    // The engine runs as a grandchild of git hooks, whose exported repo-location
+    // GIT_* variables poison every `git` this process spawns from a different
+    // working directory. Drop them before anything else runs.
+    //
+    // SAFETY: this is the first statement of every entry into the engine
+    // (`run` and `run_with_custom_lints` both land here before doing anything
+    // else); no thread has been spawned yet.
+    unsafe { mockspace_manifest::gate::sanitize_git_env() };
+
     let args: Vec<String> = std::env::args().collect();
 
     // Help resolves before anything else, and in particular before project

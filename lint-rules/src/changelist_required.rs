@@ -193,10 +193,18 @@ fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
 /// Extract crate name from a path like `crates/<crate-name>/src/lib.rs`.
 /// The content that would actually be committed.
 ///
-/// For a staged entry that is the blob in the index, which is what a commit
-/// writes. Reading the working tree instead would judge content the commit
-/// does not contain, and the difference is exactly where a gate gets walked
-/// past.
+/// For a staged entry that is the blob in the index, which is what a plain
+/// `git commit` writes. Reading the working tree instead would judge content
+/// the commit does not contain, and the difference is exactly where a gate
+/// gets walked past.
+///
+/// Known gap, tracked #41: under `git commit -a` a file staged earlier and
+/// then further modified commits the *worktree* blob, so this reads content
+/// the commit will not carry. Detection is unaffected (the file is flagged
+/// either way); only content-based judgment can go stale, and the case is
+/// catalogued as an ignored test below. Closing it needs a signal for which
+/// commit shape is in flight, which the sanitized hook environment no longer
+/// provides for free.
 fn staged_or_worktree(workspace_root: &Path, file: &str, source: &str) -> Option<String> {
     if source == "staged" {
         let out = Command::new("git")
@@ -253,4 +261,49 @@ fn extract_crate_name(path: &str) -> Option<String> {
     let after_crates = path.strip_prefix("crates/")?;
     let end = after_crates.find('/')?;
     Some(after_crates[.. end].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Catalogued gap, tracked #41. Under `git commit -a` the commit carries
+    /// the worktree blob of a staged-then-modified file, so the content this
+    /// function judges should be the worktree's. Today it returns the index
+    /// blob (correct for plain `git commit`, stale for `commit -a`), and the
+    /// function has no signal for which shape is in flight.
+    #[test]
+    #[ignore = "catalogue: staged-then-modified file under commit -a commits \
+                the worktree blob while this reads the index blob; needs the \
+                commit shape signal; tracked #41"]
+    fn a_staged_then_modified_file_reads_as_what_commit_a_commits() {
+        let dir = std::env::temp_dir().join(format!("clr_commit_a_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("crates/x/src")).unwrap();
+        let git = |args: &[&str]| {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&dir)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        };
+        git(&["init", "-q"]);
+        let file = "crates/x/src/lib.rs";
+        std::fs::write(dir.join(file), "pub fn staged_version() {}\n").unwrap();
+        git(&["add", file]);
+        // Modified again after staging: this is what `commit -a` would commit.
+        std::fs::write(dir.join(file), "pub fn worktree_version() {}\n").unwrap();
+
+        let content = staged_or_worktree(&dir, file, "staged").unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            content.contains("worktree_version"),
+            "under commit -a the judged content must be the worktree blob; \
+             got the index blob instead: {content:?}"
+        );
+    }
 }
