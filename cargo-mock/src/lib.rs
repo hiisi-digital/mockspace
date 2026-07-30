@@ -185,6 +185,11 @@ fn run(args: &[String]) -> Result<(), String> {
     // working tree and the question being asked is what it does right now.
     if let Some(raw) = engine_override {
         let source = engine::locate(&raw)?;
+        eprintln!(
+            "mock: ENGINE OVERRIDE: running the engine at {} instead of this \
+             repo's pinned engine",
+            source.display()
+        );
         let bin = engine::build(&cache_root, &source)?;
         let dep = engine::lint_rules_dep(&source);
         return cache::exec_engine(&bin, &mock_abs, &dep, args).map(|_never| ());
