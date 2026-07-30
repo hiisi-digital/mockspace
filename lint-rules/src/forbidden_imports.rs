@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use crate::{Lint, LintContext, LintError, Severity};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 /// A single forbidden-imports rule.
 #[derive(Clone, Debug)]
@@ -51,15 +51,12 @@ impl Lint for ForbiddenImports {
     fn name(&self) -> &'static str {
         "forbidden-imports"
     }
-
     fn default_severity(&self) -> Severity {
         Severity::OFF
     }
-
     fn config_keys(&self) -> &[&str] {
         &["rules"]
     }
-
     fn configure(&mut self, params: &HashMap<String, String>) {
         // Rules are passed as flattened keys from config parsing:
         //   "rule.no-std-in-sdk.scope" = "{prefix}-sdk"
@@ -118,7 +115,9 @@ impl Lint for ForbiddenImports {
             }
         }
     }
+}
 
+impl CrateLint for ForbiddenImports {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
 

@@ -35,7 +35,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use mockspace_lint_rules::{CrossCrateLint, Lint};
+use mockspace_lint_rules::LintPack;
 
 use crate::bootstrap::{discover_custom_lint_files, parse_lint_crates, scan_lint_functions};
 use crate::config::Config;
@@ -45,11 +45,10 @@ const COLLECT_SYMBOL: &[u8] = b"__mockspace_collect_lints";
 
 /// Lints loaded from a repo's cdylib, plus the library keeping their vtables
 /// alive. Dropping this frees the lints, then unloads the library, in that
-/// order (the field order matters: `lints`/`cross` must drop before `_lib`).
+/// order (the field order matters: `pack` must drop before `_lib`).
 pub struct LoadedLints {
-    pub lints: Vec<Box<dyn Lint>>,
-    pub cross: Vec<Box<dyn CrossCrateLint>>,
-    _lib:      libloading::Library,
+    pub pack: LintPack,
+    _lib:     libloading::Library,
 }
 
 /// Build and load this repo's custom lints, if it has any. Returns `None` when
@@ -250,24 +249,21 @@ fn gen_collect_lib(lints_dir: &Path, lint_files: &[String], packs: &[(String, St
     let pack_idents: Vec<String> = packs.iter().map(|(n, _)| n.replace('-', "_")).collect();
 
     out.push_str(
-        "/// Collect this repo's lints. Both vecs are owned by the caller (the\n\
+        "/// Collect this repo's lints. The pack is owned by the caller (the\n\
          /// engine); the boxes' vtables live in this cdylib, which the engine\n\
-         /// keeps loaded for the duration of the lint run.\n\
+         /// keeps loaded for the duration of the lint run. One struct rather\n\
+         /// than a vec per kind, so a new lint kind is additive here.\n\
          #[unsafe(no_mangle)]\npub extern \"C\" fn __mockspace_collect_lints(\n\
-         \x20   lints: &mut Vec<Box<dyn mockspace::Lint>>,\n\
-         \x20   cross: &mut Vec<Box<dyn mockspace::CrossCrateLint>>,\n) {\n",
+         \x20   pack: &mut mockspace::LintPack,\n) {\n",
     );
     for m in &lint_mods {
-        out.push_str(&format!("    lints.push({m}::lint());\n"));
-    }
-    for id in &pack_idents {
-        out.push_str(&format!("    lints.extend({id}::lints());\n"));
+        out.push_str(&format!("    pack.crate_lints.push({m}::lint());\n"));
     }
     for m in &cross_mods {
-        out.push_str(&format!("    cross.push({m}::cross_lint());\n"));
+        out.push_str(&format!("    pack.workspace_lints.push({m}::cross_lint());\n"));
     }
     for id in &pack_idents {
-        out.push_str(&format!("    cross.extend({id}::cross_lints());\n"));
+        out.push_str(&format!("    {id}::collect(pack);\n"));
     }
     out.push_str("}\n");
     out
@@ -329,9 +325,8 @@ unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
     // when the cdylib's `mockspace-lint-rules` pin matches ours (the caller
     // invariant), which the type system cannot check. Marking it unsafe forces
     // the `unsafe {}` + SAFETY at the call, reflecting the real contract.
-    type Collect = unsafe extern "C" fn(&mut Vec<Box<dyn Lint>>, &mut Vec<Box<dyn CrossCrateLint>>);
-    let mut lints: Vec<Box<dyn Lint>> = Vec::new();
-    let mut cross: Vec<Box<dyn CrossCrateLint>> = Vec::new();
+    type Collect = unsafe extern "C" fn(&mut LintPack);
+    let mut pack = LintPack::default();
     {
         // the symbol borrows `lib`; scope it so the borrow ends before `lib`
         // moves into the returned struct.
@@ -345,16 +340,15 @@ unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
                     String::from_utf8_lossy(COLLECT_SYMBOL)
                 )
             })?;
-        // SAFETY: a call across the C ABI. The vecs are `#[repr(Rust)]` but the
+        // SAFETY: a call across the C ABI. `LintPack` is `#[repr(Rust)]` but the
         // caller-invariant above guarantees the cdylib's `mockspace-lint-rules`
-        // is the same pin as ours, so `Box<dyn Lint>`'s layout agrees on both
-        // sides (validated: identical trait source, separate compilation, same
-        // toolchain -> identical vtable layout).
-        unsafe { collect(&mut lints, &mut cross) };
+        // is the same pin as ours, so the struct's layout and every
+        // `Box<dyn ...Lint>` vtable inside it agree on both sides (validated:
+        // identical trait source, separate compilation, same toolchain).
+        unsafe { collect(&mut pack) };
     }
     Ok(LoadedLints {
-        lints,
-        cross,
+        pack,
         _lib: lib,
     })
 }
@@ -397,12 +391,14 @@ mod tests {
         assert!(src.contains("#[unsafe(no_mangle)]"));
         assert!(src.contains("pub extern \"C\" fn __mockspace_collect_lints"));
         assert!(src.contains("mod foo;"));
-        assert!(src.contains("lints.push(foo::lint());"));
-        // pack idents dash->underscore, both lints() and cross_lints()
-        assert!(src.contains("lints.extend(some_pack::lints());"));
-        assert!(src.contains("cross.extend(some_pack::cross_lints());"));
-        // foo has no cross_lint(), so no per-file cross push for it
-        assert!(!src.contains("cross.push(foo::cross_lint());"));
+        // one struct across the boundary, so a new lint kind is additive
+        assert!(src.contains("pack: &mut mockspace::LintPack"));
+        assert!(src.contains("pack.crate_lints.push(foo::lint());"));
+        // pack idents dash->underscore, and one collect() call per pack rather
+        // than one call per lint kind
+        assert!(src.contains("some_pack::collect(pack);"));
+        // foo has no cross_lint(), so no per-file workspace push for it
+        assert!(!src.contains("pack.workspace_lints.push(foo::cross_lint());"));
     }
 
     #[test]

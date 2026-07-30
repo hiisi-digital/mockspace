@@ -88,6 +88,17 @@ pub fn generate_agent_rules(
         eprintln!("  {}", claude_path.display());
         count += 1;
 
+        // Clean up the renamed byline hook. It matched Bash only, so leaving it
+        // behind would keep a hook that cannot see an MCP tool while the
+        // replacement can, and a reader would not know which was authoritative.
+        for dir in [claude_dir.join("hooks"), repo_root.join(".github/hooks")] {
+            let stale = dir.join("check-byline.sh");
+            if stale.is_file() {
+                let _ = fs::remove_file(&stale);
+                eprintln!("  removed superseded {}", stale.display());
+            }
+        }
+
         // Clean up legacy root CLAUDE.md if it exists
         let legacy_path = repo_root.join("CLAUDE.md");
         if legacy_path.is_file() {
@@ -460,7 +471,7 @@ pub fn generate_agent_rules(
         for entry in entries {
             let path = entry.path();
             let tmpl_name = entry.file_name().to_string_lossy().to_string();
-            // Strip .tmpl suffix: "check-byline.sh.tmpl" -> "check-byline.sh"
+            // Strip .tmpl suffix: "check-message.sh.tmpl" -> "check-message.sh"
             let out_name = tmpl_name.trim_end_matches(".tmpl");
 
             let template = fs::read_to_string(&path).expect("failed to read hook template");

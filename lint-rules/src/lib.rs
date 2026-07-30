@@ -1,27 +1,32 @@
 //! AST lint rules for mockspace workspaces.
 //!
-//! Each lint implements the `Lint` trait (per-crate) or `CrossCrateLint` trait
-//! (cross-crate). Consumers build `LintContext` for each crate and call
-//! `check_crate()` / `check_cross_crate()` to run the rule sets.
+//! Every lint implements [`Lint`], which carries what a lint has regardless of
+//! its input, plus exactly one trait naming what it is handed: [`CrateLint`] for
+//! one crate, [`WorkspaceLint`] for every crate at once, [`RepoLint`] for
+//! repository state with no crates involved, and [`MessageLint`] for an authored
+//! commit message or forge body. Consumers call `check_crate()`,
+//! `check_workspace()`, `check_repo()` or `check_message()` accordingly.
 //!
 //! # External lint packs
 //!
 //! A third-party crate can ship its own lint set and be consumed by any
 //! mockspace project via the `[lint-crates]` section in `mockspace.toml`.
-//! The pack must expose two public functions:
+//! The pack must expose one public function:
 //!
 //! ```rust,ignore
-//! pub fn lints() -> Vec<Box<dyn mockspace_lint_rules::Lint>>;
-//! pub fn cross_lints() -> Vec<Box<dyn mockspace_lint_rules::CrossCrateLint>>;
+//! pub fn collect(pack: &mut mockspace_lint_rules::LintPack);
 //! ```
 //!
-//! Either may return empty. The [`lint_pack!`] macro generates both from a
-//! list of lint structs. Example:
+//! One entry point taking one struct, so a pack that later gains a lint kind
+//! does not change the signature the host links against. The [`lint_pack!`]
+//! macro generates it from lists of lint structs, any of which may be omitted:
 //!
 //! ```rust,ignore
 //! mockspace_lint_rules::lint_pack! {
-//!     lints: [MyRuleA, MyRuleB],
-//!     cross_lints: [MyCrossRule],
+//!     lints:           [MyRuleA, MyRuleB],
+//!     workspace_lints: [MyComparingRule],
+//!     repo_lints:      [MyRepoStateRule],
+//!     message_lints:   [MyCommitRule],
 //! }
 //! ```
 //!
@@ -43,14 +48,9 @@ mod no_adhoc_error_enum;
 mod no_adhoc_framework;
 mod no_bare_macro_types;
 mod no_bare_pub;
-mod no_bare_result;
-mod no_bare_string;
-mod no_bare_vec;
-mod no_box;
 mod no_duplicate_fn;
 mod no_empty_crate;
 mod no_entry_suffix;
-mod no_float;
 mod no_manual_id;
 mod no_manual_impl;
 mod no_pool_access;
@@ -984,12 +984,26 @@ impl std::fmt::Display for LintError {
 }
 
 /// Trait for pluggable lints. Each lint inspects a single crate's AST.
+/// What every lint has, whatever it is given.
+///
+/// The trait family is keyed on the *input*: [`CrateLint`] is handed one crate,
+/// [`WorkspaceLint`] every crate at once, [`RepoLint`] the repository's own state
+/// with no crates involved, and [`MessageLint`] an authored message. This
+/// supertrait holds everything that does not depend on which of those it is.
+///
+/// Hoisting these was not cosmetic. `name`, `source_only` and `default_severity`
+/// were previously duplicated verbatim between the crate and cross-crate traits,
+/// and `finding_kinds`, `config_keys` and `configure` existed on only one of
+/// them, which meant a cross-crate lint could not be configured at all.
 pub trait Lint {
-    /// Human-readable name for error reporting.
+    /// Human-readable name for error reporting. Also the key a lint is
+    /// configured under.
     fn name(&self) -> &'static str;
 
-    /// Check a crate and return any violations found.
-    fn check(&self, ctx: &LintContext) -> Vec<LintError>;
+    /// One line on what the lint enforces, for generated documentation.
+    fn description(&self) -> &'static str {
+        ""
+    }
 
     /// Whether this lint only inspects source code (not docs).
     ///
@@ -1042,28 +1056,166 @@ pub trait Lint {
 
     /// Apply configuration parameters to this lint.
     fn configure(&mut self, _params: &HashMap<String, String>) {}
+
+    /// Whether this lint wants the invocation that triggered the run.
+    ///
+    /// Opt-in because most lints do not care, and because the engine only has
+    /// an invocation to hand over on some paths: an agent-hook run has the
+    /// triggering command, a `mock` build-gate run has none.
+    fn invocation_wanted(&self) -> bool {
+        false
+    }
 }
 
-/// Trait for cross-crate lints that compare data across all crates at once.
-pub trait CrossCrateLint {
-    /// Human-readable name for error reporting.
-    fn name(&self) -> &'static str;
+/// A lint handed one crate at a time.
+///
+/// The overwhelming majority. Was called `Lint` before the family grew, which
+/// became misleading once a lint could be handed something other than a crate.
+pub trait CrateLint: Lint {
+    /// Check a crate and return any violations found.
+    fn check(&self, ctx: &LintContext) -> Vec<LintError>;
+}
 
+/// A lint handed every crate at once, to compare them against each other.
+///
+/// For findings that only exist in the relation between crates: the same
+/// function defined twice, one definition that must be unique across the
+/// workspace, a deprecation that disagrees with its replacement.
+pub trait WorkspaceLint: Lint {
     /// Check all crates simultaneously and return any violations found.
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError>;
+}
 
-    /// Whether this lint only inspects source code (not docs).
-    fn source_only(&self) -> bool {
-        true
-    }
-
-    /// The default severity for this lint's violations.
+/// A lint handed the repository's own state, with no crates involved.
+///
+/// Design-round phase, changelist locks, doc templates, config: repository
+/// state that has nothing to do with any particular crate. These were
+/// previously written as cross-crate lints, because that was the only hook
+/// running once per workspace rather than once per crate, and they reached
+/// `crates.first()` purely to steal a `workspace_root` from it. That made them
+/// silently inert in a repo with **no crates at all**, since there was no crate
+/// to steal from and the whole check returned no findings. This trait is handed
+/// the paths directly and cannot fail that way.
+pub trait RepoLint: Lint {
+    /// Check repository state and return any violations found.
     ///
-    /// Used when no config override is present. Lints should override
-    /// this to match what they currently hardcode.
-    fn default_severity(&self) -> Severity {
-        Severity::HARD_ERROR
+    /// Findings still carry a `crate_name`, derived from the offending file's
+    /// own path (falling back to `"unknown"`), which is what these lints already
+    /// did. There is no separate error type.
+    fn check_repo(&self, ctx: &RepoContext) -> Vec<LintError>;
+}
+
+/// Context for a [`RepoLint`]: the paths, and nothing crate-shaped.
+pub struct RepoContext<'a> {
+    /// Root directory of the mock workspace, where `design_rounds/` lives.
+    pub mock_dir:      &'a Path,
+    /// Root of the repository containing the mock workspace.
+    pub repo_root:     &'a Path,
+    /// Every crate directory name in the workspace. Empty is a legitimate
+    /// state, and a repo lint must behave correctly when it is.
+    pub all_crates:    &'a BTreeSet<String>,
+    /// The invocation that triggered this run, when there was one and the lint
+    /// asked for it via [`Lint::invocation_wanted`].
+    pub invocation:    Option<Invocation<'a>>,
+}
+
+/// A lint handed an authored message rather than anything in the worktree.
+///
+/// A commit message and a pull-request body are authored *about* a change rather
+/// than being part of it, and neither is a file the worktree contains: they
+/// arrive as a message-file path, a string inside a shell command, a heredoc, or
+/// a `--body-file`. A pull-request body in particular never passes through git
+/// at all, so no git hook can ever see one, which is why this input kind exists.
+pub trait MessageLint: Lint {
+    /// Which message kinds this lint applies to. Empty means all of them.
+    fn domains(&self) -> &[MessageDomain] {
+        &[]
     }
+
+    /// Check an authored message and return any violations found.
+    fn check_message(&self, ctx: &MessageContext) -> Vec<LintError>;
+}
+
+/// The kind of authored message under inspection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageDomain {
+    /// A commit message, from `commit-msg`, `-m`, `-F`, or an MCP git tool.
+    CommitMessage,
+    /// A pull-request or merge-request body.
+    PullRequestBody,
+    /// An issue body or comment.
+    IssueComment,
+    /// A code-review comment.
+    ReviewComment,
+}
+
+/// Which ruleset applies to a run: was a human in the loop, or not.
+///
+/// The distinction is the whole basis of attribution policy. A commit made under
+/// human direction is the human's work through a tool they ran, so it carries no
+/// agent byline. A commit made with no human in the chain has no other record of
+/// who produced it, so provenance is wanted. Resolved from configured signals
+/// rather than from one hardcoded environment variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentMode {
+    /// A human was in the loop, reading and redirecting. The default, because
+    /// assuming the safer of the two is what a missing signal should mean.
+    #[default]
+    Assistant,
+    /// Genuinely headless: no human in the chain at the time of the work.
+    Autonomous,
+}
+
+impl AgentMode {
+    /// The token this mode is written as in configuration and environment.
+    #[must_use]
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Self::Assistant => "assistant",
+            Self::Autonomous => "autonomous",
+        }
+    }
+
+    /// Parse a mode token, `None` when it names neither mode.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "assistant" | "assisted" | "human" => Some(Self::Assistant),
+            "autonomous" | "headless" | "unattended" => Some(Self::Autonomous),
+            _ => None,
+        }
+    }
+}
+
+/// Context for a [`MessageLint`].
+pub struct MessageContext<'a> {
+    /// Which kind of message this is.
+    pub domain:     MessageDomain,
+    /// Which ruleset applies, resolved from the configured signals.
+    pub mode:       AgentMode,
+    /// The authored text itself.
+    pub message:    &'a str,
+    /// Where the text came from, for error reporting: a file path, `-m`, a
+    /// heredoc, a tool argument.
+    pub origin:     &'a str,
+    /// Root of the repository the message belongs to.
+    pub repo_root:  &'a Path,
+    /// The invocation that triggered this run, when there was one and the lint
+    /// asked for it via [`Lint::invocation_wanted`].
+    pub invocation: Option<Invocation<'a>>,
+}
+
+/// The command or tool call that triggered a lint run.
+///
+/// Absent on a plain `mock` invocation, present when a lint runs from an agent
+/// hook, where the command being intercepted is the thing under inspection: a
+/// `gh pr create` body lives in the command text and nowhere else.
+#[derive(Debug, Clone, Copy)]
+pub struct Invocation<'a> {
+    /// The full shell command, heredocs and quoting intact.
+    pub command:   Option<&'a str>,
+    /// The tool name, for recognising MCP git and forge tools by shape.
+    pub tool_name: Option<&'a str>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1074,7 +1226,7 @@ pub trait CrossCrateLint {
 /// external lint pack must expose.
 ///
 /// Each entry is an expression producing a value that implements `Lint`
-/// (in the `lints:` list) or `CrossCrateLint` (in the `cross_lints:` list).
+/// implementing the trait for the list it appears in.
 /// Unit-struct lints are spelled `MyLint`; lints with constructors are
 /// spelled `MyLint::new(args)`.
 ///
@@ -1094,22 +1246,82 @@ pub trait CrossCrateLint {
 macro_rules! lint_pack {
     (
         $(lints: [ $( $lint:expr ),* $(,)? ] $(,)?)?
-        $(cross_lints: [ $( $cross:expr ),* $(,)? ] $(,)?)?
+        $(workspace_lints: [ $( $ws:expr ),* $(,)? ] $(,)?)?
+        $(repo_lints: [ $( $repo:expr ),* $(,)? ] $(,)?)?
+        $(message_lints: [ $( $msg:expr ),* $(,)? ] $(,)?)?
     ) => {
-        pub fn lints() -> ::std::vec::Vec<::std::boxed::Box<dyn $crate::Lint>> {
-            #[allow(unused_mut)]
-            let mut v: ::std::vec::Vec<::std::boxed::Box<dyn $crate::Lint>> = ::std::vec::Vec::new();
-            $( $( v.push(::std::boxed::Box::new($lint)); )* )?
-            v
-        }
-
-        pub fn cross_lints() -> ::std::vec::Vec<::std::boxed::Box<dyn $crate::CrossCrateLint>> {
-            #[allow(unused_mut)]
-            let mut v: ::std::vec::Vec<::std::boxed::Box<dyn $crate::CrossCrateLint>> = ::std::vec::Vec::new();
-            $( $( v.push(::std::boxed::Box::new($cross)); )* )?
-            v
+        /// Contribute this pack's lints to the host's collection.
+        ///
+        /// One entry point taking one struct, so a pack that gains a lint kind
+        /// later does not change the signature the host links against.
+        pub fn collect(#[allow(unused_variables)] pack: &mut $crate::LintPack) {
+            $( $( pack.crate_lints.push(::std::boxed::Box::new($lint)); )* )?
+            $( $( pack.workspace_lints.push(::std::boxed::Box::new($ws)); )* )?
+            $( $( pack.repo_lints.push(::std::boxed::Box::new($repo)); )* )?
+            $( $( pack.message_lints.push(::std::boxed::Box::new($msg)); )* )?
         }
     };
+}
+
+/// Every lint a pack contributes, by input kind.
+///
+/// The cdylib boundary passes this one value rather than a vector per kind, so
+/// adding a kind is additive at the ABI rather than a signature change. Adding
+/// `MessageLint` is what proved the old two-vector shape would keep breaking.
+#[derive(Default)]
+pub struct LintPack {
+    /// Lints handed one crate at a time.
+    pub crate_lints:     Vec<Box<dyn CrateLint>>,
+    /// Lints handed every crate at once.
+    pub workspace_lints: Vec<Box<dyn WorkspaceLint>>,
+    /// Lints handed repository state, with no crates.
+    pub repo_lints:      Vec<Box<dyn RepoLint>>,
+    /// Lints handed an authored message.
+    pub message_lints:   Vec<Box<dyn MessageLint>>,
+}
+
+/// Every lint name registered more than once across the builtin sets and a
+/// pack, sorted.
+///
+/// A name registered twice runs twice and reports twice, and a
+/// `[lints.<name>]` entry is ambiguous between the two, so at least one
+/// registration is unconfigurable. That state shipped: the builtin set and
+/// the stack pack both registered `no-bare-result` and `no-bare-string` for
+/// months, and a pack's own uniqueness test cannot see across the boundary.
+/// The host checks this before running anything and treats a hit as a hard
+/// configuration error rather than degrading into doubled findings.
+#[must_use]
+pub fn duplicate_lint_names(pack: &LintPack) -> Vec<String> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut bump = |name: &str| *counts.entry(name.to_string()).or_insert(0) += 1;
+
+    for l in all_lints() {
+        bump(l.name());
+    }
+    for l in all_workspace_lints() {
+        bump(l.name());
+    }
+    for l in all_repo_lints() {
+        bump(l.name());
+    }
+    for l in &pack.crate_lints {
+        bump(l.name());
+    }
+    for l in &pack.workspace_lints {
+        bump(l.name());
+    }
+    for l in &pack.repo_lints {
+        bump(l.name());
+    }
+    for l in &pack.message_lints {
+        bump(l.name());
+    }
+
+    counts
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(name, _)| name)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1117,9 +1329,8 @@ macro_rules! lint_pack {
 // ---------------------------------------------------------------------------
 
 /// Returns all registered lint rules.
-pub fn all_lints() -> Vec<Box<dyn Lint>> {
+pub fn all_lints() -> Vec<Box<dyn CrateLint>> {
     vec![
-        Box::new(no_bare_result::NoBareResult),
         Box::new(no_bare_macro_types::NoBareMacroTypes),
         Box::new(no_entry_suffix::NoEntrySuffix),
         Box::new(no_manual_impl::NoManualImpl),
@@ -1128,17 +1339,13 @@ pub fn all_lints() -> Vec<Box<dyn Lint>> {
         Box::new(no_primitive_key::NoPrimitiveKey),
         Box::new(no_raw_error_outside_primitives::NoRawErrorOutsidePrimitives),
         Box::new(no_pool_access::NoPoolAccess),
-        Box::new(no_bare_vec::NoBareVec),
-        Box::new(no_box::NoBox),
         Box::new(no_empty_crate::NoEmptyCrate),
         Box::new(design_doc_source_mismatch::DesignDocSourceMismatch),
         Box::new(actionable_errors::ActionableErrors),
         Box::new(file_size::FileSize::new()),
-        Box::new(no_float::NoFloat),
         Box::new(export_count::ExportCount),
         Box::new(no_todo::NoTodo),
         Box::new(no_adhoc_framework::NoAdhocFramework),
-        Box::new(no_bare_string::NoBareString),
         Box::new(no_self_define::NoSelfDefine),
         Box::new(registrable_completeness::RegistrableCompleteness),
         Box::new(repr_c_abi_safety::ReprCAbiSafety),
@@ -1163,7 +1370,7 @@ pub fn all_lints() -> Vec<Box<dyn Lint>> {
 /// inside this function, which priced a crate at one parse per file per lint,
 /// a loop on the wrong side of the work.
 fn check_every_file(
-    lint: &dyn Lint,
+    lint: &dyn CrateLint,
     ctx: &LintContext,
     parsed: &[(&CrateSourceFile, Tree)],
 ) -> Vec<LintError> {
@@ -1217,17 +1424,29 @@ pub fn make_parser() -> tree_sitter::Parser {
     parser
 }
 
-/// Returns all registered cross-crate lint rules.
-pub fn all_cross_crate_lints() -> Vec<Box<dyn CrossCrateLint>> {
+/// Returns all registered workspace lint rules: the ones that compare crates
+/// against each other.
+pub fn all_workspace_lints() -> Vec<Box<dyn WorkspaceLint>> {
     vec![
         Box::new(no_duplicate_fn::NoDuplicateFn),
         Box::new(single_source::SingleSource),
         Box::new(undocumented_type::UndocumentedType),
+        Box::new(deprecation_comparison::DeprecationComparison),
+    ]
+}
+
+/// Returns all registered repo lint rules: the ones that inspect repository
+/// state and involve no crates.
+///
+/// These ran as cross-crate lints until the trait family was split. They never
+/// looked at a crate, so they now receive the paths directly and keep working in
+/// a repo that has no crates at all.
+pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
+    vec![
         Box::new(changelist_doc_gate::ChangelistDocGate),
         Box::new(changelist_lock::ChangelistLock),
         Box::new(changelist_required::ChangelistRequired),
         Box::new(changelist_immutability::ChangelistImmutability),
-        Box::new(deprecation_comparison::DeprecationComparison),
     ]
 }
 
@@ -1257,7 +1476,7 @@ pub fn check_crate_with_extra(
     ctx: &LintContext,
     doc_only: bool,
     overrides: Option<&LintConfig>,
-    extra_lints: &[Box<dyn Lint>],
+    extra_lints: &[Box<dyn CrateLint>],
 ) -> Vec<LintError> {
     let mut lints = all_lints();
 
@@ -1275,66 +1494,11 @@ pub fn check_crate_with_extra(
     // One parse per file, shared by every per-file lint below.
     let parsed = parse_sources(ctx.all_sources);
 
-    // Helper closure to process a single lint
-    let process_lint = |lint: &dyn Lint, errors: &mut Vec<LintError>| {
-        if doc_only && lint.source_only() {
-            return;
-        }
-
-        // A configured override wins; absent one, the lint's own declared
-        // default decides whether it runs at all. Without that second half a
-        // lint declaring `Severity::OFF` ran anyway, which made
-        // `default_severity` decorative for every lint no consumer had named
-        // in its config, and shipped opt-in lints as blocking errors.
-        //
-        // Naming a lint in any section counts as asking for it. A consumer can
-        // configure only `findings` or only `rules`, which populates neither
-        // `base` nor anything else this looks at, and reading that as silence
-        // would make the configuration inert without saying so.
-        let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
-        let named_in_config = overrides.is_some_and(|cfg| {
-            cfg.base.contains_key(lint.name())
-                || cfg.findings.contains_key(lint.name())
-                || cfg.params.contains_key(lint.name())
+    for lint in lints.iter().map(Box::as_ref).chain(extra_lints.iter().map(Box::as_ref)) {
+        run_with_overrides(lint, doc_only, overrides, &mut errors, || {
+            check_every_file(lint, ctx, &parsed)
         });
-        if !named_in_config && lint.default_severity().is_off() {
-            return;
-        }
-        if base_override.is_some_and(|sev| sev.is_off()) {
-            return;
-        }
-
-        let mut lint_errors = check_every_file(lint, ctx, &parsed);
-
-        // Apply per-finding or base severity overrides
-        if let Some(cfg) = overrides {
-            for err in &mut lint_errors {
-                // Check finding-specific override first
-                let effective = if let (Some(kind), Some(finding_map)) =
-                    (err.finding_kind, cfg.findings.get(lint.name()))
-                {
-                    if let Some(sev) = finding_map.get(kind) { Some(*sev) } else { base_override }
-                } else {
-                    base_override
-                };
-
-                if let Some(sev) = effective {
-                    err.severity = sev;
-                }
-                // If no override, preserve the error's own severity
-            }
-        }
-
-        errors.extend(lint_errors);
-    };
-
-    for lint in &lints {
-        process_lint(lint.as_ref(), &mut errors);
     }
-    for lint in extra_lints {
-        process_lint(lint.as_ref(), &mut errors);
-    }
-
     errors
 }
 
@@ -1344,86 +1508,162 @@ pub fn check_crate_with_extra(
 ///
 /// When `overrides` is provided, lint severities can be overridden
 /// (same semantics as `check_crate`).
-pub fn check_cross_crate(
+pub fn check_workspace(
     crates: &[(&str, &LintContext)],
     doc_only: bool,
     overrides: Option<&LintConfig>,
 ) -> Vec<LintError> {
-    check_cross_crate_with_extra(crates, doc_only, overrides, &[])
+    check_workspace_with_extra(crates, doc_only, overrides, &[])
 }
 
-/// Run all cross-crate lints plus any custom lints, returning violations.
-// FIXME: no per-file dispatch here: every cross-crate lint reads each crate's
+/// Run all repo lints, returning violations. Involves no crates.
+pub fn check_repo(
+    ctx: &RepoContext,
+    doc_only: bool,
+    overrides: Option<&LintConfig>,
+) -> Vec<LintError> {
+    check_repo_with_extra(ctx, doc_only, overrides, &[])
+}
+
+/// Decide whether a lint runs, and apply the configured severity overrides to
+/// whatever it found.
+///
+/// `run` is only called when the lint is not skipped, so a lint that is off
+/// costs nothing. Shared by every runner below: expressible only because
+/// the [`Lint`] supertrait now carries `name` and `source_only` for all of them,
+/// where previously each trait declared its own copy and each runner its own
+/// duplicate of this logic.
+///
+/// Enablement resolves config first, then the lint's own declared default. That
+/// second half was missing and made [`Lint::default_severity`] decorative for
+/// the `off` case: fourteen loimu-specific lints declared `OFF`, stamped
+/// `HARD_ERROR` onto their findings anyway, and fired as hard errors in every
+/// repo that had not explicitly overridden them. A fresh repo with no `[lints]`
+/// section therefore inherited a framework's house rules (`define_error!`,
+/// `#[public_api]`, `Collection<T>`) it had never opted into.
+///
+/// Only an explicit override restamps a finding's severity. A lint's own
+/// per-finding levels are deliberate gradation, a build gate and an advisory
+/// coming out of one lint, and flattening them onto the lint's default would
+/// erase it.
+fn run_with_overrides(
+    lint: &dyn Lint,
+    doc_only: bool,
+    overrides: Option<&LintConfig>,
+    out: &mut Vec<LintError>,
+    run: impl FnOnce() -> Vec<LintError>,
+) {
+    if doc_only && lint.source_only() {
+        return;
+    }
+
+    let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
+
+    // A configured override wins; absent one, the lint's own declared default
+    // decides whether it runs at all. Naming a lint in any section counts as
+    // asking for it: a consumer can configure only `findings` or only
+    // `params`, which populates neither `base` nor anything else the override
+    // lookup sees, and reading that as silence would make the configuration
+    // inert without saying so.
+    let named_in_config = overrides.is_some_and(|cfg| {
+        cfg.base.contains_key(lint.name())
+            || cfg.findings.contains_key(lint.name())
+            || cfg.params.contains_key(lint.name())
+    });
+    if !named_in_config && lint.default_severity().is_off() {
+        return;
+    }
+    if base_override.is_some_and(|sev| sev.is_off()) {
+        return;
+    }
+
+    let mut lint_errors = run();
+
+    if let Some(cfg) = overrides {
+        for err in &mut lint_errors {
+            let effective = if let (Some(kind), Some(finding_map)) =
+                (err.finding_kind, cfg.findings.get(lint.name()))
+            {
+                finding_map.get(kind).copied().or(base_override)
+            } else {
+                base_override
+            };
+            if let Some(sev) = effective {
+                err.severity = sev;
+            }
+        }
+    }
+
+    out.extend(lint_errors);
+}
+
+// FIXME: no per-file dispatch here: every workspace lint reads each crate's
 // root tree only, so single-source, no-duplicate-fn and undocumented-type miss
 // module files that the per-crate path now covers. A naive per-file expansion
 // of the pairs corrupts no-duplicate-fn's crate-keyed suppression lookup, so
 // the fix is per-lint collection with file-attributed items. tracked: #33
-pub fn check_cross_crate_with_extra(
+/// Run all workspace lints plus any custom ones, returning violations.
+pub fn check_workspace_with_extra(
     crates: &[(&str, &LintContext)],
     doc_only: bool,
     overrides: Option<&LintConfig>,
-    extra_lints: &[Box<dyn CrossCrateLint>],
+    extra_lints: &[Box<dyn WorkspaceLint>],
 ) -> Vec<LintError> {
-    let lints = all_cross_crate_lints();
+    let lints = all_workspace_lints();
     let mut errors = Vec::new();
-
-    let process_lint = |lint: &dyn CrossCrateLint, errors: &mut Vec<LintError>| {
-        if doc_only && lint.source_only() {
-            return;
-        }
-
-        // A configured override wins; absent one, the lint's own declared
-        // default decides whether it runs at all. Without that second half a
-        // lint declaring `Severity::OFF` ran anyway, which made
-        // `default_severity` decorative for every lint no consumer had named
-        // in its config, and shipped opt-in lints as blocking errors.
-        //
-        // Naming a lint in any section counts as asking for it. A consumer can
-        // configure only `findings` or only `rules`, which populates neither
-        // `base` nor anything else this looks at, and reading that as silence
-        // would make the configuration inert without saying so.
-        let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
-        let named_in_config = overrides.is_some_and(|cfg| {
-            cfg.base.contains_key(lint.name())
-                || cfg.findings.contains_key(lint.name())
-                || cfg.params.contains_key(lint.name())
+    for lint in lints.iter().map(Box::as_ref).chain(extra_lints.iter().map(Box::as_ref)) {
+        run_with_overrides(lint, doc_only, overrides, &mut errors, || {
+            lint.check_all(crates)
         });
-        if !named_in_config && lint.default_severity().is_off() {
-            return;
-        }
-        if base_override.is_some_and(|sev| sev.is_off()) {
-            return;
-        }
-
-        let mut lint_errors = lint.check_all(crates);
-
-        // Apply per-finding or base severity overrides
-        if let Some(cfg) = overrides {
-            for err in &mut lint_errors {
-                let effective = if let (Some(kind), Some(finding_map)) =
-                    (err.finding_kind, cfg.findings.get(lint.name()))
-                {
-                    if let Some(sev) = finding_map.get(kind) { Some(*sev) } else { base_override }
-                } else {
-                    base_override
-                };
-
-                if let Some(sev) = effective {
-                    err.severity = sev;
-                }
-            }
-        }
-
-        errors.extend(lint_errors);
-    };
-
-    for lint in &lints {
-        process_lint(lint.as_ref(), &mut errors);
     }
-    for lint in extra_lints {
-        process_lint(lint.as_ref(), &mut errors);
-    }
+    errors
+}
 
+/// Run all message lints plus any custom ones, returning violations.
+///
+/// A lint declaring domains runs only for those; declaring none runs for all, so
+/// an attribution rule covers every surface without enumerating them.
+///
+/// mockspace ships no message lints of its own: a commit convention is not
+/// something an engine should impose, so every one arrives from a pack the project
+/// chose to import.
+pub fn check_message_with_extra(
+    ctx: &MessageContext,
+    overrides: Option<&LintConfig>,
+    extra_lints: &[Box<dyn MessageLint>],
+) -> Vec<LintError> {
+    let mut errors = Vec::new();
+    for lint in extra_lints.iter().map(Box::as_ref) {
+        let domains = lint.domains();
+        if !domains.is_empty() && !domains.contains(&ctx.domain) {
+            continue;
+        }
+        // `doc_only` is false: a message is never a doc template, so the
+        // source-only skip does not apply to this domain.
+        run_with_overrides(lint, false, overrides, &mut errors, || {
+            lint.check_message(ctx)
+        });
+    }
+    errors
+}
+
+/// Run all repo lints plus any custom ones, returning violations.
+///
+/// Takes no crates, by design. These lints inspect repository state, so they
+/// must keep working in a repo whose crate list is empty.
+pub fn check_repo_with_extra(
+    ctx: &RepoContext,
+    doc_only: bool,
+    overrides: Option<&LintConfig>,
+    extra_lints: &[Box<dyn RepoLint>],
+) -> Vec<LintError> {
+    let lints = all_repo_lints();
+    let mut errors = Vec::new();
+    for lint in lints.iter().map(Box::as_ref).chain(extra_lints.iter().map(Box::as_ref)) {
+        run_with_overrides(lint, doc_only, overrides, &mut errors, || {
+            lint.check_repo(ctx)
+        });
+    }
     errors
 }
 
@@ -1436,28 +1676,56 @@ mod pack_tests {
         fn name(&self) -> &'static str {
             "smoke-lint"
         }
-
+    }
+    impl CrateLint for SmokeLint {
         fn check(&self, _ctx: &LintContext) -> Vec<LintError> {
             Vec::new()
         }
     }
 
-    struct SmokeCross;
-    impl CrossCrateLint for SmokeCross {
+    struct SmokeWorkspace;
+    impl Lint for SmokeWorkspace {
         fn name(&self) -> &'static str {
-            "smoke-cross"
+            "smoke-workspace"
         }
-
+    }
+    impl WorkspaceLint for SmokeWorkspace {
         fn check_all(&self, _crates: &[(&str, &LintContext)]) -> Vec<LintError> {
             Vec::new()
         }
     }
 
+    struct SmokeRepo;
+    impl Lint for SmokeRepo {
+        fn name(&self) -> &'static str {
+            "smoke-repo"
+        }
+    }
+    impl RepoLint for SmokeRepo {
+        fn check_repo(&self, _ctx: &RepoContext) -> Vec<LintError> {
+            Vec::new()
+        }
+    }
+
+    struct SmokeMessage;
+    impl Lint for SmokeMessage {
+        fn name(&self) -> &'static str {
+            "smoke-message"
+        }
+    }
+    impl MessageLint for SmokeMessage {
+        fn check_message(&self, _ctx: &MessageContext) -> Vec<LintError> {
+            Vec::new()
+        }
+    }
+
     mod full_pack {
-        use super::{SmokeCross, SmokeLint};
+        use super::{SmokeLint, SmokeMessage, SmokeRepo, SmokeWorkspace};
         crate::lint_pack! {
             lints: [SmokeLint],
-            cross_lints: [SmokeCross],
+            workspace_lints: [SmokeWorkspace],
+            repo_lints: [SmokeRepo],
+            message_lints: [SmokeMessage],
         }
     }
 
@@ -1473,23 +1741,249 @@ mod pack_tests {
     }
 
     #[test]
-    fn full_pack_produces_both_vecs() {
-        assert_eq!(full_pack::lints().len(), 1);
-        assert_eq!(full_pack::cross_lints().len(), 1);
-        assert_eq!(full_pack::lints()[0].name(), "smoke-lint");
-        assert_eq!(full_pack::cross_lints()[0].name(), "smoke-cross");
+    fn full_pack_contributes_every_kind() {
+        let mut pack = LintPack::default();
+        full_pack::collect(&mut pack);
+        assert_eq!(pack.crate_lints.len(), 1);
+        assert_eq!(pack.workspace_lints.len(), 1);
+        assert_eq!(pack.repo_lints.len(), 1);
+        assert_eq!(pack.message_lints.len(), 1);
+        assert_eq!(pack.crate_lints[0].name(), "smoke-lint");
+        assert_eq!(pack.workspace_lints[0].name(), "smoke-workspace");
+        assert_eq!(pack.repo_lints[0].name(), "smoke-repo");
+        assert_eq!(pack.message_lints[0].name(), "smoke-message");
     }
 
     #[test]
-    fn lints_only_pack_empty_cross() {
-        assert_eq!(lints_only::lints().len(), 1);
-        assert_eq!(lints_only::cross_lints().len(), 0);
+    fn a_pack_may_omit_every_kind_but_one() {
+        let mut pack = LintPack::default();
+        lints_only::collect(&mut pack);
+        assert_eq!(pack.crate_lints.len(), 1);
+        assert!(pack.workspace_lints.is_empty());
+        assert!(pack.repo_lints.is_empty());
+        assert!(pack.message_lints.is_empty());
     }
 
     #[test]
-    fn empty_pack_empty_both() {
-        assert_eq!(empty_pack::lints().len(), 0);
-        assert_eq!(empty_pack::cross_lints().len(), 0);
+    fn an_empty_pack_contributes_nothing() {
+        let mut pack = LintPack::default();
+        empty_pack::collect(&mut pack);
+        assert!(pack.crate_lints.is_empty());
+        assert!(pack.workspace_lints.is_empty());
+        assert!(pack.repo_lints.is_empty());
+        assert!(pack.message_lints.is_empty());
+    }
+
+    /// A pack collecting into a pack that already holds lints must append rather
+    /// than replace, since the host collects every pack into one value.
+    #[test]
+    fn collecting_two_packs_accumulates() {
+        let mut pack = LintPack::default();
+        full_pack::collect(&mut pack);
+        lints_only::collect(&mut pack);
+        assert_eq!(pack.crate_lints.len(), 2);
+        assert_eq!(pack.workspace_lints.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod repo_lint_tests {
+    use super::*;
+
+    /// A repo lint that always reports, so the harness can observe whether it
+    /// was invoked at all.
+    struct AlwaysReports;
+
+    impl Lint for AlwaysReports {
+        fn name(&self) -> &'static str {
+            "always-reports"
+        }
+
+        fn source_only(&self) -> bool {
+            false
+        }
+    }
+
+    impl RepoLint for AlwaysReports {
+        fn check_repo(&self, _ctx: &RepoContext) -> Vec<LintError> {
+            vec![LintError::error(
+                "unknown".to_string(),
+                0,
+                "always-reports",
+                "invoked".to_string(),
+            )]
+        }
+    }
+
+    /// The bug this trait split exists to fix.
+    ///
+    /// Repo lints previously ran through the cross-crate hook, which handed them
+    /// `&[(&str, &LintContext)]` and from which they recovered a path via
+    /// `crates.first()`. With no crates that returned `None` and the lint
+    /// returned no findings, so the design-round gate was silently inert in
+    /// exactly the repo that most needs it: one whose taxonomy is still the
+    /// subject of its first design round. A repo lint takes no crates, so it
+    /// cannot regress this way.
+    #[test]
+    fn repo_lints_run_when_the_workspace_has_no_crates() {
+        let tmp = std::env::temp_dir().join(format!("ms_repo_lint_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let no_crates = BTreeSet::new();
+        let ctx = RepoContext {
+            mock_dir:   &tmp,
+            repo_root:  &tmp,
+            all_crates: &no_crates,
+            invocation: None,
+        };
+
+        let extra: Vec<Box<dyn RepoLint>> = vec![Box::new(AlwaysReports)];
+        let errors = check_repo_with_extra(&ctx, false, None, &extra);
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        assert_eq!(
+            errors.len(),
+            1,
+            "a repo lint must run with an empty crate set; it received none and reported nothing"
+        );
+        assert_eq!(errors[0].lint_name, "always-reports");
+    }
+
+    /// A lint that is off unless a repo asks for it, and that stamps a hard
+    /// error onto its finding. The combination is not contrived: fourteen
+    /// registered lints have exactly this shape.
+    struct OffByDefault;
+
+    impl Lint for OffByDefault {
+        fn name(&self) -> &'static str {
+            "off-by-default"
+        }
+
+        fn default_severity(&self) -> Severity {
+            Severity::OFF
+        }
+
+        fn source_only(&self) -> bool {
+            false
+        }
+    }
+
+    impl RepoLint for OffByDefault {
+        fn check_repo(&self, _ctx: &RepoContext) -> Vec<LintError> {
+            vec![LintError::error(
+                "unknown".to_string(),
+                0,
+                "off-by-default",
+                "invoked".to_string(),
+            )]
+        }
+    }
+
+    /// Run one repo lint against a throwaway directory.
+    fn run_one(lint: Box<dyn RepoLint>, cfg: Option<&LintConfig>) -> Vec<LintError> {
+        let tmp = std::env::temp_dir().join(format!(
+            "ms_sev_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let no_crates = BTreeSet::new();
+        let ctx = RepoContext {
+            mock_dir:   &tmp,
+            repo_root:  &tmp,
+            all_crates: &no_crates,
+            invocation: None,
+        };
+        let extra: Vec<Box<dyn RepoLint>> = vec![lint];
+        let errors = check_repo_with_extra(&ctx, false, cfg, &extra);
+        let _ = std::fs::remove_dir_all(&tmp);
+        errors
+    }
+
+    #[test]
+    fn a_lint_that_declares_itself_off_does_not_run() {
+        // Severity resolution consulted config and never the lint's own default,
+        // so `default_severity() == OFF` meant nothing and the lint fired at
+        // whatever level its findings stamped. That is how a fresh repo with no
+        // `[lints]` section inherited a framework's house rules.
+        let errors = run_one(Box::new(OffByDefault), None);
+        assert!(
+            errors.is_empty(),
+            "an off-by-default lint ran anyway and reported {errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_lint_that_declares_a_real_default_still_runs() {
+        // The permit path. Without this, a resolution bug that skips every lint
+        // passes the test above and disarms the whole gate silently.
+        let errors = run_one(Box::new(AlwaysReports), None);
+        assert_eq!(errors.len(), 1, "an on-by-default lint must still run");
+        assert_eq!(errors[0].severity, Severity::HARD_ERROR);
+    }
+
+    #[test]
+    fn a_repo_can_opt_into_a_lint_that_is_off_by_default() {
+        // Off by default is not off for good: a repo that does follow the
+        // convention names the lint and gets it.
+        let mut base = HashMap::new();
+        base.insert("off-by-default".to_string(), Severity::HARD_ERROR);
+        let cfg = LintConfig::from_base(base);
+        let errors = run_one(Box::new(OffByDefault), Some(&cfg));
+        assert_eq!(errors.len(), 1, "an opted-into lint must run");
+        assert_eq!(errors[0].severity, Severity::HARD_ERROR);
+    }
+
+    #[test]
+    fn an_off_override_silences_a_lint_that_is_on_by_default() {
+        let mut base = HashMap::new();
+        base.insert("always-reports".to_string(), Severity::OFF);
+        let cfg = LintConfig::from_base(base);
+        let errors = run_one(Box::new(AlwaysReports), Some(&cfg));
+        assert!(errors.is_empty(), "an off override must silence the lint");
+    }
+
+    #[test]
+    fn a_findings_own_severity_survives_when_no_override_names_the_lint() {
+        // A lint may grade its own findings, a build gate here and an advisory
+        // there. Resolution must not flatten that onto the lint's default.
+        let cfg = LintConfig::empty();
+        let errors = run_one(Box::new(AlwaysReports), Some(&cfg));
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].severity,
+            Severity::HARD_ERROR,
+            "the finding's own level was overwritten by the lint's default"
+        );
+    }
+
+    #[test]
+    fn an_explicit_base_override_restamps_the_finding() {
+        let mut base = HashMap::new();
+        base.insert("always-reports".to_string(), Severity::ADVISORY);
+        let cfg = LintConfig::from_base(base);
+        let errors = run_one(Box::new(AlwaysReports), Some(&cfg));
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].severity, Severity::ADVISORY);
+    }
+
+    #[test]
+    fn the_changelist_family_is_registered_as_repo_lints() {
+        // They only ever read the mock dir, so they belong here rather than
+        // among the crate-comparing workspace lints.
+        let names: Vec<&str> = all_repo_lints().iter().map(|l| l.name()).collect();
+        for expected in [
+            "changelist-doc-gate",
+            "changelist-lock",
+            "changelist-required",
+            "changelist-immutability",
+        ] {
+            assert!(names.contains(&expected), "{expected} is not a repo lint: {names:?}");
+        }
+        // and none of them lingers among the workspace lints
+        let ws: Vec<&str> = all_workspace_lints().iter().map(|l| l.name()).collect();
+        for unexpected in ["changelist-doc-gate", "changelist-lock"] {
+            assert!(!ws.contains(&unexpected), "{unexpected} still a workspace lint");
+        }
     }
 }
 
@@ -1510,7 +2004,9 @@ mod declared_default_severity_tests {
         fn default_severity(&self) -> Severity {
             self.1
         }
+    }
 
+    impl CrateLint for AlwaysFires {
         fn check(&self, ctx: &LintContext) -> Vec<LintError> {
             vec![LintError::error(ctx.crate_name.to_string(), 1, self.0, "fired".to_string())]
         }
@@ -1518,7 +2014,7 @@ mod declared_default_severity_tests {
 
     struct AlwaysFiresAcross(&'static str, Severity);
 
-    impl CrossCrateLint for AlwaysFiresAcross {
+    impl Lint for AlwaysFiresAcross {
         fn name(&self) -> &'static str {
             self.0
         }
@@ -1526,7 +2022,9 @@ mod declared_default_severity_tests {
         fn default_severity(&self) -> Severity {
             self.1
         }
+    }
 
+    impl WorkspaceLint for AlwaysFiresAcross {
         fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
             crates
                 .iter()
@@ -1568,7 +2066,7 @@ mod declared_default_severity_tests {
             },
             CrateSourceFile {
                 rel_path: std::path::PathBuf::from("src/env.rs"),
-                text:     "pub fn args() -> Vec<String> { todo!() }\n".to_string(),
+                text:     "pub fn args() { todo!() }\n".to_string(),
             },
         ]
     }
@@ -1578,13 +2076,13 @@ mod declared_default_severity_tests {
         // The bug this dispatcher exists for. `ctx.source` is the crate root and
         // nothing else, so every surface lint read `src/lib.rs` and skipped the
         // rest of the crate while the gate reported clean. In kolli that hid
-        // three `Vec` in a public signature through a full review.
+        // real findings in module files through a full review.
         let files = crate_with_a_dirty_module();
         let mut base = ctx();
         base.all_sources = &files;
 
-        let found = check_every_file(&no_bare_vec::NoBareVec, &base, &parse_sources(&files));
-        assert_eq!(found.len(), 1, "expected the module file's Vec, got {found:?}");
+        let found = check_every_file(&no_todo::NoTodo, &base, &parse_sources(&files));
+        assert_eq!(found.len(), 1, "expected the module file's todo macro, got {found:?}");
         assert_eq!(
             found[0].path.as_deref(),
             Some("src/env.rs"),
@@ -1604,8 +2102,56 @@ mod declared_default_severity_tests {
         base.all_sources = &files;
 
         let root_only = parse_sources(&files[.. 1]);
-        let found = check_every_file(&no_bare_vec::NoBareVec, &base, &root_only);
+        let found = check_every_file(&no_todo::NoTodo, &base, &root_only);
         assert!(found.is_empty(), "the crate root is clean, so this should find nothing");
+    }
+
+    #[test]
+    fn the_builtin_set_alone_has_no_duplicate_names() {
+        // The gate the host runs on every pack also pins the builtin set
+        // itself: two builtins sharing a name would be the same double-report
+        // bug with nobody external to blame.
+        assert_eq!(duplicate_lint_names(&LintPack::default()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_pack_reusing_a_builtin_name_is_reported() {
+        // The shipped incident: the stack pack and the builtin set both
+        // registered a lint under one name, every finding doubled, and the
+        // config could not address either copy.
+        struct Shadow;
+        impl Lint for Shadow {
+            fn name(&self) -> &'static str {
+                "no-todo"
+            }
+        }
+        impl CrateLint for Shadow {
+            fn check(&self, _ctx: &LintContext) -> Vec<LintError> {
+                Vec::new()
+            }
+        }
+        let mut pack = LintPack::default();
+        pack.crate_lints.push(Box::new(Shadow));
+        assert_eq!(duplicate_lint_names(&pack), vec!["no-todo".to_string()]);
+    }
+
+    #[test]
+    fn a_duplicate_inside_one_pack_is_reported_too() {
+        struct Twin;
+        impl Lint for Twin {
+            fn name(&self) -> &'static str {
+                "twin-lint"
+            }
+        }
+        impl CrateLint for Twin {
+            fn check(&self, _ctx: &LintContext) -> Vec<LintError> {
+                Vec::new()
+            }
+        }
+        let mut pack = LintPack::default();
+        pack.crate_lints.push(Box::new(Twin));
+        pack.crate_lints.push(Box::new(Twin));
+        assert_eq!(duplicate_lint_names(&pack), vec!["twin-lint".to_string()]);
     }
 
     #[test]
@@ -1620,7 +2166,7 @@ mod declared_default_severity_tests {
         let mut base = ctx();
         base.all_sources = &files;
 
-        let found = check_cross_crate(&[("test-crate", &base)], false, None);
+        let found = check_workspace(&[("test-crate", &base)], false, None);
         assert!(
             found
                 .iter()
@@ -1644,7 +2190,9 @@ mod declared_default_severity_tests {
             fn per_file(&self) -> bool {
                 false
             }
+        }
 
+        impl CrateLint for CrateScoped {
             fn check(&self, ctx: &LintContext) -> Vec<LintError> {
                 vec![LintError::error(ctx.crate_name.to_string(), 1, "crate-scoped", "once".into())]
             }
@@ -1676,7 +2224,7 @@ mod declared_default_severity_tests {
     fn fired_across(lint: AlwaysFiresAcross, overrides: Option<&LintConfig>) -> usize {
         let name = lint.0;
         let ctx = ctx();
-        check_cross_crate_with_extra(&[("test-crate", &ctx)], false, overrides, &[Box::new(lint)])
+        check_workspace_with_extra(&[("test-crate", &ctx)], false, overrides, &[Box::new(lint)])
             .into_iter()
             .filter(|e| e.lint_name == name)
             .count()

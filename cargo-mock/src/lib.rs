@@ -23,6 +23,7 @@ mod selfupdate;
 use std::path::Path;
 use std::process::ExitCode;
 
+use mockspace_manifest::gate::HOOK_VERSION;
 use pin::{Pin, Reference};
 
 /// Where a resolved pin came from, so the registry can tell a repo that has
@@ -177,6 +178,51 @@ fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    // A retired alias intercepts `cargo mock` before this launcher ever runs
+    // under that spelling, so it is refused rather than tolerated: the two
+    // spellings must be the same tool.
+    if located.is_some() {
+        // Both spellings cargo honours: config.toml and the extensionless
+        // legacy config. The refusal covers what the retired bootstrap wrote,
+        // which was always repo-local; a user's own alias elsewhere is their
+        // choice, not an anomaly of ours.
+        let candidates = [
+            root.join(".cargo").join("config.toml"),
+            root.join(".cargo").join("config"),
+        ];
+        for cargo_cfg in candidates {
+            let Ok(cfg) = std::fs::read_to_string(&cargo_cfg) else {
+                continue;
+            };
+            if legacy_alias_present(&cfg) {
+                return Err(format!(
+                    "a retired `cargo mock` alias sits in {}. Cargo resolves \
+                     aliases before external subcommands, so `cargo mock` runs \
+                     whatever the alias points at instead of this launcher. \
+                     Delete the `mock = ...` line, and the [alias] table if \
+                     that empties it, then re-run.",
+                    cargo_cfg.display()
+                ));
+            }
+        }
+    }
+
+    // Plant the durable gate BEFORE building the engine.
+    //
+    // The engine used to be the only thing that installed it, which leaves a
+    // window nothing covers: every way the engine can fail to run also leaves the
+    // repo ungated, silently. Its build can fail on a bad pin, on no network, or
+    // on a compile error in the pinned revision, and it can fail on the repo's own
+    // contents, which is not hypothetical: a workspace with no members exited
+    // non-zero before reaching any setup. The launcher cannot fail for any of
+    // those reasons, so it plants the gate and the engine keeps it current.
+    //
+    // Best-effort and quiet on success: a gate that cannot be written is worth
+    // reporting, but it must not stop the command the user actually ran.
+    if located.is_some() {
+        plant_gate(&root);
+    }
+
     let cache_root = cache::cache_root()?;
 
     // The scratch path: build the engine from a checkout on disk and run this
@@ -229,6 +275,59 @@ fn run(args: &[String]) -> Result<(), String> {
     // target/), using the pin-matched lint-rules dep we pass along; the
     // launcher no longer needs to know about lints.
     cache::exec_engine(&bin, &mock_abs, &resolved.lint_rules_dep, args).map(|_never| ())
+}
+
+fn legacy_alias_present(config: &str) -> bool {
+    let mut in_alias = false;
+    for line in config.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_alias = t == "[alias]";
+            continue;
+        }
+        if in_alias
+            && (t.starts_with("mock =")
+                || t.starts_with("mock=")
+                || t.starts_with("\"mock\" =")
+                || t.starts_with("\"mock\"="))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Install the durable hooks and point `core.hooksPath` at them.
+///
+/// The hook version is the launcher's own, and is deliberately shared with the
+/// engine through `mockspace-manifest` rather than duplicated: two copies of a
+/// version number is how a repo ends up with hooks from one era wired by another.
+/// Whether the repo's `.cargo/config.toml` still carries the retired
+/// `cargo mock` alias.
+///
+/// Cargo resolves aliases before external subcommands, so a leftover alias
+/// shadows this launcher whenever `cargo mock` is typed: the user runs
+/// whatever the alias points at, not the pinned engine, and nothing says so.
+/// Per the anomalous-state rule that is an error with guidance, never a
+/// silent difference between `mock` and `cargo mock`.
+fn plant_gate(root: &Path) {
+    let Some(dir) = mockspace_manifest::gate::durable_hooks_dir(HOOK_VERSION) else {
+        return; // no home directory to write into; nothing to do
+    };
+    let mut actions = mockspace_manifest::gate::install_durable_hooks(&dir, HOOK_VERSION);
+    // The same opt-out the engine honours; without it here the launcher edited
+    // `core.hooksPath` on every invocation and the variable was inert on the
+    // normal path. Hooks still get written; they are inert files until wired.
+    if std::env::var("MOCKSPACE_NO_AUTO_ACTIVATE").is_ok() {
+        for a in actions {
+            eprintln!("mock: {a}");
+        }
+        return;
+    }
+    actions.extend(mockspace_manifest::gate::activate(root, &dir));
+    for a in actions {
+        eprintln!("mock: {a}");
+    }
 }
 
 /// Unix seconds now, or 0 if the clock is before the epoch (impossible in
@@ -341,6 +440,15 @@ fn resolve_pin(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_retired_alias_is_detected_only_under_its_table() {
+        assert!(legacy_alias_present("[alias]\nmock = \"run --quiet\"\n"));
+        assert!(legacy_alias_present("[build]\njobs = 4\n[alias]\nmock=\"x\"\n"));
+        assert!(!legacy_alias_present("[env]\nmock = \"not an alias\"\n"));
+        assert!(!legacy_alias_present("[alias]\nmockery = \"other\"\n"));
+        assert!(!legacy_alias_present(""));
+    }
+
     use super::*;
 
     fn s(v: &[&str]) -> Vec<String> {

@@ -41,7 +41,7 @@ pub(crate) fn write_builtin_hook(
 /// Generate all builtin agent hooks.
 ///
 /// Writes 5 hooks to both `.claude/hooks/` and `.github/hooks/`:
-/// - check-byline.sh
+/// - check-message.sh
 /// - mockspace-write-guard.sh
 /// - mockspace-reminder.sh
 /// - no-yagni-guard.sh
@@ -66,8 +66,8 @@ pub(crate) fn generate_builtin_hooks(
     ));
 
     hooks.push(write_builtin_hook(
-        "check-byline.sh",
-        &builtin_check_byline(cfg),
+        "check-message.sh",
+        &builtin_check_message(cfg),
         &repo_root,
         claude_hooks_dir,
         copilot_hooks_dir,

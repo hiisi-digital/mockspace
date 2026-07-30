@@ -43,8 +43,10 @@ impl Lint for Trivial {
         .expect("load ok")
         .expect("has custom lints");
 
-    assert_eq!(loaded.lints.len(), 1);
-    assert!(loaded.cross.is_empty());
+    assert_eq!(loaded.pack.crate_lints.len(), 1);
+    assert!(loaded.pack.workspace_lints.is_empty());
+    assert!(loaded.pack.repo_lints.is_empty());
+    assert!(loaded.pack.message_lints.is_empty());
     // dispatch across the cdylib boundary.
-    assert_eq!(loaded.lints[0].name(), "trivial-cdylib-probe");
+    assert_eq!(loaded.pack.crate_lints[0].name(), "trivial-cdylib-probe");
 }

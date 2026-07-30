@@ -12,7 +12,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "design-doc-source-mismatch";
 
@@ -40,15 +40,15 @@ impl Lint for DesignDocSourceMismatch {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::PUSH_GATE
     }
-
     fn name(&self) -> &'static str {
         LINT_NAME
     }
-
     fn source_only(&self) -> bool {
         false
     }
+}
 
+impl CrateLint for DesignDocSourceMismatch {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let design_doc = match ctx.design_doc {
             Some(d) => d,

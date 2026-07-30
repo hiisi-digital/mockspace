@@ -15,7 +15,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError, make_parser};
+use crate::{CrateLint, Lint, LintContext, LintError, make_parser};
 
 const LINT_NAME: &str = "no-empty-crate";
 
@@ -46,11 +46,12 @@ impl Lint for NoEmptyCrate {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::ADVISORY
     }
-
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+}
 
+impl CrateLint for NoEmptyCrate {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         // lib.rs tree is already parsed — check it first so the common case
         // of a populated lib.rs avoids re-parsing every module.

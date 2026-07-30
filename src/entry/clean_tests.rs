@@ -176,8 +176,8 @@ fn every_dispatched_subcommand_is_in_the_known_list() {
         "bench",
     ] {
         assert!(
-            super::KNOWN_SUBCOMMANDS.contains(&name),
-            "{name} dispatched but missing from KNOWN_SUBCOMMANDS"
+            super::known_subcommands().contains(&name),
+            "{name} dispatched but missing from known_subcommands"
         );
     }
 }

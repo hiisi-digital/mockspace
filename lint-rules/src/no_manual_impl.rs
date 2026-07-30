@@ -7,7 +7,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 /// (trait_name, crate suffix — impls in `<prefix>-<suffix>` are exempt)
 ///
@@ -41,7 +41,9 @@ impl Lint for NoManualImpl {
     fn name(&self) -> &'static str {
         "no-manual-impl"
     }
+}
 
+impl CrateLint for NoManualImpl {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
         let root = ctx.tree.root_node();

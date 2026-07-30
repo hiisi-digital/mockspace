@@ -55,7 +55,7 @@ A successor model for this workflow (tasks, phases, manifests, epochs as first-c
 Three sources contribute rules:
 
 - **Built-in lints** in `mockspace-lint-rules`. Universal quality checks (file size, undocumented types, no empty crate) and the design-round state-machine lints that enforce the phase transitions above.
-- **Consumer lints** in `mock/lints/<name>.rs`. Each file exports a Rust function returning a lint trait object. Bootstrap discovers them and wires them into the generated proxy crate.
+- **Consumer lints** in `mock/lints/<name>.rs`. Each file exports a Rust function returning a lint trait object. The engine discovers them and compiles them, together with any imported packs, into one lint library it loads at run time.
 - **Config-driven rules** under `[lints.<rule-name>]` in `mock/mockspace.toml`. The `forbidden-imports` rule covers the common case of "this scope must not import these paths".
 
 Each lint declares a severity per gate. The same lint can be `info` at commit, `warn` at build, and `error` at push. The four design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`) are always on and non-negotiable.
@@ -66,7 +66,7 @@ Every `cargo mock` run regenerates the `docs/` tree from templates under `mock/`
 
 ## Git hooks
 
-`mockspace` never touches `.git/hooks/`. It generates parallel hooks under `mock/target/hooks/` that source the user's existing `.git/hooks/<name>` first and then run mockspace's own validation. Activation is explicit (`cargo mock activate`) and reversible (`cargo mock deactivate`); when deactivated, git falls back to whatever the user already had.
+`mockspace` never touches `.git/hooks/`. Durable hooks live in the user config home and delegate to a per-repo validator under the mock directory's `target/hooks/`, sourcing the user's existing `.git/hooks/<name>` first and then running mockspace's own validation. The launcher wires them on first contact and the engine keeps them current; deactivation (`cargo mock deactivate`) is explicit and reversible, and git then falls back to whatever the user already had.
 
 ## Installation
 
