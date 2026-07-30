@@ -85,6 +85,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 ));
             } else {
                 errors.push(LintError {
+                    path: None,
                     crate_name:   ctx.crate_name.to_string(),
                     line:         line_idx + 1,
                     lint_name:    LINT_NAME,
@@ -113,6 +114,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
             ));
         } else {
             errors.push(LintError {
+                path: None,
                 crate_name:   ctx.crate_name.to_string(),
                 line:         line_idx + 1,
                 lint_name:    LINT_NAME,
@@ -246,6 +248,7 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                         if trimmed.contains(pattern) {
                             let float_ty = if pattern.contains("f32") { "f32" } else { "f64" };
                             errors.push(LintError {
+                                path: None,
                                 crate_name:   ctx.crate_name.to_string(),
                                 line:         line_num + 1,
                                 lint_name:    LINT_NAME,

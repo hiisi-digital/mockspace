@@ -103,6 +103,7 @@ fn check_call(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 ));
             } else {
                 errors.push(LintError {
+                    path: None,
                     crate_name: ctx.crate_name.to_string(),
                     line: line_idx + 1,
                     lint_name: "no-bare-macro-types",
@@ -151,6 +152,7 @@ fn check_struct_literal(node: Node, ctx: &LintContext, errors: &mut Vec<LintErro
                 ));
             } else {
                 errors.push(LintError {
+                    path: None,
                     crate_name: ctx.crate_name.to_string(),
                     line: line_idx + 1,
                     lint_name: "no-bare-macro-types",

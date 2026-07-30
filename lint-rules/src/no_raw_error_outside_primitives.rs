@@ -40,6 +40,7 @@ impl Lint for NoRawErrorOutsidePrimitives {
                     ));
                 } else {
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: line_num + 1,
                         lint_name: "no-raw-error-outside-primitives",

@@ -1,7 +1,16 @@
 //! Lint: no bare `Vec`, `HashMap`, or other stdlib/third-party collections.
 //!
-//! Framework code must use `Collection<T>`, `Dictionary<K, V>`, `DenseColumn<T>`,
-//! `IdMap<K, V>`, `SparseArray<V>`, or `SparseSet<T>` from the storage crate.
+//! A container named in a signature decides three things on the caller's behalf:
+//! which container, which layout, and where the memory comes from. None of those
+//! are the callee's to pick. The fix is never a different concrete container; it
+//! is to name the contract the position actually needs as a trait, take it as a
+//! bound, and let whoever calls it supply the container and its allocation.
+//!
+//! So the guidance below describes contract shapes rather than types. An earlier
+//! version named six concrete types from a downstream consumer's storage crate,
+//! none of which exist in any repository this lint governs, so every consumer was
+//! being pointed at types it could not use and at a decision that was not the
+//! lint's to make.
 //!
 //! Two detection phases:
 //! - Phase 1: AST-based detection in regular code (struct fields, fn signatures)
@@ -22,52 +31,64 @@ use crate::{Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "no-bare-vec";
 
-/// (pattern to match as type_identifier, suggested replacement)
+/// What a position needs, once the container is taken out of it.
+///
+/// One string per shape rather than per type, because every map wants the same
+/// advice and repeating it per name is how the advice drifts.
+const SEQUENCE: &str =
+    "This one is a sequence: take `impl IntoIterator<Item = T>` or `&[T]` to read one, and a \
+     push-shaped bound to fill one.";
+const KEYED: &str = "This one is a keyed lookup: take a bound carrying the get and insert this \
+                     position actually uses, and nothing more.";
+const MEMBERSHIP: &str = "This one is membership: take a bound carrying the contains and insert \
+                          this position actually uses, and nothing more.";
+
+/// (pattern to match as type_identifier, the contract shape the position needs)
 const FORBIDDEN_TYPES: &[(&str, &str)] = &[
-    ("Vec", "Collection<T> or DenseColumn<T>"),
-    ("HashMap", "Dictionary<K, V> or IdMap<K, V>"),
-    ("HashSet", "SparseSet<T> or Collection<T>"),
-    ("BTreeMap", "Dictionary<K, V> or IdMap<K, V>"),
-    ("BTreeSet", "SparseSet<T> or Collection<T>"),
-    ("VecDeque", "Collection<T>"),
-    ("LinkedList", "Collection<T>"),
-    ("BinaryHeap", "Collection<T>"),
-    ("IndexMap", "Dictionary<K, V> or IdMap<K, V>"),
-    ("IndexSet", "SparseSet<T> or Collection<T>"),
-    ("SmallVec", "Collection<T>"),
-    ("TinyVec", "Collection<T>"),
-    ("ArrayVec", "Collection<T>"),
-    ("SlotMap", "IdMap<K, V>"),
-    ("DenseSlotMap", "IdMap<K, V>"),
-    ("SecondaryMap", "IdMap<K, V>"),
+    ("Vec", SEQUENCE),
+    ("HashMap", KEYED),
+    ("HashSet", MEMBERSHIP),
+    ("BTreeMap", KEYED),
+    ("BTreeSet", MEMBERSHIP),
+    ("VecDeque", SEQUENCE),
+    ("LinkedList", SEQUENCE),
+    ("BinaryHeap", SEQUENCE),
+    ("IndexMap", KEYED),
+    ("IndexSet", MEMBERSHIP),
+    ("SmallVec", SEQUENCE),
+    ("TinyVec", SEQUENCE),
+    ("ArrayVec", SEQUENCE),
+    ("SlotMap", KEYED),
+    ("DenseSlotMap", KEYED),
+    ("SecondaryMap", KEYED),
 ];
 
 /// Text patterns for Phase 2 macro body scanning (includes the `<` to reduce false positives).
 const MACRO_FORBIDDEN: &[(&str, &str)] = &[
-    ("Vec<", "Collection<T> or DenseColumn<T>"),
-    ("HashMap<", "Dictionary<K, V> or IdMap<K, V>"),
-    ("HashSet<", "SparseSet<T> or Collection<T>"),
-    ("BTreeMap<", "Dictionary<K, V> or IdMap<K, V>"),
-    ("BTreeSet<", "SparseSet<T> or Collection<T>"),
-    ("VecDeque<", "Collection<T>"),
-    ("LinkedList<", "Collection<T>"),
-    ("BinaryHeap<", "Collection<T>"),
-    ("IndexMap<", "Dictionary<K, V> or IdMap<K, V>"),
-    ("IndexSet<", "SparseSet<T> or Collection<T>"),
-    ("SmallVec<", "Collection<T>"),
-    ("TinyVec<", "Collection<T>"),
-    ("ArrayVec<", "Collection<T>"),
-    ("SlotMap<", "IdMap<K, V>"),
-    ("DenseSlotMap<", "IdMap<K, V>"),
-    ("SecondaryMap<", "IdMap<K, V>"),
+    ("Vec<", SEQUENCE),
+    ("HashMap<", KEYED),
+    ("HashSet<", MEMBERSHIP),
+    ("BTreeMap<", KEYED),
+    ("BTreeSet<", MEMBERSHIP),
+    ("VecDeque<", SEQUENCE),
+    ("LinkedList<", SEQUENCE),
+    ("BinaryHeap<", SEQUENCE),
+    ("IndexMap<", KEYED),
+    ("IndexSet<", MEMBERSHIP),
+    ("SmallVec<", SEQUENCE),
+    ("TinyVec<", SEQUENCE),
+    ("ArrayVec<", SEQUENCE),
+    ("SlotMap<", KEYED),
+    ("DenseSlotMap<", KEYED),
+    ("SecondaryMap<", KEYED),
     // full paths
-    ("std::collections::HashMap<", "Dictionary<K, V>"),
-    ("std::collections::HashSet<", "SparseSet<T>"),
-    ("std::collections::BTreeMap<", "Dictionary<K, V>"),
-    ("std::collections::BTreeSet<", "SparseSet<T>"),
-    ("std::collections::VecDeque<", "Collection<T>"),
-    ("std::collections::LinkedList<", "Collection<T>"),
-    ("std::collections::BinaryHeap<", "Collection<T>"),
+    ("std::collections::HashMap<", KEYED),
+    ("std::collections::HashSet<", MEMBERSHIP),
+    ("std::collections::BTreeMap<", KEYED),
+    ("std::collections::BTreeSet<", MEMBERSHIP),
+    ("std::collections::VecDeque<", SEQUENCE),
+    ("std::collections::LinkedList<", SEQUENCE),
+    ("std::collections::BinaryHeap<", SEQUENCE),
 ];
 
 pub struct NoBareVec;
@@ -129,13 +150,14 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
             let (severity, message) = if explanation_is_sufficient(&explanation) {
                 (
                     crate::Severity::ADVISORY,
-                    format!("suppressed by lint:allow(bare_collection) — {explanation}"),
+                    format!("suppressed by lint:allow(bare_collection): {explanation}"),
                 )
             } else {
                 (crate::Severity::PUSH_GATE,
-                 "lint:allow(bare_collection) requires an explanation (8+ words) — explain WHY this bare collection is justified".to_string())
+                 "lint:allow(bare_collection) requires an explanation (8+ words): say why this bare collection is justified".to_string())
             };
             errors.push(LintError {
+                path: None,
                 crate_name: ctx.crate_name.to_string(),
                 line: node.start_position().row + 1,
                 lint_name: LINT_NAME,
@@ -159,13 +181,14 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     let (severity, message) = if explanation_is_sufficient(&explanation) {
                         (
                             crate::Severity::ADVISORY,
-                            format!("suppressed by lint:allow(bare_collection) — {explanation}"),
+                            format!("suppressed by lint:allow(bare_collection): {explanation}"),
                         )
                     } else {
                         (crate::Severity::PUSH_GATE,
-                         "lint:allow(bare_collection) requires an explanation (8+ words) — explain WHY this bare collection is justified".to_string())
+                         "lint:allow(bare_collection) requires an explanation (8+ words): say why this bare collection is justified".to_string())
                     };
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: line_idx + 1,
                         lint_name: LINT_NAME,
@@ -180,13 +203,14 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     let (severity, message) = if explanation_is_sufficient(&explanation) {
                         (
                             crate::Severity::ADVISORY,
-                            format!("suppressed by lint:allow(bare_collection) — {explanation}"),
+                            format!("suppressed by lint:allow(bare_collection): {explanation}"),
                         )
                     } else {
                         (crate::Severity::PUSH_GATE,
-                         "lint:allow(bare_collection) requires an explanation (8+ words) — explain WHY this bare collection is justified".to_string())
+                         "lint:allow(bare_collection) requires an explanation (8+ words): say why this bare collection is justified".to_string())
                     };
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: node.start_position().row + 1,
                         lint_name: LINT_NAME,
@@ -202,7 +226,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                         (
                             crate::Severity::ADVISORY,
                             format!(
-                                "suppressed by lint:allow(bare_collection) on enclosing item — {explanation}"
+                                "suppressed by lint:allow(bare_collection) on enclosing item: {explanation}"
                             ),
                         )
                     } else {
@@ -210,6 +234,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                          "lint:allow(bare_collection) on enclosing item requires an explanation (8+ words)".to_string())
                     };
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: node.start_position().row + 1,
                         lint_name: LINT_NAME,
@@ -221,12 +246,15 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 }
                 let severity = crate::Severity::PUSH_GATE;
                 errors.push(LintError {
+                    path: None,
                     crate_name: ctx.crate_name.to_string(),
                     line: node.start_position().row + 1,
                     lint_name: LINT_NAME,
                     severity,
                     message: format!(
-                        "`{forbidden}` collection type — use `{replacement}` from the storage crate instead",
+                        "`{forbidden}` names a container here. Name the contract instead: declare what this \
+                          position needs as a trait, take it as a bound, and let the caller supply \
+                          the container and its allocation. {replacement}",
                     ),
                     finding_kind: None,
                 });
@@ -247,7 +275,7 @@ fn is_type_position(node: Node) -> bool {
     let mut current = node.parent();
     while let Some(parent) = current {
         match parent.kind() {
-            // Intermediate type nodes — keep walking up
+            // Intermediate type nodes: keep walking up
             "generic_type"
             | "reference_type"
             | "array_type"
@@ -272,7 +300,7 @@ fn is_type_position(node: Node) -> bool {
             | "type_bound" => {
                 return true;
             },
-            // Expression position — not a type annotation (e.g., Vec::new())
+            // Expression position, not a type annotation (e.g. Vec::new())
             "call_expression" | "field_expression" | "scoped_identifier" | "macro_invocation" => {
                 return false;
             },
@@ -516,7 +544,7 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                         (
                             crate::Severity::ADVISORY,
                             format!(
-                                "suppressed by lint:allow(bare_collection) in macro — {explanation}"
+                                "suppressed by lint:allow(bare_collection) in macro: {explanation}"
                             ),
                         )
                     } else {
@@ -527,6 +555,7 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                     for &(pattern, _) in MACRO_FORBIDDEN {
                         if trimmed.contains(pattern) {
                             errors.push(LintError {
+                                path: None,
                                 crate_name: ctx.crate_name.to_string(),
                                 line: line_num + 1,
                                 lint_name: LINT_NAME,
@@ -542,12 +571,16 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                         if trimmed.contains(pattern) {
                             let col_name = pattern.split('<').next().unwrap_or(pattern);
                             errors.push(LintError {
+                                path: None,
                                 crate_name: ctx.crate_name.to_string(),
                                 line: line_num + 1,
                                 lint_name: LINT_NAME,
                                 severity: crate::Severity::PUSH_GATE,
                                 message: format!(
-                                    "`{col_name}` in macro body — use `{replacement}` from the storage crate instead",
+                                    "`{col_name}` names a container in a macro body. Name the contract instead: \
+                                     declare what this position needs as a trait, take it as a \
+                                     bound, and let the caller supply the container and its \
+                                     allocation. {replacement}",
                                 ),
                                 finding_kind: None,
                             });
@@ -571,4 +604,125 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
 
 fn txt<'a>(node: Node<'a>, src: &'a str) -> &'a str {
     &src[node.byte_range()]
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::*;
+
+    /// The six names an earlier version of this lint told every consumer to
+    /// reach for. None of them exists in any repository this lint governs; they
+    /// came from a downstream consumer's storage crate.
+    const NAMES_FROM_NOWHERE: &[&str] = &[
+        "Collection<T>",
+        "Dictionary<K, V>",
+        "DenseColumn",
+        "IdMap<K, V>",
+        "SparseArray",
+        "SparseSet<T>",
+    ];
+
+    fn ctx_for(source: &'static str) -> LintContext<'static> {
+        let mut parser = crate::make_parser();
+        let tree = parser.parse(source, None).unwrap();
+        LintContext {
+            crate_name:              "test-crate",
+            short_name:              "test-crate",
+            source,
+            tree:                    Box::leak(Box::new(tree)),
+            all_sources:             &[],
+            deps:                    &[],
+            all_crates:              Box::leak(Box::new(BTreeSet::new())),
+            design_doc:              None,
+            all_doc_content:         "",
+            shame_doc:               None,
+            workspace_root:          std::path::Path::new("/tmp"),
+            proc_macro_crates:       &[],
+            crate_prefix:            "test",
+            lint_proc_macro_source:  false,
+            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
+        }
+    }
+
+    fn reported(source: &'static str) -> Vec<LintError> {
+        NoBareVec.check(&ctx_for(source))
+    }
+
+    #[test]
+    fn a_container_in_a_public_signature_is_reported() {
+        // The control for every message test below: they would all pass
+        // vacuously against a lint that reported nothing.
+        assert!(!reported("pub fn f(v: Vec<u8>) {}\n").is_empty());
+    }
+
+    #[test]
+    fn the_guidance_names_no_type_that_does_not_exist() {
+        // The whole failure this test exists for: the lint spent its life
+        // telling consumers to use six types from a repository none of them
+        // depend on, so the only way to satisfy it was to ignore it.
+        for message in reported("pub fn f(v: Vec<u8>) {}\n").iter().map(|e| e.to_string()) {
+            for name in NAMES_FROM_NOWHERE {
+                assert!(
+                    !message.contains(name),
+                    "the guidance names `{name}`, which exists in no governed repository: {message}",
+                );
+            }
+            assert!(
+                !message.contains("storage crate"),
+                "the guidance points at a crate that does not exist here: {message}",
+            );
+        }
+    }
+
+    #[test]
+    fn the_guidance_asks_for_a_contract_rather_than_another_container() {
+        // Naming a different concrete container would repeat the mistake in a
+        // new vocabulary. The instruction has to be to stop naming containers.
+        let messages: Vec<String> =
+            reported("pub fn f(v: Vec<u8>) {}\n").iter().map(|e| e.to_string()).collect();
+        assert!(
+            messages.iter().any(|m| m.contains("trait") && m.contains("bound")),
+            "no message told the reader to declare a trait and take it as a bound: {messages:?}",
+        );
+        assert!(
+            messages.iter().any(|m| m.contains("allocation")),
+            "no message said who supplies the allocation: {messages:?}",
+        );
+    }
+
+    #[test]
+    fn no_message_carries_an_em_dash() {
+        // Banned in every authored line, and a lint message is read more often
+        // than most prose in the tree.
+        for source in [
+            "pub fn f(v: Vec<u8>) {}\n",
+            "pub struct S { pub items: HashMap<u8, u8> }\n",
+            "pub fn g() -> BTreeSet<u8> { todo!() }\n",
+        ] {
+            for message in reported(source).iter().map(|e| e.to_string()) {
+                assert!(!message.contains('\u{2014}'), "em-dash in a lint message: {message}");
+                assert!(!message.contains('\u{2013}'), "en-dash in a lint message: {message}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_map_and_a_set_get_different_advice_from_a_sequence() {
+        // One shape per kind. Collapsing them would produce advice that is
+        // correct for a Vec and wrong for the two thirds of the table that are
+        // not sequences.
+        let seq = reported("pub fn f(v: Vec<u8>) {}\n");
+        let map = reported("pub fn f(v: HashMap<u8, u8>) {}\n");
+        let set = reported("pub fn f(v: HashSet<u8>) {}\n");
+        assert!(!seq.is_empty() && !map.is_empty() && !set.is_empty());
+
+        let text = |errors: &[LintError]| -> String {
+            errors.iter().map(std::string::ToString::to_string).collect()
+        };
+        assert!(text(&seq).contains("sequence"), "a Vec was not called a sequence");
+        assert!(text(&map).contains("keyed lookup"), "a HashMap was not called a keyed lookup");
+        assert!(text(&set).contains("membership"), "a HashSet was not called membership");
+    }
 }
