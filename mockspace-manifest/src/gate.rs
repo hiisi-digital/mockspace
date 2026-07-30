@@ -274,7 +274,10 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
 /// The repo-location variables git exports into hook processes. A child `git`
 /// spawned from a hook inherits them, and any invocation whose working
 /// directory differs from the hook's then resolves against the wrong tree.
-const GIT_REPO_ENV: &[&str] = &[
+///
+/// Public so the removal set is testable without mutating the environment;
+/// the membership tests below pin it against accidental narrowing.
+pub const GIT_REPO_ENV: &[&str] = &[
     "GIT_DIR",
     "GIT_COMMON_DIR",
     "GIT_WORK_TREE",
@@ -298,14 +301,27 @@ const GIT_REPO_ENV: &[&str] = &[
 /// templates as `(untracked) changed`.
 ///
 /// Dropping `GIT_INDEX_FILE` means a `git commit -a` temporary index is not
-/// consulted; the gates already scan staged, unstaged and untracked state
-/// alike, so a change gated one way is gated the other.
+/// consulted. For *detection* that changes nothing: the gates scan staged,
+/// unstaged and untracked state alike, so a change is flagged either way. For
+/// *content* it can: a file staged and then further modified reads as its
+/// index blob while a `commit -a` in flight would commit the worktree blob
+/// (see `staged_or_worktree` in the changelist-required lint, where the case
+/// is catalogued).
 ///
-/// Call this first thing in each binary's entry, before any thread spawns;
-/// mutating the environment later is not sound.
-pub fn sanitize_git_env() {
+/// This also strips a `GIT_DIR`/`GIT_WORK_TREE` pair a user exported on
+/// purpose (the bare dotfiles-repo pattern); running `mock` inside such an
+/// environment falls back to ordinary repo discovery from the working
+/// directory.
+///
+/// # Safety
+///
+/// Call first thing in the process entry, before any other thread exists.
+/// The environment is process-global and unsynchronised; mutating it while
+/// another thread reads it (including indirectly, through `Command::spawn`
+/// or any libc function that walks `environ`) is undefined behaviour.
+pub unsafe fn sanitize_git_env() {
     for var in GIT_REPO_ENV {
-        // SAFETY: called at process entry before any other thread exists.
+        // SAFETY: the caller guarantees no other thread exists yet.
         unsafe { std::env::remove_var(var) };
     }
 }
@@ -457,23 +473,43 @@ mod tests {
         assert_eq!(fingerprint("same"), fingerprint("same"));
     }
 
+    // The behaviour of `remove_var` is std's to test; the contract owned here
+    // is the *set*: which variables count as repo-location. These pin it
+    // without touching the process environment, which the test harness's
+    // sibling threads read concurrently (env mutation under the default
+    // multi-threaded harness is undefined behaviour).
     #[test]
-    fn sanitize_drops_every_repo_location_var_and_spares_the_rest() {
-        // SAFETY: no other test in this crate reads or writes these variables.
-        unsafe {
-            std::env::set_var("GIT_DIR", "/somewhere/.git");
-            std::env::set_var("GIT_INDEX_FILE", "/somewhere/.git/index");
-            std::env::set_var("GIT_AUTHOR_NAME", "kept");
+    fn the_removal_set_names_every_repo_location_var() {
+        for var in [
+            "GIT_DIR",
+            "GIT_COMMON_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_PREFIX",
+        ] {
+            assert!(
+                GIT_REPO_ENV.contains(&var),
+                "{var} is repo-location and must be sanitized"
+            );
         }
-        sanitize_git_env();
-        assert_eq!(std::env::var_os("GIT_DIR"), None);
-        assert_eq!(std::env::var_os("GIT_INDEX_FILE"), None);
-        assert_eq!(
-            std::env::var("GIT_AUTHOR_NAME").as_deref(),
-            Ok("kept"),
-            "identity variables are not repo-location and must survive"
-        );
-        // SAFETY: as above.
-        unsafe { std::env::remove_var("GIT_AUTHOR_NAME") };
+    }
+
+    #[test]
+    fn the_removal_set_spares_identity_and_config() {
+        for var in [
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_SSH_COMMAND",
+        ] {
+            assert!(
+                !GIT_REPO_ENV.contains(&var),
+                "{var} is not repo-location and must survive sanitizing"
+            );
+        }
     }
 }
