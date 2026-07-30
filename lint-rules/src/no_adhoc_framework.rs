@@ -181,6 +181,7 @@ fn emit_with_explanation(
         }
     } else {
         errors.push(LintError {
+            path: None,
             crate_name:   crate_name.to_string(),
             line:         line_num + 1,
             lint_name:    "no-adhoc-framework",

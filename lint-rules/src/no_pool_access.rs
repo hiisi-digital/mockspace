@@ -45,6 +45,7 @@ impl Lint for NoPoolAccess {
                 // Check for banned patterns inside behavior body
                 if trimmed.contains(".pool()") || trimmed.contains(".pool_mut()") {
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: line_num + 1,
                         lint_name: "no-pool-access",
@@ -55,6 +56,7 @@ impl Lint for NoPoolAccess {
                 }
                 if trimmed.contains(".resource(") || trimmed.contains(".resource::<") {
                     errors.push(LintError {
+                        path: None,
                         crate_name:   ctx.crate_name.to_string(),
                         line:         line_num + 1,
                         lint_name:    "no-pool-access",
@@ -67,6 +69,7 @@ impl Lint for NoPoolAccess {
                 }
                 if trimmed.contains(".resource_mut(") || trimmed.contains(".resource_mut::<") {
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: line_num + 1,
                         lint_name: "no-pool-access",

@@ -113,6 +113,7 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
 
     if !has_registrable {
         errors.push(LintError {
+            path: None,
             crate_name:   ctx.crate_name.to_string(),
             line:         line_idx + 1,
             lint_name:    LINT_NAME,

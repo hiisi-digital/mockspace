@@ -47,6 +47,7 @@ impl Lint for ExportCount {
 
         if count > MAX_EXPORTS {
             vec![LintError {
+                path: None,
                 crate_name:   ctx.crate_name.to_string(),
                 line:         1,
                 lint_name:    "export-count",

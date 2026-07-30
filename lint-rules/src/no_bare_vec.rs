@@ -157,6 +157,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                  "lint:allow(bare_collection) requires an explanation (8+ words): say why this bare collection is justified".to_string())
             };
             errors.push(LintError {
+                path: None,
                 crate_name: ctx.crate_name.to_string(),
                 line: node.start_position().row + 1,
                 lint_name: LINT_NAME,
@@ -187,6 +188,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                          "lint:allow(bare_collection) requires an explanation (8+ words): say why this bare collection is justified".to_string())
                     };
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: line_idx + 1,
                         lint_name: LINT_NAME,
@@ -208,6 +210,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                          "lint:allow(bare_collection) requires an explanation (8+ words): say why this bare collection is justified".to_string())
                     };
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: node.start_position().row + 1,
                         lint_name: LINT_NAME,
@@ -231,6 +234,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                          "lint:allow(bare_collection) on enclosing item requires an explanation (8+ words)".to_string())
                     };
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: node.start_position().row + 1,
                         lint_name: LINT_NAME,
@@ -242,6 +246,7 @@ fn visit_nodes(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 }
                 let severity = crate::Severity::PUSH_GATE;
                 errors.push(LintError {
+                    path: None,
                     crate_name: ctx.crate_name.to_string(),
                     line: node.start_position().row + 1,
                     lint_name: LINT_NAME,
@@ -550,6 +555,7 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                     for &(pattern, _) in MACRO_FORBIDDEN {
                         if trimmed.contains(pattern) {
                             errors.push(LintError {
+                                path: None,
                                 crate_name: ctx.crate_name.to_string(),
                                 line: line_num + 1,
                                 lint_name: LINT_NAME,
@@ -565,6 +571,7 @@ fn scan_macro_bodies(ctx: &LintContext, errors: &mut Vec<LintError>) {
                         if trimmed.contains(pattern) {
                             let col_name = pattern.split('<').next().unwrap_or(pattern);
                             errors.push(LintError {
+                                path: None,
                                 crate_name: ctx.crate_name.to_string(),
                                 line: line_num + 1,
                                 lint_name: LINT_NAME,

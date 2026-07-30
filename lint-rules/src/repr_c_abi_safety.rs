@@ -152,6 +152,7 @@ fn check_single_field(
             // No suppression allowed for repr(C) ABI safety.
             // lint:allow(bare_collection) does NOT override this.
             errors.push(LintError {
+                path: None,
                 crate_name: ctx.crate_name.to_string(),
                 line,
                 lint_name: LINT_NAME,

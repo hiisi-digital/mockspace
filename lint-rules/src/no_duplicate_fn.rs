@@ -23,6 +23,10 @@ impl CrossCrateLint for NoDuplicateFn {
         // Collect all public function signatures from all crates
         let mut all_fns: Vec<FnSig> = Vec::new();
 
+        // FIXME: reads each crate's root tree only, so a duplicate defined in
+        // a module file is invisible; per-file collection needs the FnSigs to
+        // carry their file, or the suppression lookup below reads the wrong
+        // source. tracked: #33
         for &(crate_name, ctx) in crates {
             let root = ctx.tree.root_node();
             collect_pub_fns(root, ctx.source, crate_name, &mut all_fns);
@@ -61,6 +65,7 @@ impl CrossCrateLint for NoDuplicateFn {
                         continue;
                     }
                     errors.push(LintError {
+                        path: None,
                         crate_name:   dup.crate_name.clone(),
                         line:         dup.line,
                         lint_name:    "no-duplicate-fn",
@@ -103,6 +108,7 @@ impl CrossCrateLint for NoDuplicateFn {
                         continue;
                     }
                     errors.push(LintError {
+                        path: None,
                         crate_name:   dup.crate_name.clone(),
                         line:         dup.line,
                         lint_name:    "no-duplicate-fn",

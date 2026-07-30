@@ -149,6 +149,7 @@ impl FileSize {
 
         if count > self.max_lines {
             Some(LintError {
+                path: None,
                 crate_name:   ctx.crate_name.to_string(),
                 line:         1,
                 lint_name:    "file-size",

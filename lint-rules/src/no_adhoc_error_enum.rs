@@ -67,6 +67,7 @@ fn check_enum(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
             ));
         } else {
             errors.push(LintError {
+                path: None,
                 crate_name: ctx.crate_name.to_string(),
                 line: line_idx + 1,
                 lint_name: "no-adhoc-error-enum",

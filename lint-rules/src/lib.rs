@@ -809,6 +809,11 @@ pub struct LintError {
     pub severity:     Severity,
     /// Optional sub-category for per-finding severity overrides.
     pub finding_kind: Option<&'static str>,
+    /// The file within the crate the finding is in, when it is not the crate
+    /// root. Carried as a field so the renderer can print a real location;
+    /// a path folded into the message made `{crate}:{line}` read as a
+    /// location that pointed at nothing.
+    pub path:         Option<String>,
 }
 
 impl LintError {
@@ -821,6 +826,7 @@ impl LintError {
         message: String,
     ) -> Self {
         Self {
+            path: None,
             crate_name,
             line,
             lint_name,
@@ -839,6 +845,7 @@ impl LintError {
         message: String,
     ) -> Self {
         Self {
+            path: None,
             crate_name,
             line,
             lint_name,
@@ -857,6 +864,7 @@ impl LintError {
         message: String,
     ) -> Self {
         Self {
+            path: None,
             crate_name,
             line,
             lint_name,
@@ -875,6 +883,7 @@ impl LintError {
         message: String,
     ) -> Self {
         Self {
+            path: None,
             crate_name,
             line,
             lint_name,
@@ -888,6 +897,7 @@ impl LintError {
     #[must_use]
     pub fn info(crate_name: String, line: usize, lint_name: &'static str, message: String) -> Self {
         Self {
+            path: None,
             crate_name,
             line,
             lint_name,
@@ -907,6 +917,7 @@ impl LintError {
         severity: Severity,
     ) -> Self {
         Self {
+            path: None,
             crate_name,
             line,
             lint_name,
@@ -927,6 +938,7 @@ impl LintError {
         finding_kind: &'static str,
     ) -> Self {
         Self {
+            path: None,
             crate_name,
             line,
             lint_name,
@@ -939,13 +951,20 @@ impl LintError {
 
 impl std::fmt::Display for LintError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `crate/src/file.rs:line` when the finding names a file, the bare
+        // `crate:line` for the crate root, so the location always points at
+        // something that exists.
+        let location = match &self.path {
+            Some(p) => format!("{}/{}", self.crate_name, p),
+            None => self.crate_name.clone(),
+        };
         if let Some(kind) = self.finding_kind {
             write!(
                 f,
                 "  [{lint}/{kind}] {crate_name}:{line}: [{level}] {msg}",
                 lint = self.lint_name,
                 kind = kind,
-                crate_name = self.crate_name,
+                crate_name = location,
                 line = self.line,
                 level = self.severity.label(),
                 msg = self.message,
@@ -955,7 +974,7 @@ impl std::fmt::Display for LintError {
                 f,
                 "  [{lint}] {crate_name}:{line}: [{level}] {msg}",
                 lint = self.lint_name,
-                crate_name = self.crate_name,
+                crate_name = location,
                 line = self.line,
                 level = self.severity.label(),
                 msg = self.message,
@@ -1139,41 +1158,55 @@ pub fn all_lints() -> Vec<Box<dyn Lint>> {
 /// its own loop over `all_sources`, which is the same fix twenty-six more times
 /// and a fresh tree-sitter parse inside each lint.
 ///
-/// Doing it here instead means no lint changes at all. The cost is one parse per
-/// file per lint, which is the honest price of looking at the file.
-fn check_every_file(lint: &dyn Lint, ctx: &LintContext) -> Vec<LintError> {
-    // An empty `all_sources` means a caller built the context without one, so
-    // the old behaviour is what it expects rather than no coverage at all.
-    if !lint.per_file() || ctx.all_sources.is_empty() {
+/// Doing it here instead means no lint changes at all. The caller parses each
+/// file once and every per-file lint shares the trees; the parse used to live
+/// inside this function, which priced a crate at one parse per file per lint,
+/// a loop on the wrong side of the work.
+fn check_every_file(
+    lint: &dyn Lint,
+    ctx: &LintContext,
+    parsed: &[(&CrateSourceFile, Tree)],
+) -> Vec<LintError> {
+    // An empty parse set means a caller built the context without
+    // `all_sources`, so the old behaviour is what it expects rather than no
+    // coverage at all.
+    if !lint.per_file() || parsed.is_empty() {
         return lint.check(ctx);
     }
 
-    let mut parser = make_parser();
     let mut errors = Vec::new();
-    for file in ctx.all_sources {
-        // A file that will not parse is not this lint's problem to report; the
-        // compiler says it better and says it first.
-        let Some(tree) = parser.parse(&file.text, None) else {
-            continue;
-        };
+    for (file, tree) in parsed {
         let path = file.rel_path.to_string_lossy();
         let per_file = LintContext {
             source: &file.text,
-            tree: &tree,
+            tree,
             ..*ctx
         };
         for mut err in lint.check(&per_file) {
-            // The crate root keeps its bare message, because that is where a
-            // reader already looks and every existing message reads as if it
-            // were there. Anything else names its file, since a finding
-            // reported against a crate with no path is one nobody can find.
+            // The crate root stays bare, because that is where a reader
+            // already looks. Anything else carries its file as a field, and
+            // the renderer turns it into a location that points at something;
+            // folded into the message it made `{crate}:{line}` read as a
+            // location that pointed at nothing.
             if path != "src/lib.rs" {
-                err.message = format!("{path}: {}", err.message);
+                err.path = Some(path.to_string());
             }
             errors.push(err);
         }
     }
     errors
+}
+
+/// Parse every source file once, for the per-file dispatch to share.
+///
+/// A file that will not parse is dropped rather than reported; the compiler
+/// says it better and says it first.
+fn parse_sources(sources: &[CrateSourceFile]) -> Vec<(&CrateSourceFile, Tree)> {
+    let mut parser = make_parser();
+    sources
+        .iter()
+        .filter_map(|f| parser.parse(&f.text, None).map(|t| (f, t)))
+        .collect()
 }
 
 pub fn make_parser() -> tree_sitter::Parser {
@@ -1239,6 +1272,9 @@ pub fn check_crate_with_extra(
 
     let mut errors = Vec::new();
 
+    // One parse per file, shared by every per-file lint below.
+    let parsed = parse_sources(ctx.all_sources);
+
     // Helper closure to process a single lint
     let process_lint = |lint: &dyn Lint, errors: &mut Vec<LintError>| {
         if doc_only && lint.source_only() {
@@ -1268,7 +1304,7 @@ pub fn check_crate_with_extra(
             return;
         }
 
-        let mut lint_errors = check_every_file(lint, ctx);
+        let mut lint_errors = check_every_file(lint, ctx, &parsed);
 
         // Apply per-finding or base severity overrides
         if let Some(cfg) = overrides {
@@ -1317,6 +1353,11 @@ pub fn check_cross_crate(
 }
 
 /// Run all cross-crate lints plus any custom lints, returning violations.
+// FIXME: no per-file dispatch here: every cross-crate lint reads each crate's
+// root tree only, so single-source, no-duplicate-fn and undocumented-type miss
+// module files that the per-crate path now covers. A naive per-file expansion
+// of the pairs corrupts no-duplicate-fn's crate-keyed suppression lookup, so
+// the fix is per-lint collection with file-attributed items. tracked: #33
 pub fn check_cross_crate_with_extra(
     crates: &[(&str, &LintContext)],
     doc_only: bool,
@@ -1542,22 +1583,50 @@ mod declared_default_severity_tests {
         let mut base = ctx();
         base.all_sources = &files;
 
-        let found = check_every_file(&no_bare_vec::NoBareVec, &base);
+        let found = check_every_file(&no_bare_vec::NoBareVec, &base, &parse_sources(&files));
         assert_eq!(found.len(), 1, "expected the module file's Vec, got {found:?}");
-        assert!(
-            found[0].message.starts_with("src/env.rs: "),
-            "a finding outside the crate root must name its file: {}",
-            found[0].message,
+        assert_eq!(
+            found[0].path.as_deref(),
+            Some("src/env.rs"),
+            "a finding outside the crate root must carry its file: {found:?}",
         );
     }
 
     #[test]
     fn the_crate_root_alone_would_have_missed_it() {
         // The control, and the proof that the test above is measuring the
-        // dispatcher rather than the lint. With no `all_sources` the old path
-        // runs, and the old path is exactly what shipped.
-        let found = check_every_file(&no_bare_vec::NoBareVec, &ctx());
-        assert!(found.is_empty(), "the crate root was clean, so this should find nothing");
+        // dispatcher rather than the lint: the same dirty fixture, dispatched
+        // with only the crate root parsed, finds nothing, because the
+        // violation lives in a module file the root never reads. That is
+        // exactly what shipped before the dispatcher existed.
+        let files = crate_with_a_dirty_module();
+        let mut base = ctx();
+        base.all_sources = &files;
+
+        let root_only = parse_sources(&files[.. 1]);
+        let found = check_every_file(&no_bare_vec::NoBareVec, &base, &root_only);
+        assert!(found.is_empty(), "the crate root is clean, so this should find nothing");
+    }
+
+    #[test]
+    #[ignore = "catalogue: cross-crate lints see only crate roots; tracked #33"]
+    fn a_cross_crate_lint_sees_a_module_file() {
+        // The intended contract, held red on purpose: undocumented-type walks
+        // every file of every crate, so an undocumented pub item in a module
+        // file is found. Today the cross-crate dispatch hands each lint the
+        // root tree only; the per-crate dispatcher's fix has no cross-crate
+        // counterpart yet, and this flips green when it grows one.
+        let files = crate_with_a_dirty_module();
+        let mut base = ctx();
+        base.all_sources = &files;
+
+        let found = check_cross_crate(&[("test-crate", &base)], false, None);
+        assert!(
+            found
+                .iter()
+                .any(|e| e.lint_name == "undocumented-type" && e.message.contains("args")),
+            "an undocumented pub fn in a module file must be found: {found:?}"
+        );
     }
 
     #[test]
@@ -1584,7 +1653,7 @@ mod declared_default_severity_tests {
         let files = crate_with_a_dirty_module();
         let mut base = ctx();
         base.all_sources = &files;
-        assert_eq!(check_every_file(&CrateScoped, &base).len(), 1);
+        assert_eq!(check_every_file(&CrateScoped, &base, &parse_sources(&files)).len(), 1);
     }
 
     fn config_of(name: &str, severity: Severity) -> LintConfig {

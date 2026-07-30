@@ -147,6 +147,9 @@ fn is_type_name(word: &str) -> bool {
 }
 
 /// Collect all struct/enum/trait definitions from a crate's source.
+// FIXME: walks the root tree only, so an undocumented pub item in a module
+// file is never seen; the lint whose whole subject is public items still
+// misses most of them in a multi-file crate. tracked: #33
 fn collect_source_type_defs(ctx: &LintContext) -> Vec<(String, usize)> {
     let mut defs = Vec::new();
     let root = ctx.tree.root_node();
