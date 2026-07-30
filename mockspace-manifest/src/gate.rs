@@ -271,6 +271,45 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
     actions
 }
 
+/// The repo-location variables git exports into hook processes. A child `git`
+/// spawned from a hook inherits them, and any invocation whose working
+/// directory differs from the hook's then resolves against the wrong tree.
+const GIT_REPO_ENV: &[&str] = &[
+    "GIT_DIR",
+    "GIT_COMMON_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_PREFIX",
+];
+
+/// Drop the repo-location `GIT_*` variables git exports into hooks, so every
+/// child `git` rediscovers the repo from its own working directory.
+///
+/// Both binaries run routinely as grandchildren of a git hook, and the engine
+/// spawns `git` with `current_dir` set to the mock workspace, not the repo
+/// root. With `GIT_DIR` inherited and `GIT_WORK_TREE` unset, git treats that
+/// working directory as the top of the work tree: every index path
+/// (`mock/crates/...`) then misses the `crates/...` pathspec, and the
+/// changelist gates read the whole tree as untracked. With a *relative*
+/// `GIT_DIR=.git` the same inheritance makes those invocations fail outright
+/// and the gates run blind. Found live: a worktree commit reported all 84 doc
+/// templates as `(untracked) changed`.
+///
+/// Dropping `GIT_INDEX_FILE` means a `git commit -a` temporary index is not
+/// consulted; the gates already scan staged, unstaged and untracked state
+/// alike, so a change gated one way is gated the other.
+///
+/// Call this first thing in each binary's entry, before any thread spawns;
+/// mutating the environment later is not sound.
+pub fn sanitize_git_env() {
+    for var in GIT_REPO_ENV {
+        // SAFETY: called at process entry before any other thread exists.
+        unsafe { std::env::remove_var(var) };
+    }
+}
+
 /// Point the repo's `core.hooksPath` at `dir`, unless it already points somewhere
 /// mockspace owns.
 ///
@@ -416,5 +455,25 @@ mod tests {
     fn the_fingerprint_changes_with_the_content() {
         assert_ne!(fingerprint("a"), fingerprint("b"));
         assert_eq!(fingerprint("same"), fingerprint("same"));
+    }
+
+    #[test]
+    fn sanitize_drops_every_repo_location_var_and_spares_the_rest() {
+        // SAFETY: no other test in this crate reads or writes these variables.
+        unsafe {
+            std::env::set_var("GIT_DIR", "/somewhere/.git");
+            std::env::set_var("GIT_INDEX_FILE", "/somewhere/.git/index");
+            std::env::set_var("GIT_AUTHOR_NAME", "kept");
+        }
+        sanitize_git_env();
+        assert_eq!(std::env::var_os("GIT_DIR"), None);
+        assert_eq!(std::env::var_os("GIT_INDEX_FILE"), None);
+        assert_eq!(
+            std::env::var("GIT_AUTHOR_NAME").as_deref(),
+            Ok("kept"),
+            "identity variables are not repo-location and must survive"
+        );
+        // SAFETY: as above.
+        unsafe { std::env::remove_var("GIT_AUTHOR_NAME") };
     }
 }
