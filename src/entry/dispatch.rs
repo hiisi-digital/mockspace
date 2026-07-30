@@ -280,18 +280,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 // An unrecognised first positional is a mistyped subcommand,
                 // not a reason to silently run the default full regeneration
                 // (slow, and not what was asked). Report and exit non-zero.
-                eprintln!("error: unknown subcommand `{other}`");
-                if let Some(guess) = suggest_subcommand(other) {
-                    eprintln!("  did you mean `{guess}`?");
-                }
-                eprintln!("\navailable subcommands:");
-                for name in known_subcommands() {
-                    eprintln!("  {name}");
-                }
-                eprintln!(
-                    "\n(run `cargo mock` with no subcommand to regenerate docs and agent rules)"
-                );
-                return ExitCode::from(2);
+                return super::help::unknown_subcommand(other);
             },
         }
     }

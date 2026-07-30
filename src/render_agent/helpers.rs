@@ -172,7 +172,3 @@ pub(crate) fn agent_mode_var(project_name: &str) -> String {
     format!("{upper}_AGENT_MODE")
 }
 
-/// Quote a string as a bash single-quoted literal, escaping internal quotes.
-pub(crate) fn bash_literal(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}

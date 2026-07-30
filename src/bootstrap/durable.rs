@@ -42,12 +42,3 @@ pub(crate) fn ensure_durable_hooks(actions: &mut Vec<String>) -> Option<PathBuf>
     Some(dir)
 }
 
-/// The durable gate's script, from the one shared implementation.
-///
-/// The body lives in `mockspace-manifest` because the launcher installs it too,
-/// before the engine runs, so that every way the engine can fail to start still
-/// leaves the repo gated. A second copy here is exactly the drift this arc has
-/// been removing, so this is a thin forward.
-pub(crate) fn gen_durable_hook(name: &str) -> String {
-    mockspace_manifest::gate::durable_hook(name, HOOK_VERSION)
-}

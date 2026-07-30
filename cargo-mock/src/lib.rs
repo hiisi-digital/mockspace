@@ -178,6 +178,25 @@ fn run(args: &[String]) -> Result<(), String> {
         ));
     }
 
+    // A retired alias intercepts `cargo mock` before this launcher ever runs
+    // under that spelling, so it is refused rather than tolerated: the two
+    // spellings must be the same tool.
+    if located.is_some() {
+        let cargo_cfg = root.join(".cargo").join("config.toml");
+        if let Ok(cfg) = std::fs::read_to_string(&cargo_cfg) {
+            if legacy_alias_present(&cfg) {
+                return Err(format!(
+                    "a retired `cargo mock` alias sits in {}. Cargo resolves \
+                     aliases before external subcommands, so `cargo mock` runs \
+                     whatever the alias points at instead of this launcher. \
+                     Delete the `mock = ...` line, and the [alias] table if \
+                     that empties it, then re-run.",
+                    cargo_cfg.display()
+                ));
+            }
+        }
+    }
+
     // Plant the durable gate BEFORE building the engine.
     //
     // The engine used to be the only thing that installed it, which leaves a
@@ -253,6 +272,29 @@ fn run(args: &[String]) -> Result<(), String> {
 /// The hook version is the launcher's own, and is deliberately shared with the
 /// engine through `mockspace-manifest` rather than duplicated: two copies of a
 /// version number is how a repo ends up with hooks from one era wired by another.
+/// Whether the repo's `.cargo/config.toml` still carries the retired
+/// `cargo mock` alias.
+///
+/// Cargo resolves aliases before external subcommands, so a leftover alias
+/// shadows this launcher whenever `cargo mock` is typed: the user runs
+/// whatever the alias points at, not the pinned engine, and nothing says so.
+/// Per the anomalous-state rule that is an error with guidance, never a
+/// silent difference between `mock` and `cargo mock`.
+fn legacy_alias_present(config: &str) -> bool {
+    let mut in_alias = false;
+    for line in config.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_alias = t == "[alias]";
+            continue;
+        }
+        if in_alias && (t.starts_with("mock =") || t.starts_with("mock=")) {
+            return true;
+        }
+    }
+    false
+}
+
 fn plant_gate(root: &Path) {
     let Some(dir) = mockspace_manifest::gate::durable_hooks_dir(HOOK_VERSION) else {
         return; // no home directory to write into; nothing to do
@@ -374,6 +416,15 @@ fn resolve_pin(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_retired_alias_is_detected_only_under_its_table() {
+        assert!(legacy_alias_present("[alias]\nmock = \"run --quiet\"\n"));
+        assert!(legacy_alias_present("[build]\njobs = 4\n[alias]\nmock=\"x\"\n"));
+        assert!(!legacy_alias_present("[env]\nmock = \"not an alias\"\n"));
+        assert!(!legacy_alias_present("[alias]\nmockery = \"other\"\n"));
+        assert!(!legacy_alias_present(""));
+    }
+
     use super::*;
 
     fn s(v: &[&str]) -> Vec<String> {

@@ -143,13 +143,17 @@ pub(crate) fn print_help() -> ExitCode {
 /// Report an unrecognised subcommand, suggesting the nearest known one.
 pub(crate) fn unknown_subcommand(given: &str) -> ExitCode {
     eprintln!("mock: `{given}` is not a subcommand.");
-    if let Some(s) = crate::entry::suggest_subcommand(&given.to_ascii_lowercase()) {
+    if let Some(s) = crate::entry::suggest_subcommand(given) {
         eprintln!();
         eprintln!("  did you mean `mock {s}`?");
     }
     eprintln!();
-    eprintln!("  `mock help` lists every subcommand.");
-    ExitCode::FAILURE
+    eprintln!("available subcommands:");
+    for name in known_commands() {
+        eprintln!("  {name}");
+    }
+    eprintln!("\n(run `cargo mock` with no subcommand to regenerate docs and agent rules)");
+    ExitCode::from(2)
 }
 
 #[cfg(test)]

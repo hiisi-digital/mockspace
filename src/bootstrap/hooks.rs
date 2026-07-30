@@ -475,7 +475,7 @@ mod byline_hook_tests {
         let (repo, sha) = repo_with_commit(msg);
         let zero = "0".repeat(40);
         let stdin = format!("refs/heads/main {sha} refs/heads/main {zero}\n");
-        let code = run_script(&gen_durable_hook("pre-push"), &[], &stdin, Some(&repo), Some(&launcher_free_path()));
+        let code = run_script(&mockspace_manifest::gate::durable_hook("pre-push", HOOK_VERSION), &[], &stdin, Some(&repo), Some(&launcher_free_path()));
         let _ = std::fs::remove_dir_all(&repo);
         code
     }
@@ -602,7 +602,7 @@ mod byline_hook_tests {
         let zero = "0".repeat(40);
         let stdin = format!("refs/heads/main {sha} refs/heads/main {zero}\n");
         let code = run_script(
-            &gen_durable_hook("pre-push"),
+            &mockspace_manifest::gate::durable_hook("pre-push", HOOK_VERSION),
             &[],
             &stdin,
             Some(&repo),

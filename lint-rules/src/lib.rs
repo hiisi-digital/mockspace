@@ -1558,7 +1558,22 @@ fn run_with_overrides(
     }
 
     let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
-    if base_override.unwrap_or_else(|| lint.default_severity()).is_off() {
+
+    // A configured override wins; absent one, the lint's own declared default
+    // decides whether it runs at all. Naming a lint in any section counts as
+    // asking for it: a consumer can configure only `findings` or only
+    // `params`, which populates neither `base` nor anything else the override
+    // lookup sees, and reading that as silence would make the configuration
+    // inert without saying so.
+    let named_in_config = overrides.is_some_and(|cfg| {
+        cfg.base.contains_key(lint.name())
+            || cfg.findings.contains_key(lint.name())
+            || cfg.params.contains_key(lint.name())
+    });
+    if !named_in_config && lint.default_severity().is_off() {
+        return;
+    }
+    if base_override.is_some_and(|sev| sev.is_off()) {
         return;
     }
 
@@ -2051,7 +2066,7 @@ mod declared_default_severity_tests {
             },
             CrateSourceFile {
                 rel_path: std::path::PathBuf::from("src/env.rs"),
-                text:     "// TODO: replace this stub before shipping\npub fn args() {}\n".to_string(),
+                text:     "pub fn args() { todo!() }\n".to_string(),
             },
         ]
     }
@@ -2067,7 +2082,7 @@ mod declared_default_severity_tests {
         base.all_sources = &files;
 
         let found = check_every_file(&no_todo::NoTodo, &base, &parse_sources(&files));
-        assert_eq!(found.len(), 1, "expected the module file's TODO, got {found:?}");
+        assert_eq!(found.len(), 1, "expected the module file's todo macro, got {found:?}");
         assert_eq!(
             found[0].path.as_deref(),
             Some("src/env.rs"),
