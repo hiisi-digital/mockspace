@@ -1,4 +1,5 @@
 #!/usr/bin/env nutshell
+# shellcheck shell=bash
 # =============================================================================
 # consume-strays - pull every forgotten design artifact into the open round
 # =============================================================================
@@ -38,7 +39,7 @@ DEFAULT_STALE_DAYS=1
 # -----------------------------------------------------------------------------
 
 git_require_repo || exit 2
-root="$(mock_root)" || { log_error "not in a git repository"; exit 2; }
+root="$(mock_root)" || { log_error "could not locate the mockspace (install \`mock\`, or run from a mockspace repository)"; exit 2; }
 cd "$root" || exit 2
 
 if ! mock_is_mockspace; then
@@ -60,7 +61,10 @@ rel_rounds="${rounds#"$root"/}"
 # sees ten commits a day and one that sees ten a month.
 stale_days="$(mock_agent_get design_talk.stale_topic_days "$DEFAULT_STALE_DAYS")"
 case "$stale_days" in
-    ''|*[!0-9]*) stale_days="$DEFAULT_STALE_DAYS" ;;
+    ''|*[!0-9]*)
+        log_error "design_talk.stale_topic_days is '${stale_days}', which is not a whole number of days"
+        exit 2
+        ;;
 esac
 
 phase="$(mock_phase)"
@@ -149,7 +153,7 @@ A changelist is already written. Pulling topics in now would add work the
 changelist does not cover, and a changelist that does not cover its round's
 topics is the failure this script exists to prevent, not a way around it.
 
-Either deprecate the changelist (\`cargo mock deprecate\`) to return to TOPIC
+Either deprecate the changelist (\`mock deprecate\`) to return to TOPIC
 and re-run this, or finish and close this round and consume them into the next
 one. Do not merge them in and leave them unaddressed."
     exit 1

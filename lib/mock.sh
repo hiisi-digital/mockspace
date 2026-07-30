@@ -25,7 +25,7 @@
 
 nut_once || return 0
 
-use toml git log
+use toml log
 
 # The resolution is stable for the life of a process and involves several
 # filesystem probes, so it is done once. A caller that has genuinely changed
@@ -96,7 +96,7 @@ _mock_resolve() {
         return 1
     }
 
-    out="$($launcher locate 2>/dev/null)" || return 1
+    out="$($launcher locate)" || return 1
 
     while IFS= read -r line; do
         case "$line" in
@@ -236,14 +236,15 @@ mock_docs_dir() {
 # Prints: one absolute path per line, nothing when there are none
 #[pub]
 mock_flat_rounds() {
-    local suffix="${1:-}" rounds f
+    local suffix="${1:-}" rounds f prior
     rounds="$(mock_rounds_dir)" || return 1
     [[ -d "$rounds" ]] || return 0
+    prior=$(shopt -p nullglob)
     shopt -s nullglob
     for f in "${rounds}"/*${suffix}; do
         [[ -f "$f" ]] && printf '%s\n' "$f"
     done
-    shopt -u nullglob
+    eval "$prior"
 }
 
 # mock_phase

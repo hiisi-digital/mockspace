@@ -21,7 +21,7 @@ measurement is honest.
 **`mockspace-bench-matrix`** is the opinionated discipline on top, and is where most of the value
 sits. Reach for it whenever the question is a comparison across more than one axis.
 
-Commands: `cargo mock bench init` scaffolds, `add <name>` adds a variant, `run [names...]` measures,
+Commands: `mock bench init` scaffolds, `add <name>` adds a variant, `run [names...]` measures,
 `report` regenerates findings from cache, `list` prints what is registered.
 
 ## Why the framework and not a timing loop
