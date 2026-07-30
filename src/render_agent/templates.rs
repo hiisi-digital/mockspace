@@ -5,6 +5,21 @@ use super::*;
 ///
 /// These are project-agnostic defaults that every mockspace consumer gets
 /// automatically. Consumer templates with the same filename OVERRIDE builtins.
+/// Every builtin skill directory name, enabled or not.
+///
+/// The renderer sweeps stale skill directories against this list, so a knob
+/// turned off takes back what it once wrote. A name missing here leaves its
+/// directory behind forever after the knob flips; the catalogue-sync test
+/// below the skill assembly is what keeps this list honest.
+pub(crate) const BUILTIN_SKILL_DIRS: &[&str] = &[
+    "design-round",
+    "mockup-workflow",
+    "real-code-guard",
+    "sketching",
+    "benchmarking",
+    "design-talk",
+];
+
 pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
     let mock_rel = cfg
         .mock_dir
@@ -782,21 +797,31 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             body: real_code_guard_body,
             files: vec![],
         },
-        BuiltinSkill {
+    ];
+
+    // On by default, from `mock/agent/config.toml`. Sketching and
+    // benchmarking are fundamental to mockspace as a harness (the mistakes
+    // they prevent are made in the first thirty seconds of a task, by every
+    // consumer), so absent keys mean on; the knob exists because no builtin
+    // prose lands in a consumer's context without one.
+    if cfg.agent.sketching_skill {
+        skills.push(BuiltinSkill {
             dir_name: "sketching".to_string(),
             skill_name: "sketching".to_string(),
             skill_description: "Use BEFORE running any feasibility probe: does it compile, does the trait solve, does this shape work, is this feature gate actually needed, what exactly does the compiler say. Covers sketches and spikes. Directs the probe into mock/research/sketches/ with a FINDINGS.md carrying a WORKS / FAILS / INCONCLUSIVE outcome, instead of a throwaway rustc run in a temp directory whose result nobody can re-run and whose toolchain was probably wrong.".to_string(),
             body: include_str!("skills/sketching/SKILL.md").to_string(),
             files: vec![],
-        },
-        BuiltinSkill {
+        });
+    }
+    if cfg.agent.benchmarking_skill {
+        skills.push(BuiltinSkill {
             dir_name: "benchmarking".to_string(),
             skill_name: "benchmarking".to_string(),
             skill_description: "Use BEFORE writing any timing loop or making any claim that one thing is faster, cheaper or smaller than another. Any number that feeds a decision comes from mock/benches/ under the mockspace bench framework: per-variant cdylib isolation, a shared realistic workload, calibrated repetition, and a committed CSV plus findings trail. Covers what to measure, how to keep the comparison honest, and what the deliverable is.".to_string(),
             body: include_str!("skills/benchmarking/SKILL.md").to_string(),
             files: vec![],
-        },
-    ];
+        });
+    }
 
     // Opt-in, from `mock/agent/config.toml`. The flow presumes a human
     // answering design questions in the loop, and a skill that leads a

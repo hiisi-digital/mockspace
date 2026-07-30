@@ -284,6 +284,28 @@ pub fn generate_agent_rules(
         }
     }
 
+    // A knob turned off takes back what it once wrote. A builtin skill
+    // directory that is no longer generated, and is not the consumer's own,
+    // is swept here; otherwise the declared config and the generated surface
+    // disagree forever, since nothing else ever deletes it. Only names from
+    // the builtin catalogue are candidates, so a directory the consumer put
+    // there by hand is never touched.
+    let enabled: Vec<&str> = builtins.skills.iter().map(|s| s.dir_name.as_str()).collect();
+    for dir_name in BUILTIN_SKILL_DIRS {
+        if enabled.contains(dir_name) {
+            continue;
+        }
+        if consumer_skill_names.iter().any(|n| n == dir_name) {
+            continue;
+        }
+        for base in [&claude_skills_dir, &copilot_skills_dir] {
+            let stale = base.join(dir_name);
+            if stale.is_dir() && fs::remove_dir_all(&stale).is_ok() {
+                eprintln!("  {} (builtin skill, removed: disabled)", stale.display());
+            }
+        }
+    }
+
     // --- Consumer skills/*/SKILL.md.tmpl -> .claude/skills/*/SKILL.md + .github/skills/*/SKILL.md ---
     let skills_dir = agent_dir.join("skills");
     if skills_dir.is_dir() {
