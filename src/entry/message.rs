@@ -67,6 +67,20 @@ pub(crate) struct Request<'a> {
 
 /// Lint one message. Returns failure when any finding blocks at `mode`.
 pub(crate) fn run(cfg: &Config, pack: &LintPack, mode: LintMode, req: &Request) -> ExitCode {
+    // An unknown preset name would quietly weaken the predicate, so it is an
+    // error rather than something to route around, and it is checked before
+    // the empty-lints early return below: a typo'd preset in a repo that
+    // happens to ship no message lints is still a typo'd preset.
+    let unknown = agent_mode::unknown_presets(&cfg.agent.attribution.mode_signals);
+    if !unknown.is_empty() {
+        eprintln!(
+            "mock: unknown agent-mode preset(s): {}. known: {}",
+            unknown.join(", "),
+            agent_mode::KNOWN_PRESETS.join(", ")
+        );
+        return ExitCode::FAILURE;
+    }
+
     // No message lints means the project imported no pack that ships one, which
     // is a legitimate state: mockspace itself has no opinion about commit style.
     if pack.message_lints.is_empty() {
@@ -78,18 +92,6 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, mode: LintMode, req: &Request) 
     } else {
         agent_mode::expand(&cfg.agent.attribution.mode_signals)
     };
-
-    // An unknown preset name would quietly weaken the predicate, so it is an
-    // error rather than something to route around.
-    let unknown = agent_mode::unknown_presets(&cfg.agent.attribution.mode_signals);
-    if !unknown.is_empty() {
-        eprintln!(
-            "mock: unknown agent-mode preset(s): {}. known: {}",
-            unknown.join(", "),
-            agent_mode::KNOWN_PRESETS.join(", ")
-        );
-        return ExitCode::FAILURE;
-    }
 
     let resolved = agent_mode::resolve_from_env(&signals);
     let ctx = MessageContext {

@@ -182,8 +182,18 @@ fn run(args: &[String]) -> Result<(), String> {
     // under that spelling, so it is refused rather than tolerated: the two
     // spellings must be the same tool.
     if located.is_some() {
-        let cargo_cfg = root.join(".cargo").join("config.toml");
-        if let Ok(cfg) = std::fs::read_to_string(&cargo_cfg) {
+        // Both spellings cargo honours: config.toml and the extensionless
+        // legacy config. The refusal covers what the retired bootstrap wrote,
+        // which was always repo-local; a user's own alias elsewhere is their
+        // choice, not an anomaly of ours.
+        let candidates = [
+            root.join(".cargo").join("config.toml"),
+            root.join(".cargo").join("config"),
+        ];
+        for cargo_cfg in candidates {
+            let Ok(cfg) = std::fs::read_to_string(&cargo_cfg) else {
+                continue;
+            };
             if legacy_alias_present(&cfg) {
                 return Err(format!(
                     "a retired `cargo mock` alias sits in {}. Cargo resolves \
@@ -267,6 +277,26 @@ fn run(args: &[String]) -> Result<(), String> {
     cache::exec_engine(&bin, &mock_abs, &resolved.lint_rules_dep, args).map(|_never| ())
 }
 
+fn legacy_alias_present(config: &str) -> bool {
+    let mut in_alias = false;
+    for line in config.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_alias = t == "[alias]";
+            continue;
+        }
+        if in_alias
+            && (t.starts_with("mock =")
+                || t.starts_with("mock=")
+                || t.starts_with("\"mock\" =")
+                || t.starts_with("\"mock\"="))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Install the durable hooks and point `core.hooksPath` at them.
 ///
 /// The hook version is the launcher's own, and is deliberately shared with the
@@ -280,26 +310,20 @@ fn run(args: &[String]) -> Result<(), String> {
 /// whatever the alias points at, not the pinned engine, and nothing says so.
 /// Per the anomalous-state rule that is an error with guidance, never a
 /// silent difference between `mock` and `cargo mock`.
-fn legacy_alias_present(config: &str) -> bool {
-    let mut in_alias = false;
-    for line in config.lines() {
-        let t = line.trim();
-        if t.starts_with('[') {
-            in_alias = t == "[alias]";
-            continue;
-        }
-        if in_alias && (t.starts_with("mock =") || t.starts_with("mock=")) {
-            return true;
-        }
-    }
-    false
-}
-
 fn plant_gate(root: &Path) {
     let Some(dir) = mockspace_manifest::gate::durable_hooks_dir(HOOK_VERSION) else {
         return; // no home directory to write into; nothing to do
     };
     let mut actions = mockspace_manifest::gate::install_durable_hooks(&dir, HOOK_VERSION);
+    // The same opt-out the engine honours; without it here the launcher edited
+    // `core.hooksPath` on every invocation and the variable was inert on the
+    // normal path. Hooks still get written; they are inert files until wired.
+    if std::env::var("MOCKSPACE_NO_AUTO_ACTIVATE").is_ok() {
+        for a in actions {
+            eprintln!("mock: {a}");
+        }
+        return;
+    }
     actions.extend(mockspace_manifest::gate::activate(root, &dir));
     for a in actions {
         eprintln!("mock: {a}");

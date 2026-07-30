@@ -38,8 +38,10 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
         return Err("git config core.hooksPath failed".into());
     }
 
-    // Record where this repo's mock workspace lives so the generic durable
-    // hook can locate the live validator at `<root>/<mockdir>/target/hooks`.
+    // Record where this repo's mock workspace lives so the agent hook can
+    // locate the live validator at `<root>/<mockdir>/target/hooks`. The hook
+    // reads it with a `mock` fallback, so only non-default layouts need it;
+    // folding this into `mock locate` for every reader is task #21.
     let mock_rel = mock_dir
         .strip_prefix(repo_root)
         .map(|p| p.display().to_string())
@@ -53,6 +55,7 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
     if !status.success() {
         return Err("git config mockspace.mockdir failed".into());
     }
+
 
     Ok(())
 }

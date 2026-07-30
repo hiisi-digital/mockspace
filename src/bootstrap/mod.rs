@@ -97,9 +97,11 @@ pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
     ensure_generated_hooks(repo_root, mock_dir, &mut actions);
 
     // Opt-out for CI and sandboxed environments where git config edits are
-    // unwanted. The hooks above still get written (they are inert files);
-    // only the `git config` activation is skipped.
+    // unwanted. The hooks above still get written (they are inert files) and
+    // the gitignore stays maintained; only the `git config` activation is
+    // skipped.
     if std::env::var("MOCKSPACE_NO_AUTO_ACTIVATE").is_ok() {
+        ensure_gitignore(repo_root, &mut actions);
         return;
     }
 

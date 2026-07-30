@@ -44,6 +44,12 @@ set -uo pipefail
 __INPUT=$(cat)
 {{{{HOOK_HELPERS}}}}
 
+# Fail closed without jq. Every field below comes from it, and with empty
+# fields DOMAIN stays empty and the gate allows everything: a gate reporting
+# success while enforcing nothing, the exact failure this hook replaces.
+command -v jq >/dev/null 2>&1 \
+    || deny "the message gate cannot run: jq is not on PATH. It refuses rather than passing what it cannot read; install jq and retry."
+
 TOOL_NAME=$(echo "$__INPUT" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
 COMMAND=$(_extract "command")
 FILE_PATH=""
@@ -143,7 +149,11 @@ if [ -z "$(printf '%s' "$SUBMIT" | tr -d '[:space:]')" ]; then allow; fi
 _CACHE_DIR="${{TMPDIR:-/tmp}}/mockspace-message-cache"
 _CACHE_TTL=30
 mkdir -p "$_CACHE_DIR" 2>/dev/null || true
-_KEY=$(printf '%s\0%s' "$DOMAIN" "$SUBMIT" | cksum | tr -d ' ')
+# Keyed on the repo, the policy content, the domain and the text. Without the
+# first two, two repos with different [attribution] policy and one identical
+# message shared a verdict for the TTL, so a byline permitted in one passed in
+# one that forbids it.
+_KEY=$({{ printf '%s\0%s\0%s\0' "$__HOOK_REPO_ROOT" "$DOMAIN" "$SUBMIT"; cat "$__HOOK_REPO_ROOT/{mock_rel}/agent/config.toml" 2>/dev/null || true; }} | cksum | tr -d ' ')
 _CACHE_FILE="$_CACHE_DIR/$_KEY"
 
 _cached_verdict() {{
@@ -514,6 +524,15 @@ mod check_message_tests {
 
     /// Run the hook with a given tool payload. Returns (exit code, stdout).
     fn run(repo_root: &std::path::Path, payload: &str, launcher: Option<&str>) -> (i32, String) {
+        run_env(repo_root, payload, launcher, true)
+    }
+
+    fn run_env(
+        repo_root: &std::path::Path,
+        payload: &str,
+        launcher: Option<&str>,
+        with_jq: bool,
+    ) -> (i32, String) {
         let dir = repo_root.join(format!("h{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("hook.sh");
@@ -558,7 +577,29 @@ mod check_message_tests {
                     .map(|p| p.display().to_string())
             })
             .unwrap_or_default();
-        let path = format!("{}:{jq_dir}:/usr/bin:/bin", bin.display());
+        // Without jq the PATH holds only the stub dir plus a shim carrying the
+        // one external the script touches before its jq guard, so the guard is
+        // genuinely exercised even on systems that keep jq in /usr/bin.
+        let path = if with_jq {
+            format!("{}:{jq_dir}:/usr/bin:/bin", bin.display())
+        } else {
+            let shim = dir.join("shim");
+            std::fs::create_dir_all(&shim).unwrap();
+            #[cfg(unix)]
+            for tool in ["bash", "sh", "cat", "printf"] {
+                let real = Command::new("sh")
+                    .arg("-c")
+                    .arg(format!("command -v {tool}"))
+                    .output()
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+                if !real.is_empty() {
+                    let _ = std::os::unix::fs::symlink(&real, shim.join(tool));
+                }
+            }
+            format!("{}:{}", bin.display(), shim.display())
+        };
         let mut child = Command::new(&script)
             .current_dir(repo_root)
             .env("PATH", path)
@@ -685,6 +726,23 @@ mod check_message_tests {
             assert!(denied(&out), "{tool} must be checked: {out}");
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn without_jq_the_gate_denies_rather_than_allowing_everything() {
+        // Every field the gate reads comes from jq. With jq missing the old
+        // shape read every field as empty, DOMAIN stayed empty, and the gate
+        // allowed everything: success reported, nothing enforced. It must
+        // refuse instead, and say why.
+        let root = scratch();
+        let payload = format!(
+            r#"{{"tool_name":"Bash","tool_input":{{"command":"cd {} && git commit -m x"}}}}"#,
+            root.display()
+        );
+        let (_, out) = run_env(&root, &payload, Some(FAIL), false);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(denied(&out), "a jq-less environment must deny, not pass everything: {out}");
+        assert!(out.contains("jq"), "the refusal names the missing tool: {out}");
     }
 
     #[test]

@@ -65,7 +65,9 @@ impl ModeSignal {
 /// reported by [`unknown_presets`], because silently ignoring a typo in a
 /// security-relevant predicate is the worst possible failure.
 #[must_use]
-pub fn preset_signals(name: &str) -> Vec<ModeSignal> {
+pub // FIXME: same as KNOWN_PRESETS above: a Rust match where the frame wants
+// TOML-defined presets. tracked: #13
+ fn preset_signals(name: &str) -> Vec<ModeSignal> {
     let autonomous = |env: &str, equals: Option<&str>| {
         ModeSignal {
             env:    env.to_string(),
@@ -100,6 +102,9 @@ pub fn preset_signals(name: &str) -> Vec<ModeSignal> {
 }
 
 /// Every preset name this build understands, for error messages.
+// FIXME: presets hardcoded in Rust rather than loaded from TOML; op's frame
+// says defaults live in real TOML files, never in Rust consts. Dissolves when
+// the preset primitive layer lands. tracked: #13
 pub const KNOWN_PRESETS: &[&str] = &["ci", "container", "claude-headless", "copilot-headless"];
 
 /// Preset names in `raw` that this build does not understand.
