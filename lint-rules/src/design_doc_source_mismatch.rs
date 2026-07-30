@@ -32,6 +32,11 @@ const NAMED_ITEM_KINDS: &[&str] = &[
 pub struct DesignDocSourceMismatch;
 
 impl Lint for DesignDocSourceMismatch {
+    /// Crate-scoped. It compares the design document against the whole crate surface. Per file, every name declared elsewhere would read as missing.
+    fn per_file(&self) -> bool {
+        false
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::PUSH_GATE
     }

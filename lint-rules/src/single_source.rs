@@ -36,6 +36,9 @@ impl CrossCrateLint for SingleSource {
         // Collect all type definitions across all crates
         let mut all_defs: Vec<TypeDef> = Vec::new();
 
+        // FIXME: reads each crate's root tree only, so a type defined in a
+        // module file is invisible here; needs per-file collection like the
+        // per-crate dispatcher grew. tracked: #33
         for &(crate_name, ctx) in crates {
             let root = ctx.tree.root_node();
             collect_type_defs(root, ctx.source, crate_name, &mut all_defs);
@@ -80,6 +83,7 @@ impl CrossCrateLint for SingleSource {
                         continue;
                     }
                     errors.push(LintError {
+                        path: None,
                         crate_name:   dup.crate_name.clone(),
                         line:         dup.line,
                         lint_name:    "single-source",

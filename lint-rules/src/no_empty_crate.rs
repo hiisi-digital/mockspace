@@ -38,6 +38,11 @@ const SUBSTANTIVE_KINDS: &[&str] = &[
 pub struct NoEmptyCrate;
 
 impl Lint for NoEmptyCrate {
+    /// Crate-scoped. Whether a crate is empty is a fact about the crate; per file it would call every module file an empty crate.
+    fn per_file(&self) -> bool {
+        false
+    }
+
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::ADVISORY
     }

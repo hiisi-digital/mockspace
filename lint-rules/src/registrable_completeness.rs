@@ -33,6 +33,11 @@ const EXEMPT_MACROS: &[&str] = &[
 pub struct RegistrableCompleteness;
 
 impl Lint for RegistrableCompleteness {
+    /// Crate-scoped. Completeness is a property of the crate's registrations taken together.
+    fn per_file(&self) -> bool {
+        false
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
@@ -108,6 +113,7 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
 
     if !has_registrable {
         errors.push(LintError {
+            path: None,
             crate_name:   ctx.crate_name.to_string(),
             line:         line_idx + 1,
             lint_name:    LINT_NAME,

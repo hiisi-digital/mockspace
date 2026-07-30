@@ -42,6 +42,7 @@ impl Lint for NoEntrySuffix {
                 if let Some(entry_name) = extract_form1_entry(rest) {
                     if !entry_name.ends_with("Descriptor") {
                         errors.push(LintError {
+                            path: None,
                             crate_name: ctx.crate_name.to_string(),
                             line: line_idx + 1,
                             lint_name: "no-entry-suffix",

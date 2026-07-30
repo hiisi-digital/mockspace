@@ -41,6 +41,11 @@ impl FileSize {
 }
 
 impl Lint for FileSize {
+    /// Crate-scoped. It walks `all_sources` itself, so running it per file would measure every file once per file.
+    fn per_file(&self) -> bool {
+        false
+    }
+
     fn name(&self) -> &'static str {
         "file-size"
     }
@@ -144,6 +149,7 @@ impl FileSize {
 
         if count > self.max_lines {
             Some(LintError {
+                path: None,
                 crate_name:   ctx.crate_name.to_string(),
                 line:         1,
                 lint_name:    "file-size",

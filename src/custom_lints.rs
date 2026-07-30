@@ -129,6 +129,20 @@ fn write_cdylib_crate(
     // source, because cargo rejects a patch pointing back at the same source.
     if let Some(patch) = patch_section(lint_rules_dep, &cargo_home()) {
         manifest.push_str(&patch);
+    } else if !packs.is_empty() && extract_between(lint_rules_dep, "git = \"", "\"").is_none() {
+        // The dep has no git url at all (a path/registry override, e.g. the
+        // launcher's `--engine <path>` flag), so there is no revision to patch
+        // a pack's own lint-rules reference against. Left alone, a declared
+        // `[lint-crates]` pack that pulls in mockspace-lint-rules on its own
+        // builds a second, unrelated copy, and the mismatch surfaces as a bare
+        // E0271 at cdylib link that names neither this dependency nor the fix.
+        return Err(format!(
+            "lint-rules dependency `{lint_rules_dep}` has no git url, so it \
+             cannot be unified with the engine's own lint-rules revision for \
+             the `[lint-crates]` pack(s) this repo declares. A path-declared \
+             lint crate cannot be patched to match; declare it with \
+             `git = \"...\"` plus a `branch` or `rev` instead."
+        ));
     }
     write_if_changed(&gen_dir.join("Cargo.toml"), &manifest)?;
 

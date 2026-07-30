@@ -117,7 +117,7 @@ fn check_field_recursive(node: Node, ctx: &LintContext, errors: &mut Vec<LintErr
 ///
 /// Matches patterns like:
 /// - `pub name: String`
-/// - `pub names: DenseColumn<String>`
+/// - `pub names: Vec<String>`
 /// - `name: Option<String>`
 ///
 /// Does NOT match:
@@ -138,7 +138,7 @@ fn contains_bare_string_type(field_text: &str) -> bool {
         return true;
     }
 
-    // Check inside generic parameters: DenseColumn<String>, Option<String>, etc.
+    // Check inside generic parameters: Vec<String>, Option<String>, etc.
     if type_part.contains("<String>")
         || type_part.contains("<String,")
         || type_part.contains(", String>")
