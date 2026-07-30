@@ -48,14 +48,9 @@ mod no_adhoc_error_enum;
 mod no_adhoc_framework;
 mod no_bare_macro_types;
 mod no_bare_pub;
-mod no_bare_result;
-mod no_bare_string;
-mod no_bare_vec;
-mod no_box;
 mod no_duplicate_fn;
 mod no_empty_crate;
 mod no_entry_suffix;
-mod no_float;
 mod no_manual_id;
 mod no_manual_impl;
 mod no_pool_access;
@@ -1285,6 +1280,50 @@ pub struct LintPack {
     pub message_lints:   Vec<Box<dyn MessageLint>>,
 }
 
+/// Every lint name registered more than once across the builtin sets and a
+/// pack, sorted.
+///
+/// A name registered twice runs twice and reports twice, and a
+/// `[lints.<name>]` entry is ambiguous between the two, so at least one
+/// registration is unconfigurable. That state shipped: the builtin set and
+/// the stack pack both registered `no-bare-result` and `no-bare-string` for
+/// months, and a pack's own uniqueness test cannot see across the boundary.
+/// The host checks this before running anything and treats a hit as a hard
+/// configuration error rather than degrading into doubled findings.
+#[must_use]
+pub fn duplicate_lint_names(pack: &LintPack) -> Vec<String> {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut bump = |name: &str| *counts.entry(name.to_string()).or_insert(0) += 1;
+
+    for l in all_lints() {
+        bump(l.name());
+    }
+    for l in all_workspace_lints() {
+        bump(l.name());
+    }
+    for l in all_repo_lints() {
+        bump(l.name());
+    }
+    for l in &pack.crate_lints {
+        bump(l.name());
+    }
+    for l in &pack.workspace_lints {
+        bump(l.name());
+    }
+    for l in &pack.repo_lints {
+        bump(l.name());
+    }
+    for l in &pack.message_lints {
+        bump(l.name());
+    }
+
+    counts
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(name, _)| name)
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -1292,7 +1331,6 @@ pub struct LintPack {
 /// Returns all registered lint rules.
 pub fn all_lints() -> Vec<Box<dyn CrateLint>> {
     vec![
-        Box::new(no_bare_result::NoBareResult),
         Box::new(no_bare_macro_types::NoBareMacroTypes),
         Box::new(no_entry_suffix::NoEntrySuffix),
         Box::new(no_manual_impl::NoManualImpl),
@@ -1301,17 +1339,13 @@ pub fn all_lints() -> Vec<Box<dyn CrateLint>> {
         Box::new(no_primitive_key::NoPrimitiveKey),
         Box::new(no_raw_error_outside_primitives::NoRawErrorOutsidePrimitives),
         Box::new(no_pool_access::NoPoolAccess),
-        Box::new(no_bare_vec::NoBareVec),
-        Box::new(no_box::NoBox),
         Box::new(no_empty_crate::NoEmptyCrate),
         Box::new(design_doc_source_mismatch::DesignDocSourceMismatch),
         Box::new(actionable_errors::ActionableErrors),
         Box::new(file_size::FileSize::new()),
-        Box::new(no_float::NoFloat),
         Box::new(export_count::ExportCount),
         Box::new(no_todo::NoTodo),
         Box::new(no_adhoc_framework::NoAdhocFramework),
-        Box::new(no_bare_string::NoBareString),
         Box::new(no_self_define::NoSelfDefine),
         Box::new(registrable_completeness::RegistrableCompleteness),
         Box::new(repr_c_abi_safety::ReprCAbiSafety),
@@ -2017,7 +2051,7 @@ mod declared_default_severity_tests {
             },
             CrateSourceFile {
                 rel_path: std::path::PathBuf::from("src/env.rs"),
-                text:     "pub fn args() -> Vec<String> { todo!() }\n".to_string(),
+                text:     "// TODO: replace this stub before shipping\npub fn args() {}\n".to_string(),
             },
         ]
     }
@@ -2027,13 +2061,13 @@ mod declared_default_severity_tests {
         // The bug this dispatcher exists for. `ctx.source` is the crate root and
         // nothing else, so every surface lint read `src/lib.rs` and skipped the
         // rest of the crate while the gate reported clean. In kolli that hid
-        // three `Vec` in a public signature through a full review.
+        // real findings in module files through a full review.
         let files = crate_with_a_dirty_module();
         let mut base = ctx();
         base.all_sources = &files;
 
-        let found = check_every_file(&no_bare_vec::NoBareVec, &base, &parse_sources(&files));
-        assert_eq!(found.len(), 1, "expected the module file's Vec, got {found:?}");
+        let found = check_every_file(&no_todo::NoTodo, &base, &parse_sources(&files));
+        assert_eq!(found.len(), 1, "expected the module file's TODO, got {found:?}");
         assert_eq!(
             found[0].path.as_deref(),
             Some("src/env.rs"),
@@ -2053,8 +2087,56 @@ mod declared_default_severity_tests {
         base.all_sources = &files;
 
         let root_only = parse_sources(&files[.. 1]);
-        let found = check_every_file(&no_bare_vec::NoBareVec, &base, &root_only);
+        let found = check_every_file(&no_todo::NoTodo, &base, &root_only);
         assert!(found.is_empty(), "the crate root is clean, so this should find nothing");
+    }
+
+    #[test]
+    fn the_builtin_set_alone_has_no_duplicate_names() {
+        // The gate the host runs on every pack also pins the builtin set
+        // itself: two builtins sharing a name would be the same double-report
+        // bug with nobody external to blame.
+        assert_eq!(duplicate_lint_names(&LintPack::default()), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_pack_reusing_a_builtin_name_is_reported() {
+        // The shipped incident: the stack pack and the builtin set both
+        // registered a lint under one name, every finding doubled, and the
+        // config could not address either copy.
+        struct Shadow;
+        impl Lint for Shadow {
+            fn name(&self) -> &'static str {
+                "no-todo"
+            }
+        }
+        impl CrateLint for Shadow {
+            fn check(&self, _ctx: &LintContext) -> Vec<LintError> {
+                Vec::new()
+            }
+        }
+        let mut pack = LintPack::default();
+        pack.crate_lints.push(Box::new(Shadow));
+        assert_eq!(duplicate_lint_names(&pack), vec!["no-todo".to_string()]);
+    }
+
+    #[test]
+    fn a_duplicate_inside_one_pack_is_reported_too() {
+        struct Twin;
+        impl Lint for Twin {
+            fn name(&self) -> &'static str {
+                "twin-lint"
+            }
+        }
+        impl CrateLint for Twin {
+            fn check(&self, _ctx: &LintContext) -> Vec<LintError> {
+                Vec::new()
+            }
+        }
+        let mut pack = LintPack::default();
+        pack.crate_lints.push(Box::new(Twin));
+        pack.crate_lints.push(Box::new(Twin));
+        assert_eq!(duplicate_lint_names(&pack), vec!["twin-lint".to_string()]);
     }
 
     #[test]

@@ -122,6 +122,23 @@ pub fn run_lints(
     primitive_introductions: &std::collections::BTreeMap<String, Vec<String>>,
     pack: &LintPack,
 ) -> usize {
+    // A duplicated lint name is a configuration error, not a linting result:
+    // every finding would double and `[lints.<name>]` would be ambiguous
+    // between the registrations. Error and guide before running anything,
+    // rather than partially enforcing.
+    let duplicates = mockspace_lint_rules::duplicate_lint_names(pack);
+    if !duplicates.is_empty() {
+        for name in &duplicates {
+            eprintln!(
+                "  [lint-config] `{name}` is registered more than once (the builtin set \
+                 plus an imported pack, or twice across packs). Rename or remove one \
+                 registration; until then its findings would double and \
+                 `[lints.{name}]` could not say which one it configures."
+            );
+        }
+        return duplicates.len();
+    }
+
     let all_crate_names: BTreeSet<String> = crates.keys().cloned().collect();
     let workspace_root = crates_dir.parent().unwrap_or(crates_dir);
 
