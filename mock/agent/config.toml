@@ -1,0 +1,4 @@
+# Agent integration config.
+
+# Opt in to the interactive design-talk skill and the script it ships.
+agent_accelerated_interactive_design_talks = true

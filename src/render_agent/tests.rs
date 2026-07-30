@@ -252,3 +252,165 @@ fn agent_gate_is_a_generated_builtin() {
         .unwrap();
     assert!(gate.matchers.iter().any(|s| s == "Bash"));
 }
+
+// ---------------------------------------------------------------------------
+// The design-talk skill and the files it ships
+// ---------------------------------------------------------------------------
+//
+// A skill that only tells an agent what to do is a rule with extra steps. This
+// one carries a script, so the shipping of files is part of the contract, and
+// the gate is opt-in because the flow presumes a human answering in the loop.
+
+/// A throwaway repository with a mockspace.toml and an agent config, so the
+/// gate is exercised through the config that actually declares it rather than
+/// through a hand-built struct that could drift from it.
+fn skill_fixture(design_talks: Option<bool>) -> std::path::PathBuf {
+    // A sequence number besides the pid and the flag: two tests passing the
+    // same flag otherwise share one directory and remove_dir_all it under
+    // each other when the suite runs in parallel.
+    static FIXTURE_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "mockspace-skilltest-{}-{}-{:?}",
+        std::process::id(),
+        FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        design_talks
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let mock = root.join("mock");
+    std::fs::create_dir_all(mock.join("agent")).unwrap();
+    std::fs::write(
+        root.join("mockspace.toml"),
+        "project_name = \"fixture\"\ncrate_prefix = \"fixture\"\nmock_dir = \"mock\"\n",
+    )
+    .unwrap();
+    if let Some(on) = design_talks {
+        std::fs::write(
+            mock.join("agent").join("config.toml"),
+            format!("agent_accelerated_interactive_design_talks = {on}\n"),
+        )
+        .unwrap();
+    }
+    mock
+}
+
+// The same fixture with an arbitrary agent config, for knobs beyond the
+// design-talk one.
+fn skill_fixture_config(config: &str) -> std::path::PathBuf {
+    let mock = skill_fixture(None);
+    std::fs::write(mock.join("agent").join("config.toml"), config).unwrap();
+    mock
+}
+
+#[test]
+fn design_talk_skill_is_absent_unless_opted_in() {
+    for declared in [None, Some(false)] {
+        let cfg = crate::config::Config::from_dir(&skill_fixture(declared));
+        let builtins = generate_builtin_templates(&cfg);
+        assert!(
+            !builtins.skills.iter().any(|s| s.dir_name == "design-talk"),
+            "off by default, and off when declared false ({declared:?})"
+        );
+    }
+}
+
+#[test]
+fn design_talk_skill_ships_its_script_executable_and_its_manifest() {
+    let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
+    let builtins = generate_builtin_templates(&cfg);
+
+    let skill = builtins
+        .skills
+        .iter()
+        .find(|s| s.dir_name == "design-talk")
+        .expect("opted in, so the skill is generated");
+
+    let script = skill
+        .files
+        .iter()
+        .find(|f| f.rel_path == "scripts/consume-strays")
+        .expect("the skill ships its script");
+    assert!(
+        script.executable,
+        "a script without the executable bit cannot be run, which is the whole point"
+    );
+    assert!(
+        script.contents.starts_with("#!/usr/bin/env nutshell"),
+        "shipped verbatim, so the shebang is still the first line"
+    );
+
+    let manifest = skill
+        .files
+        .iter()
+        .find(|f| f.rel_path == "nut.toml")
+        .expect("the script's dependencies are declared beside it");
+    assert!(
+        manifest.contents.contains("[deps.mockspace]"),
+        "the script uses mockspace::mock, so the unit declares it"
+    );
+}
+
+#[test]
+fn the_skill_catalogue_names_every_builtin_and_nothing_else() {
+    // The sweep in the renderer deletes stale directories against
+    // BUILTIN_SKILL_DIRS. A generated skill missing from the catalogue would
+    // never be swept when its knob turns off; a catalogue name nothing
+    // generates would sweep a directory no knob can bring back.
+    let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
+    let builtins = generate_builtin_templates(&cfg);
+
+    for skill in &builtins.skills {
+        assert!(
+            BUILTIN_SKILL_DIRS.contains(&skill.dir_name.as_str()),
+            "{} is generated but absent from BUILTIN_SKILL_DIRS, so disabling \
+             it would leave its directory behind forever",
+            skill.dir_name
+        );
+    }
+    for dir in BUILTIN_SKILL_DIRS {
+        assert!(
+            builtins.skills.iter().any(|s| s.dir_name == *dir),
+            "{dir} is in BUILTIN_SKILL_DIRS but nothing generates it with \
+             every knob on, so the sweep could delete what no knob restores"
+        );
+    }
+}
+
+#[test]
+fn sketching_and_benchmarking_can_be_declined() {
+    // Default on, but a knob: no builtin prose lands in a consumer's context
+    // without one, and declining must actually decline.
+    let cfg = crate::config::Config::from_dir(&skill_fixture_config(
+        "agent_sketching_skill = false\nagent_benchmarking_skill = false\n",
+    ));
+    let builtins = generate_builtin_templates(&cfg);
+    for name in ["sketching", "benchmarking"] {
+        assert!(
+            !builtins.skills.iter().any(|s| s.dir_name == name),
+            "{name} was declined in config and generated anyway"
+        );
+    }
+}
+
+#[test]
+fn sketching_and_benchmarking_are_on_by_default() {
+    // Unlike design-talk, these default on: the mistake they prevent is
+    // made in the first thirty seconds of a task, by every consumer, whether
+    // or not a human is in the loop. An absent key or file means on.
+    for declared in [None, Some(false), Some(true)] {
+        let cfg = crate::config::Config::from_dir(&skill_fixture(declared));
+        let builtins = generate_builtin_templates(&cfg);
+        for want in ["sketching", "benchmarking"] {
+            let skill = builtins
+                .skills
+                .iter()
+                .find(|s| s.dir_name == want)
+                .unwrap_or_else(|| panic!("{want} defaults on whatever the design-talk knob says ({declared:?})"));
+            assert!(
+                skill.skill_description.contains("BEFORE"),
+                "{want}'s description must say when to invoke it, since that is what makes a \
+                 skill discoverable at the moment it is needed"
+            );
+            assert!(!skill.body.is_empty());
+        }
+    }
+}

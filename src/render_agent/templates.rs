@@ -5,6 +5,21 @@ use super::*;
 ///
 /// These are project-agnostic defaults that every mockspace consumer gets
 /// automatically. Consumer templates with the same filename OVERRIDE builtins.
+/// Every builtin skill directory name, enabled or not.
+///
+/// The renderer sweeps stale skill directories against this list, so a knob
+/// turned off takes back what it once wrote. A name missing here leaves its
+/// directory behind forever after the knob flips; the catalogue-sync test
+/// below the skill assembly is what keeps this list honest.
+pub(crate) const BUILTIN_SKILL_DIRS: &[&str] = &[
+    "design-round",
+    "mockup-workflow",
+    "real-code-guard",
+    "sketching",
+    "benchmarking",
+    "design-talk",
+];
+
 pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
     let mock_rel = cfg
         .mock_dir
@@ -236,6 +251,75 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
                     "numbers are unreproducible one-offs that cannot decide anything. Do not re-roll timing helpers, ",
                     "bump providers, or stat collection inside a bench crate either: the framework is the reusable ",
                     "surface, use it.\n",
+                    "\n",
+                    "**Invoke the skill before starting, not after.** The `sketching` skill governs feasibility work ",
+                    "and the `benchmarking` skill governs measurement, and each carries the conventions, the ",
+                    "deliverable format and the failure modes for its side. This is not optional and it is not a ",
+                    "reference to consult when stuck: the mistake both prevent is made in the first thirty seconds, ",
+                    "when a quick probe in a temp directory or a quick timing loop in a scratch file feels cheaper ",
+                    "than doing it properly. It is cheaper, and it produces a number or an answer that nobody can ",
+                    "re-run, that was very possibly measured against the wrong toolchain or optimised away entirely, ",
+                    "and that a decision then rests on.\n",
+                ),
+                &mock_rel, project_name, crate_prefix,
+            ),
+        },
+        BuiltinRule {
+            name: "design-round-consumes-its-inheritance".to_string(),
+            apply_to: vec![format!("{mock_rel}/design_rounds/**")],
+            body: substitute_builtin_vars(
+                concat!(
+                    "## A round consumes what was filed for it, and never sheds it\n",
+                    "\n",
+                    "A topic file left open in TOPIC phase is a filing: somebody found something while working ",
+                    "elsewhere and left it in the way so the next round would have to address it. This round is that ",
+                    "next round. Every flat topic in `{mock_dir}/design_rounds/` is this round's work, whoever wrote it ",
+                    "and whenever.\n",
+                    "\n",
+                    "**Every open topic is named in this round's changelists.** Say what it changes, or say why it ",
+                    "needs nothing. A topic that turns out to be out of scope still gets that written down, with the ",
+                    "reason. Silence is indistinguishable from having missed it.\n",
+                    "\n",
+                    "**Never shed one.** Do not stash it, do not delete it, do not move it to another branch, and do ",
+                    "not close the round leaving it unmentioned. If it genuinely belongs to later work it is re-filed ",
+                    "as a fresh flat topic after this round closes, so the next round inherits it the same way.\n",
+                    "\n",
+                    "### Three ways a filing disappears, all observed\n",
+                    "\n",
+                    "**A topic on a branch that never merged.** The next round branches from trunk, cannot see it, and ",
+                    "reports the question as still open because the files say so. Starting a round by branching fresh ",
+                    "from trunk drops every filing that has not landed there.\n",
+                    "\n",
+                    "**A topic swept into somebody else's archive.** `close` sweeps every loose flat file into the one ",
+                    "subdirectory it is building, regardless of which round the file belonged to. A topic filed while ",
+                    "another round is in flight is archived by that round's close, under that round's name.\n",
+                    "\n",
+                    "**An archive missing from a branch.** A closed round's directory is finished history and belongs ",
+                    "on every branch. When it exists only on a branch that never merged, the entire paper trail for ",
+                    "that design conversation is absent from trunk, and nothing reports it.\n",
+                    "\n",
+                    "### Before opening a changelist\n",
+                    "\n",
+                    "Check every ref for flat topics and archived round directories this branch cannot see, and pull ",
+                    "in what it finds. Do this while still in TOPIC: consuming a topic into a round whose changelist is ",
+                    "already written adds work the changelist does not cover, which is the failure this prevents rather ",
+                    "than a way around it. If the round has moved past TOPIC, deprecate the changelist and return to ",
+                    "TOPIC first.\n",
+                    "\n",
+                    "### A topic file is a transcript, and accretes\n",
+                    "\n",
+                    "One file per subject, added to as the round returns to it. A topic that settles in three ",
+                    "lines does not earn a file: it is appended to the file for the subject it belongs to, under ",
+                    "a new heading. Start a new file when the SUBJECT changes, not when a question is answered.\n",
+                    "\n",
+                    "Size is the check. Under roughly 300 words a topic file is almost certainly a fragment of ",
+                    "another one, and most of what is in it will be heading and metadata rather than content; find ",
+                    "the file it belongs to and append there. Over roughly 2000 words it is carrying more than one ",
+                    "subject and wants splitting along the seam.\n",
+                    "\n",
+                    "The freeze on a committed topic is against **rewriting**, never against appending. Never edit ",
+                    "or delete what is already recorded, because that is the audit trail. Adding a later section is ",
+                    "how a transcript works and is expected.\n",
                 ),
                 &mock_rel, project_name, crate_prefix,
             ),
@@ -395,9 +479,14 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "- The doc changelist covers ALL topics in the round. It is the doc execution plan.\n",
             "- The src changelist is written after docs are locked, against actual doc state.\n",
             "- Do not skip either changelist. Without them, execution is ad hoc.\n",
-            "- **Topic files are frozen once committed.** A committed topic is history. It\n",
-            "  cannot be edited, regardless of phase. To add corrections, create a new topic\n",
-            "  file (only possible during TOPIC phase, before a changelist exists).\n",
+            "- **A topic file is a transcript and accretes.** One file per subject, added to\n",
+            "  as the talk returns to it. The freeze on a committed topic is against\n",
+            "  REWRITING, not against appending: never edit or delete what is recorded, that\n",
+            "  is the audit trail, but adding a later section is how a transcript works.\n",
+            "  Start a new file when the SUBJECT changes, not when a question is answered.\n",
+            "  Under roughly 300 words a file is a fragment of another one and belongs there\n",
+            "  instead, since most of it will be heading rather than content; over roughly\n",
+            "  2000 words it carries two subjects and wants splitting along the seam.\n",
             "- **No new topics after changelist.** Once a changelist is committed, the round\n",
             "  is crystallized. No new topic files can be created. To add new topics,\n",
             "  deprecate the changelist (`cargo mock deprecate`) and return to TOPIC phase.\n",
@@ -574,7 +663,9 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             "  in `design_rounds/` (IMPL phase).\n",
             "- Never create new topic files after a changelist exists. The changelist\n",
             "  crystallizes the round. Deprecate the changelist to return to TOPIC phase.\n",
-            "- Never edit a committed topic file. Topics are frozen once committed, always.\n",
+            "- Never rewrite or delete what a committed topic already records; that is the\n",
+            "  audit trail. Appending a later section to it is expected and is how a topic\n",
+            "  file accretes across a talk.\n",
             "- Never reference or reason about real crate code during the design phase.\n",
             "  Real crates do not exist. The mock is the only codebase.\n",
             "- Never write discovered rules into memory files, plan files, or session notes.\n",
@@ -684,26 +775,78 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
         crate_prefix,
     );
 
-    let skills = vec![
+    let mut skills = vec![
         BuiltinSkill {
             dir_name: "design-round".to_string(),
             skill_name: "design-round".to_string(),
             skill_description: "Guide for running design round conversations. Use this when starting a new design round, discussing design topics with the user, or when the user asks to brainstorm or design a new subsystem, feature, or architectural change.".to_string(),
             body: design_round_body,
+            files: vec![],
         },
         BuiltinSkill {
             dir_name: "mockup-workflow".to_string(),
             skill_name: "mockup-workflow".to_string(),
             skill_description: "Guide for the mockup-first design and documentation workflow. Use this skill whenever changing framework design, adding or modifying traits, types, crate structure, or regenerating documentation. Also use when asked to implement features in real crates -- the mock must be updated first.".to_string(),
             body: mockup_workflow_body,
+            files: vec![],
         },
         BuiltinSkill {
             dir_name: "real-code-guard".to_string(),
             skill_name: "real-code-guard".to_string(),
             skill_description: "Enforces mock-first workflow when implementing features in real crates. Use this whenever modifying, creating, or refactoring code in the crates/ directory, examples/ directory, or any Rust source file outside the mock workspace. Also use when asked to implement a feature or make a change to the framework.".to_string(),
             body: real_code_guard_body,
+            files: vec![],
         },
     ];
+
+    // On by default, from `mock/agent/config.toml`. Sketching and
+    // benchmarking are fundamental to mockspace as a harness (the mistakes
+    // they prevent are made in the first thirty seconds of a task, by every
+    // consumer), so absent keys mean on; the knob exists because no builtin
+    // prose lands in a consumer's context without one.
+    if cfg.agent.sketching_skill {
+        skills.push(BuiltinSkill {
+            dir_name: "sketching".to_string(),
+            skill_name: "sketching".to_string(),
+            skill_description: "Use BEFORE running any feasibility probe: does it compile, does the trait solve, does this shape work, is this feature gate actually needed, what exactly does the compiler say. Covers sketches and spikes. Directs the probe into mock/research/sketches/ with a FINDINGS.md carrying a WORKS / FAILS / INCONCLUSIVE outcome, instead of a throwaway rustc run in a temp directory whose result nobody can re-run and whose toolchain was probably wrong.".to_string(),
+            body: include_str!("skills/sketching/SKILL.md").to_string(),
+            files: vec![],
+        });
+    }
+    if cfg.agent.benchmarking_skill {
+        skills.push(BuiltinSkill {
+            dir_name: "benchmarking".to_string(),
+            skill_name: "benchmarking".to_string(),
+            skill_description: "Use BEFORE writing any timing loop or making any claim that one thing is faster, cheaper or smaller than another. Any number that feeds a decision comes from mock/benches/ under the mockspace bench framework: per-variant cdylib isolation, a shared realistic workload, calibrated repetition, and a committed CSV plus findings trail. Covers what to measure, how to keep the comparison honest, and what the deliverable is.".to_string(),
+            body: include_str!("skills/benchmarking/SKILL.md").to_string(),
+            files: vec![],
+        });
+    }
+
+    // Opt-in, from `mock/agent/config.toml`. The flow presumes a human
+    // answering design questions in the loop, and a skill that leads a
+    // conversation nobody is having is noise in the agent's context.
+    if cfg.agent.accelerated_interactive_design_talks {
+        skills.push(BuiltinSkill {
+            dir_name: "design-talk".to_string(),
+            skill_name: "design-talk".to_string(),
+            skill_description: "Use when open design questions must be resolved before implementation begins (for example \"let's discuss the design\", \"talk it through with me first\", or resolving parked design decisions). Leads the conversation, consumes topics filed for this round from every ref before starting, writes one topic file per topic as each settles, and re-presents everything for one confirmation before any changelist opens.".to_string(),
+            body: include_str!("skills/design-talk/SKILL.md").to_string(),
+            files: vec![
+                SkillFile {
+                    rel_path:   "scripts/consume-strays".to_string(),
+                    contents:   include_str!("skills/design-talk/scripts/consume-strays")
+                        .to_string(),
+                    executable: true,
+                },
+                SkillFile {
+                    rel_path:   "nut.toml".to_string(),
+                    contents:   include_str!("skills/design-talk/nut.toml").to_string(),
+                    executable: false,
+                },
+            ],
+        });
+    }
 
     // --- Builtin Preamble ---
     //
