@@ -1,0 +1,18 @@
+# =============================================================================
+# design-talk - the skill's own unit
+# =============================================================================
+# A nut.toml belongs to the unit that declares the dependency, the way a
+# Cargo.toml belongs to a crate. This one sits beside the scripts that `use`
+# these, so they resolve the same however the skill is invoked and from
+# whichever repository the caller happens to be standing in.
+# =============================================================================
+
+[meta]
+name = "design-talk"
+description = "Design-talk tooling: consuming stranded design artifacts into the open round"
+
+# mockspace ships the config library: where a repository keeps its mockspace,
+# what it is named, which config governs it, and what phase the round is in.
+[deps.mockspace]
+git = "https://github.com/hiisi-digital/mockspace.git"
+ref = "dev"

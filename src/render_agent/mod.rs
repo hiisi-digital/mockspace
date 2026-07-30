@@ -258,6 +258,52 @@ pub fn generate_agent_rules(
         render_design::write_generated(&copilot_path, &copilot_content);
         eprintln!("  {} (builtin)", copilot_path.display());
         count += 1;
+
+        // Anything runnable the skill ships, into both surfaces so either agent
+        // can invoke it. Written verbatim rather than through write_generated:
+        // that prepends an auto-generated banner, which would sit above the
+        // shebang and stop a script being a script.
+        for file in &builtin_skill.files {
+            for skill_dir in [&claude_skill_dir, &copilot_skill_dir] {
+                let dest = skill_dir.join(&file.rel_path);
+                if let Some(parent) = dest.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if fs::write(&dest, &file.contents).is_err() {
+                    eprintln!("  warning: could not write {}", dest.display());
+                    continue;
+                }
+                #[cfg(unix)]
+                if file.executable {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(0o755));
+                }
+                eprintln!("  {} (builtin)", dest.display());
+                count += 1;
+            }
+        }
+    }
+
+    // A knob turned off takes back what it once wrote. A builtin skill
+    // directory that is no longer generated, and is not the consumer's own,
+    // is swept here; otherwise the declared config and the generated surface
+    // disagree forever, since nothing else ever deletes it. Only names from
+    // the builtin catalogue are candidates, so a directory the consumer put
+    // there by hand is never touched.
+    let enabled: Vec<&str> = builtins.skills.iter().map(|s| s.dir_name.as_str()).collect();
+    for dir_name in BUILTIN_SKILL_DIRS {
+        if enabled.contains(dir_name) {
+            continue;
+        }
+        if consumer_skill_names.iter().any(|n| n == dir_name) {
+            continue;
+        }
+        for base in [&claude_skills_dir, &copilot_skills_dir] {
+            let stale = base.join(dir_name);
+            if stale.is_dir() && fs::remove_dir_all(&stale).is_ok() {
+                eprintln!("  {} (builtin skill, removed: disabled)", stale.display());
+            }
+        }
     }
 
     // --- Consumer skills/*/SKILL.md.tmpl -> .claude/skills/*/SKILL.md + .github/skills/*/SKILL.md ---

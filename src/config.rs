@@ -125,9 +125,10 @@ pub struct Config {
     /// cargo-deny or the config is absent. Default true.
     pub deny_check:      bool,
 
-    /// Agent integration config from `mock/agent/config.toml` if present.
-    /// Empty defaults when the file is absent.
-    pub attribution: AttributionConfig,
+    /// Everything read from `mock/agent/config.toml`. Grouped rather than
+    /// spread across this struct so a reader can tell at a glance which file
+    /// a setting comes from; the rest of `Config` is `mockspace.toml`.
+    pub agent: AgentConfig,
 
     // --- Lint overrides ---
     /// Per-lint severity overrides from `[lints]` section.
@@ -199,6 +200,48 @@ pub struct Config {
     /// supplements the detected set rather than replacing it,
     /// letting both paths coexist during the migration.
     pub primitive_introductions: BTreeMap<String, Vec<String>>,
+}
+
+/// Everything `mock/agent/config.toml` declares.
+///
+/// Its own type so the provenance is in the shape rather than in a comment on
+/// each field: anything here came from the agent file, and anything on
+/// `Config` outside this came from `mockspace.toml`. An absent file yields
+/// defaults throughout, so adopting the agent surface is opt-in per setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentConfig {
+    /// Commit byline policy per agent mode.
+    pub attribution: AttributionConfig,
+
+    /// Generate the interactive design-talk skill and the script it ships.
+    ///
+    /// Off by default. The flow presumes a human answering design questions in
+    /// the loop, which is not every project's shape, and a skill that leads a
+    /// conversation nobody is having is noise in the agent's context.
+    pub accelerated_interactive_design_talks: bool,
+
+    /// On by default: the mistake the sketching skill prevents is made in the
+    /// first thirty seconds of a task, by every consumer, so it earns a
+    /// default. Still a knob, because no builtin prose lands in a consumer's
+    /// agent context without one.
+    pub sketching_skill: bool,
+
+    /// On by default, same reasoning as `sketching_skill`.
+    pub benchmarking_skill: bool,
+}
+
+// Not derived: the derive would default every bool to false, and the two
+// skill knobs default to on. One impl keeps "absent file" and "absent key"
+// meaning the same thing everywhere.
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            attribution: AttributionConfig::default(),
+            accelerated_interactive_design_talks: false,
+            sketching_skill: true,
+            benchmarking_skill: true,
+        }
+    }
 }
 
 /// Commit byline policy per agent mode, from `mock/agent/config.toml` `[attribution]`.
@@ -274,6 +317,16 @@ impl Default for CommitStyle {
 #[serde(default)]
 struct RawAgentConfig {
     attribution: Option<RawAttribution>,
+    /// Opt in to the interactive design-talk skill, which leads a decision
+    /// conversation and ships a script that pulls stranded topics and archived
+    /// rounds into the open round.
+    agent_accelerated_interactive_design_talks: Option<bool>,
+
+    /// Opt out of the sketching skill builtin; absent means on.
+    agent_sketching_skill: Option<bool>,
+
+    /// Opt out of the benchmarking skill builtin; absent means on.
+    agent_benchmarking_skill: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -542,15 +595,22 @@ impl Config {
         let agent_config_content = fs::read_to_string(&agent_config_path).unwrap_or_default();
         let raw_agent: RawAgentConfig =
             toml_edit::de::from_str(&agent_config_content).unwrap_or_default();
-        let attribution = raw_agent
-            .attribution
-            .map(|a| {
-                AttributionConfig {
-                    non_autonomous: a.non_autonomous.unwrap_or_default(),
-                    autonomous:     a.autonomous.unwrap_or_default(),
-                }
-            })
-            .unwrap_or_default();
+        let agent = AgentConfig {
+            attribution: raw_agent
+                .attribution
+                .map(|a| {
+                    AttributionConfig {
+                        non_autonomous: a.non_autonomous.unwrap_or_default(),
+                        autonomous:     a.autonomous.unwrap_or_default(),
+                    }
+                })
+                .unwrap_or_default(),
+            accelerated_interactive_design_talks: raw_agent
+                .agent_accelerated_interactive_design_talks
+                .unwrap_or(false),
+            sketching_skill: raw_agent.agent_sketching_skill.unwrap_or(true),
+            benchmarking_skill: raw_agent.agent_benchmarking_skill.unwrap_or(true),
+        };
 
         // Builtins first, then the project's own, so a project may repoint a
         // builtin root but never has to declare one to get started.
@@ -628,7 +688,7 @@ impl Config {
             auto_fmt: raw.auto_fmt.unwrap_or(true),
             auto_clippy_fix: raw.auto_clippy_fix.unwrap_or(true),
             deny_check: raw.deny_check.unwrap_or(true),
-            attribution,
+            agent,
             lint_overrides,
             domain_kinds,
             known_macros,

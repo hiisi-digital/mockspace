@@ -1,0 +1,222 @@
+#!/usr/bin/env nutshell
+# shellcheck shell=bash
+# =============================================================================
+# consume-strays - pull every forgotten design artifact into the open round
+# =============================================================================
+# A design round is supposed to be where everything previously talked about
+# gets addressed. Three ways that fails silently, all three observed in this
+# workspace on 2026-07-29:
+#
+#   1. A topic filed to force the next round sits on its own branch and is
+#      never merged. The next round branches from trunk, cannot see it, and
+#      reports the question as still open because the files say so.
+#   2. A topic filed while another round is in flight gets swept into that
+#      round's archive by `close`, which sweeps every loose flat file into one
+#      subdirectory regardless of which round it belonged to.
+#   3. An archived round exists only on a branch that never merged, so the
+#      paper trail for a whole design conversation is absent from trunk.
+#
+# Each is invisible from inside the round that inherits the loss. This finds
+# all three across every ref and pulls them in, because a filing that has to be
+# noticed by a human to survive does not survive.
+#
+# Acts only in TOPIC phase: consuming a topic into a round whose changelist is
+# already written would add work the changelist does not cover, which is the
+# opposite of the point.
+#
+# Exit: 0 clean or consumed, 1 strays found but the round is past TOPIC,
+#       2 could not run
+# =============================================================================
+
+set -uo pipefail
+
+use log git mockspace::mock
+
+DEFAULT_STALE_DAYS=1
+
+# -----------------------------------------------------------------------------
+# Ground
+# -----------------------------------------------------------------------------
+
+git_require_repo || exit 2
+root="$(mock_root)" || { log_error "could not locate the mockspace (install \`mock\`, or run from a mockspace repository)"; exit 2; }
+cd "$root" || exit 2
+
+if ! mock_is_mockspace; then
+    log_info "no mockspace workspace in $(basename "$root"), nothing to consume"
+    exit 0
+fi
+
+rounds="$(mock_rounds_dir)" || exit 2
+if [ ! -d "$rounds" ]; then
+    log_info "no design_rounds directory, nothing to consume"
+    exit 0
+fi
+
+# git speaks repo-relative paths; the library answers in absolutes.
+rel_rounds="${rounds#"$root"/}"
+
+# A branch is only stale once it has gone this long with no commit of any kind.
+# Configurable because "abandoned" means different things to a repository that
+# sees ten commits a day and one that sees ten a month.
+stale_days="$(mock_agent_get design_talk.stale_topic_days "$DEFAULT_STALE_DAYS")"
+case "$stale_days" in
+    ''|*[!0-9]*)
+        log_error "design_talk.stale_topic_days is '${stale_days}', which is not a whole number of days"
+        exit 2
+        ;;
+esac
+
+phase="$(mock_phase)"
+log_info "round phase: ${phase}, staleness threshold: ${stale_days}d"
+
+# -----------------------------------------------------------------------------
+# Scan every ref for artifacts this branch cannot see
+# -----------------------------------------------------------------------------
+
+here="$(git_branch)"
+now="$(date +%s)"
+
+# Archived rounds already present, compared by directory name so a ref holding
+# the same archive under the same name is not re-fetched.
+head_archives="$(git ls-tree -d --name-only HEAD "${rel_rounds}/" 2>/dev/null | sed 's|.*/||' | sort -u)"
+
+missing_archives=()
+stranded_topics=()
+# A branch and its remote counterpart carry the same artifact, so the first ref
+# to offer one wins. Without this the same path is fetched and reported twice.
+seen_paths=" "
+
+while read -r ref; do
+    [ -z "$ref" ] && continue
+    [ "$ref" = "$here" ] && continue
+
+    # (3) archived rounds absent from this branch, at any age. An archive is
+    # finished history: there is no reason to ever not have it.
+    while read -r dir; do
+        [ -z "$dir" ] && continue
+        name="${dir##*/}"
+        printf '%s\n' "$head_archives" | grep -qx "$name" && continue
+        case "$seen_paths" in *" $dir "*) continue ;; esac
+        seen_paths="${seen_paths}${dir} "
+        missing_archives+=("${ref}|${dir}")
+    done < <(git ls-tree -d --name-only "$ref" "${rel_rounds}/" 2>/dev/null)
+
+    # (1) and (2) open topics stranded on a branch nobody is working on. A
+    # branch with recent commits is somebody's live work, so its topics are
+    # theirs to land; only a quiet branch has forgotten its filing.
+    last="$(git log -1 --format=%ct "$ref" 2>/dev/null || echo 0)"
+    [ -z "$last" ] && last=0
+    age_days=$(( (now - last) / 86400 ))
+    [ "$age_days" -lt "$stale_days" ] && continue
+
+    while read -r path; do
+        [ -z "$path" ] && continue
+        case "$path" in
+            *_topic.*.md|*_research.*.md) ;;
+            *) continue ;;
+        esac
+        [ -e "$path" ] && continue
+        case "$seen_paths" in *" $path "*) continue ;; esac
+        seen_paths="${seen_paths}${path} "
+        stranded_topics+=("${ref}|${path}|${age_days}")
+    done < <(git ls-tree --name-only "$ref" "${rel_rounds}/" 2>/dev/null)
+done < <(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes)
+
+found=$(( ${#missing_archives[@]} + ${#stranded_topics[@]} ))
+
+if [ "$found" -eq 0 ]; then
+    log_success "nothing stranded: every archive and every open topic is on this branch"
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# Report
+# -----------------------------------------------------------------------------
+
+for entry in "${missing_archives[@]}"; do
+    log_warn "archived round absent here: ${entry#*|}  (on ${entry%%|*})"
+done
+for entry in "${stranded_topics[@]}"; do
+    rest="${entry#*|}"
+    log_warn "open topic stranded: ${rest%%|*}  (on ${entry%%|*}, quiet ${rest##*|}d)"
+done
+
+# -----------------------------------------------------------------------------
+# Refuse to act outside TOPIC
+# -----------------------------------------------------------------------------
+
+if [ "$phase" != "topic" ] && [ "$phase" != "none" ]; then
+    log_error "this round is at ${phase}, past TOPIC, so these cannot be consumed into it"
+    printf '%s\n' "
+A changelist is already written. Pulling topics in now would add work the
+changelist does not cover, and a changelist that does not cover its round's
+topics is the failure this script exists to prevent, not a way around it.
+
+Either deprecate the changelist (\`mock deprecate\`) to return to TOPIC
+and re-run this, or finish and close this round and consume them into the next
+one. Do not merge them in and leave them unaddressed."
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# Consume
+# -----------------------------------------------------------------------------
+
+if [ -n "$(git status --porcelain)" ]; then
+    log_error "working tree is dirty; commit first (this script auto-commits what it pulls)"
+    exit 2
+fi
+
+sources=""
+for entry in "${missing_archives[@]}" ; do
+    ref="${entry%%|*}"; path="${entry#*|}"
+    git checkout "$ref" -- "$path" || { log_error "could not fetch $path from $ref"; exit 2; }
+    sources="${sources}
+  ${path}  from ${ref}"
+done
+
+for entry in "${stranded_topics[@]}"; do
+    ref="${entry%%|*}"; rest="${entry#*|}"; path="${rest%%|*}"
+    git checkout "$ref" -- "$path" || { log_error "could not fetch $path from $ref"; exit 2; }
+    sources="${sources}
+  ${path}  from ${ref}"
+done
+
+git add -- "$rel_rounds" || exit 2
+git commit -q -m "chore: consume stranded design artifacts into this round" -m "Pulled in by consume-strays because they were unreachable from this branch:
+${sources}
+
+Archived rounds are finished history and belong on every branch. Stranded
+topics were filed to force the next round to address them, and this is that
+round." || { log_error "commit failed"; exit 2; }
+
+log_success "consumed ${found} artifact(s) and committed"
+
+# -----------------------------------------------------------------------------
+# The mandate. This is the whole reason the script pulls rather than reports.
+# -----------------------------------------------------------------------------
+
+printf '%s\n' "
+=============================================================================
+MANDATORY: every topic pulled in above is now this round's work
+=============================================================================
+
+Each was filed by a human to force the next design round to address it. This
+is that round. They are not context, not background, and not somebody else's
+problem.
+
+  - Every topic file added above MUST be addressed in this round's doc and
+    src changelists. Name it, and say what it changes or why it needs nothing.
+  - A topic that turns out to need no work still gets that stated in the
+    changelist, with the reason. Silence is indistinguishable from having
+    missed it, which is how these were lost in the first place.
+  - NEVER stash one, NEVER drop one, NEVER move one to another branch, and
+    NEVER close the round leaving one unmentioned. \`close\` sweeps loose flat
+    files into whichever archive it is building, which is exactly how one of
+    these disappeared.
+  - If a topic is genuinely out of scope, it does not get dropped: it gets
+    re-filed as a fresh flat topic AFTER this round closes, so the next round
+    inherits it the same way this one did.
+
+Consolidate them now, before the doc changelist is written."

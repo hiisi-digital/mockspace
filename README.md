@@ -31,7 +31,7 @@ Pre-1.0. The tool is in active use across a stack of consumer crates and evolves
 | `mockspace` (binary + library) | The runtime: bootstrap, build integration, generation pipeline, lint runner, transition subcommands. |
 | `mockspace-lint-rules` | Sibling crate of universal-quality lints and design-round state-machine lints. Consumers compose against this from `mock/lints/`. |
 | `mockspace-bench-core` | Canonical bench framework: `Routine` trait, hardware-counter timing, FFI bridge for variant-comparison benches. v2 ships harness orchestration (workload/cache modules, validation, Pareto analysis, history + perf + disasm sensors, findings + meta-level reporting). |
-| `cargo mock` alias | Cargo subcommand entrypoint installed by bootstrap; the surface most users interact with. |
+| `cargo-mock` / `mock` launcher | The sole entrypoint, installed as two binaries from one source. Resolves the engine version a repo pins in its `mockspace.toml`, builds that engine once into a shared per-version cache, and execs it; `mock locate` answers where a repo keeps its mockspace. |
 | `mock bench init / run / report` | Scaffolds `mock/benches/` in the consumer with a starter `Routine`, runs the configured benches, and emits findings or meta-level reports. |
 
 ## Design rounds
@@ -70,20 +70,27 @@ Every `cargo mock` run regenerates the `docs/` tree from templates under `mock/`
 
 ## Installation
 
-Add a one-line `build.rs` to any crate inside your mock workspace:
+Install the launcher once per machine:
 
-```rust
-fn main() { mockspace::bootstrap_from_buildscript(); }
+```bash
+cargo install --git https://github.com/hiisi-digital/mockspace.git cargo-mock
 ```
 
-and the matching dependency:
+That installs `cargo-mock` and `mock`, the same tool under cargo's subcommand
+convention and a short direct form. There is no `build.rs` bootstrap, no
+`.cargo` alias, and no proxy crate: the launcher is the sole entry.
+
+Each repository pins the engine it runs in its root `mockspace.toml`:
 
 ```toml
-[build-dependencies]
-mockspace = { git = "https://github.com/hiisi-digital/mockspace.git" }
+# a released version, or a branch to track pre-release
+mockspace_version = "0.0.0-d05"
+# mockspace_branch = "dev"
 ```
 
-On the first `cargo check` inside `mock/`, bootstrap writes the `cargo mock` alias into `.cargo/config.toml`, generates a proxy crate under `target/mockspace-proxy/`, and materialises hook scripts under `mock/target/hooks/`. Subsequent builds re-validate the bootstrap and skip when nothing has drifted.
+The launcher builds the pinned engine once into a shared per-version cache and
+execs it, so every repo on the same pin shares one build and the working
+directory never matters.
 
 Activate the hooks once per clone:
 
@@ -99,6 +106,7 @@ cargo mock --lint-only --commit  # lint at commit-gate severity, skip generation
 cargo mock --lint-only --strict  # lint at push-gate severity (used by pre-push hook)
 cargo mock lock                  # transition: DOC -> DRAFT, or IMPL -> CLOSED
 cargo mock close                 # archive a CLOSED round
+mock locate                      # where this repo keeps its mockspace, shell-assignable
 ```
 
 For the full subcommand surface, configuration reference, lint authoring, and template structure, see `docs/USAGE_GUIDE.md`.
@@ -116,7 +124,7 @@ When it is not a fit:
 
 ## Optional: AI assistant integration
 
-If `mock/agent/` is populated with templates, mockspace renders coordinated configuration from those templates for common AI coding-assistant integrations (Claude Code, GitHub Copilot CLI, others as templates require). One source produces semantically equivalent output for each platform. This is a configuration surface, not a feature; the framework's identity is what it does for human developers.
+If `mock/agent/` is populated with templates, mockspace renders coordinated configuration from those templates for common AI coding-assistant integrations (Claude Code, GitHub Copilot CLI, others as templates require). One source produces semantically equivalent output for each platform. A small set of builtin skills renders alongside: sketching and benchmarking discipline on by default, an interactive design-talk flow opt-in, each declinable per repository in `mock/agent/config.toml`. This is a configuration surface, not a feature; the framework's identity is what it does for human developers.
 
 If you choose to use this surface:
 
