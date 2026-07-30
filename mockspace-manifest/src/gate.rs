@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Bumping it makes every existing install regenerate, which is why the bump is
 /// held until a change is ready to ship rather than done as it is developed.
-pub const HOOK_VERSION: u32 = 2;
+pub const HOOK_VERSION: u32 = 3;
 
 /// The hooks a repo's gate consists of.
 pub const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push", "commit-msg"];
