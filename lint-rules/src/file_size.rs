@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use crate::{CrateLint, CrateSourceFile, Lint, LintContext, LintError, Severity};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 pub struct FileSize {
     max_lines:       usize,

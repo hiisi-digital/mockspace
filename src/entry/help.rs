@@ -143,7 +143,7 @@ pub(crate) fn print_help() -> ExitCode {
 /// Report an unrecognised subcommand, suggesting the nearest known one.
 pub(crate) fn unknown_subcommand(given: &str) -> ExitCode {
     eprintln!("mock: `{given}` is not a subcommand.");
-    if let Some(s) = super::suggest_subcommand(&given.to_ascii_lowercase()) {
+    if let Some(s) = crate::entry::suggest_subcommand(&given.to_ascii_lowercase()) {
         eprintln!();
         eprintln!("  did you mean `mock {s}`?");
     }
@@ -168,39 +168,39 @@ mod tests {
 
     #[test]
     fn a_close_typo_gets_the_command_it_meant() {
-        assert_eq!(super::suggest_subcommand("lck"), Some("lock"));
-        assert_eq!(super::suggest_subcommand("helpp"), Some("help"));
-        assert_eq!(super::suggest_subcommand("statsu"), Some("status"));
-        assert_eq!(super::suggest_subcommand("depreciate"), Some("deprecate"));
-        assert_eq!(super::suggest_subcommand("actiavte"), Some("activate"));
+        assert_eq!(crate::entry::suggest_subcommand("lck"), Some("lock"));
+        assert_eq!(crate::entry::suggest_subcommand("helpp"), Some("help"));
+        assert_eq!(crate::entry::suggest_subcommand("statsu"), Some("status"));
+        assert_eq!(crate::entry::suggest_subcommand("depreciate"), Some("deprecate"));
+        assert_eq!(crate::entry::suggest_subcommand("actiavte"), Some("activate"));
     }
 
     #[test]
     fn an_abbreviation_gets_the_command_it_starts() {
         // Someone typing `dep` has not misspelled anything, they stopped early,
         // and a distance threshold alone would reject it.
-        assert_eq!(super::suggest_subcommand("dep"), Some("deprecate"));
-        assert_eq!(super::suggest_subcommand("chec"), Some("check"));
+        assert_eq!(crate::entry::suggest_subcommand("dep"), Some("deprecate"));
+        assert_eq!(crate::entry::suggest_subcommand("chec"), Some("check"));
     }
 
     #[test]
     fn nonsense_gets_no_suggestion() {
         // A wrong guess is worse than none: it sends the reader to try something
         // they did not mean, and they may not notice.
-        assert_eq!(super::suggest_subcommand("xyzzy"), None);
-        assert_eq!(super::suggest_subcommand("frobnicate-everything"), None);
+        assert_eq!(crate::entry::suggest_subcommand("xyzzy"), None);
+        assert_eq!(crate::entry::suggest_subcommand("frobnicate-everything"), None);
     }
 
     #[test]
     fn a_single_character_does_not_get_a_wild_guess() {
         // Distance one from many names at once, so any pick would be arbitrary.
-        assert_eq!(super::suggest_subcommand("q"), None);
+        assert_eq!(crate::entry::suggest_subcommand("q"), None);
     }
 
     #[test]
     fn the_suggestion_is_case_insensitive() {
-        assert_eq!(super::suggest_subcommand("LOCK"), Some("lock"));
-        assert_eq!(super::suggest_subcommand("Lck"), Some("lock"));
+        assert_eq!(crate::entry::suggest_subcommand("LOCK"), Some("lock"));
+        assert_eq!(crate::entry::suggest_subcommand("Lck"), Some("lock"));
     }
 
     #[test]
@@ -209,7 +209,7 @@ mod tests {
         // mean a real command whose exact spelling gets "did you mean" for
         // something else.
         for name in known_commands() {
-            assert_eq!(super::suggest_subcommand(name), Some(name), "{name} should suggest itself");
+            assert_eq!(crate::entry::suggest_subcommand(name), Some(name), "{name} should suggest itself");
         }
     }
 

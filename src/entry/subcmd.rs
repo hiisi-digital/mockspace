@@ -34,10 +34,30 @@ pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
 /// Nearest known subcommand to `input`, when close enough to be a likely
 /// typo. The threshold scales with word length so short words need a close
 /// match and longer ones tolerate a little more.
+///
+/// Case-insensitive, because `LOCK` is not a different intention from `lock`.
+/// An input that is a prefix of exactly one command suggests that command
+/// whatever the distance says: someone typing `dep` has not misspelled
+/// anything, they stopped early, and a distance threshold alone rejects it.
+/// A prefix of several commands stays ambiguous and falls through to the
+/// distance rule rather than guessing.
 pub(crate) fn suggest_subcommand(input: &str) -> Option<&'static str> {
+    let input = input.to_ascii_lowercase();
+
+    // Two characters minimum: a single letter is a prefix of something almost
+    // by accident, and any pick from it would be arbitrary.
+    if input.len() >= 2 {
+        let mut prefix_of = known_subcommands()
+            .into_iter()
+            .filter(|name| name.starts_with(&input));
+        if let (Some(only), None) = (prefix_of.next(), prefix_of.next()) {
+            return Some(only);
+        }
+    }
+
     let mut best: Option<(&'static str, usize)> = None;
     for name in known_subcommands() {
-        let d = levenshtein(input, name);
+        let d = levenshtein(&input, name);
         if best.map_or(true, |(_, bd)| d < bd) {
             best = Some((name, d));
         }
