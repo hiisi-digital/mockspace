@@ -68,6 +68,15 @@ pub trait Routine {
     type Output: PartialEq + core::fmt::Debug + Copy;
 
     /// Build input deterministically from a seed.
+    ///
+    /// This returns `Self::Input` by value, so an input large enough to
+    /// matter for cache behaviour would be materialised on the stack here.
+    /// That is not a ceiling on how large an input can be: this method is
+    /// called only from the default body of [`Routine::build_input_bytes`],
+    /// and a routine that overrides that serialiser fills the buffer
+    /// directly and never calls this at all. `ByteRoutine` already does
+    /// exactly that. Reach for the override before concluding that a
+    /// footprint-sized bench cannot be written.
     fn build_input(seed: u64) -> Self::Input;
 
     /// Validate that an output is structurally correct (not just
@@ -144,6 +153,10 @@ pub trait Routine {
     }
 
     /// Serialise a built input to bytes.
+    ///
+    /// Override this to build an input larger than the stack can hold: fill
+    /// the returned buffer directly and [`Routine::build_input`] is never
+    /// called. The default body below is the only caller of it.
     #[cfg(feature = "std")]
     fn build_input_bytes(seed: u64) -> std::vec::Vec<u8> {
         let input = Self::build_input(seed);
