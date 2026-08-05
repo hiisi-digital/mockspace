@@ -59,6 +59,21 @@ pub const DEFAULT_DETERMINISM_CHECK_SEEDS: usize = 10;
 /// `outputs_may_differ = true` on the routine bridge skips
 /// cross-variant byte comparison (the per-variant validator alone is
 /// authoritative).
+/// First pair of variants sharing an exported name, as
+/// `(earlier index, later index, the name)`.
+///
+/// Separated from [`validate`] so the detection is testable without building
+/// two cdylibs that deliberately collide, which is the only other way to
+/// reach it.
+fn first_duplicate_name(names: &[String]) -> Option<(usize, usize, &str)> {
+    for (j, name) in names.iter().enumerate() {
+        if let Some(i) = names[.. j].iter().position(|earlier| earlier == name) {
+            return Some((i, j, name.as_str()));
+        }
+    }
+    None
+}
+
 pub fn validate(
     routine: &RoutineSpec,
     variant_paths: &[String],
@@ -144,6 +159,24 @@ pub fn validate(
             name
         };
         names.push(name);
+    }
+
+    // A sample is labelled by the name the dylib exports, and every grouping
+    // downstream keys on that label. Two variants exporting one name merge
+    // into a single arm carrying samples from both, and the median that comes
+    // out is internally consistent while describing neither, which is the
+    // worst shape a wrong number can take. The manifest cannot catch it,
+    // because the name lives in the dylib rather than in the path, so two
+    // distinct crates with distinct dylib file names can still collide.
+    if let Some((i, j, name)) = first_duplicate_name(&names) {
+        return Err(BenchError::InvalidConfig {
+            reason: format!(
+                "bench `{bench_name}` n={n}: variants {} and {} both export the name \
+                 `{name}`; their samples would merge into one arm whose median \
+                 describes neither. Give each variant its own name.",
+                variant_paths[i], variant_paths[j],
+            ),
+        });
     }
 
     // Pre-flight: probe each variant via a subprocess worker call.
@@ -575,7 +608,7 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::from_hex;
+    use super::{first_duplicate_name, from_hex};
 
     #[test]
     fn from_hex_round_trips() {
@@ -587,5 +620,39 @@ mod tests {
     fn from_hex_rejects_malformed() {
         assert_eq!(from_hex("0"), None);
         assert_eq!(from_hex("zz"), None);
+    }
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn duplicate_exported_names_are_found() {
+        // Adjacent, apart, and three-way, because a check that only sees the
+        // adjacent case passes on the shape a real manifest hits least often.
+        assert_eq!(
+            first_duplicate_name(&names(&["a", "a"])),
+            Some((0, 1, "a"))
+        );
+        assert_eq!(
+            first_duplicate_name(&names(&["a", "b", "c", "b"])),
+            Some((1, 3, "b"))
+        );
+        // The earliest colliding pair is reported, not the last one found.
+        assert_eq!(
+            first_duplicate_name(&names(&["a", "b", "a", "b"])),
+            Some((0, 2, "a"))
+        );
+    }
+
+    #[test]
+    fn distinct_exported_names_pass() {
+        assert_eq!(first_duplicate_name(&names(&[])), None);
+        assert_eq!(first_duplicate_name(&names(&["only"])), None);
+        assert_eq!(first_duplicate_name(&names(&["a", "b", "c"])), None);
+        // A name that is a prefix of another is not a collision; the label is
+        // compared whole, and a substring check here would refuse a legitimate
+        // pair like `sum` beside `sum_windowed`.
+        assert_eq!(first_duplicate_name(&names(&["sum", "sum_windowed"])), None);
     }
 }

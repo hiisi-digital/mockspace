@@ -29,7 +29,11 @@ pub struct Sample {
     /// Mode label (`"normal"`, `"batched"`, etc.). Reserved for
     /// per-mode aggregation in Round 5.
     pub mode:        String,
-    /// Variant short name (extracted from the cdylib path).
+    /// Variant label: the name the variant's cdylib exports through its
+    /// `bench_name` symbol, not anything derived from its path. Every
+    /// grouping downstream keys on this string, so two variants exporting
+    /// one name merge into a single arm; `validation::validate` refuses
+    /// that pairing before a run reaches here.
     pub variant:     String,
     /// End-to-end nanoseconds (harness-side measurement, includes
     /// bridge overhead).
@@ -197,32 +201,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn worker_line_positional_contract() {
-        // The worker emits instructions/cycles at tab columns 7,8, then the
-        // always-present matrix columns setup_ns/first_ns/digest at 9,10,11, then
-        // the optional score at 12; the orchestrator parser (harness.rs) reads
-        // those exact positions. This guards the emitter and parser against drift.
-        let with_score = format!(
-            "switch\twarm\t0\t120.0\t100.0\t20.0\t64\t{}\t{}\t{:.1}\t{:.1}\t{}\t42.00",
-            4200u64, 900u64, 555.5, 180.0, 987654321u64
-        );
-        let p: Vec<&str> = with_score.split('\t').collect();
-        assert_eq!(p[7], "4200", "instructions at col 7");
-        assert_eq!(p[8], "900", "cycles at col 8");
-        assert_eq!(p[9], "555.5", "setup_ns at col 9");
-        assert_eq!(p[10], "180.0", "first_ns at col 10");
-        assert_eq!(p[11], "987654321", "digest at col 11");
-        assert_eq!(p[12], "42.00", "score at col 12");
-
-        // The matrix columns are always emitted (zero when unmeasured), so a
-        // score-less line has exactly the 12 fixed columns and no col 12.
-        let no_score = format!(
-            "switch\twarm\t0\t120.0\t100.0\t20.0\t64\t{}\t{}\t{:.1}\t{:.1}\t{}",
-            4200u64, 900u64, 0.0, 0.0, 0u64
-        );
-        let q: Vec<&str> = no_score.split('\t').collect();
-        assert_eq!(q.len(), 12, "no-score line has exactly the 12 fixed columns");
-        assert!(q.get(12).is_none(), "no score column when absent");
-    }
+    // The worker-line positional contract has no test. The one that stood here
+    // built a tab-separated string with `format!` and then asserted that
+    // splitting it returned the fields it had just interpolated, calling
+    // neither the emitter nor the parser. It could not fail if a column moved,
+    // which is the only drift it claimed to guard, so it reported coverage
+    // that did not exist. Deleted rather than adjusted: a test that cannot
+    // fail occupies the place where its absence would otherwise be noticed.
+    //
+    // The real thing needs the emitter and the orchestrator's parser in one
+    // round trip, which is worth doing and is larger than the change that
+    // removed this.
 }
