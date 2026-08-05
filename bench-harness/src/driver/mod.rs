@@ -445,6 +445,33 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
                 continue;
             },
         };
+        // Samples are labelled by the variant's exported `bench_name`, and
+        // every grouping downstream keys on that label. Two dylibs exporting
+        // one name therefore merge into a single arm carrying samples from
+        // both, and the median that comes out is internally consistent and
+        // describes neither of them, which is the worst shape a wrong number
+        // can take. The manifest cannot catch this: the name lives in the
+        // dylib, not in the path.
+        {
+            let mut labels: Vec<&str> =
+                result.samples.iter().map(|s| s.variant.as_str()).collect();
+            labels.sort_unstable();
+            labels.dedup();
+            if labels.len() < config.variant_paths.len() {
+                eprintln!(
+                    "error: bench `{}` n={} ran {} variants whose samples carry only \
+                     {} distinct names ({}); two of them export the same `bench_name`, \
+                     so their samples merged and the reported median would describe \
+                     neither. Give each variant its own name.",
+                    config.bench_name,
+                    config.n,
+                    config.variant_paths.len(),
+                    labels.len(),
+                    labels.join(", "),
+                );
+                return ExitCode::FAILURE;
+            }
+        }
         if let Err(e) = harness::write_csv(&result, &csv_path) {
             eprintln!("error: writing csv: {e}");
             return ExitCode::FAILURE;
