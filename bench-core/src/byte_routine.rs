@@ -139,6 +139,21 @@ mod tests {
         assert_eq!(&typed[..], &heaped[..]);
     }
 
+    /// The same equivalence one chunk boundary past a single mixer word and
+    /// at a size no longer trivially inlined, since the override is the path
+    /// a footprint-sized bench takes and the pair is only useful if it agrees
+    /// somewhere other than the smallest case. This is as large as the pair
+    /// can be checked at all: the typed side materialises on the stack, which
+    /// is the ceiling the override exists to escape, so equivalence at a real
+    /// footprint size is not a test anyone can write.
+    #[cfg(feature = "std")]
+    #[test]
+    fn heap_build_matches_typed_build_at_a_larger_size() {
+        let typed = ByteRoutine::<65_536, 8, false>::build_input(7);
+        let heaped = <ByteRoutine<65_536, 8, false> as Routine>::build_input_bytes(7);
+        assert_eq!(&typed[..], &heaped[..]);
+    }
+
     #[cfg(feature = "std")]
     #[test]
     fn dispatch_macro_declared_sizes_only() {

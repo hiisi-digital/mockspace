@@ -69,14 +69,22 @@ pub trait Routine {
 
     /// Build input deterministically from a seed.
     ///
-    /// This returns `Self::Input` by value, so an input large enough to
-    /// matter for cache behaviour would be materialised on the stack here.
-    /// That is not a ceiling on how large an input can be: this method is
-    /// called only from the default body of [`Routine::build_input_bytes`],
-    /// and a routine that overrides that serialiser fills the buffer
-    /// directly and never calls this at all. `ByteRoutine` already does
-    /// exactly that. Reach for the override before concluding that a
-    /// footprint-sized bench cannot be written.
+    /// This returns `Self::Input` by value, so at a size that matters for
+    /// cache behaviour the input is materialised on the stack here. That is
+    /// not a ceiling on input size, but the escape is narrower than it looks
+    /// and is worth stating exactly.
+    ///
+    /// On the harness path this is called from one place only, the default
+    /// body of `build_input_bytes`. A routine that overrides that serialiser
+    /// fills the byte buffer directly, and nothing on that path calls this.
+    /// `ByteRoutine` already does exactly that.
+    ///
+    /// Two obligations survive the override. This method stays **required**,
+    /// so the by-value constructor is still written and must not be called at
+    /// a size the stack cannot hold; tests that call it directly are the usual
+    /// way that happens. And the bytes the override produces must remain a
+    /// valid image of `Self::Input`, because the byte-side methods read them
+    /// back through a pointer cast.
     fn build_input(seed: u64) -> Self::Input;
 
     /// Validate that an output is structurally correct (not just
@@ -155,8 +163,9 @@ pub trait Routine {
     /// Serialise a built input to bytes.
     ///
     /// Override this to build an input larger than the stack can hold: fill
-    /// the returned buffer directly and [`Routine::build_input`] is never
-    /// called. The default body below is the only caller of it.
+    /// the returned buffer directly and `build_input` is not called on the
+    /// harness path, since the default body below is its only caller there.
+    /// The buffer must still be a valid byte image of `Self::Input`.
     #[cfg(feature = "std")]
     fn build_input_bytes(seed: u64) -> std::vec::Vec<u8> {
         let input = Self::build_input(seed);
