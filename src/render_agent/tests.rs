@@ -324,6 +324,34 @@ fn canon_design_code_chain_is_a_generated_builtin() {
         rule.body
             .contains("splitting the file, not refining the granularity")
     );
+
+    // "just change it" overstates the leaf tier's freedom into no
+    // constraints at all; this is the corrected framing (2026-08-07), and a
+    // later editor restoring the old bare phrasing must not slip past
+    // unnoticed, since it contradicts the design-governs-code relation the
+    // rule states elsewhere
+    assert!(!rule.body.contains("just change it. It is the leaf"));
+    assert!(
+        rule.body
+            .contains("nothing has to be nuked first, because code is the leaf")
+    );
+    assert!(
+        rule.body
+            .contains("The mockspace round ceremony applies in full")
+    );
+    assert!(
+        rule.body
+            .contains("nothing may appear in code that is not in the design")
+    );
+    assert!(
+        rule.body
+            .contains("undeclared design change wearing the leaf tier's freedom")
+    );
+    assert!(
+        rule.body
+            .contains("unconstrained downward and fully constrained upward")
+    );
+
     assert!(
         !rule.body.contains('\u{2014}'),
         "no em-dashes in a generated rule"
