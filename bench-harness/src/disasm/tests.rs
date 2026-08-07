@@ -4,16 +4,35 @@
 //! this module has private access to everything in `super` exactly as
 //! it would inline, via `#[path]`.
 //!
-//! [`normalize_disasm`] / [`strip_symbol_annotation`] / [`same_work`] /
-//! [`duplicate_pairs`] are pure and tested with synthetic strings, no
-//! subprocess involved. The remaining tests compile real cdylibs at
-//! test time via `rustc` directly (no cargo, no crate deps) and run
-//! the actual `objdump`/`otool` extraction against them.
+//! [`symbol_candidates`] / [`normalize_disasm`] / [`normalize_addresses`] /
+//! [`same_work`] / [`duplicate_pairs`] / [`build_report`] are pure and
+//! tested with synthetic strings and precomputed `Option<String>`
+//! values, no subprocess involved (`strip_symbol_annotation` /
+//! `adrp_destination` / `fold_adrp_companion_immediate` are exercised
+//! only indirectly, through `normalize_disasm`). The remaining tests
+//! compile real cdylibs at test time via `rustc` directly (no cargo,
+//! no crate deps) and run the actual `objdump`/`otool` extraction
+//! against them. [`build_cdylib`] skips (rather than fails) only when
+//! `rustc` cannot be spawned at all; a `rustc` that runs and fails to
+//! compile the probe source panics with its stderr, so a broken
+//! fixture cannot read as a green skip.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::*;
+
+// ── pure logic: symbol_candidates ──
+
+#[test]
+fn symbol_candidates_tries_bare_and_underscore_prefixed() {
+    // The underscore-prefix guard shipped with no direct test of its
+    // own; this pins it on every platform, independent of whether the
+    // local `objdump` accepts
+    // `--disassemble-symbols=` at all (see the real-dylib test below,
+    // which is not universally portable across objdump flavours).
+    assert_eq!(symbol_candidates("bench_entry"), ["bench_entry".to_string(), "_bench_entry".to_string()]);
+}
 
 // ── pure logic: normalize_disasm / strip_symbol_annotation ──
 
@@ -31,8 +50,10 @@ fn normalize_disasm_strips_address_and_raw_opcode_columns() {
     // The header line survives (it carries no address to strip past its
     // own tab) but its kept half, "file format mach-o arm64", is
     // identical for every dylib of the same architecture, so it never
-    // causes two variants to compare unequal.
-    assert_eq!(normalized, "file format mach-o arm64\ncbz\tx0, 0x370\nsub\tx8, x0, #0x1");
+    // causes two variants to compare unequal. `0x370` is a branch
+    // target, folded to `ADDR`; `#0x1` is a `#`-prefixed immediate and
+    // survives untouched.
+    assert_eq!(normalized, "file format mach-o arm64\ncbz\tx0, ADDR\nsub\tx8, x0, #0x1");
 }
 
 #[test]
@@ -43,17 +64,57 @@ fn normalize_disasm_drops_otool_section_header() {
 }
 
 #[test]
-fn normalize_disasm_strips_crate_salted_symbol_annotation() {
+fn normalize_disasm_folds_mangled_name_and_shifted_target_together() {
     // Two variants computing identical work in separate crates get a
     // different mangled name for the same private helper (the crate's
-    // own metadata hash is embedded in it); the raw call target address
-    // is unaffected. This is the false-negative defect two's fix
-    // corrects: without stripping the annotation, these two lines
-    // would never compare equal for any pair of distinct crates.
+    // own metadata hash is embedded in it), AND a shifted call-target
+    // address (crate names of different lengths, or any other unrelated
+    // difference, move where `do_work` lands in `.text`). Real variant
+    // names are not conveniently the same length (`variant_scalar`
+    // against `variant_unrolled_x4`), so the target addresses below are
+    // deliberately different, not just the mangled names: without
+    // folding both, these two lines would never compare equal for any
+    // real pair of distinct crates.
     let a = "     8c0: 97fffff0     \tbl\t0x880 <__RINvCsfGFIfYg1MGU_10variant_a27do_workKj40_EB2_>\n";
-    let b = "     8c0: 97fffff0     \tbl\t0x880 <__RINvCsdNdfRXoBgyl_10variant_b27do_workKj40_EB2_>\n";
+    let b = "     8c0: 97fffff0     \tbl\t0x890 <__RINvCsdNdfRXoBgyl_10variant_unrolled_x427do_workKj40_EB2_>\n";
     assert_eq!(normalize_disasm(a), normalize_disasm(b));
-    assert_eq!(normalize_disasm(a), "bl\t0x880");
+    assert_eq!(normalize_disasm(a), "bl\tADDR");
+}
+
+#[test]
+fn normalize_addresses_folds_a_branch_target_that_shifted_by_an_unrelated_layout_change() {
+    // Reproduces the reviewer's finding directly: two builds differing
+    // only in something unrelated to the branch itself (here, a longer
+    // crate name pushing everything after it forward) shift every
+    // subsequent `.text` address by a constant. `b.ne 0xb68` against
+    // `b.ne 0xb78` is exactly that shape.
+    assert_eq!(normalize_addresses("b.ne\t0xb68"), normalize_addresses("b.ne\t0xb78"));
+    assert_eq!(normalize_addresses("b.ne\t0xb68"), "b.ne\tADDR");
+}
+
+#[test]
+fn normalize_addresses_leaves_hash_prefixed_immediates_alone() {
+    // `#0x1f` (31) and `#0x25` (37) are semantic: they are the actual
+    // multiplier constants two different algorithms chose, not layout.
+    // Folding them would erase exactly the distinction the "different
+    // work is not a duplicate" guarantee depends on.
+    assert_eq!(normalize_addresses("mov\tx9, #0x1f"), "mov\tx9, #0x1f");
+    assert_ne!(normalize_addresses("mov\tx9, #0x1f"), normalize_addresses("mov\tx9, #0x25"));
+}
+
+#[test]
+fn normalize_addresses_leaves_dollar_prefixed_immediates_alone() {
+    // x86 AT&T syntax uses `$` rather than `#` for an immediate.
+    assert_eq!(normalize_addresses("mov\t$0x40,%eax"), "mov\t$0x40,%eax");
+}
+
+#[test]
+fn normalize_addresses_leaves_bracketed_memory_operands_alone() {
+    // A memory-operand offset is semantic (which field of the struct is
+    // being read), not a branch target, whether or not it happens to be
+    // `#`-prefixed; the bracket-depth guard protects it either way.
+    assert_eq!(normalize_addresses("str\tx2, [sp, #0x8]"), "str\tx2, [sp, #0x8]");
+    assert_eq!(normalize_addresses("ldr\tx0, [x1, 0x10]"), "ldr\tx0, [x1, 0x10]");
 }
 
 #[test]
@@ -84,9 +145,10 @@ fn differing_entry_is_never_a_duplicate_even_if_text_matches() {
 
 #[test]
 fn matching_entry_with_differing_text_is_not_a_duplicate() {
-    // This is defect two itself: an identical dispatcher shell around
-    // per-size functions that were not inlined must not be reported as
-    // a duplicate when the functions actually differ.
+    // An identical dispatcher shell around per-size functions that were
+    // not inlined (so `bench_entry` itself carries no trace of what
+    // they compute) must not be reported as a duplicate when the
+    // functions actually differ.
     assert!(!same_work(&some("same"), &some("same"), &some("alpha"), &some("beta")));
 }
 
@@ -127,11 +189,12 @@ fn a_genuine_clean_pass_has_no_unreadable_variants() {
 
 #[test]
 fn total_extraction_failure_is_not_a_clean_pass() {
-    // This is defect one's failure shape one level up: if `.text`
-    // extraction fails for every variant, `same_work` is false for
-    // every pair by construction (see `missing_text_is_never_a_duplicate`
-    // above), so `dupes` alone is indistinguishable from a genuine
-    // no-duplicates run. `unreadable` is what a caller must check.
+    // An extraction that silently finds nothing must not look like an
+    // extraction that ran and found nothing wrong: if `.text` extraction
+    // fails for every variant, `same_work` is false for every pair by
+    // construction (see `missing_text_is_never_a_duplicate` above), so
+    // `dupes` alone is indistinguishable from a genuine no-duplicates
+    // run. `unreadable` is what a caller must check.
     let paths = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let entry = vec![None, None, None];
     let text = vec![None, None, None];
@@ -176,28 +239,67 @@ const DYLIB_EXT: &str = "dylib";
 const DYLIB_EXT: &str = "so";
 
 /// Compile `source` as a cdylib named `crate_name` via `rustc`
-/// directly. Returns `None` (the caller should skip, not fail) if
-/// `rustc` cannot be run.
+/// directly.
+///
+/// Returns `None` (the caller should skip, not fail) only when `rustc`
+/// itself cannot be spawned at all. A `rustc` that runs and fails to
+/// compile the probe source is a broken fixture, not an unavailable
+/// tool, and panics with the compiler's stderr rather than returning
+/// `None`: collapsing the two into one `Option` would let a broken
+/// test fixture masquerade as an environment-availability skip, and
+/// every test built on this helper would silently pass having tested
+/// nothing.
+///
+/// The source file is always written to the fixed name `probe.rs`
+/// inside `dir`, never `{crate_name}.rs`. `panic!()` embeds `file!()`,
+/// the literal path passed to rustc, in its `Location` data; a source
+/// path whose length tracks `crate_name`'s length would make the
+/// panic branch's compiled size depend on the crate name too, which
+/// is exactly the kind of test-harness-introduced noise this module
+/// exists to be robust against in the dylibs under test, not to add on
+/// top in the fixture that builds them. `--crate-name` still varies
+/// per call and is what the mangled symbols and metadata hash key off.
 fn build_cdylib(dir: &Path, crate_name: &str, source: &str) -> Option<PathBuf> {
-    let src_path = dir.join(format!("{crate_name}.rs"));
+    let src_path = dir.join("probe.rs");
     std::fs::write(&src_path, source).expect("write probe source");
     let out_path = dir.join(format!("lib{crate_name}.{DYLIB_EXT}"));
-    let status = Command::new("rustc")
+    let output = match Command::new("rustc")
         .args(["--crate-type", "cdylib", "--crate-name", crate_name, "-O", "--edition", "2021"])
         .arg("-o")
         .arg(&out_path)
         .arg(&src_path)
-        .status()
-        .ok()?;
-    if status.success() { Some(out_path) } else { None }
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => panic!("failed to spawn rustc to build probe crate `{crate_name}`: {e}"),
+    };
+    if !output.status.success() {
+        panic!(
+            "rustc failed to compile probe crate `{crate_name}`:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Some(out_path)
 }
 
-/// A `#[inline(never)]` per-size function so the compiler cannot
-/// fold it into `bench_entry`, matching the real macro's shape when
-/// the optimizer declines to inline (large function, multiple
-/// codegen units, no LTO): `bench_entry` stays a thin dispatcher
-/// whose own disassembly is the same shell regardless of what the
-/// per-size function computes.
+/// A `#[inline(never)]` per-size function so the compiler cannot fold
+/// it into `bench_entry`, matching the real macro's shape when the
+/// optimizer declines to inline (large function, multiple codegen
+/// units, no LTO): `bench_entry` stays a thin dispatcher whose own
+/// disassembly is the same shell regardless of what the per-size
+/// function computes.
+///
+/// The unmatched-`n` arm returns `0` rather than the real macro's
+/// `panic!(...)`. `n` is always `64` in every test built on this
+/// fixture, so the arm never runs; a `panic!` with format
+/// interpolation pulls in `core`'s Arguments-building and formatting
+/// machinery regardless of whether it runs, which (observed directly)
+/// adds roughly 50,000 lines of unrelated disassembly to every dylib
+/// and, deep inside it, at least one more instance of the
+/// `adrp`+`add`-into-a-different-register address idiom that
+/// `fold_adrp_companion_immediate` does not fold (see its doc comment).
+/// None of that machinery is what these tests exist to exercise.
 fn dispatcher_source(work_body: &str) -> String {
     format!(
         "#[inline(never)]\n\
@@ -218,7 +320,7 @@ fn dispatcher_source(work_body: &str) -> String {
          \x20\x20\x20\x20\x20\x20\x20\x20do_work(input, output);\n\
          \x20\x20\x20\x20\x20\x20\x20\x200\n\
          \x20\x20\x20\x20}}\n\
-         \x20\x20\x20\x20other => panic!(\"bad n={{other}}\"),\n\
+         \x20\x20\x20\x20_ => 0,\n\
          \x20\x20\x20\x20}}\n\
          }}\n"
     )
@@ -237,21 +339,54 @@ const XOR_MUL_WORK: &str = "\x20\x20\x20\x20let mut acc: u64 = 0xcbf29ce48422232
     \x20\x20\x20\x20}\n\
     \x20\x20\x20\x20*output = acc;";
 
+/// Whether the local `objdump` looks LLVM-flavored (Apple's toolchain,
+/// or `llvm-objdump`), which is what accepts `--disassemble-symbols=`.
+/// GNU binutils spells the same option `--disassemble=`, so
+/// `objdump_symbol` legitimately returns `None` there: the whole-`.text`
+/// path (`objdump_all`, no symbol filter at all) is unaffected and
+/// still the authoritative comparison, so this is not a correctness
+/// gap in `check_duplicates`, only a reason the entry-only fast path
+/// never fires on such a system. Not verified against a real GNU
+/// binutils install from this environment; this guard exists so that
+/// gap degrades this test into a skip instead of a false failure,
+/// rather than silently assuming every `objdump` on every platform
+/// accepts the same flag spelling.
+fn objdump_is_llvm_flavored() -> bool {
+    let Ok(output) = Command::new("objdump").arg("--version").output() else {
+        return false;
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    text.contains("LLVM")
+}
+
 #[test]
 fn objdump_finds_bench_entry_under_this_platforms_symbol_prefix() {
-    // Regression test for defect one: on Mach-O the exported symbol is
-    // `_bench_entry`, and a bare `--disassemble-symbols=bench_entry`
-    // used to find nothing (objdump exits 0 with only a stderr
-    // warning). Calls `objdump_symbol` directly rather than through
-    // `extract_bench_entry`, so a silent fall-through to the otool
-    // fallback cannot mask a regression here.
-    let dir = scratch_dir("defect_one");
-    let Some(dylib) = build_cdylib(&dir, "probe_defect_one", &dispatcher_source(ADD_MUL_WORK))
+    // On Mach-O the exported symbol is `_bench_entry`, and a bare
+    // `--disassemble-symbols=bench_entry` used to find nothing (objdump
+    // exits 0 with only a stderr warning). Calls `objdump_symbol`
+    // directly rather than through `extract_bench_entry`, so a silent
+    // fall-through to the otool fallback cannot mask a regression here.
+    let dir = scratch_dir("underscore_prefix");
+    let Some(dylib) =
+        build_cdylib(&dir, "probe_underscore_prefix", &dispatcher_source(ADD_MUL_WORK))
     else {
         eprintln!("skipping: rustc unavailable");
         return;
     };
     let Some(asm) = objdump_symbol(dylib.to_str().unwrap(), "bench_entry") else {
+        if !objdump_is_llvm_flavored() {
+            eprintln!(
+                "skipping: this objdump does not identify as LLVM-flavored, so \
+                 --disassemble-symbols= may not be the flag it accepts (GNU binutils \
+                 spells it --disassemble=); see objdump_is_llvm_flavored"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
         panic!("objdump_symbol found nothing for a freshly built dylib's bench_entry");
     };
     assert!(
@@ -263,11 +398,15 @@ fn objdump_finds_bench_entry_under_this_platforms_symbol_prefix() {
 
 #[test]
 fn identical_work_in_separate_crates_is_flagged_duplicate() {
+    // The two crate names are deliberately different lengths, the
+    // shape a real pair of variant names actually takes ("same length"
+    // would be the case that happens to work even without folding the
+    // addresses a longer name shifts everything after it by).
     let dir = scratch_dir("identical");
     let source = dispatcher_source(ADD_MUL_WORK);
     let (Some(a), Some(b)) = (
-        build_cdylib(&dir, "probe_identical_a", &source),
-        build_cdylib(&dir, "probe_identical_b", &source),
+        build_cdylib(&dir, "variant_scalar", &source),
+        build_cdylib(&dir, "variant_unrolled_x4", &source),
     ) else {
         eprintln!("skipping: rustc unavailable");
         return;
@@ -285,21 +424,21 @@ fn identical_work_in_separate_crates_is_flagged_duplicate() {
     assert_eq!(
         dupes.len(),
         1,
-        "identical work in two crates should be flagged as one duplicate pair"
+        "identical work in two crates of different name length should be flagged as one \
+         duplicate pair"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn different_work_is_not_flagged_duplicate() {
-    // `do_work` is `#[inline(never)]` in both variants, matching the
-    // bug defect two names: the real work sits in a symbol
-    // `bench_entry` merely calls, not in `bench_entry` itself. The
-    // variants must not be reported as duplicates, regardless of
-    // whether `bench_entry`'s own shell happens to land at the same
-    // address in both (unrelated compiler layout decisions can move
-    // it either way); what must hold is that `do_work` computing
-    // different things is never lost.
+    // `do_work` is `#[inline(never)]` in both variants: the real work
+    // sits in a symbol `bench_entry` merely calls, not in `bench_entry`
+    // itself. The precondition assertion below is what makes this
+    // fixture actually exercise that shape rather than passing for the
+    // unrelated reason that `bench_entry`'s own disassembly already
+    // differed; `matching_entry_with_differing_text_is_not_a_duplicate`
+    // above is the deterministic version of this same guarantee.
     let dir = scratch_dir("different");
     let (Some(a), Some(b)) = (
         build_cdylib(&dir, "probe_different_a", &dispatcher_source(ADD_MUL_WORK)),
@@ -316,6 +455,12 @@ fn different_work_is_not_flagged_duplicate() {
     assert!(
         text_section.iter().all(Option::is_some),
         "expected extract_text_section to succeed on both freshly built dylibs"
+    );
+    assert_eq!(
+        entry_asm[0], entry_asm[1],
+        "both variants dispatch a single size the same way; bench_entry's own disassembly \
+         should be identical so this fixture actually exercises the whole-.text fallback \
+         rather than passing because bench_entry alone already differed"
     );
     let dupes = duplicate_pairs(&paths, &entry_asm, &text_section);
     assert!(

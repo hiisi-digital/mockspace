@@ -28,6 +28,11 @@
 
 use std::process::Command;
 
+mod normalize;
+#[cfg(test)]
+use normalize::normalize_addresses;
+use normalize::normalize_disasm;
+
 /// The spellings a symbol's C name might carry across platforms.
 /// Mach-O prefixes every exported symbol with an underscore
 /// (`bench_entry` becomes `_bench_entry`); ELF does not. Try the bare
@@ -84,47 +89,6 @@ fn otool_all(dylib_path: &str) -> Option<String> {
     Some(normalize_disasm(&String::from_utf8_lossy(&result.stdout)))
 }
 
-/// Normalise disassembly for comparison: strip addresses, raw opcode
-/// bytes, and section/label decoration, keeping only mnemonics and
-/// operands. Also drops a trailing `<symbol+offset>` annotation
-/// objdump/otool append to a jump or call target: that name is the
-/// Rust-mangled name of whatever the compiler placed at that address,
-/// salted with the crate's own metadata hash, so two variants that
-/// compute byte-identical work in separate crates would otherwise
-/// compare as different purely because their private helper's mangled
-/// name differs.
-fn normalize_disasm(text: &str) -> String {
-    let mut lines: Vec<String> = Vec::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty()
-            || trimmed.ends_with(':')
-            || trimmed.starts_with("Disassembly")
-            || trimmed.starts_with('(')
-        {
-            continue;
-        }
-        let kept = if let Some(pos) = trimmed.find('\t') {
-            &trimmed[pos + 1 ..]
-        } else {
-            trimmed
-        };
-        lines.push(strip_symbol_annotation(kept).to_string());
-    }
-    lines.join("\n")
-}
-
-/// Drop a trailing ` <symbol+offset>` annotation, if the line carries
-/// one. See [`normalize_disasm`] for why.
-fn strip_symbol_annotation(line: &str) -> &str {
-    if line.ends_with('>')
-        && let Some(pos) = line.rfind(" <")
-    {
-        return &line[.. pos];
-    }
-    line
-}
-
 /// Extract machine code for the `bench_entry` symbol from a dylib.
 fn extract_bench_entry(dylib_path: &str) -> Option<String> {
     if let Some(asm) = objdump_symbol(dylib_path, "bench_entry") {
@@ -168,6 +132,16 @@ fn extract_symbol_range(text: &str, symbol: &str) -> Option<String> {
 /// Disassemble the whole `.text` section of a dylib: every function,
 /// not just `bench_entry`. See the module docs for why this, rather
 /// than `bench_entry` alone, is the authoritative comparison basis.
+///
+/// Known gap, not fixed here: `objdump_all` runs `objdump -d`, which
+/// disassembles every executable section in the file, while
+/// `otool_all` runs `otool -tv`, which covers only `__TEXT,__text`.
+/// If `objdump` serves one variant of a pair and the `otool` fallback
+/// serves the other (only possible when `objdump` itself is present
+/// but fails on exactly one dylib), the two are compared across
+/// different byte ranges and can never match. Both binaries reaching
+/// for the same tool inside one run is the overwhelmingly common case,
+/// so this stays a known gap rather than a fix in this pass.
 fn extract_text_section(dylib_path: &str) -> Option<String> {
     if let Some(asm) = objdump_all(dylib_path) {
         return Some(asm);
@@ -247,9 +221,8 @@ fn duplicate_pairs(
 /// "no duplicates": the variants named in `unreadable` were excluded
 /// from the comparison entirely, because their `.text` section could
 /// not be extracted (`objdump` and, on macOS, `otool` both failed, or
-/// neither is installed). This is the same failure shape defect one
-/// was: an extraction that silently does nothing must not look like
-/// an extraction that ran and found nothing wrong.
+/// neither is installed). An extraction that silently does nothing
+/// must not look like an extraction that ran and found nothing wrong.
 #[derive(Debug, PartialEq, Eq)]
 struct CheckReport {
     /// Duplicate pairs found among variants whose `.text` section was
