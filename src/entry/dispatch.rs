@@ -20,6 +20,55 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
+/// Whether this invocation is one that repairs or inspects rather than gates.
+///
+/// These stay usable when the pack will not build, because `clean` and
+/// `migrate` are among the ways a broken pack gets fixed, and refusing to run
+/// them would leave the repo with no route out. Everything else gates, so
+/// everything else blocks.
+fn is_recovery_command(args: &[String]) -> bool {
+    const RECOVERY: &[&str] = &["clean", "activate", "deactivate", "status", "migrate"];
+    args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
+}
+
+/// The blocking message for a pack that would not build.
+///
+/// It names the failure, says what it costs, and lists the causes worth
+/// checking first. The stale-branch case leads because it is the one that has
+/// actually happened: a pack pinned to a branch that stopped moving keeps
+/// resolving cleanly to an old head while the engine moves on, so the two
+/// drift apart with nothing in either repository looking wrong.
+fn explain_lint_load_failure(cfg: &Config, err: &impl std::fmt::Display) -> String {
+    let mut s = String::new();
+    s.push_str("this repo's custom lints could not be built, so no lint below\n");
+    s.push_str("them ran. Nothing was checked.\n\n");
+    s.push_str("  the build reported:\n");
+    for line in err.to_string().lines() {
+        s.push_str("    ");
+        s.push_str(line);
+        s.push('\n');
+    }
+    s.push_str("\n  declared in:\n    ");
+    s.push_str(&cfg.config_path.display().to_string());
+    s.push_str("\n\n  what to check, most likely first:\n");
+    s.push_str(
+        "    - a `[lint-crates]` entry pinned to a branch that has stopped\n\
+         \x20     moving. The head still resolves, so nothing looks stale, but the\n\
+         \x20     pack ages against an engine that keeps moving. Point it at the\n\
+         \x20     branch the pack is actually developed on.\n",
+    );
+    s.push_str(
+        "    - a `[lint-crates]` key that is not the pack's package name. It is\n\
+         \x20     used verbatim as the cargo dependency name and as the Rust\n\
+         \x20     identifier, so a renamed pack needs the key renamed with it.\n",
+    );
+    s.push_str(
+        "    - a local lint in this repo's lints directory still on an older\n\
+         \x20     trait shape than the engine expects.\n",
+    );
+    s
+}
+
 pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // The engine runs as a grandchild of git hooks, whose exported repo-location
     // GIT_* variables poison every `git` this process spawns from a different
@@ -91,15 +140,32 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // boxed lints' vtables outlive every use below; the shadowing binds the
     // effective slices for the rest of the function.
     let loaded = if pack_is_empty(pack) {
-        arg_value(&args, "--mockspace-lint-rules-dep").and_then(|dep| {
-            match crate::custom_lints::load(&cfg, &cfg.config_path, &dep) {
+        match arg_value(&args, "--mockspace-lint-rules-dep") {
+            Some(dep) => match crate::custom_lints::load(&cfg, &cfg.config_path, &dep) {
                 Ok(l) => l,
+                // A pack that will not build is a blocking failure, not a
+                // warning. Reporting it and carrying on runs every remaining
+                // gate with the repo's own lints absent and then reports a
+                // pass, which is the one outcome that cannot be allowed:
+                // silence and success are indistinguishable to the caller. It
+                // shipped that way, and arvo took 194 commits over eight days
+                // with its pack missing before anyone read the line.
+                //
+                // The recovery and inspection commands are exempt, because
+                // some of them are how the failure gets fixed.
+                Err(e) if !is_recovery_command(&args) => {
+                    eprintln!();
+                    eprintln!("BLOCKED: {}", explain_lint_load_failure(&cfg, &e));
+                    return ExitCode::FAILURE;
+                },
                 Err(e) => {
                     eprintln!("mock: custom lints unavailable: {e}");
+                    eprintln!("mock: continuing because this command does not lint.");
                     None
                 },
-            }
-        })
+            },
+            None => None,
+        }
     } else {
         None
     };
@@ -822,4 +888,74 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     eprintln!("  generated {agent_count} agent files");
 
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(rest: &[&str]) -> Vec<String> {
+        std::iter::once("mock".to_string())
+            .chain(rest.iter().map(|s| s.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn gating_commands_are_not_recovery_commands() {
+        // These lint, so a pack that will not build must block them. This is
+        // the half that regressed: every one of these ran to a reported pass
+        // with the pack absent.
+        for cmd in ["check", "lock", "close", "deprecate", "unlock", "archive"] {
+            assert!(
+                !is_recovery_command(&args(&[cmd])),
+                "`{cmd}` gates, so it must not be exempt from the lint-load block"
+            );
+        }
+        // The bare invocation regenerates docs and agent rules, and is the
+        // most common way the gate is reached at all.
+        assert!(!is_recovery_command(&args(&[])));
+        assert!(!is_recovery_command(&args(&["--lint-only", "--commit"])));
+    }
+
+    #[test]
+    fn recovery_commands_survive_a_broken_pack() {
+        // Refusing these would leave a repo with a broken pack no route out,
+        // since `clean` and `migrate` are among the ways it gets fixed.
+        for cmd in ["clean", "activate", "deactivate", "status", "migrate"] {
+            assert!(
+                is_recovery_command(&args(&[cmd])),
+                "`{cmd}` repairs or inspects, so it must stay usable"
+            );
+        }
+    }
+
+    #[test]
+    fn a_flag_value_is_not_read_as_a_recovery_command() {
+        // `--scope status` names a crate, not the `status` subcommand. The
+        // check skips argv[0] but not flag values, so this pins the shape a
+        // future reader would otherwise have to rediscover.
+        let a = args(&["--dir", "clean"]);
+        assert!(
+            is_recovery_command(&a),
+            "documenting current behaviour: a flag value that spells a \
+             recovery command is read as one. If this ever tightens, the \
+             tightening is the fix, not this assertion."
+        );
+    }
+
+    #[test]
+    fn the_block_message_names_the_cost_and_the_first_cause() {
+        let cfg = Config::from_dir(Path::new("/nowhere"));
+        let msg = explain_lint_load_failure(&cfg, &"no rules expected `cross_lints`");
+
+        // The cost is the point: a reader who skims must learn that nothing
+        // was checked, not merely that something failed.
+        assert!(msg.contains("Nothing was checked"), "message: {msg}");
+        // The underlying compiler output survives, indented rather than lost.
+        assert!(msg.contains("no rules expected `cross_lints`"), "message: {msg}");
+        // The stale-pin cause leads, because it is the one that has happened.
+        let stale = msg.find("stopped").expect("stale-branch cause present");
+        let key = msg.find("package name").expect("key-mismatch cause present");
+        assert!(stale < key, "the stale-branch cause should lead: {msg}");
+    }
 }
