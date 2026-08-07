@@ -263,6 +263,9 @@ fn canon_design_code_chain_is_a_generated_builtin() {
     );
     assert!(rule.apply_to.iter().any(|g| g.contains("research")));
     assert!(rule.apply_to.iter().any(|g| g.contains("canon")));
+    // design_rounds/ is where an agent decides whether what it is writing is
+    // canon, design, or code, so this rule applies there too
+    assert!(rule.apply_to.iter().any(|g| g.contains("design_rounds")));
 
     assert!(rule.body.contains("Canon is the theory"));
     assert!(rule.body.contains("Design is the spec"));
@@ -275,6 +278,18 @@ fn canon_design_code_chain_is_a_generated_builtin() {
     assert!(rule.body.contains("archive/"));
     assert!(rule.body.contains("examples/"));
     assert!(rule.body.contains("only `archive/` does"));
+    // demotion moves a whole timestamped directory (parallel to
+    // design_rounds/<timestamp>/), not a filename suffix
+    assert!(rule.body.contains("canon/archive/<timestamp>/"));
+    assert!(rule.body.contains("design_rounds/<timestamp>/"));
+    assert!(
+        rule.body
+            .contains("a directory rather than a filename suffix")
+    );
+    // canon files are .md, stated as derived from the design_rounds/
+    // parallel rather than as a settled decision
+    assert!(rule.body.contains("A canon file is `.md`, not `.md.tmpl`"));
+    assert!(rule.body.contains("derived rather than decided"));
     // the two rules that hold now, stated firmly rather than as intent
     assert!(rule.body.contains("must declare the canon it relates to"));
     assert!(rule.body.contains("has no reason to exist"));
@@ -298,9 +313,23 @@ fn canon_design_code_chain_is_a_generated_builtin() {
                 .contains("has a lint, phase gate, or hook behind it yet")
     );
 
-    // a canon change nukes only its declared dependents, never every design;
-    // this is the corrected blast radius (2026-08-07), and a later editor
-    // restoring the stronger original phrasing must not slip past unnoticed
+    // A canon change nukes only its declared dependents, never every design.
+    // A guard pinned to one literal sentence ("every design is nuked") missed
+    // a second bad phrasing ("every design beneath it") in the unformalised-
+    // cascade section: the grep that produced the guard shared its own blind
+    // spot. Pin the CLAIM instead of a sentence: enumerate every legitimate
+    // "every design" occurrence and assert the substring appears nowhere
+    // else. Three are legitimate, not two: the mutation-order clause naming
+    // its own scope, the disclaimer following it, and the tier test (whose
+    // "every design built on it" is inherently scoped by "on it").
+    let every_design_occurrences = rule.body.matches("every design").count();
+    assert_eq!(
+        every_design_occurrences, 3,
+        "expected exactly 3 occurrences of \"every design\" (the mutation-order clause, its \
+         disclaimer, and the tier test); found {every_design_occurrences}. A new occurrence is \
+         either a fourth legitimate one this assertion needs updating for, or a regression to the \
+         unscoped \"nukes every design\" claim the mutation order corrected."
+    );
     assert!(
         rule.body
             .contains("every design that declares that file is nuked first")
@@ -309,7 +338,12 @@ fn canon_design_code_chain_is_a_generated_builtin() {
         rule.body
             .contains("Not every design in the project. Only the declared dependents")
     );
+    assert!(
+        rule.body
+            .contains("every design built on it is wrong, it is canon")
+    );
     assert!(!rule.body.contains("every design is nuked"));
+    assert!(!rule.body.contains("every design beneath"));
     // the two consequences that fall out of scoping to declared dependents
     assert!(rule.body.contains("Adding a new canon file nukes nothing"));
     assert!(
