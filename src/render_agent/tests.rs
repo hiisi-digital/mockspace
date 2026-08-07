@@ -234,6 +234,46 @@ fn agent_gate_hook_self_heals_then_blocks() {
 }
 
 #[test]
+fn canon_design_code_chain_is_a_generated_builtin() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cfg = Config::from_dir(&tmp.path().join("mock"));
+    let builtins = generate_builtin_templates(&cfg);
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "canon-design-code-chain")
+        .expect("canon-design-code-chain builtin rule must be generated");
+
+    // covers design templates, crate source, and the research area, since
+    // the rule governs which tier a document belongs to across all three
+    assert!(
+        rule.apply_to
+            .iter()
+            .any(|g| g.ends_with("*.md.tmpl") && !g.contains("crates"))
+    );
+    assert!(
+        rule.apply_to
+            .iter()
+            .any(|g| g.contains("crates") && g.ends_with("*.md.tmpl"))
+    );
+    assert!(
+        rule.apply_to
+            .iter()
+            .any(|g| g.contains("crates") && g.ends_with("*.rs"))
+    );
+    assert!(rule.apply_to.iter().any(|g| g.contains("research")));
+
+    assert!(rule.body.contains("Canon is the theory"));
+    assert!(rule.body.contains("Design is the spec"));
+    assert!(rule.body.contains("nuked"));
+    assert!(rule.body.contains("Canon is never deleted, only demoted"));
+    assert!(
+        !rule.body.contains('\u{2014}'),
+        "no em-dashes in a generated rule"
+    );
+}
+
+#[test]
 fn agent_gate_is_a_generated_builtin() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let claude = tmp.path().join(".claude/hooks");
