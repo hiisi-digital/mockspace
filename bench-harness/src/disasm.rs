@@ -19,6 +19,12 @@
 //! dispatcher shell. The authoritative check disassembles the whole
 //! `.text` section, which sees the user's function wherever the
 //! optimizer put it.
+//!
+//! When extraction itself fails, silence would look identical to a
+//! clean pass: an empty duplicate list either way. [`check_duplicates`]
+//! reports that case explicitly (see [`CheckReport`]) rather than
+//! letting a variant it could not read vanish into "no duplicates
+//! found".
 
 use std::process::Command;
 
@@ -181,11 +187,14 @@ fn extract_text_section(dylib_path: &str) -> Option<String> {
 /// Whether two variants' disassembly describes the same compiled
 /// work.
 ///
-/// `entry_a` / `entry_b` are `bench_entry`'s own disassembly: a cheap
-/// negative when both are available. Differing entries prove differing
-/// `.text` (the entry is part of it), so the pair is not a duplicate
-/// regardless of `text_a` / `text_b`, without needing them to have
-/// been extractable at all.
+/// Both `entry_asm` and `text_section` are already-extracted, precomputed
+/// disassembly; this function does no extraction of its own, so it decides
+/// nothing about which subprocess calls happen. `entry_a` / `entry_b` are
+/// `bench_entry`'s own disassembly: a cheap negative when both are
+/// available. Differing entries prove differing `.text` (the entry is
+/// part of it), so the pair is not a duplicate regardless of `text_a` /
+/// `text_b`, and the decision does not depend on those having been
+/// extractable at all.
 ///
 /// When the entries match, or either is unavailable, the whole `.text`
 /// section is the authoritative comparison: it sees the user's
@@ -228,8 +237,99 @@ fn duplicate_pairs(
     dupes
 }
 
+/// The outcome of a duplicate-check pass, kept distinct from printing
+/// it so "answered, no duplicates" and "could not answer" are two
+/// different values rather than the same empty `dupes` list.
+///
+/// An empty `dupes` with an empty `unreadable` is a genuine clean
+/// pass. An empty `dupes` with a non-empty `unreadable` means the
+/// check could not examine every variant and must not be read as
+/// "no duplicates": the variants named in `unreadable` were excluded
+/// from the comparison entirely, because their `.text` section could
+/// not be extracted (`objdump` and, on macOS, `otool` both failed, or
+/// neither is installed). This is the same failure shape defect one
+/// was: an extraction that silently does nothing must not look like
+/// an extraction that ran and found nothing wrong.
+#[derive(Debug, PartialEq, Eq)]
+struct CheckReport {
+    /// Duplicate pairs found among variants whose `.text` section was
+    /// extracted successfully.
+    dupes:      Vec<(String, String)>,
+    /// Paths whose `.text` section could not be extracted at all, and
+    /// were therefore excluded from `dupes` regardless of whether they
+    /// are, in truth, duplicates of something else in the run.
+    unreadable: Vec<String>,
+}
+
+/// Build a [`CheckReport`] from precomputed disassembly. Pure and
+/// testable without a dylib on disk, same as [`duplicate_pairs`].
+fn build_report(
+    variant_paths: &[String],
+    entry_asm: &[Option<String>],
+    text_section: &[Option<String>],
+) -> CheckReport {
+    let unreadable = variant_paths
+        .iter()
+        .zip(text_section)
+        .filter(|(_, text)| text.is_none())
+        .map(|(path, _)| path.clone())
+        .collect();
+    CheckReport {
+        dupes: duplicate_pairs(variant_paths, entry_asm, text_section),
+        unreadable,
+    }
+}
+
+/// Print a [`CheckReport`] to stderr. Total or partial extraction
+/// failure is reported before (and regardless of) any duplicate
+/// pairs, so a run that could not fully answer never reads the same
+/// as a run that answered "no duplicates".
+fn print_report(variant_paths: &[String], report: &CheckReport) {
+    if !report.unreadable.is_empty() {
+        if report.unreadable.len() == variant_paths.len() {
+            eprintln!(
+                "  WARNING: could not disassemble any of the {} variant(s) (objdump/otool \
+                 unavailable or failed); the duplicate check did not run.",
+                variant_paths.len()
+            );
+        } else {
+            eprintln!(
+                "  WARNING: {} of {} variant(s) could not be disassembled and were excluded \
+                 from the duplicate check:",
+                report.unreadable.len(),
+                variant_paths.len()
+            );
+            for path in &report.unreadable {
+                let short = path.rsplit('/').nth(1).unwrap_or(path);
+                eprintln!("    {}", short);
+            }
+        }
+    }
+
+    if !report.dupes.is_empty() {
+        eprintln!(
+            "  WARNING: {} variant pair(s) have identical machine code:",
+            report.dupes.len()
+        );
+        for (a, b) in &report.dupes {
+            let a_short = a.rsplit('/').nth(1).unwrap_or(a);
+            let b_short = b.rsplit('/').nth(1).unwrap_or(b);
+            eprintln!("    {} == {}", a_short, b_short);
+        }
+    }
+}
+
 /// Compare `bench_entry` disassembly and the whole `.text` section
-/// across all variant dylibs. Reports duplicates to stderr.
+/// across all variant dylibs. Reports duplicates to stderr, and
+/// reports separately (see [`CheckReport`]) when the check could not
+/// disassemble some or all of the variants, so that case is never
+/// silently indistinguishable from a clean pass.
+///
+/// Extraction runs eagerly for every variant path before any
+/// comparison: the cheap `bench_entry`-only negative in [`same_work`]
+/// short-circuits a string comparison once both sides are in memory,
+/// not the disassembly itself, which has already happened for every
+/// variant by the time this function compares anything.
 pub fn check_duplicates(variant_paths: &[String]) {
     if variant_paths.len() < 2 {
         return;
@@ -240,19 +340,8 @@ pub fn check_duplicates(variant_paths: &[String]) {
     let text_section: Vec<Option<String>> =
         variant_paths.iter().map(|p| extract_text_section(p)).collect();
 
-    let dupes = duplicate_pairs(variant_paths, &entry_asm, &text_section);
-
-    if !dupes.is_empty() {
-        eprintln!(
-            "  WARNING: {} variant pair(s) have identical machine code:",
-            dupes.len()
-        );
-        for (a, b) in &dupes {
-            let a_short = a.rsplit('/').nth(1).unwrap_or(a);
-            let b_short = b.rsplit('/').nth(1).unwrap_or(b);
-            eprintln!("    {} == {}", a_short, b_short);
-        }
-    }
+    let report = build_report(variant_paths, &entry_asm, &text_section);
+    print_report(variant_paths, &report);
 }
 
 #[cfg(test)]

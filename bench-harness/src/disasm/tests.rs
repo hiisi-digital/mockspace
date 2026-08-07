@@ -105,6 +105,55 @@ fn duplicate_pairs_reports_every_matching_pair_once() {
     assert_eq!(dupes, vec![("a".to_string(), "b".to_string())]);
 }
 
+// ── CheckReport: "could not answer" must be distinguishable from
+// "answered, no duplicates". Both currently produce an empty `dupes`;
+// the whole point of `CheckReport` is that `unreadable` is what tells
+// the two apart, so these assert on it directly rather than assuming
+// an empty duplicate list means a clean pass.
+
+#[test]
+fn a_genuine_clean_pass_has_no_unreadable_variants() {
+    let paths = vec!["a".to_string(), "b".to_string()];
+    let entry = vec![some("x"), some("y")];
+    let text = vec![some("alpha"), some("beta")];
+    let report = build_report(&paths, &entry, &text);
+    assert!(report.dupes.is_empty());
+    assert!(
+        report.unreadable.is_empty(),
+        "a run where every variant was disassembled and none matched must not carry any \
+         unreadable paths"
+    );
+}
+
+#[test]
+fn total_extraction_failure_is_not_a_clean_pass() {
+    // This is defect one's failure shape one level up: if `.text`
+    // extraction fails for every variant, `same_work` is false for
+    // every pair by construction (see `missing_text_is_never_a_duplicate`
+    // above), so `dupes` alone is indistinguishable from a genuine
+    // no-duplicates run. `unreadable` is what a caller must check.
+    let paths = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    let entry = vec![None, None, None];
+    let text = vec![None, None, None];
+    let report = build_report(&paths, &entry, &text);
+    assert!(report.dupes.is_empty());
+    assert_eq!(
+        report.unreadable, paths,
+        "every variant's `.text` section failed to extract; all of them should be reported \
+         as unreadable, not silently dropped"
+    );
+}
+
+#[test]
+fn partial_extraction_failure_still_reports_dupes_found_among_the_rest() {
+    let paths = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+    let entry = vec![some("x"), some("x"), None];
+    let text = vec![some("t"), some("t"), None];
+    let report = build_report(&paths, &entry, &text);
+    assert_eq!(report.dupes, vec![("a".to_string(), "b".to_string())]);
+    assert_eq!(report.unreadable, vec!["c".to_string()]);
+}
+
 // ── real dylibs, compiled at test time via rustc directly (no cargo,
 // no crate deps), so these run without a published mockspace-bench-core.
 // Skips (rather than fails) when rustc or objdump/otool are missing,
