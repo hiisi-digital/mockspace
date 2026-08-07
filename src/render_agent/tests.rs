@@ -268,10 +268,35 @@ fn canon_design_code_chain_is_a_generated_builtin() {
     assert!(rule.body.contains("Design is the spec"));
     assert!(rule.body.contains("nuked"));
     assert!(rule.body.contains("Canon is never deleted, only demoted"));
-    // the reserved directory is named, and the future guard is stated as
-    // intent rather than as an already-working gate
+    // the reserved directory is named, with its archive/ and examples/
+    // subdirectories, and the deliberate inversion of the design_rounds/
+    // any-subdir-means-archived rule
     assert!(rule.body.contains("mock/canon/") || rule.body.contains("/canon/"));
-    assert!(rule.body.contains("does not exist yet"));
+    assert!(rule.body.contains("archive/"));
+    assert!(rule.body.contains("examples/"));
+    assert!(rule.body.contains("only `archive/` does"));
+    // the two rules that hold now, stated firmly rather than as intent
+    assert!(rule.body.contains("must declare the canon it relates to"));
+    assert!(rule.body.contains("has no reason to exist"));
+    assert!(
+        rule.body
+            .contains("Naming a canon that does not exist is a hard failure")
+    );
+    // the cascade/relation mechanism is named as anticipated and unspecified,
+    // not as something to invent or assume absent
+    assert!(
+        rule.body.contains("not specified")
+            || rule.body.contains("not yet formalised")
+            || rule.body.contains("is not formalised yet")
+    );
+    assert!(rule.body.contains("dogfood"));
+    // no automated gate exists yet for any of the three rules above
+    assert!(
+        rule.body.contains("No tooling enforces any of this yet")
+            || rule
+                .body
+                .contains("has a lint, phase gate, or hook behind it yet")
+    );
     assert!(
         !rule.body.contains('\u{2014}'),
         "no em-dashes in a generated rule"
