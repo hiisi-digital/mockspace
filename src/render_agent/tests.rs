@@ -234,6 +234,165 @@ fn agent_gate_hook_self_heals_then_blocks() {
 }
 
 #[test]
+fn canon_design_code_chain_is_a_generated_builtin() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cfg = Config::from_dir(&tmp.path().join("mock"));
+    let builtins = generate_builtin_templates(&cfg);
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "canon-design-code-chain")
+        .expect("canon-design-code-chain builtin rule must be generated");
+
+    // covers design templates, crate source, and the research area, since
+    // the rule governs which tier a document belongs to across all three
+    assert!(
+        rule.apply_to
+            .iter()
+            .any(|g| g.ends_with("*.md.tmpl") && !g.contains("crates"))
+    );
+    assert!(
+        rule.apply_to
+            .iter()
+            .any(|g| g.contains("crates") && g.ends_with("*.md.tmpl"))
+    );
+    assert!(
+        rule.apply_to
+            .iter()
+            .any(|g| g.contains("crates") && g.ends_with("*.rs"))
+    );
+    assert!(rule.apply_to.iter().any(|g| g.contains("research")));
+    assert!(rule.apply_to.iter().any(|g| g.contains("canon")));
+    // design_rounds/ is where an agent decides whether what it is writing is
+    // canon, design, or code, so this rule applies there too
+    assert!(rule.apply_to.iter().any(|g| g.contains("design_rounds")));
+
+    assert!(rule.body.contains("Canon is the theory"));
+    assert!(rule.body.contains("Design is the spec"));
+    assert!(rule.body.contains("nuked"));
+    assert!(rule.body.contains("Canon is never deleted, only demoted"));
+    // the reserved directory is named, with its archive/ and examples/
+    // subdirectories, and the deliberate inversion of the design_rounds/
+    // any-subdir-means-archived rule
+    assert!(rule.body.contains("mock/canon/") || rule.body.contains("/canon/"));
+    assert!(rule.body.contains("archive/"));
+    assert!(rule.body.contains("examples/"));
+    assert!(rule.body.contains("only `archive/` does"));
+    // demotion moves a whole timestamped directory (parallel to
+    // design_rounds/<timestamp>/), not a filename suffix
+    assert!(rule.body.contains("canon/archive/<timestamp>/"));
+    assert!(rule.body.contains("design_rounds/<timestamp>/"));
+    assert!(
+        rule.body
+            .contains("a directory rather than a filename suffix")
+    );
+    // canon files are .md, stated as derived from the design_rounds/
+    // parallel rather than as a settled decision
+    assert!(rule.body.contains("A canon file is `.md`, not `.md.tmpl`"));
+    assert!(rule.body.contains("derived rather than decided"));
+    // the two rules that hold now, stated firmly rather than as intent
+    assert!(rule.body.contains("must declare the canon it relates to"));
+    assert!(rule.body.contains("has no reason to exist"));
+    assert!(
+        rule.body
+            .contains("Naming a canon that does not exist is a hard failure")
+    );
+    // the cascade/relation mechanism is named as anticipated and unspecified,
+    // not as something to invent or assume absent
+    assert!(
+        rule.body.contains("not specified")
+            || rule.body.contains("not yet formalised")
+            || rule.body.contains("is not formalised yet")
+    );
+    assert!(rule.body.contains("dogfood"));
+    // no automated gate exists yet for any of the three rules above
+    assert!(
+        rule.body.contains("No tooling enforces any of this yet")
+            || rule
+                .body
+                .contains("has a lint, phase gate, or hook behind it yet")
+    );
+
+    // A canon change nukes only its declared dependents, never every design.
+    // A guard pinned to one literal sentence ("every design is nuked") missed
+    // a second bad phrasing ("every design beneath it") in the unformalised-
+    // cascade section: the grep that produced the guard shared its own blind
+    // spot. Pin the CLAIM instead of a sentence: enumerate every legitimate
+    // "every design" occurrence and assert the substring appears nowhere
+    // else. Three are legitimate, not two: the mutation-order clause naming
+    // its own scope, the disclaimer following it, and the tier test (whose
+    // "every design built on it" is inherently scoped by "on it").
+    let every_design_occurrences = rule.body.matches("every design").count();
+    assert_eq!(
+        every_design_occurrences, 3,
+        "expected exactly 3 occurrences of \"every design\" (the mutation-order clause, its \
+         disclaimer, and the tier test); found {every_design_occurrences}. A new occurrence is \
+         either a fourth legitimate one this assertion needs updating for, or a regression to the \
+         unscoped \"nukes every design\" claim the mutation order corrected."
+    );
+    assert!(
+        rule.body
+            .contains("every design that declares that file is nuked first")
+    );
+    assert!(
+        rule.body
+            .contains("Not every design in the project. Only the declared dependents")
+    );
+    assert!(
+        rule.body
+            .contains("every design built on it is wrong, it is canon")
+    );
+    assert!(!rule.body.contains("every design is nuked"));
+    assert!(!rule.body.contains("every design beneath"));
+    // the two consequences that fall out of scoping to declared dependents
+    assert!(rule.body.contains("Adding a new canon file nukes nothing"));
+    assert!(
+        rule.body
+            .contains("Appending to an existing canon file also nukes nothing")
+    );
+    assert!(rule.body.contains("trigger is invalidation, not editing"));
+    // file granularity: one file is one topic, so splitting is the fix for
+    // an over-broad blast radius, not a finer-grained dependency unit
+    assert!(rule.body.contains("one file is one topic"));
+    assert!(
+        rule.body
+            .contains("splitting the file, not refining the granularity")
+    );
+
+    // "just change it" overstates the leaf tier's freedom into no
+    // constraints at all; this is the corrected framing (2026-08-07), and a
+    // later editor restoring the old bare phrasing must not slip past
+    // unnoticed, since it contradicts the design-governs-code relation the
+    // rule states elsewhere
+    assert!(!rule.body.contains("just change it. It is the leaf"));
+    assert!(
+        rule.body
+            .contains("nothing has to be nuked first, because code is the leaf")
+    );
+    assert!(
+        rule.body
+            .contains("The mockspace round ceremony applies in full")
+    );
+    assert!(
+        rule.body
+            .contains("nothing may appear in code that is not in the design")
+    );
+    assert!(
+        rule.body
+            .contains("undeclared design change wearing the leaf tier's freedom")
+    );
+    assert!(
+        rule.body
+            .contains("unconstrained downward and fully constrained upward")
+    );
+
+    assert!(
+        !rule.body.contains('\u{2014}'),
+        "no em-dashes in a generated rule"
+    );
+}
+
+#[test]
 fn agent_gate_is_a_generated_builtin() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let claude = tmp.path().join(".claude/hooks");
@@ -404,7 +563,9 @@ fn sketching_and_benchmarking_are_on_by_default() {
                 .skills
                 .iter()
                 .find(|s| s.dir_name == want)
-                .unwrap_or_else(|| panic!("{want} defaults on whatever the design-talk knob says ({declared:?})"));
+                .unwrap_or_else(|| {
+                    panic!("{want} defaults on whatever the design-talk knob says ({declared:?})")
+                });
             assert!(
                 skill.skill_description.contains("BEFORE"),
                 "{want}'s description must say when to invoke it, since that is what makes a \
