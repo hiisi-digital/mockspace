@@ -73,8 +73,16 @@ pub(super) fn strip_symbol_annotation(line: &str) -> &str {
 /// [`normalize_disasm`] for why these need folding and not just the
 /// leading per-line address column.
 ///
-/// A hex literal counts as an address, and gets folded, unless either
-/// holds:
+/// Verified directly against real compiled dylibs only on ARM64
+/// (Apple's `objdump`/`otool`, this module's only tested target). The
+/// x86 AT&T rule below (parenthesised displacements) is believed
+/// correct by construction and covered by a unit test against
+/// synthetic input, but this machine cannot compile and disassemble an
+/// x86 dylib to exercise it for real; treat it as reasoned, not
+/// verified, until it is.
+///
+/// A hex literal counts as an address, and gets folded, unless any of
+/// the following holds:
 ///
 /// - It is immediately preceded by `#` (ARM64 immediate syntax) or
 ///   `$` (x86 AT&T immediate syntax). Those are semantic constants the
@@ -86,9 +94,22 @@ pub(super) fn strip_symbol_annotation(line: &str) -> &str {
 ///   one shape of `#`-prefixed immediate that is address, not
 ///   algorithm; [`fold_adrp_companion_immediate`] handles it
 ///   separately, with the extra context this function does not have.)
-/// - It sits inside `[...]` (a memory operand, e.g. `[sp, #0x8]`).
-///   The offset that matters there is already `#`-prefixed and caught
-///   by the rule above; nothing inside brackets is a branch target.
+/// - It sits inside `[...]` (an ARM64 or x86 Intel-syntax memory
+///   operand, e.g. `[sp, #0x8]`). The offset that matters there is
+///   already `#`-prefixed and caught by the rule above; nothing inside
+///   brackets is a branch target.
+/// - It is immediately followed by `(` (an x86 AT&T-syntax memory
+///   operand's displacement, e.g. `0x10(%rax)`; AT&T has no brackets,
+///   so the rule above does not see it). Folding it would compare two
+///   variants that read different struct fields, array elements, or
+///   stack slots as equal, which is the dangerous direction: a false
+///   duplicate, not a missed one.
+///
+/// x86 Intel-syntax memory operands (bracketed, `mov eax, [ebx+0x10]`)
+/// are already covered by the bracket rule; only AT&T needed its own
+/// case. Any other syntax this module has not been exercised against
+/// (a disassembler emitting neither ARM64 nor these two x86 forms) is
+/// unhandled and would need its own rule added here, not assumed safe.
 pub(super) fn normalize_addresses(operand: &str) -> String {
     let bytes = operand.as_bytes();
     let mut out = String::with_capacity(operand.len());
@@ -111,11 +132,18 @@ pub(super) fn normalize_addresses(operand: &str) -> String {
                 && bytes[i + 1] == b'x'
                 && (i == 0 || !matches!(bytes[i - 1], b'#' | b'$')) =>
             {
+                let start = i;
                 i += 2;
                 while i < bytes.len() && (bytes[i] as char).is_ascii_hexdigit() {
                     i += 1;
                 }
-                out.push_str("ADDR");
+                if i < bytes.len() && bytes[i] == b'(' {
+                    // x86 AT&T displacement, e.g. `0x10(%rax)`: not a
+                    // branch/call/adrp target, leave it exactly as written.
+                    out.push_str(&operand[start .. i]);
+                } else {
+                    out.push_str("ADDR");
+                }
             },
             other => {
                 out.push(other as char);

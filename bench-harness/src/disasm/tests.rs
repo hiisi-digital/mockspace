@@ -118,6 +118,29 @@ fn normalize_addresses_leaves_bracketed_memory_operands_alone() {
 }
 
 #[test]
+fn normalize_addresses_leaves_x86_att_displacement_alone() {
+    // x86 AT&T memory operands are not bracketed (`0x10(%rax)`, not
+    // `[rax+0x10]`), so the bracket-depth guard above cannot see this
+    // one; without its own rule, `0x10` folds to `ADDR(%rax)` and two
+    // variants reading different struct fields, array elements, or
+    // stack slots compare equal, a false duplicate rather than a missed
+    // one. This machine only runs ARM64 objdump/otool, so this is a
+    // synthetic-input test of reasoned-correct logic, not a
+    // real-dylib-verified one; see the doc comment on
+    // `normalize_addresses`.
+    assert_eq!(normalize_addresses("movq\t0x10(%rax),%rbx"), "movq\t0x10(%rax),%rbx");
+    // Different displacements must still compare different: this is a
+    // struct-field or array-index selection, not layout noise.
+    assert_ne!(
+        normalize_addresses("movq\t0x10(%rax),%rbx"),
+        normalize_addresses("movq\t0x18(%rax),%rbx")
+    );
+    // A genuine call/branch target elsewhere on the same line still
+    // folds; only the parenthesised displacement is protected.
+    assert_eq!(normalize_addresses("callq\t0x4010a0 <do_work>"), "callq\tADDR <do_work>");
+}
+
+#[test]
 fn normalize_disasm_keeps_a_genuinely_different_instruction_different() {
     let xor_mul = "     8b8: ca0b0108     \teor\tx8, x8, x11\n";
     let add_mul = "     8b8: 8b090108     \tadd\tx8, x8, x9\n";
