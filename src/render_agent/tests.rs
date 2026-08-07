@@ -297,6 +297,33 @@ fn canon_design_code_chain_is_a_generated_builtin() {
                 .body
                 .contains("has a lint, phase gate, or hook behind it yet")
     );
+
+    // a canon change nukes only its declared dependents, never every design;
+    // this is the corrected blast radius (2026-08-07), and a later editor
+    // restoring the stronger original phrasing must not slip past unnoticed
+    assert!(
+        rule.body
+            .contains("every design that declares that file is nuked first")
+    );
+    assert!(
+        rule.body
+            .contains("Not every design in the project. Only the declared dependents")
+    );
+    assert!(!rule.body.contains("every design is nuked"));
+    // the two consequences that fall out of scoping to declared dependents
+    assert!(rule.body.contains("Adding a new canon file nukes nothing"));
+    assert!(
+        rule.body
+            .contains("Appending to an existing canon file also nukes nothing")
+    );
+    assert!(rule.body.contains("trigger is invalidation, not editing"));
+    // file granularity: one file is one topic, so splitting is the fix for
+    // an over-broad blast radius, not a finer-grained dependency unit
+    assert!(rule.body.contains("one file is one topic"));
+    assert!(
+        rule.body
+            .contains("splitting the file, not refining the granularity")
+    );
     assert!(
         !rule.body.contains('\u{2014}'),
         "no em-dashes in a generated rule"
