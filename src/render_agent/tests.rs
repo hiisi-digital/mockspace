@@ -262,11 +262,16 @@ fn canon_design_code_chain_is_a_generated_builtin() {
             .any(|g| g.contains("crates") && g.ends_with("*.rs"))
     );
     assert!(rule.apply_to.iter().any(|g| g.contains("research")));
+    assert!(rule.apply_to.iter().any(|g| g.contains("canon")));
 
     assert!(rule.body.contains("Canon is the theory"));
     assert!(rule.body.contains("Design is the spec"));
     assert!(rule.body.contains("nuked"));
     assert!(rule.body.contains("Canon is never deleted, only demoted"));
+    // the reserved directory is named, and the future guard is stated as
+    // intent rather than as an already-working gate
+    assert!(rule.body.contains("mock/canon/") || rule.body.contains("/canon/"));
+    assert!(rule.body.contains("does not exist yet"));
     assert!(
         !rule.body.contains('\u{2014}'),
         "no em-dashes in a generated rule"
@@ -444,7 +449,9 @@ fn sketching_and_benchmarking_are_on_by_default() {
                 .skills
                 .iter()
                 .find(|s| s.dir_name == want)
-                .unwrap_or_else(|| panic!("{want} defaults on whatever the design-talk knob says ({declared:?})"));
+                .unwrap_or_else(|| {
+                    panic!("{want} defaults on whatever the design-talk knob says ({declared:?})")
+                });
             assert!(
                 skill.skill_description.contains("BEFORE"),
                 "{want}'s description must say when to invoke it, since that is what makes a \
