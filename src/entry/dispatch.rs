@@ -225,6 +225,15 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     None => {
                         // No `--file`: read the message from stdin, which is how
                         // an agent hook passes text it extracted from a command.
+                        //
+                        // FIXME: a non-UTF-8 commit message (a repo with
+                        // `i18n.commitEncoding` set, say) makes this error and
+                        // takes the whole batch with it, naming no commit. Fails
+                        // closed, so obstructive rather than dangerous, but on
+                        // the `--not --remotes` widening path that covers all
+                        // local history, so one legacy commit blocks every push.
+                        // Wants lossy decoding per record once the batch path
+                        // owns its own reader.
                         let mut buf = String::new();
                         if let Err(e) = std::io::Read::read_to_string(
                             &mut std::io::stdin(),
@@ -246,6 +255,62 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 };
                 let command = arg_value(&args, "--command");
                 let tool = arg_value(&args, "--tool");
+
+                // `--batch`: stdin carries many messages, NUL-separated, each
+                // optionally prefixed with `<origin>\x1f`. One process handles
+                // all of them because startup dominates the work: measured at
+                // 468ms per invocation, so a 327-commit push costs about two
+                // and a half minutes spawned per message and milliseconds here.
+                //
+                // Each message is still checked on its own. Concatenating them
+                // into one call is what this exists to avoid: `check-message`
+                // parses its input as a single message with a subject line, so
+                // a blob's first line becomes the subject and every subject
+                // after the first is read as body text.
+                if args.iter().any(|a| a == "--batch") {
+                    let mut failed = 0usize;
+                    let mut checked = 0usize;
+
+                    for (rec_origin, rec_msg) in message::split_batch(&text, &origin) {
+                        checked += 1;
+                        let req = message::Request {
+                            domain,
+                            message: rec_msg,
+                            origin: rec_origin,
+                            command: command.as_deref(),
+                            tool: tool.as_deref(),
+                        };
+                        if message::run(&cfg, pack, gate, &req) != ExitCode::SUCCESS {
+                            failed += 1;
+                        }
+                    }
+
+                    if failed > 0 {
+                        eprintln!();
+                        eprintln!(
+                            "BLOCKED: {failed} of {checked} message(s) violate the message policy."
+                        );
+                        return ExitCode::FAILURE;
+                    }
+
+                    // `--batch` is only ever invoked with something to check,
+                    // so an empty stream means the caller produced nothing and
+                    // the gate can say nothing about this push. Fail closed:
+                    // silence and success being indistinguishable is how a repo
+                    // took 194 commits with its pack missing before anyone read
+                    // the line.
+                    if checked == 0 {
+                        eprintln!(
+                            "BLOCKED: the message gate received no messages to check. Expected at \
+                             least one; the caller produced an empty stream."
+                        );
+                        return ExitCode::FAILURE;
+                    }
+
+                    eprintln!("checked {checked} message(s)");
+                    return ExitCode::SUCCESS;
+                }
+
                 let req = message::Request {
                     domain,
                     message: text,
