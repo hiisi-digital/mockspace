@@ -179,6 +179,26 @@ pub(crate) fn read_message_file(path: &Path) -> Result<String, String> {
         .map_err(|e| format!("could not read the message file {}: {e}", path.display()))
 }
 
+/// Split a `--batch` stream into `(origin, message)` pairs.
+///
+/// The stream is NUL-terminated records, each `<origin>\x1f<message>`. A record
+/// with no separator is the whole message, taking `default_origin`.
+///
+/// **An empty message is a record, not noise.** Under a permissive commit-style
+/// config `empty-subject` is the only finding the lint can produce, so dropping
+/// empty records here would turn the push gate into a no-op. The only thing
+/// skipped is a completely empty record, which is the tail left by the trailing
+/// separator.
+pub(crate) fn split_batch(text: &str, default_origin: &str) -> Vec<(String, String)> {
+    text.split('\0')
+        .filter(|r| !r.is_empty())
+        .map(|r| match r.split_once('\x1f') {
+            Some((o, m)) => (o.to_string(), m.to_string()),
+            None => (default_origin.to_string(), r.to_string()),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +242,47 @@ mod tests {
         };
         let inv = message_invocation(&intercepted).expect("an invocation");
         assert_eq!(inv.command, Some("gh pr create --body '...'"));
+    }
+
+    #[test]
+    fn split_batch_keeps_an_empty_message_as_a_record() {
+        // The regression this guards: an empty commit message is exactly what
+        // `empty-subject` exists to reject, and it is the only finding a
+        // permissive commit-style config can produce. Dropping it here made the
+        // whole push gate a no-op on the repo that motivated the batch mode.
+        let recs = split_batch("abc123 \x1f\0", "<stdin>");
+        assert_eq!(recs.len(), 1, "an empty message is still a record");
+        assert_eq!(recs[0].0, "abc123 ");
+        assert_eq!(recs[0].1, "", "the message is empty and must reach the lint");
+    }
+
+    #[test]
+    fn split_batch_splits_on_the_first_separator_only() {
+        // A 0x1f inside a body is harmless: the label separator is always first.
+        let recs = split_batch("h1 subj\x1fbody with \x1f inside\n\0", "<stdin>");
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].0, "h1 subj");
+        assert_eq!(recs[0].1, "body with \x1f inside\n");
+    }
+
+    #[test]
+    fn split_batch_falls_back_to_the_default_origin() {
+        let recs = split_batch("no separator here\0", "<stdin>");
+        assert_eq!(recs, vec![("<stdin>".to_string(), "no separator here".to_string())]);
+    }
+
+    #[test]
+    fn split_batch_reads_many_records_in_order_and_ignores_the_trailing_tail() {
+        let recs = split_batch("a1 one\x1ffeat: one\n\0b2 two\x1ffix: two\n\nbody\n\0", "<stdin>");
+        assert_eq!(recs.len(), 2, "the trailing separator leaves no extra record");
+        assert_eq!(recs[0].0, "a1 one");
+        assert_eq!(recs[1].0, "b2 two");
+        assert_eq!(recs[1].1, "fix: two\n\nbody\n");
+    }
+
+    #[test]
+    fn split_batch_on_an_empty_stream_yields_nothing() {
+        assert!(split_batch("", "<stdin>").is_empty());
+        assert!(split_batch("\0", "<stdin>").is_empty());
     }
 }

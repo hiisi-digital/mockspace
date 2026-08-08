@@ -155,22 +155,27 @@ while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
 $RANGE_REVS"
 done <<< "$PREPUSH_STDIN"
 
-# Several refs in one push routinely share commits; validate each once.
-PUSH_REVS=$(printf '%s\n' "$PUSH_REVS" | grep -v '^[[:space:]]*$' | sort -u || true)
+# Several refs in one push routinely share commits; validate each once. The
+# dedupe preserves rev-list order (history order) rather than sorting, so a
+# rejection lists failing commits the way a reader expects to see them.
+PUSH_REVS=$(printf '%s\n' "$PUSH_REVS" | grep -v '^[[:space:]]*$' | awk '!seen[$0]++' || true)
 
 if [ -n "$PUSH_REVS" ]; then
-    # One batched call rather than one per commit: launcher startup dominates
-    # (measured at 468ms), so a few hundred commits would cost minutes spawned
-    # per message. `--batch` splits on NUL and labels each record with the sha
-    # before an 0x1f, so a rejection names the commit it came from.
+    # One git process for the whole range, not two per commit. Measured on the
+    # mockspace repo at 376 commits: the per-commit loop costs 11.0s against
+    # 0.054s here, and the widening path below can cover all local history.
+    #
+    # `-z` emits one NUL-terminated record per commit, and the format puts the
+    # label before an 0x1f so a rejection names the commit it came from. The
+    # framing is exactly what `--batch` parses.
+    #
+    # `--no-walk=unsorted` keeps the order the revs were fed in; plain
+    # `--no-walk` would re-sort by commit date.
+    set -o pipefail
     printf '%s\n' "$PUSH_REVS" \
-        | while IFS= read -r rev; do
-            [ -z "$rev" ] && continue
-            printf '%s\037' "$(git log -1 --format='%h %s' "$rev" 2>/dev/null)"
-            git log -1 --format=%B "$rev" 2>/dev/null
-            printf '\000'
-        done \
+        | git log --no-walk=unsorted --stdin -z --format='%h %s%x1f%B' \
         | "$launcher" check-message --domain commit-message --gate push --batch || exit 1
+    set +o pipefail
 fi
 "##
     .to_string()
@@ -678,30 +683,102 @@ mod byline_hook_tests {
     }
 
     #[test]
-    fn the_generated_pre_push_hook_validates_each_commit_message_separately() {
-        // Regression: the gate used to concatenate every message in the range
-        // into one blob and hand it to `check-message`, which parses its input
-        // as a single message with a subject line. The blob's first line was
-        // always empty (the accumulator starts empty), so every push was
-        // rejected with "the commit subject is empty", while no subject after
-        // the first was ever checked at all.
-        let h = gen_pre_push("mock", std::path::Path::new("/dev/null"));
+    fn the_pre_push_scan_emits_one_record_per_commit_including_an_empty_message() {
+        // Behavioural, not textual. The previous version of this test asserted
+        // substrings of the generated script, so it passed on a script whose
+        // pipeline never ran, failed on a strictly better implementation, and
+        // would not have caught the blob shape returning under another variable
+        // name. This runs the real body against a real repo and reads what the
+        // launcher actually receives.
+        //
+        // The empty-message commit is the point: `empty-subject` is the only
+        // finding a permissive commit-style config can produce, so a gate that
+        // drops empty records checks nothing at all.
+        let dir = scratch("prepush_records");
+        let out = dir.join("stdin.bin");
+        let bin = scratch("prepush_bin");
+        let stub = bin.join("mock");
+        std::fs::write(
+            &stub,
+            format!("#!/usr/bin/env bash\ncat > {}\nexit 0\n", out.display()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut p = std::fs::metadata(&stub).unwrap().permissions();
+            p.set_mode(0o755);
+            std::fs::set_permissions(&stub, p).unwrap();
+        }
 
-        // Revisions are collected, then each message is fetched on its own.
-        assert!(h.contains("git rev-list"), "must collect revs, not messages");
-        assert!(
-            h.contains("git log -1 --format=%B \"$rev\""),
-            "each message must be fetched on its own"
+        let (repo, _sha) = repo_with_commit("feat: first subject\n");
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap()
+        };
+        git(&["commit", "-q", "--no-verify", "--allow-empty", "-m", "fix: second subject"]);
+        git(&[
+            "commit",
+            "-q",
+            "--no-verify",
+            "--allow-empty",
+            "--allow-empty-message",
+            "-m",
+            "",
+        ]);
+        let head =
+            String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout).trim().to_string();
+
+        // A new branch: remote sha all zeros, so the body takes the widening
+        // path and scans everything not already on a remote.
+        let prepush_stdin =
+            format!("refs/heads/main {head} refs/heads/main {}", "0".repeat(40));
+        let script = format!(
+            "#!/usr/bin/env bash\nset -u\nPREPUSH_STDIN=$(cat)\n{}",
+            message_prepush_scan_body()
         );
-        assert!(h.contains("--batch"), "messages are checked per commit in one call");
+        let path_env = format!("{}:{}", bin.display(), launcher_free_path());
+        let code =
+            run_script(&script, &[], &prepush_stdin, Some(&repo), Some(&path_env));
 
-        // The accumulate-then-validate-once shape must not come back.
-        assert!(
-            !h.contains("PUSH_MSGS"),
-            "messages must not be accumulated into a single blob"
+        let got = std::fs::read(&out).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&bin);
+        let _ = std::fs::remove_dir_all(&repo);
+
+        assert_eq!(code, 0, "the stub passes, so the gate must pass");
+
+        let text = String::from_utf8_lossy(&got);
+        let records: Vec<&str> = text.split('\0').filter(|r| !r.is_empty()).collect();
+        assert_eq!(
+            records.len(),
+            3,
+            "one record per commit, empty message included. got: {text:?}"
         );
 
-        // A failing commit is named, which the blob form could not do.
-        assert!(h.contains("\\037"), "each record carries its commit label");
+        let bodies: Vec<&str> = records
+            .iter()
+            .map(|r| r.split_once('\x1f').expect("every record is labelled").1)
+            .collect();
+        assert!(
+            bodies.iter().any(|b| b.starts_with("feat: first subject")),
+            "got: {bodies:?}"
+        );
+        assert!(
+            bodies.iter().any(|b| b.starts_with("fix: second subject")),
+            "got: {bodies:?}"
+        );
+        assert!(
+            bodies.iter().any(|b| b.trim().is_empty()),
+            "the empty message must reach the launcher. got: {bodies:?}"
+        );
     }
+
 }
