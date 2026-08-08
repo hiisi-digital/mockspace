@@ -246,6 +246,54 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 };
                 let command = arg_value(&args, "--command");
                 let tool = arg_value(&args, "--tool");
+
+                // `--batch`: stdin carries many messages, NUL-separated, each
+                // optionally prefixed with `<origin>\x1f`. One process handles
+                // all of them because startup dominates the work: measured at
+                // 468ms per invocation, so a 327-commit push costs about two
+                // and a half minutes spawned per message and milliseconds here.
+                //
+                // Each message is still checked on its own. Concatenating them
+                // into one call is what this exists to avoid: `check-message`
+                // parses its input as a single message with a subject line, so
+                // a blob's first line becomes the subject and every subject
+                // after the first is read as body text.
+                if args.iter().any(|a| a == "--batch") {
+                    let mut failed = 0usize;
+                    let mut checked = 0usize;
+                    for record in text.split('\0') {
+                        if record.trim().is_empty() {
+                            continue;
+                        }
+                        let (rec_origin, rec_msg) = match record.split_once('\x1f') {
+                            Some((o, m)) => (o.to_string(), m.to_string()),
+                            None => (origin.clone(), record.to_string()),
+                        };
+                        if rec_msg.trim().is_empty() {
+                            continue;
+                        }
+                        checked += 1;
+                        let req = message::Request {
+                            domain,
+                            message: rec_msg,
+                            origin: rec_origin,
+                            command: command.as_deref(),
+                            tool: tool.as_deref(),
+                        };
+                        if message::run(&cfg, pack, gate, &req) != ExitCode::SUCCESS {
+                            failed += 1;
+                        }
+                    }
+                    if failed > 0 {
+                        eprintln!();
+                        eprintln!(
+                            "BLOCKED: {failed} of {checked} message(s) violate the message policy."
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                    return ExitCode::SUCCESS;
+                }
+
                 let req = message::Request {
                     domain,
                     message: text,

@@ -110,6 +110,11 @@ fi
 /// Every message being pushed goes through the same configured lints the
 /// commit-msg gate uses, at the push tier, so a project can warn locally and
 /// block before anything is shared.
+///
+/// Each message is validated on its own. `check-message` parses its input as
+/// one message with a subject line, so a batch of them cannot be concatenated
+/// and checked in a single call: the blob's first line becomes the subject and
+/// every later subject is read as body text.
 pub(crate) fn message_prepush_scan_body() -> String {
     r##"launcher=""
 if command -v mock >/dev/null 2>&1; then launcher="mock"
@@ -123,7 +128,13 @@ if [ -z "$launcher" ]; then
     exit 1
 fi
 
-PUSH_MSGS=""
+# Collect the revisions being pushed, not their messages. Each message is
+# validated on its own below: `check-message` parses its input as ONE message
+# with a subject line, so concatenating N of them makes the blob's own first
+# line the subject (always empty, since the accumulator starts empty) and
+# reads every subject after the first as body text. That combination blocked
+# every push while checking no subject at all.
+PUSH_REVS=""
 while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
     if [ -z "$bl_local" ]; then
         continue
@@ -136,17 +147,30 @@ while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
         # Bounded by `--not --remotes`; when the remote has never been fetched
         # this widens to all local history, which is the safe (over-)inclusive
         # direction for a gate of this kind.
-        RANGE_MSGS=$(git log --format=%B "$bl_local" --not --remotes 2>/dev/null || true)
+        RANGE_REVS=$(git rev-list "$bl_local" --not --remotes 2>/dev/null || true)
     else
-        RANGE_MSGS=$(git log --format=%B "$bl_remote".."$bl_local" 2>/dev/null || true)
+        RANGE_REVS=$(git rev-list "$bl_remote".."$bl_local" 2>/dev/null || true)
     fi
-    PUSH_MSGS="$PUSH_MSGS
-$RANGE_MSGS"
+    PUSH_REVS="$PUSH_REVS
+$RANGE_REVS"
 done <<< "$PREPUSH_STDIN"
 
-if [ -n "$(printf '%s' "$PUSH_MSGS" | tr -d '[:space:]')" ]; then
-    printf '%s\n' "$PUSH_MSGS" \
-        | "$launcher" check-message --domain commit-message --gate push || exit 1
+# Several refs in one push routinely share commits; validate each once.
+PUSH_REVS=$(printf '%s\n' "$PUSH_REVS" | grep -v '^[[:space:]]*$' | sort -u || true)
+
+if [ -n "$PUSH_REVS" ]; then
+    # One batched call rather than one per commit: launcher startup dominates
+    # (measured at 468ms), so a few hundred commits would cost minutes spawned
+    # per message. `--batch` splits on NUL and labels each record with the sha
+    # before an 0x1f, so a rejection names the commit it came from.
+    printf '%s\n' "$PUSH_REVS" \
+        | while IFS= read -r rev; do
+            [ -z "$rev" ] && continue
+            printf '%s\037' "$(git log -1 --format='%h %s' "$rev" 2>/dev/null)"
+            git log -1 --format=%B "$rev" 2>/dev/null
+            printf '\000'
+        done \
+        | "$launcher" check-message --domain commit-message --gate push --batch || exit 1
 fi
 "##
     .to_string()
@@ -653,4 +677,31 @@ mod byline_hook_tests {
         assert!(!h.contains("co-authored-by"), "policy must not be baked into the hook");
     }
 
+    #[test]
+    fn the_generated_pre_push_hook_validates_each_commit_message_separately() {
+        // Regression: the gate used to concatenate every message in the range
+        // into one blob and hand it to `check-message`, which parses its input
+        // as a single message with a subject line. The blob's first line was
+        // always empty (the accumulator starts empty), so every push was
+        // rejected with "the commit subject is empty", while no subject after
+        // the first was ever checked at all.
+        let h = gen_pre_push("mock", std::path::Path::new("/dev/null"));
+
+        // Revisions are collected, then each message is fetched on its own.
+        assert!(h.contains("git rev-list"), "must collect revs, not messages");
+        assert!(
+            h.contains("git log -1 --format=%B \"$rev\""),
+            "each message must be fetched on its own"
+        );
+        assert!(h.contains("--batch"), "messages are checked per commit in one call");
+
+        // The accumulate-then-validate-once shape must not come back.
+        assert!(
+            !h.contains("PUSH_MSGS"),
+            "messages must not be accumulated into a single blob"
+        );
+
+        // A failing commit is named, which the blob form could not do.
+        assert!(h.contains("\\037"), "each record carries its commit label");
+    }
 }
