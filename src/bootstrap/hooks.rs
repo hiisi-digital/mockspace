@@ -110,6 +110,11 @@ fi
 /// Every message being pushed goes through the same configured lints the
 /// commit-msg gate uses, at the push tier, so a project can warn locally and
 /// block before anything is shared.
+///
+/// Each message is validated on its own. `check-message` parses its input as
+/// one message with a subject line, so a batch of them cannot be concatenated
+/// and checked in a single call: the blob's first line becomes the subject and
+/// every later subject is read as body text.
 pub(crate) fn message_prepush_scan_body() -> String {
     r##"launcher=""
 if command -v mock >/dev/null 2>&1; then launcher="mock"
@@ -123,7 +128,13 @@ if [ -z "$launcher" ]; then
     exit 1
 fi
 
-PUSH_MSGS=""
+# Collect the revisions being pushed, not their messages. Each message is
+# validated on its own below: `check-message` parses its input as ONE message
+# with a subject line, so concatenating N of them makes the blob's own first
+# line the subject (always empty, since the accumulator starts empty) and
+# reads every subject after the first as body text. That combination blocked
+# every push while checking no subject at all.
+PUSH_REVS=""
 while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
     if [ -z "$bl_local" ]; then
         continue
@@ -136,17 +147,35 @@ while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
         # Bounded by `--not --remotes`; when the remote has never been fetched
         # this widens to all local history, which is the safe (over-)inclusive
         # direction for a gate of this kind.
-        RANGE_MSGS=$(git log --format=%B "$bl_local" --not --remotes 2>/dev/null || true)
+        RANGE_REVS=$(git rev-list "$bl_local" --not --remotes 2>/dev/null || true)
     else
-        RANGE_MSGS=$(git log --format=%B "$bl_remote".."$bl_local" 2>/dev/null || true)
+        RANGE_REVS=$(git rev-list "$bl_remote".."$bl_local" 2>/dev/null || true)
     fi
-    PUSH_MSGS="$PUSH_MSGS
-$RANGE_MSGS"
+    PUSH_REVS="$PUSH_REVS
+$RANGE_REVS"
 done <<< "$PREPUSH_STDIN"
 
-if [ -n "$(printf '%s' "$PUSH_MSGS" | tr -d '[:space:]')" ]; then
-    printf '%s\n' "$PUSH_MSGS" \
-        | "$launcher" check-message --domain commit-message --gate push || exit 1
+# Several refs in one push routinely share commits; validate each once. The
+# dedupe preserves rev-list order (history order) rather than sorting, so a
+# rejection lists failing commits the way a reader expects to see them.
+PUSH_REVS=$(printf '%s\n' "$PUSH_REVS" | grep -v '^[[:space:]]*$' | awk '!seen[$0]++' || true)
+
+if [ -n "$PUSH_REVS" ]; then
+    # One git process for the whole range, not two per commit. Measured on the
+    # mockspace repo at 376 commits: the per-commit loop costs 11.0s against
+    # 0.054s here, and the widening path below can cover all local history.
+    #
+    # `-z` emits one NUL-terminated record per commit, and the format puts the
+    # label before an 0x1f so a rejection names the commit it came from. The
+    # framing is exactly what `--batch` parses.
+    #
+    # `--no-walk=unsorted` keeps the order the revs were fed in; plain
+    # `--no-walk` would re-sort by commit date.
+    set -o pipefail
+    printf '%s\n' "$PUSH_REVS" \
+        | git log --no-walk=unsorted --stdin -z --format='%h %s%x1f%B' \
+        | "$launcher" check-message --domain commit-message --gate push --batch || exit 1
+    set +o pipefail
 fi
 "##
     .to_string()
@@ -651,6 +680,105 @@ mod byline_hook_tests {
         // fails closed rather than guessing a policy
         assert!(h.contains("no mockspace launcher on PATH"));
         assert!(!h.contains("co-authored-by"), "policy must not be baked into the hook");
+    }
+
+    #[test]
+    fn the_pre_push_scan_emits_one_record_per_commit_including_an_empty_message() {
+        // Behavioural, not textual. The previous version of this test asserted
+        // substrings of the generated script, so it passed on a script whose
+        // pipeline never ran, failed on a strictly better implementation, and
+        // would not have caught the blob shape returning under another variable
+        // name. This runs the real body against a real repo and reads what the
+        // launcher actually receives.
+        //
+        // The empty-message commit is the point: `empty-subject` is the only
+        // finding a permissive commit-style config can produce, so a gate that
+        // drops empty records checks nothing at all.
+        let dir = scratch("prepush_records");
+        let out = dir.join("stdin.bin");
+        let bin = scratch("prepush_bin");
+        let stub = bin.join("mock");
+        std::fs::write(
+            &stub,
+            format!("#!/usr/bin/env bash\ncat > {}\nexit 0\n", out.display()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut p = std::fs::metadata(&stub).unwrap().permissions();
+            p.set_mode(0o755);
+            std::fs::set_permissions(&stub, p).unwrap();
+        }
+
+        let (repo, _sha) = repo_with_commit("feat: first subject\n");
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap()
+        };
+        git(&["commit", "-q", "--no-verify", "--allow-empty", "-m", "fix: second subject"]);
+        git(&[
+            "commit",
+            "-q",
+            "--no-verify",
+            "--allow-empty",
+            "--allow-empty-message",
+            "-m",
+            "",
+        ]);
+        let head =
+            String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout).trim().to_string();
+
+        // A new branch: remote sha all zeros, so the body takes the widening
+        // path and scans everything not already on a remote.
+        let prepush_stdin =
+            format!("refs/heads/main {head} refs/heads/main {}", "0".repeat(40));
+        let script = format!(
+            "#!/usr/bin/env bash\nset -u\nPREPUSH_STDIN=$(cat)\n{}",
+            message_prepush_scan_body()
+        );
+        let path_env = format!("{}:{}", bin.display(), launcher_free_path());
+        let code =
+            run_script(&script, &[], &prepush_stdin, Some(&repo), Some(&path_env));
+
+        let got = std::fs::read(&out).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&bin);
+        let _ = std::fs::remove_dir_all(&repo);
+
+        assert_eq!(code, 0, "the stub passes, so the gate must pass");
+
+        let text = String::from_utf8_lossy(&got);
+        let records: Vec<&str> = text.split('\0').filter(|r| !r.is_empty()).collect();
+        assert_eq!(
+            records.len(),
+            3,
+            "one record per commit, empty message included. got: {text:?}"
+        );
+
+        let bodies: Vec<&str> = records
+            .iter()
+            .map(|r| r.split_once('\x1f').expect("every record is labelled").1)
+            .collect();
+        assert!(
+            bodies.iter().any(|b| b.starts_with("feat: first subject")),
+            "got: {bodies:?}"
+        );
+        assert!(
+            bodies.iter().any(|b| b.starts_with("fix: second subject")),
+            "got: {bodies:?}"
+        );
+        assert!(
+            bodies.iter().any(|b| b.trim().is_empty()),
+            "the empty message must reach the launcher. got: {bodies:?}"
+        );
     }
 
 }
