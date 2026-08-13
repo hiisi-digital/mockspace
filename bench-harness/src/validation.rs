@@ -8,19 +8,22 @@
 //! `bench_entry` in-process. Returns
 //! [`BenchError::ValidationFailed`] on mismatch.
 //!
-//! Three modes:
+//! Two independent checks, not three exclusive modes:
 //!
-//! - **Per-variant validity check** (when the routine implements
-//!   [`mockspace_bench_core::Routine::validate_output`]): each
-//!   variant's output is checked individually. Outputs may differ
-//!   across variants as long as each is valid (e.g. graph coloring
-//!   may pick different but equally-valid colourings).
-//! - **Approximate cross-variant comparison** (when the routine
-//!   declares [`mockspace_bench_core::Routine::max_relative_error`]
-//!   as `Some(eps)`): outputs are compared element-wise as f64 slices
-//!   with relative-error tolerance.
-//! - **Byte-exact cross-variant comparison** (default): all variants
-//!   must produce identical bytes.
+//! - **Per-variant validity**, always. Each variant's output is passed to
+//!   [`mockspace_bench_core::Routine::validate_output`], whose default returns
+//!   `Ok(())`, so a routine that declared no validator pays a no-op.
+//! - **Cross-variant agreement**, unless the routine declares
+//!   [`mockspace_bench_core::Routine::outputs_may_differ`]. That flag is
+//!   consent to variants disagreeing, and it is all it means (e.g. graph
+//!   colouring may pick different but equally-valid colourings). When the
+//!   routine declares
+//!   [`mockspace_bench_core::Routine::max_relative_error`] as `Some(eps)`,
+//!   outputs are compared element-wise as f64 slices with relative-error
+//!   tolerance; otherwise byte-exact.
+//!
+//! A routine can want both, and the common case does: outputs that agree
+//! byte-for-byte *and* each satisfy an invariant.
 
 use std::collections::HashSet;
 use std::process::Command;
@@ -71,10 +74,14 @@ pub(crate) struct ValidationPlan {
 /// cdylibs, which is the only other way to reach it.
 pub(crate) fn validation_plan(outputs_may_differ: bool, approx_eps: Option<f64>) -> ValidationPlan {
     ValidationPlan {
-        // The bridge cannot report whether the routine overrode
-        // `validate_output`, so `outputs_may_differ` is used as the consent
-        // signal for running it at all.
-        per_variant:   outputs_may_differ,
+        // Always. The bridge cannot report whether the routine overrode
+        // `validate_output`, and it does not need to: the trait's default
+        // returns `Ok(())`, so a routine that declared nothing pays a no-op and
+        // one that declared a validator gets it run. Gating this on
+        // `outputs_may_differ` instead is what silently disabled every
+        // validator written by a routine that also wanted byte-identical
+        // output.
+        per_variant:   true,
         cross_variant: if outputs_may_differ {
             None
         } else if let Some(eps) = approx_eps {
@@ -137,15 +144,8 @@ pub fn validate(
     let output_size = routine.bridge.output_size;
     let approx_eps = routine.bridge.max_relative_error;
     let approx_comparator = routine.bridge.approx_comparator;
-    // The validator is only meaningful when the Routine actually
-    // declared one; we cannot tell from the bridge alone, so use
-    // outputs_may_differ as the consent signal.
-    let validator: Option<fn(&[u8], &[u8]) -> Result<(), String>> =
-        if routine.bridge.outputs_may_differ {
-            Some(routine.bridge.validator)
-        } else {
-            None
-        };
+    let validator = routine.bridge.validator;
+    let plan = validation_plan(routine.bridge.outputs_may_differ, approx_eps);
 
     let mut rng = Rng::new(VALIDATION_ROOT_SEED);
     let seeds: Vec<u64> = (0 .. validation_seeds).map(|_| rng.next()).collect();
@@ -411,7 +411,10 @@ pub fn validate(
     let base_idx = (0 .. names.len()).find(|i| !slow_variants.contains(i));
 
     for (si, &seed) in seeds.iter().enumerate() {
-        if let Some(validator) = &validator {
+        // Per-variant structural validity. Independent of everything below:
+        // whether variants agree with each other says nothing about whether
+        // each one is individually valid.
+        if plan.per_variant {
             let input = input_builder(seed);
             for i in 0 .. names.len() {
                 if slow_variants.contains(&i) {
@@ -427,52 +430,60 @@ pub fn validate(
                         .get_or_insert((names[i].clone(), format!("invalid output: {reason}")));
                 }
             }
-        } else if let Some(eps) = approx_eps {
-            let Some(b0) = base_idx else { break };
-            let baseline = &collected[b0][si].0;
-            for i in (b0 + 1) .. names.len() {
-                if slow_variants.contains(&i) {
-                    continue;
-                }
-                if let Err(reason) = approx_comparator(baseline, &collected[i][si].0, eps) {
-                    mismatches += 1;
-                    if mismatches <= 3 {
-                        eprintln!("  APPROX MISMATCH seed={} (#{}):", seed, si);
-                        eprintln!("    {} vs {}: {}", names[b0], names[i], reason);
+        }
+
+        // Cross-variant agreement, skipped when the routine consents to
+        // variants differing.
+        match plan.cross_variant {
+            None => {},
+            Some(CrossVariant::Approx(eps)) => {
+                let Some(b0) = base_idx else { break };
+                let baseline = &collected[b0][si].0;
+                for i in (b0 + 1) .. names.len() {
+                    if slow_variants.contains(&i) {
+                        continue;
                     }
-                    first_mismatch_reason.get_or_insert((
-                        names[i].clone(),
-                        format!("approx mismatch vs {}: {reason}", names[b0]),
-                    ));
+                    if let Err(reason) = approx_comparator(baseline, &collected[i][si].0, eps) {
+                        mismatches += 1;
+                        if mismatches <= 3 {
+                            eprintln!("  APPROX MISMATCH seed={} (#{}):", seed, si);
+                            eprintln!("    {} vs {}: {}", names[b0], names[i], reason);
+                        }
+                        first_mismatch_reason.get_or_insert((
+                            names[i].clone(),
+                            format!("approx mismatch vs {}: {reason}", names[b0]),
+                        ));
+                    }
                 }
-            }
-        } else {
-            let Some(b0) = base_idx else { break };
-            let baseline = &collected[b0][si].0;
-            for i in (b0 + 1) .. names.len() {
-                if slow_variants.contains(&i) {
-                    continue;
-                }
-                if collected[i][si].0 != *baseline {
-                    mismatches += 1;
-                    if mismatches <= 3 {
-                        eprintln!("  MISMATCH seed={} (#{}):", seed, si);
-                        eprintln!("    {} vs {}", names[b0], names[i]);
-                        for (j, (a, b)) in
-                            baseline.iter().zip(collected[i][si].0.iter()).enumerate()
-                        {
-                            if a != b {
-                                eprintln!("    first diff at byte {}: {} vs {}", j, a, b);
-                                break;
+            },
+            Some(CrossVariant::ByteExact) => {
+                let Some(b0) = base_idx else { break };
+                let baseline = &collected[b0][si].0;
+                for i in (b0 + 1) .. names.len() {
+                    if slow_variants.contains(&i) {
+                        continue;
+                    }
+                    if collected[i][si].0 != *baseline {
+                        mismatches += 1;
+                        if mismatches <= 3 {
+                            eprintln!("  MISMATCH seed={} (#{}):", seed, si);
+                            eprintln!("    {} vs {}", names[b0], names[i]);
+                            for (j, (a, b)) in
+                                baseline.iter().zip(collected[i][si].0.iter()).enumerate()
+                            {
+                                if a != b {
+                                    eprintln!("    first diff at byte {}: {} vs {}", j, a, b);
+                                    break;
+                                }
                             }
                         }
+                        first_mismatch_reason.get_or_insert((
+                            names[i].clone(),
+                            format!("byte mismatch vs {}", names[b0]),
+                        ));
                     }
-                    first_mismatch_reason.get_or_insert((
-                        names[i].clone(),
-                        format!("byte mismatch vs {}", names[b0]),
-                    ));
                 }
-            }
+            },
         }
     }
 
@@ -491,17 +502,15 @@ pub fn validate(
         });
     }
 
-    if validator.is_some() {
-        eprintln!(
-            "  Validation OK: all {} variants produce valid output",
-            active_count
-        );
-    } else {
-        eprintln!(
-            "  Validation OK: all {} variants produce identical output",
-            active_count
-        );
-    }
+    eprintln!(
+        "  Validation OK: all {} variants {}",
+        active_count,
+        match plan.cross_variant {
+            None => "produce valid output",
+            Some(CrossVariant::Approx(_)) => "produce valid output, agreeing within tolerance",
+            Some(CrossVariant::ByteExact) => "produce valid, identical output",
+        }
+    );
 
     // Determinism check: call each variant twice with the same seed
     // and verify both outputs are identical.
