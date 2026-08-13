@@ -40,25 +40,51 @@ const VALIDATION_ROOT_SEED: u64 = 0xCAFE_BABE_DEAD_BEEF;
 /// [`DEFAULT_VALIDATION_SEEDS`].
 pub const DEFAULT_DETERMINISM_CHECK_SEEDS: usize = 10;
 
-/// Validate all variant cdylibs against the given [`RoutineSpec`].
+/// How variants are compared against each other, when they are compared at all.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum CrossVariant {
+    /// Element-wise f64 comparison with the routine's relative-error tolerance.
+    Approx(f64),
+    /// Byte-exact equality against the baseline variant.
+    ByteExact,
+}
+
+/// What one validation pass checks.
 ///
-/// Returns the subset of `variant_paths` that survived the probes
-/// (variants that crashed or timed out at the probe stage are
-/// excluded so the orchestrator can still proceed without them).
+/// The `Routine` contract asks two independent questions and this type keeps
+/// them independent. `per_variant` is whether each variant's own output is
+/// checked for structural validity; `cross_variant` is whether variants must
+/// agree with each other, and how. A routine can want both: outputs that agree
+/// byte-for-byte *and* satisfy an invariant.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ValidationPlan {
+    /// Run `Routine::validate_output` on every variant's output.
+    pub per_variant:   bool,
+    /// Compare variants against each other. `None` when the routine consents
+    /// to variants differing.
+    pub cross_variant: Option<CrossVariant>,
+}
+
+/// Decide what a validation pass checks, from the two routine-bridge flags.
 ///
-/// The validation strategy is selected from the routine bridge:
-///
-/// - If the routine has a custom validator (set via the
-///   `Routine::validate_output` default override), per-variant
-///   validity is checked.
-/// - Else if the routine declares `max_relative_error = Some(eps)`,
-///   cross-variant comparison uses the routine's `compare_outputs_approx`
-///   with that tolerance.
-/// - Else byte-exact cross-variant comparison.
-///
-/// `outputs_may_differ = true` on the routine bridge skips
-/// cross-variant byte comparison (the per-variant validator alone is
-/// authoritative).
+/// Separated from [`validate`] so the decision is testable without building
+/// cdylibs, which is the only other way to reach it.
+pub(crate) fn validation_plan(outputs_may_differ: bool, approx_eps: Option<f64>) -> ValidationPlan {
+    ValidationPlan {
+        // The bridge cannot report whether the routine overrode
+        // `validate_output`, so `outputs_may_differ` is used as the consent
+        // signal for running it at all.
+        per_variant:   outputs_may_differ,
+        cross_variant: if outputs_may_differ {
+            None
+        } else if let Some(eps) = approx_eps {
+            Some(CrossVariant::Approx(eps))
+        } else {
+            Some(CrossVariant::ByteExact)
+        },
+    }
+}
+
 /// First pair of variants sharing an exported name, as
 /// `(earlier index, later index, the name)`.
 ///
@@ -74,6 +100,15 @@ fn first_duplicate_name(names: &[String]) -> Option<(usize, usize, &str)> {
     None
 }
 
+/// Validate all variant cdylibs against the given [`RoutineSpec`].
+///
+/// Returns the subset of `variant_paths` that survived the probes
+/// (variants that crashed or timed out at the probe stage are
+/// excluded so the orchestrator can still proceed without them).
+///
+/// What gets checked is [`validation_plan`]'s decision, over two independent
+/// questions: whether each variant's own output is checked for structural
+/// validity, and whether variants must agree with each other.
 pub fn validate(
     routine: &RoutineSpec,
     variant_paths: &[String],
@@ -608,7 +643,46 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{first_duplicate_name, from_hex};
+    use super::{CrossVariant, first_duplicate_name, from_hex, validation_plan};
+
+    // The contract these pin is `Routine`'s own documentation in bench-core:
+    // `validate_output`'s default is "no structural check; the harness STILL
+    // does cross-variant byte comparison unless `outputs_may_differ` is true",
+    // and `outputs_may_differ = false` means the harness "ALSO does
+    // cross-variant byte comparison". Both sentences describe the two checks as
+    // independent. A routine may want its outputs to agree byte-for-byte AND to
+    // each satisfy an invariant.
+
+    #[test]
+    fn per_variant_validation_runs_regardless_of_cross_variant_agreement() {
+        // The regression this names: gating the per-variant validator on
+        // `outputs_may_differ` means a routine that declares a validator and
+        // also expects byte-identical outputs never has that validator called.
+        assert!(validation_plan(false, None).per_variant);
+        assert!(validation_plan(false, Some(1e-9)).per_variant);
+        assert!(validation_plan(true, None).per_variant);
+        assert!(validation_plan(true, Some(1e-9)).per_variant);
+    }
+
+    #[test]
+    fn cross_variant_comparison_is_skipped_only_by_consent() {
+        // `outputs_may_differ` is consent to variants disagreeing, and that is
+        // the only thing it controls.
+        assert_eq!(validation_plan(true, None).cross_variant, None);
+        assert_eq!(validation_plan(true, Some(1e-9)).cross_variant, None);
+    }
+
+    #[test]
+    fn tolerance_selects_approximate_comparison_over_byte_exact() {
+        assert_eq!(
+            validation_plan(false, None).cross_variant,
+            Some(CrossVariant::ByteExact)
+        );
+        assert_eq!(
+            validation_plan(false, Some(1e-9)).cross_variant,
+            Some(CrossVariant::Approx(1e-9))
+        );
+    }
 
     #[test]
     fn from_hex_round_trips() {
