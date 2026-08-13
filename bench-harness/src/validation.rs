@@ -92,6 +92,39 @@ pub(crate) fn validation_plan(outputs_may_differ: bool, approx_eps: Option<f64>)
     }
 }
 
+/// Run the routine's per-variant structural check over one seed's outputs.
+///
+/// `outputs` is one entry per variant, `None` for a variant that was skipped.
+/// Returns `(variant index, refusal reason)` for each output the routine
+/// refused, in variant order.
+///
+/// Separated from [`validate`] because the property that regressed is not which
+/// comparison mode is chosen but **whether this check runs at all**. Holding the
+/// decision here, and calling it unconditionally, means a test with a stub
+/// validator can establish that it is reached. A gate reintroduced at the call
+/// site would be visible as a second condition around a function that already
+/// owns the decision.
+fn check_each_variant(
+    plan: ValidationPlan,
+    validator: fn(&[u8], &[u8]) -> Result<(), String>,
+    input_builder: fn(u64) -> Vec<u8>,
+    seed: u64,
+    outputs: &[Option<&[u8]>],
+) -> Vec<(usize, String)> {
+    if !plan.per_variant {
+        return Vec::new();
+    }
+    let input = input_builder(seed);
+    outputs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, output)| {
+            let output = (*output)?;
+            validator(&input, output).err().map(|reason| (i, reason))
+        })
+        .collect()
+}
+
 /// First pair of variants sharing an exported name, as
 /// `(earlier index, later index, the name)`.
 ///
@@ -411,25 +444,27 @@ pub fn validate(
     let base_idx = (0 .. names.len()).find(|i| !slow_variants.contains(i));
 
     for (si, &seed) in seeds.iter().enumerate() {
-        // Per-variant structural validity. Independent of everything below:
-        // whether variants agree with each other says nothing about whether
-        // each one is individually valid.
-        if plan.per_variant {
-            let input = input_builder(seed);
-            for i in 0 .. names.len() {
+        // Per-variant structural validity. Called unconditionally: whether
+        // variants agree with each other says nothing about whether each one is
+        // individually valid, and the decision lives in `check_each_variant`.
+        let per_seed_outputs: Vec<Option<&[u8]>> = (0 .. names.len())
+            .map(|i| {
                 if slow_variants.contains(&i) {
-                    continue;
+                    None
+                } else {
+                    Some(collected[i][si].0.as_slice())
                 }
-                let output = &collected[i][si].0;
-                if let Err(reason) = validator(&input, output) {
-                    mismatches += 1;
-                    if mismatches <= 3 {
-                        eprintln!("  INVALID seed={} variant={}: {}", seed, names[i], reason);
-                    }
-                    first_mismatch_reason
-                        .get_or_insert((names[i].clone(), format!("invalid output: {reason}")));
-                }
+            })
+            .collect();
+        for (i, reason) in
+            check_each_variant(plan, validator, input_builder, seed, &per_seed_outputs)
+        {
+            mismatches += 1;
+            if mismatches <= 3 {
+                eprintln!("  INVALID seed={} variant={}: {}", seed, names[i], reason);
             }
+            first_mismatch_reason
+                .get_or_insert((names[i].clone(), format!("invalid output: {reason}")));
         }
 
         // Cross-variant agreement, skipped when the routine consents to
@@ -502,13 +537,19 @@ pub fn validate(
         });
     }
 
+    // Deliberately does not say "valid". A routine that never overrode
+    // `validate_output` gets the default `Ok(())`, and the bridge cannot report
+    // which happened, so claiming structural validity here would assert exactly
+    // what the harness is unable to know.
     eprintln!(
-        "  Validation OK: all {} variants {}",
+        "  Validation OK: all {} variants passed {}",
         active_count,
         match plan.cross_variant {
-            None => "produce valid output",
-            Some(CrossVariant::Approx(_)) => "produce valid output, agreeing within tolerance",
-            Some(CrossVariant::ByteExact) => "produce valid, identical output",
+            None => "the routine's own per-variant check",
+            Some(CrossVariant::Approx(_)) =>
+                "the routine's own per-variant check and agree within tolerance",
+            Some(CrossVariant::ByteExact) =>
+                "the routine's own per-variant check and produce identical output",
         }
     );
 
@@ -652,7 +693,15 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CrossVariant, first_duplicate_name, from_hex, validation_plan};
+    use std::cell::Cell;
+
+    use super::{
+        CrossVariant,
+        check_each_variant,
+        first_duplicate_name,
+        from_hex,
+        validation_plan,
+    };
 
     // The contract these pin is `Routine`'s own documentation in bench-core:
     // `validate_output`'s default is "no structural check; the harness STILL
@@ -671,6 +720,68 @@ mod tests {
         assert!(validation_plan(false, Some(1e-9)).per_variant);
         assert!(validation_plan(true, None).per_variant);
         assert!(validation_plan(true, Some(1e-9)).per_variant);
+    }
+
+    // Call counter for the stub validator. A `fn` pointer cannot capture, and
+    // the bridge stores `fn` pointers, so the count cannot live in a closure.
+    // Thread-local rather than a `static`: the test harness runs each test on
+    // its own thread, and a shared counter made these two tests read each
+    // other's calls when they ran concurrently.
+    thread_local! {
+        static VALIDATOR_CALLS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn validator_calls() -> usize {
+        VALIDATOR_CALLS.with(Cell::get)
+    }
+
+    fn counting_validator(_input: &[u8], output: &[u8]) -> Result<(), String> {
+        VALIDATOR_CALLS.with(|c| c.set(c.get() + 1));
+        // Refuse exactly one recognisable output so the reporting path is
+        // exercised too, rather than only the call count.
+        if output == [0xBA, 0xD1] {
+            return Err("stub refusal".to_string());
+        }
+        Ok(())
+    }
+
+    fn stub_input(_seed: u64) -> Vec<u8> {
+        vec![0x11]
+    }
+
+    /// The check the plan test cannot make: that the validator is actually
+    /// reached. `validation_plan` hardcodes `per_variant`, so asserting on it
+    /// alone asserts a literal, and a gate reintroduced around the call site
+    /// would leave that assertion green.
+    #[test]
+    fn the_validator_is_called_for_every_live_variant_when_outputs_must_agree() {
+        let good: &[u8] = &[0x01];
+        let bad: &[u8] = &[0xBA, 0xD1];
+        // `outputs_may_differ = false` with no tolerance: byte-exact
+        // cross-variant comparison, which is the configuration whose validator
+        // was silently dropped.
+        let plan = validation_plan(false, None);
+        let outputs = [Some(good), Some(bad), None, Some(good)];
+
+        let refused = check_each_variant(plan, counting_validator, stub_input, 7, &outputs);
+
+        // Three live variants, one skipped: three calls, not four and not zero.
+        assert_eq!(validator_calls(), 3);
+        // The refusal is reported against the right variant index, with the
+        // skipped variant not shifting the numbering.
+        assert_eq!(refused, vec![(1, "stub refusal".to_string())]);
+    }
+
+    #[test]
+    fn a_skipped_variant_is_not_validated_and_a_clean_run_reports_nothing() {
+        let good: &[u8] = &[0x01];
+        let plan = validation_plan(true, None);
+        let outputs = [None, Some(good)];
+
+        let refused = check_each_variant(plan, counting_validator, stub_input, 7, &outputs);
+
+        assert_eq!(validator_calls(), 1);
+        assert!(refused.is_empty());
     }
 
     #[test]
