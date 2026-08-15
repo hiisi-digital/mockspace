@@ -77,6 +77,15 @@ pub struct BenchManifest {
     /// and `realistic`.
     #[serde(default)]
     pub workload: HashMap<String, WorkloadSection>,
+    /// Declared benchspace membership. Absent means the default
+    /// applies: `members = ["**"]`, so any subdirectory (at any
+    /// depth) carrying its own `bench.toml` is a member. Membership
+    /// is always declared or defaulted, never inferred from a
+    /// directory looking bench-shaped: detection by contents is what
+    /// broke a consumer whose tree held a self-contained bench
+    /// directory that predates this design.
+    #[serde(default)]
+    pub benchspace: Option<BenchspaceSection>,
     /// Build settings for the tool-generated crates: the mockspace
     /// dependency spec they pin, and the release-profile values the
     /// tool passes on every build. Defaults are the framework's; a
@@ -84,13 +93,44 @@ pub struct BenchManifest {
     #[serde(default)]
     pub build: Option<BuildSection>,
     /// Nested-tree bookkeeping: manifest key to `(bench, sweep)`.
-    /// Populated by [`crate::tree::load_tree`]; empty for a flat
+    /// Populated by [`crate::tree::load`]; empty for a flat
     /// tree, where every section is its own single sweep.
     #[serde(skip)]
     pub nested: HashMap<String, (String, String)>,
     /// Whether this manifest was composed from a nested tree.
     #[serde(skip)]
     pub nested_mode: bool,
+}
+
+/// The `[benchspace]` section: which subdirectories are members,
+/// cargo-workspace style.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BenchspaceSection {
+    /// Member patterns over directory paths relative to the benches
+    /// root. A literal path is an explicit member and must exist
+    /// with its own `bench.toml`; a pattern containing `*` matches
+    /// discovered directories that carry one, and matching nothing
+    /// is not an error. `"*"` matches one path component, `"**"`
+    /// any number.
+    #[serde(default = "default_members")]
+    pub members: Vec<String>,
+    /// Patterns removing directories from membership, same grammar.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+pub(crate) fn default_members() -> Vec<String> {
+    vec!["**".to_string()]
+}
+
+impl Default for BenchspaceSection {
+    fn default() -> Self {
+        BenchspaceSection {
+            members: default_members(),
+            exclude: Vec::new(),
+        }
+    }
 }
 
 /// The `[build]` section: named defaults the tool applies to every
@@ -614,7 +654,7 @@ impl BenchManifest {
             bench_name: bench_name.to_string(),
             bench,
             sweep,
-            nested: self.nested_mode,
+            nested: self.nested.contains_key(bench_name),
             title: section.title.clone(),
             workload: section.workload.clone(),
             master_seed: section.master_seed,

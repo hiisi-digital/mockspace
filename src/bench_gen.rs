@@ -40,40 +40,34 @@ pub const DEFAULT_MOCKSPACE_DEP: &str =
 /// Everything generation needs about one tree.
 pub struct GenPlan {
     /// The benches root (`mock/benches/`).
-    pub bench_dir: PathBuf,
-    /// The loaded manifest (composed for a nested tree).
-    pub manifest:  BenchManifest,
-    /// Discovered arms (nested trees only; a flat tree builds its
-    /// `variants/` directories as before).
-    pub arms:      Vec<ArmSource>,
+    pub bench_dir:    PathBuf,
+    /// The loaded manifest (root sections plus composed members).
+    pub manifest:     BenchManifest,
+    /// Discovered arms of composed-form members.
+    pub arms:         Vec<ArmSource>,
     /// Discovered support crates.
-    pub support:   Vec<SupportSource>,
+    pub support:      Vec<SupportSource>,
+    /// Sections-form members, whose `variants/` build the legacy way
+    /// rooted at the member directory.
+    pub flat_members: Vec<String>,
 }
 
-/// Load the tree for generation: nested when bench directories
-/// exist, flat otherwise.
+/// Load the tree for generation: the root manifest plus every
+/// declared or defaulted benchspace member.
 pub fn plan(bench_dir: &Path) -> Result<GenPlan, String> {
-    if tree::is_nested_tree(bench_dir) {
-        let TreeManifest {
-            manifest,
-            arms,
-            support,
-        } = tree::load_tree(bench_dir).map_err(|e| e.to_string())?;
-        Ok(GenPlan {
-            bench_dir: bench_dir.to_path_buf(),
-            manifest,
-            arms,
-            support,
-        })
-    } else {
-        let manifest = BenchManifest::load(&bench_dir.join("bench.toml")).map_err(|e| e.to_string())?;
-        Ok(GenPlan {
-            bench_dir: bench_dir.to_path_buf(),
-            manifest,
-            arms: Vec::new(),
-            support: Vec::new(),
-        })
-    }
+    let TreeManifest {
+        manifest,
+        arms,
+        support,
+        flat_members,
+    } = tree::load(bench_dir).map_err(|e| e.to_string())?;
+    Ok(GenPlan {
+        bench_dir: bench_dir.to_path_buf(),
+        manifest,
+        arms,
+        support,
+        flat_members,
+    })
 }
 
 /// The mockspace dependency spec for this tree's generated crates.

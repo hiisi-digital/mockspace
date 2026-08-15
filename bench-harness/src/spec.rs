@@ -128,10 +128,10 @@ mod routine_table_tests {
         ));
         std::fs::remove_dir_all(&root).ok();
         std::fs::create_dir_all(root.join("warm/arms/k/src")).unwrap();
+        std::fs::write(root.join("bench.toml"), "[timing]\npasses = 4\n").unwrap();
         std::fs::write(
             root.join("warm/bench.toml"),
             r#"
-            [bench]
             title = "Warm"
             arms = ["k"]
             [sweep.width-l1]
@@ -141,7 +141,7 @@ mod routine_table_tests {
         "#,
         )
         .unwrap();
-        let manifest = crate::tree::load_tree(&root).unwrap().manifest;
+        let manifest = crate::tree::load(&root).unwrap().manifest;
         let configs: Vec<BenchConfig> = manifest
             .bench_names()
             .iter()

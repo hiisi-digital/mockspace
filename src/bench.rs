@@ -595,11 +595,28 @@ fn run_generated(
                 return ExitCode::FAILURE;
             }
         }
-        // A flat tree without a driver crate still builds its
+        // Root sections and sections-form members build their
         // variants/ directories the legacy way; resolution for them
-        // is unchanged.
-        if !plan.manifest.nested_mode {
-            if let Err(e) = build_flat_variants(bench_dir, names, &profile) {
+        // is unchanged. A filtered run that selects only members
+        // still builds the root set, which is cheap and never wrong.
+        let root_names: Vec<&str> = names
+            .iter()
+            .copied()
+            .filter(|n| plan.manifest.nested.get(*n).is_none() && !n.contains('/'))
+            .collect();
+        if names.is_empty() || !root_names.is_empty() {
+            if let Err(e) = build_flat_variants(bench_dir, &root_names, &profile) {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        for member in &plan.flat_members {
+            if let Some(w) = &wanted {
+                if !w.iter().any(|n| n == member) {
+                    continue;
+                }
+            }
+            if let Err(e) = build_flat_variants(&bench_dir.join(member), &[], &profile) {
                 eprintln!("error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -844,8 +861,11 @@ fn cmd_list(cfg: &Config) -> ExitCode {
 
 fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
     let bench_dir = cfg.mock_dir.join("benches");
-    let legacy = bench_dir.join("variants").is_dir() && !bench_tree::is_nested_tree(&bench_dir);
-    if legacy {
+    // A tree whose root carries a variants/ directory is the flat
+    // layout; `add` keeps its legacy shape there. Everything else
+    // scaffolds a member, which the default benchspace glob picks up
+    // without a declaration.
+    if bench_dir.join("variants").is_dir() {
         return cmd_add_legacy(&bench_dir, args);
     }
 
@@ -882,6 +902,7 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         }
         eprintln!("scaffolded {bench}/bench.toml");
+        warn_if_not_a_member(&bench_dir, bench);
     }
     let arm = arm.unwrap_or("sample");
     let adir = bdir.join("arms").join(arm);
@@ -898,6 +919,28 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
     eprintln!("  1. implement the run block in {bench}/arms/{arm}/src/lib.rs");
     eprintln!("  2. reference \"{arm}\" from the bench's `arms` list if it is not there yet");
     ExitCode::SUCCESS
+}
+
+/// A freshly scaffolded bench is a member through the default glob;
+/// a root that declares an explicit member list has opted out of
+/// discovery, so say so instead of leaving a bench that never runs.
+fn warn_if_not_a_member(bench_dir: &Path, bench: &str) {
+    let Ok(manifest) =
+        mockspace_bench_harness::config::BenchManifest::load(&bench_dir.join("bench.toml"))
+    else {
+        return;
+    };
+    let Some(space) = manifest.benchspace else {
+        return; // default ["**"] matches everything
+    };
+    let matched = space.members.iter().any(|p| bench_tree::glob_match(p, bench))
+        && !space.exclude.iter().any(|p| bench_tree::glob_match(p, bench));
+    if !matched {
+        eprintln!(
+            "warning: [benchspace] members = {:?} does not match `{bench}`; add it to              the list or it will never run.",
+            space.members
+        );
+    }
 }
 
 /// Legacy flat trees keep the old `add <variant>` behaviour, with
@@ -971,6 +1014,13 @@ const STARTER_ROOT_BENCH_TOML: &str = r#"# Bench tree globals. Each bench is a s
 #                        every bench's points
 #   [build]              mockspace dep spec + release profile values
 #
+# Membership is declared, cargo-workspace style, and defaults to
+# every subdirectory carrying its own bench.toml:
+#
+#   [benchspace]
+#   members = ["**"]      # the default when the section is absent
+#   exclude = []
+#
 # A consumer-owned Cargo.toml at this root takes the whole run over
 # (the escape hatch for drivers the generator cannot express).
 
@@ -982,14 +1032,15 @@ harness_runs = 1
 cooldowns_ms = [0]
 "#;
 
-const STARTER_BENCH_DIR_TOML: &str = r#"# One bench: one question, one set of competing arms. Sweeps are
-# optional ([sweep.<name>] sections, each with its own points and
-# overrides); without them the [bench] points make a single default
-# sweep named after the bench. Declared roles: `baseline = "arm"`
-# selects the arm every delta is computed against; `floor = "arm"`
-# a null-cost arm subtracted from every arm first.
+const STARTER_BENCH_DIR_TOML: &str = r#"# One bench: one question, one set of competing arms. The directory
+# name is the bench's name, so the fields sit at the top level with
+# no wrapper table. Sweeps are optional ([sweep.<name>] sections,
+# each with its own points and overrides); without them the points
+# here make a single default sweep named after the bench. Declared
+# roles: `baseline = "arm"` selects the arm every delta is computed
+# against; `floor = "arm"` a null-cost arm subtracted from every arm
+# first.
 
-[bench]
 title = "SAMPLE_TITLE"
 workload = "default"
 arms = ["SAMPLE_ARM"]

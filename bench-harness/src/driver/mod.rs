@@ -180,14 +180,11 @@ fn output_paths(config: &BenchConfig, root: &Path) -> (PathBuf, String, String) 
     (dir, csv, report)
 }
 
-/// Load the manifest for a bench tree root: the composed nested tree
-/// when bench directories exist, the flat `bench.toml` otherwise.
+/// Load the manifest for a bench tree root: the root file plus every
+/// declared or defaulted benchspace member, composed. A tree with no
+/// members loads as its flat root manifest unchanged.
 fn load_manifest(root: &Path) -> Result<BenchManifest, BenchError> {
-    if crate::tree::is_nested_tree(root) {
-        crate::tree::load_tree(root).map(|t| t.manifest)
-    } else {
-        BenchManifest::load(&root.join("bench.toml"))
-    }
+    crate::tree::load(root).map(|t| t.manifest)
 }
 
 /// Match the requested names against the manifest keys. A request

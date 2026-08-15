@@ -115,7 +115,6 @@ cooldowns_ms = [0]
         write(
             &bench_dir.join(bench).join("bench.toml"),
             r#"
-[bench]
 title = "Plus one"
 workload = "default"
 arms = ["plusone"]
