@@ -133,8 +133,9 @@ fn find_self_invocations(
                             line_idx + 1,
                             LINT_NAME,
                             format!(
-                                "`{clean}!` suppression in `{}` too short ({word_count}/50 words) \
-                                : explain in depth why this must live here, not in a domain crate",
+                                "`{clean}!` suppression in `{}` too short \
+                                 ({word_count}/50 words). Explain in depth why this must live \
+                                 here, not in a domain crate.",
                                 ctx.crate_name,
                             ),
                         ));
@@ -145,8 +146,9 @@ fn find_self_invocations(
                         line_idx + 1,
                         LINT_NAME,
                         format!(
-                            "`{clean}!` must not be called in `{}` (defines or re-exports it) \
-                            : domain crates call it, not the infrastructure crate",
+                            "`{clean}!` must not be called in `{}`, which defines or \
+                             re-exports it. Domain crates call it, the infrastructure crate \
+                             does not.",
                             ctx.crate_name,
                         ),
                     ));
