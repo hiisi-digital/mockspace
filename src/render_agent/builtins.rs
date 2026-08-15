@@ -478,8 +478,15 @@ _gate_intact() {
 
 if _gate_intact; then allow; fi
 
-# Gate broken: validator cleaned away, or core.hooksPath not wired. Self-heal
-# by running the launcher, which writes both, then retry.
+# Gate broken: validator cleaned away, or core.hooksPath not wired.
+#
+# Try the narrow repair first. `activate` only ensures the durable hooks and
+# points core.hooksPath; it writes nothing else in the tree, which matters
+# because this runs while a commit is in flight. Only if that is not enough
+# (the validator itself is missing, which activate refuses to paper over) do
+# we fall back to a full run, which also regenerates docs and agent rules.
+( cd "$root" && cargo mock activate ) >/dev/null 2>&1 || true
+if _gate_intact; then allow; fi
 ( cd "$root" && cargo mock ) >/dev/null 2>&1 || true
 if _gate_intact; then allow; fi
 
@@ -632,13 +639,16 @@ mod check_message_tests {
     }
 
     fn scratch() -> std::path::PathBuf {
+        // A process-wide counter, not a clock. SystemTime here has microsecond
+        // resolution at best (twenty back-to-back samples yield four distinct
+        // values on this host), and `create_dir_all` succeeds silently on an
+        // existing directory, so two tests starting in the same tick shared a
+        // scratch directory and overwrote each other's fixtures.
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let d = std::env::temp_dir().join(format!(
             "ms_checkmsg_{}_{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -813,18 +823,6 @@ mod check_message_tests {
         assert!(!denied(&out), "git status must not be denied: {out}");
     }
 
-    // FIXME: this module is flaky under parallel execution, roughly one run in
-    // three, and `a_passing_verdict_allows_the_tool` is where it usually lands:
-    // it receives the FAIL stub's stdout ("x message-attribution: nope") while
-    // having been given the PASS stub. Serially (`--test-threads=1`) all 13
-    // pass every time. The obvious shared state is already isolated per
-    // invocation: `scratch()` is unique per call (pid plus nanos), the launcher
-    // stub and the hook script live under that unique dir, TMPDIR is pointed at
-    // a per-invocation cache dir, and the verdict cache key includes the repo
-    // root. So the leak is somewhere else and is not yet identified. A flaky
-    // gate teaches people to re-run until green, which is how a real failure
-    // gets dismissed, so this wants closing rather than tolerating.
-    // Reproduce: `for i in 1 2 3 4 5; do cargo test --lib render_agent; done`.
     #[test]
     fn a_passing_verdict_allows_the_tool() {
         let root = scratch();

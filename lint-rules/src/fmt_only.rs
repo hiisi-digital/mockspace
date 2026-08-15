@@ -40,7 +40,9 @@ pub enum NotFmtOnly {
 /// True when `file` in the working tree is byte-identical to `rustfmt`'s
 /// output for the version at `HEAD`.
 ///
-/// `dir` is where git and rustfmt run; `file` is relative to it. Both gates
+/// `dir` is where git and rustfmt run; `file` is relative to it, and
+/// `current` is the content to judge, which must be what the commit will
+/// carry rather than whatever the working tree happens to hold. Both gates
 /// pass their mock directory, which is what `git diff --relative` reported
 /// those paths against.
 ///
@@ -48,12 +50,10 @@ pub enum NotFmtOnly {
 ///
 /// Returns [`NotFmtOnly`] rather than a bool so the gate can say which of
 /// the three cases it hit. Every one of them means "refuse".
-pub fn is_fmt_only_change(dir: &Path, file: &str) -> Result<(), NotFmtOnly> {
+pub fn is_fmt_only_change(dir: &Path, file: &str, current: &str) -> Result<(), NotFmtOnly> {
     let committed = git_show(dir, file).ok_or(NotFmtOnly::Undeterminable)?;
-    let current =
-        std::fs::read_to_string(dir.join(file)).map_err(|_| NotFmtOnly::Undeterminable)?;
 
-    // Cheap exit: unchanged files are trivially fmt-only and need no rustfmt.
+    // Cheap exit: unchanged content is trivially fmt-only and needs no rustfmt.
     if committed == current {
         return Ok(());
     }
@@ -64,6 +64,48 @@ pub fn is_fmt_only_change(dir: &Path, file: &str) -> Result<(), NotFmtOnly> {
     } else {
         Err(NotFmtOnly::ContentDiffers)
     }
+}
+
+/// Drop files whose only change is what `rustfmt` would have produced.
+///
+/// **The content judged is the content the commit will carry**, resolved by
+/// [`crate::staged_or_worktree`] from the same `source` label the gate
+/// collected the file under. Reading the working tree instead is a bypass and
+/// not a subtle one: stage a semantic edit, restore the worktree to
+/// `rustfmt(HEAD)`, and a predicate judging the worktree drops the file while
+/// the index still carries the edit. The pre-commit auto-fix makes that state
+/// reachable without adversarial intent, because it deliberately does not
+/// re-stage a partially staged file.
+///
+/// Fails closed throughout: a missing `rustfmt`, an untracked file, content
+/// that cannot be resolved, or source `rustfmt` will not parse all leave the
+/// file in the list and the gate refuses exactly as before.
+pub fn drop_fmt_only(
+    workspace_root: &Path,
+    files: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    files
+        .into_iter()
+        .filter(|(file, source)| {
+            let Some(current) = crate::changelist_required::staged_or_worktree(workspace_root, file, source) else {
+                return true; // cannot resolve the content: refuse
+            };
+            match is_fmt_only_change(workspace_root, file, &current) {
+                Ok(()) => false,
+                Err(NotFmtOnly::RustfmtMissing) => {
+                    // The one case the user can act on: the exemption is
+                    // unavailable rather than declined, and silence would
+                    // read as "this change is not formatting".
+                    eprintln!(
+                        "--- fmt-only exemption unavailable: rustfmt is not on PATH, so \
+                         `{file}` is judged as an ordinary source edit ---"
+                    );
+                    true
+                },
+                Err(_) => true,
+            }
+        })
+        .collect()
 }
 
 /// The blob at `HEAD` for `file`, or `None` when the file is new, untracked,
@@ -123,14 +165,17 @@ mod tests {
 
     impl Repo {
         fn new(name: &str, committed: &str) -> Repo {
+        // A process-wide counter, not a clock. SystemTime here has microsecond
+        // resolution at best (twenty back-to-back samples yield four distinct
+        // values on this host), and `create_dir_all` succeeds silently on an
+        // existing directory, so two tests starting in the same tick shared a
+        // scratch directory and overwrote each other's fixtures.
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let root = std::env::temp_dir().join(format!(
                 "fmtonly-{}-{}-{}",
                 name,
                 std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             ));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(root.join("crates/foo/src")).unwrap();
@@ -153,8 +198,10 @@ mod tests {
             std::fs::write(self.root.join("crates/foo/src/lib.rs"), contents).unwrap();
         }
 
+        /// Judge the worktree copy, which is what these unit tests vary.
         fn check(&self) -> Result<(), NotFmtOnly> {
-            is_fmt_only_change(&self.root, "crates/foo/src/lib.rs")
+            let cur = std::fs::read_to_string(self.root.join("crates/foo/src/lib.rs")).unwrap();
+            is_fmt_only_change(&self.root, "crates/foo/src/lib.rs", &cur)
         }
     }
 
@@ -167,19 +214,22 @@ mod tests {
     /// Deliberately misformatted, so rustfmt has something to change.
     const UGLY: &str = "pub fn a(  x:u8 )->u8{x+1}\n";
 
-    fn rustfmt_available() -> bool {
-        Command::new("rustfmt")
+    /// The toolchain pins `components = ["rustfmt", ...]`, so an absent
+    /// rustfmt is a broken environment rather than a supported one. These
+    /// tests used to `return` silently on it, which turned that breakage into
+    /// a green.
+    fn require_rustfmt() {
+        let ok = Command::new("rustfmt")
             .arg("--version")
             .output()
             .map(|o| o.status.success())
-            .unwrap_or(false)
+            .unwrap_or(false);
+        assert!(ok, "rustfmt is not on PATH; the pinned toolchain provides it");
     }
 
     #[test]
     fn rustfmts_own_output_is_fmt_only() {
-        if !rustfmt_available() {
-            return;
-        }
+        require_rustfmt();
         let r = Repo::new("clean", UGLY);
         let formatted = rustfmt(&r.root, UGLY).expect("rustfmt runs");
         assert_ne!(formatted, UGLY, "the fixture must actually be reformatted");
@@ -189,9 +239,7 @@ mod tests {
 
     #[test]
     fn an_edit_smuggled_alongside_formatting_is_refused() {
-        if !rustfmt_available() {
-            return;
-        }
+        require_rustfmt();
         let r = Repo::new("smuggled", UGLY);
         // rustfmt's output, then one semantic character changed. This is the
         // case the whole exemption turns on: it looks formatted, it compiles,
@@ -203,9 +251,7 @@ mod tests {
 
     #[test]
     fn a_pure_semantic_edit_is_refused() {
-        if !rustfmt_available() {
-            return;
-        }
+        require_rustfmt();
         let r = Repo::new("semantic", UGLY);
         r.write("pub fn a(x: u8) -> u8 {\n    x + 99\n}\n");
         assert_eq!(r.check(), Err(NotFmtOnly::ContentDiffers));
@@ -222,7 +268,7 @@ mod tests {
         let r = Repo::new("untracked", UGLY);
         std::fs::write(r.root.join("crates/foo/src/new.rs"), UGLY).unwrap();
         assert_eq!(
-            is_fmt_only_change(&r.root, "crates/foo/src/new.rs"),
+            is_fmt_only_change(&r.root, "crates/foo/src/new.rs", UGLY),
             Err(NotFmtOnly::Undeterminable),
             "a file with no committed version has nothing to compare against"
         );
@@ -230,9 +276,7 @@ mod tests {
 
     #[test]
     fn unparseable_source_is_undeterminable_and_therefore_refused() {
-        if !rustfmt_available() {
-            return;
-        }
+        require_rustfmt();
         let r = Repo::new("unparseable", "pub fn a( {{{ \n");
         r.write("pub fn a( {{{  \n");
         assert_eq!(

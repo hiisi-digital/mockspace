@@ -4,24 +4,19 @@ This is the deep reference. Start with the [README](../README.md) for the concep
 
 ## Bootstrap
 
-A mockspace lives in `mock/` at the repo root. The first-time bootstrap is driven from any crate's `build.rs` inside that workspace:
+A mockspace lives in `mock/` at the repo root. The launcher is the sole entry, installed once per machine:
 
-```rust
-fn main() { mockspace::bootstrap_from_buildscript(); }
+```bash
+cargo install --git https://github.com/hiisi-digital/mockspace.git cargo-mock
 ```
 
-```toml
-[build-dependencies]
-mockspace = { git = "https://github.com/hiisi-digital/mockspace.git" }
-```
+Then run it from the repo root. On any normal invocation the engine:
 
-On the first `cargo check` inside `mock/`, bootstrap:
+1. Writes the generated validator under `mock/target/hooks/`.
+2. Ensures the durable hooks in the user config home, which delegate to that validator and source the user's own `.git/hooks/*` first.
+3. Points `core.hooksPath` at them.
 
-1. Writes a cargo alias (`cargo mock`) into `.cargo/config.toml`.
-2. Generates a proxy crate under `target/mockspace-proxy/` that embeds the consumer's custom lints alongside the built-in ones.
-3. Materialises hook scripts under `mock/target/hooks/`.
-
-It is idempotent. Subsequent builds re-validate the bootstrap and skip work when nothing has drifted.
+It is idempotent and cheap on the common path. There is no `build.rs` bootstrap, no cargo alias in `.cargo/config.toml`, and no generated proxy crate; a repo still calling `bootstrap_from_buildscript` from a build script gets a hard error naming the migration steps.
 
 Activate the hooks once per clone:
 
@@ -246,7 +241,7 @@ define_thing = "thing | ⚙ | #FFF | #000"
 Three sources contribute rules:
 
 1. **Built-in lints** from `mockspace_lint_rules` (sibling crate under `lint-rules/`). Universal quality lints (`no-empty-crate`, `file-size`, `undocumented-type`, etc.) and design-round state-machine lints.
-2. **Custom lints** in `mock/lints/<name>.rs`. Each file defines `pub fn lint() -> Box<dyn mockspace_lint_rules::Lint>` (per-crate) or `pub fn cross_lint() -> Box<dyn mockspace_lint_rules::CrossCrateLint>` (cross-crate). Files suffixed `_cross` are treated as cross-crate. Bootstrap discovers them and wires them into the generated proxy crate.
+2. **Custom lints** in `mock/lints/<name>.rs`. Each file defines `pub fn lint() -> Box<dyn mockspace_lint_rules::Lint>` (per-crate) or `pub fn cross_lint() -> Box<dyn mockspace_lint_rules::CrossCrateLint>` (cross-crate). Files suffixed `_cross` are treated as cross-crate. The engine discovers them and compiles them into one cdylib alongside the built-in lints.
 3. **Config-driven rules** under `[lints.forbidden-imports]` and friends in `mockspace.toml`.
 
 Each lint has a `commit` / `build` / `push` level. Violations at `error` fail the pipeline; `warn` prints without failing; `info` is purely informational.
