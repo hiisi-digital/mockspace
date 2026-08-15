@@ -395,7 +395,7 @@ surface**, so its deadness is a consequence of a grammar gap rather than of nobo
 `(name, dylib_path, abi_hash)`. `spec.rs:8` names it as one of the two things the module exists for.
 Nothing constructs it. What the harness does instead: `BenchConfig.variant_paths: Vec<PathBuf>`
 (`config.rs:730`) carries paths only, and `load_variant` (`harness.rs:118-147`) dlopens, reads
-`bench_abi_hash`, compares it, reads `bench_name`, and **returns `(String, BenchEntryFn)` — a bare
+`bench_abi_hash`, compares it, reads `bench_name`, and **returns `(String, BenchEntryFn)`, a bare
 tuple, with the abi hash discarded after the comparison.**
 
 So the type that makes the three facts one object exists, is documented as the mechanism, and is
@@ -456,7 +456,7 @@ vocabulary in three places:
 - `src/bench_gen.rs:124-125`: **six** name literals with their arities, in a `match` on `&str`.
 - `src/bench_gen.rs:126-131`: the same six names again, in the error message that lists the builtins.
 
-The generator emits `format!("harness::{name}({v})")` (`bench_gen.rs:135,142`) — a string naming a
+The generator emits `format!("harness::{name}({v})")` (`bench_gen.rs:135,142`), a string naming a
 function it never resolves. Rename `scalar_work` and `parse_stage` still accepts `"scalar_work 48"`,
 emitting a generated driver that fails to compile with an error pointing at generated code.
 
