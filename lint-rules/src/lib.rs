@@ -30,8 +30,8 @@
 //! }
 //! ```
 //!
-//! The generated proxy crate (`target/mockspace-proxy/`) concatenates every
-//! pack's lints with any in-tree `mock/lints/*.rs` files and runs the union.
+//! The engine compiles every pack's lints together with any in-tree
+//! `mock/lints/*.rs` files into one cdylib and runs the union.
 
 pub mod fmt_only;
 mod actionable_errors;
@@ -39,7 +39,7 @@ mod changelist_doc_gate;
 pub mod changelist_helpers;
 mod changelist_immutability;
 mod changelist_lock;
-mod changelist_required;
+pub(crate) mod changelist_required;
 mod deprecation_comparison;
 mod design_doc_source_mismatch;
 mod export_count;
@@ -711,15 +711,26 @@ mod is_shame_template_tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // A misspelled file is inert. On a case-insensitive filesystem the
-        // constructed-path form opens this and honours its escapes, while
-        // both phase gates refuse the same file.
+        // A misspelled file is inert.
         std::fs::write(dir.join("shame.md.tmpl"), "## thing\nreason\n").unwrap();
         assert_eq!(
             read_shame_template(&dir),
             None,
             "a lowercase spelling must not be honoured; the gates refuse it"
         );
+        // That assertion only discriminates where the filesystem is
+        // case-insensitive, because elsewhere the constructed-path form this
+        // replaced also fails to open the file and the check is vacuous. Say
+        // which case ran, so a green on a case-sensitive host is not read as
+        // covering the divergence it was written for.
+        let case_insensitive = dir.join("SHAME.md.tmpl").is_file();
+        if !case_insensitive {
+            eprintln!(
+                "note: this filesystem is case-sensitive, so the case half of \
+                 read_shame_template is not exercised here; it is exercised on \
+                 macOS and on any case-insensitive volume"
+            );
+        }
 
         std::fs::remove_file(dir.join("shame.md.tmpl")).unwrap();
         std::fs::write(dir.join("SHAME.md.tmpl"), "## thing\nreason\n").unwrap();
