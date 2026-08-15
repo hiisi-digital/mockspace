@@ -1,17 +1,19 @@
 //! Bench framework command family.
 //!
-//! `mock bench init` scaffolds a `mock/benches/` directory in the
-//! consumer with a starter `bench.toml`, a binary that drives the
-//! harness, an example variant, and a README. The layout is exactly
-//! what the harness discovers at run time.
+//! `mock bench init` scaffolds a config-only `mock/benches/` tree: a
+//! root `bench.toml` of globals, a sample bench directory, and a
+//! sample arm whose manifest the tool generates. No driver crate is
+//! scaffolded; the driver binary is generated from `bench.toml`.
 //!
-//! `mock bench run` builds the consumer's bench binary + variants in
-//! release mode and spawns the binary, which drives the harness via
-//! `mockspace-bench-harness`.
+//! `mock bench run` builds the arms into tool-owned target
+//! directories with the pinned release profile, generates and builds
+//! the driver, and spawns it. A consumer-owned `Cargo.toml` at the
+//! bench root is the escape hatch: it takes the whole run over and
+//! is built and located from cargo's own artifact records.
 //!
-//! `mock bench report` invokes the bench binary with `--report-only`
-//! to regenerate findings.md from the existing CSV cache without
-//! re-running the full harness.
+//! `mock bench report` invokes the driver with `--report-only` to
+//! regenerate the report files from the cached samples without
+//! re-running the harness.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -696,6 +698,21 @@ fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
                 .and_then(|n| n.as_str())
         })
         .map(|n| n.replace('-', "_"));
+    // An arm is a measured cdylib by definition; a consumer manifest
+    // that builds anything else produces no dylib for the harness to
+    // load, and the miss would otherwise surface as a preflight
+    // failure naming a path instead of the rule.
+    let is_cdylib = doc
+        .get("lib")
+        .and_then(|l| l.get("crate-type"))
+        .and_then(|c| c.as_array())
+        .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some("cdylib")));
+    if !is_cdylib {
+        return Err(format!(
+            "arm {}/arms/{} must build a cdylib (the harness dlopens it), but its              Cargo.toml declares no `crate-type = [\"cdylib\"]`. A library crate that              arms link belongs under support/, not arms/.",
+            arm.bench, arm.arm
+        ));
+    }
     match lib_name {
         Some(name) if name == expected => Ok(()),
         Some(name) => Err(format!(
@@ -1125,6 +1142,34 @@ mod tests {
         let code = cmd_init(&cfg);
         assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
         std::fs::remove_dir_all(&mock).ok();
+    }
+
+    #[test]
+    fn an_arm_manifest_that_is_not_a_cdylib_is_refused_naming_the_rule() {
+        let dir = temp_mock("arm-crate-type");
+        let arm_dir = dir.join("warm/arms/kernel");
+        std::fs::create_dir_all(arm_dir.join("src")).unwrap();
+        std::fs::write(
+            arm_dir.join("Cargo.toml"),
+            "[package]\nname = \"kernel\"\n[lib]\nname = \"kernel\"\n",
+        )
+        .unwrap();
+        let arm = bench_tree::ArmSource {
+            bench:        "warm".into(),
+            arm:          "kernel".into(),
+            dir:          arm_dir.clone(),
+            has_manifest: true,
+        };
+        let err = check_arm_lib_name(&arm).unwrap_err();
+        assert!(err.contains("belongs under support/"), "{err}");
+        // the same manifest as a proper cdylib passes both checks
+        std::fs::write(
+            arm_dir.join("Cargo.toml"),
+            "[package]\nname = \"kernel\"\n[lib]\nname = \"kernel\"\ncrate-type = [\"cdylib\"]\n",
+        )
+        .unwrap();
+        check_arm_lib_name(&arm).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

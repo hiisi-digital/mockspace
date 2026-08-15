@@ -25,11 +25,15 @@ use mockspace_bench_harness::tree::{self, ArmSource, SupportSource, TreeManifest
 /// generated manifests. Overridable per tree via `[build] mockspace`.
 ///
 /// FIXME: not pin-matched to the running engine the way the launcher
-/// passes `--mockspace-lint-rules-dep` for the lint cdylib; the bench
-/// driver crosses no vtable boundary with the engine (the cdylib ABI
-/// is guarded by `bench_abi_hash` at dlopen), so a drift here is a
-/// version skew, not unsoundness. Plumb the launcher's pin through
-/// when the flag mechanism grows a bench twin.
+/// passes `--mockspace-lint-rules-dep` for the lint cdylib. The
+/// `bench_abi_hash` check at dlopen is a weaker guard than that pin:
+/// it folds only the struct size, the field count and the field
+/// widths, so a bench-core skew that reorders same-width fields (or
+/// changes semantics without changing shape) passes the check and
+/// misreads timing fields silently across FFI. Until the launcher's
+/// pin mechanism grows a bench twin, a floating `branch = "dev"`
+/// here trades that risk for zero-config; consumers who care pin a
+/// rev via `[build] mockspace`, and the E2E test pins by path.
 pub const DEFAULT_MOCKSPACE_DEP: &str =
     "{ git = \"https://github.com/hiisi-digital/mockspace\", branch = \"dev\" }";
 
@@ -330,6 +334,17 @@ pub fn support_package_name(s: &SupportSource) -> Result<String, String> {
     let doc: toml_edit::DocumentMut = text
         .parse()
         .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+    let is_cdylib = doc
+        .get("lib")
+        .and_then(|l| l.get("crate-type"))
+        .and_then(|c| c.as_array())
+        .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some("cdylib")));
+    if is_cdylib {
+        return Err(format!(
+            "support crate {} declares `crate-type = [\"cdylib\"]`. A support crate              is a library the arms and the driver link and is never measured; a              measured cdylib belongs under arms/, not support/.",
+            s.dir.display()
+        ));
+    }
     doc.get("package")
         .and_then(|p| p.get("name"))
         .and_then(|n| n.as_str())
@@ -548,6 +563,31 @@ mod tests {
         let driver = driver_cargo_toml(DEFAULT_MOCKSPACE_DEP, &[]).unwrap();
         assert!(driver.contains("[workspace]"));
         assert!(driver.contains("mockspace-bench-harness"));
+    }
+
+    #[test]
+    fn a_cdylib_under_support_is_refused_naming_the_rule() {
+        let dir = std::env::temp_dir().join(format!(
+            "mockspace-support-cdylib-test-{}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"kit\"\n[lib]\ncrate-type = [\"cdylib\"]\n",
+        )
+        .unwrap();
+        let src = SupportSource {
+            bench: None,
+            name:  "kit".into(),
+            dir:   dir.clone(),
+        };
+        let err = support_package_name(&src).unwrap_err();
+        assert!(err.contains("belongs under arms/"), "{err}");
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"kit\"\n").unwrap();
+        assert_eq!(support_package_name(&src).unwrap(), "kit");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

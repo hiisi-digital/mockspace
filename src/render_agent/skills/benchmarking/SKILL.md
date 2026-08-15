@@ -131,16 +131,18 @@ deployment actually has, and say which you picked.
 
 ## Configuration
 
-`bench.toml` per bench: `title`, `workload`, `variants`, `sizes`, `master_seed`, `may_differ`,
-`required`, `threaded`, an optional `normalise` block (`baseline`, `mode`, `floor`), and a per-bench
-`timing` override of `passes`, `runs_per_pass`, `batch_size`, `harness_runs` and `cooldowns_ms`. Sizes
-may carry their own variant subset.
+`bench.toml` per bench: `title`, `workload`, `arms`, `points`, `master_seed`, `may_differ`,
+`required`, `threaded`, declared roles (`baseline`, `floor`, `delta`), and a per-bench `timing`
+override of `passes`, `runs_per_pass`, `batch_size`, `harness_runs` and `cooldowns_ms`. Points may
+carry their own arm subset. The legacy spellings (`variants`, `sizes`, a `normalise` table) stay
+accepted; the canonical ones are these.
 
 Set `may_differ = false` and `required = true` unless there is a stated reason otherwise: identical
-output across variants is the premise that makes the comparison mean anything.
+output across arms is the premise that makes the comparison mean anything.
 
-Every size in `bench.toml` must appear in the bench binary's `byte_routine_dispatch!` declaration,
-because each size is its own monomorphisation and the declared list is the controlled input set.
+Each point is its own monomorphisation. With the generated driver the declared list defaults to the
+union of every bench's points and `[dispatch] points` narrows it; only a consumer-owned driver binary
+maintains a `byte_routine_dispatch!` declaration by hand.
 
 ## The deliverable
 

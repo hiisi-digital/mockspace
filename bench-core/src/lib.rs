@@ -630,9 +630,6 @@ mod abi_tests {
         assert_eq!(core::mem::align_of::<FfiBenchCall>(), 8);
     }
 
-    // The hash must be deterministic and must actually reflect the current
-    // four-field layout (not the retired single-field one). This is the value
-    // the harness compiles into every variant and checks on load.
     #[test]
     fn abi_hash_reflects_four_field_layout() {
         // recompute the expected fold for {32-byte size, 4 fields, 4x8-byte}.
