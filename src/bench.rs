@@ -17,6 +17,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use mockspace_bench_harness::config::BuildSection;
+use mockspace_bench_harness::tree as bench_tree;
+
+use crate::bench_gen;
 use crate::config::Config;
 
 pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
@@ -87,6 +91,13 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
         .filter(|a| a.starts_with("--"))
         .collect();
 
+    // The escape hatch: a consumer-owned driver crate at the bench
+    // root drives the run exactly as before. Without one, the driver
+    // is generated from bench.toml.
+    if !bench_dir.join("Cargo.toml").exists() {
+        return run_generated(cfg, &bench_dir, &names, &extra, false);
+    }
+
     let dirs = if names.is_empty() {
         None
     } else {
@@ -140,6 +151,15 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    if !bench_dir.join("Cargo.toml").exists() {
+        let names: Vec<&str> = _args
+            .iter()
+            .copied()
+            .filter(|a| !a.starts_with("--"))
+            .collect();
+        return run_generated(cfg, &bench_dir, &names, &["--report-only"], true);
+    }
+
     let bin_path = match build_bin_only(&bench_dir) {
         Ok(p) => p,
         Err(e) => {
@@ -186,7 +206,8 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
         .and_then(|b| b.as_table())
         .ok_or_else(|| "bench.toml has no [bench.*] sections".to_string())?;
     let mut dirs: Vec<String> = Vec::new();
-    let mut push_entry = |entry: &str, dirs: &mut Vec<String>| {
+    let mut ignored: usize = 0;
+    let mut push_entry = |entry: &str, dirs: &mut Vec<String>, ignored: &mut usize| {
         let dir = if !entry.contains('/') {
             Some(entry.to_string())
         } else {
@@ -195,19 +216,23 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
                 .and_then(|rest| rest.split('/').next())
                 .map(|d| d.to_string())
         };
-        if let Some(d) = dir {
-            if !dirs.contains(&d) {
-                dirs.push(d);
-            }
+        match dir {
+            Some(d) => {
+                if !dirs.contains(&d) {
+                    dirs.push(d);
+                }
+            },
+            None => *ignored += 1,
         }
     };
     let collect_array = |item: Option<&toml_edit::Item>,
                          dirs: &mut Vec<String>,
-                         push: &mut dyn FnMut(&str, &mut Vec<String>)| {
+                         ignored: &mut usize,
+                         push: &mut dyn FnMut(&str, &mut Vec<String>, &mut usize)| {
         if let Some(arr) = item.and_then(|v| v.as_array()) {
             for v in arr.iter() {
                 if let Some(sv) = v.as_str() {
-                    push(sv, dirs);
+                    push(sv, dirs, ignored);
                 }
             }
         }
@@ -220,11 +245,11 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
                 available.join(", ")
             )
         })?;
-        collect_array(section.get("variants"), &mut dirs, &mut push_entry);
+        collect_array(section.get("variants"), &mut dirs, &mut ignored, &mut push_entry);
         if let Some(sizes) = section.get("sizes") {
             if let Some(arr) = sizes.as_array_of_tables() {
                 for t in arr.iter() {
-                    collect_array(t.get("variants"), &mut dirs, &mut push_entry);
+                    collect_array(t.get("variants"), &mut dirs, &mut ignored, &mut push_entry);
                 }
             }
             if let Some(arr) = sizes.as_array() {
@@ -233,7 +258,7 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
                         if let Some(tv) = t.get("variants").and_then(|x| x.as_array()) {
                             for e in tv.iter() {
                                 if let Some(sv) = e.as_str() {
-                                    push_entry(sv, &mut dirs);
+                                    push_entry(sv, &mut dirs, &mut ignored);
                                 }
                             }
                         }
@@ -241,6 +266,15 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
                 }
             }
         }
+    }
+    if ignored > 0 {
+        // The silent version of this measured stale artifacts: a
+        // filtered run built nothing for path-style entries and then
+        // timed whatever dylibs were already on disk.
+        eprintln!(
+            "warning: {ignored} variant entr{} outside variants/ were not rebuilt for              this filtered run; their artifacts may be stale. Run without bench names              to rebuild everything, or move them under variants/.",
+            if ignored == 1 { "y" } else { "ies" }
+        );
     }
     Ok(dirs)
 }
@@ -420,6 +454,295 @@ fn build_bin_only(bench_dir: &Path) -> Result<PathBuf, String> {
     }
 }
 
+/// The effective release-profile flags: the framework defaults with
+/// any `[build]` overrides from the tree's own root manifest. The
+/// values always travel on the command line, where a manifest cannot
+/// silently drop them; the override moves the values, never the
+/// mechanism.
+fn profile_args_for(build: Option<&BuildSection>) -> Vec<String> {
+    let opt = build.and_then(|b| b.opt_level).unwrap_or(3);
+    let lto = build
+        .and_then(|b| b.lto.clone())
+        .unwrap_or_else(|| "fat".to_string());
+    let cgu = build.and_then(|b| b.codegen_units).unwrap_or(1);
+    vec![
+        "--config".into(),
+        format!("profile.release.opt-level={opt}"),
+        "--config".into(),
+        format!("profile.release.lto=\"{lto}\""),
+        "--config".into(),
+        format!("profile.release.codegen-units={cgu}"),
+    ]
+}
+
+/// One cargo build with explicit profile flags and an optional
+/// tool-owned target directory; returns stdout for artifact parsing.
+fn cargo_build_at(
+    manifest: &Path,
+    what: &str,
+    profile: &[String],
+    target_dir: Option<&Path>,
+) -> Result<Vec<u8>, String> {
+    let mut argv: Vec<std::ffi::OsString> =
+        ["build", "--release", "--message-format=json-render-diagnostics"]
+            .iter()
+            .map(Into::into)
+            .collect();
+    argv.extend(profile.iter().map(Into::into));
+    if let Some(td) = target_dir {
+        argv.push("--target-dir".into());
+        argv.push(td.as_os_str().to_owned());
+    }
+    argv.push("--manifest-path".into());
+    argv.push(manifest.as_os_str().to_owned());
+    let out = Command::new("cargo")
+        .args(argv)
+        .output()
+        .map_err(|e| format!("spawning cargo for {what}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("cargo build failed for {what}"));
+    }
+    Ok(out.stdout)
+}
+
+/// Resolve exactly one built executable from a build's artifact
+/// records, with the same refusals as the legacy path.
+fn single_executable(manifest: &Path, stdout: &[u8], what: &str) -> Result<PathBuf, String> {
+    let mut bins = built_executables(manifest, stdout);
+    match bins.len() {
+        1 => Ok(bins.remove(0)),
+        0 => Err(format!("{what} built no executable ({} declares no binary target)", manifest.display())),
+        n => Err(format!("{what} built {n} executables; one [[bin]] is expected")),
+    }
+}
+
+/// The generated-driver run path: `bench.toml` is the whole input.
+///
+/// Arms build into per-arm tool-owned target directories (so where a
+/// dylib lands is a tool guarantee rather than a workspace accident),
+/// the driver crate is generated under `mock/target/mockspace-bench/`
+/// the way the custom-lint collect crate is, and the optional hooks
+/// library at `src/lib.rs` is compiled in by path when present.
+fn run_generated(
+    cfg: &Config,
+    bench_dir: &Path,
+    names: &[&str],
+    extra: &[&str],
+    report_only: bool,
+) -> ExitCode {
+    let plan = match bench_gen::plan(bench_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
+    let dep = bench_gen::mockspace_dep(&plan.manifest);
+    let profile = profile_args_for(plan.manifest.build.as_ref());
+
+    if !report_only {
+        // Which benches the filter selects; a request may name a
+        // sweep (`bench/sweep`), which builds its bench's arms.
+        let wanted: Option<Vec<String>> = if names.is_empty() {
+            None
+        } else {
+            Some(
+                names
+                    .iter()
+                    .map(|n| n.split('/').next().unwrap_or(n).to_string())
+                    .collect(),
+            )
+        };
+        for arm in &plan.arms {
+            if let Some(w) = &wanted {
+                if !w.contains(&arm.bench) {
+                    continue;
+                }
+            }
+            let target = bench_dir.join(bench_tree::arm_target_dir(&arm.bench, &arm.arm));
+            let what = format!("arm {}/arms/{}", arm.bench, arm.arm);
+            let manifest_path = if arm.has_manifest {
+                if let Err(e) = check_arm_lib_name(arm) {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                }
+                arm.dir.join("Cargo.toml")
+            } else {
+                let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
+                let toml = match bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::FAILURE;
+                    },
+                };
+                if let Err(e) = bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml) {
+                    eprintln!("error: {e}");
+                    return ExitCode::FAILURE;
+                }
+                gen_dir.join("Cargo.toml")
+            };
+            eprintln!("  building {what}...");
+            if let Err(e) = cargo_build_at(&manifest_path, &what, &profile, Some(&target)) {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        // A flat tree without a driver crate still builds its
+        // variants/ directories the legacy way; resolution for them
+        // is unchanged.
+        if !plan.manifest.nested_mode {
+            if let Err(e) = build_flat_variants(bench_dir, names, &profile) {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // ── the generated driver crate ──
+    let gen_dir = bench_gen::driver_gen_dir(&cfg.mock_dir);
+    let hooks_lib = bench_dir.join("src").join("lib.rs");
+    let hooks_lib = hooks_lib.exists().then(|| {
+        hooks_lib
+            .canonicalize()
+            .unwrap_or_else(|_| hooks_lib.clone())
+    });
+    let cargo_toml = match bench_gen::driver_cargo_toml(&dep, &plan.support) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
+    let main_rs = match bench_gen::driver_main_source(&plan.manifest, hooks_lib.as_deref()) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
+    if let Err(e) = bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &cargo_toml)
+        .and_then(|_| bench_gen::write_if_changed(&gen_dir.join("src").join("main.rs"), &main_rs))
+    {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    eprintln!("  building generated bench driver...");
+    let stdout =
+        match cargo_build_at(&gen_dir.join("Cargo.toml"), "generated bench driver", &profile, None)
+        {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            },
+        };
+    let bin_path = match single_executable(
+        &gen_dir.join("Cargo.toml"),
+        &stdout,
+        "generated bench driver",
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
+
+    let mut cmd = Command::new(&bin_path);
+    for n in names {
+        cmd.args(["--only", n]);
+    }
+    for e in extra {
+        cmd.arg(e);
+    }
+    let status = cmd.current_dir(bench_dir).status();
+    match status {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(s) => {
+            eprintln!("bench driver exited with {:?}", s.code());
+            ExitCode::FAILURE
+        },
+        Err(e) => {
+            eprintln!("error: failed to spawn {}: {e}", bin_path.display());
+            ExitCode::FAILURE
+        },
+    }
+}
+
+/// In a nested tree the arm's directory name is its lib name (that
+/// is what short-name resolution builds paths from), so a consumer
+/// manifest declaring a different one would build a dylib nothing
+/// can find. Refuse it with the fix spelled out.
+fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
+    let expected = arm.arm.replace('-', "_");
+    let text = fs::read_to_string(arm.dir.join("Cargo.toml"))
+        .map_err(|e| format!("reading {}: {e}", arm.dir.join("Cargo.toml").display()))?;
+    let doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| format!("{}: {e}", arm.dir.join("Cargo.toml").display()))?;
+    let lib_name = doc
+        .get("lib")
+        .and_then(|l| l.get("name"))
+        .and_then(|n| n.as_str())
+        .or_else(|| {
+            doc.get("package")
+                .and_then(|p| p.get("name"))
+                .and_then(|n| n.as_str())
+        })
+        .map(|n| n.replace('-', "_"));
+    match lib_name {
+        Some(name) if name == expected => Ok(()),
+        Some(name) => Err(format!(
+            "arm {}/arms/{} declares lib name `{name}` but the directory name resolves              to `{expected}`. In a nested tree the arm's directory name is its lib              name; rename one to match the other.",
+            arm.bench, arm.arm
+        )),
+        None => Err(format!(
+            "{} has no [lib] or [package] name",
+            arm.dir.join("Cargo.toml").display()
+        )),
+    }
+}
+
+/// Build the `variants/` directories of a flat tree (the legacy
+/// resolution keeps pointing into their own target dirs).
+fn build_flat_variants(bench_dir: &Path, names: &[&str], profile: &[String]) -> Result<(), String> {
+    let only_dirs = if names.is_empty() {
+        None
+    } else {
+        Some(variant_dirs_for(bench_dir, names)?)
+    };
+    let variants_dir = bench_dir.join("variants");
+    if !variants_dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&variants_dir).map_err(|e| format!("reading variants dir: {e}"))? {
+        let entry = entry.map_err(|e| format!("variants dir entry: {e}"))?;
+        let path = entry.path();
+        if let Some(dirs) = &only_dirs {
+            let dir_name = path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("")
+                .to_string();
+            if !dirs.contains(&dir_name) {
+                continue;
+            }
+        }
+        let manifest = path.join("Cargo.toml");
+        if manifest.exists() {
+            eprintln!("  building variant {}...", path.display());
+            cargo_build_at(
+                &manifest,
+                &format!("variant {}", path.display()),
+                profile,
+                None,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 // ── init ──
 
 fn cmd_init(cfg: &Config) -> ExitCode {
@@ -465,54 +788,38 @@ fn cmd_init(cfg: &Config) -> ExitCode {
 
 // ── list ──
 
+/// Human display for one arm entry: the short name where the entry
+/// is one, the dylib stem where it is a path.
+fn entry_display(entry: &str) -> String {
+    let stem = entry
+        .rsplit('/')
+        .next()
+        .unwrap_or(entry)
+        .trim_end_matches(std::env::consts::DLL_SUFFIX);
+    stem.strip_prefix(std::env::consts::DLL_PREFIX)
+        .unwrap_or(stem)
+        .to_string()
+}
+
 fn cmd_list(cfg: &Config) -> ExitCode {
     let bench_dir = cfg.mock_dir.join("benches");
-    let text = match fs::read_to_string(bench_dir.join("bench.toml")) {
-        Ok(t) => t,
+    let plan = match bench_gen::plan(&bench_dir) {
+        Ok(p) => p,
         Err(e) => {
-            eprintln!("error: reading bench.toml: {e}");
+            eprintln!("error: {e}");
             return ExitCode::FAILURE;
         },
     };
-    let doc: toml_edit::DocumentMut = match text.parse() {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("error: parsing bench.toml: {e}");
-            return ExitCode::FAILURE;
-        },
-    };
-    let Some(bench) = doc.get("bench").and_then(|b| b.as_table()) else {
-        eprintln!("no [bench.*] sections in bench.toml");
-        return ExitCode::SUCCESS;
-    };
-    let mut names: Vec<&str> = bench.iter().map(|(k, _)| k).collect();
-    names.sort();
-    for name in names {
-        let section = bench.get(name).unwrap();
-        let title = section.get("title").and_then(|t| t.as_str()).unwrap_or("");
-        let mut sizes: Vec<String> = Vec::new();
-        if let Some(item) = section.get("sizes") {
-            if let Some(arr) = item.as_array() {
-                for v in arr.iter() {
-                    if let Some(n) = v.as_integer() {
-                        sizes.push(n.to_string());
-                    }
-                }
-            }
-            if let Some(arr) = item.as_array_of_tables() {
-                for t in arr.iter() {
-                    if let Some(n) = t.get("n").and_then(|x| x.as_integer()) {
-                        sizes.push(n.to_string());
-                    }
-                }
-            }
-        }
-        let dirs = variant_dirs_for(&bench_dir, &[name]).unwrap_or_default();
+    for name in plan.manifest.bench_names() {
+        let section = &plan.manifest.bench[&name];
+        let points: Vec<String> = section.sizes.iter().map(|s| s.n.to_string()).collect();
+        let mut arms: Vec<String> = section.variants.iter().map(|e| entry_display(e)).collect();
+        arms.dedup();
         println!(
-            "{name}  [{}]  variants: {}  {}",
-            sizes.join(", "),
-            dirs.join(", "),
-            title
+            "{name}  [{}]  arms: {}  {}",
+            points.join(", "),
+            arms.join(", "),
+            section.title
         );
     }
     println!();

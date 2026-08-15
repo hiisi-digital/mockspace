@@ -77,6 +77,12 @@ pub struct BenchManifest {
     /// and `realistic`.
     #[serde(default)]
     pub workload: HashMap<String, WorkloadSection>,
+    /// Build settings for the tool-generated crates: the mockspace
+    /// dependency spec they pin, and the release-profile values the
+    /// tool passes on every build. Defaults are the framework's; a
+    /// consumer overrides here, never in a manifest cargo may ignore.
+    #[serde(default)]
+    pub build: Option<BuildSection>,
     /// Nested-tree bookkeeping: manifest key to `(bench, sweep)`.
     /// Populated by [`crate::tree::load_tree`]; empty for a flat
     /// tree, where every section is its own single sweep.
@@ -85,6 +91,29 @@ pub struct BenchManifest {
     /// Whether this manifest was composed from a nested tree.
     #[serde(skip)]
     pub nested_mode: bool,
+}
+
+/// The `[build]` section: named defaults the tool applies to every
+/// bench build, overridable here and nowhere else.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildSection {
+    /// The cargo dependency spec the generated crates use for the
+    /// mockspace bench crates, verbatim, e.g.
+    /// `{ git = "https://github.com/hiisi-digital/mockspace", rev = "..." }`.
+    /// Default: the dev branch of the canonical repository.
+    #[serde(default)]
+    pub mockspace:     Option<String>,
+    /// Release profile overrides. The tool passes the effective
+    /// values on the command line (`--config`), where a manifest
+    /// cannot silently drop them; these keys move the values, they
+    /// do not relocate the mechanism.
+    #[serde(default, rename = "opt-level")]
+    pub opt_level:     Option<u32>,
+    #[serde(default)]
+    pub lto:           Option<String>,
+    #[serde(default, rename = "codegen-units")]
+    pub codegen_units: Option<u32>,
 }
 
 /// The `[dispatch]` section: what the generated driver declares to
