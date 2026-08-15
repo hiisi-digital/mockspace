@@ -46,6 +46,7 @@ use crate::error::BenchError;
 /// cooldowns_ms = [0, 100, 600]
 /// ```
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BenchManifest {
     /// Named bench entries. Key is the bench short name.
     #[serde(default)]
@@ -54,10 +55,32 @@ pub struct BenchManifest {
     /// bench declares a `[bench.<name>.timing]` override.
     #[serde(default)]
     pub timing: TimingSection,
+    /// Opt-in generated documentation pass. Read by the docs
+    /// regeneration path, which emits a `BENCHES.md` from the
+    /// committed history when this is enabled.
+    ///
+    /// Typed here rather than left unknown because the section is a
+    /// shipped feature: the scaffolded `bench.toml` documents it, and
+    /// at least one consumer has it turned on. Refusing it as an
+    /// unknown key would have turned off a working feature and told
+    /// the consumer to delete the line.
+    #[serde(default)]
+    pub docgen: Option<DocgenSection>,
+}
+
+/// Opt-in for the generated `BENCHES.md` pass.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocgenSection {
+    /// Whether the docs regeneration pass emits a generated
+    /// `BENCHES.md` for this bench tree.
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// One named bench inside a [`BenchManifest`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BenchSection {
     /// Display title for the bench (used in findings.md).
     pub title:       String,
@@ -143,6 +166,7 @@ pub struct BenchSection {
 /// cross-variant, post-collection operation and the timing macro has
 /// no visibility across variants.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NormaliseSection {
     /// Variant short name used as the analysis baseline.
     pub baseline: String,
@@ -163,6 +187,7 @@ pub struct NormaliseSection {
 
 /// One `(N, [variants])` pair inside a [`BenchSection`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SizeSection {
     /// Logical size parameter passed into `bench_entry(... , n: usize)`.
     pub n:        usize,
@@ -176,6 +201,7 @@ pub struct SizeSection {
 /// Per-bench timing override: every knob optional, merged over the
 /// global [`TimingSection`] by [`BenchManifest::for_size`].
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TimingOverride {
     pub passes:        Option<usize>,
     pub runs_per_pass: Option<usize>,
@@ -211,11 +237,43 @@ fn de_seed<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
 /// Deserialize `sizes` from either a plain integer array or the
 /// array-of-tables form.
 fn de_sizes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<SizeSection>, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
+    // Not `#[serde(untagged)]`. An untagged enum swallows the
+    // struct-level `deny_unknown_fields` inside a failed variant and
+    // reports "data did not match any variant", naming neither the
+    // offending key nor the accepted ones, with the span on the table
+    // header. That is the shape most manifests use for per-size
+    // variants, so the deny would have been useless exactly where it
+    // is needed. `deserialize_any` dispatches on the TOML shape and
+    // forwards a map straight through, so the inner error survives.
     enum Raw {
         Bare(usize),
         Full(SizeSection),
+    }
+    impl<'de> Deserialize<'de> for Raw {
+        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> serde::de::Visitor<'de> for V {
+                type Value = Raw;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("an integer size or a table with `n` and optional `variants`")
+                }
+
+                fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Raw, E> {
+                    Ok(Raw::Bare(v as usize))
+                }
+
+                fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Raw, E> {
+                    Ok(Raw::Bare(v as usize))
+                }
+
+                fn visit_map<A: serde::de::MapAccess<'de>>(self, m: A) -> Result<Raw, A::Error> {
+                    SizeSection::deserialize(serde::de::value::MapAccessDeserializer::new(m))
+                        .map(Raw::Full)
+                }
+            }
+            d.deserialize_any(V)
+        }
     }
     let raw: Vec<Raw> = Vec::deserialize(d)?;
     Ok(raw
@@ -268,6 +326,7 @@ pub fn resolve_variant_path(entry: &str, mock_benches_dir: &Path) -> PathBuf {
 
 /// Shared timing knobs.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TimingSection {
     /// Outer pass count per harness run.
     #[serde(default = "default_passes")]
@@ -319,12 +378,26 @@ impl Default for TimingSection {
 impl BenchManifest {
     /// Load a manifest from a TOML file. The file is read in full;
     /// missing keys fall back to [`Default`].
+    ///
+    /// An unrecognised key is an error rather than a silent default.
+    /// Every section carries `deny_unknown_fields`, because a
+    /// measurement tool that ignores a key its author wrote is the
+    /// worst shape available: the run succeeds, the report looks
+    /// ordinary, and the setting was never applied. A typoed
+    /// `threaded` leaves the harness pinning a threaded workload to
+    /// one core and skewing every timing. A typoed `master_seed`
+    /// trades reproducibility for a fresh random seed. Neither says
+    /// anything at the time, and both are invisible in the artifact.
+    ///
+    /// The error carries the path because a consumer with several
+    /// bench trees otherwise has to guess which one refused.
     pub fn load(path: &Path) -> Result<Self, BenchError> {
         let text =
             std::fs::read_to_string(path).map_err(|e| BenchError::io("reading bench.toml", e))?;
         toml::from_str(&text).map_err(|e| {
+            let shown = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
             BenchError::InvalidConfig {
-                reason: format!("bench.toml parse error: {e}"),
+                reason: format!("{}: {e}", shown.display()),
             }
         })
     }
@@ -751,5 +824,112 @@ mod tests {
         );
         let err = m.for_size("b", 0, Path::new("/root")).unwrap_err();
         assert!(format!("{err}").contains("lists no variants"));
+    }
+
+    /// A key nobody reads must not be accepted. The failure this
+    /// prevents is silent: the run succeeds, the report looks
+    /// ordinary, and the setting the author wrote was discarded.
+    #[test]
+    fn an_unknown_top_level_section_is_refused_and_named() {
+        let err = toml::from_str::<BenchManifest>(
+            "[telemetry]\nenabled = true\n\n[bench.b]\ntitle = \"t\"\nworkload = \"w\"\n",
+        )
+        .expect_err("an unread section must not parse");
+        let msg = format!("{err}");
+        assert!(msg.contains("telemetry"), "does not name the offending key: {msg}");
+    }
+
+    /// `[docgen]` is a shipped feature, not an unknown key. An
+    /// earlier revision of this change refused it and shipped a test
+    /// asserting the refusal, which would have turned off a working
+    /// docs pass and left a test standing as the reason not to
+    /// restore it.
+    #[test]
+    fn the_docgen_section_is_a_feature_and_still_parses() {
+        let m = toml::from_str::<BenchManifest>("[docgen]\nenabled = true\n")
+            .expect("docgen is a real section");
+        assert!(m.docgen.expect("present").enabled);
+    }
+
+    /// And it is typed rather than merely tolerated, so a typo
+    /// inside it is still caught.
+    #[test]
+    fn a_typo_inside_docgen_is_still_refused() {
+        let err = toml::from_str::<BenchManifest>("[docgen]\nenabledd = true\n")
+            .expect_err("a typo inside a known section must not parse");
+        assert!(format!("{err}").contains("enabledd"));
+    }
+
+    /// A typo in a bench key falls back to a default that is not
+    /// what the author asked for. `threaded` is the sharpest case:
+    /// left false, the harness pins a threaded workload to one core
+    /// and every timing in the run is skewed.
+    #[test]
+    fn a_typoed_bench_key_is_refused_rather_than_defaulted() {
+        let src = "[bench.b]\ntitle = \"t\"\nworkload = \"w\"\nthreadedd = true\n";
+        let err = toml::from_str::<BenchManifest>(src).expect_err("a typo must not parse");
+        assert!(format!("{err}").contains("threadedd"));
+    }
+
+    /// The array-of-tables `sizes` form is the shape most manifests
+    /// use, and an untagged wrapper used to swallow the deny there:
+    /// the error named no key and pointed at the table header. This
+    /// asserts the offending key survives to the message.
+    #[test]
+    fn a_typo_inside_the_array_of_tables_sizes_form_names_the_key() {
+        let src = "[bench.b]\ntitle = \"t\"\nworkload = \"w\"\n\n\
+                   [[bench.b.sizes]]\nn = 64\nvariantss = [\"a\"]\n";
+        let err = toml::from_str::<BenchManifest>(src).expect_err("a typo must not parse");
+        let msg = format!("{err}");
+        assert!(msg.contains("variantss"), "the key is not named: {msg}");
+    }
+
+    /// Both `sizes` shapes must still parse, since the hand-written
+    /// deserializer that fixed the error message is where a shape
+    /// would be lost.
+    #[test]
+    fn both_sizes_shapes_survive_the_hand_written_deserializer() {
+        let bare = manifest(
+            "[bench.b]\ntitle = \"t\"\nworkload = \"w\"\nvariants = [\"a\"]\nsizes = [16, 32]\n",
+        );
+        assert_eq!(bare.bench["b"].sizes.len(), 2);
+        assert_eq!(bare.bench["b"].sizes[0].n, 16);
+        let tabled = manifest(
+            "[bench.b]\ntitle = \"t\"\nworkload = \"w\"\n\n\
+             [[bench.b.sizes]]\nn = 64\nvariants = [\"a\"]\n",
+        );
+        assert_eq!(tabled.bench["b"].sizes[0].n, 64);
+        assert_eq!(tabled.bench["b"].sizes[0].variants, vec!["a".to_string()]);
+    }
+
+    /// The control, and it covers every field of every struct that
+    /// carries the deny. Named for what it does: a sampled version
+    /// of this would not notice the deny starting to refuse a valid
+    /// manifest in the structs it skipped.
+    #[test]
+    fn every_field_of_every_denied_struct_still_parses() {
+        let src = "\n[timing]\npasses = 2\nruns_per_pass = 3\nbatch_size = 4\n\
+                   harness_runs = 5\ncooldowns_ms = [1, 2]\n\n\
+                   [docgen]\nenabled = true\n\n\
+                   [bench.b]\ntitle = \"t\"\nworkload = \"w\"\nmaster_seed = 7\n\
+                   variants = [\"a\"]\nmay_differ = true\nrequired = true\n\
+                   threaded = true\n\n\
+                   [bench.b.timing]\npasses = 9\nruns_per_pass = 8\nbatch_size = 7\n\
+                   harness_runs = 6\ncooldowns_ms = [3]\n\n\
+                   [bench.b.normalise]\nbaseline = \"a\"\nmode = \"ratio\"\nfloor = \"a\"\n\n\
+                   [[bench.b.sizes]]\nn = 64\nvariants = [\"a\"]\n";
+        let m = toml::from_str::<BenchManifest>(src).expect("every documented key must parse");
+        let b = m.bench.get("b").expect("bench present");
+        assert!(b.may_differ && b.required && b.threaded);
+        assert_eq!(b.master_seed, 7);
+        assert_eq!(m.timing.cooldowns_ms, vec![1, 2]);
+        assert!(m.docgen.expect("docgen present").enabled);
+        let t = b.timing.as_ref().expect("override present");
+        assert_eq!(t.cooldowns_ms, Some(vec![3]));
+        let n = b.normalise.as_ref().expect("normalise present");
+        assert_eq!(n.baseline, "a");
+        assert_eq!(n.mode.as_deref(), Some("ratio"));
+        assert_eq!(n.floor.as_deref(), Some("a"));
+        assert_eq!(b.sizes[0].n, 64);
     }
 }
