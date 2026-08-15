@@ -338,6 +338,23 @@ impl Severity {
     }
 }
 
+/// True when `file` names the SHAME escape-hatch template itself.
+///
+/// The exemption is for a file *named* `SHAME.md.tmpl`, so the check is
+/// against a whole path component. Written as a bare suffix match it also
+/// exempts `NOT_SHAME.md.tmpl`, `DESIGN_SHAME.md.tmpl` and anything else
+/// ending in those characters, which opens the phase gate for templates
+/// nobody exempted.
+///
+/// Every surface that carves SHAME out of a phase gate calls this, so the
+/// predicate exists once: `changelist-doc-gate`, `changelist-lock`, and the
+/// generated `mockspace-write-guard` hook, whose shell regex is anchored the
+/// same way.
+#[must_use]
+pub fn is_shame_template(file: &str) -> bool {
+    file == "SHAME.md.tmpl" || file.ends_with("/SHAME.md.tmpl")
+}
+
 /// Whether a source line carries `lint:allow(<rule_name>)`, including
 /// the case where one marker silences multiple lints at once via the
 /// comma-separated form `lint:allow(rule_a, rule_b, rule_c)`. Whitespace
