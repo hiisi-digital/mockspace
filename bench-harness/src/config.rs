@@ -102,14 +102,20 @@ pub struct BenchSection {
     /// `variants/<name>/target/release/<platform dylib>`) or paths
     /// relative to `mock/benches/` (containing a separator; a bare
     /// stem gets the platform dylib prefix and extension).
-    #[serde(default)]
+    /// The canonical spelling is `arms`; `variants` is the accepted
+    /// legacy spelling. Writing both is a duplicate-field error.
+    #[serde(default, alias = "arms")]
     pub variants:    Vec<String>,
     /// The N values the bench runs at. Two TOML shapes are accepted:
     /// a plain integer array (`sizes = [64, 256, 1024]`, using the
     /// bench-level `variants`) or the array-of-tables form
     /// (`[[bench.<name>.sizes]]` with `n` and an optional per-size
     /// `variants` list overriding the bench-level one).
-    #[serde(default, deserialize_with = "de_sizes")]
+    /// The canonical spelling is `points`; `sizes` is the accepted
+    /// legacy spelling. A point is the integer parameter of one cell
+    /// and is not necessarily a size: several trees pack encoded case
+    /// keys into it.
+    #[serde(default, deserialize_with = "de_sizes", alias = "points")]
     pub sizes:       Vec<SizeSection>,
     /// Whether variants may produce different valid outputs for the
     /// same input. `false` (default): the harness cross-validates
@@ -130,6 +136,21 @@ pub struct BenchSection {
     /// notes in the framework docs for what is and is not measured.
     #[serde(default)]
     pub threaded:    bool,
+    /// Declared role: the arm every delta is computed against. The
+    /// flattened spelling of `[bench.<name>.normalise] baseline`;
+    /// writing both forms is refused at load.
+    #[serde(default)]
+    pub baseline:    Option<String>,
+    /// Declared role: the null-cost arm subtracted from every arm
+    /// (including the baseline) before ratios. Flattened spelling of
+    /// `normalise.floor`; requires `baseline`.
+    #[serde(default)]
+    pub floor:       Option<String>,
+    /// Which normalised column to add: `"subtract"` (default),
+    /// `"ratio"`, `"percent"`, or `"none"`. Flattened spelling of
+    /// `normalise.mode`; requires `baseline`.
+    #[serde(default)]
+    pub delta:       Option<String>,
     /// Per-bench timing override. Any field left out falls back to
     /// the global `[timing]` section.
     #[serde(default)]
@@ -193,8 +214,8 @@ pub struct SizeSection {
     pub n:        usize,
     /// Per-size variant entries (short names or paths, same grammar
     /// as the bench-level list). Empty means "use the bench-level
-    /// `variants`".
-    #[serde(default)]
+    /// `variants`". Accepts the canonical `arms` spelling too.
+    #[serde(default, alias = "arms")]
     pub variants: Vec<String>,
 }
 
@@ -394,12 +415,44 @@ impl BenchManifest {
     pub fn load(path: &Path) -> Result<Self, BenchError> {
         let text =
             std::fs::read_to_string(path).map_err(|e| BenchError::io("reading bench.toml", e))?;
-        toml::from_str(&text).map_err(|e| {
+        let manifest: BenchManifest = toml::from_str(&text).map_err(|e| {
             let shown = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
             BenchError::InvalidConfig {
                 reason: format!("{}: {e}", shown.display()),
             }
-        })
+        })?;
+        manifest.validate_roles()?;
+        Ok(manifest)
+    }
+
+    /// Refuse contradictory or incomplete role declarations.
+    ///
+    /// The flattened `baseline` / `floor` / `delta` keys and the
+    /// `[bench.<name>.normalise]` table express the same thing; a
+    /// section carrying both would leave which one wins to reading
+    /// the source, so it is refused. `floor` and `delta` qualify a
+    /// baseline and are refused without one, matching the table form
+    /// where `baseline` is required.
+    pub fn validate_roles(&self) -> Result<(), BenchError> {
+        for (name, section) in &self.bench {
+            let flattened =
+                section.baseline.is_some() || section.floor.is_some() || section.delta.is_some();
+            if flattened && section.normalise.is_some() {
+                return Err(BenchError::InvalidConfig {
+                    reason: format!(
+                        "bench `{name}` declares roles twice: flattened                          `baseline`/`floor`/`delta` keys and a `normalise` table.                          Keep one form; the flattened keys are the canonical one."
+                    ),
+                });
+            }
+            if section.baseline.is_none() && (section.floor.is_some() || section.delta.is_some()) {
+                return Err(BenchError::InvalidConfig {
+                    reason: format!(
+                        "bench `{name}` declares `floor` or `delta` without a                          `baseline`. Both qualify a baseline arm; name one."
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Build a flat [`BenchConfig`] for one `(bench, size_idx)` entry.
@@ -443,8 +496,28 @@ impl BenchManifest {
             .map(|p| resolve_variant_path(p, mock_benches_dir))
             .collect();
         let ov = section.timing.as_ref();
+        // Effective roles: the normalise table and the flattened keys
+        // are mutually exclusive (validate_roles), so whichever is
+        // present wins without a precedence question.
+        let (nz_baseline, nz_mode, nz_floor) = if let Some(nz) = &section.normalise {
+            (
+                Some(nz.baseline.clone()),
+                Some(nz.mode.clone().unwrap_or_else(|| "subtract".to_string())),
+                nz.floor.clone(),
+            )
+        } else if let Some(b) = &section.baseline {
+            (
+                Some(b.clone()),
+                Some(section.delta.clone().unwrap_or_else(|| "subtract".to_string())),
+                section.floor.clone(),
+            )
+        } else {
+            (None, None, None)
+        };
         Ok(BenchConfig {
             bench_name: bench_name.to_string(),
+            bench: bench_name.to_string(),
+            sweep: bench_name.to_string(),
             title: section.title.clone(),
             workload: section.workload.clone(),
             master_seed: section.master_seed,
@@ -469,12 +542,9 @@ impl BenchManifest {
             batch_k: 1,
             max_call_us: None,
             tuning: HarnessTuning::default(),
-            normalise_baseline: section.normalise.as_ref().map(|nz| nz.baseline.clone()),
-            normalise_mode: section
-                .normalise
-                .as_ref()
-                .map(|nz| nz.mode.clone().unwrap_or_else(|| "subtract".to_string())),
-            normalise_floor: section.normalise.as_ref().and_then(|nz| nz.floor.clone()),
+            normalise_baseline: nz_baseline,
+            normalise_mode: nz_mode,
+            normalise_floor: nz_floor,
         })
     }
 
@@ -495,8 +565,17 @@ impl BenchManifest {
 /// [`BenchManifest::for_size`] for manifest-driven runs.
 #[derive(Clone, Debug)]
 pub struct BenchConfig {
-    /// Manifest key for this bench (e.g. `"content_hash"`).
+    /// Manifest key for this bench (e.g. `"content_hash"`). In a
+    /// nested tree this is the unique `<bench>/<sweep>` composite;
+    /// in a flat tree it is the section name.
     pub bench_name:    String,
+    /// The bench this cell belongs to: the directory name in a
+    /// nested tree, the section name in a flat one. This is what
+    /// [`crate::routine_table!`] and the `routine_for` hook key on.
+    pub bench:         String,
+    /// The sweep within the bench. Equal to the bench name in a flat
+    /// tree, where every section is its own single sweep.
+    pub sweep:         String,
     /// Display title (for findings.md).
     pub title:         String,
     /// Workload program identifier.
@@ -596,6 +675,8 @@ impl Default for BenchConfig {
     fn default() -> Self {
         BenchConfig {
             bench_name:    String::new(),
+            bench:         String::new(),
+            sweep:         String::new(),
             title:         "Benchmark".into(),
             workload:      String::new(),
             master_seed:   0,
@@ -791,6 +872,170 @@ mod tests {
         assert!(c.may_differ && c.required && c.threaded);
         let base = manifest(BASE).for_size("b", 0, Path::new("/root")).unwrap();
         assert!(!base.may_differ && !base.required && !base.threaded);
+    }
+
+    #[test]
+    fn the_arms_spelling_parses_identically_to_variants() {
+        let canonical = manifest(
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            arms = ["alpha", "beta"]
+            points = [64, 1024]
+        "#,
+        );
+        let legacy = manifest(BASE);
+        let c = canonical.for_size("b", 1, Path::new("/root")).unwrap();
+        let l = legacy.for_size("b", 1, Path::new("/root")).unwrap();
+        assert_eq!(c.variant_paths, l.variant_paths);
+        assert_eq!(c.n, l.n);
+    }
+
+    #[test]
+    fn the_arms_spelling_works_per_point_too() {
+        let m = manifest(
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+
+            [[bench.b.points]]
+            n = 64
+            arms = ["gamma"]
+        "#,
+        );
+        let c = m.for_size("b", 0, Path::new("/root")).unwrap();
+        assert!(c.variant_paths[0].display().to_string().contains("gamma"));
+    }
+
+    #[test]
+    fn writing_both_spellings_of_one_field_is_refused() {
+        // serde reports the duplicate under the canonical field name,
+        // which is the field both spellings map to.
+        let err = toml::from_str::<BenchManifest>(
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            variants = ["a"]
+            arms = ["a"]
+            sizes = [64]
+        "#,
+        )
+        .unwrap_err();
+        assert!(format!("{err}").contains("duplicate"), "got: {err}");
+    }
+
+    #[test]
+    fn flattened_roles_flow_to_the_config() {
+        let m = manifest(
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            arms = ["alpha", "beta", "nullarm"]
+            points = [64]
+            baseline = "beta"
+            floor = "nullarm"
+            delta = "ratio"
+        "#,
+        );
+        m.validate_roles().expect("roles are consistent");
+        let c = m.for_size("b", 0, Path::new(".")).unwrap();
+        assert_eq!(c.normalise_baseline.as_deref(), Some("beta"));
+        assert_eq!(c.normalise_floor.as_deref(), Some("nullarm"));
+        assert_eq!(c.normalise_mode.as_deref(), Some("ratio"));
+    }
+
+    #[test]
+    fn flattened_baseline_defaults_delta_to_subtract() {
+        let m = manifest(
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            arms = ["alpha", "beta"]
+            points = [64]
+            baseline = "alpha"
+        "#,
+        );
+        let c = m.for_size("b", 0, Path::new(".")).unwrap();
+        assert_eq!(c.normalise_mode.as_deref(), Some("subtract"));
+    }
+
+    #[test]
+    fn load_itself_refuses_double_roles_not_only_validate_roles() {
+        // Guards the call site: `validate_roles` existing is not the
+        // fix, `load` running it is. Deleting the call turns this red
+        // while the direct `validate_roles` tests stay green.
+        let dir = std::env::temp_dir().join(format!(
+            "mockspace-bench-config-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bench.toml");
+        std::fs::write(
+            &path,
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            arms = ["alpha"]
+            points = [64]
+            baseline = "alpha"
+            [bench.b.normalise]
+            baseline = "alpha"
+        "#,
+        )
+        .unwrap();
+        let err = BenchManifest::load(&path).unwrap_err();
+        assert!(format!("{err}").contains("declares roles twice"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn declaring_roles_in_both_forms_is_refused() {
+        let m = manifest(
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            arms = ["alpha", "beta"]
+            points = [64]
+            baseline = "alpha"
+            [bench.b.normalise]
+            baseline = "beta"
+        "#,
+        );
+        let err = m.validate_roles().unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("declares roles twice"), "got: {msg}");
+        assert!(msg.contains("`b`"), "names the bench: {msg}");
+    }
+
+    #[test]
+    fn floor_or_delta_without_baseline_is_refused() {
+        let m = manifest(
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            arms = ["alpha", "nullarm"]
+            points = [64]
+            floor = "nullarm"
+        "#,
+        );
+        let err = m.validate_roles().unwrap_err();
+        assert!(format!("{err}").contains("without a"), "got: {err}");
+    }
+
+    #[test]
+    fn a_flat_tree_config_carries_bench_and_sweep_equal_to_the_section_name() {
+        let c = manifest(BASE).for_size("b", 0, Path::new("/root")).unwrap();
+        assert_eq!(c.bench, "b");
+        assert_eq!(c.sweep, "b");
+        assert_eq!(c.bench_name, "b");
     }
 
     #[test]
