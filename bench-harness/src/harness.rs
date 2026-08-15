@@ -40,11 +40,18 @@ use crate::workload::{Workload, mix};
 // ── Environment metadata helpers ──
 
 /// Serialize [`EnvMeta`] to a JSON string (no serde_json dependency).
+///
+/// `build_profile` is a constant rather than a measurement: the
+/// framework passes these settings on every build, so a run's
+/// artifacts record which profile produced them. Without it a
+/// comparison across the commit that introduced the guarantee reads
+/// as a performance change with no visible cause.
 fn env_meta_to_json(meta: &EnvMeta) -> String {
     format!(
         "{{\"cpu\":\"{cpu}\",\"os\":\"{os}\",\"rustc\":\"{rustc}\",\
         \"git_commit\":\"{git}\",\"timestamp\":{ts},\
-        \"counter_freq\":{freq},\"framework\":\"mockspace-bench-harness\"}}",
+        \"counter_freq\":{freq},\"framework\":\"mockspace-bench-harness\",\
+        \"build_profile\":\"opt-level=3,lto=fat,codegen-units=1\"}}",
         cpu = json_escape(&meta.cpu),
         os = json_escape(&meta.os),
         rustc = json_escape(&meta.rustc),
