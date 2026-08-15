@@ -3,7 +3,7 @@
 **Date:** 2026-08-15
 **Phase:** research, cold derivation, phase one committed blind
 **Branch:** `docs/the-smallest-mechanism-that-is-correct` off `feat/bench-round-consolidation`
-**Probes:** `mock/research/202608151554_probes/` (five, each with its negative controls and committed output)
+**Probes:** `mock/research/202608151554_probes/` (six, each with its negative controls and committed output)
 **Read:** `feat/bench-consolidation` (PR #21) as the tree that lands first, per the round's own changelist
 
 ## Gates
@@ -427,7 +427,61 @@ once. In this workspace's idiom that is a small declarative macro over the field
 mechanism to maintain. **What would close it:** whether the round's sweep work adds timing knobs. The
 `202608151339` topic says a sweep "could move the seed table, the anti-hoist, the S/I split, the digest,
 the calibration floor or the build profile" and rules those out for comparability. If the list stays at
-five, leaving it is correct and I would leave it. If change 2 adds even one, collapse it first.
+five, leaving it is correct and I would leave it in isolation.
+
+### But it does not stay in isolation: PR #21 makes it three copies of twelve fields
+
+I first wrote this section against `config.rs` alone and left `tree.rs` unread as a concession. Reading
+it changes the size of the finding by a factor of six. **Three structs now carry one bench vocabulary:**
+
+| | `BenchSection` `config.rs:203` | `ComposedBench` `tree.rs:102` | `SweepSection` `tree.rs:138` |
+|---|---|---|---|
+| `title` | `String` | `String` | `Option<String>` |
+| `workload` | `String` | `String`, defaulted | `Option<String>` |
+| `master_seed` | `u64` | `Option<u64>` | `Option<u64>` |
+| `arms` / `variants` | `Vec<String>` | `Vec<String>` | `Vec<String>` |
+| `points` / `sizes` | `Vec<SizeSection>` | `Vec<SizeSection>` | `Vec<SizeSection>` |
+| `may_differ` | `bool` | `bool` | `Option<bool>` |
+| `required` | `bool` | `bool` | `Option<bool>` |
+| `threaded` | `bool` | `bool` | `Option<bool>` |
+| `baseline` / `floor` / `delta` | `Option<String>` x3 | `Option<String>` x3 | `Option<String>` x3 |
+| `timing` | `Option<TimingOverride>` | `Option<TimingOverride>` | `Option<TimingOverride>` |
+| `normalise` | `Option<NormaliseSection>` | **absent** | **absent** |
+
+Twelve fields written three times, with `TimingSection`/`TimingOverride` making five of them a fourth
+and fifth time, and the merges hand-written at `config.rs:663-675`, `tree.rs:401-527` (127 lines) and
+`tree.rs:552`.
+
+**The copies have already disagreed, and the probe shows where.**
+`mock/research/202608151554_probes/per-file-form-asymmetry/`, on `feat/bench-consolidation`, with both
+controls passing (the flattened roles load per-file; the `[normalise]` table loads in a root section):
+
+```
+F1 per-file + [normalise] table        REFUSED  unknown field `normalise`
+F2 root section + flattened roles      LOADS
+F3 [sweep.a] + flattened roles         LOADS
+F4 [sweep.a] + [normalise] table       REFUSED  unknown field `normalise`
+```
+
+So `[normalise]` is writable in the `[bench.<name>]` form and refused in the per-file form and in a
+sweep. **That may well be the right call**, since the flattened keys are the canonical spelling and not
+carrying a legacy table into a new form is defensible. It is stated in no document I found, and a
+consumer moving a section into a per-file bench meets it as a parse error rather than as a decision.
+
+**The diagnostic is good and I am not criticising it.** It names the field and lists the accepted ones.
+What it also does is print the duplication: the two accepted-field lists carry the same names **in
+different orders**, because they are two separately hand-written struct declarations.
+
+```
+expected one of `title`, `workload`, `master_seed`, `arms`, `variants`, `points`, `sizes`, ...
+expected one of `points`, `sizes`, `arms`, `variants`, `title`, `workload`, `master_seed`, ...
+```
+
+**This raises F5 from a maybe to a yes.** One field list, with the required, the optional and the merge
+derived from it, and `normalise`'s presence or absence per form becomes a declared fact rather than an
+emergent one. **What would close it the other way:** if the three forms are meant to diverge in more
+than `normalise`, a derived partial is the wrong shape and the divergences should be enumerated
+explicitly instead. Nothing I read says they are meant to diverge at all.
 
 ## F6. The two role spellings are two field sets, and only one of them needs to be
 
@@ -615,7 +669,7 @@ measured that rather than assumed it.
 | F2 | `enum Mode` against an emptiness guard | whether any consumer or artifact uses a third mode value; I found only `warm`/`cold` in the current trees |
 | F3 | the `WorkerLine` type against widening the guard to `>= 12` | whether change 1 lands before or after this round's source changelists |
 | F4 | delete the six against exposing them | per symbol: is it unreachable from a documented path (expose) or unwanted (delete); `domain_work` is decided by F7 |
-| F5 | derive `TimingOverride` against leaving it | whether change 2 adds a timing knob; at five stable fields, leave it |
+| F5 | derive one field list against leaving three | whether the three forms are *meant* to diverge beyond `normalise`; nothing I read says so |
 | F8 | collapse `validation.rs`'s 24 writes against leaving them | count how many survive change 1's structured return |
 | F9 | un-ignore the eleven doctests | build them and count the failures; I could not, and it is one command for whoever can |
 
@@ -667,6 +721,10 @@ not types in `bench-core` and read as deliberate placeholders rather than as cla
 and `bench_matrix!` need a consumer crate to transcribe against. **Five of eleven unmeasured, five
 compile, two are wrong.**
 
-**`tree.rs`.** 1049 new lines on the branch that lands first, and I did not read it. Somebody should.
-It is the single largest piece of unreviewed mechanism in the surface this round touches, and my census
-in F4 treats it only as a bag of reference sites.
+**`tree.rs`: partly withdrawn.** I first conceded 1049 unread lines. I then read its type declarations
+and its composition path, which produced F5's second half and the per-file-form probe. What I still have
+not exercised is its **loader**: `resolve_members`, `discover`, `glob_match` (`tree.rs:192-307`) and the
+composition merge at `:401-527`. `glob_match` is a hand-written glob against a settled default of
+`["**"]`, so it decides membership for every consumer that adopts the form, and I neither read it
+closely nor tested it. **That is the largest thing still unexamined in this surface and it is where I
+would send the next person.**
