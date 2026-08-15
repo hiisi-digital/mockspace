@@ -42,6 +42,7 @@ pub mod quality;
 pub mod report;
 pub mod sample;
 pub mod spec;
+pub mod tree;
 pub mod summary;
 pub mod validation;
 pub mod workload;

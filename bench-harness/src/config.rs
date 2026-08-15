@@ -66,6 +66,56 @@ pub struct BenchManifest {
     /// the consumer to delete the line.
     #[serde(default)]
     pub docgen: Option<DocgenSection>,
+    /// Byte-dispatch declaration for the generated driver. `out` is
+    /// the output width in bytes; `points` narrows the generated
+    /// monomorphisation list, which otherwise defaults to the union
+    /// of every bench's points.
+    #[serde(default)]
+    pub dispatch: Option<DispatchSection>,
+    /// Declarative workload programs for the generated driver, by
+    /// name. Two builtins exist without being declared: `default`
+    /// and `realistic`.
+    #[serde(default)]
+    pub workload: HashMap<String, WorkloadSection>,
+    /// Nested-tree bookkeeping: manifest key to `(bench, sweep)`.
+    /// Populated by [`crate::tree::load_tree`]; empty for a flat
+    /// tree, where every section is its own single sweep.
+    #[serde(skip)]
+    pub nested: HashMap<String, (String, String)>,
+    /// Whether this manifest was composed from a nested tree.
+    #[serde(skip)]
+    pub nested_mode: bool,
+}
+
+/// The `[dispatch]` section: what the generated driver declares to
+/// `byte_routine_dispatch!`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DispatchSection {
+    /// Output width in bytes. The observed universal is 8.
+    #[serde(default = "default_dispatch_out")]
+    pub out:    usize,
+    /// Explicit monomorphisation list, overriding the default union
+    /// of every bench's points. Narrowing only; a manifest point
+    /// outside the effective list is a targeted runtime error.
+    #[serde(default, alias = "sizes")]
+    pub points: Vec<usize>,
+}
+
+fn default_dispatch_out() -> usize {
+    8
+}
+
+/// One `[workload.<name>]` section: an ordered stage list. Each
+/// entry is a builtin stage constructor name, optionally with one
+/// integer argument: `"algo_call"`, `"scalar_work 48"`,
+/// `"graph_work 32"`, `"heavy_memory 384"`, `"branch_work 24"`,
+/// `"light_scalar"`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkloadSection {
+    /// The ordered stages of the program.
+    pub stages: Vec<String>,
 }
 
 /// Opt-in for the generated `BENCHES.md` pass.
@@ -255,9 +305,18 @@ fn de_seed<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
     }
 }
 
+/// Deserialize an optional `master_seed` with the same integer-or-
+/// string grammar as [`de_seed`]. Used by the nested per-bench schema
+/// where absence means "inherit".
+pub(crate) fn de_seed_opt<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<u64>, D::Error> {
+    de_seed(d).map(Some)
+}
+
 /// Deserialize `sizes` from either a plain integer array or the
 /// array-of-tables form.
-fn de_sizes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<SizeSection>, D::Error> {
+pub(crate) fn de_sizes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<SizeSection>, D::Error> {
     // Not `#[serde(untagged)]`. An untagged enum swallows the
     // struct-level `deny_unknown_fields` inside a failed variant and
     // reports "data did not match any variant", naming neither the
@@ -514,10 +573,15 @@ impl BenchManifest {
         } else {
             (None, None, None)
         };
+        let (bench, sweep) = self
+            .nested
+            .get(bench_name)
+            .cloned()
+            .unwrap_or_else(|| (bench_name.to_string(), bench_name.to_string()));
         Ok(BenchConfig {
             bench_name: bench_name.to_string(),
-            bench: bench_name.to_string(),
-            sweep: bench_name.to_string(),
+            bench,
+            sweep,
             title: section.title.clone(),
             workload: section.workload.clone(),
             master_seed: section.master_seed,
