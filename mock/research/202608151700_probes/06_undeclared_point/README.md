@@ -29,3 +29,25 @@ Without that, the abort would be equally consistent with a broken build.
 `holds for: arm declaring one point, harness point differing, target
 macOS aarch64, rustc as pinned by the checkout, arms 1, edition 2024.`
 Not varied: platform, arity, the routine form of the attribute.
+
+## Addendum, phase two: this probe also shows the three arm identities diverging
+
+Used in the reconciliation for a claim it was not built for, so recorded here.
+
+The arm in this probe sits in a directory named `arm`, builds to `libarm.dylib`, and exports
+`bench_name` = `"only64"`. Three identities, all different:
+
+```
+$ nm -gU arm/target/release/libarm.dylib | grep bench
+0000000000000888 T _bench_abi_hash
+000000000000089c T _bench_entry
+0000000000000c00 T _bench_name
+$ strings arm/target/release/libarm.dylib | grep -x only64
+only64
+```
+
+`Sample::variant`'s doc comment (`bench-harness/src/sample.rs:32-36`) says the third is the one that
+matters: "the name the variant's cdylib exports through its `bench_name` symbol, not anything derived
+from its path. Every grouping downstream keys on this string."
+
+Nothing checks that the three agree.

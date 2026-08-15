@@ -679,3 +679,243 @@ involves concurrency at all; parallel arm builds; the routine form of `#[bench_v
 dependencies as opposed to path dependencies; consumers other than the four in this workspace; wall-clock
 time anywhere; the `perf-counters` feature; the `boundary` feature of `bench-matrix`; Windows path
 separators anywhere a path is interpolated into a message.
+
+---
+
+## Phase two: reconciliation
+
+The sibling is `docs/the-smallest-mechanism-that-is-correct`, file
+`mock/research/202608151554_the-smallest-mechanism-that-is-correct.md`, 810 lines with seven probe
+directories. Read after this file was committed and pushed; nothing above has been edited except by
+appendix below, so the blind derivation stands as written including the parts it corrects.
+
+Its lens is what the framework carries by convention rather than in a type. Mine is where the tool fights
+the person using it. Those turn out to overlap almost exactly on the *findings* and barely at all on the
+*routes*, which is the useful shape: five of the six convergences below were reached from different code,
+with different instruments, and two of them from formats the other expert never opened.
+
+### Where we agree, and how independently
+
+**1. `baseline` and `floor` fail open, and a wrong name is silent.** My section 1, its F1. Both
+instrument-backed, by two separately written probes
+(`202608151700_probes/02_fail_open_keys`, `202608151554_probes/normalise-silence`), both with their own
+negative controls, both landing on the same three functions at `analysis.rs:276`, `:295`, `:302`. This is
+the strongest convergence in the pair and it is real corroboration rather than shared reading: neither
+document existed when the other's probe was written.
+
+It went further than I did on one axis and I adopt the addition. `normalise_mode` is read at exactly one
+place, `report.rs:196`, so of the four documented values three are indistinguishable from each other and
+from any typo. Its probe shows `"percent"`, `"none"`, `"percnt"`, `""`, `"RATIO"` and `"banana"` all
+rendering identically to `"subtract"`. I tested the two role names and never tested the mode, so **the
+fail-open class is three keys wide rather than two**, and the third is the one whose valid set is closed
+and therefore cheapest to make a type.
+
+Its quantification is also better than mine. I measured a typo'd floor moving a ratio from 0.38 to 0.50.
+It measured a typo'd baseline flipping a delta from `-74.81%` to `+297.03%` on the same data, which
+changes the sign as well as the magnitude and is the more alarming sentence to put in front of anyone.
+
+**2. `report::generate` panics on a `DataSet` with no variants.** My probe 07, its F2. Independently
+derived and, more usefully, **by two disjoint routes into the same state**. Its route is the type surface:
+`mode` is a two-element closed set carried as a `String` through twelve signatures, so any wrong string
+empties the filter. Mine is the data: a garbled or sheared CSV row produces a mode field that matches
+nothing, with no typo anywhere.
+
+**These compose and neither is sufficient.** Its `enum Mode` removes the typo route and does not remove
+the state, which it says itself; my finding is why, and it names a second producer of the state that a
+closed enum cannot reach because the bad value arrives from a file rather than from a call site. So the
+guard at `report::generate`'s entry is load-bearing under both analyses, and the enum is the cheap
+additional win. That is the combined recommendation and it is stronger than either half.
+
+**3. The changelist's tautology clause is false.** Both found it, both cite commit `ca58832`,
+independently. Its version is better and I adopt the extension: **the same commit also performs change
+1's "profile handoff and the deletion of the hardcoded literal"**, with `harness.rs:44-70` reading the
+profile from the environment and omitting the field entirely when the tool did not drive the build. So
+two items of change 1, not one, are already done by the PR the changelist says lands first. I checked
+only the tautology.
+
+**4. The file sizes after PR #21.** Identical numbers, measured separately: `config.rs` 1322,
+`driver/mod.rs` 973, `tree.rs` 1049 and new, nine files over 500 becoming ten. We also agree on the
+conclusion, which is that this is a fact the round should carry rather than a split pass it should run.
+My section 7 goes one step further and proposes two narrow extractions (`glob_match` out of `tree.rs`,
+the CLI functions out of `driver/mod.rs`); it proposes none. That is a difference of degree and I would
+not defend mine hard. Its reason for proposing none is that the round has larger problems, and after
+reading its F1 through F3 I agree the ordering is right.
+
+**5. `NotImplemented` should go.** Both, trivially, same two lines.
+
+**6. Damage parses as zero, and that endangers change 1's digest comparison.** This is the convergence I
+would put in front of the round, because **we found it in two different formats and neither of us found
+the other's.**
+
+Its F3 is the **worker stdout wire**: a 12-or-13 column tab-separated line written by two `println!`
+format strings at `harness.rs:490-499` and parsed positionally at `harness.rs:720-741`, guarded by
+`parts.len() >= 9` while the writer emits 12 or 13, every field `unwrap_or`. Its probe shows three short
+lines out of twenty moving an arm's reported mean from 100 ns to 85 ns with the sample count intact.
+
+My section 5 is the **samples CSV**: `sample.rs:108-141` and its duplicate at `cache.rs:400-431`, every
+field `unwrap_or`, rows under ten fields dropped uncounted. My probe shows a garbled cell reading as
+0.0 ns, an arm name containing a comma shearing every column, and a pre-digest file reading every digest
+as 0.
+
+Two hand-indexed positional formats, two independent parsers each, four copies of one column order, and
+**both turn damage into zeros**. Neither of us set out to find a class and both of us found an instance
+of one.
+
+**The change-1 hazard is the part that was reached twice independently and is therefore the part to
+believe.** Its route: `digest` is column 11, outside the `>= 9` guard, defaults to `0`, so two arms with
+short lines both report `0` and compare equal. My route: `digest` is CSV column 16, absent from every
+pre-digest file, defaults to `0`, so every arm of an older run agrees. **The changelist adds "the
+digest's post-cell comparison, which makes it load-bearing for the first time"
+(`changelist.doc.md:46-47`), and on either input the check that exists to catch a wrong answer
+manufactures a right one.** Two experts, two formats, one conclusion.
+
+Its emergency fix (widen the guard to `>= 12`, drop rather than default) and my type-level fix
+(`digest: Option<u64>`, refuse rather than agree on `None`) are the same shape at two costs, and its
+framing of which to take when is correct: the guard if change 1 is imminent, the type after.
+
+**7. `cache.rs`'s public items have no caller.** Both censused, by different instruments. Its census is
+over the 95 re-exported symbols with a `\b` word grep and an honest over-counting caveat; mine is per
+declaring file with a call-versus-re-export classification and an honest under-detection caveat
+(`202608151700_probes/05_public_surface_reach`). We agree on `apply_drift`, `config_hash`, `global_mean`,
+`global_mean_for_mode`. Two instruments with opposite biases agreeing on the same four is worth more than
+either count.
+
+Its `VariantSpec` finding is better than anything I have on that surface and I adopt it wholesale:
+the resolved `(name, dylib_path, abi_hash)` triple exists as a documented type, is constructed by
+nothing, and `load_variant` (`harness.rs:118-147`) reads all three facts and returns a bare tuple with
+the ABI hash discarded twenty lines from where the record topic wants it.
+
+### Where we disagree
+
+**One substantive disagreement, and I concede most of it.**
+
+My section 1 proposes adding the arm-existence checks to `BenchManifest::validate_roles`
+(`config.rs:564-584`), on the ground that it already loops every section, already runs from both load
+paths, and already produces the right message shape. **Its F1 argues explicitly that this cannot work**:
+"`validate_roles` runs on the manifest, and the manifest is not where the arm list is: arms are resolved
+to paths at `for_size` and to *names* only at dlopen".
+
+I checked, and it is right about `validate_roles` and the picture is more specific than either of us
+wrote.
+
+**For the composed form the names do exist at load, but not where I put the check.**
+`resolve_arm_entry` (`tree.rs:613-637`) receives `arms: &[ArmSource]`, the discovered arm directory
+names, and converts each short name into a dylib **path** which is what lands in `section.variants`
+(`tree.rs:507`). So by the time `validate_roles` runs at `tree.rs:180` the names are gone, exactly as it
+says. They are in scope one function earlier, in `compose_composed_member`, which is where the check
+would have to go for that form.
+
+**For the sections form its objection holds without qualification**: `variants` are literal paths and no
+name is known until dlopen.
+
+**And there is a third identity that makes its A3 the only correct answer rather than merely the more
+general one.** I confirmed this on my own committed probe rather than by reading. Probe 06's arm sits in
+a directory named `arm`, builds to `libarm.dylib`, and exports `bench_name` = `"only64"`:
+
+```
+directory name : arm
+dylib file name: libarm.dylib
+exported name  : only64
+```
+
+`Sample::variant`'s own doc comment says which of the three matters: "the name the variant's cdylib
+exports through its `bench_name` symbol, not anything derived from its path. **Every grouping downstream
+keys on this string**" (`sample.rs:32-36`). So `with_baseline` matches against the exported name, and a
+load-time check against directory names would be checking a different identity and could pass while the
+run still fails open. It would catch the common typo and give false confidence on the uncommon one,
+which is the worse failure for a check whose whole purpose is confidence.
+
+**So: my `validate_roles` location is withdrawn. Its A3 is the right mechanism and I endorse it.** The
+driver's preflight already dlopens every arm; reading `bench_name` there costs one symbol lookup per arm
+and produces the one list every declared role must be checked against. That is one place, it covers both
+tree forms, and it checks the identity that is actually used.
+
+**What I add to A3, which is a fourth finding neither of us had.** The three identities are never checked
+against each other at all. A person who renames an arm's directory and forgets the string literal, or the
+reverse, gets a run where the manifest, the filesystem and the report disagree about what the arm is
+called, and the report wins silently because it is downstream of everything. The same preflight pass that
+resolves `bench_name` for A3 has both other names in hand and should say so:
+
+```
+arm `widths/arms/packed` exports the name `pakced`. The manifest, the directory
+and the exported name are three spellings of one arm and every report keys on
+the exported one. Rename the directory, or the `#[bench_arm("...")]` literal.
+```
+
+**A second, smaller disagreement, and I am the one who is wrong.** My gate section reproduces the brief's
+"107 `println!`", and its correction 2 shows why that number is an artifact: `grep 'println!'` matches
+`eprintln!`. Verified on the round branch: 107 naive, 96 of them `eprintln!`, **11 true `println!`**. My
+sentence reproduced a figure I should have checked, in a paragraph whose whole purpose was checking the
+brief's figures. The correction stands and the sentence above is left as written rather than edited,
+because that is the record.
+
+### Where we did not overlap at all
+
+Four threads, two each, with no conflict and no corroboration.
+
+Mine that it did not reach: the **per-arm target directory** and the one-parameter fix
+(`202608151700_probes/04_target_dir_sharing`); the **missing `bench_points` export**, so an undeclared
+manifest point is discovered by SIGABRT (`probes/06`); the **loader stopping at the first error** while
+the driver's own preflight already collects all of them; **`mock bench check`** and the effective-shape
+rendering.
+
+Its that I did not reach: the **`--config profile.release` precedence measurement**, which closed its
+first thread as a concession and which I would have needed before proposing anything about arm profiles;
+the **`[normalise]` per-file asymmetry** (writable in a root section, refused in the per-file form and in
+a sweep, undocumented either way); **`TimingOverride` as `TimingSection` with every field optional**, and
+the three-struct twelve-field table that follows from PR #21; the **stage vocabulary in three lists**
+and the reason `domain_work` is unreachable; the **eleven `ignore`d doc examples, two of which do not
+compile**; and the **`glob_match` backtracker**.
+
+Its `glob_match` work is the one I most wish I had done, because `["**"]` is the settled default and
+therefore runs for every consumer that adopts the form, and because it reached the shape by measurement
+rather than by reading. I named `glob_match` only as a clean seam to extract from `tree.rs`, which is a
+formatting observation next to what it found.
+
+### The intersection, stated so nobody reads our agreement as wider than it is
+
+We read the same three topic files, the same changelist, the same six research files and the same two
+branches, and this workspace's rules load into both contexts automatically. **Agreement on anything those
+documents state is one instance wearing two hats.** That covers the changelist correction, the file
+sizes, and every characterisation of what the three topics found.
+
+The agreements that are worth something are the instrument-backed ones, and they intersect on a narrower
+region than the list above suggests:
+
+```
+independently instrument-backed, both: baseline/floor fail-open; empty-DataSet panic;
+                                       damage-parses-as-zero endangering the digest;
+                                       cache.rs public items unreached
+instruments intersect on:              branch = feat/bench-consolidation,
+                                       host = darwin/aarch64, threads = 1,
+                                       consumers = { arvo, hilavitkutin, vehje, kirjo }
+intersection is EMPTY for:             operating system, target triple, toolchain version
+                                       (it names cargo 1.98.0-nightly fbb61be30; I did not
+                                       record mine, so the two do not intersect on it at all),
+                                       concurrency of any kind, the routine form of the
+                                       attribute, wall-clock time (neither of us measured any)
+```
+
+That last block is the honest limit. **Neither of us ran a benchmark and neither of us priced anything.**
+Every number in both files is a count, a grep, a rendered string or a compilation-unit tally. The
+build-cost question my section 4 opens and the glob-matcher question its F12 opens both need the
+mockspace bench harness, and neither has had it.
+
+### What the pair recommends that neither file does alone
+
+Three, in the order I would build them after reading both.
+
+**One: the preflight resolves `bench_name` and becomes the single check point** (its A3, my section 2's
+preflight extension, plus the three-identity check above). Its F1's role validation, my `bench_points`
+comparison, and the name-agreement check are all the same loop over the same already-dlopened arms. One
+mechanism, three classes of silent misdeclaration closed, and the loop exists.
+
+**Two: one definition per wire format, both of them** (its F3, my section 5). Its `WorkerLine` and my
+`Sample` codec extraction are the same move on two formats, and doing one without the other leaves the
+class half-fixed in a way that will read as fixed. Both make `digest` an `Option` so change 1's
+comparison refuses rather than agrees on absence.
+
+**Three: guard `report::generate` and close the mode** (its F2, my probe 07). Four lines and one enum,
+and the pair establishes that neither alone closes the state.
+
+Everything else in either file is separable and can be scheduled independently.
