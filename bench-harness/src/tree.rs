@@ -269,19 +269,32 @@ fn discover(benches_dir: &Path, pattern: &str) -> Vec<String> {
     found
 }
 
-/// Match a `/`-separated glob against a relative path. `*` matches
-/// exactly one path component, `**` any number including zero;
-/// anything else is literal per component.
+/// Match a `/`-separated glob against a relative path. A whole
+/// component of `**` matches any number of components including
+/// zero; within a component, `*` matches any run of characters
+/// (`bench-*`, `*-probe`), never crossing a `/`.
 pub fn glob_match(pattern: &str, path: &str) -> bool {
+    fn component(pat: &str, text: &str) -> bool {
+        match pat.split_once('*') {
+            None => pat == text,
+            Some((prefix, rest)) => {
+                let Some(after) = text.strip_prefix(prefix) else {
+                    return false;
+                };
+                (0 ..= after.len())
+                    .filter(|i| after.is_char_boundary(*i))
+                    .any(|i| component(rest, &after[i ..]))
+            },
+        }
+    }
     fn rec(pat: &[&str], path: &[&str]) -> bool {
         match pat.split_first() {
             None => path.is_empty(),
             Some((&"**", rest)) => {
                 (0 ..= path.len()).any(|skip| rec(rest, &path[skip ..]))
             },
-            Some((&"*", rest)) => !path.is_empty() && rec(rest, &path[1 ..]),
             Some((comp, rest)) => {
-                path.first() == Some(comp) && rec(rest, &path[1 ..])
+                !path.is_empty() && component(comp, path[0]) && rec(rest, &path[1 ..])
             },
         }
     }
@@ -870,6 +883,22 @@ mod tests {
     }
 
     #[test]
+    fn a_narrowed_pattern_ignores_a_non_matching_dir_that_carries_a_bench_toml() {
+        // The discovery half of the regression shape: under a
+        // wildcard narrower than "**", a directory carrying a
+        // bench.toml that does not match the pattern is not a
+        // member. Membership-by-contents sneaking back into the walk
+        // turns this red.
+        let t = Tree::new("narrowed-pattern");
+        t.write("bench.toml", "[benchspace]\nmembers = [\"bench-*\"]\n");
+        t.write("bench-hash/bench.toml", HASH_BENCH);
+        t.mkdir("bench-hash/arms/fnv/src").mkdir("bench-hash/arms/xx/src");
+        t.write("stranger/bench.toml", HASH_BENCH);
+        let tree = load(&t.root).unwrap();
+        assert_eq!(tree.manifest.bench_names(), vec!["bench-hash"]);
+    }
+
+    #[test]
     fn exclude_removes_a_directory_the_glob_would_take() {
         let t = Tree::new("exclude");
         t.write("bench.toml", "[benchspace]\nmembers = [\"**\"]\nexclude = [\"scratch\"]\n");
@@ -1009,5 +1038,12 @@ mod tests {
         assert!(!glob_match("a/**", "b/c"));
         assert!(glob_match("a", "a"));
         assert!(!glob_match("a", "b"));
+        // in-component wildcards, the shape cargo users write
+        assert!(glob_match("bench-*", "bench-hash"));
+        assert!(!glob_match("bench-*", "stranger"));
+        assert!(!glob_match("bench-*", "bench-a/b"), "a component * never crosses /");
+        assert!(glob_match("*-probe", "disasm-probe"));
+        assert!(glob_match("a*c", "abc"));
+        assert!(!glob_match("a*c", "abd"));
     }
 }
