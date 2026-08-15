@@ -783,28 +783,283 @@ matrix over it is a few dozen lines on machinery that is committed and working.
 
 ---
 
-## Phase two: reconciliation, owed and not performed
+## Phase two: reconciliation
 
-Phase one is committed and pushed: this file, seven probe directories with their sources, their
-committed outputs and each one's negative controls.
+The sibling is `docs/bench-usability-architecture`, file
+`mock/research/202608151700_where-the-bench-framework-fights-you.md`, 921 lines with seven probe
+directories. It committed after this file and has already reconciled against me. Nothing above this line
+has been edited; the blind derivation stands as written, including the two places this section corrects.
 
-**At the time of writing there is no sibling to reconcile against.** I fetched all refs repeatedly
-across the run. The only `docs/*` branches carrying work dated today are
-`docs/sweep-consumer-view` and `docs/sweep-investigation`, both from the round's earlier phase and both
-already folded into the three topic files, and `docs/bench-ergonomics-survey`, whose measurement the
-`202608151339` topic corrects. `feat/bench-hygiene-collection` moved during my run and carries PR #21
-plus lint work, not a parallel derivation.
+**The eighth probe in this file was built for this section**, not for phase one:
+`mock/research/202608151554_probes/standalone-target-dir-sharing/`, which attacks its section 4.
 
-So the reconciliation section this file owes is **not omitted, it is outstanding**, and whoever finds the
-sibling branch should append it here rather than assume it was skipped. Two things to check first when
-it appears, because they are where agreement between us would mean least:
+### First, the tree moved under both of us
 
-- **Shared inputs.** We read the same three topic files, the same changelist and the same six research
-  files, and this workspace's rules load into both contexts automatically. Agreement on anything those
-  documents state is one instance wearing two hats.
-- **Which of my claims are instrument-backed.** F1, F2, F3, F9, F12 and the profile precedence each have
-  a committed probe with stated negative controls, and each probe's `run.sh` prints the tree it built
-  against, because the first run of two of them compiled against the wrong branch and I only caught it
-  by adding that line. F4's census, F5's field table and the three corrections to the brief are greps
-  anyone can re-run. Everything else in this file is reading, and reading is where two experts agree
-  most easily and least usefully.
+**PR #21 merged. `dev` is `93f51bf`.** Every `feat/bench-consolidation` citation in this file was
+re-resolved against merged `dev` and **all of them survive unchanged**: `analysis.rs:276`, `:295`,
+`report.rs:196`, `harness.rs:721`, `sample.rs:31`, `config.rs:203`, `tree.rs:102`,
+`byte_routine.rs:12`, `error.rs:19`. Read "the branch that lands first" as "`dev` at `93f51bf`"
+throughout. The two doc examples that do not compile are now wrong on the trunk rather than on a branch.
+
+### Item 1. The joint answer on the zero-defaulting class
+
+We found this class in two formats and neither of us found the other's. Its section 5 is the **samples
+CSV** (`sample.rs:108-141`, duplicated at `cache.rs:400-431`, header written at five places and read at
+none, rows under ten fields dropped uncounted). My F3 is the **worker stdout TSV**
+(`harness.rs:490-499` writing, `:720-741` parsing, guard `>= 9` against a 12-or-13-column writer).
+
+Four positional parsers, two formats, one behaviour: **damage becomes zero, and zero is a legitimate
+measurement.** Below is one mechanism covering both, and the part change 1 must carry stated separately
+because it is smaller and can land alone.
+
+#### The rule change 1 needs, and it is one sentence
+
+> **A digest comparison concludes `agree` only when every arm supplied a digest. Absence is a taint, not
+> agreement.**
+
+That is the whole of what change 1 has to adopt, and it is adoptable as written today, before either
+codec is touched. The changelist promotes the digest to load-bearing for the first time
+(`202608151545_changelist.doc.md`, change 1, "the digest's post-cell comparison"). Both of our routes
+produce arms that agree on a digest neither reported:
+
+| route | how every arm reaches `0` |
+|---|---|
+| mine, fresh samples | `digest` is column 11, outside the `parts.len() >= 9` guard, `unwrap_or(0)` |
+| its, loaded samples | `digest` is CSV column 16, absent from every pre-digest file, `unwrap_or(0)`, and `sample.rs:138` says such files are expected: "appended columns; absent in older CSVs, default 0" |
+
+So the verdict is **three-valued, not two**: `Agree`, `Disagree`, `NotEstablished`. The third is not a
+new concept; it is what the round's tainting already does for a structural drop, applied to the one field
+change 1 is promoting. **A two-valued digest comparison is unsafe on both inputs and the fix is a guard,
+not a refactor.**
+
+#### The mechanism underneath, which is separable and should follow
+
+One shape, applied twice, and it is the same shape at both ends:
+
+```
+ColumnTable  ::= the ordered field list, declared exactly once
+Row          ::= parse(ColumnTable, text) -> Result<Sample, RowError>
+RowError     ::= WrongArity { expected, found } | Unparseable { column, text }
+digest       ::  Option<u64>          -- absent and zero are different values
+Drops        ::= a counted, recorded quantity, never a silent skip
+```
+
+Four properties follow, and each closes something one of us measured:
+
+1. **Arity is checked against the declared column count, not against a hand-written floor.** `>= 9`
+   against a 12-column writer is a floor somebody chose; `== COLUMNS.len()` is a fact the table already
+   knows. This closes my short-line case at the source rather than by widening a constant.
+2. **A row that does not parse is a `RowError` naming the arm and the column, never a default.** Its
+   probe 03 shows a garbled `algo_ns` reading as `0.0` and then being reported as the fastest arm; mine
+   shows three short lines moving a mean from 100 ns to 85 ns with the sample count intact. One rule
+   removes both.
+3. **`digest: Option<u64>`.** Absence and a genuine zero digest stop being the same value, which is what
+   makes the one-sentence rule above expressible rather than merely intended.
+4. **The CSV header becomes the parse key.** It is written at five places and read at none;
+   `load_samples_csv` skips it (`sample.rs:113`). Resolving positions from it makes an appended column
+   readable in an old file **and** turns its comma-in-an-arm-name shear into a named refusal. This is its
+   finding and I adopt it; my format has no header and gains nothing here, which is the one place the two
+   halves genuinely differ.
+
+**And the drop count is where the two rules meet the record.** Its section 5 wants dropped rows counted
+and put in the record the round is already building. That is right and it is also the answer to my F8: a
+verdict that is printed and not recorded is the defect the record topic names, and a row that is dropped
+and not counted is the same defect one level down. One field on `CellRecord`, two producers.
+
+**Ordering, stated so the round can schedule it.** The one-sentence rule is a guard inside change 1 and
+costs nothing. The codec extraction is change 2 or later, is separable in both formats, and **must not be
+done in one format only**: a fixed worker wire and an unfixed CSV reader leaves the class half-closed in
+a way that reads as closed, which is worse than leaving both, because the next reader will believe it.
+
+### Item 2. Attacking its section 4, the per-arm target directory
+
+Its strongest surviving proposal, and the only claim in either file resting on compilation-unit counts. I
+attacked it on three axes. **One attack fails and hands the claim back stronger, one lands and relocates
+the fix, and the third converts "unpriced" into a structural number.**
+
+#### Attack A, the invocation shape. It fails, and the proposal is now better established.
+
+Its probe 04 builds `cargo build -p arm-a --target-dir X` with the three arms as **members of one
+workspace**. The tool does neither: `cargo_build_at` (`src/bench.rs:508-534`) builds
+`--manifest-path <arm>/Cargo.toml`, and every consumer arm is a free-standing package (vehje,
+hilavitkutin and kirjo carry an explicit `[workspace]` marker; arvo's 94 sit under
+`arvo/mock/Cargo.toml:32`'s `exclude = ["benches"]`). Whether artifacts share across **distinct
+standalone packages** is a different question from whether they share across workspace members, and
+probe 04 does not answer it.
+
+`mock/research/202608151554_probes/standalone-target-dir-sharing/` asks it in the tool's shape, carrying
+the `--config profile.release.*` flags PR #21 now passes, because `--config` participates in the
+fingerprint. All three controls pass:
+
+```
+S1  per-arm target dir (build_flat_variants today)  : 3 compilations of `support`
+S2  one shared target dir, order a,b,c              : 2 compilations, 3 cdylibs
+S3  the same dir, a second pass                     : 2  (no thrash)
+S4  a fresh dir, alternating a,b,a,b,a,b            : 2  (order-independent)
+isolation under S2: 0 external `common` symbols in any of the three cdylibs
+```
+
+**Its mechanism holds on the tool's real shape, and two things it did not test are now established:** a
+repeat pass rebuilds nothing, and the result does not depend on build order. Those were the two ways
+`--target-dir` sharing usually goes wrong, and neither does. I set out to break this and made it
+stronger; that is the result and I am handing it back rather than claiming it.
+
+#### Attack B, the locus. This lands, and the fix as stated changes nothing that anyone runs.
+
+The proposal changes `arm_target_dir` (`tree.rs:644`). That function is reached from **exactly one call
+site**, `src/bench.rs:590`, on the generated-arm path. The measurement it is justified by is arvo's 90
+per-variant target directories at 2.4 GB, and those are produced by `build_flat_variants`, which calls
+`cargo_build_at(&manifest, &what, profile, None)` at `src/bench.rs:801-806`. **`None`. No `--target-dir`
+at all.**
+
+And the census in the same probe directory says the split is total rather than partial:
+
+```
+arvo           variants/ arm crates = 94    <member>/arms/ dirs = 0
+vehje          variants/ arm crates = 900   <member>/arms/ dirs = 0
+hilavitkutin   variants/ arm crates = 92    <member>/arms/ dirs = 0
+kirjo          variants/ arm crates = 2     <member>/arms/ dirs = 0
+total 1088
+```
+
+**Zero consumers use the composed form.** So `arm_target_dir` governs a path with no users, and 100
+percent of the cost it was measured against is on the path the fix does not touch.
+
+**Replacement 1, and it is the same size as the original.** Pass the shared target directory at **both**
+call sites. Two parameters, not one. `build_flat_variants` already receives `bench_dir`, so the directory
+it would share into is in scope; the change is the argument it currently passes as `None`.
+
+**And this is an instance rather than an incident, which is the more useful finding.** PR #21 built a
+second mechanism with the same locus defect: `[build] mockspace`, the declared dependency spec
+(`config.rs:140-147`), is read at exactly one place, `src/bench_gen.rs:78`, also the generated-arm path.
+So **two mechanisms PR #21 added to fix real problems both reach only the path with zero users, while the
+path carrying all 1088 arms gets neither.** Whoever reviews the next mechanism on this surface should ask
+which of the two build paths it reaches before asking whether it works.
+
+#### Attack C, the price. It cannot be a timing here, and it can be a structure.
+
+Under this workspace's rules a wall-clock number taken outside `mock/benches/` is not a measurement, and
+I did not run the harness, so **how many seconds this is worth remains unpriced and I am not guessing.**
+What can be established without a harness is how much sharing is structurally *available*, because a
+shared target directory shares only where the fingerprint matches, and the fingerprint is decided by the
+declared dependencies.
+
+The census, over all 1088 real arm crates:
+
+```
+mockspace-bench-core , source and pin normalised away : 1088 x { features = ["std"] }
+mockspace-bench-macro, source and pin normalised away : 1073 x { no features }
+distinct pins across the corpus: 205 branch="dev", 289 rev="49ff5f55...", 594 rev="98031e43..."
+distinct dependency+feature signatures: arvo 21 of 94, vehje 4 of 900, hilavitkutin 2 of 92, kirjo 1 of 2
+```
+
+**Not one arm varies the framework's own feature axis.** The only thing partitioning those fingerprints is
+the pin, and there are three pins in the whole corpus. So `mockspace-bench-core`, `mockspace-bench-macro`
+and `bench-macro`'s proc-macro tree (`syn`, `quote`, `proc_macro2`, `unicode_ident`) are each compiled
+**1088 times today and would compile once per distinct pin present in a consumer, which is between three
+and six.**
+
+That is a much stronger sentence than "strictly fewer compilations", it is a count rather than a timing,
+and it is the number I would put in the round: **the six crates that dominate a cold arm build have no
+feature axis at all, so their sharing is total and is not at risk from the feature-unification hazard
+probe 04 identified.** Its hazard is real and it bounds only the consumer's own support crates, where the
+signature counts above are the bound: 21 of 94 in arvo, 4 of 900 in vehje.
+
+**Replacement 2, which the census produces and neither file had.** Three distinct pins across four
+consumers, one of them `branch = "dev"` on 205 arms, means those arms silently rebuild whenever `dev`
+moves and their `bench_abi_hash` can drift from the harness's between one arm and the next within a
+single tree. `[build] mockspace` is the mechanism for making the pin one declared fact per tree, it
+exists, and it reaches only the generated path (attack B). **Pinning per tree is also what makes the
+shared target directory share maximally**, since the pin is the only partition the census found. The two
+changes are the same change and should be scheduled together.
+
+**On its residue.** It offers per-bench target directories, unadopted and marked as a residue, in case
+arm builds are ever parallelised. I would keep that marked as a residue and add one fact to it: the
+census says the fingerprint partition is by **pin**, not by bench, so a per-bench partition would give up
+sharing for a reason unrelated to what actually partitions. If parallelism is wanted later, partition by
+whatever bounds cargo's package-lock contention and price the sharing given up against the census, rather
+than assuming per-bench is the natural unit. **What would close it:** a harness run at a realistic arm
+count comparing sequential-shared against parallel-partitioned. Unpriced, by both of us, and it stays
+that way until the harness runs.
+
+### Item 3. What I carry forward unchanged, updated against its file
+
+**Twelve, up from eight.** The eight in this file stand; its reconciliation adopts three of them
+(`VariantSpec`, the `--config` precedence measurement, the `normalise_mode` extension to the fail-open
+class) and disputes none. Four more come from its file, and I state how I hold each.
+
+9. **The samples codec is duplicated and the extraction is safe** (its section 5). Adopted on reading and
+   then re-checked: `cache.rs:400-431` against `sample.rs:108-141`, and the changelist lists the samples
+   CSV's columns under "Not changed", so the schema is stable. I did not reach `cache.rs` at all; my F4
+   census counted its symbols and never opened its bodies. Its finding is the reason my F3 is half a
+   class rather than a whole one.
+10. **`load_itself_refuses_double_roles_not_only_validate_roles`** (`config.rs:1110-1113`) as the pattern
+    every added check should follow. Adopted, and I want to say why more loudly than either file has: it
+    pins that a check is **wired**, not that it works. This workspace's test gate asks whether a law
+    reaches something the code does, and a test of `validate_roles` in isolation does not, while this one
+    does. The validation topic found four instances of a check that existed and never ran. This is the
+    test shape that makes that class impossible, and it should be copied rather than rediscovered.
+11. **`#[serde(deny_unknown_fields)]` on the composed form** (`tree.rs:99`). I credited the discipline at
+    `config.rs:531-539` and did not notice PR #21 carried it into the new shape. One line, and it is what
+    makes the per-file form's diagnostics as good as the root form's, which my own F5 probe then used
+    without crediting.
+12. **Splitting `results/` from `history/` so `rm -rf results/` stays safe** (its section 9 item 3,
+    carried from `202608151234`). Adopted on reading, not re-checked, and flagged as such.
+
+### Item 4. The located disagreements
+
+**One, and it is small, because it conceded the large one before I could argue it.**
+
+Its section 1 put the arm-existence check in `BenchManifest::validate_roles`; my F1 argued that cannot
+work because the manifest is not where the arm names are. It checked, agreed, withdrew the location, and
+endorsed my A3. **I take the concession and will not re-argue it.** Its check produced a fact neither of
+us had, from its own probe 06, and it is better than my argument was: the three identities are
+*different* (`arm` the directory, `libarm.dylib` the file, `only64` the exported name), and `Sample`'s own
+doc says the exported one is what every grouping keys on (`sample.rs:32-36`), so a load-time check
+against directory names would check a different identity and could pass while the run still fails open.
+That is a stronger reason than mine, which was only that the names are absent.
+
+**Its addition to A3 I adopt in full.** The same preflight has all three identities in hand and should
+report their disagreement, not only resolve one of them. That is a fourth class neither file had.
+
+**The residual disagreement is about scope, not correctness.** Its section 7 proposes two narrow
+extractions from the oversized files, `glob_match` out of `tree.rs` and the CLI functions out of
+`driver/mod.rs`. My F11 and my correction 3 propose none, on the ground that the round has larger
+problems. It says it would not defend its position hard, and after its section 4 I would not defend mine
+hard either. **What would decide it:** whether the codec extraction of item 1 lands first. If it does,
+`sample.rs` grows and `harness.rs` shrinks, which moves two of the ten files over 500 lines, and the
+question of which others to split should be asked after that rather than before.
+
+**And one thing we agree on that I want recorded as a limit rather than as a result.** Neither of us ran
+a benchmark. Neither of us priced anything in time. Every number in both files is a count, a grep, a
+rendered string or a compilation-unit tally, and the two questions that genuinely need the harness, its
+build cost and my glob matcher, are unpriced in both. A reader taking our convergence as evidence about
+performance is taking it further than either instrument reaches.
+
+### The intersection, and where our agreement is worth less than it looks
+
+We read the same three topic files, the same changelist, the same six research files and the same two
+branches, and this workspace's rules load into both contexts. **Agreement on anything those documents
+state is one instance wearing two hats**: the changelist correction, the file sizes, and every
+characterisation of what the three topics found.
+
+Its file states the instrument intersection and I agree with it as written, with one correction it
+invites: it records that the two do not intersect on toolchain because it did not record its own. Mine
+is `cargo 1.98.0-nightly (fbb61be30 2026-05-26)` / `rustc 1.98.0-nightly (cced03bfd 2026-05-28)`, which
+is the workspace pin, so if its runs were on the same checkout they do intersect and the dimension is
+recoverable by asking it rather than by re-running. **Until it says so, the honest reading is that the
+dimension is absent for the pair and therefore claims nothing.**
+
+Two more dimensions this section adds, both mine alone and neither shared:
+
+```
+standalone-target-dir-sharing: package shape = standalone (not workspace member),
+                               invocation = --manifest-path, passes = 2, order = {sequential, alternating},
+                               feature sets = 2, arms = 3, cargo = 1.98.0-nightly fbb61be30,
+                               host = darwin/aarch64, threads = 1
+census:                        consumers = { arvo, vehje, hilavitkutin, kirjo } at their dev checkouts,
+                               arms = 1088 (the whole population, not a sample)
+```
+
+Not reached by either of us anywhere: parallel arm builds, any target triple but the host, any operating
+system but macOS, registry dependencies as opposed to path and git ones, and wall-clock time.
