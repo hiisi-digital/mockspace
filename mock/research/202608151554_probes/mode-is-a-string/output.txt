@@ -1,0 +1,14 @@
+C1 correct mode renders both arms : PASS
+C2 correct mode does not panic    : PASS
+
+controls pass.
+
+F  mode="wamr" -> PANIC: index out of bounds: the len is 0 but the index is 0
+F  mode="Warm" -> PANIC: index out of bounds: the len is 0 but the index is 0
+F  mode="cold" -> PANIC: index out of bounds: the len is 0 but the index is 0
+F  mode="normal" -> PANIC: index out of bounds: the len is 0 but the index is 0
+F  mode="batched" -> PANIC: index out of bounds: the len is 0 but the index is 0
+F  mode="" -> PANIC: index out of bounds: the len is 0 but the index is 0
+
+`"normal"` and `"batched"` are the two values the field's own doc
+comment names (sample.rs:28-29). Neither is ever written by the code.
