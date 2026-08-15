@@ -362,7 +362,7 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
 fi
 # --- Crate files are phase-gated ---
 if echo "$REL_PATH" | grep -qE '^crates/'; then
-    if echo "$REL_PATH" | grep -qE 'SHAME\.md\.tmpl$'; then allow; fi
+    if echo "$REL_PATH" | grep -qE '(^|/)SHAME\.md\.tmpl$'; then allow; fi
     if echo "$REL_PATH" | grep -qE '\.(md\.tmpl|md)$'; then
         if [[ "$PHASE" != "DOC" ]]; then
             deny "BLOCKED: cannot edit '${{REL_PATH}}' -- not in DOC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-doc-gate (HARD_ERROR)"
@@ -433,6 +433,15 @@ allow
 /// is wired to it). If broken by a `target/` clean it self-heals via a
 /// `cargo check`, and blocks hard if that fails. Native mockspace, so it
 /// travels with `.claude/hooks/` and survives independently of git config.
+/// The self-heal step runs the launcher rather than `cargo check`.
+///
+/// It used to run `cargo check` in the mock workspace, on the reasoning that
+/// `build.rs` re-ran the bootstrap and re-activated the gate. That bootstrap
+/// is gone and `bootstrap_from_buildscript` is now a tombstone that fails the
+/// build with migration steps, so the step could not restore anything and
+/// cost a full check on every broken-gate path. A bare `cargo mock` is what
+/// writes the validator and points `core.hooksPath`, and it is what the deny
+/// message already tells the user to run.
 pub(crate) fn builtin_mockspace_gate() -> String {
     r##"#!/usr/bin/env bash
 # Built-in mockspace hook: block agent git commit/push when the gate is broken
@@ -469,9 +478,16 @@ _gate_intact() {
 
 if _gate_intact; then allow; fi
 
-# Gate broken: validator cleaned away, or core.hooksPath not wired. Self-heal
-# by rebuilding (build.rs re-runs the bootstrap and re-activates), then retry.
-( cd "$root/$mockdir" && cargo check --quiet --locked ) >/dev/null 2>&1 || true
+# Gate broken: validator cleaned away, or core.hooksPath not wired.
+#
+# Try the narrow repair first. `activate` only ensures the durable hooks and
+# points core.hooksPath; it writes nothing else in the tree, which matters
+# because this runs while a commit is in flight. Only if that is not enough
+# (the validator itself is missing, which activate refuses to paper over) do
+# we fall back to a full run, which also regenerates docs and agent rules.
+( cd "$root" && cargo mock activate ) >/dev/null 2>&1 || true
+if _gate_intact; then allow; fi
+( cd "$root" && cargo mock ) >/dev/null 2>&1 || true
 if _gate_intact; then allow; fi
 
 deny "mockspace gate is broken and self-heal failed: the git validator at $validator is missing or core.hooksPath is not wired to mockspace. Agent commits and pushes are blocked until it is restored. Run 'cargo mock' from $root, then retry."
@@ -623,13 +639,16 @@ mod check_message_tests {
     }
 
     fn scratch() -> std::path::PathBuf {
+        // A process-wide counter, not a clock. SystemTime here has microsecond
+        // resolution at best (twenty back-to-back samples yield four distinct
+        // values on this host), and `create_dir_all` succeeds silently on an
+        // existing directory, so two tests starting in the same tick shared a
+        // scratch directory and overwrote each other's fixtures.
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let d = std::env::temp_dir().join(format!(
             "ms_checkmsg_{}_{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&d).unwrap();
         d

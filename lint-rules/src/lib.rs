@@ -30,15 +30,16 @@
 //! }
 //! ```
 //!
-//! The generated proxy crate (`target/mockspace-proxy/`) concatenates every
-//! pack's lints with any in-tree `mock/lints/*.rs` files and runs the union.
+//! The engine compiles every pack's lints together with any in-tree
+//! `mock/lints/*.rs` files into one cdylib and runs the union.
 
+pub mod fmt_only;
 mod actionable_errors;
 mod changelist_doc_gate;
 pub mod changelist_helpers;
 mod changelist_immutability;
 mod changelist_lock;
-mod changelist_required;
+pub(crate) mod changelist_required;
 mod deprecation_comparison;
 mod design_doc_source_mismatch;
 mod export_count;
@@ -336,6 +337,45 @@ impl Severity {
             }
         }
     }
+}
+
+/// True when `file` names the SHAME escape-hatch template itself.
+///
+/// The exemption is for a file *named* `SHAME.md.tmpl`, so the check is
+/// against a whole path component. Written as a bare suffix match it also
+/// exempts `NOT_SHAME.md.tmpl`, `DESIGN_SHAME.md.tmpl` and anything else
+/// ending in those characters, which opens the phase gate for templates
+/// nobody exempted.
+///
+/// Every surface that carves SHAME out of a phase gate calls this, so the
+/// predicate exists once: `changelist-doc-gate`, `changelist-lock`, and the
+/// generated `mockspace-write-guard` hook, whose shell regex is anchored the
+/// same way.
+#[must_use]
+pub fn is_shame_template(file: &str) -> bool {
+    file == "SHAME.md.tmpl" || file.ends_with("/SHAME.md.tmpl")
+}
+
+/// Read `<dir>/SHAME.md.tmpl`, but only when the directory really holds an
+/// entry spelled exactly that.
+///
+/// Opening the constructed path directly is wrong on a case-insensitive
+/// filesystem, which macOS uses by default: `shame.md.tmpl` opens through
+/// it and its escape hatches are honoured, while both phase gates refuse
+/// the file because they match case-sensitively. The same tree on Linux
+/// silently stops honouring them. Listing the directory makes the reader
+/// agree with the gates on every platform, and the direction is the safe
+/// one: a misspelled file is inert rather than secretly authoritative.
+#[must_use]
+pub fn read_shame_template(dir: &std::path::Path) -> Option<String> {
+    let exact = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .any(|e| e.file_name() == std::ffi::OsStr::new("SHAME.md.tmpl"));
+    if !exact {
+        return None;
+    }
+    std::fs::read_to_string(dir.join("SHAME.md.tmpl")).ok()
 }
 
 /// Whether a source line carries `lint:allow(<rule_name>)`, including
@@ -657,6 +697,68 @@ mod cfg_test_mod_tests {
         // `mod tests { #![cfg(test)] .. }` is equivalent to the outer form and
         // appears in real code.
         assert!(first_mod_is_test("mod tests { #![cfg(test)]\n fn f() {} }"));
+    }
+}
+
+#[cfg(test)]
+mod is_shame_template_tests {
+    use super::is_shame_template;
+
+    #[test]
+    fn the_reader_honours_only_the_exact_spelling() {
+        use super::read_shame_template;
+        let dir = std::env::temp_dir().join(format!("shame-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A misspelled file is inert.
+        std::fs::write(dir.join("shame.md.tmpl"), "## thing\nreason\n").unwrap();
+        assert_eq!(
+            read_shame_template(&dir),
+            None,
+            "a lowercase spelling must not be honoured; the gates refuse it"
+        );
+        // That assertion only discriminates where the filesystem is
+        // case-insensitive, because elsewhere the constructed-path form this
+        // replaced also fails to open the file and the check is vacuous. Say
+        // which case ran, so a green on a case-sensitive host is not read as
+        // covering the divergence it was written for.
+        let case_insensitive = dir.join("SHAME.md.tmpl").is_file();
+        if !case_insensitive {
+            eprintln!(
+                "note: this filesystem is case-sensitive, so the case half of \
+                 read_shame_template is not exercised here; it is exercised on \
+                 macOS and on any case-insensitive volume"
+            );
+        }
+
+        std::fs::remove_file(dir.join("shame.md.tmpl")).unwrap();
+        std::fs::write(dir.join("SHAME.md.tmpl"), "## thing\nreason\n").unwrap();
+        assert_eq!(read_shame_template(&dir).as_deref(), Some("## thing\nreason\n"));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(read_shame_template(&dir), None, "a missing dir reads as absent");
+    }
+
+    #[test]
+    fn only_a_whole_path_component_named_shame_matches() {
+        assert!(is_shame_template("crates/foo/SHAME.md.tmpl"));
+        assert!(is_shame_template("crates/SHAME.md.tmpl"));
+        // The bare-filename arm. No caller reaches it today, since all
+        // three require a `crates/` prefix first, so nothing else can
+        // exercise it.
+        assert!(is_shame_template("SHAME.md.tmpl"));
+
+        assert!(!is_shame_template("crates/foo/NOT_SHAME.md.tmpl"));
+        assert!(!is_shame_template("crates/foo/DESIGN_SHAME.md.tmpl"));
+        assert!(!is_shame_template("crates/foo/SHAME.md.tmpl.bak"));
+        assert!(!is_shame_template("crates/SHAME.md.tmpl/inner.md.tmpl"));
+        assert!(!is_shame_template(""));
+        // Matching is case-sensitive, deliberately: the escape hatch is
+        // one exact filename. A case-insensitive filesystem will let a
+        // consumer create `shame.md.tmpl` and find it gated, which is
+        // the safe direction; the reverse would silently open the gate.
+        assert!(!is_shame_template("crates/foo/shame.md.tmpl"));
     }
 }
 

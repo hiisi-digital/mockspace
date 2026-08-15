@@ -225,8 +225,22 @@ fn agent_gate_hook_self_heals_then_blocks() {
     assert!(hook.contains("target/hooks/pre-commit"));
     assert!(hook.contains("core.hooksPath"));
     assert!(hook.contains("mockspace.mockdir"));
-    // self-heals with a locked check so it cannot dirty Cargo.lock
-    assert!(hook.contains("cargo check --quiet --locked"));
+    // Self-heals by running the launcher, which is the only thing that
+    // both writes the validator and points core.hooksPath. It previously
+    // ran `cargo check` in the mock workspace, on the reasoning that
+    // build.rs re-ran the bootstrap; that bootstrap is gone and its
+    // remaining symbol fails the build, so the step healed nothing.
+    assert!(hook.contains("cd \"$root\" && cargo mock activate"), "{hook}");
+    // The narrow repair is tried before the full run, because a full run
+    // regenerates docs and agent rules and this executes while a commit is in
+    // flight.
+    let narrow = hook.find("cargo mock activate").expect("narrow repair present");
+    let full = hook.rfind("&& cargo mock )").expect("full repair present");
+    assert!(narrow < full, "the narrow repair must be attempted first");
+    assert!(
+        !hook.contains("cargo check"),
+        "the cargo check self-heal cannot restore the gate: build.rs no longer bootstraps"
+    );
     // fails closed via the deny helper
     assert!(hook.contains("deny \"mockspace gate is broken"));
     // scoped to this repo like the other builtins
@@ -574,4 +588,160 @@ fn sketching_and_benchmarking_are_on_by_default() {
             assert!(!skill.body.is_empty());
         }
     }
+}
+
+#[test]
+fn write_guard_shame_carve_out_matches_a_whole_path_component() {
+    // The carve-out is for the file named `SHAME.md.tmpl`. Written as a
+    // bare suffix regex it also allows `NOT_SHAME.md.tmpl` and friends
+    // straight through the phase gate. This runs the pattern the hook
+    // actually ships rather than asserting on its text.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mock_dir = tmp.path().join("mock");
+    std::fs::create_dir(&mock_dir).expect("create mock dir");
+    let cfg = Config::from_dir(&mock_dir);
+    let hook = builtin_write_guard(&cfg);
+
+    let line = hook
+        .lines()
+        .find(|l| l.contains("SHAME") && l.contains("grep -qE"))
+        .expect("the write guard carves SHAME out with a grep -qE");
+    let open = line.find('\'').expect("pattern is single-quoted");
+    let close = line[open + 1 ..].find('\'').expect("pattern is closed") + open + 1;
+    let pattern = &line[open + 1 .. close];
+
+    // The oracle is the Rust predicate the two lints call, not a list of
+    // cases someone thought of. Any divergence between the shell regex and
+    // `is_shame_template` fails here, which is the only thing keeping one
+    // rule expressed in two languages in step.
+    let cases = [
+        "crates/foo/SHAME.md.tmpl",
+        "crates/SHAME.md.tmpl",
+        "SHAME.md.tmpl",
+        "crates/foo/NOT_SHAME.md.tmpl",
+        "crates/foo/DESIGN_SHAME.md.tmpl",
+        "crates/foo/DESIGN.md.tmpl",
+        "crates/foo/SHAME.md.tmpl.bak",
+        "crates/SHAME.md.tmpl/inner.md.tmpl",
+    ];
+    for path in cases {
+        let expected = mockspace_lint_rules::is_shame_template(path);
+        let out = std::process::Command::new("grep")
+            .args(["-qE", pattern])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut c| {
+                use std::io::Write;
+                c.stdin.as_mut().expect("stdin").write_all(path.as_bytes())?;
+                c.wait()
+            })
+            .expect("run grep");
+        assert_eq!(
+            out.success(),
+            expected,
+            "the hook regex `{pattern}` and is_shame_template disagree about `{path}`"
+        );
+    }
+}
+
+/// Run the generated write guard against one target path in a repo whose
+/// round is in DRAFT (doc changelist locked, so crate docs are frozen).
+/// Returns true when the hook allowed the write.
+#[cfg(unix)]
+fn write_guard_allows(target_rel: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::{Command, Stdio};
+
+    let repo = std::env::temp_dir().join(format!(
+        "wg-{}-{}",
+        std::process::id(),
+        target_rel.replace('/', "_")
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    let rounds = repo.join("mock/design_rounds");
+    std::fs::create_dir_all(&rounds).unwrap();
+    std::fs::create_dir_all(repo.join("mock/crates/foo")).unwrap();
+    // A locked doc changelist and no src changelist is DRAFT: crate doc
+    // templates are frozen, which is the state the carve-out exists for.
+    std::fs::write(rounds.join("202601010000_changelist.doc.lock.md"), "locked\n").unwrap();
+
+    for args in [
+        vec!["init", "-q"],
+        vec!["config", "user.email", "t@example.com"],
+        vec!["config", "user.name", "t"],
+        vec!["add", "-A"],
+    ] {
+        Command::new("git").args(&args).current_dir(&repo).output().unwrap();
+    }
+
+    let cfg = Config::from_dir(&repo.join("mock"));
+    let script = repo.join("guard.sh");
+    let body = builtin_write_guard(&cfg)
+        .replace("{{HOOK_HELPERS}}", crate::render_agent::CLAUDE_HOOK_HELPERS)
+        .replace("{{REPO_ROOT}}", &repo.display().to_string());
+    std::fs::write(&script, body).unwrap();
+    let mut perm = std::fs::metadata(&script).unwrap().permissions();
+    perm.set_mode(0o755);
+    std::fs::set_permissions(&script, perm).unwrap();
+
+    let payload = format!(
+        r#"{{"tool_name":"Write","tool_input":{{"file_path":"{}/mock/{}"}}}}"#,
+        repo.display(),
+        target_rel
+    );
+    let mut child = Command::new("bash")
+        .arg(&script)
+        .current_dir(&repo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        child.stdin.as_mut().unwrap().write_all(payload.as_bytes()).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let _ = std::fs::remove_dir_all(&repo);
+
+    // Fail closed on anything that is not a verdict. Testing
+    // `!stdout.contains("deny")` reads a script that errored out as an allow,
+    // which is the opposite of what a gate must do under uncertainty.
+    assert!(
+        out.status.success(),
+        "the guard exited {:?} for `{target_rel}`: {stderr}",
+        out.status.code()
+    );
+    let denied = stdout.contains(r#""permissionDecision":"deny""#);
+    // The allow helper emits a hookSpecificOutput carrying no decision key at
+    // all, so an allow is the absence of a deny inside a well-formed verdict
+    // rather than an explicit "allow". Requiring the envelope is what keeps a
+    // crashed script from reading as permission.
+    assert!(
+        stdout.contains("hookSpecificOutput"),
+        "the guard produced no verdict envelope for `{target_rel}`: stdout={stdout} stderr={stderr}"
+    );
+    !denied
+}
+
+#[test]
+#[cfg(unix)]
+fn the_shame_escape_hatch_stays_writable_while_a_lookalike_is_gated() {
+    // The behaviour, not the regex text. Neutering the carve-out's `allow`
+    // leaves every text assertion green, so this runs the hook.
+    assert!(
+        write_guard_allows("crates/foo/SHAME.md.tmpl"),
+        "SHAME.md.tmpl is the escape hatch and must be writable in every phase"
+    );
+    assert!(
+        !write_guard_allows("crates/foo/DESIGN.md.tmpl"),
+        "an ordinary crate doc template is frozen in DRAFT"
+    );
+    assert!(
+        !write_guard_allows("crates/foo/NOT_SHAME.md.tmpl"),
+        "a lookalike is not the escape hatch and stays gated"
+    );
 }
