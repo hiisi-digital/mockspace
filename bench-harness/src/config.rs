@@ -46,6 +46,7 @@ use crate::error::BenchError;
 /// cooldowns_ms = [0, 100, 600]
 /// ```
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BenchManifest {
     /// Named bench entries. Key is the bench short name.
     #[serde(default)]
@@ -58,6 +59,7 @@ pub struct BenchManifest {
 
 /// One named bench inside a [`BenchManifest`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BenchSection {
     /// Display title for the bench (used in findings.md).
     pub title:       String,
@@ -143,6 +145,7 @@ pub struct BenchSection {
 /// cross-variant, post-collection operation and the timing macro has
 /// no visibility across variants.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NormaliseSection {
     /// Variant short name used as the analysis baseline.
     pub baseline: String,
@@ -163,6 +166,7 @@ pub struct NormaliseSection {
 
 /// One `(N, [variants])` pair inside a [`BenchSection`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct SizeSection {
     /// Logical size parameter passed into `bench_entry(... , n: usize)`.
     pub n:        usize,
@@ -176,6 +180,7 @@ pub struct SizeSection {
 /// Per-bench timing override: every knob optional, merged over the
 /// global [`TimingSection`] by [`BenchManifest::for_size`].
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TimingOverride {
     pub passes:        Option<usize>,
     pub runs_per_pass: Option<usize>,
@@ -268,6 +273,7 @@ pub fn resolve_variant_path(entry: &str, mock_benches_dir: &Path) -> PathBuf {
 
 /// Shared timing knobs.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TimingSection {
     /// Outer pass count per harness run.
     #[serde(default = "default_passes")]
@@ -319,12 +325,25 @@ impl Default for TimingSection {
 impl BenchManifest {
     /// Load a manifest from a TOML file. The file is read in full;
     /// missing keys fall back to [`Default`].
+    ///
+    /// An unrecognised key is an error rather than a silent default.
+    /// Every section carries `deny_unknown_fields`, because a
+    /// measurement tool that ignores a key its author wrote is the
+    /// worst shape available: the run succeeds, the report looks
+    /// ordinary, and the setting was never applied. A typoed
+    /// `threaded` leaves the harness pinning a threaded workload to
+    /// one core and skewing every timing. A typoed `master_seed`
+    /// trades reproducibility for a fresh random seed. Neither says
+    /// anything at the time, and both are invisible in the artifact.
+    ///
+    /// The error carries the path because a consumer with several
+    /// bench trees otherwise has to guess which one refused.
     pub fn load(path: &Path) -> Result<Self, BenchError> {
         let text =
             std::fs::read_to_string(path).map_err(|e| BenchError::io("reading bench.toml", e))?;
         toml::from_str(&text).map_err(|e| {
             BenchError::InvalidConfig {
-                reason: format!("bench.toml parse error: {e}"),
+                reason: format!("{}: {e}", path.display()),
             }
         })
     }
@@ -751,5 +770,61 @@ mod tests {
         );
         let err = m.for_size("b", 0, Path::new("/root")).unwrap_err();
         assert!(format!("{err}").contains("lists no variants"));
+    }
+
+    /// A key nobody reads must not be accepted. The failure this
+    /// prevents is silent: the run succeeds, the report looks
+    /// ordinary, and the setting the author wrote was discarded.
+    #[test]
+    fn an_unknown_top_level_section_is_refused_and_named() {
+        let err = toml::from_str::<BenchManifest>(
+            "[docgen]\nenabled = true\n\n[bench.b]\ntitle = \"t\"\nworkload = \"w\"\n",
+        )
+        .expect_err("an unread section must not parse");
+        let msg = format!("{err}");
+        assert!(msg.contains("docgen"), "does not name the offending key: {msg}");
+    }
+
+    /// The case that motivated this: a real consumer shipped exactly
+    /// this section and no version of the crate has ever read it.
+    #[test]
+    fn the_shipped_docgen_section_would_now_be_caught() {
+        assert!(toml::from_str::<BenchManifest>("[docgen]\nenabled = true\n").is_err());
+    }
+
+    /// A typo in a bench key falls back to a default that is not
+    /// what the author asked for. `threaded` is the sharpest case:
+    /// left false, the harness pins a threaded workload to one core
+    /// and every timing in the run is skewed.
+    #[test]
+    fn a_typoed_bench_key_is_refused_rather_than_defaulted() {
+        let src = "[bench.b]\ntitle = \"t\"\nworkload = \"w\"\nthreadedd = true\n";
+        let err = toml::from_str::<BenchManifest>(src).expect_err("a typo must not parse");
+        assert!(format!("{err}").contains("threadedd"));
+    }
+
+    /// The control. Every key the crate documents must still parse,
+    /// or the deny is refusing valid manifests instead of typos.
+    #[test]
+    fn every_documented_bench_key_still_parses() {
+        let src = "\n[timing]\npasses = 2\nruns_per_pass = 3\nbatch_size = 4\n\
+                   harness_runs = 5\ncooldowns_ms = [1, 2]\n\n\
+                   [bench.b]\ntitle = \"t\"\nworkload = \"w\"\nmaster_seed = 7\n\
+                   variants = [\"a\"]\nsizes = [16]\nmay_differ = true\nrequired = true\n\
+                   threaded = true\n";
+        let m = toml::from_str::<BenchManifest>(src).expect("documented keys must parse");
+        let b = m.bench.get("b").expect("bench present");
+        assert!(b.may_differ && b.required && b.threaded);
+        assert_eq!(b.master_seed, 7);
+        assert_eq!(m.timing.cooldowns_ms, vec![1, 2]);
+    }
+
+    /// `may_differ` defaults to the restrictive reading, so a bench
+    /// that says nothing is cross-validated byte-exact rather than
+    /// silently exempted.
+    #[test]
+    fn may_differ_defaults_to_cross_validating() {
+        let m = manifest("[bench.b]\ntitle = \"t\"\nworkload = \"w\"\n");
+        assert!(!m.bench["b"].may_differ, "the permissive value must not be the default");
     }
 }
