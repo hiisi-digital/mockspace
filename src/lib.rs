@@ -37,20 +37,20 @@ pub mod render_md;
 
 /// Path to the mockspace source directory, captured at compile time.
 ///
-/// When mockspace is a `[build-dependency]`, this resolves to wherever cargo
-/// cached the source (git checkout, local path, etc.). Used by bootstrap to
-/// generate the proxy crate in `target/mockspace-proxy/`.
+/// Resolves to wherever cargo placed the source: a git checkout, a local
+/// path, or the installed launcher's own build directory.
 pub const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
 // Re-export lint rules for convenience
 /// Entry point: parses CLI args and runs the mockspace pipeline.
 ///
-/// Called by both mockspace's own `main.rs` and by the generated
-/// `target/mockspace-proxy/` runner crate.
+/// Called by mockspace's own `main.rs` and by the `cargo-mock` launcher,
+/// which is the sole entry now that the generated proxy crate is gone.
 pub use entry::run;
 /// Entry point with consumer-provided custom lints.
 ///
-/// Called by proxy crates that define custom lints in `mock/lints/`.
+/// Used when the repo defines custom lints under `{mock_dir}/lints/` or
+/// declares external packs under `[lint-crates]`.
 pub use entry::run_with_custom_lints;
 pub use mockspace_lint_rules::{
     AgentMode,
