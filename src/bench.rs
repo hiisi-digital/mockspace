@@ -277,7 +277,7 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
         // filtered run built nothing for path-style entries and then
         // timed whatever dylibs were already on disk.
         eprintln!(
-            "warning: {ignored} variant entr{} outside variants/ were not rebuilt for              this filtered run; their artifacts may be stale. Run without bench names              to rebuild everything, or move them under variants/.",
+            "warning: {ignored} variant entr{} outside variants/ were not rebuilt for this filtered run; their artifacts may be stale. Run without bench names to rebuild everything, or move them under variants/.",
             if ignored == 1 { "y" } else { "ies" }
         );
     }
@@ -699,7 +699,7 @@ fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
     match lib_name {
         Some(name) if name == expected => Ok(()),
         Some(name) => Err(format!(
-            "arm {}/arms/{} declares lib name `{name}` but the directory name resolves              to `{expected}`. In a nested tree the arm's directory name is its lib              name; rename one to match the other.",
+            "arm {}/arms/{} declares lib name `{name}` but the directory name resolves to `{expected}`. In a nested tree the arm's directory name is its lib name; rename one to match the other.",
             arm.bench, arm.arm
         )),
         None => Err(format!(
@@ -758,7 +758,7 @@ fn cmd_init(cfg: &Config) -> ExitCode {
             bench_dir.display()
         );
         eprintln!(
-            "To add a bench or an arm to the existing tree use `mock bench add`; to              re-scaffold, move the directory aside first."
+            "To add a bench or an arm to the existing tree use `mock bench add`; to re-scaffold, move the directory aside first."
         );
         return ExitCode::FAILURE;
     }
@@ -769,7 +769,7 @@ fn cmd_init(cfg: &Config) -> ExitCode {
     }
 
     eprintln!(
-        "scaffolded {} with a sample bench (config-only: the driver binary is          generated from bench.toml)",
+        "scaffolded {} with a sample bench (config-only: the driver binary is generated from bench.toml)",
         bench_dir.display()
     );
     eprintln!();

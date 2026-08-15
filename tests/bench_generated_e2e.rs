@@ -50,29 +50,28 @@ pub extern "C" fn bench_abi_hash() -> u64 {
 }
 "#;
 
-/// The hooks library: `after_cell` drops a marker into the staged
-/// output directory, proving the `#[path]` inclusion compiled, the
-/// hook fired with the right payload, and staging promoted what the
-/// hook wrote.
+/// The hooks library: `after_cell` first asserts the cell's samples
+/// and report are already staged (the ordering guarantee: moving the
+/// hook before the writes turns this run red), then drops a marker
+/// into the staged directory, and fails the `gate` bench so the
+/// withheld-ledger behaviour is measured rather than documented.
 const HOOKS_LIB: &str = r#"
 use mockspace_bench_harness::driver::{AfterCell, CellVerdict, Hooks};
 
 fn after_cell(cell: &AfterCell<'_>) -> CellVerdict {
-    let marker = cell.out_dir.join(format!(
-        "{}_n{}_hook-marker.txt",
-        cell.sweep_name(),
-        cell.config.n
-    ));
+    let stem = format!("{}_n{}", cell.config.sweep, cell.config.n);
+    for staged in [format!("{stem}.csv"), format!("{stem}_report.md")] {
+        assert!(
+            cell.out_dir.join(&staged).is_file(),
+            "after_cell fired before {staged} was staged"
+        );
+    }
+    let marker = cell.out_dir.join(format!("{stem}_hook-marker.txt"));
     std::fs::write(&marker, "after_cell ran\n").expect("marker writes");
-    CellVerdict::Note("marker written".into())
-}
-
-trait SweepName {
-    fn sweep_name(&self) -> &str;
-}
-impl SweepName for AfterCell<'_> {
-    fn sweep_name(&self) -> &str {
-        &self.config.sweep
+    if cell.config.bench == "gate" {
+        CellVerdict::Fail("gated: this cell must not reach the ledger".into())
+    } else {
+        CellVerdict::Note("marker written".into())
     }
 }
 
@@ -112,9 +111,10 @@ cooldowns_ms = [0]
 "#
         ),
     );
-    write(
-        &bench_dir.join("hash").join("bench.toml"),
-        r#"
+    for bench in ["hash", "gate"] {
+        write(
+            &bench_dir.join(bench).join("bench.toml"),
+            r#"
 [bench]
 title = "Plus one"
 workload = "default"
@@ -122,41 +122,48 @@ arms = ["plusone"]
 points = [64]
 master_seed = 7
 "#,
-    );
-    write(
-        &bench_dir.join("hash").join("arms").join("plusone").join("src").join("lib.rs"),
-        ARM_LIB,
-    );
+        );
+        write(
+            &bench_dir.join(bench).join("arms").join("plusone").join("src").join("lib.rs"),
+            ARM_LIB,
+        );
+    }
     write(&bench_dir.join("src").join("lib.rs"), HOOKS_LIB);
 
-    // ── run it exactly as the command would ──
+    // ── run it exactly as the command would. The gate bench's Fail
+    // verdict must fail the exit code; every artifact must still be
+    // on disk, which is what tells this failure apart from a run
+    // that never completed. ──
     let cfg = mockspace::config::Config::from_dir(&mock_dir);
     let code = mockspace::bench::cmd(&cfg, &["run"]);
     assert_eq!(
         format!("{code:?}"),
-        format!("{:?}", std::process::ExitCode::SUCCESS),
-        "the generated run must succeed end to end"
+        format!("{:?}", std::process::ExitCode::FAILURE),
+        "the gate bench's Fail verdict must fail the run"
     );
 
-    // ── everything the run promised is on disk ──
-    let results = bench_dir.join("results").join("hash");
-    for artifact in [
-        "hash_n64.csv",
-        "hash_n64.meta.json",
-        "hash_n64_report.md",
-        "hash_n64_hook-marker.txt",
-    ] {
-        assert!(
-            results.join(artifact).is_file(),
-            "missing promoted artifact {artifact} in {}",
-            results.display()
-        );
+    // ── everything the run promised is on disk, for both benches ──
+    for bench in ["hash", "gate"] {
+        let results = bench_dir.join("results").join(bench);
+        for suffix in [".csv", ".meta.json", "_report.md", "_hook-marker.txt"] {
+            let artifact = format!("{bench}_n64{suffix}");
+            assert!(
+                results.join(&artifact).is_file(),
+                "missing promoted artifact {artifact} in {}",
+                results.display()
+            );
+        }
     }
+    // the accepted cell reaches the ledger; the gated-out one does not
     let history: PathBuf = bench_dir.join("history").join("hash").join("hash_n64.tsv");
-    assert!(history.is_file(), "the ledger appends after promotion");
+    assert!(history.is_file(), "the accepted cell's ledger appends after promotion");
     assert!(
         std::fs::read_to_string(&history).unwrap().contains("plusone"),
         "the history rows carry the arm's exported name"
+    );
+    assert!(
+        !bench_dir.join("history").join("gate").exists(),
+        "a Fail verdict withholds the cell's history append"
     );
     // nothing wrote into the consumer's source area
     assert!(

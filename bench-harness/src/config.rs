@@ -528,14 +528,14 @@ impl BenchManifest {
             if flattened && section.normalise.is_some() {
                 return Err(BenchError::InvalidConfig {
                     reason: format!(
-                        "bench `{name}` declares roles twice: flattened                          `baseline`/`floor`/`delta` keys and a `normalise` table.                          Keep one form; the flattened keys are the canonical one."
+                        "bench `{name}` declares roles twice: flattened `baseline`/`floor`/`delta` keys and a `normalise` table. Keep one form; the flattened keys are the canonical one."
                     ),
                 });
             }
             if section.baseline.is_none() && (section.floor.is_some() || section.delta.is_some()) {
                 return Err(BenchError::InvalidConfig {
                     reason: format!(
-                        "bench `{name}` declares `floor` or `delta` without a                          `baseline`. Both qualify a baseline arm; name one."
+                        "bench `{name}` declares `floor` or `delta` without a `baseline`. Both qualify a baseline arm; name one."
                     ),
                 });
             }

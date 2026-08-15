@@ -16,9 +16,11 @@
 //!    dispatch. This is where `routine_table!` plugs in.
 //! 4. `after_cell`: per cell, after the cell's samples, meta and
 //!    report are written into its staged output directory and the
-//!    validation drops are final. Staging is not yet promoted and
-//!    history is not yet appended, so a `Fail` verdict can never
-//!    poison the ledger with a run reported as failed.
+//!    validation drops are final. Staging is not yet promoted, and a
+//!    `Fail` verdict withholds the cell's history append outright,
+//!    so a gated-out run cannot become the next run's regression
+//!    baseline. The staged artifacts still promote: they are the
+//!    evidence of what ran and why it was failed.
 //!
 //! `routine_for` and `after_cell` have callers today (a custom
 //! routine table; a post-cell disassembly gate with an exit-code
@@ -144,20 +146,23 @@ pub(super) fn run_after_init(hooks: &Hooks, plan: &RunPlan<'_>) {
     }
 }
 
-/// Run `after_cell` if declared, printing its verdict and folding a
-/// `Fail` into `hook_failure`.
-pub(super) fn run_after_cell(hooks: &Hooks, cell: &AfterCell<'_>, hook_failure: &mut bool) {
+/// Run `after_cell` if declared, printing its verdict. Returns
+/// whether the cell failed, which the driver folds into the exit
+/// code and uses to withhold the cell's history append.
+#[must_use]
+pub(super) fn run_after_cell(hooks: &Hooks, cell: &AfterCell<'_>) -> bool {
     let Some(h) = hooks.after_cell else {
-        return;
+        return false;
     };
     match h(cell) {
-        CellVerdict::Pass => {},
+        CellVerdict::Pass => false,
         CellVerdict::Note(msg) => {
             eprintln!("  after_cell: {msg}");
+            false
         },
         CellVerdict::Fail(msg) => {
             eprintln!("  after_cell FAIL: {msg}");
-            *hook_failure = true;
+            true
         },
     }
 }
@@ -201,9 +206,7 @@ mod tests {
         let hooks = Hooks::default();
         let config = BenchConfig::default();
         let r = result();
-        let mut failed = false;
-        run_after_cell(&hooks, &cell(&config, &r, &[]), &mut failed);
-        assert!(!failed);
+        assert!(!run_after_cell(&hooks, &cell(&config, &r, &[])));
         let manifest = crate::config::BenchManifest::default();
         assert!(
             run_on_init(&hooks, &InitContext {
@@ -260,16 +263,18 @@ mod tests {
         let mut failing = BenchConfig::default();
         failing.bench = "gate".into();
         failing.n = 64;
-        let mut failed = false;
-        run_after_cell(&hooks, &cell(&failing, &r, &[]), &mut failed);
-        assert!(failed, "Fail must set the flag");
+        assert!(
+            run_after_cell(&hooks, &cell(&failing, &r, &[])),
+            "Fail must report the cell as failed"
+        );
 
         let mut noting = BenchConfig::default();
         noting.bench = "other".into();
         noting.n = 64;
-        let mut noted_failed = false;
-        run_after_cell(&hooks, &cell(&noting, &r, &[]), &mut noted_failed);
-        assert!(!noted_failed, "Note must not set the flag");
+        assert!(
+            !run_after_cell(&hooks, &cell(&noting, &r, &[])),
+            "Note must not report the cell as failed"
+        );
 
         assert_eq!(CALLS.load(Ordering::SeqCst), 2, "the hook ran per cell");
     }

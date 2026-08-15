@@ -151,9 +151,11 @@ pub(super) fn resolve_routine(
             Err(BenchError::InvalidConfig {
                 reason: format!(
                     "bench `{}` n={} has no monomorphised byte routine: the compiled \
-                 dispatch list is {:?}. Add {} to the `byte_routine_dispatch!` \
-                 declaration in your bench binary (each size is its own \
-                 monomorphisation by design), or serve it from `routine_for`.",
+                 dispatch list is {:?}. With the generated driver, add {} to \
+                 `[dispatch] points` in bench.toml (or leave `[dispatch]` out so the \
+                 list defaults to the union of every bench's points). With a \
+                 consumer-owned driver, add it to the `byte_routine_dispatch!` \
+                 declaration, or serve it from `routine_for`.",
                     config.bench_name, config.n, spec.byte_dispatch.sizes, config.n
                 ),
             })
@@ -614,18 +616,17 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         }
 
         // ── after_cell: artifacts staged, drops final, nothing
-        // promoted or appended yet ──
-        hooks::run_after_cell(
-            &spec.hooks,
-            &AfterCell {
-                config:    &config,
-                result:    &result,
-                arm_paths: &config.variant_paths,
-                dropped:   &dropped,
-                out_dir:   &dir,
-            },
-            &mut hook_failure,
-        );
+        // promoted or appended yet; a Fail withholds the ledger ──
+        let cell_failed = hooks::run_after_cell(&spec.hooks, &AfterCell {
+            config:    &config,
+            result:    &result,
+            arm_paths: &config.variant_paths,
+            dropped:   &dropped,
+            out_dir:   &dir,
+        });
+        if cell_failed {
+            hook_failure = true;
+        }
 
         // ── history + regressions + summary rows ──
         let (history_root, benchmark_key) = history_root_and_key(&config, root);
@@ -672,7 +673,15 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 regression:    flagged,
             });
         }
-        deferred_history.push((history_root, benchmark_key, entries));
+        if cell_failed {
+            // A gated-out run must not become the next run's
+            // regression baseline: the ledger records accepted runs.
+            // The staged artifacts still promote as the evidence of
+            // what ran and why it was failed.
+            eprintln!("  history withheld for {benchmark_key}: after_cell returned Fail");
+        } else {
+            deferred_history.push((history_root, benchmark_key, entries));
+        }
     }
 
     // ── orderly completion: promote staged results, then history ──

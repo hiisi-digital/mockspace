@@ -72,8 +72,8 @@ pub struct VariantSpec {
 ///     "warm-container"        => Case[80003, 130003, 160003],
 /// };
 /// // table: fn(&BenchConfig) -> Option<RoutineSpec>, matching on
-/// // (config.bench_name, config.n); None falls through to the byte
-/// // dispatch.
+/// // (config.bench, config.n), so one row serves every sweep of a
+/// // nested bench; None falls through to the byte dispatch.
 /// ```
 #[macro_export]
 macro_rules! routine_table {
@@ -81,7 +81,7 @@ macro_rules! routine_table {
         fn __routine_table(
             config: &$crate::BenchConfig,
         ) -> Option<$crate::RoutineSpec> {
-            match (config.bench_name.as_str(), config.n) {
+            match (config.bench.as_str(), config.n) {
                 $( $(
                     ($bench, $n) => Some($crate::RoutineSpec {
                         name:   ::std::string::String::from($bench),
@@ -97,6 +97,8 @@ macro_rules! routine_table {
 
 #[cfg(test)]
 mod routine_table_tests {
+    use std::path::PathBuf;
+
     use crate::config::BenchConfig;
 
     /// A stand-in for the consumer shapes the table dispatches:
@@ -112,27 +114,67 @@ mod routine_table_tests {
         }
     }
 
-    fn config(bench: &str, n: usize) -> BenchConfig {
-        BenchConfig {
-            bench_name: bench.to_string(),
-            n,
-            ..BenchConfig::default()
-        }
+    /// Configs come from a real nested tree rather than hand-built
+    /// structs, because hand-built structs are how the table's key
+    /// choice went untested: `bench_name` is the composite
+    /// `warm/width-l1` for a named sweep, and a table keyed on it
+    /// would never match a nested cell.
+    fn tree_configs() -> Vec<BenchConfig> {
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "mockspace-routine-table-test-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        ));
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::create_dir_all(root.join("warm/arms/k/src")).unwrap();
+        std::fs::write(
+            root.join("warm/bench.toml"),
+            r#"
+            [bench]
+            title = "Warm"
+            arms = ["k"]
+            [sweep.width-l1]
+            points = [7]
+            [sweep.width-l2]
+            points = [11]
+        "#,
+        )
+        .unwrap();
+        let manifest = crate::tree::load_tree(&root).unwrap().manifest;
+        let configs: Vec<BenchConfig> = manifest
+            .bench_names()
+            .iter()
+            .map(|name| manifest.for_size(name, 0, &root).unwrap())
+            .collect();
+        std::fs::remove_dir_all(&root).ok();
+        configs
     }
 
     #[test]
-    fn listed_pairs_dispatch_and_unlisted_fall_through() {
-        let table = routine_table! {
-            "carrier" => Keyed[16384, 131072],
-            "contend" => Keyed[163841],
-        };
-        assert!(table(&config("carrier", 16384)).is_some());
-        assert!(table(&config("carrier", 131072)).is_some());
-        assert!(table(&config("contend", 163841)).is_some());
+    fn one_row_serves_every_sweep_of_a_nested_bench_and_unlisted_points_fall_through() {
+        let table = routine_table! { "warm" => Keyed[7, 11] };
+        let configs = tree_configs();
+        assert_eq!(configs.len(), 2, "two sweeps resolved");
+        for c in &configs {
+            assert_eq!(c.bench, "warm");
+            assert_ne!(c.bench_name, "warm", "the composite key is not the bench");
+            assert!(
+                table(c).is_some(),
+                "the table must match the nested cell {} (bench `{}`, n={})",
+                c.bench_name,
+                c.bench,
+                c.n
+            );
+        }
         // an unlisted point of a listed bench falls through
-        assert!(table(&config("carrier", 163841)).is_none());
+        let mut off = configs[0].clone();
+        off.n = 13;
+        assert!(table(&off).is_none());
         // an unlisted bench falls through
-        assert!(table(&config("footprint", 16384)).is_none());
+        let mut other = configs[0].clone();
+        other.bench = "footprint".into();
+        assert!(table(&other).is_none());
     }
 
     #[test]
@@ -140,12 +182,16 @@ mod routine_table_tests {
         // The bridge's input builder is `Keyed::<K>::build_input`, so
         // the built input differs per point iff K was actually the
         // point and not a copy-paste of another row's.
-        let table = routine_table! { "k" => Keyed[7, 11] };
-        let spec7 = table(&config("k", 7)).unwrap();
-        let spec11 = table(&config("k", 11)).unwrap();
-        let buf7 = (spec7.bridge.input_builder)(0);
-        let buf11 = (spec11.bridge.input_builder)(0);
+        let table = routine_table! { "warm" => Keyed[7, 11] };
+        let configs = tree_configs();
+        let by_n = |n: usize| -> crate::spec::RoutineSpec {
+            let c = configs.iter().find(|c| c.n == n).unwrap();
+            table(c).unwrap()
+        };
+        let buf7 = (by_n(7).bridge.input_builder)(0);
+        let buf11 = (by_n(11).bridge.input_builder)(0);
         assert_eq!(u64::from_le_bytes(buf7.try_into().unwrap()), 7);
         assert_eq!(u64::from_le_bytes(buf11.try_into().unwrap()), 11);
+        let _ = PathBuf::new();
     }
 }
