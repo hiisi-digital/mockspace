@@ -579,6 +579,70 @@ impl BenchManifest {
                     ),
                 });
             }
+
+            // A role naming an arm that is not there is refused here rather
+            // than ignored downstream. `with_baseline` and `with_floor` both
+            // silently do nothing on an unknown name, so a one-letter typo
+            // renders a report that is byte-identical to declaring no role at
+            // all, except for one absent paragraph. Measured: a mistyped
+            // baseline flips a column from -74.81% to +297.03%, and a mistyped
+            // floor reads 0.50x where the correct spelling reads 0.38x.
+            //
+            // Only `baseline` and `floor` name arms. `delta` names a
+            // normalisation mode (`subtract` / `ratio` / `percent` / `none`),
+            // and checking it against the arm list refuses every correct
+            // manifest that sets it.
+            //
+            // The comparison is against the DECLARED arm spellings, matching
+            // the entry itself, the file stem of a path entry, and that stem
+            // with the platform dylib prefix removed, because a path entry
+            // like `variants/native/target/release/libnative.dylib` carries an
+            // arm whose name is `native`.
+            //
+            // The authoritative name is the arm's exported `bench_name`, which
+            // is not known until an arm is loaded, so this catches the typo and
+            // not a declared name that disagrees with what the arm exports.
+            // Closing that gap is the preflight `bench_name` resolution.
+            if !section.variants.is_empty() {
+                let declared: Vec<&str> = section
+                    .variants
+                    .iter()
+                    .map(|v| {
+                        std::path::Path::new(v)
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(v.as_str())
+                    })
+                    .collect();
+                // What a user would recognise: the stem with the platform
+                // dylib prefix removed. Listing `libkernel` back at someone who
+                // wrote `kernel` makes a correct manifest look wrong.
+                let display: Vec<&str> = declared
+                    .iter()
+                    .map(|d| d.strip_prefix(std::env::consts::DLL_PREFIX).unwrap_or(d))
+                    .collect();
+                let known = |role: &str| {
+                    section.variants.iter().any(|v| v == role)
+                        || declared.contains(&role)
+                        || display.contains(&role)
+                };
+                for (key, value) in [
+                    ("baseline", section.baseline.as_deref()),
+                    ("floor", section.floor.as_deref()),
+                ] {
+                    if let Some(role) = value.filter(|r| !r.is_empty() && !known(r)) {
+                        return Err(BenchError::InvalidConfig {
+                            reason: format!(
+                                "bench `{name}` declares {key} = \"{role}\", which is not an arm \
+                                 of this bench. Arms: {}. A role naming an absent arm is not \
+                                 ignored: it would render a report indistinguishable from \
+                                 declaring no {key} at all.",
+                                display.join(", ")
+                            ),
+                        });
+                    }
+                }
+            }
         }
         Ok(())
     }
