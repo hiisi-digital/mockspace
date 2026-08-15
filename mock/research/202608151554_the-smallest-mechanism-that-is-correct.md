@@ -3,7 +3,7 @@
 **Date:** 2026-08-15
 **Phase:** research, cold derivation, phase one committed blind
 **Branch:** `docs/the-smallest-mechanism-that-is-correct` off `feat/bench-round-consolidation`
-**Probes:** `mock/research/202608151554_probes/` (six, each with its negative controls and committed output)
+**Probes:** `mock/research/202608151554_probes/` (seven, each with its negative controls and committed output)
 **Read:** `feat/bench-consolidation` (PR #21) as the tree that lands first, per the round's own changelist
 
 ## Gates
@@ -81,7 +81,8 @@ names.
 
 ## What I am carrying forward unchanged, and from whom
 
-**Count: seven.** Each was examined and each survives. Keeping them is the result.
+**Count: eight.** Each was examined and each survives. Keeping them is the result. The eighth is
+`glob_match`'s own test suite and is stated with F12, where the examination that kept it lives.
 
 1. **The four-crate split, from whoever drew it.** I set out to challenge it and it holds, on a
    checkable ground rather than a stylistic one: a variant cdylib links `bench-core` + `bench-macro`
@@ -638,6 +639,53 @@ subsequent rounds fill in workload, cache, orchestrator, validation, analysis, r
 history." That branch does not exist on the remote, and every subsystem it lists as forthcoming is
 shipped. A reader arriving at the crate is told it is a skeleton. One paragraph.
 
+## F12. `glob_match` is correct where it is documented, and has a combinatorial wall
+
+`glob_match` (`tree.rs:276-303`) decides benchspace membership, and `["**"]` is the settled default, so
+it runs for every consumer that adopts the form. I named it as unexamined and then examined it.
+
+**Its own suite is real and I am carrying it forward** (this is the eighth thing kept). `tree.rs:1031-1047`
+is 17 assertions covering `**` at the root, `*` not crossing `/`, and prefix, suffix and infix
+components, one of them carrying its reason inline ("a component `*` never crosses `/`"). For a grammar
+this small that is close to the whole matrix rather than a sample.
+
+**Every corner it does not name behaves as documented.**
+`mock/research/202608151554_probes/glob-corners/`, both controls passing:
+
+```
+glob_match("a/**",   "a")     = true     as documented
+glob_match("**",     "")      = true     as documented
+glob_match("a/**/b", "a/b")   = true     as documented
+```
+
+The doc comment's zero-component claim holds and was unasserted. `**` as a prefix, `**` in the middle,
+several `*` in one component, `*` matching an empty run, and the empty pattern all behave sensibly.
+`glob_match("*", "")` is `false` while `glob_match("", "")` is `true`, which is harmless because
+`split('/').filter(non-empty)` means a path component is never empty.
+
+**The one real hazard is the backtracker.** `component` (`tree.rs:277-289`) recurses over every cut
+point with no memoisation. Growth in the number of `*` in one component, on a 24-character component,
+as an ad-hoc spike showing a shape and pricing nothing:
+
+```
+stars   4     5     6     7     8     9    10    11    12    13
+ms    1.3   5.9  20.7  64.5 167.9 341.0 615.3 974.2 1405  1838
+```
+
+The ratios flatten past `k = n/2` because the cost is **combinatorial in (stars, component length)**
+rather than exponential in stars alone. An earlier run at `k = 16` against `n = 40`, much nearer that
+peak, had not returned after roughly 400 seconds and was killed; that is an existence claim about
+non-termination in practice, and it is the only claim the run supports.
+
+**This is a hazard, not a live defect, and I rank it last.** Patterns are consumer-authored and the
+realistic ones (`**`, `bench-*`, `*-probe`) sit far from the wall. It is worth recording because
+`members` and `exclude` are matched against **every discovered path** (`tree.rs:197`, `:261`), so the
+cost is paid per path rather than once, and because the standard two-pointer greedy glob is linear and
+is about the same number of lines. **What would close it:** if any consumer's `members` or `exclude`
+ever carries more than about three stars in one component, replace the matcher; below that, leave it.
+
+---
+
 ---
 
 ## Additions: mechanisms whose absence forces duplication
@@ -671,7 +719,8 @@ measured that rather than assumed it.
 | F4 | delete the six against exposing them | per symbol: is it unreachable from a documented path (expose) or unwanted (delete); `domain_work` is decided by F7 |
 | F5 | derive one field list against leaving three | whether the three forms are *meant* to diverge beyond `normalise`; nothing I read says so |
 | F8 | collapse `validation.rs`'s 24 writes against leaving them | count how many survive change 1's structured return |
-| F9 | un-ignore the eleven doctests | build them and count the failures; I could not, and it is one command for whoever can |
+| F9 | fix the two wrong examples against making all eleven `no_run` | do both; the second makes the first unrepeatable |
+| F12 | replace the glob matcher against leaving it | whether any consumer's `members` or `exclude` carries more than about three stars in one component |
 
 ## Predicates: what my instruments varied, and what they could not reach
 
@@ -721,10 +770,13 @@ not types in `bench-core` and read as deliberate placeholders rather than as cla
 and `bench_matrix!` need a consumer crate to transcribe against. **Five of eleven unmeasured, five
 compile, two are wrong.**
 
-**`tree.rs`: partly withdrawn.** I first conceded 1049 unread lines. I then read its type declarations
-and its composition path, which produced F5's second half and the per-file-form probe. What I still have
-not exercised is its **loader**: `resolve_members`, `discover`, `glob_match` (`tree.rs:192-307`) and the
-composition merge at `:401-527`. `glob_match` is a hand-written glob against a settled default of
-`["**"]`, so it decides membership for every consumer that adopts the form, and I neither read it
-closely nor tested it. **That is the largest thing still unexamined in this surface and it is where I
-would send the next person.**
+**`tree.rs`: withdrawn except for one part, which is now the honest gap.** I first conceded 1049 unread
+lines, then read its type declarations and composition path (F5's second half, the per-file-form probe)
+and then its glob (F12). What I have still **not** exercised is the composition merge itself,
+`compose_composed_member` at `tree.rs:401-527`: 127 lines of hand-written precedence deciding which of a
+sweep's, a member's and the root's value wins for each of twelve fields, with `merge_timing` at `:552`
+doing the same for five more. It is the single place where F5's three copies actually meet, its
+correctness is entirely in the ordering of hand-written `or_else` chains, and I read it without
+exercising it. **That is where I would send the next person**, and the instrument is cheap: the
+per-file-form probe already builds a real tree and calls `tree::load`, so asserting a full precedence
+matrix over it is a few dozen lines on machinery that is committed and working.
