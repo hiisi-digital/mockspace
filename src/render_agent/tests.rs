@@ -225,8 +225,16 @@ fn agent_gate_hook_self_heals_then_blocks() {
     assert!(hook.contains("target/hooks/pre-commit"));
     assert!(hook.contains("core.hooksPath"));
     assert!(hook.contains("mockspace.mockdir"));
-    // self-heals with a locked check so it cannot dirty Cargo.lock
-    assert!(hook.contains("cargo check --quiet --locked"));
+    // Self-heals by running the launcher, which is the only thing that
+    // both writes the validator and points core.hooksPath. It previously
+    // ran `cargo check` in the mock workspace, on the reasoning that
+    // build.rs re-ran the bootstrap; that bootstrap is gone and its
+    // remaining symbol fails the build, so the step healed nothing.
+    assert!(hook.contains("cd \"$root\" && cargo mock"), "{hook}");
+    assert!(
+        !hook.contains("cargo check"),
+        "the cargo check self-heal cannot restore the gate: build.rs no longer bootstraps"
+    );
     // fails closed via the deny helper
     assert!(hook.contains("deny \"mockspace gate is broken"));
     // scoped to this repo like the other builtins
