@@ -175,8 +175,7 @@ fn is_locked_doc(file: &str) -> bool {
         return false;
     }
     let is_doc = file.ends_with(".md.tmpl") || file.ends_with(".md");
-    let is_shame = file.ends_with("SHAME.md.tmpl");
-    is_doc && !is_shame
+    is_doc && !crate::is_shame_template(file)
 }
 
 fn is_crate_source(file: &str) -> bool {
@@ -203,4 +202,28 @@ fn extract_crate_name(path: &str) -> Option<String> {
     let after_crates = path.strip_prefix("crates/")?;
     let end = after_crates.find('/')?;
     Some(after_crates[.. end].to_string())
+}
+
+#[cfg(test)]
+mod is_locked_doc_tests {
+    use super::is_locked_doc;
+
+    #[test]
+    fn crate_docs_are_locked_and_only_shame_itself_is_exempt() {
+        assert!(is_locked_doc("crates/foo/DESIGN.md.tmpl"));
+        assert!(is_locked_doc("crates/foo/README.md"));
+        assert!(!is_locked_doc("crates/foo/SHAME.md.tmpl"));
+        assert!(!is_locked_doc("crates/SHAME.md.tmpl"));
+        // A suffix match would exempt these, opening the lock gate for
+        // templates nobody carved out.
+        assert!(is_locked_doc("crates/foo/NOT_SHAME.md.tmpl"));
+        assert!(is_locked_doc("crates/foo/DESIGN_SHAME.md.tmpl"));
+    }
+
+    #[test]
+    fn files_outside_crates_and_non_docs_are_not_locked_docs() {
+        assert!(!is_locked_doc(""));
+        assert!(!is_locked_doc("design_rounds/foo.md"));
+        assert!(!is_locked_doc("crates/foo/src/lib.rs"));
+    }
 }

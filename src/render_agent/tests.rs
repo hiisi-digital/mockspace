@@ -575,3 +575,52 @@ fn sketching_and_benchmarking_are_on_by_default() {
         }
     }
 }
+
+#[test]
+fn write_guard_shame_carve_out_matches_a_whole_path_component() {
+    // The carve-out is for the file named `SHAME.md.tmpl`. Written as a
+    // bare suffix regex it also allows `NOT_SHAME.md.tmpl` and friends
+    // straight through the phase gate. This runs the pattern the hook
+    // actually ships rather than asserting on its text.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mock_dir = tmp.path().join("mock");
+    std::fs::create_dir(&mock_dir).expect("create mock dir");
+    let cfg = Config::from_dir(&mock_dir);
+    let hook = builtin_write_guard(&cfg);
+
+    let line = hook
+        .lines()
+        .find(|l| l.contains("SHAME") && l.contains("grep -qE"))
+        .expect("the write guard carves SHAME out with a grep -qE");
+    let open = line.find('\'').expect("pattern is single-quoted");
+    let close = line[open + 1 ..].find('\'').expect("pattern is closed") + open + 1;
+    let pattern = &line[open + 1 .. close];
+
+    // (path, should the carve-out fire)
+    let cases = [
+        ("crates/foo/SHAME.md.tmpl", true),
+        ("crates/SHAME.md.tmpl", true),
+        ("SHAME.md.tmpl", true),
+        ("crates/foo/NOT_SHAME.md.tmpl", false),
+        ("crates/foo/DESIGN_SHAME.md.tmpl", false),
+        ("crates/foo/DESIGN.md.tmpl", false),
+    ];
+    for (path, expected) in cases {
+        let out = std::process::Command::new("grep")
+            .args(["-qE", pattern])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut c| {
+                use std::io::Write;
+                c.stdin.as_mut().expect("stdin").write_all(path.as_bytes())?;
+                c.wait()
+            })
+            .expect("run grep");
+        assert_eq!(
+            out.success(),
+            expected,
+            "pattern `{pattern}` against `{path}`: expected match={expected}"
+        );
+    }
+}

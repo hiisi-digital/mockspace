@@ -362,7 +362,7 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
 fi
 # --- Crate files are phase-gated ---
 if echo "$REL_PATH" | grep -qE '^crates/'; then
-    if echo "$REL_PATH" | grep -qE 'SHAME\.md\.tmpl$'; then allow; fi
+    if echo "$REL_PATH" | grep -qE '(^|/)SHAME\.md\.tmpl$'; then allow; fi
     if echo "$REL_PATH" | grep -qE '\.(md\.tmpl|md)$'; then
         if [[ "$PHASE" != "DOC" ]]; then
             deny "BLOCKED: cannot edit '${{REL_PATH}}' -- not in DOC phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-doc-gate (HARD_ERROR)"
