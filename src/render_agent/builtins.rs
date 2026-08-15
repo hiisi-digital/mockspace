@@ -433,6 +433,15 @@ allow
 /// is wired to it). If broken by a `target/` clean it self-heals via a
 /// `cargo check`, and blocks hard if that fails. Native mockspace, so it
 /// travels with `.claude/hooks/` and survives independently of git config.
+/// The self-heal step runs the launcher rather than `cargo check`.
+///
+/// It used to run `cargo check` in the mock workspace, on the reasoning that
+/// `build.rs` re-ran the bootstrap and re-activated the gate. That bootstrap
+/// is gone and `bootstrap_from_buildscript` is now a tombstone that fails the
+/// build with migration steps, so the step could not restore anything and
+/// cost a full check on every broken-gate path. A bare `cargo mock` is what
+/// writes the validator and points `core.hooksPath`, and it is what the deny
+/// message already tells the user to run.
 pub(crate) fn builtin_mockspace_gate() -> String {
     r##"#!/usr/bin/env bash
 # Built-in mockspace hook: block agent git commit/push when the gate is broken
@@ -470,8 +479,8 @@ _gate_intact() {
 if _gate_intact; then allow; fi
 
 # Gate broken: validator cleaned away, or core.hooksPath not wired. Self-heal
-# by rebuilding (build.rs re-runs the bootstrap and re-activates), then retry.
-( cd "$root/$mockdir" && cargo check --quiet --locked ) >/dev/null 2>&1 || true
+# by running the launcher, which writes both, then retry.
+( cd "$root" && cargo mock ) >/dev/null 2>&1 || true
 if _gate_intact; then allow; fi
 
 deny "mockspace gate is broken and self-heal failed: the git validator at $validator is missing or core.hooksPath is not wired to mockspace. Agent commits and pushes are blocked until it is restored. Run 'cargo mock' from $root, then retry."
@@ -804,6 +813,18 @@ mod check_message_tests {
         assert!(!denied(&out), "git status must not be denied: {out}");
     }
 
+    // FIXME: this module is flaky under parallel execution, roughly one run in
+    // three, and `a_passing_verdict_allows_the_tool` is where it usually lands:
+    // it receives the FAIL stub's stdout ("x message-attribution: nope") while
+    // having been given the PASS stub. Serially (`--test-threads=1`) all 13
+    // pass every time. The obvious shared state is already isolated per
+    // invocation: `scratch()` is unique per call (pid plus nanos), the launcher
+    // stub and the hook script live under that unique dir, TMPDIR is pointed at
+    // a per-invocation cache dir, and the verdict cache key includes the repo
+    // root. So the leak is somewhere else and is not yet identified. A flaky
+    // gate teaches people to re-run until green, which is how a real failure
+    // gets dismissed, so this wants closing rather than tolerating.
+    // Reproduce: `for i in 1 2 3 4 5; do cargo test --lib render_agent; done`.
     #[test]
     fn a_passing_verdict_allows_the_tool() {
         let root = scratch();
