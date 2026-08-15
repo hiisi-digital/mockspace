@@ -98,15 +98,10 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
             },
         }
     };
-    if let Err(e) = build_variants_and_bin_filtered(&bench_dir, dirs.as_deref()) {
-        eprintln!("error: build failed: {e}");
-        return ExitCode::FAILURE;
-    }
-
-    let bin_path = match locate_bench_bin(&bench_dir) {
+    let bin_path = match build_variants_and_bin_filtered(&bench_dir, dirs.as_deref()) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("error: locating bench binary: {e}");
+            eprintln!("error: {e}");
             return ExitCode::FAILURE;
         },
     };
@@ -145,15 +140,10 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    if let Err(e) = build_bin_only(&bench_dir) {
-        eprintln!("error: build failed: {e}");
-        return ExitCode::FAILURE;
-    }
-
-    let bin_path = match locate_bench_bin(&bench_dir) {
+    let bin_path = match build_bin_only(&bench_dir) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("error: locating bench binary: {e}");
+            eprintln!("error: {e}");
             return ExitCode::FAILURE;
         },
     };
@@ -258,13 +248,17 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
 /// The release profile the framework guarantees, passed on every
 /// build rather than left to the consumer's manifests.
 ///
-/// A `[profile.release]` table is honoured only in a workspace root.
-/// A variant that is a workspace member therefore loses its own
-/// silently, and a consumer whose manifests never declared one never
-/// had it at all. Both have been observed in the same tree: ninety
-/// variant crates built at cargo's default `lto = false,
+/// A `[profile.release]` table is honoured only in a workspace root,
+/// so a consumer whose manifests never declared one never had the
+/// documented profile at all. That is what was measured: a tree of
+/// ninety-four variant crates, none declaring a profile and none
+/// declaring a workspace, built at cargo's default `lto = false,
 /// codegen-units = 16` while the framework's documentation promised
 /// fat LTO and a single codegen unit.
+///
+/// A workspace member losing its own profile is a second, related
+/// mechanism. It was not observed in that tree, and it is not silent:
+/// cargo prints `profiles for the non root package will be ignored`.
 ///
 /// Codegen-unit partitioning is not stable across builds, so the
 /// default is a reproducibility defect and not only a slower one:
@@ -280,45 +274,78 @@ const PROFILE_ARGS: [&str; 6] = [
     "profile.release.codegen-units=1",
 ];
 
-/// The binary name a bench manifest declares, read rather than
-/// assumed.
+/// Every executable cargo reports building for `manifest`.
 ///
-/// This was hardcoded to `benches`, the starter template's package
-/// name. A consumer that renamed its bench package built everything
-/// successfully and then failed with "no bench binary found",
-/// because the name the scaffold happened to use was being treated
-/// as part of the contract.
-fn bench_bin_name(manifest: &Path) -> Result<String, String> {
-    let text =
-        fs::read_to_string(manifest).map_err(|e| format!("reading {}: {e}", manifest.display()))?;
-    let doc: toml_edit::DocumentMut = text
-        .parse()
-        .map_err(|e| format!("parsing {}: {e}", manifest.display()))?;
-    if let Some(name) = doc
-        .get("bin")
-        .and_then(|b| b.as_array_of_tables())
-        .and_then(|a| a.iter().next())
-        .and_then(|t| t.get("name"))
-        .and_then(|v| v.as_str())
-    {
-        return Ok(name.to_string());
-    }
-    doc.get("package")
-        .and_then(|p| p.get("name"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            format!(
-                "{} declares neither a [[bin]] name nor a [package] name",
-                manifest.display()
-            )
+/// Asked rather than guessed. The name was hardcoded to `benches`,
+/// the starter template's package name, so a consumer that renamed
+/// its bench package built everything and then failed to locate it.
+/// Reading the name out of the manifest instead fixed that case and
+/// kept the guessing: a manifest with several `[[bin]]` tables, an
+/// inline `bin = [{ name = ... }]` array, or a binary discovered at
+/// `src/bin/` rather than declared, each resolve to something the
+/// build may not have produced. A bench root that is a member of an
+/// outer workspace also puts its artifacts in the outer `target/`,
+/// which no amount of name resolution finds.
+///
+/// `--message-format=json` removes all of it at once: cargo emits a
+/// `compiler-artifact` record per built target carrying the absolute
+/// path of what it just wrote.
+fn built_executables(manifest: &Path, stdout: &[u8]) -> Vec<PathBuf> {
+    let manifest = manifest.canonicalize().unwrap_or_else(|_| manifest.to_path_buf());
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|v| v.get("reason").and_then(|r| r.as_str()) == Some("compiler-artifact"))
+        .filter(|v| {
+            v.get("manifest_path")
+                .and_then(|m| m.as_str())
+                .map(|m| Path::new(m).canonicalize().unwrap_or_else(|_| PathBuf::from(m)))
+                .is_some_and(|m| m == manifest)
         })
+        .filter_map(|v| {
+            v.get("executable")
+                .and_then(|e| e.as_str())
+                .map(PathBuf::from)
+        })
+        .collect()
+}
+
+/// The argv of every build this module runs.
+///
+/// One function so the profile cannot be passed on one path and
+/// forgotten on the other, and so a test can assert the flags are
+/// present without spawning cargo. They were previously written out
+/// at both call sites, where dropping them from both left every test
+/// green.
+fn build_argv(manifest: &Path) -> Vec<std::ffi::OsString> {
+    let mut argv: Vec<std::ffi::OsString> = ["build", "--release", "--message-format=json-render-diagnostics"]
+        .iter()
+        .map(Into::into)
+        .collect();
+    argv.extend(PROFILE_ARGS.iter().map(Into::into));
+    argv.push("--manifest-path".into());
+    argv.push(manifest.as_os_str().to_owned());
+    argv
+}
+
+/// Run one cargo build and return its stdout for artifact parsing.
+fn cargo_build_json(manifest: &Path, what: &str) -> Result<Vec<u8>, String> {
+    let out = Command::new("cargo")
+        .args(build_argv(manifest))
+        .output()
+        .map_err(|e| format!("spawning cargo for {what}: {e}"))?;
+    if !out.status.success() {
+        // Diagnostics are already rendered to stderr by
+        // `json-render-diagnostics`, so the consumer has seen them.
+        return Err(format!("cargo build failed for {what}"));
+    }
+    Ok(out.stdout)
 }
 
 fn build_variants_and_bin_filtered(
     bench_dir: &Path,
     only_dirs: Option<&[String]>,
-) -> Result<(), String> {
+) -> Result<PathBuf, String> {
     let variants_dir = bench_dir.join("variants");
     if variants_dir.exists() {
         for entry in
@@ -339,16 +366,7 @@ fn build_variants_and_bin_filtered(
             let manifest = path.join("Cargo.toml");
             if manifest.exists() {
                 eprintln!("  building variant {}...", path.display());
-                let status = Command::new("cargo")
-                    .args(["build", "--release"])
-                    .args(PROFILE_ARGS)
-                    .arg("--manifest-path")
-                    .arg(&manifest)
-                    .status()
-                    .map_err(|e| format!("spawning cargo for {}: {e}", path.display()))?;
-                if !status.success() {
-                    return Err(format!("cargo build failed for {}", path.display()));
-                }
+                cargo_build_json(&manifest, &format!("variant {}", path.display()))?;
             }
         }
     }
@@ -356,7 +374,14 @@ fn build_variants_and_bin_filtered(
     build_bin_only(bench_dir)
 }
 
-fn build_bin_only(bench_dir: &Path) -> Result<(), String> {
+/// Build the bench binary and return the path cargo says it wrote.
+///
+/// Building and locating are one step because they share an answer:
+/// the artifact record cargo emits during the build already carries
+/// the absolute path. Splitting them is what let the two drift, with
+/// the locator guessing a name and a directory the build never
+/// promised.
+fn build_bin_only(bench_dir: &Path) -> Result<PathBuf, String> {
     let manifest = bench_dir.join("Cargo.toml");
     if !manifest.exists() {
         return Err(format!(
@@ -365,45 +390,34 @@ fn build_bin_only(bench_dir: &Path) -> Result<(), String> {
         ));
     }
     eprintln!("  building bench binary...");
-    let status = Command::new("cargo")
-        .args(["build", "--release"])
-        .args(PROFILE_ARGS)
-        .arg("--manifest-path")
-        .arg(&manifest)
-        .status()
-        .map_err(|e| format!("spawning cargo: {e}"))?;
-    if !status.success() {
-        return Err("cargo build failed for bench binary".into());
+    let stdout = cargo_build_json(&manifest, "bench binary")?;
+    let mut bins = built_executables(&manifest, &stdout);
+    match bins.len() {
+        1 => Ok(bins.remove(0)),
+        0 => Err(format!(
+            "{} declares no binary target, so there is nothing to run. Add a [[bin]] \
+             section or a src/main.rs.",
+            manifest.display()
+        )),
+        _ => {
+            let names: Vec<String> = bins
+                .iter()
+                .map(|b| {
+                    b.file_name()
+                        .map(|f| f.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                })
+                .collect();
+            Err(format!(
+                "{} declares {} binary targets ({}), so which one drives the harness is \
+                 ambiguous. Leave one [[bin]] in the bench package and move the others \
+                 elsewhere.",
+                manifest.display(),
+                names.len(),
+                names.join(", ")
+            ))
+        },
     }
-    Ok(())
-}
-
-fn locate_bench_bin(bench_dir: &Path) -> Result<PathBuf, String> {
-    // Cargo's default target dir is `<manifest_dir>/target`. The
-    // binary's name comes from the consumer's own manifest; assuming
-    // the starter template's `benches` made every renamed bench
-    // package unlocatable.
-    let manifest = bench_dir.join("Cargo.toml");
-    let name = bench_bin_name(&manifest)?;
-    let release_dir = bench_dir.join("target/release");
-    if !release_dir.exists() {
-        return Err(format!(
-            "target/release not found under {}; build did not produce artifacts",
-            bench_dir.display()
-        ));
-    }
-    let candidates = [release_dir.join(&name), release_dir.join(format!("{name}.exe"))];
-    for c in &candidates {
-        if c.exists() {
-            return Ok(c.clone());
-        }
-    }
-    Err(format!(
-        "no bench binary found in {}; expected `{name}` or `{name}.exe`, the name \
-         declared by {}",
-        release_dir.display(),
-        manifest.display()
-    ))
 }
 
 // ── init ──
@@ -739,7 +753,7 @@ by `mock bench init`.
 - `bench.toml`: per-bench config (sizes, timing, variant cdylib paths).
 - `variants/<name>/`: one workspace per variant. Each compiles to a
   cdylib that exports `bench_entry`, `bench_name`, `bench_abi_hash`.
-- `target/release/benches`: the built bench binary.
+- `target/release/<your bin name>`: the built bench binary, located from what cargo reports building.
 - `target/release/lib<variant>.{dylib,so,dll}`: the built variant cdylibs.
 
 ## Workflow
@@ -783,69 +797,114 @@ mod tests {
         fs::write(path, contents).unwrap();
     }
 
-    #[test]
-    fn bin_name_prefers_the_declared_bin_over_the_package() {
-        let tmp = tempfile::tempdir().unwrap();
-        let m = tmp.path().join("Cargo.toml");
-        write(
-            &m,
-            "[package]\nname = \"arvo-benches\"\n\n[[bin]]\nname = \"custom-runner\"\npath = \
-             \"src/main.rs\"\n",
-        );
-        assert_eq!(bench_bin_name(&m).unwrap(), "custom-runner");
+    fn artifact(manifest: &Path, executable: Option<&str>) -> String {
+        let exe = match executable {
+            Some(e) => format!("\"{e}\""),
+            None => "null".to_string(),
+        };
+        format!(
+            "{{\"reason\":\"compiler-artifact\",\"manifest_path\":\"{}\",\"executable\":{exe}}}",
+            manifest.display()
+        )
     }
 
+    /// The profile must reach the argv of every build. Dropping
+    /// `PROFILE_ARGS` from the builder turns this red, which the
+    /// previous test could not do: it asserted the constant against
+    /// itself and never reached a command.
     #[test]
-    fn bin_name_falls_back_to_the_package_name() {
-        let tmp = tempfile::tempdir().unwrap();
-        let m = tmp.path().join("Cargo.toml");
-        write(&m, "[package]\nname = \"arvo-benches\"\n");
-        assert_eq!(bench_bin_name(&m).unwrap(), "arvo-benches");
-    }
-
-    /// The regression this change exists for. A consumer whose bench
-    /// package is not called `benches` was unlocatable: the build
-    /// succeeded and the run then failed. The name must come from the
-    /// manifest, so a package named anything else resolves.
-    #[test]
-    fn bin_name_is_not_the_starter_templates_name() {
-        let tmp = tempfile::tempdir().unwrap();
-        let m = tmp.path().join("Cargo.toml");
-        write(&m, "[package]\nname = \"arvo-benches\"\n");
-        let got = bench_bin_name(&m).unwrap();
-        assert_ne!(got, "benches", "the hardcoded name must not survive");
-        assert_eq!(got, "arvo-benches");
-    }
-
-    #[test]
-    fn bin_name_errors_when_the_manifest_names_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let m = tmp.path().join("Cargo.toml");
-        write(&m, "[dependencies]\n");
-        let err = bench_bin_name(&m).unwrap_err();
-        assert!(err.contains("declares neither"), "unhelpful error: {err}");
-    }
-
-    #[test]
-    fn bin_name_errors_when_the_manifest_is_absent() {
-        let tmp = tempfile::tempdir().unwrap();
-        let m = tmp.path().join("Cargo.toml");
-        assert!(bench_bin_name(&m).is_err());
-    }
-
-    /// The profile is the framework's guarantee, so it travels on the
-    /// command line where a workspace-member manifest cannot lose it.
-    /// Asserted as pairs so a reordering or a dropped flag fails.
-    #[test]
-    fn profile_args_pin_all_three_settings() {
-        let pairs: Vec<(&str, &str)> = PROFILE_ARGS.chunks(2).map(|c| (c[0], c[1])).collect();
-        assert_eq!(pairs.len(), 3);
-        for (flag, _) in &pairs {
-            assert_eq!(*flag, "--config");
+    fn the_build_argv_carries_the_profile_and_the_json_format() {
+        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"))
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        for expected in [
+            "profile.release.opt-level=3",
+            "profile.release.lto=\"fat\"",
+            "profile.release.codegen-units=1",
+        ] {
+            let at = argv.iter().position(|a| a == expected);
+            let at = at.unwrap_or_else(|| panic!("{expected} missing from argv: {argv:?}"));
+            assert_eq!(argv[at - 1], "--config", "value not preceded by its flag");
         }
-        let values: Vec<&str> = pairs.iter().map(|(_, v)| *v).collect();
-        assert!(values.contains(&"profile.release.lto=\"fat\""));
-        assert!(values.contains(&"profile.release.codegen-units=1"));
-        assert!(values.contains(&"profile.release.opt-level=3"));
+        assert!(argv.contains(&"--message-format=json-render-diagnostics".to_string()));
+        assert_eq!(argv.last().unwrap(), "/x/Cargo.toml");
+    }
+
+    /// The control for the test above: a value that is not passed
+    /// must not be reported as present, or the assertion is vacuous.
+    #[test]
+    fn the_build_argv_does_not_carry_a_profile_setting_we_never_pass() {
+        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"))
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(!argv.iter().any(|a| a.contains("panic=abort")));
+    }
+
+    /// The executable comes from cargo's own record. Hardcoding a
+    /// name anywhere turns this red, because the name here is one
+    /// the framework has never used.
+    #[test]
+    fn the_executable_path_comes_from_the_artifact_record() {
+        let m = Path::new("/w/Cargo.toml");
+        let out = artifact(m, Some("/w/target/release/some-consumers-own-name"));
+        let bins = built_executables(m, out.as_bytes());
+        assert_eq!(bins.len(), 1);
+        assert_eq!(
+            bins[0],
+            PathBuf::from("/w/target/release/some-consumers-own-name")
+        );
+    }
+
+    /// Three ways a line must be ignored. Without these the parser
+    /// would report an executable for almost any build output.
+    #[test]
+    fn unrelated_artifact_lines_are_ignored() {
+        let m = Path::new("/w/Cargo.toml");
+        let lines = [
+            artifact(m, None),
+            artifact(Path::new("/other/Cargo.toml"), Some("/other/target/release/dep")),
+            "{\"reason\":\"build-finished\",\"success\":true}".to_string(),
+            "not json at all".to_string(),
+        ]
+        .join("\n");
+        assert!(built_executables(m, lines.as_bytes()).is_empty());
+    }
+
+    /// A build that produced nothing runnable is named as such,
+    /// rather than reported as a missing file.
+    #[test]
+    fn a_manifest_with_no_binary_target_is_explained() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n");
+        let bins: Vec<PathBuf> = built_executables(&tmp.path().join("Cargo.toml"), b"");
+        assert!(bins.is_empty());
+    }
+
+    /// Several binaries is ambiguous rather than a licence to pick
+    /// the first. Taking `.next()` silently launched whichever
+    /// target happened to be declared first.
+    #[test]
+    fn several_executables_are_all_returned_so_the_caller_can_refuse() {
+        let m = Path::new("/w/Cargo.toml");
+        let out = [
+            artifact(m, Some("/w/target/release/helper-tool")),
+            artifact(m, Some("/w/target/release/bench-driver")),
+        ]
+        .join("\n");
+        let bins = built_executables(m, out.as_bytes());
+        assert_eq!(bins.len(), 2, "both must survive for the caller to refuse");
+    }
+
+    /// The artifact path is absolute and wherever cargo put it, so a
+    /// bench root inside an outer workspace resolves too. The old
+    /// locator looked under the bench directory and would not have.
+    #[test]
+    fn an_artifact_outside_the_bench_directory_still_resolves() {
+        let m = Path::new("/repo/mock/benches/Cargo.toml");
+        let out = artifact(m, Some("/repo/target/release/arvo-benches"));
+        let bins = built_executables(m, out.as_bytes());
+        assert_eq!(bins[0], PathBuf::from("/repo/target/release/arvo-benches"));
     }
 }
