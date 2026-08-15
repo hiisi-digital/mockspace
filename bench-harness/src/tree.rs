@@ -1030,6 +1030,7 @@ mod tests {
             [sweep.density-w13]
             points = [130001]
             arms = ["kernel"]
+            baseline = "kernel"
             required = true
         "#,
         );
@@ -1046,6 +1047,37 @@ mod tests {
         let d = tree.manifest.for_size("warm/density-w13", 0, &t.root).unwrap();
         assert_eq!(d.variant_paths.len(), 1);
         assert!(d.required && !c.required);
+        // A sweep that narrows its arms declares its own baseline, because an
+        // inherited one naming an excluded arm is refused. See the test below.
+        assert_eq!(d.normalise_baseline.as_deref(), Some("kernel"));
+    }
+
+    #[test]
+    fn a_sweep_that_narrows_its_arms_may_not_inherit_a_baseline_it_excluded() {
+        // The bench declares two arms and a baseline; the sweep keeps one arm
+        // and inherits the baseline naming the other. At runtime that baseline
+        // resolves to nothing and the report renders as though no baseline was
+        // declared, which is the silence op settled as a refusal at load.
+        let t = Tree::new("narrowed-baseline");
+        t.write("bench.toml", EMPTY_ROOT);
+        t.write(
+            "warm/bench.toml",
+            r#"
+            title = "Warm container"
+            workload = "realistic"
+            arms = ["kernel", "native"]
+            baseline = "native"
+
+            [sweep.narrowed]
+            points = [1]
+            arms = ["kernel"]
+        "#,
+        );
+        t.mkdir("warm/arms/kernel/src").mkdir("warm/arms/native/src");
+        let err = load(&t.root).unwrap_err().to_string();
+        assert!(err.contains("baseline = \"native\""), "{err}");
+        assert!(err.contains("not an arm of this bench"), "{err}");
+        assert!(err.contains("Arms: kernel"), "names what is available: {err}");
     }
 
     #[test]
