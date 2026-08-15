@@ -46,7 +46,7 @@ impl RepoLint for ChangelistRequired {
         }
 
         // Check if any .rs source files are modified.
-        let modified = get_all_modified_rs_files(workspace_root);
+        let modified = drop_fmt_only(workspace_root, get_all_modified_rs_files(workspace_root));
 
         modified
             .into_iter()
@@ -116,6 +116,24 @@ impl RepoLint for ChangelistRequired {
 }
 
 /// Get all modified .rs files in crates/ (staged + unstaged + untracked).
+/// Drop files whose only change is what `rustfmt` would have produced.
+///
+/// The pre-commit auto-fix formats staged sources, so a round whose
+/// formatting drifted lands fmt changes after its src changelist locks and
+/// the gate refuses them, forcing a mechanical micro-round that changes no
+/// design. A change that reproduces `rustfmt`'s output for the committed
+/// version byte for byte carries no edit, so it passes.
+///
+/// The check is verified rather than declared, and it fails closed: a
+/// missing `rustfmt`, an untracked file, or source `rustfmt` will not parse
+/// all leave the file in the list and the gate refuses as before.
+fn drop_fmt_only(workspace_root: &Path, files: Vec<(String, String)>) -> Vec<(String, String)> {
+    files
+        .into_iter()
+        .filter(|(file, _)| crate::fmt_only::is_fmt_only_change(workspace_root, file).is_err())
+        .collect()
+}
+
 fn get_all_modified_rs_files(workspace_root: &Path) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = Vec::new();
 
@@ -305,5 +323,117 @@ mod tests {
             "under commit -a the judged content must be the worktree blob; \
              got the index blob instead: {content:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod fmt_only_exemption {
+    use std::process::Command;
+
+    use super::*;
+
+    /// A mock dir in CLOSED phase (both changelists locked) with one
+    /// committed, deliberately unformatted source file.
+    fn frozen_repo(name: &str, committed: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "clr-fmt-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("crates/x/src")).unwrap();
+        std::fs::create_dir_all(root.join("design_rounds")).unwrap();
+        std::fs::write(
+            root.join("design_rounds/202601010000_changelist.doc.lock.md"),
+            "locked\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("design_rounds/202601010001_changelist.src.lock.md"),
+            "locked\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("crates/x/src/lib.rs"), committed).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@example.com"],
+            vec!["config", "user.name", "t"],
+            vec!["add", "-A"],
+            vec!["commit", "-q", "-m", "seed", "--no-gpg-sign"],
+        ] {
+            Command::new("git").args(&args).current_dir(&root).output().unwrap();
+        }
+        root
+    }
+
+    fn blocked(root: &std::path::Path) -> Vec<LintError> {
+        let crates = std::collections::BTreeSet::new();
+        let ctx = RepoContext {
+            mock_dir:   root,
+            repo_root:  root,
+            all_crates: &crates,
+            invocation: None,
+        };
+        ChangelistRequired.check_repo(&ctx)
+    }
+
+    const UGLY: &str = "pub fn a(  x:u8 )->u8{x+1}\n";
+
+    fn formatted(root: &std::path::Path, src: &str) -> Option<String> {
+        use std::io::Write;
+        let mut c = Command::new("rustfmt")
+            .args(["--emit=stdout", "--quiet"])
+            .current_dir(root)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        c.stdin.as_mut()?.write_all(src.as_bytes()).ok()?;
+        let o = c.wait_with_output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).to_string())
+    }
+
+    #[test]
+    fn a_fmt_only_change_passes_the_frozen_phase_and_a_smuggled_edit_does_not() {
+        let root = frozen_repo("both", UGLY);
+        let Some(fmt) = formatted(&root, UGLY) else {
+            let _ = std::fs::remove_dir_all(&root);
+            return; // no rustfmt on this machine
+        };
+        assert_ne!(fmt, UGLY, "the fixture must actually be reformatted");
+
+        // rustfmt's own output, in CLOSED phase: permitted.
+        std::fs::write(root.join("crates/x/src/lib.rs"), &fmt).unwrap();
+        assert!(
+            blocked(&root).is_empty(),
+            "a change that is exactly rustfmt's output carries no edit"
+        );
+
+        // The same formatting with one semantic character changed: refused.
+        std::fs::write(root.join("crates/x/src/lib.rs"), fmt.replace("x + 1", "x + 2")).unwrap();
+        let errs = blocked(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            !errs.is_empty(),
+            "an edit smuggled alongside formatting must still be refused in CLOSED"
+        );
+    }
+
+    #[test]
+    fn a_plain_source_edit_is_still_refused_in_a_frozen_phase() {
+        let root = frozen_repo("plain", "pub fn a(x: u8) -> u8 {\n    x + 1\n}\n");
+        std::fs::write(
+            root.join("crates/x/src/lib.rs"),
+            "pub fn a(x: u8) -> u8 {\n    x + 99\n}\n",
+        )
+        .unwrap();
+        let errs = blocked(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!errs.is_empty(), "the gate must still be a gate");
     }
 }
