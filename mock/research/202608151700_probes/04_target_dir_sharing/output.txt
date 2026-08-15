@@ -1,0 +1,19 @@
+=== A: one workspace, one invocation ===
+  compilations of `shared`: 1
+
+=== B: one invocation per arm, ONE shared --target-dir (proposed) ===
+  compilations of `shared`: 2
+  cdylibs produced:          3
+
+=== C: one invocation per arm, one --target-dir each (today) ===
+  compilations of `shared`: 3
+
+=== isolation under B: is each cdylib still a closed linkage unit? ===
+  libarm_a: symbols matching 'common' crossing the boundary = 0
+  libarm_b: symbols matching 'common' crossing the boundary = 0
+  libarm_c: symbols matching 'common' crossing the boundary = 0
+
+=== NEGATIVE CONTROLS ===
+  (1) PASS: isolated C=3 > shared B=2
+  (2) PASS: B=2 < 3 arms, so identical feature sets shared an artifact
+  (3) PASS: A=1, so the workspace shape handed arm-b and arm-c a `shared` built with arm-a's feature
