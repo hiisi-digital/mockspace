@@ -582,6 +582,7 @@ impl BenchManifest {
             bench_name: bench_name.to_string(),
             bench,
             sweep,
+            nested: self.nested_mode,
             title: section.title.clone(),
             workload: section.workload.clone(),
             master_seed: section.master_seed,
@@ -640,6 +641,10 @@ pub struct BenchConfig {
     /// The sweep within the bench. Equal to the bench name in a flat
     /// tree, where every section is its own single sweep.
     pub sweep:         String,
+    /// Whether this cell came from a nested tree. Decides the output
+    /// naming (`<bench>/<sweep>_n<point>_report.md` against the flat
+    /// `<bench>/<bench>_n<n>_findings.md`) and the history root.
+    pub nested:        bool,
     /// Display title (for findings.md).
     pub title:         String,
     /// Workload program identifier.
@@ -741,6 +746,7 @@ impl Default for BenchConfig {
             bench_name:    String::new(),
             bench:         String::new(),
             sweep:         String::new(),
+            nested:        false,
             title:         "Benchmark".into(),
             workload:      String::new(),
             master_seed:   0,

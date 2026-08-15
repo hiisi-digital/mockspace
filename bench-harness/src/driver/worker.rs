@@ -5,14 +5,14 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use super::{Cli, DriverRegistry, resolve_routine};
-use crate::config::{BenchConfig, BenchManifest};
+use super::{Cli, DriverSpec, resolve_routine};
+use crate::config::BenchConfig;
 use crate::harness;
 
 /// Worker-mode dispatch: parse the worker args the orchestrator
 /// passed, rebuild the routine and workload from the manifest, and
 /// run the worker loop.
-pub(super) fn drive_worker(registry: &DriverRegistry, cli: &Cli) -> ExitCode {
+pub(super) fn drive_worker(spec: &DriverSpec, cli: &Cli) -> ExitCode {
     let args = &cli.raw;
     let get = |flag: &str| -> Option<String> {
         args.iter()
@@ -42,7 +42,7 @@ pub(super) fn drive_worker(registry: &DriverRegistry, cli: &Cli) -> ExitCode {
     // Rebuild the routine + workload the same way the orchestrator
     // did: the worker inherits the orchestrator's cwd, so the
     // manifest is readable at the same relative path.
-    let manifest = match BenchManifest::load(Path::new("bench.toml")) {
+    let manifest = match super::load_manifest(Path::new(".")) {
         Ok(m) => m,
         Err(e) => {
             eprintln!(
@@ -62,17 +62,25 @@ pub(super) fn drive_worker(registry: &DriverRegistry, cli: &Cli) -> ExitCode {
     };
     let mut probe = BenchConfig::default();
     probe.bench_name = bench_name.clone();
+    let (bench, sweep) = manifest
+        .nested
+        .get(&bench_name)
+        .cloned()
+        .unwrap_or_else(|| (bench_name.clone(), bench_name.clone()));
+    probe.bench = bench;
+    probe.sweep = sweep;
+    probe.nested = manifest.nested_mode;
     probe.workload = workload_name.clone();
     probe.n = n;
     probe.may_differ = may_differ;
-    let routine = match resolve_routine(registry, &probe) {
+    let routine = match resolve_routine(spec, &probe) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: worker routine resolution: {e}");
             return ExitCode::FAILURE;
         },
     };
-    let workload = (registry.build_workload)(&workload_name, n);
+    let workload = (spec.build_workload)(&workload_name, n);
 
     if mode == "validate" {
         let seeds: Vec<u64> = get("--seeds")

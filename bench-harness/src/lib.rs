@@ -83,7 +83,10 @@ pub use config::{
     TimingSection,
 };
 pub use disasm::check_duplicates as check_disasm_duplicates;
-pub use driver::{DriverRegistry, drive};
+pub use driver::{
+    AfterCell, CellVerdict, DriverRegistry, DriverSpec, Hooks, InitContext, InitVerdict,
+    RunPlan, drive, drive_spec,
+};
 pub use env::{EnvMeta, collect_env_meta};
 pub use error::BenchError;
 pub use harness::{run_orchestrator, run_worker, write_csv};
