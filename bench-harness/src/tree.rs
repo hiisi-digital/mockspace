@@ -1150,6 +1150,35 @@ mod invariants {
     }
 
     #[test]
+    fn a_composed_member_inherits_every_knob_it_does_not_declare() {
+        // The cross-knob isolation case, for the composed form. A matrix that
+        // varies one knob at a time cannot find this: the member always
+        // declares the knob being read, so a level that silently resets the
+        // other four is invisible and the matrix passes on a broken tree.
+        // Its sibling case for the sections form is
+        // `a_sections_member_composes_with_prefixed_keys_and_its_own_timing`.
+        let t = Tree::new("composed-cross-knob");
+        t.write(
+            "bench.toml",
+            "[timing]\npasses = 8\nruns_per_pass = 2000\nbatch_size = 100\n\
+             harness_runs = 1\ncooldowns_ms = [0]\n",
+        );
+        t.write(
+            "m/bench.toml",
+            "title = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\npoints = [1]\n\
+             \n[timing]\npasses = 5\n",
+        );
+        t.mkdir("m/arms/fnv/src");
+        let tree = load(&t.root).unwrap();
+        let c = tree.manifest.for_size("m", 0, &t.root).unwrap();
+        assert_eq!(c.passes, 5, "the declared knob wins");
+        assert_eq!(c.runs_per_pass, 2000, "undeclared: root, not the framework default");
+        assert_eq!(c.batch_size, 100, "undeclared: root, not the framework default");
+        assert_eq!(c.harness_runs, 1, "undeclared: root, not the framework default");
+        assert_eq!(c.cooldowns_ms, vec![0], "undeclared: root, not the framework default");
+    }
+
+    #[test]
     fn a_sweep_timing_override_wins_over_the_members_own() {
         // merge_timing's argument order at the composed-form call site.
         let t = Tree::new("sweep-over-member");
