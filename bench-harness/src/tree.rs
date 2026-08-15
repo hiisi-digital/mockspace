@@ -178,6 +178,20 @@ pub fn load(benches_dir: &Path) -> Result<TreeManifest, BenchError> {
 
     manifest.nested_mode = !manifest.nested.is_empty();
     manifest.validate_roles()?;
+    // A tree that resolves to nothing is a misconfiguration, not an empty
+    // valid state: either the root declares no sections and no member
+    // matched, or every pattern missed. Loading it successfully means the
+    // run reports "0 benches" and exits 0, which reads as a pass.
+    if manifest.bench.is_empty() {
+        return Err(BenchError::InvalidConfig {
+            reason: format!(
+                "{} resolves to zero benches. Declare `[bench.<name>]` sections in \
+                 it, or point `[benchspace] members` at directories that carry \
+                 their own bench.toml.",
+                root_path.display()
+            ),
+        });
+    }
     tree.manifest = manifest;
     Ok(tree)
 }
@@ -212,8 +226,30 @@ fn resolve_members(
             }
         } else {
             let rel = entry.trim_matches('/').to_string();
+            // A literal member must name a directory inside the benches
+            // tree. Without this, `../outside` is accepted and the tool
+            // writes build output outside its own mock-arms directory,
+            // with `..` embedded in every manifest key it produces.
+            if rel.is_empty() || rel.split('/').any(|c| c == ".." || c == ".") {
+                return Err(BenchError::InvalidConfig {
+                    reason: format!(
+                        "[benchspace] member `{rel}` leaves the benches tree. A member \
+                         is a directory under benches/, named relative to it, with no \
+                         `..` or `.` components."
+                    ),
+                });
+            }
+            // Listing a member and excluding it is a contradiction, and a
+            // silent drop makes it read as a tree with no benches. A typo
+            // in `members` is an error naming both sides, so this is too.
             if excluded(&rel) {
-                continue;
+                return Err(BenchError::InvalidConfig {
+                    reason: format!(
+                        "[benchspace] lists member `{rel}` and also excludes it. \
+                         Remove it from `members` or from `exclude`; as written the \
+                         declaration cancels itself."
+                    ),
+                });
             }
             let dir = benches_dir.join(&rel);
             if !dir.join("bench.toml").is_file() {
@@ -353,17 +389,24 @@ fn compose_sections_member(
         }
     })?;
     parsed.validate_roles()?;
-    // "Declared" cannot be read off TimingSection (its fields carry
-    // defaults), so presence in the raw document is the signal.
-    let member_timing = raw.get("timing").map(|_| {
-        TimingOverride {
-            passes:        Some(parsed.timing.passes),
-            runs_per_pass: Some(parsed.timing.runs_per_pass),
-            batch_size:    Some(parsed.timing.batch_size),
-            harness_runs:  Some(parsed.timing.harness_runs),
-            cooldowns_ms:  Some(parsed.timing.cooldowns_ms.clone()),
-        }
-    });
+    // Read the member's [timing] off the raw document as an override, so
+    // an absent knob stays None and falls through to the root's.
+    //
+    // Reading it off `parsed.timing` instead is wrong and silently so:
+    // TimingSection's fields carry serde defaults, so every undeclared
+    // knob arrives as Some(framework default) and overrides the root
+    // rather than deferring to it. A member trimming one knob then got
+    // the framework's budget for the other four, which for a member
+    // declaring only `passes` meant 25x the runs the root asked for.
+    let member_timing = raw
+        .get("timing")
+        .map(|v| v.clone().try_into::<TimingOverride>())
+        .transpose()
+        .map_err(|e| {
+            BenchError::InvalidConfig {
+                reason: format!("{}: [timing]: {e}", file.display()),
+            }
+        })?;
 
     let mut names: Vec<&String> = parsed.bench.keys().collect();
     names.sort();
@@ -533,11 +576,22 @@ fn insert_composed(
     sweep: &str,
 ) -> Result<(), BenchError> {
     if manifest.bench.contains_key(&key) {
+        // Name the incumbent for what it actually is. `nested` carries the
+        // origin of every composed key, so a key absent from it came from a
+        // root section. Hardcoding the root case reported a section that does
+        // not exist whenever both sides were members, which is exactly the
+        // case a reader needs the message to disambiguate.
+        let incumbent = match manifest.nested.get(&key) {
+            Some((prev_member, prev_sweep)) => {
+                format!("by member directory `{prev_member}/` as sweep `{prev_sweep}`")
+            },
+            None => format!("as a [bench.{key}] section in the root bench.toml"),
+        };
         return Err(BenchError::InvalidConfig {
             reason: format!(
-                "bench key `{key}` is declared twice: as a [bench.{key}] section in \
-                 the root bench.toml and by member directory `{member}/`. Rename one; \
-                 which of two same-named benches runs must never depend on load order."
+                "bench key `{key}` is declared twice: {incumbent}, and by member \
+                 directory `{member}/` as sweep `{sweep}`. Rename one; which of two \
+                 same-named benches runs must never depend on load order."
             ),
         });
     }
@@ -686,12 +740,12 @@ fn support_in(dir: &Path, bench: Option<&str>) -> Vec<SupportSource> {
 mod tests {
     use super::*;
 
-    struct Tree {
-        root: PathBuf,
+    pub(super) struct Tree {
+        pub(super) root: PathBuf,
     }
 
     impl Tree {
-        fn new(name: &str) -> Tree {
+        pub(super) fn new(name: &str) -> Tree {
             static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let root = std::env::temp_dir().join(format!(
                 "mockspace-benchspace-test-{}-{}-{name}",
@@ -703,14 +757,14 @@ mod tests {
             Tree { root }
         }
 
-        fn write(&self, rel: &str, contents: &str) -> &Self {
+        pub(super) fn write(&self, rel: &str, contents: &str) -> &Self {
             let p = self.root.join(rel);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, contents).unwrap();
             self
         }
 
-        fn mkdir(&self, rel: &str) -> &Self {
+        pub(super) fn mkdir(&self, rel: &str) -> &Self {
             std::fs::create_dir_all(self.root.join(rel)).unwrap();
             self
         }
@@ -723,14 +777,14 @@ mod tests {
     }
 
     /// The composed form: top-level fields, no wrapper table.
-    const HASH_BENCH: &str = r#"
+    pub(super) const HASH_BENCH: &str = r#"
         title = "Hash mixers"
         workload = "realistic"
         arms = ["fnv", "xx"]
         points = [64, 256]
     "#;
 
-    const EMPTY_ROOT: &str = "[timing]\npasses = 4\n";
+    pub(super) const EMPTY_ROOT: &str = "[timing]\npasses = 4\n";
 
     #[test]
     fn the_default_glob_makes_any_subdir_with_a_bench_toml_a_member() {
@@ -788,13 +842,21 @@ mod tests {
         // resource_storage's real shape: [timing] + [bench.*], own
         // deliberately trimmed budget, entries relative to itself.
         let t = Tree::new("sections-member");
-        t.write("bench.toml", "[timing]\npasses = 10\nruns_per_pass = 50000\n");
+        // Every root knob is deliberately NOT the framework default, so a
+        // member knob that silently arrives as a default is distinguishable
+        // from one that correctly inherited the root's. With the root set to
+        // the defaults (passes = 10, runs_per_pass = 50000) this test agrees
+        // with the bug it exists to catch.
+        t.write(
+            "bench.toml",
+            "[timing]\npasses = 8\nruns_per_pass = 2000\nbatch_size = 100\n\
+             harness_runs = 1\ncooldowns_ms = [0]\n",
+        );
         t.write(
             "storage/bench.toml",
             r#"
             [timing]
             passes = 5
-            runs_per_pass = 2000
 
             [bench.rsb_clean]
             title = "Clean"
@@ -822,9 +884,15 @@ mod tests {
         let clean = tree.manifest.for_size("storage/rsb_clean", 0, &t.root).unwrap();
         assert_eq!((clean.bench.as_str(), clean.sweep.as_str()), ("storage", "rsb_clean"));
         assert!(clean.nested);
-        // member timing wins over root where the section has none
-        assert_eq!(clean.passes, 5);
-        assert_eq!(clean.runs_per_pass, 2000);
+        // The member declared `passes` and nothing else, so that one knob
+        // wins and every other falls through to the root. An undeclared knob
+        // arriving as the framework default instead is the defect this pins:
+        // runs_per_pass would read 50000 rather than the root's 2000.
+        assert_eq!(clean.passes, 5, "the member's declared knob wins");
+        assert_eq!(clean.runs_per_pass, 2000, "undeclared: inherits the root, not the default");
+        assert_eq!(clean.batch_size, 100, "undeclared: inherits the root, not the default");
+        assert_eq!(clean.harness_runs, 1, "undeclared: inherits the root, not the default");
+        assert_eq!(clean.cooldowns_ms, vec![0], "undeclared: inherits the root, not the default");
         // a short name resolves against the member's own variants/
         let short = clean.variant_paths[0].display().to_string();
         assert!(short.contains("storage/variants/rsb_v0/target/release/"), "{short}");
@@ -1003,8 +1071,15 @@ mod tests {
             "hash/bench.toml",
             "[bench]\ntitle = \"Hash\"\narms = [\"fnv\"]\npoints = [64]\n",
         );
-        let err = load(&t.root).unwrap_err();
-        assert!(format!("{err}").contains("hash/bench.toml"), "{err}");
+        let err = format!("{}", load(&t.root).unwrap_err());
+        assert!(err.contains("hash/bench.toml"), "names the file: {err}");
+        // Naming the file alone is satisfied by any parse error, including
+        // an unrelated syntax slip. Pin the reason so the test fails when
+        // the wrapper starts parsing rather than merely when something does.
+        assert!(
+            err.contains("expected struct BenchSection"),
+            "names why the wrapper is not the composed form: {err}"
+        );
     }
 
     #[test]
@@ -1045,5 +1120,119 @@ mod tests {
         assert!(glob_match("*-probe", "disasm-probe"));
         assert!(glob_match("a*c", "abc"));
         assert!(!glob_match("a*c", "abd"));
+    }
+}
+
+#[cfg(test)]
+mod invariants {
+    //! Invariants the design depends on that nothing else pins. Each
+    //! was verified to go red under a mutation of the line it names.
+    use super::tests::{EMPTY_ROOT, HASH_BENCH, Tree};
+    use super::*;
+
+    #[test]
+    fn a_member_owns_its_interior_so_a_nested_bench_toml_is_not_a_second_member() {
+        // The `continue` in `discover`. Without it the default `**`
+        // turns a bench.toml nested inside a member into a member of
+        // its own, which is the regression class that started this work.
+        let t = Tree::new("owns-interior");
+        t.write("bench.toml", EMPTY_ROOT);
+        t.write("outer/bench.toml", HASH_BENCH);
+        t.mkdir("outer/arms/fnv/src").mkdir("outer/arms/xx/src");
+        t.write("outer/inner/bench.toml", HASH_BENCH);
+        t.mkdir("outer/inner/arms/fnv/src").mkdir("outer/inner/arms/xx/src");
+        let tree = load(&t.root).unwrap();
+        assert_eq!(
+            tree.manifest.bench_names(),
+            vec!["outer"],
+            "the nested bench.toml belongs to `outer`, not to the benchspace"
+        );
+    }
+
+    #[test]
+    fn a_sweep_timing_override_wins_over_the_members_own() {
+        // merge_timing's argument order at the composed-form call site.
+        let t = Tree::new("sweep-over-member");
+        t.write("bench.toml", "[timing]\npasses = 9\n");
+        t.write(
+            "m/bench.toml",
+            "title = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
+             \n[timing]\npasses = 5\n\n[sweep.s]\npoints = [1]\n\n\
+             [sweep.s.timing]\npasses = 2\n",
+        );
+        t.mkdir("m/arms/fnv/src");
+        let tree = load(&t.root).unwrap();
+        let cell = tree.manifest.for_size("m/s", 0, &t.root).unwrap();
+        assert_eq!(cell.passes, 2, "the sweep's override outranks the member's");
+    }
+
+    #[test]
+    fn exclude_applies_to_a_literal_member_by_refusing_the_contradiction() {
+        let t = Tree::new("exclude-literal");
+        t.write(
+            "bench.toml",
+            "[benchspace]\nmembers = [\"m\"]\nexclude = [\"m\"]\n",
+        );
+        t.write("m/bench.toml", HASH_BENCH);
+        t.mkdir("m/arms/fnv/src").mkdir("m/arms/xx/src");
+        let err = load(&t.root).unwrap_err().to_string();
+        assert!(err.contains("lists member `m` and also excludes it"), "{err}");
+    }
+
+    #[test]
+    fn the_walk_skips_target_and_dot_directories() {
+        let t = Tree::new("walk-skips");
+        t.write("bench.toml", EMPTY_ROOT);
+        t.write("real/bench.toml", HASH_BENCH);
+        t.mkdir("real/arms/fnv/src").mkdir("real/arms/xx/src");
+        t.write("target/stale/bench.toml", HASH_BENCH);
+        t.write(".hidden/bench.toml", HASH_BENCH);
+        let tree = load(&t.root).unwrap();
+        assert_eq!(
+            tree.manifest.bench_names(),
+            vec!["real"],
+            "build output and dot trees are not benchspace members"
+        );
+    }
+
+    #[test]
+    fn a_literal_member_may_not_leave_the_benches_tree() {
+        let t = Tree::new("escape");
+        t.write("bench.toml", "[benchspace]\nmembers = [\"../outside\"]\n");
+        let err = load(&t.root).unwrap_err().to_string();
+        assert!(err.contains("leaves the benches tree"), "{err}");
+    }
+
+    #[test]
+    fn a_tree_resolving_to_zero_benches_is_an_error() {
+        let t = Tree::new("empty");
+        t.write("bench.toml", "[benchspace]\nmembers = [\"nothing-*\"]\n");
+        let err = load(&t.root).unwrap_err().to_string();
+        assert!(err.contains("resolves to zero benches"), "{err}");
+    }
+
+    #[test]
+    fn a_collision_between_two_members_names_both_members() {
+        // Not "the root bench.toml", which is what a hardcoded message
+        // reported for a root section that does not exist.
+        let t = Tree::new("member-collision");
+        t.write("bench.toml", "[benchspace]\nmembers = [\"a\", \"a/b\"]\n");
+        t.write(
+            "a/bench.toml",
+            "title = \"A\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
+             \n[sweep.b]\npoints = [1]\n",
+        );
+        t.mkdir("a/arms/fnv/src");
+        t.write(
+            "a/b/bench.toml",
+            "title = \"B\"\nworkload = \"realistic\"\narms = [\"fnv\"]\npoints = [1]\n",
+        );
+        t.mkdir("a/b/arms/fnv/src");
+        let err = load(&t.root).unwrap_err().to_string();
+        assert!(err.contains("member directory `a/`"), "{err}");
+        assert!(
+            !err.contains("root bench.toml"),
+            "neither side is a root section: {err}"
+        );
     }
 }

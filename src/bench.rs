@@ -62,7 +62,7 @@ fn print_help() {
     eprintln!();
     eprintln!("`mock/benches/` layout (created by `init`):");
     eprintln!("  bench.toml            globals: [timing] [dispatch] [build] [workload.*]");
-    eprintln!("  <bench>/bench.toml    the bench: [bench] meta + [sweep.<name>] sections");
+    eprintln!("  <bench>/bench.toml    the bench: top-level fields + optional [sweep.<name>]");
     eprintln!("  <bench>/arms/<arm>/   one measured cdylib per arm (manifest generated)");
     eprintln!("  <bench>/support/      this bench's library crates");
     eprintln!("  support/              library crates several benches share");
@@ -751,7 +751,9 @@ fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
         .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some("cdylib")));
     if !is_cdylib {
         return Err(format!(
-            "arm {}/arms/{} must build a cdylib (the harness dlopens it), but its              Cargo.toml declares no `crate-type = [\"cdylib\"]`. A library crate that              arms link belongs under support/, not arms/.",
+            "arm {}/arms/{} must build a cdylib (the harness dlopens it), but its \
+             Cargo.toml declares no `crate-type = [\"cdylib\"]`. A library crate that \
+             arms link belongs under support/, not arms/.",
             arm.bench, arm.arm
         ));
     }
@@ -962,7 +964,8 @@ fn warn_if_not_a_member(bench_dir: &Path, bench: &str) {
         && !space.exclude.iter().any(|p| bench_tree::glob_match(p, bench));
     if !matched {
         eprintln!(
-            "warning: [benchspace] members = {:?} does not match `{bench}`; add it to              the list or it will never run.",
+            "warning: [benchspace] members = {:?} does not match `{bench}`; add it to \
+             the list or it will never run.",
             space.members
         );
     }
@@ -1143,8 +1146,10 @@ driver binary is generated from `bench.toml` on every run.
 ## Layout
 
 - `bench.toml`: globals ([timing], [dispatch], [workload.*], [build]).
-- `<bench>/bench.toml`: the bench: [bench] meta plus optional
-  [sweep.<name>] sections.
+- `<bench>/bench.toml`: the bench. Its fields sit at the top level
+  with no wrapper table, because the directory name is the bench's
+  name. Optional [sweep.<name>] sections carry per-sweep points and
+  overrides.
 - `<bench>/arms/<arm>/src/lib.rs`: one measured cdylib per arm. The
   manifest is generated; writing a Cargo.toml in the arm directory
   takes it over.

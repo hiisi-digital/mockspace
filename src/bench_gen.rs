@@ -335,7 +335,9 @@ pub fn support_package_name(s: &SupportSource) -> Result<String, String> {
         .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some("cdylib")));
     if is_cdylib {
         return Err(format!(
-            "support crate {} declares `crate-type = [\"cdylib\"]`. A support crate              is a library the arms and the driver link and is never measured; a              measured cdylib belongs under arms/, not support/.",
+            "support crate {} declares `crate-type = [\"cdylib\"]`. A support crate \
+             is a library the arms and the driver link and is never measured; a \
+             measured cdylib belongs under arms/, not support/.",
             s.dir.display()
         ));
     }

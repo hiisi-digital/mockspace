@@ -7,9 +7,16 @@
 //! this test loads every real bench tree, found by walking a
 //! workspace root handed in through `MOCKSPACE_REAL_TREES`.
 //!
-//! Without the variable the test states that it skipped and why,
-//! rather than passing silently: a skip that looks like a pass is
-//! how a gate stops being one.
+//! Without the variable the test PANICS rather than returning, and
+//! it carries `#[ignore]` so a default run reports it as ignored.
+//! An earlier shape printed a skip notice and returned: cargo
+//! captures stderr for passing tests, so the notice was invisible
+//! and the summary read `1 passed` having verified nothing. A skip
+//! that looks like a pass is how a gate stops being one, and this
+//! gate had never once run.
+//!
+//! Run it with:
+//!   MOCKSPACE_REAL_TREES=~/Dev/clause-dev cargo test --test real_trees -- --ignored
 
 use std::path::{Path, PathBuf};
 
@@ -56,14 +63,15 @@ fn find_roots(workspace: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
+#[ignore = "needs MOCKSPACE_REAL_TREES pointing at a workspace of consumer clones"]
 fn every_real_bench_tree_loads_and_resolves_through_the_benchspace_path() {
-    let Ok(workspace) = std::env::var("MOCKSPACE_REAL_TREES") else {
-        eprintln!(
-            "SKIPPED: real-tree gate needs MOCKSPACE_REAL_TREES pointing at a \
-             workspace of consumer clones; nothing was verified"
-        );
-        return;
-    };
+    let workspace = std::env::var("MOCKSPACE_REAL_TREES").unwrap_or_else(|_| {
+        panic!(
+            "the real-tree gate needs MOCKSPACE_REAL_TREES pointing at a \
+             workspace of consumer clones. It panics rather than returning \
+             because a silent return reads as a pass and verifies nothing."
+        )
+    });
     let workspace = PathBuf::from(workspace);
     let roots = find_roots(&workspace);
     assert!(
