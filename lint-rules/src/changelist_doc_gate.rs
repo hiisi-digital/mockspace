@@ -204,3 +204,20 @@ mod is_doc_template_tests {
         assert!(!is_doc_template("README.md"));
     }
 }
+
+#[cfg(test)]
+mod shame_component_tests {
+    use super::is_doc_template;
+
+    /// The exemption is for the file named `SHAME.md.tmpl`, so it must
+    /// match a whole path component. A suffix match also exempts any
+    /// template whose name merely ends in those characters, which
+    /// silently opens the doc gate for files nobody exempted.
+    #[test]
+    fn only_the_shame_template_itself_is_exempt() {
+        assert!(!is_doc_template("crates/foo/SHAME.md.tmpl"));
+        assert!(!is_doc_template("crates/SHAME.md.tmpl"));
+        assert!(is_doc_template("crates/foo/NOT_SHAME.md.tmpl"));
+        assert!(is_doc_template("crates/foo/DESIGN_SHAME.md.tmpl"));
+    }
+}
