@@ -1076,7 +1076,7 @@ mod tests {
         t.mkdir("warm/arms/kernel/src").mkdir("warm/arms/native/src");
         let err = load(&t.root).unwrap_err().to_string();
         assert!(err.contains("baseline = \"native\""), "{err}");
-        assert!(err.contains("not an arm of this bench"), "{err}");
+        assert!(err.contains("not an arm it runs"), "{err}");
         assert!(err.contains("Arms: kernel"), "names what is available: {err}");
     }
 

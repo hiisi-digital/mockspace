@@ -7,7 +7,7 @@ vehje repo's `mock/research/202607230922_carrier-matrix-result-review-panel/`
 (`muratori_extraction_design.md` for this crate, the four panel files for why each
 discipline matters).
 
-## 1. Extend `FfiBenchCall` and surface the S / first-touch / digest columns — DONE
+## 1. Extend `FfiBenchCall` and surface the S / first-touch / digest columns: DONE
 
 Landed: `FfiBenchCall` now carries `{ run_ticks, setup_ticks, first_ticks, digest }`,
 `abi_hash()` folds the four-field layout (stale variant dylibs rejected at load),
@@ -37,7 +37,7 @@ The scaffold already computes `setup_ticks`, `first_ticks`, and a reps-invariant
   prep) fully closed. It is additive plus one struct field; the ABI-hash bump means
   all consumers rebuild, which is the intended safety behaviour.
 
-## 2. The `bench_matrix!` declarative macro — DONE
+## 2. The `bench_matrix!` declarative macro: DONE
 
 Landed in `src/macros.rs`. Two regime arms (`warm` 2-arg cells, `cold_cycle(M)`
 3-arg cells), optional per-cell `#[feature = "..."]`, optional per-cell `setup`
@@ -62,7 +62,7 @@ Not yet covered (open, low priority): **multi-sweep.** The entropy grid is a 2D
 Either add cartesian multi-sweep, or keep it a single flattened sweep with
 composite values. The entropy-grid family can be hand-authored until then.
 
-## 3. Floor-aware normalise (null-floor differencing) in the harness reporter — DONE
+## 3. Floor-aware normalise (null-floor differencing) in the harness reporter: DONE
 
 Wired end to end: `MatrixDecl::floor` -> `MatrixSpec::floor_contains` ->
 `render_bench_section` resolves the floor tag to its variant name and emits

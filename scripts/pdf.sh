@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mockspace-pdf — generate a design documentation PDF from docs/
+# mockspace-pdf: generate a design documentation PDF from docs/
 #
 # Reusable across any repo that uses mockspace and has generated docs/.
 # Requires: pandoc, xelatex (or pdflatex for --engine pdflatex)
@@ -89,7 +89,7 @@ PROJECT_NAME=$(grep -m1 '^digraph ' "$DOT_FILE" \
     | sed 's/[[:space:]]*{.*//')
 [[ -z "$PROJECT_NAME" ]] && PROJECT_NAME="$(basename "$REPO_ROOT")"
 
-[[ -z "$TITLE"    ]] && TITLE="$PROJECT_NAME — Design Documentation"
+[[ -z "$TITLE"    ]] && TITLE="$PROJECT_NAME: Design Documentation"
 [[ -z "$OUT_FILE" ]] && OUT_FILE="$REPO_ROOT/$PROJECT_NAME-design.pdf"
 
 echo "project : $PROJECT_NAME"
@@ -197,11 +197,11 @@ for img in "$DOCS_DIR"/*.png; do
     stem="$(basename "$img" .png)"
 
     for f in "${patched_files[@]}"; do
-        # Already embedded as a figure in this file — nothing to do
+        # Already embedded as a figure in this file: nothing to do
         if grep -qE '!\[[^]]*\]\('"$stem"'\.png\)' "$f" 2>/dev/null; then
             continue
         fi
-        # Has a hyperlink to stem.svg or stem.png but no embed — inject once
+        # Has a hyperlink to stem.svg or stem.png but no embed: inject once
         if grep -qF "](${stem}.svg)" "$f" || grep -qF "](${stem}.png)" "$f"; then
             awk -v stem="$stem" '
             {
@@ -350,7 +350,7 @@ end
 
 -- Tag each figure block with a stable identifier so pandoc emits \label{anchor}
 -- in LaTeX. Pandoc renders [text](#anchor) as \hyperref[anchor]{text}, which
--- resolves via \label — so this is the correct mechanism (not \hypertarget).
+-- resolves via \label: so this is the correct mechanism (not \hypertarget).
 -- Must use Figure (block), NOT Image (inline): setting the inline identifier
 -- has no effect on the wrapping figure's \label.
 function Figure(el)
