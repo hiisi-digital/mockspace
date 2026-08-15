@@ -1,0 +1,15 @@
+control: sections sharing an arm form one component, others stay apart
+
+sections: 49   families (components): 18   multi-section families: 7   singletons: 11
+
+family (by largest member)         sweeps  distinct arm sets
+precise-container-width-l1             10                  3
+warm-clamp-arity-l2                     8                  1
+satfold-align-l1                        7                  3
+wide-rung-density-w200                  5                  1
+bitpack-footprint-dense                 3                  3
+bitpack-contend-best                    3                  3
+bitpack-write-contend-race              2                  3
+
+total sweeps: 49
+sweeps sitting in a family whose arm sets are NOT all identical: 25
