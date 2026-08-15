@@ -203,8 +203,12 @@ fn extract_allow_explanation(context: &str) -> Option<&str> {
     // Take only up to the end of the line containing the marker.
     let rest = after.split('\n').next().unwrap_or(after);
 
-    if let Some(dash_pos) = rest.find(':') {
-        Some(rest[dash_pos + ':'.len_utf8() ..].trim())
+    // The em-dash is the directive's delimiter, written by consumers in their
+    // own source. It is grammar rather than text we print, and it was chosen
+    // because it does not occur in Rust while a colon occurs constantly.
+    // lint:allow(no-em-dash): the delimiter is user-facing grammar, not text.
+    if let Some(dash_pos) = rest.find('\u{2014}') {
+        Some(rest[dash_pos + '\u{2014}'.len_utf8() ..].trim())
     } else if let Some(dash_pos) = rest.find(" - ") {
         Some(rest[dash_pos + 3 ..].trim())
     } else {
@@ -227,4 +231,32 @@ fn extract_struct_name(line: &str) -> Option<&str> {
         .next()?;
 
     if name.is_empty() { None } else { Some(name) }
+}
+
+#[cfg(test)]
+mod allow_grammar {
+    use super::extract_allow_explanation;
+
+    const DASH: char = '\u{2014}';
+
+    /// Same grammar, same reason: the delimiter must not occur in the content.
+    #[test]
+    fn the_delimiter_is_the_em_dash_and_a_colon_is_content() {
+        let line = format!(
+            "// lint:allow(no_adhoc_framework) {DASH} the scheduler owns one global table"
+        );
+        assert_eq!(
+            extract_allow_explanation(&line),
+            Some("the scheduler owns one global table")
+        );
+
+        let colon = format!(
+            "// lint:allow(no_adhoc_framework) {DASH} core::fmt is unreachable here"
+        );
+        assert_eq!(
+            extract_allow_explanation(&colon),
+            Some("core::fmt is unreachable here"),
+            "a colon in the content must not act as the delimiter"
+        );
+    }
 }

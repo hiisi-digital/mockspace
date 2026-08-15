@@ -199,9 +199,19 @@ fn extract_allow_explanation(context: &str, rule_name: &str) -> Option<String> {
     let pos = context.find(&marker)?;
     let after = &context[pos + marker.len() ..];
 
-    // Find the separator (em dash or hyphen).
-    let rest = if let Some(dash_pos) = after.find(':') {
-        &after[dash_pos + ':'.len_utf8() ..]
+    // Find the separator.
+    //
+    // The em-dash here is GRAMMAR, not prose: it is the delimiter a consumer
+    // types in their own source after `lint:allow(rule)`, and the workspace
+    // em-dash ban governs text we print, not a directive we parse. It was
+    // chosen precisely because it does not occur in Rust source, so it cannot
+    // be confused with content. A colon does occur, constantly: `core::fmt`
+    // would split a suppression at the path and grant it on a fragment. See
+    // `feedback_delimiter_that_occurs_in_the_content.md`.
+    //
+    // lint:allow(no-em-dash): the delimiter is user-facing grammar, not text.
+    let rest = if let Some(dash_pos) = after.find('\u{2014}') {
+        &after[dash_pos + '\u{2014}'.len_utf8() ..]
     } else if let Some(dash_pos) = after.find(" - ") {
         &after[dash_pos + 3 ..]
     } else {
@@ -236,4 +246,54 @@ fn is_inside_macro_def(node: Node) -> bool {
         current = parent.parent();
     }
     false
+}
+
+#[cfg(test)]
+mod allow_grammar {
+    use super::extract_allow_explanation;
+
+    const DASH: char = '\u{2014}';
+
+    /// The delimiter is chosen so it cannot occur in the content it delimits.
+    /// A colon does occur in Rust constantly, so splitting on one grants a
+    /// suppression on a fragment of a type path and silently voids every
+    /// explanation written with the real delimiter.
+    #[test]
+    fn the_delimiter_is_the_em_dash_and_a_colon_is_content() {
+        let with_dash = format!(
+            "// lint:allow(no_self_define) {DASH} the id crate is the one place \
+             define_id may be called"
+        );
+        let got = extract_allow_explanation(&with_dash, "no_self_define").unwrap();
+        assert!(
+            got.contains("the id crate is the one place"),
+            "the explanation must survive the delimiter: {got:?}"
+        );
+
+        // A colon inside the explanation is content and must not split it.
+        let with_colon = format!(
+            "// lint:allow(no_self_define) {DASH} core::fmt cannot be reached from \
+             the infrastructure crate without a cycle"
+        );
+        let got = extract_allow_explanation(&with_colon, "no_self_define").unwrap();
+        assert!(
+            got.starts_with("core::fmt cannot be reached"),
+            "a colon in the content must not act as the delimiter: {got:?}"
+        );
+    }
+
+    #[test]
+    fn a_spaced_hyphen_is_the_accepted_alternative_and_a_bare_marker_is_empty() {
+        let hyphen = "// lint:allow(no_self_define) - the crate defines the primitive itself";
+        assert!(
+            extract_allow_explanation(hyphen, "no_self_define")
+                .unwrap()
+                .contains("defines the primitive")
+        );
+        assert_eq!(
+            extract_allow_explanation("// lint:allow(no_self_define)", "no_self_define").unwrap(),
+            ""
+        );
+        assert_eq!(extract_allow_explanation("// nothing here", "no_self_define"), None);
+    }
 }

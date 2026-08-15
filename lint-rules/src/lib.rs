@@ -2437,8 +2437,8 @@ mod no_em_dashes_in_our_own_text {
     /// for generated agent rules, so this crate accumulated 106 of them while
     /// being the tool that carries the ban.
     ///
-    /// Walks its own sources rather than checking a rendered artifact, because
-    /// the message strings never become one.
+    /// Walks the sources rather than checking a rendered artifact, because the
+    /// message strings never become one.
     #[test]
     fn this_crate_prints_no_em_dashes_at_a_consumer() {
         fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
@@ -2449,7 +2449,10 @@ mod no_em_dashes_in_our_own_text {
                 let p = e.path();
                 if p.is_dir() {
                     walk(&p, out);
-                } else if p.extension().is_some_and(|x| x == "rs") {
+                } else if p
+                    .extension()
+                    .is_some_and(|x| x == "rs" || x == "sh" || x == "md")
+                {
                     let Ok(text) = std::fs::read_to_string(&p) else {
                         continue;
                     };
@@ -2462,10 +2465,23 @@ mod no_em_dashes_in_our_own_text {
             }
         }
 
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        assert!(src.is_dir(), "{} is not a directory", src.display());
+        // Widened past this crate's own `src/`, because the class grep found
+        // the same defect in a shell script and a TODO under the repository
+        // root. What this still cannot reach is `mock/crates/**/*.md.tmpl`,
+        // which is the parked v2 tree and is gated behind a design round; two
+        // files there carry em-dashes and are recorded rather than edited.
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("lint-rules sits under the repository root")
+            .to_path_buf();
         let mut hits = Vec::new();
-        walk(&src, &mut hits);
+        for rel in ["lint-rules/src", "src", "bench-core/src", "bench-harness/src",
+                    "bench-macro/src", "bench-matrix/src", "cargo-mock/src", "scripts"] {
+            let dir = repo.join(rel);
+            if dir.is_dir() {
+                walk(&dir, &mut hits);
+            }
+        }
         assert!(
             hits.is_empty(),
             "em-dashes are forbidden in authored text, and these reach a \
