@@ -84,9 +84,12 @@ Each repository pins the engine it runs in its root `mockspace.toml`:
 
 ```toml
 # a released version, or a branch to track pre-release
-mockspace_version = "0.0.0-d05"
-# mockspace_branch = "dev"
+# mockspace_version = "0.0.0-d01"
+mockspace_branch = "dev"
 ```
+
+No release has been tagged yet, so tracking the branch is the only working
+form today. The commented pin shows the shape a tagged release takes.
 
 The launcher builds the pinned engine once into a shared per-version cache and
 execs it, so every repo on the same pin shares one build and the working

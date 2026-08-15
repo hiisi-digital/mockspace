@@ -1,6 +1,6 @@
 //! Lint: every `define_error!` invocation must include a non-empty `hint:` field.
 //!
-//! Errors must be actionable — the user seeing the error should know what to do
+//! Errors must be actionable: the user seeing the error should know what to do
 //! next. The `hint:` field provides that guidance. An empty hint (`hint: ""`)
 //! is treated the same as a missing hint.
 //!
@@ -79,7 +79,7 @@ impl CrateLint for ActionableErrors {
                         || after_colon == "'',"
                         || after_colon == "''"
                     {
-                        // Empty hint — do not mark as found
+                        // Empty hint: do not mark as found
                     } else {
                         found_hint = true;
                     }
@@ -99,7 +99,7 @@ impl CrateLint for ActionableErrors {
                                 ctx.crate_name.to_string(),
                                 macro_start_line,
                                 "actionable-errors",
-                                format!("suppressed by lint:allow(actionable_errors) on {macro_name} — review periodically"),
+                                format!("suppressed by lint:allow(actionable_errors) on {macro_name}: review periodically"),
                             ));
                         } else {
                             errors.push(LintError {
@@ -109,7 +109,7 @@ impl CrateLint for ActionableErrors {
                                 lint_name:    "actionable-errors",
                                 severity:     crate::Severity::HARD_ERROR,
                                 message:      format!(
-                                    "{macro_name} missing hint field — errors must be actionable \
+                                    "{macro_name} missing hint field: errors must be actionable \
                                      (include what to do next)",
                                 ),
                                 finding_kind: None,

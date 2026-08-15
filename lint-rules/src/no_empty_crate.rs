@@ -19,7 +19,7 @@ use crate::{CrateLint, Lint, LintContext, LintError, make_parser};
 
 const LINT_NAME: &str = "no-empty-crate";
 
-/// Node kinds that count as "substantive content" — having at least one means
+/// Node kinds that count as "substantive content": having at least one means
 /// the crate is not empty.
 const SUBSTANTIVE_KINDS: &[&str] = &[
     "struct_item",
@@ -53,7 +53,7 @@ impl Lint for NoEmptyCrate {
 
 impl CrateLint for NoEmptyCrate {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
-        // lib.rs tree is already parsed — check it first so the common case
+        // lib.rs tree is already parsed: check it first so the common case
         // of a populated lib.rs avoids re-parsing every module.
         if has_substantive_content(ctx.tree.root_node()) {
             return Vec::new();
@@ -65,7 +65,7 @@ impl CrateLint for NoEmptyCrate {
         // but the crate clearly has an API surface.
         let mut parser = make_parser();
         for file in ctx.all_sources {
-            // Skip lib.rs — already checked via ctx.tree above.
+            // Skip lib.rs: already checked via ctx.tree above.
             if file.rel_path.file_name().and_then(|n| n.to_str()) == Some("lib.rs") {
                 continue;
             }
@@ -82,7 +82,7 @@ impl CrateLint for NoEmptyCrate {
             1,
             LINT_NAME,
             format!(
-                "crate `{}` has no type, trait, function, or macro definitions — \
+                "crate `{}` has no type, trait, function, or macro definitions: \
                  populate it or remove it from the workspace",
                 ctx.crate_name,
             ),
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn reexport_from_submodule_passes() {
-        // lib.rs only contains mod declarations and re-exports — no direct
+        // lib.rs only contains mod declarations and re-exports: no direct
         // substantive content, but the submodule provides it. This is the
         // common `pub mod foo; pub use foo::*;` pattern the old lint
         // flagged as a false positive.

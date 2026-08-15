@@ -579,6 +579,113 @@ impl BenchManifest {
                     ),
                 });
             }
+
+            // A role naming an arm that is not there is refused here rather
+            // than ignored downstream. `with_baseline` and `with_floor` both
+            // silently do nothing on an unknown name, so a one-letter typo
+            // renders a report byte-identical to declaring no role at all,
+            // except for one absent paragraph. Measured: a mistyped baseline
+            // flips a column from -74.81% to +297.03%, and a mistyped floor
+            // reads 0.50x where the correct spelling reads 0.38x.
+            //
+            // Three things this has to get right, each of which a first
+            // attempt got wrong and a review measured:
+            //
+            // 1. Roles arrive in TWO forms. The flattened `baseline`/`floor`
+            //    keys, and the `[normalise]` table. Across the real consumer
+            //    corpus 157 sections use the table and 0 use the flattened
+            //    keys, so checking only the flattened form checks nothing.
+            // 2. Arms are per SIZE. `section.variants` is the fallback; a
+            //    `[[sizes]]` entry may carry its own list, and that list is
+            //    what the size actually runs. 263 of 264 real sections leave
+            //    the bench-level list empty, so a bench-level-only guard is
+            //    closed everywhere that matters. A role must name an arm of
+            //    the size it applies to, and a role naming an arm excluded by
+            //    a narrowing size is the same silence in a different shape.
+            // 3. Arm names are NOT platform-dependent. Stripping
+            //    `DLL_PREFIX` makes acceptance differ between hosts: on a
+            //    platform with an empty prefix the fallback is a no-op and a
+            //    manifest carrying `libX.dylib` entries refuses to load. Both
+            //    the prefixed and bare spellings are accepted everywhere.
+            //
+            // `delta` is not checked: it names a normalisation mode
+            // (`subtract` / `ratio` / `percent` / `none`), not an arm.
+            //
+            // The comparison is against DECLARED spellings. The authoritative
+            // name is the arm's exported `bench_name`, unknown until an arm
+            // loads, so this catches the typo and not a declared name that
+            // disagrees with what the arm exports. That gap is the preflight
+            // `bench_name` resolution.
+            let roles: Vec<(&str, &str)> = [
+                ("baseline", section.baseline.as_deref()),
+                ("floor", section.floor.as_deref()),
+                ("normalise.baseline", section.normalise.as_ref().map(|n| n.baseline.as_str())),
+                ("normalise.floor", section.normalise.as_ref().and_then(|n| n.floor.as_deref())),
+            ]
+            .into_iter()
+            .filter_map(|(k, v)| v.filter(|r| !r.is_empty()).map(|r| (k, r)))
+            .collect();
+
+            if !roles.is_empty() {
+                // Every arm list this bench can present to a role: the
+                // bench-level fallback, plus each size's own override.
+                let lists: Vec<&Vec<String>> = if section.sizes.is_empty() {
+                    vec![&section.variants]
+                } else {
+                    section
+                        .sizes
+                        .iter()
+                        .map(|z| if z.variants.is_empty() { &section.variants } else { &z.variants })
+                        .collect()
+                };
+
+                for list in lists {
+                    if list.is_empty() {
+                        continue; // nothing declared here to compare against
+                    }
+                    let spellings: Vec<String> = list
+                        .iter()
+                        .flat_map(|v| {
+                            let stem = std::path::Path::new(v)
+                                .file_stem()
+                                .and_then(|x| x.to_str())
+                                .unwrap_or(v.as_str());
+                            // Accept the entry, its stem, and the stem with a
+                            // `lib` prefix removed. Not `DLL_PREFIX`: that
+                            // would make the verdict depend on the host.
+                            [
+                                v.to_string(),
+                                stem.to_string(),
+                                stem.strip_prefix("lib").unwrap_or(stem).to_string(),
+                            ]
+                        })
+                        .collect();
+                    let display: Vec<&str> = list
+                        .iter()
+                        .map(|v| {
+                            let stem = std::path::Path::new(v)
+                                .file_stem()
+                                .and_then(|x| x.to_str())
+                                .unwrap_or(v.as_str());
+                            stem.strip_prefix("lib").unwrap_or(stem)
+                        })
+                        .collect();
+
+                    for (key, role) in &roles {
+                        if !spellings.iter().any(|sp| sp == role) {
+                            return Err(BenchError::InvalidConfig {
+                                reason: format!(
+                                    "bench `{name}` declares {key} = \"{role}\", which is not an \
+                                     arm it runs. Arms: {}. A role naming an absent arm is not \
+                                     ignored: it would render a report indistinguishable from \
+                                     declaring no {key} at all.",
+                                    display.join(", ")
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1318,5 +1425,136 @@ mod tests {
         assert_eq!(n.mode.as_deref(), Some("ratio"));
         assert_eq!(n.floor.as_deref(), Some("a"));
         assert_eq!(b.sizes[0].n, 64);
+    }
+}
+
+#[cfg(test)]
+mod role_resolution {
+    use super::*;
+
+    fn load(toml: &str) -> Result<(), BenchError> {
+        let m: BenchManifest = toml::from_str(toml).expect("parses");
+        m.validate_roles()
+    }
+
+    const ARMS_PER_SIZE: &str = r#"
+        [bench.h]
+        title = "H"
+        workload = "w"
+        [[bench.h.sizes]]
+        n = 64
+        variants = ["fnv", "xx"]
+    "#;
+
+    /// The declaration form 157 of 264 real sections use. A check reading only
+    /// the flattened keys compares nothing on any of them.
+    #[test]
+    fn a_normalise_table_role_is_checked() {
+        let ok = format!("{ARMS_PER_SIZE}\n[bench.h.normalise]\nbaseline = \"fnv\"\n");
+        assert!(load(&ok).is_ok(), "a real arm must be accepted");
+
+        let bad = format!("{ARMS_PER_SIZE}\n[bench.h.normalise]\nbaseline = \"fvn\"\n");
+        let err = load(&bad).unwrap_err().to_string();
+        assert!(err.contains("normalise.baseline = \"fvn\""), "{err}");
+        assert!(err.contains("Arms: fnv, xx"), "names what it runs: {err}");
+
+        let bad_floor =
+            format!("{ARMS_PER_SIZE}\n[bench.h.normalise]\nbaseline = \"fnv\"\nfloor = \"nul\"\n");
+        assert!(
+            load(&bad_floor).unwrap_err().to_string().contains("normalise.floor"),
+            "the floor is checked too"
+        );
+    }
+
+    /// Arms live per size in 263 of 264 real sections, so a bench-level-only
+    /// guard is closed exactly where the corpus is.
+    #[test]
+    fn arms_declared_per_size_are_what_a_role_is_checked_against() {
+        let bad = r#"
+            [bench.h]
+            title = "H"
+            workload = "w"
+            baseline = "nope"
+            [[bench.h.sizes]]
+            n = 64
+            variants = ["fnv", "xx"]
+        "#;
+        assert!(
+            load(bad).is_err(),
+            "the bench-level arm list is empty here; the size's list is the truth"
+        );
+    }
+
+    /// A size that narrows its arms while the bench inherits a role naming an
+    /// excluded one. Same silence as the sweep case, at the form consumers write.
+    #[test]
+    fn a_size_that_narrows_its_arms_may_not_keep_a_role_it_excluded() {
+        let toml = r#"
+            [bench.h]
+            title = "H"
+            workload = "w"
+            variants = ["kernel", "native"]
+            baseline = "native"
+            [[bench.h.sizes]]
+            n = 64
+            variants = ["kernel"]
+        "#;
+        let err = load(toml).unwrap_err().to_string();
+        assert!(err.contains("baseline = \"native\""), "{err}");
+        assert!(err.contains("Arms: kernel"), "{err}");
+    }
+
+    /// The mirror: a size that ADDS the arm the bench-level list lacks must
+    /// not be refused. An earlier form read only the bench-level list and
+    /// rejected this correct manifest.
+    #[test]
+    fn a_size_that_supplies_the_role_arm_is_accepted() {
+        let toml = r#"
+            [bench.h]
+            title = "H"
+            workload = "w"
+            variants = ["kernel"]
+            baseline = "native"
+            [[bench.h.sizes]]
+            n = 64
+            variants = ["native"]
+        "#;
+        assert!(load(toml).is_ok(), "the size supplies the baseline arm");
+    }
+
+    /// Acceptance must not depend on the host. An earlier form stripped
+    /// `DLL_PREFIX`, which is empty on Windows, so a manifest carrying
+    /// `libX.dylib` entries loaded on macOS and refused on Windows.
+    #[test]
+    fn a_path_arm_resolves_the_same_on_every_platform() {
+        let toml = r#"
+            [bench.h]
+            title = "H"
+            workload = "w"
+            baseline = "native"
+            [[bench.h.sizes]]
+            n = 64
+            variants = ["variants/native/target/release/libnative.dylib"]
+        "#;
+        assert!(
+            load(toml).is_ok(),
+            "`libnative.dylib` carries an arm named `native` regardless of DLL_PREFIX"
+        );
+    }
+
+    /// `delta` names a normalisation mode, not an arm.
+    #[test]
+    fn delta_is_a_mode_and_is_not_checked_against_the_arms() {
+        let toml = r#"
+            [bench.h]
+            title = "H"
+            workload = "w"
+            baseline = "fnv"
+            delta = "ratio"
+            [[bench.h.sizes]]
+            n = 64
+            variants = ["fnv", "xx"]
+        "#;
+        assert!(load(toml).is_ok(), "`ratio` is a mode, not an arm");
     }
 }

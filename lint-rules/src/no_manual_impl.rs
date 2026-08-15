@@ -9,7 +9,7 @@ use tree_sitter::Node;
 
 use crate::{CrateLint, Lint, LintContext, LintError};
 
-/// (trait_name, crate suffix — impls in `<prefix>-<suffix>` are exempt)
+/// (trait_name, crate suffix: impls in `<prefix>-<suffix>` are exempt)
 ///
 /// NOTE: this hardcoded list is a stopgap until #[only_macro_gen] attribute
 /// auto-discovery is implemented (Phase 1 of the audit round). After that,
@@ -111,7 +111,7 @@ fn check_impl(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     ctx.crate_name.to_string(),
                     line_idx + 1,
                     "no-manual-impl",
-                    format!("suppressed by lint:allow(no_manual_impl) on `impl {forbidden_trait} for {type_part}` — review periodically"),
+                    format!("suppressed by lint:allow(no_manual_impl) on `impl {forbidden_trait} for {type_part}`: review periodically"),
                 ));
             } else {
                 errors.push(LintError {
@@ -121,7 +121,7 @@ fn check_impl(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     lint_name: "no-manual-impl",
                     severity: crate::Severity::HARD_ERROR,
                     message: format!(
-                        "manual `impl {forbidden_trait} for {type_part}` — use the appropriate define_*! macro",
+                        "manual `impl {forbidden_trait} for {type_part}`: use the appropriate define_*! macro",
                     ),
                     finding_kind: None,
                 });

@@ -80,7 +80,7 @@ impl WorkspaceLint for UndocumentedType {
                                 line,
                                 LINT_NAME,
                                 format!(
-                                    "`{type_name}` is in SHAME.md.tmpl ({word_count} words) — \
+                                    "`{type_name}` is in SHAME.md.tmpl ({word_count} words): \
                                      add it to a design doc via a design round to resolve",
                                 ),
                             ));
@@ -91,7 +91,7 @@ impl WorkspaceLint for UndocumentedType {
                                 line,
                                 LINT_NAME,
                                 format!(
-                                    "`{type_name}` SHAME.md.tmpl entry too short ({word_count}/50 words) — \
+                                    "`{type_name}` SHAME.md.tmpl entry too short ({word_count}/50 words): \
                                      explain why it exists and how it will be documented. \
                                      BLOCKS BUILD AND PUSH until fixed.",
                                 ),

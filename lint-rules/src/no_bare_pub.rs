@@ -98,7 +98,7 @@ fn is_bare_pub(trimmed: &str) -> bool {
         return false;
     }
 
-    // pub(crate), pub(super), pub(in ...) are scoped — allowed
+    // pub(crate), pub(super), pub(in ...) are scoped: allowed
     if trimmed.starts_with("pub(crate)")
         || trimmed.starts_with("pub(super)")
         || trimmed.starts_with("pub(in ")
@@ -116,7 +116,7 @@ fn is_bare_pub(trimmed: &str) -> bool {
         return false;
     }
 
-    // Skip `pub mod` — proc macro attrs on file modules are unstable
+    // Skip `pub mod`: proc macro attrs on file modules are unstable
     if trimmed.starts_with("pub mod ") {
         return false;
     }

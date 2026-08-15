@@ -37,7 +37,7 @@ impl CrateLint for NoRawErrorOutsidePrimitives {
                         ctx.crate_name.to_string(),
                         line_num + 1,
                         "no-raw-error-outside-primitives",
-                        "suppressed by lint:allow(no_raw_error) — review periodically".to_string(),
+                        "suppressed by lint:allow(no_raw_error): review periodically".to_string(),
                     ));
                 } else {
                     errors.push(LintError {

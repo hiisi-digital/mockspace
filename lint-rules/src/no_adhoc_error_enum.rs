@@ -64,7 +64,7 @@ fn check_enum(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 ctx.crate_name.to_string(),
                 line_idx + 1,
                 "no-adhoc-error-enum",
-                format!("suppressed by lint:allow(no_adhoc_error_enum) on `{name}` — review periodically"),
+                format!("suppressed by lint:allow(no_adhoc_error_enum) on `{name}`: review periodically"),
             ));
         } else {
             errors.push(LintError {
@@ -74,7 +74,7 @@ fn check_enum(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 lint_name: "no-adhoc-error-enum",
                 severity: crate::Severity::HARD_ERROR,
                 message: format!(
-                    "ad-hoc error enum `{name}` — use define_error!, define_warning!, or define_raw_error!",
+                    "ad-hoc error enum `{name}`: use define_error!, define_warning!, or define_raw_error!",
                 ),
                 finding_kind: None,
             });

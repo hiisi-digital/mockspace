@@ -181,7 +181,10 @@ pub fn workload_fn_source(manifest: &BenchManifest) -> Result<String, String> {
     }
     let mut declared: Vec<(&String, &mockspace_bench_harness::config::WorkloadSection)> =
         manifest.workload.iter().collect();
-    declared.sort_by_key(|(name, _)| name.clone());
+    // Sort by borrowed key rather than cloning: `name` is a `&&String` here,
+    // so `.clone()` duplicated the reference rather than the string and the
+    // allocation it looked like it was avoiding never happened either way.
+    declared.sort_by(|a, b| a.0.cmp(b.0));
     for (name, section) in declared {
         programs.push((name.clone(), section.stages.clone()));
     }

@@ -1,6 +1,6 @@
 [package]
 name = "cargo-mock"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 # The one crate in this repo that publishes. The engine (`mockspace`) stays
 # `publish = false`; this thin launcher git-installs the per-repo pinned
