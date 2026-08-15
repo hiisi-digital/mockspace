@@ -287,7 +287,9 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
 /// Remove nested cargo build dirs under `benches/`, `tests/`, and research
 /// `sketches/`. The repo-root `target/` and the mockspace install at
 /// `mock/target/` are spared: the former is the active build dir, the latter
-/// holds the proxy crate + git hooks (removing it uninstalls mockspace).
+/// holds the generated validator the durable hooks delegate to. Removing it
+/// does not uninstall mockspace, since the durable hooks and `core.hooksPath`
+/// live outside the repo, but it does break the gate until the next run.
 pub(crate) fn cmd_clean(cfg: &Config) -> ExitCode {
     let targets = nested_artifact_targets(&cfg.repo_root);
     if targets.is_empty() {

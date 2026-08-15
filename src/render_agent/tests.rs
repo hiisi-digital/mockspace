@@ -230,7 +230,13 @@ fn agent_gate_hook_self_heals_then_blocks() {
     // ran `cargo check` in the mock workspace, on the reasoning that
     // build.rs re-ran the bootstrap; that bootstrap is gone and its
     // remaining symbol fails the build, so the step healed nothing.
-    assert!(hook.contains("cd \"$root\" && cargo mock"), "{hook}");
+    assert!(hook.contains("cd \"$root\" && cargo mock activate"), "{hook}");
+    // The narrow repair is tried before the full run, because a full run
+    // regenerates docs and agent rules and this executes while a commit is in
+    // flight.
+    let narrow = hook.find("cargo mock activate").expect("narrow repair present");
+    let full = hook.rfind("&& cargo mock )").expect("full repair present");
+    assert!(narrow < full, "the narrow repair must be attempted first");
     assert!(
         !hook.contains("cargo check"),
         "the cargo check self-heal cannot restore the gate: build.rs no longer bootstraps"
@@ -689,7 +695,7 @@ fn write_guard_allows(target_rel: &str) -> bool {
         .current_dir(&repo)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     {
@@ -698,8 +704,27 @@ fn write_guard_allows(target_rel: &str) -> bool {
     }
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
     let _ = std::fs::remove_dir_all(&repo);
-    !stdout.contains("deny")
+
+    // Fail closed on anything that is not a verdict. Testing
+    // `!stdout.contains("deny")` reads a script that errored out as an allow,
+    // which is the opposite of what a gate must do under uncertainty.
+    assert!(
+        out.status.success(),
+        "the guard exited {:?} for `{target_rel}`: {stderr}",
+        out.status.code()
+    );
+    let denied = stdout.contains(r#""permissionDecision":"deny""#);
+    // The allow helper emits a hookSpecificOutput carrying no decision key at
+    // all, so an allow is the absence of a deny inside a well-formed verdict
+    // rather than an explicit "allow". Requiring the envelope is what keeps a
+    // crashed script from reading as permission.
+    assert!(
+        stdout.contains("hookSpecificOutput"),
+        "the guard produced no verdict envelope for `{target_rel}`: stdout={stdout} stderr={stderr}"
+    );
+    !denied
 }
 
 #[test]

@@ -3,7 +3,14 @@
 **Date:** 2026-07-19
 **Supersedes-in-spirit:** `202607191140_launcher-vs-buildrs.md` (the first sketch). This is the concrete
 design op asked for: parity first, then dissolve the proxy.
-**Status:** design for confirmation. High blast radius (every consumer repo). Not implemented.
+**Status when written:** design for confirmation. High blast radius (every consumer repo). Not
+implemented.
+
+**Status now:** implemented, and landed by a route other than this document, which sat on an unmerged
+branch while the work shipped. `src/bootstrap/mod.rs` records that the build.rs bootstrap, the
+`.cargo` alias and the generated proxy crate are gone and that `bootstrap_from_buildscript` survives
+as a tombstone. The file lands as audit trail; the status line above is preserved as what it said at
+the time rather than rewritten.
 
 ## What the bootstrap does today (the parity audit)
 

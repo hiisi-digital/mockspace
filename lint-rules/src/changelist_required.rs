@@ -46,7 +46,10 @@ impl RepoLint for ChangelistRequired {
         }
 
         // Check if any .rs source files are modified.
-        let modified = drop_fmt_only(workspace_root, get_all_modified_rs_files(workspace_root));
+        let modified = crate::fmt_only::drop_fmt_only(
+            workspace_root,
+            get_all_modified_rs_files(workspace_root),
+        );
 
         modified
             .into_iter()
@@ -116,23 +119,6 @@ impl RepoLint for ChangelistRequired {
 }
 
 /// Get all modified .rs files in crates/ (staged + unstaged + untracked).
-/// Drop files whose only change is what `rustfmt` would have produced.
-///
-/// The pre-commit auto-fix formats staged sources, so a round whose
-/// formatting drifted lands fmt changes after its src changelist locks and
-/// the gate refuses them, forcing a mechanical micro-round that changes no
-/// design. A change that reproduces `rustfmt`'s output for the committed
-/// version byte for byte carries no edit, so it passes.
-///
-/// The check is verified rather than declared, and it fails closed: a
-/// missing `rustfmt`, an untracked file, or source `rustfmt` will not parse
-/// all leave the file in the list and the gate refuses as before.
-fn drop_fmt_only(workspace_root: &Path, files: Vec<(String, String)>) -> Vec<(String, String)> {
-    files
-        .into_iter()
-        .filter(|(file, _)| crate::fmt_only::is_fmt_only_change(workspace_root, file).is_err())
-        .collect()
-}
 
 fn get_all_modified_rs_files(workspace_root: &Path) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = Vec::new();
@@ -223,10 +209,19 @@ fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
 /// catalogued as an ignored test below. Closing it needs a signal for which
 /// commit shape is in flight, which the sanitized hook environment no longer
 /// provides for free.
-fn staged_or_worktree(workspace_root: &Path, file: &str, source: &str) -> Option<String> {
+pub(crate) fn staged_or_worktree(
+    workspace_root: &Path,
+    file: &str,
+    source: &str,
+) -> Option<String> {
     if source == "staged" {
         let out = Command::new("git")
-            .args(["show", &format!(":{file}")])
+            // `:./` resolves the path against the current directory. The bare
+            // `:{file}` form resolves from the repository root, so from a mock
+            // directory it reads `<repo>/crates/...` rather than
+            // `<repo>/mock/crates/...`: the wrong blob where both exist, and a
+            // silent fall-through to the worktree where they do not.
+            .args(["show", &format!(":./{file}")])
             .current_dir(workspace_root)
             .output()
             .ok()?;
@@ -335,14 +330,17 @@ mod fmt_only_exemption {
     /// A mock dir in CLOSED phase (both changelists locked) with one
     /// committed, deliberately unformatted source file.
     fn frozen_repo(name: &str, committed: &str) -> std::path::PathBuf {
+        // A process-wide counter, not a clock. SystemTime here has microsecond
+        // resolution at best (twenty back-to-back samples yield four distinct
+        // values on this host), and `create_dir_all` succeeds silently on an
+        // existing directory, so two tests starting in the same tick shared a
+        // scratch directory and overwrote each other's fixtures.
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "clr-fmt-{}-{}-{}",
             name,
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("crates/x/src")).unwrap();
@@ -401,10 +399,10 @@ mod fmt_only_exemption {
     #[test]
     fn a_fmt_only_change_passes_the_frozen_phase_and_a_smuggled_edit_does_not() {
         let root = frozen_repo("both", UGLY);
-        let Some(fmt) = formatted(&root, UGLY) else {
+        let fmt = formatted(&root, UGLY).unwrap_or_else(|| {
             let _ = std::fs::remove_dir_all(&root);
-            return; // no rustfmt on this machine
-        };
+            panic!("rustfmt is not on PATH; the pinned toolchain provides it")
+        });
         assert_ne!(fmt, UGLY, "the fixture must actually be reformatted");
 
         // rustfmt's own output, in CLOSED phase: permitted.
@@ -435,5 +433,107 @@ mod fmt_only_exemption {
         let errs = blocked(&root);
         let _ = std::fs::remove_dir_all(&root);
         assert!(!errs.is_empty(), "the gate must still be a gate");
+    }
+}
+
+#[cfg(test)]
+mod fmt_only_judges_the_committed_content {
+    use std::process::Command;
+
+    use super::*;
+
+    /// A mock dir in CLOSED phase with one committed, misformatted source file.
+    fn frozen(name: &str, committed: &str) -> std::path::PathBuf {
+        // A process-wide counter, not a clock. SystemTime here has microsecond
+        // resolution at best (twenty back-to-back samples yield four distinct
+        // values on this host), and `create_dir_all` succeeds silently on an
+        // existing directory, so two tests starting in the same tick shared a
+        // scratch directory and overwrote each other's fixtures.
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "clr-idx-{}-{}-{}",
+            name,
+            std::process::id(),
+            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("crates/x/src")).unwrap();
+        std::fs::create_dir_all(root.join("design_rounds")).unwrap();
+        for cl in ["202601010000_changelist.doc.lock.md", "202601010001_changelist.src.lock.md"] {
+            std::fs::write(root.join("design_rounds").join(cl), "locked\n").unwrap();
+        }
+        std::fs::write(root.join("crates/x/src/lib.rs"), committed).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@example.com"],
+            vec!["config", "user.name", "t"],
+            vec!["add", "-A"],
+            vec!["commit", "-q", "-m", "seed", "--no-gpg-sign"],
+        ] {
+            Command::new("git").args(&args).current_dir(&root).output().unwrap();
+        }
+        root
+    }
+
+    fn gate(root: &std::path::Path) -> Vec<LintError> {
+        let crates = std::collections::BTreeSet::new();
+        ChangelistRequired.check_repo(&RepoContext {
+            mock_dir:   root,
+            repo_root:  root,
+            all_crates: &crates,
+            invocation: None,
+        })
+    }
+
+    /// The bypass: stage a semantic edit, then leave the worktree holding
+    /// exactly `rustfmt(HEAD)`. A predicate that reads the worktree calls the
+    /// change fmt-only and drops it, while the commit carries the edit.
+    ///
+    /// Reachable without adversarial intent: the pre-commit auto-fix runs
+    /// before the lints and deliberately does not re-stage a partially staged
+    /// file, so it leaves the worktree formatted while the index keeps what
+    /// was staged.
+    #[test]
+    fn a_semantic_edit_in_the_index_is_refused_even_when_the_worktree_is_formatted() {
+        const UGLY: &str = "pub fn a(  x:u8 )->u8{x+1}\n";
+        let root = frozen("bypass", UGLY);
+
+        let mut c = Command::new("rustfmt")
+            .args(["--emit=stdout", "--quiet"])
+            .current_dir(&root)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()
+            .and_then(|mut ch| {
+                use std::io::Write;
+                ch.stdin.as_mut()?.write_all(UGLY.as_bytes()).ok()?;
+                Some(ch)
+            })
+            .map(|ch| ch.wait_with_output().unwrap());
+        let out = c.take().filter(|o| o.status.success()).unwrap_or_else(|| {
+            let _ = std::fs::remove_dir_all(&root);
+            panic!("rustfmt is not on PATH; the pinned toolchain provides it")
+        });
+        let fmt = String::from_utf8_lossy(&out.stdout).to_string();
+
+        // Index: a semantic edit. Worktree: exactly rustfmt(HEAD).
+        let file = root.join("crates/x/src/lib.rs");
+        std::fs::write(&file, "pub fn a(x: u8) -> u8 {\n    x + 999\n}\n").unwrap();
+        Command::new("git")
+            .args(["add", "crates/x/src/lib.rs"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        std::fs::write(&file, &fmt).unwrap();
+
+        let errs = gate(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            !errs.is_empty(),
+            "the commit carries a semantic edit in the index; a worktree-only \
+             check calls it fmt-only and lets it through a frozen phase"
+        );
     }
 }
