@@ -255,6 +255,66 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
     Ok(dirs)
 }
 
+/// The release profile the framework guarantees, passed on every
+/// build rather than left to the consumer's manifests.
+///
+/// A `[profile.release]` table is honoured only in a workspace root.
+/// A variant that is a workspace member therefore loses its own
+/// silently, and a consumer whose manifests never declared one never
+/// had it at all. Both have been observed in the same tree: ninety
+/// variant crates built at cargo's default `lto = false,
+/// codegen-units = 16` while the framework's documentation promised
+/// fat LTO and a single codegen unit.
+///
+/// Codegen-unit partitioning is not stable across builds, so the
+/// default is a reproducibility defect and not only a slower one:
+/// two runs of an unchanged variant can differ in inlining and
+/// layout, which is exactly the contamination per-variant cdylib
+/// isolation exists to prevent.
+const PROFILE_ARGS: [&str; 6] = [
+    "--config",
+    "profile.release.opt-level=3",
+    "--config",
+    "profile.release.lto=\"fat\"",
+    "--config",
+    "profile.release.codegen-units=1",
+];
+
+/// The binary name a bench manifest declares, read rather than
+/// assumed.
+///
+/// This was hardcoded to `benches`, the starter template's package
+/// name. A consumer that renamed its bench package built everything
+/// successfully and then failed with "no bench binary found",
+/// because the name the scaffold happened to use was being treated
+/// as part of the contract.
+fn bench_bin_name(manifest: &Path) -> Result<String, String> {
+    let text =
+        fs::read_to_string(manifest).map_err(|e| format!("reading {}: {e}", manifest.display()))?;
+    let doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| format!("parsing {}: {e}", manifest.display()))?;
+    if let Some(name) = doc
+        .get("bin")
+        .and_then(|b| b.as_array_of_tables())
+        .and_then(|a| a.iter().next())
+        .and_then(|t| t.get("name"))
+        .and_then(|v| v.as_str())
+    {
+        return Ok(name.to_string());
+    }
+    doc.get("package")
+        .and_then(|p| p.get("name"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "{} declares neither a [[bin]] name nor a [package] name",
+                manifest.display()
+            )
+        })
+}
+
 fn build_variants_and_bin_filtered(
     bench_dir: &Path,
     only_dirs: Option<&[String]>,
@@ -280,7 +340,9 @@ fn build_variants_and_bin_filtered(
             if manifest.exists() {
                 eprintln!("  building variant {}...", path.display());
                 let status = Command::new("cargo")
-                    .args(["build", "--release", "--manifest-path"])
+                    .args(["build", "--release"])
+                    .args(PROFILE_ARGS)
+                    .arg("--manifest-path")
                     .arg(&manifest)
                     .status()
                     .map_err(|e| format!("spawning cargo for {}: {e}", path.display()))?;
@@ -304,7 +366,9 @@ fn build_bin_only(bench_dir: &Path) -> Result<(), String> {
     }
     eprintln!("  building bench binary...");
     let status = Command::new("cargo")
-        .args(["build", "--release", "--manifest-path"])
+        .args(["build", "--release"])
+        .args(PROFILE_ARGS)
+        .arg("--manifest-path")
         .arg(&manifest)
         .status()
         .map_err(|e| format!("spawning cargo: {e}"))?;
@@ -316,8 +380,11 @@ fn build_bin_only(bench_dir: &Path) -> Result<(), String> {
 
 fn locate_bench_bin(bench_dir: &Path) -> Result<PathBuf, String> {
     // Cargo's default target dir is `<manifest_dir>/target`. The
-    // bench crate name is `benches` (set in the starter Cargo.toml).
-    // Allow either macOS or Linux extension by simple existence check.
+    // binary's name comes from the consumer's own manifest; assuming
+    // the starter template's `benches` made every renamed bench
+    // package unlocatable.
+    let manifest = bench_dir.join("Cargo.toml");
+    let name = bench_bin_name(&manifest)?;
     let release_dir = bench_dir.join("target/release");
     if !release_dir.exists() {
         return Err(format!(
@@ -325,15 +392,17 @@ fn locate_bench_bin(bench_dir: &Path) -> Result<PathBuf, String> {
             bench_dir.display()
         ));
     }
-    let candidates = [release_dir.join("benches"), release_dir.join("benches.exe")];
+    let candidates = [release_dir.join(&name), release_dir.join(format!("{name}.exe"))];
     for c in &candidates {
         if c.exists() {
             return Ok(c.clone());
         }
     }
     Err(format!(
-        "no bench binary found in {}; expected `benches` or `benches.exe`",
-        release_dir.display()
+        "no bench binary found in {}; expected `{name}` or `{name}.exe`, the name \
+         declared by {}",
+        release_dir.display(),
+        manifest.display()
     ))
 }
 
@@ -704,3 +773,79 @@ detection, optional perf counter integration, asm dedup check.
   and `harness::write_report`.
 - Origin: framework was extracted from `polka-dots/mock/benches/`.
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(path: &Path, contents: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn bin_name_prefers_the_declared_bin_over_the_package() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = tmp.path().join("Cargo.toml");
+        write(
+            &m,
+            "[package]\nname = \"arvo-benches\"\n\n[[bin]]\nname = \"custom-runner\"\npath = \
+             \"src/main.rs\"\n",
+        );
+        assert_eq!(bench_bin_name(&m).unwrap(), "custom-runner");
+    }
+
+    #[test]
+    fn bin_name_falls_back_to_the_package_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = tmp.path().join("Cargo.toml");
+        write(&m, "[package]\nname = \"arvo-benches\"\n");
+        assert_eq!(bench_bin_name(&m).unwrap(), "arvo-benches");
+    }
+
+    /// The regression this change exists for. A consumer whose bench
+    /// package is not called `benches` was unlocatable: the build
+    /// succeeded and the run then failed. The name must come from the
+    /// manifest, so a package named anything else resolves.
+    #[test]
+    fn bin_name_is_not_the_starter_templates_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = tmp.path().join("Cargo.toml");
+        write(&m, "[package]\nname = \"arvo-benches\"\n");
+        let got = bench_bin_name(&m).unwrap();
+        assert_ne!(got, "benches", "the hardcoded name must not survive");
+        assert_eq!(got, "arvo-benches");
+    }
+
+    #[test]
+    fn bin_name_errors_when_the_manifest_names_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = tmp.path().join("Cargo.toml");
+        write(&m, "[dependencies]\n");
+        let err = bench_bin_name(&m).unwrap_err();
+        assert!(err.contains("declares neither"), "unhelpful error: {err}");
+    }
+
+    #[test]
+    fn bin_name_errors_when_the_manifest_is_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = tmp.path().join("Cargo.toml");
+        assert!(bench_bin_name(&m).is_err());
+    }
+
+    /// The profile is the framework's guarantee, so it travels on the
+    /// command line where a workspace-member manifest cannot lose it.
+    /// Asserted as pairs so a reordering or a dropped flag fails.
+    #[test]
+    fn profile_args_pin_all_three_settings() {
+        let pairs: Vec<(&str, &str)> = PROFILE_ARGS.chunks(2).map(|c| (c[0], c[1])).collect();
+        assert_eq!(pairs.len(), 3);
+        for (flag, _) in &pairs {
+            assert_eq!(*flag, "--config");
+        }
+        let values: Vec<&str> = pairs.iter().map(|(_, v)| *v).collect();
+        assert!(values.contains(&"profile.release.lto=\"fat\""));
+        assert!(values.contains(&"profile.release.codegen-units=1"));
+        assert!(values.contains(&"profile.release.opt-level=3"));
+    }
+}
