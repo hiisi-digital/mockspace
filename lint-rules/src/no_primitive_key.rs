@@ -56,7 +56,7 @@ impl CrateLint for NoPrimitiveKey {
                                     ctx.crate_name.to_string(),
                                     line_num + 1,
                                     "no-primitive-key",
-                                    "suppressed by lint:allow(no_primitive_key) — review periodically".to_string(),
+                                    "suppressed by lint:allow(no_primitive_key): review periodically".to_string(),
                                 ));
                             } else {
                                 errors.push(LintError {
@@ -66,7 +66,7 @@ impl CrateLint for NoPrimitiveKey {
                                     lint_name:    "no-primitive-key",
                                     severity:     crate::Severity::HARD_ERROR,
                                     message:      format!(
-                                        "`{map_type}<{prim}, ...>` — use a define_id! type as key",
+                                        "`{map_type}<{prim}, ...>`: use a define_id! type as key",
                                     ),
                                     finding_kind: None,
                                 });

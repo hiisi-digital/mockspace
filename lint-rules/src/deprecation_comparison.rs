@@ -58,17 +58,17 @@ impl WorkspaceLint for DeprecationComparison {
 
         for dep_cl in &deprecated {
             // Find the active (non-deprecated, non-locked) CL of the same kind.
-            // Also accept locked CLs — they should have had the comparison when active.
+            // Also accept locked CLs: they should have had the comparison when active.
             let active_cl = all_cls
                 .iter()
                 .find(|cl| cl.kind == dep_cl.kind && cl.status != ClStatus::Deprecated);
 
             let active_cl = match active_cl {
                 Some(cl) => cl,
-                None => continue, // no active CL of same kind — not a violation
+                None => continue, // no active CL of same kind: not a violation
             };
 
-            // SHAME check — keyed by active CL filename.
+            // SHAME check: keyed by active CL filename.
             if shame_entry_with_min_words(&shame_blobs, &active_cl.filename, 50) {
                 continue;
             }

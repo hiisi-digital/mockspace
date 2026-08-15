@@ -85,13 +85,13 @@ fn check_changelist_edit(cl: &ParsedChangelist, phase: Phase) -> Option<String> 
     match cl.status {
         ClStatus::Locked => {
             Some(format!(
-                "cannot be modified — it is locked and frozen forever. \
+                "cannot be modified: it is locked and frozen forever. \
                  Use SHAME.md.tmpl to document gaps discovered during execution."
             ))
         },
         ClStatus::Deprecated => {
             Some(format!(
-                "cannot be modified — it is deprecated and frozen forever."
+                "cannot be modified: it is deprecated and frozen forever."
             ))
         },
         ClStatus::Active => {
@@ -99,7 +99,7 @@ fn check_changelist_edit(cl: &ParsedChangelist, phase: Phase) -> Option<String> 
                 ClKind::Doc => {
                     if phase != Phase::Doc {
                         Some(format!(
-                            "cannot be modified in phase {} — active doc changelists \
+                            "cannot be modified in phase {}: active doc changelists \
                              are only editable in DOC phase.",
                             phase.label(),
                         ))
@@ -110,7 +110,7 @@ fn check_changelist_edit(cl: &ParsedChangelist, phase: Phase) -> Option<String> 
                 ClKind::Src => {
                     if phase != Phase::Src {
                         Some(format!(
-                            "cannot be modified in phase {} — active src changelists \
+                            "cannot be modified in phase {}: active src changelists \
                              are only editable in IMPL phase.",
                             phase.label(),
                         ))

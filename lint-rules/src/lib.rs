@@ -74,7 +74,7 @@ use tree_sitter::Tree;
 // Proc-macro crate list (single source of truth)
 // ---------------------------------------------------------------------------
 
-/// Fallback proc-macro crate list. Empty — the caller should always pass
+/// Fallback proc-macro crate list. Empty: the caller should always pass
 /// the project-specific list via `LintContext::proc_macro_crates`.
 pub const PROC_MACRO_CRATES: &[&str] = &[];
 
@@ -153,7 +153,7 @@ pub struct LintContext<'a> {
     /// the introductions set should be *detected* from each crate's
     /// DESIGN.md.tmpl / source parse, not declared in a parallel
     /// TOML table. See the `Config.primitive_introductions` docs on
-    /// the mockspace crate for the future direction — once that
+    /// the mockspace crate for the future direction: once that
     /// lands, the TOML map becomes additive rather than the sole
     /// source of truth.
     pub primitive_introductions: &'a BTreeMap<String, Vec<String>>,
@@ -272,7 +272,7 @@ impl Severity {
     pub const HARD_ERROR: Self = Self::new(Level::Error, Level::Error, Level::Error);
     /// Informational only.
     pub const INFO_ONLY: Self = Self::new(Level::Info, Level::Info, Level::Info);
-    /// Completely disabled — not reported at any gate.
+    /// Completely disabled: not reported at any gate.
     pub const OFF: Self = Self::new(Level::Pass, Level::Pass, Level::Pass);
     /// Warns on commit and build, blocks push only. For work-in-progress
     /// that must be clean before sharing.
@@ -2426,5 +2426,51 @@ mod declared_default_severity_tests {
     fn cross_crate_config_can_turn_on_a_lint_that_declares_off() {
         let cfg = config_of("declares-off", Severity::HARD_ERROR);
         assert_eq!(fired_across(AlwaysFiresAcross("declares-off", Severity::OFF), Some(&cfg)), 1);
+    }
+}
+
+#[cfg(test)]
+mod no_em_dashes_in_our_own_text {
+    /// The workspace forbids em-dashes in every authored surface, and lint
+    /// messages are the most user-facing text this crate has: they print into
+    /// a consumer's terminal every time a gate fires. Enforcement existed only
+    /// for generated agent rules, so this crate accumulated 106 of them while
+    /// being the tool that carries the ban.
+    ///
+    /// Walks its own sources rather than checking a rendered artifact, because
+    /// the message strings never become one.
+    #[test]
+    fn this_crate_prints_no_em_dashes_at_a_consumer() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let Ok(text) = std::fs::read_to_string(&p) else {
+                        continue;
+                    };
+                    for (i, line) in text.lines().enumerate() {
+                        if line.contains('\u{2014}') {
+                            out.push(format!("{}:{}: {}", p.display(), i + 1, line.trim()));
+                        }
+                    }
+                }
+            }
+        }
+
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        assert!(src.is_dir(), "{} is not a directory", src.display());
+        let mut hits = Vec::new();
+        walk(&src, &mut hits);
+        assert!(
+            hits.is_empty(),
+            "em-dashes are forbidden in authored text, and these reach a \
+             consumer's terminal. Use a period, comma, colon, or parentheses:\n{}",
+            hits.join("\n")
+        );
     }
 }

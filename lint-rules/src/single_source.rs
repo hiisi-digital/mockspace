@@ -1,7 +1,7 @@
 //! Cross-crate lint: one definition per concept.
 //!
 //! Detects the same type name (struct, enum, trait) defined in more than one
-//! crate. Re-exports (`pub use`) are excluded — only actual definitions count.
+//! crate. Re-exports (`pub use`) are excluded: only actual definitions count.
 //!
 //! Exempt: test modules, macro-generated types (inside `macro_rules!`), and
 //! type aliases (`type Foo = ...`) which are intentional re-definitions.
@@ -91,7 +91,7 @@ impl WorkspaceLint for SingleSource {
                         lint_name:    "single-source",
                         severity:     crate::Severity::HARD_ERROR,
                         message:      format!(
-                            "{} `{name}` also defined in {} — one definition per concept",
+                            "{} `{name}` also defined in {}: one definition per concept",
                             dup.kind, first.crate_name,
                         ),
                         finding_kind: None,

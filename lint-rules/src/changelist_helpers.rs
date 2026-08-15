@@ -46,15 +46,15 @@ pub struct ParsedChangelist {
 /// stay close to the underlying file-suffix machinery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Phase {
-    /// No changelists at all — only topic files allowed.
+    /// No changelists at all: only topic files allowed.
     Topic,
-    /// Unlocked doc CL exists — doc templates editable.
+    /// Unlocked doc CL exists: doc templates editable.
     Doc,
-    /// Doc CL locked, no src CL — src CL creation only. Label: `DRAFT`.
+    /// Doc CL locked, no src CL: src CL creation only. Label: `DRAFT`.
     SrcPlan,
-    /// Doc CL locked, unlocked src CL exists — source editable. Label: `IMPL`.
+    /// Doc CL locked, unlocked src CL exists: source editable. Label: `IMPL`.
     Src,
-    /// Both CLs locked — round complete, nothing editable. Label: `CLOSED`.
+    /// Both CLs locked: round complete, nothing editable. Label: `CLOSED`.
     Done,
 }
 
@@ -130,7 +130,7 @@ fn parse_new_format_suffix(suffix: &str, full_name: &str) -> Option<ParsedChange
 // ---------------------------------------------------------------------------
 
 /// Scan the design_rounds directory for all changelists.
-/// Only returns root-level files (not in subdirectories — those are archived).
+/// Only returns root-level files (not in subdirectories: those are archived).
 pub fn find_changelists(design_rounds: &Path) -> Vec<ParsedChangelist> {
     let entries = match std::fs::read_dir(design_rounds) {
         Ok(e) => e,
@@ -190,7 +190,7 @@ pub fn has_any_changelist(design_rounds: &Path) -> bool {
 pub fn current_phase(design_rounds: &Path) -> Phase {
     let cls = find_changelists(design_rounds);
 
-    // Filter out deprecated CLs — they don't count.
+    // Filter out deprecated CLs: they don't count.
     let active_doc = cls
         .iter()
         .any(|cl| cl.kind == ClKind::Doc && cl.status == ClStatus::Active);

@@ -126,21 +126,3 @@ pub(crate) fn delete_all_rs(dir: &Path) -> u32 {
     count
 }
 
-/// Resolve a `--dir` argument to an absolute path containing `mockspace.toml`.
-///
-/// Tries in order:
-/// 1. Absolute path as-is (already absolute from bootstrap alias)
-/// 2. Relative path from CWD (user running from repo root)
-/// 3. Relative path from git repo root (user running from a subdirectory
-///    with a stale relative-path alias)
-///
-/// Falls back to the raw path if nothing matches, so downstream code
-/// can produce a clear "no mockspace.toml found" error.
-/// djb2 hash for detecting proxy Cargo.toml changes across cargo check runs.
-pub(crate) fn simple_hash(s: &str) -> u64 {
-    let mut h: u64 = 5381;
-    for b in s.bytes() {
-        h = h.wrapping_mul(33).wrapping_add(b as u64);
-    }
-    h
-}

@@ -4,7 +4,7 @@
 //! Re-exports (`pub use`) and submodules (`pub mod`) are excluded from the
 //! count. Items inside `define_*!` macro invocations are also excluded.
 //!
-//! This is a WARNING lint — it does not hard-block. The orchestrator may
+//! This is a WARNING lint: it does not hard-block. The orchestrator may
 //! choose to treat it differently from error-level lints.
 
 use tree_sitter::Node;
@@ -98,7 +98,7 @@ fn has_pub_visibility(node: Node, source: &str) -> bool {
             let text = &source[child.byte_range()];
             // Match `pub` but not `pub(crate)` or `pub(super)` etc.
             // All of these still count as public exports from the file's
-            // perspective — the guideline is about cognitive load, not
+            // perspective: the guideline is about cognitive load, not
             // strict API surface.
             return text.starts_with("pub");
         }
