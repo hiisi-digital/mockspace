@@ -125,6 +125,10 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
     };
 
     let mut cmd = Command::new(&bin_path);
+    cmd.env(
+        mockspace_bench_harness::harness::BUILD_PROFILE_ENV,
+        profile_env_value(PROFILE_ARGS.iter().copied()),
+    );
     for n in &names {
         cmd.args(["--only", n]);
     }
@@ -176,6 +180,10 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
     };
 
     let mut cmd = Command::new(&bin_path);
+    cmd.env(
+        mockspace_bench_harness::harness::BUILD_PROFILE_ENV,
+        profile_env_value(PROFILE_ARGS.iter().copied()),
+    );
     cmd.arg("--report-only");
     for a in _args.iter().filter(|a| !a.starts_with("--")) {
         cmd.args(["--only", a]);
@@ -482,6 +490,19 @@ fn profile_args_for(build: Option<&BuildSection>) -> Vec<String> {
     ]
 }
 
+/// The value the spawned driver's `MOCKSPACE_BENCH_PROFILE` carries:
+/// the `profile.release.*` settings from the exact flags passed to
+/// the builds, so the run's metadata records what was used rather
+/// than a constant that stops being true the moment `[build]`
+/// overrides anything.
+fn profile_env_value<'a>(flags: impl IntoIterator<Item = &'a str>) -> String {
+    flags
+        .into_iter()
+        .filter_map(|f| f.strip_prefix("profile.release."))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// One cargo build with explicit profile flags and an optional
 /// tool-owned target directory; returns stdout for artifact parsing.
 fn cargo_build_at(
@@ -674,6 +695,10 @@ fn run_generated(
     };
 
     let mut cmd = Command::new(&bin_path);
+    cmd.env(
+        mockspace_bench_harness::harness::BUILD_PROFILE_ENV,
+        profile_env_value(profile.iter().map(String::as_str)),
+    );
     for n in names {
         cmd.args(["--only", n]);
     }
@@ -1272,6 +1297,27 @@ mod tests {
             "{{\"reason\":\"compiler-artifact\",\"manifest_path\":\"{}\",\"executable\":{exe}}}",
             manifest.display()
         )
+    }
+
+    /// The env value is derived from the flags actually passed, so
+    /// an override that changes the flags changes the record too.
+    #[test]
+    fn the_profile_env_value_mirrors_the_flags() {
+        let flags = profile_args_for(None);
+        assert_eq!(
+            profile_env_value(flags.iter().map(String::as_str)),
+            "opt-level=3,lto=\"fat\",codegen-units=1"
+        );
+        let overridden = profile_args_for(Some(&BuildSection {
+            mockspace:     None,
+            opt_level:     Some(0),
+            lto:           Some("off".into()),
+            codegen_units: Some(16),
+        }));
+        assert_eq!(
+            profile_env_value(overridden.iter().map(String::as_str)),
+            "opt-level=0,lto=\"off\",codegen-units=16"
+        );
     }
 
     /// The profile must reach the argv of every build. Dropping

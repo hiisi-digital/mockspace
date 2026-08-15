@@ -153,6 +153,19 @@ master_seed = 7
             );
         }
     }
+    // the metadata records the profile that was actually passed,
+    // which this tree overrides; the old hardcoded literal would
+    // have recorded opt-level=3 here
+    let meta = std::fs::read_to_string(
+        bench_dir.join("results").join("hash").join("hash_n64.meta.json"),
+    )
+    .unwrap();
+    assert!(
+        meta.contains("opt-level=0") && meta.contains("codegen-units=16"),
+        "the recorded profile must be the overridden one: {meta}"
+    );
+    assert!(!meta.contains("opt-level=3"), "{meta}");
+
     // the accepted cell reaches the ledger; the gated-out one does not
     let history: PathBuf = bench_dir.join("history").join("hash").join("hash_n64.tsv");
     assert!(history.is_file(), "the accepted cell's ledger appends after promotion");
