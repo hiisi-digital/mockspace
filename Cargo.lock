@@ -193,9 +193,11 @@ name = "mockspace"
 version = "0.1.0"
 dependencies = [
  "libloading",
+ "mockspace-bench-harness",
  "mockspace-lint-rules",
  "mockspace-manifest",
  "serde",
+ "serde_json",
  "tempfile",
  "toml_edit",
  "tree-sitter",

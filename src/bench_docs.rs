@@ -44,6 +44,45 @@ fn docgen_enabled(bench_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Every history ledger of a bench tree, in both layouts: the flat
+/// `.bench_history/<benchmark>.tsv` (keyed by stem) and the nested
+/// `history/<bench>/<sweep>_n<point>.tsv` (keyed `<bench>/<stem>` so
+/// the doc names the bench the cell belongs to). Sorted by key.
+fn discover_history_logs(bench_dir: &Path) -> Vec<(String, std::path::PathBuf)> {
+    let mut logs: Vec<(String, std::path::PathBuf)> = Vec::new();
+    if let Ok(rd) = fs::read_dir(bench_dir.join(".bench_history")) {
+        for p in rd.flatten().map(|e| e.path()) {
+            if p.extension().is_some_and(|e| e == "tsv") {
+                let key = p
+                    .file_stem()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or("bench")
+                    .to_string();
+                logs.push((key, p));
+            }
+        }
+    }
+    if let Ok(benches) = fs::read_dir(bench_dir.join("history")) {
+        for bdir in benches.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+            let bench = bdir
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("bench")
+                .to_string();
+            if let Ok(rd) = fs::read_dir(&bdir) {
+                for p in rd.flatten().map(|e| e.path()) {
+                    if p.extension().is_some_and(|e| e == "tsv") {
+                        let stem = p.file_stem().and_then(|f| f.to_str()).unwrap_or("cell");
+                        logs.push((format!("{bench}/{stem}"), p));
+                    }
+                }
+            }
+        }
+    }
+    logs.sort();
+    logs
+}
+
 /// Parse one `<benchmark>.tsv` history log and keep the latest
 /// cohort (rows sharing the maximum timestamp) per variant.
 fn latest_cohort(path: &Path) -> Vec<Row> {
@@ -133,20 +172,12 @@ pub fn generate(cfg: &Config) {
     if !docgen_enabled(&bench_dir) {
         return;
     }
-    let history_dir = bench_dir.join(".bench_history");
-    let mut logs: Vec<std::path::PathBuf> = fs::read_dir(&history_dir)
-        .map(|rd| {
-            rd.flatten()
-                .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e == "tsv"))
-                .collect()
-        })
-        .unwrap_or_default();
-    logs.sort();
+    let logs = discover_history_logs(&bench_dir);
     if logs.is_empty() {
         eprintln!(
-            "  bench docgen enabled but no history at {}",
-            history_dir.display()
+            "  bench docgen enabled but no history at {} or {}",
+            bench_dir.join(".bench_history").display(),
+            bench_dir.join("history").display()
         );
         return;
     }
@@ -160,12 +191,8 @@ pub fn generate(cfg: &Config) {
          findings), see `mock/benches/results/` in the repository.\n\n",
     );
 
-    for log in &logs {
-        let benchmark = log
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("bench")
-            .to_string();
+    for (benchmark, log) in &logs {
+        let benchmark = benchmark.clone();
         let rows = latest_cohort(log);
         if rows.is_empty() {
             continue;
@@ -230,4 +257,29 @@ pub fn generate(cfg: &Config) {
         .join(render_design::ordered_doc_name("BENCHES.md", cfg));
     render_design::write_generated(&md_path, &md);
     eprintln!("  {}", md_path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_logs_are_discovered_in_both_layouts_with_bench_qualified_keys() {
+        let dir = std::env::temp_dir().join(format!(
+            "mockspace-bench-docs-test-{}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join(".bench_history")).unwrap();
+        std::fs::create_dir_all(dir.join("history/warm")).unwrap();
+        std::fs::write(dir.join(".bench_history/hash_n64.tsv"), "").unwrap();
+        std::fs::write(dir.join("history/warm/width-l1_n80003.tsv"), "").unwrap();
+        std::fs::write(dir.join("history/warm/notes.md"), "").unwrap();
+        let keys: Vec<String> = discover_history_logs(&dir)
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(keys, vec!["hash_n64", "warm/width-l1_n80003"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

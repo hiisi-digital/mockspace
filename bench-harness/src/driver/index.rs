@@ -2,7 +2,6 @@
 
 use std::path::Path;
 
-use super::RESULTS_DIR;
 use crate::error::BenchError;
 
 /// One row of the end-of-run summary.
@@ -27,8 +26,7 @@ pub(super) fn fmt_ns(ns: f64) -> String {
 
 /// Regenerate `results/INDEX.md`: the latest summary rows plus links
 /// to every findings file present under `results/`.
-pub(super) fn write_index(summary: &[SummaryRow]) -> Result<(), BenchError> {
-    let root = Path::new(RESULTS_DIR);
+pub(super) fn write_index(root: &Path, summary: &[SummaryRow]) -> Result<(), BenchError> {
     if !root.exists() {
         return Ok(());
     }
@@ -60,7 +58,7 @@ pub(super) fn write_index(summary: &[SummaryRow]) -> Result<(), BenchError> {
             if let Ok(files) = std::fs::read_dir(d.path()) {
                 for f in files.flatten() {
                     let name = f.file_name().to_string_lossy().into_owned();
-                    if name.ends_with("_findings.md") {
+                    if name.ends_with("_findings.md") || name.ends_with("_report.md") {
                         let rel = f
                             .path()
                             .strip_prefix(root)

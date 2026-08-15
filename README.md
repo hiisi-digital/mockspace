@@ -32,7 +32,7 @@ Pre-1.0. The tool is in active use across a stack of consumer crates and evolves
 | `mockspace-lint-rules` | Sibling crate of universal-quality lints and design-round state-machine lints. Consumers compose against this from `mock/lints/`. |
 | `mockspace-bench-core` | Canonical bench framework: `Routine` trait, hardware-counter timing, FFI bridge for variant-comparison benches. v2 ships harness orchestration (workload/cache modules, validation, Pareto analysis, history + perf + disasm sensors, findings + meta-level reporting). |
 | `cargo-mock` / `mock` launcher | The sole entrypoint, installed as two binaries from one source. Resolves the engine version a repo pins in its `mockspace.toml`, builds that engine once into a shared per-version cache, and execs it; `mock locate` answers where a repo keeps its mockspace. |
-| `mock bench init / run / report` | Scaffolds `mock/benches/` in the consumer with a starter `Routine`, runs the configured benches, and emits findings or meta-level reports. |
+| `mock bench init / run / report` | Scaffolds a config-only `mock/benches/` tree, generates the driver binary from `bench.toml` (a consumer-owned driver crate remains the escape hatch), runs the configured benches, and emits reports. |
 
 ## Design rounds
 
