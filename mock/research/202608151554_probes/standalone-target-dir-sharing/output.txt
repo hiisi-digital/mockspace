@@ -1,0 +1,58 @@
+cargo:  cargo 1.98.0-nightly (fbb61be30 2026-05-26)
+
+=== S1: per-arm target dir (what build_flat_variants does today) ===
+  compilations of `support`: 3
+
+=== S2: one shared target dir, order a,b,c ===
+  compilations of `support`: 2
+  cdylibs produced:          3
+
+=== S3: the SAME shared dir, a second pass. Does anything rebuild? ===
+  compilations of `support` after two passes: 2  (was 2)
+
+=== S4: a fresh shared dir, ALTERNATING order a,b,a,b,a,b ===
+  compilations of `support`: 2  (two arms, two feature sets)
+
+=== isolation: is each cdylib still a closed linkage unit under S2? ===
+  libarm_a: undefined/external symbols matching 'common' = 0
+  libarm_b: undefined/external symbols matching 'common' = 0
+  libarm_c: undefined/external symbols matching 'common' = 0
+
+=== NEGATIVE CONTROLS ===
+  (1) PASS: every --manifest-path build into a foreign target dir succeeded
+  (2) PASS: per-arm S1=3 > shared S2=2
+  (3) PASS: S2=2 < 3 arms, so matching feature sets shared
+
+=== FINDINGS ===
+  no thrash: a repeat pass adds 0 compilations
+  order-independent: alternating a,b x3 still costs 2
+=== arm crates per consumer, and the composed form's uptake ===
+  arvo           variants/ arm crates = 94     <member>/arms/ dirs = 0
+  vehje          variants/ arm crates = 900    <member>/arms/ dirs = 0
+  hilavitkutin   variants/ arm crates = 92     <member>/arms/ dirs = 0
+  kirjo          variants/ arm crates = 2      <member>/arms/ dirs = 0
+  total arm crates: 1088
+
+  Every one is on the legacy variants/ path, which build_flat_variants
+  builds with cargo_build_at(.., None) at src/bench.rs:801-806, i.e.
+  with NO --target-dir. arm_target_dir (tree.rs:644) is reached only
+  from src/bench.rs:590, the generated-arm path, which has no users.
+
+=== do any arms vary the framework's own feature axis? ===
+  mockspace-bench-core, distinct dep lines with the source and pin normalised away:
+    1088 mockspace-bench-core={SRC,PIN,features=["std"]}
+  mockspace-bench-macro, distinct dep lines with the source and pin normalised away:
+    1073 mockspace-bench-macro={SRC,PIN}
+
+=== distinct PINS, which is what actually partitions the fingerprints ===
+   205 branch="dev"
+   289 rev="49ff5f55b8413f7046281ae1944130c10509c361"
+   594 rev="98031e439bc0a5eeb658065b2b54cac80b7b644d"
+
+=== distinct dependency+feature signatures per consumer ===
+  (the structural bound on how much the consumer's OWN support crates
+   can share; the framework crates are bounded by the pin count above)
+    arvo              94 arms -> 21 distinct signatures
+    vehje            900 arms -> 4 distinct signatures
+    hilavitkutin      92 arms -> 2 distinct signatures
+    kirjo              2 arms -> 1 distinct signatures
