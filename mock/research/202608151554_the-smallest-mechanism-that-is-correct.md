@@ -3,7 +3,7 @@
 **Date:** 2026-08-15
 **Phase:** research, cold derivation, phase one committed blind
 **Branch:** `docs/the-smallest-mechanism-that-is-correct` off `feat/bench-round-consolidation`
-**Probes:** `mock/research/202608151554_probes/` (four, each with its negative controls and committed output)
+**Probes:** `mock/research/202608151554_probes/` (five, each with its negative controls and committed output)
 **Read:** `feat/bench-consolidation` (PR #21) as the tree that lands first, per the round's own changelist
 
 ## Gates
@@ -514,11 +514,37 @@ have. That reason is removable, and removing it is the addition: a `#[doc(hidden
 compiles them. The ones that genuinely cannot compile should say why in the fence's neighbourhood, so
 `ignore` stops being the default.
 
-**The cheapest first step is a measurement I did not take:** un-ignore all eleven, build, and count how
-many fail. I did not do it because it means editing the tree I was reading, and my probe crates cannot
-host a doctest of another crate's private example type. **That is the thing I could not do, and it is
-the first thing the next person should.** If the answer is zero failures, this finding is cosmetic. If
-it is more than zero, the framework ships documented API that does not exist.
+**Two of them are wrong today, and the probe says which.**
+`mock/research/202608151554_probes/doc-examples-compile/` transcribes six of the examples verbatim
+between BEGIN/END markers, each as its own cargo bin, plus the minimum scaffolding the example's own
+prose names but does not show. On `feat/bench-consolidation`, **four compile and two do not**:
+
+- **`bench-core/src/byte_routine.rs:12`** documents
+  `use mockspace_bench_core::{routine_bridge, ByteRoutine, RoutineSpec};` and `bench-core` **has no
+  `RoutineSpec`**. It lives in `bench-harness/src/spec.rs:34`. `error[E0432]: unresolved import`. This
+  is the module doc of `ByteRoutine`, the type the framework tells a consumer to reach for first, and
+  it is in the one crate all 1088 arm crates link.
+- **`bench-core/src/lib.rs:379`**, the trailing comment
+  `// dispatch(n, may_differ) -> Option<RoutineBridge>`, describes something callable. The macro yields
+  a `ByteDispatch` **struct**. The code line above it compiles (`ex2a`); the comment beside it does not
+  (`ex2b`, `error[E0618]: expected function, found ByteDispatch`). Splitting those into two bins is
+  what lets the finding be about the comment rather than the example.
+
+**The probe's first run was wrong and the fix is the interesting part.** Its path dependencies are
+relative, so it compiled against whichever branch the repository was checked out at. Run on this
+round's base and attributed to PR #21's tree, `ex4` reported a failure that is entirely an artifact of
+the checkout. The missing control was the tree's own identity, and `run.sh` now prints
+`git rev-parse` before anything else and both runs are committed.
+
+That artifact is also the finding's mechanism stated better than I could state it: **`ex4` genuinely
+fails on one branch and compiles on the other**, because `Hooks` and `routine_table!` are PR #21
+additions. An `ignore`d example can be correct on one branch and wrong on the next with nothing
+anywhere to notice, which is what `ignore` buys and what the two live failures are instances of.
+
+**What to build.** A `#[doc(hidden)]` example `Routine` in `bench-core` (its test modules already build
+several) turns most of the eleven into `no_run`, which compiles them. Fix the two that are wrong first;
+they are a one-line import correction and a one-line comment correction, and neither survives the day
+`no_run` lands.
 
 ## F10. Four report entry points that are one function and two flags
 
@@ -633,9 +659,13 @@ dressed up as a finding.
 **The `build_workload` duplication.** Real across three consumers, and PR #21's `[workload.*]` closes it
 at the framework level. My contribution shrank to F7, which is a defect *in* that fix.
 
-**F9's measurement.** I could not un-ignore the eleven doctests, because it means editing the tree I was
-sent to read and a probe crate cannot host another crate's private doctest scaffolding. The finding is
-that they are all `ignore`; whether any of them is *wrong* is unmeasured and I am not claiming it.
+**F9's measurement: withdrawn as a concession.** I first wrote that I could not measure whether any of
+the eleven examples is wrong. I could, by transcribing them into separate bins rather than by
+un-ignoring the doctests, and the answer is two of the six I could transcribe. What remains genuinely
+unmeasured is the other five: `timed!` and `timed_calibrated!` name `Input<N>` / `Output<N>`, which are
+not types in `bench-core` and read as deliberate placeholders rather than as claims; `bench-macro`'s two
+and `bench_matrix!` need a consumer crate to transcribe against. **Five of eleven unmeasured, five
+compile, two are wrong.**
 
 **`tree.rs`.** 1049 new lines on the branch that lands first, and I did not read it. Somebody should.
 It is the single largest piece of unreviewed mechanism in the surface this round touches, and my census
