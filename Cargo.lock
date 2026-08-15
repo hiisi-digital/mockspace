@@ -32,7 +32,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-mock"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "mockspace-manifest",
  "serde",
@@ -190,7 +190,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "mockspace"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "libloading",
  "mockspace-bench-harness",
@@ -206,11 +206,11 @@ dependencies = [
 
 [[package]]
 name = "mockspace-bench-core"
-version = "0.1.0"
+version = "0.0.0"
 
 [[package]]
 name = "mockspace-bench-harness"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "libloading",
  "mockspace-bench-core",
@@ -220,7 +220,7 @@ dependencies = [
 
 [[package]]
 name = "mockspace-bench-macro"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "mockspace-bench-core",
  "proc-macro2",
@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "mockspace-bench-matrix"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "libloading",
  "mockspace-bench-core",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "mockspace-lint-rules"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "tempfile",
  "tree-sitter",
@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "mockspace-manifest"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "serde",
  "tempfile",
