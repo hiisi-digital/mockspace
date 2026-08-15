@@ -1,0 +1,14 @@
+[package]
+name = "probe-zero-sample-survives"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+mockspace-bench-harness = { path = "../../../../bench-harness" }
+
+[[bin]]
+name = "probe-zero-sample-survives"
+path = "src/main.rs"
+
+[workspace]

@@ -1,0 +1,37 @@
+# Probe: do the framework's `ignore`d doc examples compile?
+#
+# Every doctest in the four bench crates is fenced ```ignore, so rustdoc
+# never builds any of them. Each bin below transcribes one example
+# VERBATIM (the transcription is marked) plus the minimum scaffolding
+# the example's own prose names. A bin that fails to build is a
+# documented API that does not exist.
+[package]
+name = "probe-doc-examples"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+mockspace-bench-core = { path = "../../../../bench-core", features = ["std"] }
+mockspace-bench-harness = { path = "../../../../bench-harness" }
+
+[[bin]]
+name = "ex1_byte_routine_module"
+path = "src/bin/ex1_byte_routine_module.rs"
+[[bin]]
+name = "ex2a_dispatch_verbatim"
+path = "src/bin/ex2a_dispatch_verbatim.rs"
+[[bin]]
+name = "ex2b_dispatch_comment"
+path = "src/bin/ex2b_dispatch_comment.rs"
+[[bin]]
+name = "ex3_routine_spec"
+path = "src/bin/ex3_routine_spec.rs"
+[[bin]]
+name = "ex4_hooks_struct_update"
+path = "src/bin/ex4_hooks_struct_update.rs"
+[[bin]]
+name = "ex5_driver_module"
+path = "src/bin/ex5_driver_module.rs"
+
+[workspace]
