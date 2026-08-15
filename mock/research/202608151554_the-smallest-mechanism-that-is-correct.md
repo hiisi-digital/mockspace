@@ -780,3 +780,31 @@ correctness is entirely in the ordering of hand-written `or_else` chains, and I 
 exercising it. **That is where I would send the next person**, and the instrument is cheap: the
 per-file-form probe already builds a real tree and calls `tree::load`, so asserting a full precedence
 matrix over it is a few dozen lines on machinery that is committed and working.
+
+---
+
+## Phase two: reconciliation, owed and not performed
+
+Phase one is committed and pushed: this file, seven probe directories with their sources, their
+committed outputs and each one's negative controls.
+
+**At the time of writing there is no sibling to reconcile against.** I fetched all refs repeatedly
+across the run. The only `docs/*` branches carrying work dated today are
+`docs/sweep-consumer-view` and `docs/sweep-investigation`, both from the round's earlier phase and both
+already folded into the three topic files, and `docs/bench-ergonomics-survey`, whose measurement the
+`202608151339` topic corrects. `feat/bench-hygiene-collection` moved during my run and carries PR #21
+plus lint work, not a parallel derivation.
+
+So the reconciliation section this file owes is **not omitted, it is outstanding**, and whoever finds the
+sibling branch should append it here rather than assume it was skipped. Two things to check first when
+it appears, because they are where agreement between us would mean least:
+
+- **Shared inputs.** We read the same three topic files, the same changelist and the same six research
+  files, and this workspace's rules load into both contexts automatically. Agreement on anything those
+  documents state is one instance wearing two hats.
+- **Which of my claims are instrument-backed.** F1, F2, F3, F9, F12 and the profile precedence each have
+  a committed probe with stated negative controls, and each probe's `run.sh` prints the tree it built
+  against, because the first run of two of them compiled against the wrong branch and I only caught it
+  by adding that line. F4's census, F5's field table and the three corrections to the brief are greps
+  anyone can re-run. Everything else in this file is reading, and reading is where two experts agree
+  most easily and least usefully.
