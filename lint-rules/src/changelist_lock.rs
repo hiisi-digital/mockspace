@@ -5,7 +5,7 @@
 //! - Doc templates blocked if doc CL is locked (DRAFT, IMPL, CLOSED).
 //! - Source files blocked if src CL is locked (CLOSED).
 //!
-//! SHAME.md.tmpl is always exempt — it is the escape valve for
+//! SHAME.md.tmpl is always exempt: it is the escape valve for
 //! documenting types discovered during changelist execution.
 //!
 //! Enforcement is global: not just staged files, but ANY untracked or

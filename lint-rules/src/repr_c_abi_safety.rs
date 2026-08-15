@@ -160,7 +160,7 @@ fn check_single_field(
                 lint_name: LINT_NAME,
                 severity: crate::Severity::HARD_ERROR,
                 message: format!(
-                    "`{unsafe_type}` in `#[repr(C)]` struct `{struct_name}` is not ABI-safe — {fix}",
+                    "`{unsafe_type}` in `#[repr(C)]` struct `{struct_name}` is not ABI-safe: {fix}",
                 ),
                 finding_kind: None,
             });

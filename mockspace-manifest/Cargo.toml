@@ -1,6 +1,6 @@
 [package]
 name = "mockspace-manifest"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 # The one shared reader of a repo's mockspace.toml header and its engine pin,
 # so the launcher and the engine parse the same format exactly once instead of

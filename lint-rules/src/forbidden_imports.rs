@@ -10,11 +10,11 @@
 //! - `enabled`: optional, defaults to true
 //!
 //! Pattern matching:
-//! - `"String"` — matches the word `String` as a type (word boundary, not in quotes)
-//! - `"dyn *"` — matches `dyn ` keyword in type position
-//! - `"std::*"` — matches `use std::` or `std::` in type paths
-//! - `"f32"`, `"f64"` — matches these as type annotations
-//! - `"{prefix}_core::*"` — matches imports from sibling crates
+//! - `"String"`: matches the word `String` as a type (word boundary, not in quotes)
+//! - `"dyn *"`: matches `dyn ` keyword in type position
+//! - `"std::*"`: matches `use std::` or `std::` in type paths
+//! - `"f32"`, `"f64"`: matches these as type annotations
+//! - `"{prefix}_core::*"`: matches imports from sibling crates
 
 use std::collections::HashMap;
 
@@ -144,10 +144,10 @@ impl CrateLint for ForbiddenImports {
 /// Check if a crate name matches a scope glob pattern.
 ///
 /// Supported patterns:
-/// - `"*"` — matches all crates
-/// - `"*-sdk"` — crates ending in `-sdk`
-/// - `"prefix-*"` — crates starting with `prefix-`
-/// - `"prefix-connector-*"` — crates matching the prefix pattern
+/// - `"*"`: matches all crates
+/// - `"*-sdk"`: crates ending in `-sdk`
+/// - `"prefix-*"`: crates starting with `prefix-`
+/// - `"prefix-connector-*"`: crates matching the prefix pattern
 /// - Exact name: `"prefix-primitives"`
 fn scope_matches(scope: &str, crate_name: &str, crate_prefix: &str) -> bool {
     // Expand {prefix} placeholder
@@ -158,18 +158,18 @@ fn scope_matches(scope: &str, crate_name: &str, crate_prefix: &str) -> bool {
     }
 
     if scope.starts_with('*') && scope.ends_with('*') {
-        // *pattern* — contains
+        // *pattern*: contains
         let inner = &scope[1 .. scope.len() - 1];
         return crate_name.contains(inner);
     }
 
     if let Some(suffix) = scope.strip_prefix('*') {
-        // *-sdk — ends with
+        // *-sdk: ends with
         return crate_name.ends_with(suffix);
     }
 
     if let Some(prefix) = scope.strip_suffix('*') {
-        // prefix-connector-* — starts with
+        // prefix-connector-*: starts with
         return crate_name.starts_with(prefix);
     }
 
@@ -237,7 +237,7 @@ fn check_module_path(
                 line_num + 1,
                 "forbidden-imports",
                 format!(
-                    "`{module_prefix}::*` import forbidden in this crate — {}",
+                    "`{module_prefix}::*` import forbidden in this crate: {}",
                     rule.reason
                 ),
                 Severity::HARD_ERROR,
@@ -272,13 +272,13 @@ fn check_keyword_pattern(
             continue;
         }
 
-        // Check for the keyword (not inside strings — rough heuristic)
+        // Check for the keyword (not inside strings: rough heuristic)
         if contains_keyword(trimmed, keyword) {
             errors.push(LintError::with_finding_kind(
                 ctx.crate_name.to_string(),
                 line_num + 1,
                 "forbidden-imports",
-                format!("`{}` keyword forbidden — {}", keyword.trim(), rule.reason),
+                format!("`{}` keyword forbidden: {}", keyword.trim(), rule.reason),
                 Severity::HARD_ERROR,
                 leak_rule_name(&rule.name),
             ));
@@ -318,7 +318,7 @@ fn check_type_name(
                 line_num + 1,
                 "forbidden-imports",
                 format!(
-                    "`{type_name}` type forbidden in this crate — {}",
+                    "`{type_name}` type forbidden in this crate: {}",
                     rule.reason
                 ),
                 Severity::HARD_ERROR,

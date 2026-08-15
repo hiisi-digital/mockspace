@@ -1,7 +1,7 @@
 //! Cross-crate lint: doc template edits require the DOC phase.
 //!
 //! Doc template changes in `crates/` are only allowed during
-//! `Phase::Doc` — when an unlocked doc CL exists.
+//! `Phase::Doc`: when an unlocked doc CL exists.
 //!
 //! Blocked in: TOPIC (no CL), DRAFT (doc CL locked), IMPL (source
 //! window), CLOSED (round complete).

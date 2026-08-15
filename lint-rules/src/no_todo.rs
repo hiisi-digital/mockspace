@@ -40,7 +40,7 @@ fn find_todo_macros(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) 
                     ctx.crate_name.to_string(),
                     node.start_position().row + 1,
                     LINT_NAME,
-                    "todo!() is not allowed — implement fully".to_string(),
+                    "todo!() is not allowed: implement fully".to_string(),
                 ));
                 return;
             }

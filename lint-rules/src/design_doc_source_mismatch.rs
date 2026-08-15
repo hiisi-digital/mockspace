@@ -8,7 +8,7 @@
 //! SHAME.md.tmpl exists: document known gaps that cannot be fixed yet.
 //!
 //! Crates with no DESIGN.md.tmpl are skipped. Nuked crates (containing the
-//! xtask nuke marker) are skipped — there is no source to compare against.
+//! xtask nuke marker) are skipped: there is no source to compare against.
 
 use tree_sitter::Node;
 
@@ -55,7 +55,7 @@ impl CrateLint for DesignDocSourceMismatch {
             None => return Vec::new(),
         };
 
-        // Skip nuked crates — no source to compare against
+        // Skip nuked crates: no source to compare against
         if ctx.source.contains("Nuked by") {
             return Vec::new();
         }
@@ -95,7 +95,7 @@ impl CrateLint for DesignDocSourceMismatch {
                 if let Some(explanation) = find_shame_entry(shame, name) {
                     let word_count = explanation.split_whitespace().count();
                     if word_count >= 50 {
-                        continue; // sufficient SHAME entry — silenced
+                        continue; // sufficient SHAME entry: silenced
                     }
                     errors.push(LintError::push_error(
                         ctx.crate_name.to_string(),
@@ -103,7 +103,7 @@ impl CrateLint for DesignDocSourceMismatch {
                         LINT_NAME,
                         format!(
                             "`{name}` documented in DESIGN.md.tmpl but not found in source; \
-                             SHAME.md.tmpl entry only {word_count}/50 words — expand it or \
+                             SHAME.md.tmpl entry only {word_count}/50 words: expand it or \
                              remove `{name}` from DESIGN.md.tmpl."
                         ),
                     ));
@@ -116,7 +116,7 @@ impl CrateLint for DesignDocSourceMismatch {
                 *line,
                 LINT_NAME,
                 format!(
-                    "`{name}` documented in DESIGN.md.tmpl but not found in source — \
+                    "`{name}` documented in DESIGN.md.tmpl but not found in source: \
                      add it to source, remove from DESIGN, or add a SHAME.md.tmpl entry \
                      (`## {name}` header + 50+ word explanation).",
                 ),
@@ -253,7 +253,7 @@ fn extract_backtick_name(cell: &str) -> Option<String> {
     let end = rest.find('`')?;
     let inside = &rest[.. end];
 
-    // Handle macro syntax like `define_id!(Name)` — extract the macro name
+    // Handle macro syntax like `define_id!(Name)`: extract the macro name
     if inside.starts_with("define_") {
         // This is a macro usage example, not a type name
         return None;

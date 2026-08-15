@@ -1,6 +1,6 @@
 [package]
 name = "mockspace-bench-matrix"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 publish = false
 description = "Opinionated semantic-matrix layer on the mockspace bench harness: declare cells, sweep them across axes, get isolated per-cell timing with the measurement discipline provided"

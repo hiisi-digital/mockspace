@@ -1,2 +1,0 @@
-[alias]
-mock = "run --manifest-path target/mockspace-proxy/Cargo.toml -- --dir mock"
