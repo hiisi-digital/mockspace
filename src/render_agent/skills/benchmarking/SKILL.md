@@ -131,16 +131,53 @@ deployment actually has, and say which you picked.
 
 ## Configuration
 
-`bench.toml` per bench: `title`, `workload`, `variants`, `sizes`, `master_seed`, `may_differ`,
-`required`, `threaded`, an optional `normalise` block (`baseline`, `mode`, `floor`), and a per-bench
-`timing` override of `passes`, `runs_per_pass`, `batch_size`, `harness_runs` and `cooldowns_ms`. Sizes
-may carry their own variant subset.
+### The tree, and which directories are in it
+
+`mock/benches/bench.toml` is the root. It carries the globals (`[timing]`, `[dispatch]`,
+`[build]`, `[workload.*]`) and, optionally, `[bench.<name>]` sections of its own.
+
+Each bench is a directory under it holding its own `bench.toml`. **That file has no wrapper
+table: its fields sit at the top level**, because the directory name is already the bench's
+name. Optional `[sweep.<name>]` sections carry per-sweep points and overrides. A bench's arms
+live in `<bench>/arms/<arm>/`, one measured cdylib each; `<bench>/support/` and the root
+`support/` hold ordinary library crates the arms link.
+
+**Membership is declared, never detected.** The root file's `[benchspace]` table says which
+directories are members:
+
+```toml
+[benchspace]
+members = ["**"]        # the default when the table is absent
+exclude = []
+```
+
+`members` takes glob patterns or literal directory names. `*` matches within one path
+component and never crosses `/`; `**` matches any number of components, including zero. A
+literal entry is explicit and must exist with its own `bench.toml`, so a typo is an error
+naming it; a pattern may match nothing without complaint. **A matched member owns its
+interior**, so a `bench.toml` nested inside a member belongs to that member rather than
+becoming a second one.
+
+The default `**` takes every subdirectory carrying a `bench.toml`. Narrow it when a tree holds
+directories that are not benches. Nothing is inferred from a directory's contents or its name.
+
+A member's own `[timing]` overrides the root's **only for the knobs it declares**; the rest
+fall through to the root. A `[sweep.*]` override outranks both.
+
+### The per-bench keys
+
+`bench.toml` per bench: `title`, `workload`, `arms`, `points`, `master_seed`, `may_differ`,
+`required`, `threaded`, declared roles (`baseline`, `floor`, `delta`), and a per-bench `timing`
+override of `passes`, `runs_per_pass`, `batch_size`, `harness_runs` and `cooldowns_ms`. Points may
+carry their own arm subset. The legacy spellings (`variants`, `sizes`, a `normalise` table) stay
+accepted; the canonical ones are these.
 
 Set `may_differ = false` and `required = true` unless there is a stated reason otherwise: identical
-output across variants is the premise that makes the comparison mean anything.
+output across arms is the premise that makes the comparison mean anything.
 
-Every size in `bench.toml` must appear in the bench binary's `byte_routine_dispatch!` declaration,
-because each size is its own monomorphisation and the declared list is the controlled input set.
+Each point is its own monomorphisation. With the generated driver the declared list defaults to the
+union of every bench's points and `[dispatch] points` narrows it; only a consumer-owned driver binary
+maintains a `byte_routine_dispatch!` declaration by hand.
 
 ## The deliverable
 
