@@ -1,0 +1,9 @@
+bench                         : bitpack-carrier-width
+points                        : 6  [16384, 131072, 1048576, 2097152, 4194304, 8388608]
+arms in manifest              : 6
+arm crates restating the list : 6  ['bitpack-carrier-d64', 'bitpack-carrier-packed-simd', 'bitpack-carrier-d32', 'bitpack-carrier-packed', 'bitpack-carrier-d16', 'bitpack-carrier-d16-control']
+manifest rows                 : 6
+driver match arms             : 6
+bridge types in driver        : ['CarrierColumn']
+
+total restatements of the same 6 integers: 6 + 1 + 6 = 13

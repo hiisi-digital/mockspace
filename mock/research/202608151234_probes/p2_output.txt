@@ -1,0 +1,17 @@
+sections parsed                        : 49
+size rows parsed                       : 256
+(a) rows whose arms differ from their
+    section's first row                : 1  in 1 section(s) ['bitpack-write-contend-race']
+
+arms appearing in >1 section           : 36
+families (>1 section)                  : 7
+singletons                             : 11
+
+(b) sweeps needing an `arms` override  : 13 of 49  (27%)
+  family of 10 (precise-container-width-l1...): 3 distinct arm set(s), 5 override(s)
+  family of  8 (warm-clamp-arity-l2...): 1 distinct arm set(s), 0 override(s)
+  family of  7 (satfold-align-l1...): 3 distinct arm set(s), 3 override(s)
+  family of  5 (wide-rung-density-w200...): 1 distinct arm set(s), 0 override(s)
+  family of  3 (bitpack-footprint-dense...): 3 distinct arm set(s), 2 override(s)
+  family of  3 (bitpack-contend-best...): 3 distinct arm set(s), 2 override(s)
+  family of  2 (bitpack-write-contend-race...): 2 distinct arm set(s), 1 override(s)
