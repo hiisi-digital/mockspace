@@ -1254,3 +1254,53 @@ Three, and no others.
 | the digest's three-way verdict (`Agreed` / `Disagreed` / `NotComparable`) as a `CellRecord` field | change 1's source changelist stating which of the three it implements. If it states `NotComparable`, this closes with no further work |
 | a process arm in the bench harness, so build and tooling costs are priceable | op deciding Route A or Route B. Under B the build-cost question is permanently unpriced and section 4 stands on its counts alone |
 | the cross-knob timing isolation case as a test in `tree.rs` rather than only in probe 08 | nothing external; it is three lines per form, and the probe already contains both |
+
+## 7. Correcting section 1 of this phase, and the correction is a stronger finding
+
+Section 1's table says of both wire formats: "**zero tests anywhere naming either format**". That is
+right for the worker wire and **wrong for the CSV**, checked after writing it. Left as written, corrected
+here.
+
+`sample.rs:149-201`, `csv_parses_perf_columns_and_is_backward_compatible`, names the format three times,
+once per schema generation (17 columns, 14, 12), and asserts real values on each. It is a good test.
+
+**And two of its assertions pin the change-1 hazard as intended behaviour:**
+
+```rust
+// sample.rs:181   (14-column file, no matrix columns)
+assert_eq!(sp[0].digest, 0);
+// sample.rs:197   (12-column file, no perf columns either)
+assert_eq!(so[0].digest, 0);
+```
+
+That is sharper than "untested" and it changes what change 1 has to do. The behaviour is not an
+oversight anybody can quietly fix: it is asserted, it passes, and it is **correct for the purpose the
+test was written for**, which is that an older CSV still loads. It becomes wrong the moment the digest
+decides a verdict, and not before.
+
+So the joint answer in section 1 gains one item, and it is the one most likely to be missed:
+
+**Change 1 must name `csv_parses_perf_columns_and_is_backward_compatible` as a test it changes.** Under
+the `Reported<T>` shape those two assertions become `assert_eq!(sp[0].digest, NotReported)`, and the
+reader keeps loading old files exactly as before. Without that, the fix lands red against a test that is
+certifying the defect, and the cheapest way out of a red test is to revert the fix.
+
+This is also the cleanest instance available of why the round's own record topic matters. The test is
+honest, the reader is honest, and the composition of the two produces a verdict nobody intended, because
+`0` was doing duty as both a digest and an absence.
+
+**And the worker wire's absence of a test is deliberate and documented**, which I am carrying forward as
+the seventeenth kept thing. `sample.rs:203-215`:
+
+> The worker-line positional contract has no test. The one that stood here built a tab-separated string
+> with `format!` and then asserted that splitting it returned the fields it had just interpolated,
+> calling neither the emitter nor the parser. It could not fail if a column moved, which is the only
+> drift it claimed to guard, so it reported coverage that did not exist. Deleted rather than adjusted: a
+> test that cannot fail occupies the place where its absence would otherwise be noticed.
+
+That is the test gate's own standard applied by whoever wrote it, with the reasoning recorded rather than
+the count quietly preserved. It also states the remedy, "the emitter and the orchestrator's parser in one
+round trip", which is precisely what section 1 step 3's `WorkerLine` makes possible: today the parser has
+no function boundary to call.
+
+**Carry-forward count is therefore seventeen, not sixteen.**
