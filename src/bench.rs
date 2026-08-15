@@ -59,11 +59,16 @@ fn print_help() {
     eprintln!("with no names, every bench in bench.toml runs");
     eprintln!();
     eprintln!("`mock/benches/` layout (created by `init`):");
-    eprintln!("  Cargo.toml         the bench binary");
-    eprintln!("  src/main.rs        Routine impl + run/report dispatch");
-    eprintln!("  bench.toml         per-bench config (sizes, timing, variants)");
-    eprintln!("  variants/<name>/   one cdylib per variant");
-    eprintln!("  README.md");
+    eprintln!("  bench.toml            globals: [timing] [dispatch] [build] [workload.*]");
+    eprintln!("  <bench>/bench.toml    the bench: [bench] meta + [sweep.<name>] sections");
+    eprintln!("  <bench>/arms/<arm>/   one measured cdylib per arm (manifest generated)");
+    eprintln!("  <bench>/support/      this bench's library crates");
+    eprintln!("  support/              library crates several benches share");
+    eprintln!("  src/lib.rs            optional hooks() library");
+    eprintln!("  results/  history/    generated outputs (the driver is the only writer)");
+    eprintln!();
+    eprintln!("the driver binary is generated from bench.toml; a consumer-owned");
+    eprintln!("Cargo.toml at the bench root takes the whole run over (escape hatch)");
 }
 
 // ── run ──
@@ -749,22 +754,13 @@ fn cmd_init(cfg: &Config) -> ExitCode {
     let bench_dir = cfg.mock_dir.join("benches");
     if bench_dir.exists() {
         eprintln!(
-            "error: {} already exists. `mock bench init` is idempotent only when the dir is absent.",
+            "error: {} already exists; `mock bench init` scaffolds only a fresh tree.",
             bench_dir.display()
         );
-        eprintln!("delete the directory or pick a different scaffolding strategy.");
+        eprintln!(
+            "To add a bench or an arm to the existing tree use `mock bench add`; to              re-scaffold, move the directory aside first."
+        );
         return ExitCode::FAILURE;
-    }
-
-    if let Err(e) = fs::create_dir_all(&bench_dir) {
-        eprintln!("error: failed to create {}: {}", bench_dir.display(), e);
-        return ExitCode::FAILURE;
-    }
-    for sub in &["src", "variants/sample/src"] {
-        if let Err(e) = fs::create_dir_all(bench_dir.join(sub)) {
-            eprintln!("error: failed to create benches/{sub}: {e}");
-            return ExitCode::FAILURE;
-        }
     }
 
     if let Err(e) = write_starter_files(&bench_dir) {
@@ -773,16 +769,16 @@ fn cmd_init(cfg: &Config) -> ExitCode {
     }
 
     eprintln!(
-        "scaffolded {} with starter bench binary + sample variant",
+        "scaffolded {} with a sample bench (config-only: the driver binary is          generated from bench.toml)",
         bench_dir.display()
     );
     eprintln!();
     eprintln!("next steps:");
-    eprintln!("  1. edit src/main.rs: replace IdentityAdd with your Routine");
-    eprintln!("  2. edit bench.toml: set sizes + variant cdylib paths");
-    eprintln!("  3. add a variant under variants/<name>/ for each impl");
-    eprintln!("  4. run `mock bench run` to build + benchmark");
-    eprintln!("  5. run `mock bench report` to regenerate findings.md from cache");
+    eprintln!("  1. edit sample/bench.toml: title, arms, points");
+    eprintln!("  2. implement sample/arms/sample/src/lib.rs (the measured code)");
+    eprintln!("  3. `mock bench add <bench> <arm>` scaffolds more of either");
+    eprintln!("  4. `mock bench run` generates the driver, builds, measures");
+    eprintln!("  5. `mock bench report` regenerates reports from cached samples");
     ExitCode::SUCCESS
 }
 
@@ -830,6 +826,68 @@ fn cmd_list(cfg: &Config) -> ExitCode {
 // ── add ──
 
 fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
+    let bench_dir = cfg.mock_dir.join("benches");
+    let legacy = bench_dir.join("variants").is_dir() && !bench_tree::is_nested_tree(&bench_dir);
+    if legacy {
+        return cmd_add_legacy(&bench_dir, args);
+    }
+
+    // Nested trees: `add <bench> <arm>` (or `<bench>/<arm>`). Adding
+    // a bench that does not exist scaffolds it; adding an arm to an
+    // existing bench scaffolds only the arm.
+    let (bench, arm) = match args {
+        [b, a] => (*b, Some(*a)),
+        [one] if one.contains('/') => {
+            let mut it = one.splitn(2, '/');
+            (it.next().unwrap_or(""), it.next())
+        },
+        [b] => (*b, None),
+        _ => {
+            eprintln!("usage: mock bench add <bench> [<arm>]  (or <bench>/<arm>)");
+            return ExitCode::FAILURE;
+        },
+    };
+    let name_ok =
+        |n: &str| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !name_ok(bench) || arm.is_some_and(|a| !name_ok(a)) {
+        eprintln!("error: bench and arm names are [a-zA-Z0-9_-] (the arm becomes a crate name)");
+        return ExitCode::FAILURE;
+    }
+
+    let bdir = bench_dir.join(bench);
+    if !bdir.join("bench.toml").exists() {
+        let arms_list = format!("{:?}", arm.unwrap_or("sample"));
+        let toml = STARTER_BENCH_DIR_TOML
+            .replace("SAMPLE_TITLE", bench)
+            .replace("\"SAMPLE_ARM\"", &arms_list);
+        if let Err(e) = bench_gen::write_if_changed(&bdir.join("bench.toml"), &toml) {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+        eprintln!("scaffolded {bench}/bench.toml");
+    }
+    let arm = arm.unwrap_or("sample");
+    let adir = bdir.join("arms").join(arm);
+    if adir.exists() {
+        eprintln!("error: {} already exists", adir.display());
+        return ExitCode::FAILURE;
+    }
+    let lib = STARTER_ARM_LIB.replace("sample", &arm.replace('-', "_"));
+    if let Err(e) = bench_gen::write_if_changed(&adir.join("src").join("lib.rs"), &lib) {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    eprintln!("scaffolded {bench}/arms/{arm}/src/lib.rs (its manifest is generated). Next:");
+    eprintln!("  1. implement the run block in {bench}/arms/{arm}/src/lib.rs");
+    eprintln!("  2. reference \"{arm}\" from the bench's `arms` list if it is not there yet");
+    ExitCode::SUCCESS
+}
+
+/// Legacy flat trees keep the old `add <variant>` behaviour, with
+/// the `[workspace]` header the old scaffold was missing: without it
+/// an outer workspace captures the crate (the target directory moves
+/// and the profile is ignored) or refuses to build it outright.
+fn cmd_add_legacy(bench_dir: &Path, args: &[&str]) -> ExitCode {
     let Some(name) = args.first() else {
         eprintln!("usage: mock bench add <variant-name>");
         return ExitCode::FAILURE;
@@ -838,7 +896,6 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
         eprintln!("error: variant name must be [a-zA-Z0-9_] (it becomes a crate name)");
         return ExitCode::FAILURE;
     }
-    let bench_dir = cfg.mock_dir.join("benches");
     let dir = bench_dir.join("variants").join(name);
     if dir.exists() {
         eprintln!("error: {} already exists", dir.display());
@@ -849,7 +906,7 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let cargo = STARTER_VARIANT_CARGO_TOML.replace("sample", name);
-    let lib = STARTER_VARIANT_LIB.replace("sample", name);
+    let lib = STARTER_ARM_LIB.replace("sample", name);
     if let Err(e) = fs::write(dir.join("Cargo.toml"), cargo)
         .and_then(|_| fs::write(dir.join("src/lib.rs"), lib))
     {
@@ -863,123 +920,42 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
 }
 
 fn write_starter_files(bench_dir: &Path) -> std::io::Result<()> {
-    fs::write(bench_dir.join("Cargo.toml"), STARTER_BIN_CARGO_TOML)?;
-    fs::write(bench_dir.join("src/main.rs"), STARTER_BIN_MAIN)?;
-    fs::write(bench_dir.join("bench.toml"), STARTER_BENCH_TOML)?;
-    fs::write(bench_dir.join("README.md"), STARTER_README)?;
-    fs::write(
-        bench_dir.join("variants/sample/Cargo.toml"),
-        STARTER_VARIANT_CARGO_TOML,
+    let write = |rel: &str, content: &str| -> std::io::Result<()> {
+        let path = bench_dir.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, content)
+    };
+    write("bench.toml", STARTER_ROOT_BENCH_TOML)?;
+    write(
+        "sample/bench.toml",
+        &STARTER_BENCH_DIR_TOML
+            .replace("SAMPLE_TITLE", "Sample bench")
+            .replace("SAMPLE_ARM", "sample"),
     )?;
-    fs::write(
-        bench_dir.join("variants/sample/src/lib.rs"),
-        STARTER_VARIANT_LIB,
-    )?;
+    write("sample/arms/sample/src/lib.rs", STARTER_ARM_LIB)?;
+    write("README.md", STARTER_README)?;
     Ok(())
 }
 
-const STARTER_BIN_CARGO_TOML: &str = r#"[package]
-name = "benches"
-version = "0.0.0"
-edition = "2021"
-publish = false
-
-[[bin]]
-name = "benches"
-path = "src/main.rs"
-
-[dependencies]
-mockspace-bench-core = { git = "https://github.com/hiisi-digital/mockspace", branch = "dev", features = ["std"] }
-mockspace-bench-harness = { git = "https://github.com/hiisi-digital/mockspace", branch = "dev" }
-
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-"#;
-
-const STARTER_BIN_MAIN: &str = r##"//! Consumer bench binary: registrations only. The generic loop
-//! (manifest iteration, filtering, report-only, preflight, seed
-//! replay, validation, history, summary, findings index) lives in
-//! `mockspace_bench_harness::driver::drive`.
-
-use std::process::ExitCode;
-
-use mockspace_bench_core::byte_routine_dispatch;
-use mockspace_bench_harness::driver::{drive, DriverRegistry};
-use mockspace_bench_harness::{self as harness, BenchConfig, RoutineSpec, Workload};
-
-/// Build the workload program for a workload name. The workload
-/// surrounds the measured call with realistic context so numbers
-/// approximate the real calling environment; add named programs as
-/// your benches need them.
-fn build_workload(name: &str, _n: usize) -> Workload {
-    let mut w = Workload::new();
-    match name {
-        "realistic" => {
-            w.program("realistic", |b| {
-                b.stage(vec![
-                    harness::algo_call(),
-                    harness::light_scalar(),
-                    harness::heavy_memory(),
-                    harness::branch_work(),
-                ]);
-            });
-        }
-        _ => {
-            w.program("default", |b| {
-                b.stage(vec![harness::algo_call(), harness::light_scalar()]);
-            });
-        }
-    }
-    w
-}
-
-/// Custom routines for benches whose inputs are not plain bytes
-/// (graph shapes, sparse layouts). Return `None` to fall through to
-/// the byte dispatch below.
-fn routine_for(_config: &BenchConfig) -> Option<RoutineSpec> {
-    None
-}
-
-fn main() -> ExitCode {
-    drive(&DriverRegistry {
-        build_workload,
-        routine_for,
-        // Every size stays its own monomorphisation: the declared
-        // list is the strictly controlled input set. A manifest size
-        // outside it is a targeted error naming this line.
-        byte_dispatch: byte_routine_dispatch!(out = 8, sizes = [64, 256, 1024, 4096, 16384]),
-    })
-}
-"##;
-
-const STARTER_BENCH_TOML: &str = r#"# Bench harness configuration. `mock bench run [names...]` runs it;
-# `mock bench list` prints what is registered here.
+const STARTER_ROOT_BENCH_TOML: &str = r#"# Bench tree globals. Each bench is a subdirectory with its own
+# bench.toml; `mock bench list` prints what is registered,
+# `mock bench run [names...]` runs it. The driver binary is generated
+# from this configuration; no consumer Rust is needed for byte-shaped
+# benches. Optional extension points:
 #
-# Each [bench.<name>] section is one bench:
-#   variants = ["a", "b"]   variant short names (dirs under variants/)
-#   sizes = [64, 256]       the N list; every N must be in the bench
-#                           binary's byte_routine_dispatch! declaration
-#                           (each size is its own monomorphisation)
-#   may_differ = false      variants may produce different valid outputs
-#   required = false        validation failure fails the whole run
-#   threaded = false        variants spawn threads (skips the P-core pin)
-#   [bench.<name>.timing]   per-bench override of any [timing] knob
+#   src/lib.rs           a hooks() library (routine_for, after_cell,
+#                        on_init, after_init)
+#   <bench>/support/     library crates this bench's arms share
+#   support/             library crates several benches share
+#   [workload.<name>]    stages = ["algo_call", "scalar_work 48", ...]
+#   [dispatch]           out = 8; points defaults to the union of
+#                        every bench's points
+#   [build]              mockspace dep spec + release profile values
 #
-# master_seed: integer, or a string ("0x...") for values past the TOML
-# i64 cap; 0 picks a fresh random seed (printed, replayable with
-# `--seed`).
-#
-# [docgen] enabled = true makes the docs regeneration pass emit a
-# generated BENCHES.md (plus graphviz visualisations) under docs/
-# from the bench history.
-
-[bench.sample]
-title = "Sample bench"
-workload = "default"
-variants = ["sample"]
-sizes = [64, 256]
+# A consumer-owned Cargo.toml at this root takes the whole run over
+# (the escape hatch for drivers the generator cannot express).
 
 [timing]
 passes = 4
@@ -989,7 +965,64 @@ harness_runs = 1
 cooldowns_ms = [0]
 "#;
 
-const STARTER_VARIANT_CARGO_TOML: &str = r#"[package]
+const STARTER_BENCH_DIR_TOML: &str = r#"# One bench: one question, one set of competing arms. Sweeps are
+# optional ([sweep.<name>] sections, each with its own points and
+# overrides); without them the [bench] points make a single default
+# sweep named after the bench. Declared roles: `baseline = "arm"`
+# selects the arm every delta is computed against; `floor = "arm"`
+# a null-cost arm subtracted from every arm first.
+
+[bench]
+title = "SAMPLE_TITLE"
+workload = "default"
+arms = ["SAMPLE_ARM"]
+points = [64, 256]
+"#;
+
+const STARTER_ARM_LIB: &str = r#"//! One arm: the measured implementation, compiled to a cdylib the
+//! harness loads in an isolated subprocess. The manifest is
+//! generated (write a Cargo.toml here to take it over); the exports
+//! below are the ABI the harness looks up after dlopen.
+
+use mockspace_bench_core::{abi_hash, timed, FfiBenchCall};
+
+/// The actual algorithm under test for this arm. Replace with your
+/// real implementation.
+fn sample_impl(input: &u64, output: &mut u64) {
+    *output = input.wrapping_add(1);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bench_entry(
+    input_ptr: *const u8,
+    output_ptr: *mut u8,
+    _n: usize,
+) -> FfiBenchCall {
+    let input = unsafe { &*(input_ptr as *const u64) };
+    let output = unsafe { &mut *(output_ptr as *mut u64) };
+    timed! {
+        run { sample_impl(input, output); }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bench_name() -> *const u8 {
+    b"sample\0".as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bench_abi_hash() -> u64 {
+    abi_hash()
+}
+"#;
+
+/// The legacy flat-tree variant manifest, for `add` in trees that
+/// predate the nested layout. The `[workspace]` header is not
+/// optional: without it an outer workspace captures the crate, which
+/// has broken a whole bench tree once and the lint cdylib once.
+const STARTER_VARIANT_CARGO_TOML: &str = r#"[workspace]
+
+[package]
 name = "sample"
 version = "0.0.0"
 edition = "2021"
@@ -1009,95 +1042,125 @@ lto = "fat"
 codegen-units = 1
 "#;
 
-const STARTER_VARIANT_LIB: &str = r#"//! Sample variant cdylib.
-//!
-//! One cdylib per variant. Each one exports `bench_entry`,
-//! `bench_name`, `bench_abi_hash` (extern "C") that the harness
-//! looks up via dlsym after dlopen.
-
-use mockspace_bench_core::{abi_hash, timed, FfiBenchCall};
-
-/// The actual algorithm under test for this variant. Replace with
-/// your real impl. Operates on the same Input / Output shape as the
-/// Routine in the parent bench binary.
-fn sample_impl(input: &u64, output: &mut u64) {
-    *output = input.wrapping_add(1);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn bench_entry(
-    input_ptr: *const u8,
-    output_ptr: *mut u8,
-    _n: usize,
-) -> FfiBenchCall {
-    let input = unsafe { &*(input_ptr as *const u64) };
-    let output = unsafe { &mut *(output_ptr as *mut u64) };
-    timed! {
-        run { sample_impl(input, output); }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn bench_name() -> *const u8 {
-    b"sample\0".as_ptr()
-}
-
-#[no_mangle]
-pub extern "C" fn bench_abi_hash() -> u64 {
-    abi_hash()
-}
-"#;
-
 const STARTER_README: &str = r#"# benches
 
-Canonical mockspace bench framework. Consumer-side scaffolding generated
-by `mock bench init`.
+Canonical mockspace bench tree. Scaffolded by `mock bench init`; the
+driver binary is generated from `bench.toml` on every run.
 
 ## Layout
 
-- `Cargo.toml` + `src/main.rs`: the bench binary. Defines `Routine`
-  impls, builds a workload program, dispatches to the harness.
-- `bench.toml`: per-bench config (sizes, timing, variant cdylib paths).
-- `variants/<name>/`: one workspace per variant. Each compiles to a
-  cdylib that exports `bench_entry`, `bench_name`, `bench_abi_hash`.
-- `target/release/<your bin name>`: the built bench binary, located from what cargo reports building.
-- `target/release/lib<variant>.{dylib,so,dll}`: the built variant cdylibs.
+- `bench.toml`: globals ([timing], [dispatch], [workload.*], [build]).
+- `<bench>/bench.toml`: the bench: [bench] meta plus optional
+  [sweep.<name>] sections.
+- `<bench>/arms/<arm>/src/lib.rs`: one measured cdylib per arm. The
+  manifest is generated; writing a Cargo.toml in the arm directory
+  takes it over.
+- `<bench>/support/`, `support/`: ordinary library crates the arms
+  and the optional hooks library link.
+- `src/lib.rs` (optional): `pub fn hooks() -> Hooks` with any of
+  `routine_for`, `after_cell`, `on_init`, `after_init`.
+- `results/<bench>/`: samples (CSV), meta, and reports per cell,
+  written transactionally. Safe to delete; a run regenerates it.
+- `history/<bench>/`: the append-only per-cell ledger (median, CI,
+  commit) that feeds regression detection. Tracked; never deleted.
 
 ## Workflow
 
-1. Edit `src/main.rs`: replace `IdentityAdd` with the Routine you
-   want to benchmark. The trait specifies what is computed (input
-   shape, output shape, validation, scoring, ops count).
-2. Edit `bench.toml`: set sizes and the cdylib path for each
-   variant.
-3. Add a variant under `variants/<name>/` for each implementation.
-   Each variant exports `bench_entry` calling its own algorithm via
-   the `timed!` macro.
-4. `mock bench run` builds everything and runs the harness.
-5. `mock bench report` regenerates `findings.md` from the CSV cache
-   without re-running.
+1. `mock bench add <bench> <arm>` scaffolds a bench or an arm.
+2. Implement the arm's run block.
+3. Point lists, arm lists, roles (baseline/floor), and timing live in
+   the bench's own bench.toml.
+4. `mock bench run [names...]` generates the driver, builds arms into
+   tool-owned target directories with the pinned release profile, and
+   measures. A bench name selects all its sweeps.
+5. `mock bench report` regenerates reports from cached samples.
 
-## Status
+## Escape hatch
 
-v2 of the bench framework. The harness ships full orchestration:
-variant isolation via subprocess + dlopen, hardware counter timing
-(`CNTVCT_EL0` / `rdtsc`), CSV cache with drift correction, validation
-across variants (byte-exact / approximate / per-variant validity),
-analysis (quintile + bootstrap CI + sign test + Pareto + multi-N
-scaling), findings.md generator, history log with regression
-detection, optional perf counter integration, asm dedup check.
-
-## References
-
-- `mockspace-bench-core` (the framework): see Routine trait docs.
-- `mockspace-bench-harness` (the orchestrator): see `harness::run`
-  and `harness::write_report`.
-- Origin: framework was extracted from `polka-dots/mock/benches/`.
+A consumer-owned `Cargo.toml` (+ `src/main.rs`) at this root replaces
+the generated driver entirely; `mock bench run` builds and runs it
+instead. The library driver (`mockspace_bench_harness::driver`) keeps
+the same manifest semantics either way.
 "#;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_mock(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "mockspace-bench-cmd-test-{}-{name}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&d).ok();
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn success() -> String {
+        format!("{:?}", ExitCode::SUCCESS)
+    }
+
+    /// The old scaffold shipped a main.rs that no longer compiled
+    /// against its own harness (stage constructors grew arguments).
+    /// The guard is structural now: whatever init writes must load
+    /// through the same planner the run uses, and the driver source
+    /// must generate from it.
+    #[test]
+    fn init_scaffolds_a_tree_the_planner_accepts_and_the_generator_serves() {
+        let mock = temp_mock("init");
+        let cfg = Config::from_dir(&mock);
+        let code = cmd_init(&cfg);
+        assert_eq!(format!("{code:?}"), success());
+
+        let bench_dir = mock.join("benches");
+        let plan = bench_gen::plan(&bench_dir).expect("the scaffold loads");
+        assert!(plan.manifest.nested_mode, "init scaffolds the nested layout");
+        assert_eq!(plan.manifest.bench_names(), vec!["sample"]);
+        assert_eq!(plan.arms.len(), 1);
+        assert!(!plan.arms[0].has_manifest, "the arm manifest is generated");
+        bench_gen::driver_main_source(&plan.manifest, None).expect("the driver generates");
+
+        // init refuses an existing tree and points at `add`
+        let code = cmd_init(&cfg);
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
+        std::fs::remove_dir_all(&mock).ok();
+    }
+
+    #[test]
+    fn add_scaffolds_a_bench_and_an_arm_in_a_nested_tree_and_refuses_duplicates() {
+        let mock = temp_mock("add");
+        let cfg = Config::from_dir(&mock);
+        assert_eq!(format!("{:?}", cmd_init(&cfg)), success());
+        let bench_dir = mock.join("benches");
+
+        // a new bench with a named arm
+        let code = cmd_add(&cfg, &["warm-container", "kernel"]);
+        assert_eq!(format!("{code:?}"), success());
+        assert!(bench_dir.join("warm-container/bench.toml").is_file());
+        assert!(bench_dir.join("warm-container/arms/kernel/src/lib.rs").is_file());
+        assert!(
+            !bench_dir.join("warm-container/arms/kernel/Cargo.toml").exists(),
+            "no manifest is scaffolded; the tool generates it"
+        );
+        // the scaffolded bench names the arm it was created with
+        let toml = std::fs::read_to_string(bench_dir.join("warm-container/bench.toml")).unwrap();
+        assert!(toml.contains("\"kernel\""), "{toml}");
+
+        // the slash form adds an arm to the existing bench
+        let code = cmd_add(&cfg, &["warm-container/native"]);
+        assert_eq!(format!("{code:?}"), success());
+        assert!(bench_dir.join("warm-container/arms/native/src/lib.rs").is_file());
+
+        // a duplicate arm is refused
+        let code = cmd_add(&cfg, &["warm-container", "kernel"]);
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
+
+        // the whole result still loads
+        let plan = bench_gen::plan(&bench_dir).expect("still loads");
+        assert!(plan.manifest.bench_names().contains(&"warm-container".to_string()));
+        std::fs::remove_dir_all(&mock).ok();
+    }
 
     fn write(path: &Path, contents: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();

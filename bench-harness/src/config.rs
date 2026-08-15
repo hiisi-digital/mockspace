@@ -557,8 +557,11 @@ impl BenchManifest {
         mock_benches_dir: &Path,
     ) -> Result<BenchConfig, BenchError> {
         let section = self.bench.get(bench_name).ok_or_else(|| {
+            let available = self.bench_names().join(", ");
             BenchError::InvalidConfig {
-                reason: format!("bench `{bench_name}` not found in manifest"),
+                reason: format!(
+                    "bench `{bench_name}` not found in manifest. Available: {available}"
+                ),
             }
         })?;
         let size = section.sizes.get(size_idx).ok_or_else(|| {
