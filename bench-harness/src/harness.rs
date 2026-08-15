@@ -39,19 +39,34 @@ use crate::workload::{Workload, mix};
 
 // ── Environment metadata helpers ──
 
+/// The environment variable the tool sets on the driver it spawns,
+/// carrying the release-profile settings it actually passed on the
+/// builds (`opt-level=..,lto=..,codegen-units=..`).
+pub const BUILD_PROFILE_ENV: &str = "MOCKSPACE_BENCH_PROFILE";
+
 /// Serialize [`EnvMeta`] to a JSON string (no serde_json dependency).
 ///
-/// `build_profile` is a constant rather than a measurement: the
-/// framework passes these settings on every build, so a run's
-/// artifacts record which profile produced them. Without it a
-/// comparison across the commit that introduced the guarantee reads
-/// as a performance change with no visible cause.
+/// `build_profile` records the settings the tool passed on the
+/// builds, read from [`BUILD_PROFILE_ENV`]. It was previously a
+/// hardcoded constant, which became a lie the moment `[build]`
+/// overrides existed: a tree overriding the profile got artifacts
+/// recording a profile that was not used, and a comparison across
+/// that change read as a performance shift with no visible cause.
+/// When the variable is absent (the binary run by hand, outside the
+/// tool), the field is omitted: no claim beats a wrong one.
 fn env_meta_to_json(meta: &EnvMeta) -> String {
+    env_meta_to_json_with(meta, std::env::var(BUILD_PROFILE_ENV).ok().as_deref())
+}
+
+fn env_meta_to_json_with(meta: &EnvMeta, build_profile: Option<&str>) -> String {
+    let profile_field = match build_profile {
+        Some(p) => format!(",\"build_profile\":\"{}\"", json_escape(p)),
+        None => String::new(),
+    };
     format!(
         "{{\"cpu\":\"{cpu}\",\"os\":\"{os}\",\"rustc\":\"{rustc}\",\
         \"git_commit\":\"{git}\",\"timestamp\":{ts},\
-        \"counter_freq\":{freq},\"framework\":\"mockspace-bench-harness\",\
-        \"build_profile\":\"opt-level=3,lto=fat,codegen-units=1\"}}",
+        \"counter_freq\":{freq},\"framework\":\"mockspace-bench-harness\"{profile_field}}}",
         cpu = json_escape(&meta.cpu),
         os = json_escape(&meta.os),
         rustc = json_escape(&meta.rustc),
@@ -845,4 +860,28 @@ fn to_hex(bytes: &[u8]) -> String {
         let _ = write!(s, "{b:02x}");
     }
     s
+}
+
+#[cfg(test)]
+mod env_meta_json_tests {
+    use super::*;
+
+    #[test]
+    fn the_profile_field_carries_the_passed_value_and_is_absent_when_unknown() {
+        let meta = crate::env::EnvMeta::default();
+        let with = env_meta_to_json_with(&meta, Some("opt-level=0,lto=\"off\",codegen-units=16"));
+        assert!(
+            with.contains("\"build_profile\":\"opt-level=0,lto=\\\"off\\\",codegen-units=16\""),
+            "{with}"
+        );
+        let without = env_meta_to_json_with(&meta, None);
+        assert!(
+            !without.contains("build_profile"),
+            "no claim beats a wrong one: {without}"
+        );
+        assert!(
+            !without.contains("opt-level=3"),
+            "the old hardcoded literal must be gone: {without}"
+        );
+    }
 }

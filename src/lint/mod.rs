@@ -179,8 +179,9 @@ pub fn run_lints(
         // Read ALL doc templates and concatenate
         let all_doc_content = collect_all_docs(&crate_dir);
 
-        // Read SHAME.md.tmpl if it exists
-        let shame_doc = std::fs::read_to_string(crate_dir.join("SHAME.md.tmpl")).ok();
+        // Read SHAME.md.tmpl if it exists, matching the exact spelling the
+        // phase gates match. See `read_shame_template`.
+        let shame_doc = mockspace_lint_rules::read_shame_template(&crate_dir);
 
         // Per-crate lint pass
         let ctx = LintContext {
