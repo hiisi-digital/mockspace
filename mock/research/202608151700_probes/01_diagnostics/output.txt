@@ -1,0 +1,126 @@
+╔══ 00-control-valid 
+║ story: NEGATIVE CONTROL: nothing broken. Must load clean.
+║ RESULT: Ok
+║   cells: ["widths/width"]
+║   arms:  ["widths/dense", "widths/packed"]
+╚══
+
+╔══ 00b-control-must-fail 
+║ story: NEGATIVE CONTROL: a member with no points and no sweeps. Known-refused; proves the loader can error at all.
+║ RESULT: Err
+║   invalid bench config: bench `widths` declares no points and no sweeps, so there is nothing to run. Add `points = [...]` or a [sweep.<name>] section.
+╚══
+
+╔══ 01-typo-in-key 
+║ story: Typed `arm =` instead of `arms =`.
+║ RESULT: Err
+║   invalid bench config: /var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/01-typo-in-key/widths/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | arm = ["packed"]
+║     | ^^^
+║   unknown field `arm`, expected one of `title`, `workload`, `master_seed`, `arms`, `variants`, `points`, `sizes`, `may_differ`, `required`, `threaded`, `baseline`, `floor`, `delta`, `timing`, `sweep`
+╚══
+
+╔══ 02-typo-in-section 
+║ story: Typed `[sweeps.width]` instead of `[sweep.width]`.
+║ RESULT: Err
+║   invalid bench config: /var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/02-typo-in-section/widths/bench.toml: TOML parse error at line 4, column 2
+║     |
+║   4 | [sweeps.width]
+║     |  ^^^^^^
+║   unknown field `sweeps`, expected one of `title`, `workload`, `master_seed`, `arms`, `variants`, `points`, `sizes`, `may_differ`, `required`, `threaded`, `baseline`, `floor`, `delta`, `timing`, `sweep`
+╚══
+
+╔══ 03-missing-title 
+║ story: Forgot `title`, which is the one required field.
+║ RESULT: Err
+║   invalid bench config: /var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/03-missing-title/widths/bench.toml: TOML parse error at line 1, column 1
+║     |
+║   1 | arms = ["packed"]
+║     | ^^^^^^^^^^^^^^^^^
+║   missing field `title`
+╚══
+
+╔══ 04-unbalanced-toml 
+║ story: Left a bracket open. The single most common text mistake.
+║ RESULT: Err
+║   invalid bench config: /var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/04-unbalanced-toml/widths/bench.toml: TOML parse error at line 4, column 1
+║     |
+║   4 | [sweep.width]
+║     | ^
+║   invalid array
+║   expected `]`
+╚══
+
+╔══ 05-arm-named-not-present 
+║ story: Renamed the arm directory and forgot the manifest.
+║ RESULT: Err
+║   invalid bench config: bench `widths` names arm `dense`, but widths/arms/dense/ does not exist. Discovered arms: [densee, packed]. An arm outside arms/ is referenced by path.
+╚══
+
+╔══ 06-arm-present-not-named 
+║ story: Added an arm directory and forgot to list it. Silent?
+║ RESULT: Ok
+║   cells: ["widths/width"]
+║   arms:  ["widths/dense", "widths/packed", "widths/simd"]
+╚══
+
+╔══ 07-points-in-both-places 
+║ story: Left a top-level `points` when adding a sweep.
+║ RESULT: Err
+║   invalid bench config: bench `widths` declares top-level points and [sweep.*] sections. With sweeps present, every point list lives in its sweep; move the top-level points into one.
+╚══
+
+╔══ 08-seed-as-decimal-string 
+║ story: Wrote the seed as a quoted hex string.
+║ RESULT: Ok
+║   cells: ["widths/width"]
+║   arms:  ["widths/dense", "widths/packed"]
+╚══
+
+╔══ 09-root-toml-typo 
+║ story: Typo in the ROOT globals file: `runs_per_pas`.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/09-root-toml-typo/bench.toml: TOML parse error at line 3, column 1
+║     |
+║   3 | runs_per_pas = 5
+║     | ^^^^^^^^^^^^
+║   unknown field `runs_per_pas`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 10-member-listed-absent 
+║ story: Listed a member in [benchspace] and never created it.
+║ RESULT: Err
+║   invalid bench config: [benchspace] lists member `depths`, but /var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/10-member-listed-absent/depths/bench.toml does not exist. An explicitly listed member must be a directory with its own bench.toml; patterns (`*`) may match nothing.
+╚══
+
+╔══ 11-empty-arms 
+║ story: Wrote the sweep before writing any arms.
+║ RESULT: Err
+║   invalid bench config: bench `widths` sweep `width` lists no arms (neither the sweep nor the top-level `arms` name any)
+╚══
+
+╔══ 12-no-bench-toml-at-all 
+║ story: Made the bench directory, forgot the file.
+║ RESULT: Ok
+║   cells: []
+║   arms:  []
+╚══
+
+╔══ 13-baseline-names-missing-arm 
+║ story: `baseline` names an arm that is not in `arms`.
+║ RESULT: Ok
+║   cells: ["widths/width"]
+║   arms:  ["widths/dense", "widths/packed"]
+╚══
+
+╔══ 14-points-as-strings 
+║ story: Quoted the point values.
+║ RESULT: Err
+║   invalid bench config: /var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/14-points-as-strings/widths/bench.toml: TOML parse error at line 5, column 11
+║     |
+║   5 | points = ["1024"]
+║     |           ^^^^^^
+║   invalid type: string "1024", expected an integer size or a table with `n` and optional `variants`
+╚══
+

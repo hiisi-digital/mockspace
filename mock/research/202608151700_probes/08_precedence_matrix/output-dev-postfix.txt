@@ -1,0 +1,35 @@
+== composed form: sweep against member, field by field ==
+  title         base=D            lo=M            hi=S            both=S            ok
+  workload      base=default      lo=wm           hi=ws           both=ws           ok
+  master_seed   base=0            lo=11           hi=22           both=22           ok
+  may_differ    base=false        lo=true         hi=false        both=false        ok
+  required      base=false        lo=true         hi=false        both=false        ok
+  threaded      base=false        lo=true         hi=false        both=false        ok
+  arms          base=ERR:invalid bench config: bench `widths` sweep `s` lists no arms (neither  lo=2            hi=1            both=1            ok
+  baseline      base=none         lo=packed       hi=dense        both=dense        ok
+
+== timing, composed: sweep/section over member over root ==
+  passes         ---=10  --S=9  -M-=8  -MS=9  R--=7  R-S=9  RM-=8  RMS=9
+  runs_per_pass  ---=50000  --S=9  -M-=8  -MS=9  R--=7  R-S=9  RM-=8  RMS=9
+  batch_size     ---=5000  --S=9  -M-=8  -MS=9  R--=7  R-S=9  RM-=8  RMS=9
+  harness_runs   ---=3  --S=9  -M-=8  -MS=9  R--=7  R-S=9  RM-=8  RMS=9
+  cooldowns_ms   ---=[0, 100, 600]  --S=[9]  -M-=[8]  -MS=[9]  R--=[7]  R-S=[9]  RM-=[8]  RMS=[9]
+
+== timing, sections: sweep/section over member over root ==
+  passes         ---=10  --S=9  -M-=8  -MS=9  R--=7  R-S=9  RM-=8  RMS=9
+  runs_per_pass  ---=50000  --S=9  -M-=8  -MS=9  R--=7  R-S=9  RM-=8  RMS=9
+  batch_size     ---=5000  --S=9  -M-=8  -MS=9  R--=7  R-S=9  RM-=8  RMS=9
+  harness_runs   ---=3  --S=9  -M-=8  -MS=9  R--=7  R-S=9  RM-=8  RMS=9
+  cooldowns_ms   ---=[0, 100, 600]  --S=[9]  -M-=[8]  -MS=[9]  R--=[7]  R-S=[9]  RM-=[8]  RMS=[9]
+
+== composed: declaring ONE knob must not move the other four ==
+  got : passes=8 runs_per_pass=77 batch_size=777 harness_runs=7 cooldowns_ms=[7]
+  want: passes=8 runs_per_pass=77 batch_size=777 harness_runs=7 cooldowns_ms=[7]
+
+== sections: declaring ONE knob must not move the other four ==
+  got : passes=8 runs_per_pass=77 batch_size=777 harness_runs=7 cooldowns_ms=[7]
+  want: passes=8 runs_per_pass=77 batch_size=777 harness_runs=7 cooldowns_ms=[7]
+
+(R = root bench.toml, M = member top level, S = sweep or section)
+
+RESULT: every case as documented; C1/C2/C3 passed for every field and knob.
