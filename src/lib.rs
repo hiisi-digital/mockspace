@@ -14,6 +14,7 @@
 pub mod agent_mode;
 pub mod autofix;
 pub mod bench;
+pub mod bench_gen;
 pub mod bench_docs;
 pub mod bootstrap;
 pub mod config;

@@ -26,6 +26,7 @@
 //! regression detection, an end-of-run summary table, and a findings
 //! index.
 
+pub mod hooks;
 mod index;
 mod worker;
 
@@ -34,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
+pub use hooks::{AfterCell, CellVerdict, Hooks, InitContext, InitVerdict, RunPlan};
 use index::{SummaryRow, fmt_ns, write_index};
 
 mod staging;
@@ -65,6 +67,19 @@ pub struct DriverRegistry {
     /// (`byte_routine_dispatch!`). Manifest sizes must be members of
     /// its list; the driver errors by name otherwise.
     pub byte_dispatch:  ByteDispatch,
+}
+
+/// The full driver specification: the registrations plus the named
+/// hooks. [`DriverRegistry`] remains the hook-less compat surface;
+/// `drive` adapts it onto this.
+pub struct DriverSpec {
+    /// Build the workload program for `(workload_name, n)`.
+    pub build_workload: fn(&str, usize) -> Workload,
+    /// The declared const byte-size dispatch
+    /// (`byte_routine_dispatch!`).
+    pub byte_dispatch:  ByteDispatch,
+    /// The consumer hooks. See [`Hooks`] for the ordering contract.
+    pub hooks:          Hooks,
 }
 
 pub(super) struct Cli {
@@ -116,16 +131,16 @@ fn parse_seed(s: &str) -> Option<u64> {
     }
 }
 
-/// Resolve the routine for one config: custom hook first, then the
-/// declared byte dispatch.
+/// Resolve the routine for one config: the `routine_for` hook first,
+/// then the declared byte dispatch.
 pub(super) fn resolve_routine(
-    registry: &DriverRegistry,
+    spec: &DriverSpec,
     config: &BenchConfig,
 ) -> Result<RoutineSpec, BenchError> {
-    if let Some(spec) = (registry.routine_for)(config) {
-        return Ok(spec);
+    if let Some(found) = spec.hooks.routine_for.and_then(|h| h(config)) {
+        return Ok(found);
     }
-    match (registry.byte_dispatch.dispatch)(config.n, config.may_differ) {
+    match (spec.byte_dispatch.dispatch)(config.n, config.may_differ) {
         Some(bridge) => {
             Ok(RoutineSpec {
                 name: config.workload.clone(),
@@ -136,10 +151,12 @@ pub(super) fn resolve_routine(
             Err(BenchError::InvalidConfig {
                 reason: format!(
                     "bench `{}` n={} has no monomorphised byte routine: the compiled \
-                 dispatch list is {:?}. Add {} to the `byte_routine_dispatch!` \
-                 declaration in your bench binary (each size is its own \
-                 monomorphisation by design), or serve it from `routine_for`.",
-                    config.bench_name, config.n, registry.byte_dispatch.sizes, config.n
+                 dispatch list is {:?}. With the generated driver, add {} to \
+                 `[dispatch] points` in bench.toml (or leave `[dispatch]` out so the \
+                 list defaults to the union of every bench's points). With a \
+                 consumer-owned driver, add it to the `byte_routine_dispatch!` \
+                 declaration, or serve it from `routine_for`.",
+                    config.bench_name, config.n, spec.byte_dispatch.sizes, config.n
                 ),
             })
         },
@@ -149,17 +166,72 @@ pub(super) fn resolve_routine(
 /// Per-config output paths under `<root>/<bench>/`. During a run
 /// `root` is the in-flight staging tree; report-only reads the
 /// canonical `results/` directly.
+///
+/// A flat-tree cell keeps the historical `<bench>_n<n>_findings.md`
+/// naming so committed artifacts and their citations stay reachable;
+/// a nested-tree cell writes `<sweep>_n<point>_report.md` under its
+/// bench's directory.
 fn output_paths(config: &BenchConfig, root: &Path) -> (PathBuf, String, String) {
-    let dir = root.join(&config.bench_name);
-    let csv = dir
-        .join(format!("{}_n{}.csv", config.bench_name, config.n))
-        .display()
-        .to_string();
-    let findings = dir
-        .join(format!("{}_n{}_findings.md", config.bench_name, config.n))
-        .display()
-        .to_string();
-    (dir, csv, findings)
+    let dir = root.join(&config.bench);
+    let stem = format!("{}_n{}", config.sweep, config.n);
+    let report_suffix = if config.nested { "_report.md" } else { "_findings.md" };
+    let csv = dir.join(format!("{stem}.csv")).display().to_string();
+    let report = dir.join(format!("{stem}{report_suffix}")).display().to_string();
+    (dir, csv, report)
+}
+
+/// Load the manifest for a bench tree root: the root file plus every
+/// declared or defaulted benchspace member, composed. A tree with no
+/// members loads as its flat root manifest unchanged.
+fn load_manifest(root: &Path) -> Result<BenchManifest, BenchError> {
+    crate::tree::load(root).map(|t| t.manifest)
+}
+
+/// Match the requested names against the manifest keys. A request
+/// matches its exact key, and in a nested tree a bench name selects
+/// every sweep of that bench (`warm-container` selects
+/// `warm-container/width-l1`, `warm-container/width-l2`, ...).
+fn select_names(all: &[String], requested: &[String]) -> Result<Vec<String>, String> {
+    if requested.is_empty() {
+        return Ok(all.to_vec());
+    }
+    let mut selected: Vec<String> = Vec::new();
+    for name in requested {
+        let prefix = format!("{name}/");
+        let matches: Vec<&String> = all
+            .iter()
+            .filter(|k| *k == name || k.starts_with(&prefix))
+            .collect();
+        if matches.is_empty() {
+            return Err(format!(
+                "bench `{name}` not found in bench.toml. Available: {}",
+                all.join(", ")
+            ));
+        }
+        for m in matches {
+            if !selected.contains(m) {
+                selected.push(m.clone());
+            }
+        }
+    }
+    Ok(selected)
+}
+
+/// The history root and key for one cell. A nested cell's ledger is
+/// `history/<bench>/<sweep>_n<point>.tsv`; a flat cell keeps the
+/// historical `.bench_history/<bench>_n<n>.tsv`.
+fn history_root_and_key(config: &BenchConfig, root: &Path) -> (PathBuf, String) {
+    if config.nested {
+        (
+            root.join("history").join(&config.bench),
+            format!("{}_n{}", config.sweep, config.n),
+        )
+    } else {
+        (
+            root.join(history::DEFAULT_HISTORY_DIR),
+            format!("{}_n{}", config.bench_name, config.n),
+        )
+    }
 }
 
 /// Compute warm-mode medians per variant from a result.
@@ -184,16 +256,41 @@ fn median(vals: &mut [f64]) -> f64 {
     vals[vals.len() / 2]
 }
 
-/// The library-provided bench driver entry point. See the module docs.
+/// The hook-less compat entry point: adapts a [`DriverRegistry`]
+/// onto [`drive_spec`]. Existing consumer binaries keep building and
+/// keep their behaviour; `routine_for` becomes the hook of the same
+/// name.
 pub fn drive(registry: &DriverRegistry) -> ExitCode {
+    drive_spec(&DriverSpec {
+        build_workload: registry.build_workload,
+        byte_dispatch:  registry.byte_dispatch,
+        hooks:          Hooks {
+            routine_for: Some(registry.routine_for),
+            ..Hooks::default()
+        },
+    })
+}
+
+/// The library-provided bench driver entry point. See the module and
+/// [`Hooks`] docs for the hook ordering contract.
+pub fn drive_spec(spec: &DriverSpec) -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let cli = parse_cli(&args);
 
     if cli.worker {
-        return drive_worker(registry, &cli);
+        return drive_worker(spec, &cli);
     }
 
-    let manifest = match BenchManifest::load(Path::new("bench.toml")) {
+    let cwd = std::env::current_dir()
+        .and_then(|d| d.canonicalize())
+        .unwrap_or_else(|_| PathBuf::from("."));
+    drive_parsed(spec, &cwd, &cli)
+}
+
+/// The drive loop against an explicit tree root, so it is callable
+/// without owning the process cwd. `root` is the benches directory.
+fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
+    let manifest = match load_manifest(root) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("error: {e}");
@@ -201,29 +298,27 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
         },
     };
 
+    // ── on_init: the manifest exists, nothing is resolved yet ──
+    if let Err(reason) = hooks::run_on_init(&spec.hooks, &InitContext {
+        manifest:    &manifest,
+        requested:   &cli.only,
+        report_only: cli.report_only,
+    }) {
+        eprintln!("error: on_init aborted the run: {reason}");
+        return ExitCode::FAILURE;
+    }
+
     // ── selection ──
     let all_names = manifest.bench_names();
-    let selected: Vec<String> = if cli.only.is_empty() {
-        all_names.clone()
-    } else {
-        let mut sel = Vec::new();
-        for name in &cli.only {
-            if all_names.contains(name) {
-                sel.push(name.clone());
-            } else {
-                eprintln!(
-                    "error: bench `{name}` not found in bench.toml. Available: {}",
-                    all_names.join(", ")
-                );
-                return ExitCode::FAILURE;
-            }
-        }
-        sel
+    let selected = match select_names(&all_names, &cli.only) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
     };
 
-    let cwd = std::env::current_dir()
-        .and_then(|d| d.canonicalize())
-        .unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = root.to_path_buf();
 
     // ── resolve configs + preflight ──
     let mut configs: Vec<BenchConfig> = Vec::new();
@@ -277,7 +372,7 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
     // ── transactional results: quarantine crash-borne trees, then
     // stage this run's outputs; promotion happens only on orderly
     // completion (see the staging module docs) ──
-    let results_root = PathBuf::from(RESULTS_DIR);
+    let results_root = root.join(RESULTS_DIR);
     let stage_root: Option<PathBuf> = if cli.report_only {
         None
     } else {
@@ -299,11 +394,20 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
         if cli.report_only { " [report-only]" } else { "" }
     );
 
+    // ── after_init: cells resolved, preflight passed, staging
+    // exists; nothing measured ──
+    hooks::run_after_init(&spec.hooks, &RunPlan {
+        cells:        &configs,
+        report_only:  cli.report_only,
+        results_root: &results_root,
+    });
+
     let mut summary: Vec<SummaryRow> = Vec::new();
     // History appends are deferred to after promotion so the
     // regression log never records a crash-borne run.
-    let mut deferred_history: Vec<(String, Vec<HistoryEntry>)> = Vec::new();
+    let mut deferred_history: Vec<(PathBuf, String, Vec<HistoryEntry>)> = Vec::new();
     let mut required_failure = false;
+    let mut hook_failure = false;
     let total = configs.len();
     let started = Instant::now();
 
@@ -325,14 +429,14 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             eta
         );
 
-        let routine = match resolve_routine(registry, config) {
+        let routine = match resolve_routine(spec, config) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("error: {e}");
                 return ExitCode::FAILURE;
             },
         };
-        let workload = (registry.build_workload)(&config.workload, config.n);
+        let workload = (spec.build_workload)(&config.workload, config.n);
         let out_root = stage_root.as_deref().unwrap_or(results_root.as_path());
         let (dir, csv_path, findings_path) = output_paths(config, out_root);
         if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -508,8 +612,21 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             }
         }
 
+        // ── after_cell: artifacts staged, drops final, nothing
+        // promoted or appended yet; a Fail withholds the ledger ──
+        let cell_failed = hooks::run_after_cell(&spec.hooks, &AfterCell {
+            config:    &config,
+            result:    &result,
+            arm_paths: &config.variant_paths,
+            dropped:   &dropped,
+            out_dir:   &dir,
+        });
+        if cell_failed {
+            hook_failure = true;
+        }
+
         // ── history + regressions + summary rows ──
-        let benchmark_key = format!("{}_n{}", config.bench_name, config.n);
+        let (history_root, benchmark_key) = history_root_and_key(&config, root);
         let per_variant = warm_medians(&result);
         let mut best = f64::INFINITY;
         let mut entries: Vec<HistoryEntry> = Vec::new();
@@ -532,7 +649,7 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
                 ci_hi_ns:   hi,
             });
         }
-        let historical = history::load(&benchmark_key);
+        let historical = history::load_in(&history_root, &benchmark_key);
         let regressions = history::detect_regressions(&entries, &historical);
         for (bench, variant, delta, flagged) in &regressions {
             if *flagged {
@@ -553,7 +670,15 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
                 regression:    flagged,
             });
         }
-        deferred_history.push((benchmark_key, entries));
+        if cell_failed {
+            // A gated-out run must not become the next run's
+            // regression baseline: the ledger records accepted runs.
+            // The staged artifacts still promote as the evidence of
+            // what ran and why it was failed.
+            eprintln!("  history withheld for {benchmark_key}: after_cell returned Fail");
+        } else {
+            deferred_history.push((history_root, benchmark_key, entries));
+        }
     }
 
     // ── orderly completion: promote staged results, then history ──
@@ -562,8 +687,8 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             eprintln!("error: promoting staged results: {e}");
             return ExitCode::FAILURE;
         }
-        for (key, entries) in &deferred_history {
-            if let Err(e) = history::append(key, entries) {
+        for (hroot, key, entries) in &deferred_history {
+            if let Err(e) = history::append_in(hroot, key, entries) {
                 eprintln!("  history append failed: {e}");
             }
         }
@@ -588,16 +713,261 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
             );
         }
     }
-    if let Err(e) = write_index(&summary) {
+    if let Err(e) = write_index(&results_root, &summary) {
         eprintln!("  index write failed: {e}");
     }
 
     let wall = started.elapsed().as_secs_f64();
     eprintln!("\ntotal: {wall:.1}s");
 
+    final_exit(required_failure, hook_failure)
+}
+
+/// Fold the two failure classes into the process exit. A `required`
+/// validation drop and an `after_cell` `Fail` verdict each fail the
+/// run; both are reported after promotion so the staged results and
+/// the ledger reflect what actually ran.
+fn final_exit(required_failure: bool, hook_failure: bool) -> ExitCode {
     if required_failure {
         eprintln!("FAILED: a `required = true` bench dropped variants in validation");
         return ExitCode::FAILURE;
     }
+    if hook_failure {
+        eprintln!("FAILED: an after_cell hook returned Fail");
+        return ExitCode::FAILURE;
+    }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    use super::*;
+
+    fn cfg(bench: &str, sweep: &str, n: usize, nested: bool) -> BenchConfig {
+        BenchConfig {
+            bench_name: if nested && bench != sweep {
+                format!("{bench}/{sweep}")
+            } else {
+                bench.to_string()
+            },
+            bench: bench.to_string(),
+            sweep: sweep.to_string(),
+            nested,
+            n,
+            ..BenchConfig::default()
+        }
+    }
+
+    #[test]
+    fn flat_output_naming_is_unchanged() {
+        let (dir, csv, report) = output_paths(&cfg("hash", "hash", 64, false), Path::new("results"));
+        assert_eq!(dir, Path::new("results/hash"));
+        assert!(csv.ends_with("results/hash/hash_n64.csv"), "{csv}");
+        assert!(
+            report.ends_with("results/hash/hash_n64_findings.md"),
+            "flat trees keep the committed suffix: {report}"
+        );
+    }
+
+    #[test]
+    fn nested_output_naming_uses_the_sweep_stem_and_the_report_suffix() {
+        let c = cfg("warm-container", "width-l1", 80003, true);
+        let (dir, csv, report) = output_paths(&c, Path::new("results"));
+        assert_eq!(dir, Path::new("results/warm-container"));
+        assert!(csv.ends_with("results/warm-container/width-l1_n80003.csv"), "{csv}");
+        assert!(
+            report.ends_with("results/warm-container/width-l1_n80003_report.md"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn history_partitions_per_bench_in_nested_trees_and_stays_put_in_flat_ones() {
+        let root = Path::new("/tree");
+        let (hroot, key) = history_root_and_key(&cfg("warm", "width-l1", 80003, true), root);
+        assert_eq!(hroot, Path::new("/tree/history/warm"));
+        assert_eq!(key, "width-l1_n80003");
+        let (hroot, key) = history_root_and_key(&cfg("hash", "hash", 64, false), root);
+        assert_eq!(hroot, Path::new("/tree/.bench_history"));
+        assert_eq!(key, "hash_n64");
+    }
+
+    #[test]
+    fn each_failure_class_fails_the_exit_alone() {
+        let f = failure();
+        assert_eq!(format!("{:?}", final_exit(true, false)), f);
+        assert_eq!(format!("{:?}", final_exit(false, true)), f);
+        assert_eq!(
+            format!("{:?}", final_exit(false, false)),
+            format!("{:?}", ExitCode::SUCCESS)
+        );
+    }
+
+    #[test]
+    fn selection_matches_exact_keys_and_bench_prefixes() {
+        let all: Vec<String> = ["hash", "warm/density-w13", "warm/width-l1"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(select_names(&all, &[]).unwrap(), all);
+        assert_eq!(
+            select_names(&all, &["warm".to_string()]).unwrap(),
+            vec!["warm/density-w13".to_string(), "warm/width-l1".to_string()]
+        );
+        assert_eq!(
+            select_names(&all, &["warm/width-l1".to_string()]).unwrap(),
+            vec!["warm/width-l1".to_string()]
+        );
+        let err = select_names(&all, &["nope".to_string()]).unwrap_err();
+        assert!(err.contains("Available"), "lists what exists: {err}");
+        assert!(err.contains("warm/width-l1"), "{err}");
+    }
+
+    // ── hook ordering, end to end against a temp tree ──
+
+    fn failure() -> String {
+        format!("{:?}", ExitCode::FAILURE)
+    }
+
+    fn spec_with(hooks: Hooks) -> DriverSpec {
+        fn workload(_: &str, _: usize) -> Workload {
+            Workload::new()
+        }
+        fn no_dispatch(_: usize, _: bool) -> Option<crate::core::RoutineBridge> {
+            None
+        }
+        DriverSpec {
+            build_workload: workload,
+            byte_dispatch: crate::core::ByteDispatch {
+                dispatch: no_dispatch,
+                sizes:    &[],
+            },
+            hooks,
+        }
+    }
+
+    fn temp_tree(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "mockspace-driver-test-{}-{name}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("bench.toml"),
+            r#"
+            [bench.b]
+            title = "B"
+            workload = "default"
+            variants = ["missing-arm/lib.dylib"]
+            sizes = [64]
+        "#,
+        )
+        .unwrap();
+        root
+    }
+
+    static ORDER_A: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+    #[test]
+    fn on_init_runs_before_preflight_and_after_init_does_not_survive_a_failed_preflight() {
+        fn log_on_init(_: &InitContext<'_>) -> InitVerdict {
+            ORDER_A.lock().unwrap().push("on_init");
+            InitVerdict::Proceed
+        }
+        fn log_after_init(_: &RunPlan<'_>) {
+            ORDER_A.lock().unwrap().push("after_init");
+        }
+        let root = temp_tree("preflight");
+        let spec = spec_with(Hooks {
+            on_init: Some(log_on_init),
+            after_init: Some(log_after_init),
+            ..Hooks::default()
+        });
+        let cli = Cli {
+            worker:        false,
+            report_only:   false,
+            only:          Vec::new(),
+            seed_override: None,
+            raw:           Vec::new(),
+        };
+        let code = drive_parsed(&spec, &root, &cli);
+        assert_eq!(format!("{code:?}"), failure(), "the missing dylib fails preflight");
+        assert_eq!(
+            *ORDER_A.lock().unwrap(),
+            vec!["on_init"],
+            "after_init must not fire when init never completed"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    static ORDER_B: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+    #[test]
+    fn after_init_fires_once_init_completes_and_before_any_cell() {
+        fn log_on_init(ctx: &InitContext<'_>) -> InitVerdict {
+            // the payload really is the pre-resolution manifest
+            assert!(ctx.manifest.bench.contains_key("b"));
+            ORDER_B.lock().unwrap().push("on_init");
+            InitVerdict::Proceed
+        }
+        fn log_after_init(plan: &RunPlan<'_>) {
+            assert_eq!(plan.cells.len(), 1, "cells are resolved by now");
+            ORDER_B.lock().unwrap().push("after_init");
+        }
+        let root = temp_tree("report-only");
+        let spec = spec_with(Hooks {
+            on_init: Some(log_on_init),
+            after_init: Some(log_after_init),
+            ..Hooks::default()
+        });
+        // report-only: no preflight, so init completes; the first
+        // cell then fails on the missing csv, after after_init.
+        let cli = Cli {
+            worker:        false,
+            report_only:   true,
+            only:          Vec::new(),
+            seed_override: None,
+            raw:           Vec::new(),
+        };
+        let code = drive_parsed(&spec, &root, &cli);
+        assert_eq!(format!("{code:?}"), failure(), "the missing csv fails the cell");
+        assert_eq!(*ORDER_B.lock().unwrap(), vec!["on_init", "after_init"]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    static ORDER_C: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+    #[test]
+    fn an_on_init_abort_stops_the_run_before_selection() {
+        fn veto(_: &InitContext<'_>) -> InitVerdict {
+            ORDER_C.lock().unwrap().push("on_init");
+            InitVerdict::Abort("not today".into())
+        }
+        fn log_after_init(_: &RunPlan<'_>) {
+            ORDER_C.lock().unwrap().push("after_init");
+        }
+        let root = temp_tree("abort");
+        let spec = spec_with(Hooks {
+            on_init: Some(veto),
+            after_init: Some(log_after_init),
+            ..Hooks::default()
+        });
+        // the requested name does not exist, so reaching selection
+        // would produce a selection error; the abort must come first
+        let cli = Cli {
+            worker:        false,
+            report_only:   false,
+            only:          vec!["no-such-bench".to_string()],
+            seed_override: None,
+            raw:           Vec::new(),
+        };
+        let code = drive_parsed(&spec, &root, &cli);
+        assert_eq!(format!("{code:?}"), failure());
+        assert_eq!(*ORDER_C.lock().unwrap(), vec!["on_init"]);
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
