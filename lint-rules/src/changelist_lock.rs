@@ -87,7 +87,8 @@ impl RepoLint for ChangelistLock {
 
         // Check source files if src CL is locked.
         if src_locked {
-            let src_files = get_modified_crate_files(workspace_root, false);
+            let src_files =
+                drop_fmt_only(workspace_root, get_modified_crate_files(workspace_root, false));
             let cl_name = locked_src_name.as_deref().unwrap_or("src changelist");
 
             for (file, source) in src_files {
@@ -112,6 +113,24 @@ impl RepoLint for ChangelistLock {
 
 /// Get modified files in crates/. If `docs` is true, return doc templates
 /// (excluding SHAME.md.tmpl). If false, return .rs source files.
+/// Drop files whose only change is what `rustfmt` would have produced.
+///
+/// The pre-commit auto-fix formats staged sources, so a round whose
+/// formatting drifted lands fmt changes after its src changelist locks and
+/// the gate refuses them, forcing a mechanical micro-round that changes no
+/// design. A change that reproduces `rustfmt`'s output for the committed
+/// version byte for byte carries no edit, so it passes.
+///
+/// The check is verified rather than declared, and it fails closed: a
+/// missing `rustfmt`, an untracked file, or source `rustfmt` will not parse
+/// all leave the file in the list and the gate refuses as before.
+fn drop_fmt_only(workspace_root: &Path, files: Vec<(String, String)>) -> Vec<(String, String)> {
+    files
+        .into_iter()
+        .filter(|(file, _)| crate::fmt_only::is_fmt_only_change(workspace_root, file).is_err())
+        .collect()
+}
+
 fn get_modified_crate_files(workspace_root: &Path, docs: bool) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = Vec::new();
     let filter = if docs { is_locked_doc } else { is_crate_source };

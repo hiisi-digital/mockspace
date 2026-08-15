@@ -33,6 +33,7 @@
 //! The generated proxy crate (`target/mockspace-proxy/`) concatenates every
 //! pack's lints with any in-tree `mock/lints/*.rs` files and runs the union.
 
+pub mod fmt_only;
 mod actionable_errors;
 mod changelist_doc_gate;
 pub mod changelist_helpers;
