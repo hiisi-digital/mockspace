@@ -1,7 +1,7 @@
 //! Cross-crate lint: source code changes require the IMPL phase.
 //!
 //! Source changes (`*.rs` in `crates/`) are only allowed during
-//! `Phase::Src` (label IMPL) — when a doc CL is locked AND an unlocked
+//! `Phase::Src` (label IMPL): when a doc CL is locked AND an unlocked
 //! src CL exists.
 //!
 //! Enforcement is global: not just staged files, but ANY untracked or
@@ -54,7 +54,7 @@ impl RepoLint for ChangelistRequired {
         modified
             .into_iter()
             .filter(|(file, source)| {
-                // Skip nuked crates — intentionally wiped source is not a
+                // Skip nuked crates: intentionally wiped source is not a
                 // phase violation. Check the crate's lib.rs for the nuke marker.
                 let crate_name = extract_crate_name(file).unwrap_or_default();
                 let librs = workspace_root
@@ -109,7 +109,7 @@ impl RepoLint for ChangelistRequired {
                     0,
                     LINT_NAME,
                     format!(
-                        "source file `{file}` ({source}) cannot be modified — \
+                        "source file `{file}` ({source}) cannot be modified: \
                          {phase_hint}. Revert this change before committing.",
                     ),
                 )

@@ -42,7 +42,7 @@ pub fn extract_backtick_names(text: &str) -> Vec<String> {
             continue;
         }
 
-        // Single backtick — find the closing backtick
+        // Single backtick: find the closing backtick
         let start = i + 1;
         let mut end = None;
         for (j, c) in chars.by_ref() {

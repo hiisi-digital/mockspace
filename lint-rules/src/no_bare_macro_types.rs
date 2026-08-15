@@ -100,7 +100,7 @@ fn check_call(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     ctx.crate_name.to_string(),
                     line_idx + 1,
                     "no-bare-macro-types",
-                    format!("suppressed by lint:allow(no_bare_macro_types) on `{text}(...)` — review periodically"),
+                    format!("suppressed by lint:allow(no_bare_macro_types) on `{text}(...)`: review periodically"),
                 ));
             } else {
                 errors.push(LintError {
@@ -110,7 +110,7 @@ fn check_call(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                     lint_name: "no-bare-macro-types",
                     severity: crate::Severity::HARD_ERROR,
                     message: format!(
-                        "bare `{text}(...)` — use define_error!/define_warning!/define_hint! types instead",
+                        "bare `{text}(...)`: use define_error!/define_warning!/define_hint! types instead",
                     ),
                     finding_kind: None,
                 });
@@ -149,7 +149,7 @@ fn check_struct_literal(node: Node, ctx: &LintContext, errors: &mut Vec<LintErro
                     ctx.crate_name.to_string(),
                     line_idx + 1,
                     "no-bare-macro-types",
-                    format!("suppressed by lint:allow(no_bare_macro_types) on `{text} {{ ... }}` — review periodically"),
+                    format!("suppressed by lint:allow(no_bare_macro_types) on `{text} {{ ... }}`: review periodically"),
                 ));
             } else {
                 errors.push(LintError {
@@ -159,7 +159,7 @@ fn check_struct_literal(node: Node, ctx: &LintContext, errors: &mut Vec<LintErro
                     lint_name: "no-bare-macro-types",
                     severity: crate::Severity::HARD_ERROR,
                     message: format!(
-                        "bare `{text} {{ ... }}` literal — this type should only be constructed via define_*! macros",
+                        "bare `{text} {{ ... }}` literal: this type should only be constructed via define_*! macros",
                     ),
                     finding_kind: None,
                 });

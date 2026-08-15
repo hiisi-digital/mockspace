@@ -198,7 +198,6 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
     let lint_status = Command::new("cargo")
         .args(["mock", "--lint-only", "--strict"])
         .current_dir(&cfg.repo_root)
-        .env("MOCKSPACE_REEXEC", "1") // suppress proxy re-exec inside the child
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();

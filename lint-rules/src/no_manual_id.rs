@@ -62,7 +62,7 @@ fn check_struct(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 ctx.crate_name.to_string(),
                 line_idx + 1,
                 "no-manual-id",
-                format!("suppressed by lint:allow(no_manual_id) on `{name}` — review periodically"),
+                format!("suppressed by lint:allow(no_manual_id) on `{name}`: review periodically"),
             ));
         } else {
             errors.push(LintError {
@@ -72,7 +72,7 @@ fn check_struct(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 lint_name: "no-manual-id",
                 severity: crate::Severity::HARD_ERROR,
                 message: format!(
-                    "manual ID struct `{name}` — use define_id!({name}) or define_handle!({name}) from the ID crate",
+                    "manual ID struct `{name}`: use define_id!({name}) or define_handle!({name}) from the ID crate",
                 ),
                 finding_kind: None,
             });

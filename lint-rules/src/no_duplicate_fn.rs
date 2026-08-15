@@ -36,7 +36,7 @@ impl WorkspaceLint for NoDuplicateFn {
 
         let mut errors = Vec::new();
 
-        // Group by name — exact name matches across different crates
+        // Group by name: exact name matches across different crates
         let mut by_name: HashMap<&str, Vec<&FnSig>> = HashMap::new();
         for sig in &all_fns {
             by_name.entry(sig.name.as_str()).or_default().push(sig);
@@ -73,7 +73,7 @@ impl WorkspaceLint for NoDuplicateFn {
                         lint_name:    "no-duplicate-fn",
                         severity:     crate::Severity::HARD_ERROR,
                         message:      format!(
-                            "function `{name}` also defined in {} — consider reusing",
+                            "function `{name}` also defined in {}: consider reusing",
                             first.crate_name,
                         ),
                         finding_kind: None,
@@ -82,7 +82,7 @@ impl WorkspaceLint for NoDuplicateFn {
             }
         }
 
-        // Group by signature — same param types + return type but different names
+        // Group by signature: same param types + return type but different names
         let mut by_sig: HashMap<String, Vec<&FnSig>> = HashMap::new();
         for sig in &all_fns {
             if sig.params.is_empty() && sig.ret.is_empty() {
@@ -116,7 +116,7 @@ impl WorkspaceLint for NoDuplicateFn {
                         lint_name:    "no-duplicate-fn",
                         severity:     crate::Severity::HARD_ERROR,
                         message:      format!(
-                            "function `{}` has same signature as `{}` in {} — consider reusing",
+                            "function `{}` has same signature as `{}` in {}: consider reusing",
                             dup.name, first.name, first.crate_name,
                         ),
                         finding_kind: None,
@@ -218,7 +218,7 @@ fn collect_pub_fns(root: Node, source: &str, crate_name: &str, out: &mut Vec<FnS
             continue;
         }
 
-        // Skip proc macro functions — they all share TokenStream -> TokenStream by design
+        // Skip proc macro functions: they all share TokenStream -> TokenStream by design
         if has_proc_macro_attr(child, source) {
             continue;
         }

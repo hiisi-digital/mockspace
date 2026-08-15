@@ -513,18 +513,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         doc_only
     };
 
-    // Hash the proxy's Cargo.toml before cargo check. The build-script
-    // bootstrap runs during cargo check and rewrites the proxy Cargo.toml
-    // if the lockfile-resolved mockspace path differs from the one the
-    // proxy currently references. If the hash changes, the running proxy
-    // is stale (linked against an older mockspace) and re-executing via
-    // `cargo mock` picks up the refreshed proxy (cargo rebuilds it on
-    // the next `cargo run --manifest-path ...` invocation).
-    let proxy_toml_path = cfg.repo_root.join("target/mockspace-proxy/Cargo.toml");
-    let proxy_hash_before = fs::read_to_string(&proxy_toml_path)
-        .map(|s| simple_hash(&s))
-        .unwrap_or(0);
-
     if is_infra_only || workspace_nuked || lint_only {
         eprintln!(
             "--- cargo check skipped ({}) ---",
@@ -536,18 +524,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 "infra-only"
             }
         );
-        // Side effect of the --lint-only skip: the build script that
-        // refreshes target/mockspace-proxy/Cargo.toml runs only when
-        // cargo check actually executes. Skipping check here means
-        // proxy refresh does NOT happen on --lint-only invocations.
-        // For the pre-commit hook (the main consumer of --lint-only),
-        // this is acceptable: developers run `cargo mock` without
-        // --lint-only at least once per dev cycle (cargo build, cargo
-        // run, full mock CI), and that invocation picks up any drift.
-        // If a contributor's only mockspace invocation is the pre-
-        // commit hook, they may run stale proxy logic until they
-        // trigger a non-lint-only mockspace path. Acceptable today;
-        // revisit if pre-commit-only-flow becomes a real complaint.
     } else {
         eprintln!("--- cargo check ---");
         // `cargo_gate::cargo` owns the rustup env stripping; see its docs.
@@ -567,28 +543,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-    }
-
-    // If build-script bootstrap just regenerated the proxy Cargo.toml,
-    // re-exec cargo mock so the updated mockspace actually runs. The
-    // env-var guard prevents infinite loops if bootstrap is somehow
-    // non-idempotent.
-    let proxy_hash_after = fs::read_to_string(&proxy_toml_path)
-        .map(|s| simple_hash(&s))
-        .unwrap_or(0);
-    if proxy_hash_before != proxy_hash_after && std::env::var("MOCKSPACE_REEXEC").is_err() {
-        eprintln!("--- proxy refreshed against updated mockspace; re-running cargo mock ---");
-        let forwarded: Vec<String> = std::env::args().skip(1).collect();
-        let status = Command::new("cargo")
-            .arg("mock")
-            .args(&forwarded)
-            .current_dir(&cfg.repo_root)
-            .env("MOCKSPACE_REEXEC", "1")
-            .status();
-        return match status {
-            Ok(s) if s.success() => ExitCode::SUCCESS,
-            _ => ExitCode::FAILURE,
-        };
     }
 
     eprintln!("--- parsing crates ---");
