@@ -919,3 +919,338 @@ comparison refuses rather than agrees on absence.
 and the pair establishes that neither alone closes the state.
 
 Everything else in either file is separable and can be scheduled independently.
+
+---
+
+# Phase three: convergence
+
+Written after the coordinator moderated, PR #21 merged into `dev` as `93f51bf`, and `dev` moved a further
+247 lines in `tree.rs` beyond the PR (a fix to the sections-form timing merge, plus tests). Everything
+above was written against `feat/bench-consolidation`, so the first thing here is re-checking it.
+
+## 0. What moved, and what of mine is now stale
+
+Every `file:line` this file relies on holds unchanged on `origin/dev @93f51bf`: `analysis.rs:276`
+`with_baseline`, `analysis.rs:295` `with_floor`, `report.rs:17` `let base = ds.baseline()`,
+`sample.rs:138` / `cache.rs:427` / `harness.rs:740` all still `digest: ... .unwrap_or(0)`. Probes 02,
+03, 04, 06 and 07 re-run unchanged.
+
+Two numbers in section 7 move and I restate them rather than editing the section: `tree.rs` is **1238**
+lines on dev, not 1049, and the four-crate total is **15,538**, not 15,349. The count of files at or over
+500 stays at ten. The direction the section reports is unchanged and is now one round steeper.
+
+**One claim of mine is superseded and I withdraw it.** Section 3 proposes that the loader accumulate
+errors, and cites the per-member loop's independence. That still holds. But I wrote it against a
+`compose_sections_member` that has since changed shape, and probe 08 below exercises the surface, so the
+proposal should be re-derived against dev by whoever takes it rather than adopted from my text.
+
+## 1. The joint answer on the zero-defaulting class
+
+The coordinator asked for one answer covering both formats and the digest promotion, in a form change 1
+can adopt as written. This is the convergence of my section 5 with the sibling's F3, and neither of us
+had both halves.
+
+### The class, stated once
+
+**The framework has two hand-indexed positional wire formats, and both turn damage into zeros.**
+
+| | worker stdout wire | samples CSV |
+|---|---|---|
+| written | `harness.rs:490-499`, two `println!` format strings | `harness.rs:772-800` |
+| parsed | `harness.rs:720-741`, inline in `run_orchestrator` | `sample.rs:108-141` **and** `cache.rs:400-431` |
+| columns | 12 or 13 | 17 |
+| length guard | `parts.len() >= 9` | `p.len() < 10 { continue }` / `>= 10` |
+| every field | `.parse().unwrap_or(<zero>)` | `.parse().unwrap_or(<zero>)` |
+| `digest` at | `parts.get(11)`, outside the guard | `p.get(16)`, outside the guard |
+
+Four independent copies of one column order across the two formats, no function boundary on the worker
+parser at all, and **zero tests anywhere naming either format**. Both of us found one format and neither
+found the other's, which is the reason to treat this as a class rather than two bugs.
+
+### The property change 1 needs, stated as an intent
+
+**Absence and zero are different values in every sample field a verdict reads.**
+
+That is the whole requirement, and everything below follows from it.
+
+```
+Reported<T> ::= Reported(T) | NotReported
+```
+
+`digest: Reported<u64>`, because `0` is a legal digest and therefore cannot double as its own absence
+marker. Same for `score`, which is already `Option`, and for the perf counters, where `0` means "counters
+were off" and is currently indistinguishable from "the region retired no instructions".
+
+### The three-way rule change 1 must state, because two of the three are wrong
+
+When the post-cell digest comparison meets an arm reporting no digest, there are exactly three
+behaviours and the changelist does not currently say which:
+
+- **agree.** Today's behaviour, by accident, since `0 == 0`. It converts the check that exists to catch a
+  wrong answer into one that manufactures a right one. This is the defect.
+- **disagree.** Refuses every replay of a pre-digest CSV and every run where one arm's line was short.
+  Loud, and wrong: absence is not evidence of divergence.
+- **not comparable.** The cell's digest verdict becomes `NotComparable` rather than `Agreed`, and the
+  record says so.
+
+**The third is the answer**, and it is the one that composes with the record topic rather than fighting
+it. `CellRecord`'s execution section already carries per-arm results; it gains one field:
+
+```
+digest_verdict ::= Agreed | Disagreed(arms) | NotComparable(reason)
+reason         ::= NoDigestFromArm(arm) | SchemaPredatesDigest | ShortLine(arm, column)
+```
+
+The property that buys: **a run whose digest check did not actually run says so in its own artifact.**
+Under any of the other two, a run where the check was silently inert is byte-indistinguishable from a run
+where it passed, which is the exact shape of the defect the validation topic exists to close, one level
+further in.
+
+### Ordering, reconciled
+
+The sibling proposes widening the worker guard to `>= 12` and dropping rather than defaulting, calling it
+"the right emergency fix and the wrong resting state". I propose the codec extraction and `Option`
+typing. These are the same shape at two costs and its framing of when to take which is right. Made
+concrete against change 1:
+
+1. **Before change 1 lands, and it is two lines:** widen the worker guard to the writer's column count,
+   and make `digest` parse to `NotReported` rather than `0` at all three sites. That alone closes the
+   manufactured-agreement hazard, which is the only part of this that change 1 can create.
+2. **With change 1:** the three-way verdict above, in the record.
+3. **After, separably:** one codec per format. `WorkerLine` with a `Display`/`FromStr` pair, keeping the
+   bytes identical (it is a hot per-batch pipe and hand-formatting is the right performance shape;
+   what is missing is that the writer and reader are not one definition). And `Sample::HEADER` /
+   `from_row` / `to_row` in `sample.rs`, with `cache.rs` and `harness.rs` calling them, which deletes the
+   duplicate reader at `cache.rs:400-431` and three of the four column-order literals.
+
+Step 3 is what makes either format testable at all. Today the worker parser has no function boundary, so
+no test can name it, and the round is about to make one of its columns decide a verdict.
+
+### What each of us contributes to this, so the round can weigh it
+
+Its half: the worker wire, the `>= 9` guard against 12 emitted columns, and the measurement that three
+short lines in twenty move an arm's reported mean from 100 ns to 85 ns with the sample count intact.
+Mine: the CSV, the duplicate reader, the shear on an unquoted delimiter, and that a pre-digest file makes
+every arm agree with no damage at all. **The digest hazard was reached twice, independently, through
+different columns of different formats. That is the part to believe.**
+
+## 2. Attacking the sibling's largest concession: `compose_composed_member`
+
+It named this itself as where to send the next person: 127 lines of hand-written precedence it read
+without exercising. Probe 08 exercises it, over both member forms, on dev.
+
+`mock/research/202608151700_probes/08_precedence_matrix/`.
+
+### The instrument, and why it is four cases rather than two
+
+Per field: declared nowhere, only below, only above, both. Per timing knob: all eight combinations of
+root, member, and sweep-or-section. Controls C1 (the three values pairwise distinct), C2 (the lower level
+alone must move the value, or it is inert and "the higher wins" is vacuously true), C3 (the same above).
+
+For a boolean C1 is unachievable, since one of its two inhabitants is the default. There the control
+becomes that `both` returns the higher level's `false`, which proves an explicit `Some(false)` is
+distinguished from `None` rather than swallowed by `unwrap_or`. That is the real `Option<bool>` hazard and
+it is checked rather than skipped.
+
+### The result on dev: the surface is correct
+
+Eight fields, five timing knobs, both forms, every control passing:
+
+```
+title      base=D      lo=M      hi=S      both=S      ok
+workload   base=default lo=wm    hi=ws     both=ws     ok
+master_seed base=0     lo=11     hi=22     both=22     ok
+may_differ base=false  lo=true   hi=false  both=false  ok
+required   base=false  lo=true   hi=false  both=false  ok
+threaded   base=false  lo=true   hi=false  both=false  ok
+arms       base=ERR    lo=2      hi=1      both=1      ok
+baseline   base=none   lo=packed hi=dense  both=dense  ok
+
+passes     ---=10  --S=9  -M-=8  -MS=9  R--=7  R-S=9  RM-=8  RMS=9
+(and the same for runs_per_pass, batch_size, harness_runs, cooldowns_ms,
+ in both the composed and the sections form)
+```
+
+**This is a replacement rather than a refutation, which is what was owed.** The sibling's concession was
+that the surface is unexamined; it is now examined, the answer is that it behaves as documented, and
+keeping it unchanged is the result. Its `TimingOverride`-as-a-partial finding (F5) is unaffected: the
+duplication is real and this says the hand-written merge it produces is currently correct, which is an
+argument about maintenance cost rather than about a live defect.
+
+### The instrument's own control, and the finding that came out of it
+
+Run against `origin/feat/bench-consolidation`, the tree **before** the sections-form timing fix, the probe
+reports exactly one failure and it is that defect:
+
+```
+== sections: declaring ONE knob must not move the other four ==
+  got : passes=8 runs_per_pass=50000 batch_size=5000 harness_runs=3 cooldowns_ms=[0, 100, 600]
+  want: passes=8 runs_per_pass=77   batch_size=777  harness_runs=7 cooldowns_ms=[7]
+```
+
+So the instrument catches the known defect, and only it. Both runs are committed.
+
+**And the eight-combination matrix passes on the broken tree.** Look at the sections rows in that same
+pre-fix output: `-M-=8`, `RM-=8`, all correct. The matrix varies one knob at a time, so the member always
+declares the knob being read, and the reset of the *other four* is invisible to it. Only the cross-knob
+case sees it.
+
+**That is the finding I would carry to the round about testing this surface.** A per-knob matrix, however
+exhaustive in its own dimension, is structurally blind to a defect that lives across knobs, and a
+reviewer looking at a complete 8-case matrix would reasonably call the surface covered. The cross-knob
+isolation case is three lines and it is the only one that fires. It should be a test in `tree.rs` rather
+than living only in a probe, and it should be written for both forms, because only one form had the
+defect and nothing structural prevented the other from having it.
+
+### One divergence found by the scaffold rather than looked for
+
+`workload` is **required** in the sections form (`BenchSection`, no serde default) and **defaulted** in
+the composed form (`ComposedBench`, `#[serde(default = "default_workload")]`). A section moved from one
+form to the other without adding `workload` fails to parse with `missing field workload`. The sibling's
+F5 table records both declarations correctly and does not draw the consequence; this is one more instance
+of its point rather than a new one, and it matters because moving sections between forms is exactly what
+the consumer migrations will do.
+
+## 3. The build-cost question: unpriced, and here is the measurement
+
+I said in section 4 that the question is unpriced and would not guess. Restating it so it can be picked
+up, including the part that says the current harness cannot host it.
+
+### Why the existing harness does not fit, which is itself the finding
+
+`mock/benches/` is a **per-call runtime** harness: variant cdylibs, dlopen, a calibration floor, batches,
+warmups, per-call division. A build-time comparison is not that shape. It is a one-shot process wall time
+with no per-call quantity, no calibration and no dlopen, and forcing it through the variant machinery
+would produce a number whose provenance nobody could read.
+
+So there are two honest routes and the round should pick one rather than letting the question sit:
+
+**Route A, and I would take it: the harness gains a process arm.** A variant whose measured region is
+spawning a command, with the same repetition, warmup, cooldown, CSV and findings discipline, and without
+the calibration floor or the per-call division. That is a real addition with a use beyond this question:
+**every tooling decision this project makes is currently unpriceable**, including generated-driver
+compile cost, `write_if_changed` idempotence, and lint-pack build time, all of which have already been
+raised and none of which has a number.
+
+**Route B: declare it unpriceable and leave it.** Then nobody may decide the fork on a timing argument,
+and section 4's recommendation rests solely on its compilation-unit counts, which is where it currently
+stands and is stated that way.
+
+### The measurement, specified
+
+If Route A is taken, this is the experiment.
+
+**Arms, all three real candidates and no strawman.** Per-arm target directory (today). One shared target
+directory across all arms. One target directory per bench, shared within a bench.
+
+**Workload.** A generated benchspace of N arms over one shared support crate, with the support crate
+carrying enough real dependency weight to matter (the observed set is `mockspace-bench-core`, `syn`,
+`quote`, `proc-macro2`, `unicode-ident`). N over `{2, 8, 32, 90}`, because 90 is arvo's real count and the
+shape of the curve is the answer rather than any one point.
+
+**Axes that must vary, because each one can flip the answer.**
+
+```
+arms            N in {2, 8, 32, 90}
+feature sets    1 (all arms identical) and N/2 (half the arms differ)
+regime          cold (target trees removed) and warm (one arm's source touched)
+parallelism     1 and the host's core count
+```
+
+**Reported.** Wall time of the arm-build phase, and peak on-disk size of the target trees.
+
+**The regime that decides it is warm**, because that is the authoring loop: a person changes one arm and
+wants the number. Cold is the CI case and is the one where sharing should win largest.
+
+**The confounder that must be controlled, and it is the reason parallelism is an axis rather than held at
+1.** Cargo serialises concurrent invocations against one target directory on its package lock. Today's
+per-arm shape has no such contention and `run_generated` builds arms in a sequential loop
+(`src/bench.rs`), so nothing is lost at parallelism 1. If the round ever parallelises arm builds, the
+shared shape loses concurrency it never had, and **the answer flips from "one shared directory" to "one
+per bench"**, which keeps most of the sharing and all of the parallelism. Holding parallelism at 1 would
+measure only the regime where sharing wins and would not find the flip.
+
+**What is already established without any of this**, from probe 04 and standing: the shared directory
+performs strictly fewer compilations (2 against 3, for three arms over two feature sets), preserves cdylib
+isolation under fat LTO, and the one-workspace alternative is refused because it unifies features. Those
+are counts and a symbol table, not timings, and they do not need the harness. What needs it is only the
+question of **how much**, and that question is open.
+
+## 4. What I am carrying forward unchanged, and from whom
+
+**Count: sixteen.** Eleven from phase one, restated by count only, plus five added in phases two and three.
+
+From phase one, section 9, unchanged: four from `202608151234_what-the-consumer-should-write.md`, two from
+the configuration topic, two from the validation topic, one from the record topic, and two from PR #21
+(`deny_unknown_fields` on the composed form, and the test that pins a check is wired). The eighth of
+those, the validation topic's "a cross-arm mismatch drops nothing", I re-checked against dev and it still
+holds: `driver/mod.rs`'s `Err` arm prints and pushes into `dropped` without touching `variant_paths`.
+
+Added now, all from the sibling and all examined rather than adopted on reading:
+
+12. **Its `normalise_mode` finding**, that the mode string is read at exactly one place so three of its
+    four documented values are indistinguishable from each other and from any typo. I tested two keys and
+    never tested the mode. The fail-open class is three keys wide, not two.
+13. **Its `VariantSpec` finding**, that the resolved `(name, path, abi_hash)` triple exists as a
+    documented type, is constructed by nothing, and `load_variant` reads all three facts and returns a
+    bare tuple with the ABI hash discarded twenty lines from where the record wants it.
+14. **Its A3**, a declared-name resolution point at the preflight, which I endorsed in phase two after
+    my own `validate_roles` location failed. Unchanged here.
+15. **Its correction to the `println!` count.** 11, not 107; `grep 'println!'` matches `eprintln!`.
+16. **Its `--config profile.release` precedence measurement**, which closed its first thread as a
+    concession and which I would have needed before saying anything about arm profiles. I did not
+    re-derive it and I am relying on its committed probe.
+
+And one thing I am carrying forward from the coordinator: **the sections-form timing fix on dev is
+correct**, verified independently by probe 08 rather than taken on report.
+
+## 5. The located disagreements, precisely
+
+Three. The first two are settled and recorded as history; the third is live.
+
+**Settled, and not reopened.** My `validate_roles` location against its A3. I checked, was mostly wrong,
+withdrew, and endorsed its mechanism with the three-identities extension. Phase two carries the working.
+
+**Settled by measurement.** Whether `compose_composed_member` harbours a live defect. It conceded the
+surface unexamined; probe 08 examines it and the answer is no, on dev, across both forms and every
+control. Recorded so nobody re-opens it, and the probe is the artifact that lets them check rather than
+believe.
+
+**Live, and the one I would put to op.** *What a non-resolving `floor` or `baseline` should do.*
+
+My section 1 gives two readings and leans toward refusing at load. Its F1 goes further and proposes a
+type change: `Delta` as a deserialised closed enum and `Role` as a sum type, so the contradictory state
+is inexpressible rather than constructed-and-then-refused.
+
+We do not disagree that the current behaviour is wrong, and we do not disagree about the direction. **We
+disagree about whether refusal or tolerance is the right resting state**, and it is a real fork:
+
+- **Refuse.** A name that resolves to nothing is a `BenchError` naming the declared name and listing the
+  arms that exist. Clean, and it means a half-written manifest stops running, which is a real cost during
+  authoring and during a migration touching 180 sections.
+- **Record.** The run proceeds, and the record carries `baseline_declared` alongside `baseline_effective`
+  with a `resolved: false`. The report says it. Nothing is silent and nothing is blocked.
+
+**What would decide it:** whether a bench whose normalisation did not resolve should produce artifacts at
+all. That is a question about what the artifact trail is for, which is op's rather than either of ours,
+and it is one question rather than a category, so it does not fall foul of the never-ask-which-single-rule
+prohibition: both answers are single answers about one specific failure, not a policy over a class.
+
+My own weight, stated and not hedged: **refuse**. A bench that ran against a normalisation nobody
+declared has produced a number whose meaning cannot be recovered from its artifact, and the artifact
+trail is the thing this framework exists to produce. But the tolerant answer is defensible and the
+sibling's type work is the better half of either.
+
+**One thing neither of us can settle and neither should try.** Both readings need the resolved arm names,
+which is A3. So A3 is a prerequisite for the fork rather than one of its arms, and building it is
+unblocked regardless of which way op decides.
+
+## 6. Options opened here, each with what closes it
+
+Three, and no others.
+
+| option | what would close it |
+|---|---|
+| the digest's three-way verdict (`Agreed` / `Disagreed` / `NotComparable`) as a `CellRecord` field | change 1's source changelist stating which of the three it implements. If it states `NotComparable`, this closes with no further work |
+| a process arm in the bench harness, so build and tooling costs are priceable | op deciding Route A or Route B. Under B the build-cost question is permanently unpriced and section 4 stands on its counts alone |
+| the cross-knob timing isolation case as a test in `tree.rs` rather than only in probe 08 | nothing external; it is three lines per form, and the probe already contains both |
