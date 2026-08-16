@@ -111,7 +111,13 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
 #[must_use]
 pub fn run_lints(
     crates: &CrateMap,
-    crates_dir: &Path,
+    // Every source directory, because a crate lives in exactly one of them and
+    // linting against a single root would pass the gate having read a subset.
+    src_dirs: &[std::path::PathBuf],
+    // The mock directory. Passed rather than inferred: it used to be
+    // `crates_dir.parent()`, which only held while there was one root directly
+    // under the mock dir, and silently produced a different root otherwise.
+    mock_dir: &Path,
     mode: LintMode,
     scope: Option<&[String]>,
     doc_only: bool,
@@ -140,7 +146,7 @@ pub fn run_lints(
     }
 
     let all_crate_names: BTreeSet<String> = crates.keys().cloned().collect();
-    let workspace_root = crates_dir.parent().unwrap_or(crates_dir);
+    let workspace_root = mock_dir;
 
     let mut parser = mockspace_lint_rules::make_parser();
     let mut all_errors: Vec<LintError> = Vec::new();
@@ -157,7 +163,13 @@ pub fn run_lints(
             }
         }
 
-        let crate_dir = crates_dir.join(crate_name);
+        // The crate lives under exactly one source directory; find which.
+        // Skipping when no root holds it matches the previous behaviour, where
+        // a missing `src/lib.rs` was skipped a line later.
+        let Some(crate_dir) = src_dirs.iter().map(|d| d.join(crate_name)).find(|d| d.is_dir())
+        else {
+            continue;
+        };
         let librs = crate_dir.join("src/lib.rs");
         let source = match std::fs::read_to_string(&librs) {
             Ok(s) => s,

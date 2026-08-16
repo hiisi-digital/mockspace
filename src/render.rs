@@ -16,16 +16,23 @@ fn esc(s: &str) -> String {
 ///
 /// Returned sorted, so the graph is stable between runs.
 pub fn designed_but_unbuilt(crates: &CrateMap, cfg: &Config) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(&cfg.crates_dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<String> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|name| {
-            let dir = cfg.crates_dir.join(name);
-            dir.join("DESIGN.md.tmpl").is_file() && !dir.join("src/lib.rs").is_file()
+    // Every source directory, not the first. A grouped project asked only about
+    // its first group would report a subset of its unbuilt crates as the whole,
+    // and the number would look plausible.
+    let mut out: Vec<String> = cfg
+        .src_dirs
+        .iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok().map(|e| (dir, e)))
+        .flat_map(|(dir, entries)| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .filter(|name| {
+                    let d = dir.join(name);
+                    d.join("DESIGN.md.tmpl").is_file() && !d.join("src/lib.rs").is_file()
+                })
+                .collect::<Vec<_>>()
         })
         .filter(|name| !crates.contains_key(name.as_str()))
         .collect();

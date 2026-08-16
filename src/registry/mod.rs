@@ -448,14 +448,14 @@ mod tests {
 
         let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
         cfg.mock_dir = mock.clone();
-        cfg.crates_dir = mock.join("crates");
+        cfg.src_dirs = vec![mock.join("crates")];
         cfg.docs_dir = docs.clone();
         cfg.repo_root = tmp.path().to_path_buf();
         cfg.crate_prefix = "proj".into();
         cfg.registry_namespaces = vec![ns("law", None)];
 
         let reg = reg_with("keys", "law", &[("statement", "a key is closed")]);
-        let crates = crate::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+        let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
         let ph = crate::render_design::Placeholders::compute(&crates, &cfg);
         let plan = crate::document::plan(&cfg, &crates);
         crate::document::render_all(&plan, &ph, &reg, &cfg);
@@ -504,7 +504,7 @@ mod tests {
         // Deliberately empty: the referenced document does not exist yet.
 
         let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-        cfg.crates_dir = crates_dir;
+        cfg.src_dirs = vec![crates_dir];
         cfg.docs_dir = docs.clone();
         cfg.repo_root = tmp.path().to_path_buf();
         cfg.crate_prefix = "proj".into();
@@ -548,7 +548,7 @@ mod tests {
         std::fs::write(docs.join("140_PLAN_VALIDATE.md"), "x").unwrap();
 
         let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
-        cfg.crates_dir = crates_dir;
+        cfg.src_dirs = vec![crates_dir];
         cfg.docs_dir = docs.clone();
         cfg.repo_root = tmp.path().to_path_buf();
         cfg.crate_prefix = "proj".into();

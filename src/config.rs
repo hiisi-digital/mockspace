@@ -40,7 +40,30 @@ pub struct Config {
     /// the repo root). Needed by callers that re-read the raw config, such as
     /// the runtime custom-lint loader reading `[lint-crates]`.
     pub config_path:            PathBuf,
+    /// The first entry of `src_dirs`.
+    ///
+    /// Never a config key: it was always `mock_dir/crates`, computed rather
+    /// than read, so no `mockspace.toml` can name it and there is no second
+    /// spelling to conflict with. What it is instead is exported Rust API, via
+    /// `pub mod config`, and that is the contract this deprecation is for.
+    ///
+    /// **On a grouped project this reports only the first group**, which looks
+    /// exactly like a smaller project. That is the silent-empty class already
+    /// recorded at `parse.rs`, and it is why the replacement is a list rather
+    /// than a second path.
+    #[deprecated(
+        since = "0.0.0",
+        note = "use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it \
+                sees only the first group and reports a subset as if it were the \
+                whole. If one directory really is meant, take it as an argument \
+                rather than reading the first entry of a list."
+    )]
     pub crates_dir:             PathBuf,
+    /// Every directory holding source packages, absolute, in config order.
+    ///
+    /// One entry for an ordinary project. Several for a grouped one, where the
+    /// groups are independent and a package belongs to exactly one.
+    pub src_dirs:               Vec<PathBuf>,
     pub repo_root:              PathBuf,
     pub docs_dir:               PathBuf,
     pub project_name:           String,
@@ -414,6 +437,14 @@ struct RawConfig {
     project_name:           Option<String>,
     crate_prefix:           Option<String>,
     abi_version:            Option<u32>,
+    /// Directories under the mock dir that hold source packages, relative to
+    /// it. Empty means the default, a single `crates`.
+    ///
+    /// Several entries is a project whose packages are grouped: one entry per
+    /// group, and the groups are independent. Entries are paths rather than
+    /// names, so a project keeps whatever nesting it already had.
+    #[serde(default)]
+    src_dirs:               Vec<String>,
     proc_macro_crates:      Vec<String>,
     #[serde(default)]
     lint_proc_macro_source: Option<bool>,
@@ -541,7 +572,6 @@ impl Config {
     #[must_use]
     pub fn from_dir(mock_dir: &Path) -> Self {
         let mock_dir = mock_dir.to_path_buf();
-        let crates_dir = mock_dir.join("crates");
 
         let repo_root = find_repo_root(&mock_dir).unwrap_or_else(|| mock_dir.clone());
         let docs_dir = repo_root.join("docs");
@@ -566,6 +596,37 @@ impl Config {
 
         let project_name = raw.project_name.unwrap_or_else(|| "project".into());
         let crate_prefix = raw.crate_prefix.unwrap_or_else(|| project_name.clone());
+
+        // A declared list rather than a walked tree, because a walk cannot tell
+        // an empty group from a directory that is not a group, and this project
+        // has already shipped one silent-empty discovery. A named directory that
+        // is missing is a configuration error and says so; an absent
+        // subdirectory in a walk says nothing at all.
+        let src_dirs: Vec<PathBuf> = if raw.src_dirs.is_empty() {
+            vec![mock_dir.join("crates")]
+        } else {
+            raw.src_dirs.iter().map(|d| mock_dir.join(d)).collect()
+        };
+        if raw.src_dirs.is_empty() {
+            // The default is allowed not to exist: a project with no packages
+            // yet is ordinary, and discovery yields nothing without complaint.
+        } else {
+            let missing: Vec<_> = src_dirs.iter().filter(|d| !d.is_dir()).collect();
+            assert!(
+                missing.is_empty(),
+                "mockspace.toml names src_dirs that are not directories: {}\n  \
+                 Every entry is relative to the mock dir ({}). An entry naming \
+                 nothing would contribute no packages silently, so it is refused \
+                 here instead.",
+                missing
+                    .iter()
+                    .map(|d| d.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                mock_dir.display(),
+            );
+        }
+        let crates_dir = src_dirs[0].clone();
 
         let install_git_hooks = raw
             .install_git_hooks
@@ -648,6 +709,7 @@ impl Config {
         Config {
             mock_dir,
             crates_dir,
+            src_dirs,
             repo_root,
             docs_dir,
             config_path: toml_path,

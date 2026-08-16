@@ -546,7 +546,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     eprintln!("--- parsing crates ---");
-    let crates = parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+    let crates = parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
 
     // Several crates and not one edge between them is far more often a parse
     // failure than a real architecture. It reads as neither, because nothing
@@ -593,7 +593,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             }
             let violations = lint::run_lints(
                 &crates,
-                &cfg.crates_dir,
+                &cfg.src_dirs,
+                &cfg.mock_dir,
                 mode,
                 Some(&names),
                 doc_only,
@@ -613,7 +614,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         None => {
             let violations = lint::run_lints(
                 &crates,
-                &cfg.crates_dir,
+                &cfg.src_dirs,
+                &cfg.mock_dir,
                 mode,
                 None,
                 doc_only,
