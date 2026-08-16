@@ -349,7 +349,6 @@ pub(crate) fn generate_crate_readme_rules(
 ) -> usize {
     use std::collections::BTreeSet as Set;
 
-    let crates_dir = cfg.mock_dir.join("crates");
 
     let mock_rel = cfg
         .mock_dir
@@ -361,21 +360,20 @@ pub(crate) fn generate_crate_readme_rules(
     // An unreadable or absent crates/ yields no crates, and therefore an empty
     // active set. It must NOT return early: the sweep below still has to run,
     // or removing the last crate would strand every rule it had written.
-    let mut entries: Vec<_> = fs::read_dir(&crates_dir)
-        .map(|e| {
-            e.filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir())
-                .collect()
-        })
-        .unwrap_or_default();
-    entries.sort_by_key(|e| e.file_name());
+    // Every source directory: a grouped project would otherwise write per-crate
+    // agent rules for one group, and the sweep below would then strand the rules
+    // of every crate outside it.
+    let entries = crate::parse::package_dirs_in(&cfg.src_dirs);
 
     let mut count = 0;
     let mut active: Set<String> = Set::new();
 
     for entry in entries {
-        let crate_name = entry.file_name().to_string_lossy().to_string();
-        let readme = entry.path().join("README.md.tmpl");
+        let crate_name = entry
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let readme = entry.join("README.md.tmpl");
         let Ok(raw) = fs::read_to_string(&readme) else { continue };
         if raw.trim().is_empty() {
             continue;

@@ -1,15 +1,69 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tree_sitter::{Node, Parser};
 
 use crate::model::*;
 
+/// Every package directory across every source directory, sorted by name.
+///
+/// The one place that answers "what directories are the packages", so a caller
+/// cannot accidentally answer it for a single group. Returns full paths, since
+/// a bare name is ambiguous once there is more than one root.
+pub fn package_dirs_in(src_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = src_dirs
+        .iter()
+        .filter_map(|d| fs::read_dir(d).ok())
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .map(|e| e.path())
+        .collect();
+    out.sort_by_key(|p| p.file_name().map(|n| n.to_os_string()));
+    out
+}
+
+/// Every package across every source directory.
+///
+/// The directories are independent and a package belongs to exactly one, so a
+/// name appearing under two roots is a collision rather than a merge, and it is
+/// refused. Silently keeping one would make a real package disappear while the
+/// count still looked plausible.
+pub fn discover_crates_in(src_dirs: &[PathBuf], crate_prefix: &str) -> CrateMap {
+    let mut result = BTreeMap::new();
+    for dir in src_dirs {
+        for (name, info) in discover_crates(dir, crate_prefix) {
+            if let Some(existing) = result.insert(name.clone(), info) {
+                let _ = existing;
+                panic!(
+                    "two source directories both hold a package named `{name}`.\n  \
+                     Source directories are independent and a package belongs to \
+                     exactly one, so this is ambiguous rather than additive. \
+                     Rename one, or merge the directories if they were meant to be \
+                     one group.\n  Searched: {}",
+                    src_dirs
+                        .iter()
+                        .map(|d| d.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+            }
+        }
+    }
+    result
+}
+
 pub fn discover_crates(crates_dir: &Path, crate_prefix: &str) -> CrateMap {
     let mut result = BTreeMap::new();
-    let mut entries: Vec<_> = fs::read_dir(crates_dir)
-        .expect("can't read crates dir")
+    // A missing directory yields nothing rather than failing: the default
+    // `crates` is allowed not to exist for a project with no packages yet.
+    // A *named* directory that is missing is refused in `Config::from_dir`,
+    // where the name is known and the message can say which entry is wrong.
+    let Ok(read) = fs::read_dir(crates_dir) else {
+        return result;
+    };
+    let mut entries: Vec<_> = read
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
         .collect();
@@ -490,5 +544,51 @@ ikiuni-renderer-contract = { workspace = true }
 "#;
         let deps = extract_deps(toml, "ikiuni-renderer-store", "ikiuni-renderer");
         assert_eq!(deps, vec!["ikiuni-renderer-contract"]);
+    }
+
+    /// A grouped project discovers every group, not the first one.
+    ///
+    /// The failure this pins is silent: reading one root returns a smaller map
+    /// that looks exactly like a smaller project, which is the shape this file's
+    /// own `extract_deps` comment already records as having shipped once.
+    #[test]
+    fn every_source_directory_contributes_its_packages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mock = tmp.path();
+        for (group, crate_name) in
+            [("abi", "proj-abi-bus"), ("sys", "proj-pwmon"), ("boot", "proj-pid1")]
+        {
+            let d = mock.join(group).join(crate_name).join("src");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("lib.rs"), "pub struct Thing;\n").unwrap();
+            std::fs::write(
+                mock.join(group).join(crate_name).join("Cargo.toml"),
+                format!("[package]\nname = \"{crate_name}\"\n"),
+            )
+            .unwrap();
+        }
+
+        let one = vec![mock.join("abi")];
+        let all = vec![mock.join("abi"), mock.join("sys"), mock.join("boot")];
+
+        // The control: one root really does yield only its own package, so a
+        // count of three below is the roots being walked and not an artefact.
+        assert_eq!(discover_crates_in(&one, "proj").len(), 1);
+
+        let found = discover_crates_in(&all, "proj");
+        assert_eq!(found.len(), 3, "every group contributes: {:?}", found.keys());
+        for name in ["proj-abi-bus", "proj-pwmon", "proj-pid1"] {
+            assert!(found.contains_key(name), "{name} missing from {:?}", found.keys());
+        }
+    }
+
+    /// A directory named in `src_dirs` that holds no packages is not an error
+    /// here; it is refused earlier, where the name is known.
+    #[test]
+    fn a_source_directory_with_nothing_in_it_contributes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(discover_crates_in(&[empty], "proj").is_empty());
     }
 }
