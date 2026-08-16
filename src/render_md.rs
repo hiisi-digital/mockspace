@@ -125,7 +125,6 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
                 &depths,
                 &reduced,
                 crates,
-                &cfg.crates_dir,
                 project_name,
                 cfg,
             );
@@ -142,7 +141,6 @@ fn write_crate_section(
     depths: &BTreeMap<String, usize>,
     reduced: &BTreeMap<String, Vec<String>>,
     crates: &CrateMap,
-    crates_dir: &Path,
     project_name: &str,
     cfg: &Config,
 ) {
@@ -155,8 +153,15 @@ fn write_crate_section(
     writeln!(md).unwrap();
 
     // Include README.md content
-    let readme_path = crates_dir.join(dir_name).join("README.md");
-    if let Ok(readme) = fs::read_to_string(&readme_path) {
+    // Searched across every source directory: the crate is in exactly one, and
+    // looking only in the first would silently drop the README of every crate
+    // outside it.
+    let readme_path = cfg
+        .src_dirs
+        .iter()
+        .map(|d| d.join(dir_name).join("README.md"))
+        .find(|p| p.is_file());
+    if let Some(readme) = readme_path.and_then(|p| fs::read_to_string(p).ok()) {
         let content: String = readme
             .lines()
             .skip_while(|l| l.starts_with('#') || l.is_empty())

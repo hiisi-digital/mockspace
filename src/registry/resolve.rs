@@ -137,13 +137,19 @@ fn doc_target(ns: &RegistryNamespace, row: &RegistryRow, cfg: &crate::config::Co
 
 fn resolve_crate_ref(name: &str, cfg: &crate::config::Config, docs_dir: &Path) -> Option<String> {
     let prefixed = format!("{}-{name}", cfg.crate_prefix);
-    let dir = if cfg.crates_dir.join(name).is_dir() {
-        name.to_string()
-    } else if cfg.crates_dir.join(&prefixed).is_dir() {
-        prefixed
-    } else {
-        return None;
-    };
+    // Searched across every source directory: a reference names a crate, not a
+    // crate in a particular group, and resolving only against the first would
+    // silently fail to link anything outside it.
+    let found = cfg.src_dirs.iter().find_map(|d| {
+        if d.join(name).is_dir() {
+            Some(name.to_string())
+        } else if d.join(&prefixed).is_dir() {
+            Some(prefixed.clone())
+        } else {
+            None
+        }
+    });
+    let dir = found?;
     let short = dir
         .strip_prefix(&format!("{}-", cfg.crate_prefix))
         .unwrap_or(&dir)
@@ -431,8 +437,9 @@ fn resolve_pathof(
     if parts[0] == CRATE_ROOT && parts.len() == 2 {
         let prefixed = format!("{}-{}", cfg.crate_prefix, parts[1]);
         for name in [parts[1].to_string(), prefixed] {
-            let dir = cfg.crates_dir.join(&name);
-            if dir.is_dir() {
+            // Across every source directory, for the same reason as
+            // `resolve_crate_ref`: the expression names a crate, not a group.
+            if let Some(dir) = cfg.src_dirs.iter().map(|d| d.join(&name)).find(|d| d.is_dir()) {
                 return Some(rel_to_repo(&dir, repo_root));
             }
         }

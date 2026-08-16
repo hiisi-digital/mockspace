@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::graph;
@@ -281,7 +281,7 @@ impl Placeholders {
             macros_table: compute_macros_table(crates, cfg),
             primary_items: compute_primary_items_per_crate(crates, cfg),
             crate_layers: compute_crate_layers(crates, cfg),
-            deep_dives: collect_deep_dives(&cfg.mock_dir),
+            deep_dives: collect_deep_dives(&cfg.src_dirs),
             crate_summaries: compute_crate_summaries(&cfg.mock_dir, &cfg.crate_prefix, cfg, crates),
         }
     }
@@ -450,23 +450,16 @@ fn compute_crate_layers(crates: &CrateMap, cfg: &Config) -> String {
 }
 
 /// Collect deep-dive markdown files from per-crate DEEPDIVE_*.md.tmpl files.
-fn collect_deep_dives(mock_dir: &Path) -> String {
-    let crates_dir = mock_dir.join("crates");
-    if !crates_dir.is_dir() {
-        return String::new();
-    }
-
+fn collect_deep_dives(src_dirs: &[PathBuf]) -> String {
+    // Every source directory. Hardcoding `mock_dir/crates` here never read the
+    // configured roots at all, so a grouped project silently contributed the
+    // deep dives of one group and none of the others.
     let mut all_dives = Vec::new();
 
-    let mut crate_dirs: Vec<_> = fs::read_dir(&crates_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .collect();
-    crate_dirs.sort_by_key(|e| e.file_name());
+    let crate_dirs = crate::parse::package_dirs_in(src_dirs);
 
     for crate_entry in crate_dirs {
-        let crate_path = crate_entry.path();
+        let crate_path = crate_entry.clone();
         let mut entries: Vec<_> = fs::read_dir(&crate_path)
             .unwrap()
             .filter_map(|e| e.ok())
@@ -503,7 +496,7 @@ fn now_rfc3339() -> String {
 /// Generate standalone DESIGN-DEEP-DIVES.md from per-crate DEEPDIVE_*.md.tmpl files.
 pub fn generate_deep_dives_md(cfg: &Config) -> String {
     let header = generation_header_md(cfg);
-    let dives = collect_deep_dives(&cfg.mock_dir);
+    let dives = collect_deep_dives(&cfg.src_dirs);
     if dives.is_empty() {
         return String::new();
     }
@@ -539,23 +532,18 @@ fn compute_crate_summaries(
     crates: &CrateMap,
 ) -> String {
     let mut depth_cache = BTreeMap::new();
-    let crates_dir = mock_dir.join("crates");
-    if !crates_dir.is_dir() {
-        return String::new();
-    }
-
-    let mut crate_dirs: Vec<_> = fs::read_dir(&crates_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .collect();
-    crate_dirs.sort_by_key(|e| e.file_name());
+    // Every source directory, for the same reason as `collect_deep_dives`: the
+    // hardcoded single root ignored the configured ones entirely.
+    let crate_dirs = crate::parse::package_dirs_in(&cfg.src_dirs);
 
     let mut summaries = String::new();
 
     for crate_entry in crate_dirs {
-        let crate_path = crate_entry.path();
-        let crate_name = crate_entry.file_name().to_string_lossy().to_string();
+        let crate_path = crate_entry.clone();
+        let crate_name = crate_entry
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
         let readme_path = crate_path.join("README.md.tmpl");
 
         if let Ok(content) = fs::read_to_string(&readme_path) {

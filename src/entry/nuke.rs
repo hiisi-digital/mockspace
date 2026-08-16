@@ -3,22 +3,17 @@ use super::*;
 
 /// Check if every crate in the workspace has been nuked.
 pub(crate) fn detect_nuked_workspace(cfg: &Config) -> bool {
-    let entries = match fs::read_dir(&cfg.crates_dir) {
-        Ok(e) => e,
-        Err(_) => return false,
-    };
-
-    let crate_dirs: Vec<_> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-        .collect();
+    // Every source directory. Answering this from one group would report a
+    // fully nuked workspace while other groups still held their source, and
+    // this is the check other behaviour keys off.
+    let crate_dirs = crate::parse::package_dirs_in(&cfg.src_dirs);
 
     if crate_dirs.is_empty() {
         return false;
     }
 
-    crate_dirs.iter().all(|entry| {
-        let librs = entry.path().join("src/lib.rs");
+    crate_dirs.iter().all(|dir| {
+        let librs = dir.join("src/lib.rs");
         fs::read_to_string(&librs)
             .map(|s| s.contains(&cfg.nuke_marker))
             .unwrap_or(false)
@@ -34,21 +29,22 @@ pub(crate) fn nuke_mock_sources(cfg: &Config) -> ExitCode {
     let mut nuked_files = 0u32;
     let mut nuked_crates = 0u32;
 
-    let mut entries: Vec<_> = fs::read_dir(&cfg.crates_dir)
-        .expect("can't read crates dir")
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
+    // Every source directory. A nuke that covered one group and reported
+    // success would leave the rest of the workspace holding source that every
+    // later step assumes is gone.
+    let entries = crate::parse::package_dirs_in(&cfg.src_dirs);
 
-    for entry in entries {
-        let crate_name = entry.file_name().to_string_lossy().to_string();
-        let src_dir = entry.path().join("src");
+    for path in entries {
+        let crate_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let src_dir = path.join("src");
         if !src_dir.exists() {
             continue;
         }
 
-        let cargo_toml = entry.path().join("Cargo.toml");
+        let cargo_toml = path.join("Cargo.toml");
         let is_proc_macro = fs::read_to_string(&cargo_toml)
             .map(|c| c.contains("proc-macro = true"))
             .unwrap_or(false);

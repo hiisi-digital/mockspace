@@ -528,14 +528,18 @@ pub fn plan(cfg: &Config, crates: &crate::model::CrateMap) -> Vec<Planned> {
     }
 
     // Per-crate overviews and deep dives.
-    if cfg.crates_dir.is_dir() {
+    // Across every source directory. Planning from one group would leave every
+    // crate in the others with no generated document at all, and the run would
+    // report success.
+    {
         let mut depth_cache = std::collections::BTreeMap::new();
-        if let Ok(entries) = std::fs::read_dir(&cfg.crates_dir) {
-            let mut dirs: Vec<_> = entries.flatten().filter(|e| e.path().is_dir()).collect();
-            dirs.sort_by_key(|e| e.file_name());
-            for entry in dirs {
-                let dir = entry.path();
-                let crate_name = entry.file_name().to_string_lossy().to_string();
+        {
+            let dirs = crate::parse::package_dirs_in(&cfg.src_dirs);
+            for dir in dirs {
+                let crate_name = dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 let upper = crate::render_design::crate_doc_stem(&crate_name, &cfg.crate_prefix);
                 let depth = crate::graph::compute_depth(&crate_name, crates, &mut depth_cache);
 
