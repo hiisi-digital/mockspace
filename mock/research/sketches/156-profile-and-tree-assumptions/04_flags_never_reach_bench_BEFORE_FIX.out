@@ -1,0 +1,12 @@
+=== control (a): does a POSITIONAL argument reach bench::cmd? ===
+  'not found in bench.toml' refusal seen: 1 (want 1)
+=== control (b): does a FLAG reach cargo? ===
+  cargo argv observed: test --manifest-path /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/tmp.JM7M0wwGEO/mock/benches/Cargo.toml
+  '--release' present in cargo argv: 0 (want 0)
+
+CONTROL: ok. Positionals arrive; flags do not.
+VERDICT: mock bench test --release runs cargo test with no --release.
+         The flag is dropped at src/entry/dispatch.rs:193 before
+         bench::cmd is called, so the extra-forwarding code in
+         cmd_test, cmd_run and cmd_report is unreachable via the CLI.
+         The command accepts the flag, ignores it, and reports a pass.

@@ -14,6 +14,12 @@
 # that exists to make a bench tree's tests reachable cannot run this tree, and
 # the one-word workaround cannot be expressed.
 #
+# HISTORY. As first written this had two arms and showed the tool could not
+# run the tree at all; that run is kept beside it as
+# 05_bench_test_cannot_run_arvo_BEFORE_FIX.out. Arm C is added since the flag
+# fix: the workaround is now expressible through the tool. Arm A still hangs,
+# and is expected to, because the bug that hangs is arvo's.
+#
 # NEGATIVE CONTROL, stated before the run. Arm B runs the same crate with
 # --test-threads=1 directly through cargo and MUST complete quickly. If arm B
 # also hangs, the hang is not the parallelism and this probe says nothing
@@ -57,18 +63,26 @@ S=$(date +%s)
 B=$(( $(date +%s) - S ))
 echo "  completed in ${B}s"; grep "^test result" "$FX/b.log" | head -1 | sed 's/^/  /'
 
+echo "=== arm C: mock bench test -- --test-threads=1 (the workaround, through the tool) ==="
+S=$(date +%s)
+(cd "$FX/mock" && "$BIN" bench test -- --test-threads=1) > "$FX/c.log" 2>&1 || true
+Cc=$(( $(date +%s) - S ))
+echo "  completed in ${Cc}s"; grep "crates," "$FX/c.log" | tail -1 | sed 's/^/  /'
+
 echo
 case "$A" in
   DID*) ok_a=1 ;;
   *) ok_a=0 ;;
 esac
-if [ "$ok_a" -eq 1 ] && [ "$B" -lt 60 ]; then
-  echo "CONTROL: ok. Serialised, the same crate finishes in ${B}s; through the tool it does not finish at all."
-  echo "VERDICT: mock bench test cannot run the tree it was written for. The bug"
-  echo "         that hangs is arvo's; what is mockspace's is that the command"
-  echo "         offers no way to pass --test-threads=1, because flags never"
-  echo "         reach it (04). 155 explicitly did not run this acceptance check."
+PASSED=$(grep -o '[0-9]* passed' "$FX/c.log" | tail -1 | grep -o '[0-9]*' || echo 0)
+if [ "$ok_a" -eq 1 ] && [ "$B" -lt 60 ] && [ "$Cc" -lt 60 ] && [ "$PASSED" -gt 0 ]; then
+  echo "CONTROL: ok. Serialised the crate finishes in ${B}s; under the default runner it does not finish."
+  echo "VERDICT: the hang is arvo's bug and is unchanged, as it should be."
+  echo "         What changed is that the one-word workaround is now"
+  echo "         expressible through the tool: arm C completes in ${Cc}s with"
+  echo "         ${PASSED} tests passing, where before the fix every flag was"
+  echo "         dropped before the subcommand and arm C behaved as arm A."
 else
-  echo "CONTROL FAILED or refuted: armA='$A' armB=${B}s -- result suppressed"; exit 1
+  echo "CONTROL FAILED or refuted: armA='$A' armB=${B}s armC=${Cc}s passed=$PASSED -- suppressed"; exit 1
 fi
 rm -rf "$FX"
