@@ -1,0 +1,13 @@
+warming the build (not timed)...
+=== arm A: mock bench test, budget 240s ===
+  DID NOT COMPLETE in 240s
+  stalled-test notices: 0
+=== arm B (control): cargo test -- --test-threads=1 ===
+  completed in 6s
+  test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.68s
+
+CONTROL: ok. Serialised, the same crate finishes in 6s; through the tool it does not finish at all.
+VERDICT: mock bench test cannot run the tree it was written for. The bug
+         that hangs is arvo's; what is mockspace's is that the command
+         offers no way to pass --test-threads=1, because flags never
+         reach it (04). 155 explicitly did not run this acceptance check.
