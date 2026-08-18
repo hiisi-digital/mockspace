@@ -1,0 +1,17 @@
+warming the build (not timed)...
+=== arm A: mock bench test, budget 180s ===
+  DID NOT COMPLETE in 180s
+  stalled-test notices: 0
+=== arm B (control): cargo test -- --test-threads=1 ===
+  completed in 5s
+  test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.75s
+=== arm C: mock bench test -- --test-threads=1 (the workaround, through the tool) ===
+  completed in 7s
+  2 crates, 2 carrying tests, 20 passed, 0 failed, 0 ignored
+
+CONTROL: ok. Serialised the crate finishes in 5s; under the default runner it does not finish.
+VERDICT: the hang is arvo's bug and is unchanged, as it should be.
+         What changed is that the one-word workaround is now
+         expressible through the tool: arm C completes in 7s with
+         20 tests passing, where before the fix every flag was
+         dropped before the subcommand and arm C behaved as arm A.

@@ -1,0 +1,39 @@
+Negative-control reproduction: the first draft of parse_test_result_lines,
+run standalone against a real cargo test verdict line, before the fix.
+
+Source: /tmp/verify_old_bug.rs (throwaway, reproduced here for the record)
+
+fn parse_old(stdout: &str) -> (u64, u64, u64) {
+    let mut passed = 0u64;
+    let mut failed = 0u64;
+    let mut ignored = 0u64;
+    for line in stdout.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("test result:") else { continue };
+        for field in rest.split(';') {
+            let field = field.trim();
+            if let Some(n) = field.strip_suffix(" passed").and_then(|s| s.parse::<u64>().ok()) {
+                passed += n;
+            } else if let Some(n) = field.strip_suffix(" failed").and_then(|s| s.parse::<u64>().ok()) {
+                failed += n;
+            } else if let Some(n) = field.strip_suffix(" ignored").and_then(|s| s.parse::<u64>().ok()) {
+                ignored += n;
+            }
+        }
+    }
+    (passed, failed, ignored)
+}
+fn main() {
+    let line = "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s";
+    println!("{:?}", parse_old(line));
+}
+
+Command: rustc -O /tmp/verify_old_bug.rs -o /tmp/verify_old_bug && /tmp/verify_old_bug
+Output:  (0, 0, 0)
+
+Expected (real crate, verified separately): 15 tests genuinely passed.
+The bug: the first ';'-delimited field is "ok. 15 passed", not a bare
+number once " passed" is stripped ("ok. 15" fails u64::parse), so the
+whole crate's real, passing suite is silently read as zero. Fixed in
+src/bench.rs's committed parse_test_result_lines by taking the number
+from the word pair immediately preceding the tag rather than stripping
+a suffix from the whole field.

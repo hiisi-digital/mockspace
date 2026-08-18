@@ -22,7 +22,27 @@ measurement is honest.
 sits. Reach for it whenever the question is a comparison across more than one axis.
 
 Commands: `mock bench init` scaffolds, `add <name>` adds a variant, `run [names...]` measures,
-`report` regenerates findings from cache, `list` prints what is registered.
+`report` regenerates findings from cache, `test` runs `cargo test` in every crate under the
+bench tree by walking it directly rather than delegating to cargo's own workspace resolution
+(a bare `cargo test` at the tree root sees only the driver crate, since arms and support crates
+are path dependencies rather than workspace members, and reports a misleading `0 passed` when
+there is nothing else for it to see), `list` prints what is registered.
+
+`test` takes flags and crate names, and neither is silently discarded: `mock bench test
+warm-container` narrows the run to the one crate named and refuses if nothing matches, rather
+than reporting a clean pass over the whole tree regardless of what was typed. Flags after the
+subcommand go to cargo, so `mock bench test --release` (or `-r`) runs the release profile and
+`mock bench test -- --test-threads=1` serialises a tree whose tests share process-wide state;
+a value-taking flag's value (`--profile <name>`) travels with the flag rather than being read
+as a crate name.
+A name selects the crates whose path contains it, and a name matching nothing is refused with
+the list of what exists rather than quietly running everything.
+
+**Every test count it prints carries the profile it ran under**, because a bare count is not
+interpretable without one: one real support crate runs its thirty tests in 133.72s under the
+default profile and 4.99s under release, and a downstream reader handed only the number cannot
+tell which was run. The same omission, on a bench timing rather than a test count, is how a
+true measurement gets retired as though it had been refuted.
 
 ## Why the framework and not a timing loop
 
