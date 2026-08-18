@@ -32,6 +32,7 @@ pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
         "init" => cmd_init(cfg),
         "run" => cmd_run(cfg, &rest),
         "report" => cmd_report(cfg, &rest),
+        "test" => cmd_test(cfg, &rest),
         "list" => cmd_list(cfg),
         "add" => cmd_add(cfg, &rest),
         "" => {
@@ -53,6 +54,7 @@ fn print_help() {
     eprintln!("  init    scaffold mock/benches/ in this consumer");
     eprintln!("  run     build variants + bench binary, run the harness");
     eprintln!("  report  regenerate findings.md from cached results");
+    eprintln!("  test    run cargo test in every crate under the bench tree");
     eprintln!("  list    list benches, sizes, and variants from bench.toml");
     eprintln!("  add     scaffold a new variant crate: mock bench add <name>");
     eprintln!();
@@ -201,6 +203,199 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
             ExitCode::FAILURE
         },
     }
+}
+
+// ── test ──
+
+/// A bench tree is built from many small crates (arms, support
+/// libraries, an optional hooks lib), most of them path dependencies
+/// of the generated or consumer-owned driver rather than members of
+/// any cargo workspace. `cargo test` run at the tree root therefore
+/// tests only the driver crate itself and reports its zero tests as
+/// a pass; the crates that actually carry assertions, typically the
+/// `*-shared` support libraries whose arms depend on them, are never
+/// reached. This is the same "reads as a pass, measured nothing"
+/// shape `tree::load` already refuses for a bench tree resolving to
+/// zero benches (see its own comment); this command is the
+/// equivalent refusal for a bench tree whose crates report zero
+/// tests between them.
+///
+/// So `mock bench test` does not delegate to a single `cargo test`
+/// invocation. It walks the tree for every crate manifest (skipping
+/// `target/` and dot directories, the same rule `tree::discover`
+/// uses), runs `cargo test` inside each crate's own directory, and
+/// aggregates the result. A crate reporting zero tests is normal (an
+/// arm cdylib usually carries none) and is not itself a failure; the
+/// tree as a whole reporting zero tests across every crate is
+/// refused, because that is indistinguishable from the driver-only
+/// invocation this command exists to replace.
+fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
+    let bench_dir = cfg.mock_dir.join("benches");
+    if !bench_dir.exists() {
+        eprintln!(
+            "error: {} does not exist. Run `mock bench init` first.",
+            bench_dir.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let extra: Vec<&str> = args.iter().copied().filter(|a| a.starts_with("--")).collect();
+    let manifests = find_crate_manifests(&bench_dir);
+    if manifests.is_empty() {
+        eprintln!(
+            "error: no Cargo.toml found under {}. There is nothing for `mock bench test` to run.",
+            bench_dir.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let mut total_passed = 0u64;
+    let mut total_failed = 0u64;
+    let mut total_ignored = 0u64;
+    let mut crates_with_tests = 0usize;
+    let mut crates_failed: Vec<PathBuf> = Vec::new();
+
+    for manifest in &manifests {
+        let dir = manifest.parent().unwrap_or(manifest.as_path());
+        let mut cmd = Command::new("cargo");
+        cmd.arg("test").arg("--manifest-path").arg(manifest);
+        for e in &extra {
+            cmd.arg(e);
+        }
+        let output = match cmd.current_dir(dir).output() {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("error: failed to run cargo test in {}: {e}", dir.display());
+                return ExitCode::FAILURE;
+            },
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let (passed, failed, ignored) = parse_test_result_lines(&stdout);
+        total_passed += passed;
+        total_failed += failed;
+        total_ignored += ignored;
+        if passed > 0 || failed > 0 || ignored > 0 {
+            crates_with_tests += 1;
+        }
+        let rel = manifest.strip_prefix(&bench_dir).unwrap_or(manifest);
+        if output.status.success() {
+            println!(
+                "ok    {}  {passed} passed, {failed} failed, {ignored} ignored",
+                rel.display()
+            );
+        } else {
+            println!(
+                "FAIL  {}  {passed} passed, {failed} failed, {ignored} ignored",
+                rel.display()
+            );
+            crates_failed.push(manifest.clone());
+            if !stdout.trim().is_empty() {
+                eprintln!("{stdout}");
+            }
+            if !stderr.trim().is_empty() {
+                eprintln!("{stderr}");
+            }
+        }
+    }
+
+    println!(
+        "\n{} crates, {crates_with_tests} carrying tests, {total_passed} passed, {total_failed} failed, {total_ignored} ignored",
+        manifests.len()
+    );
+
+    if !crates_failed.is_empty() {
+        eprintln!(
+            "error: {} of {} crates failed their tests",
+            crates_failed.len(),
+            manifests.len()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    if crates_with_tests == 0 {
+        eprintln!(
+            "error: {} crates were found and built, and none of them carries a single test. Either the tree genuinely has no test coverage, in which case this is the honest answer `cargo test` at the tree root was hiding, or the discovery above missed something; either way this is not a state to report as a pass.",
+            manifests.len()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    ExitCode::SUCCESS
+}
+
+/// Every crate manifest under `dir`, found by the same walk
+/// `tree::discover` uses to find bench directories: skip `target/`
+/// and dot directories, never descend into a directory once it is
+/// itself claimed (here, once a `Cargo.toml` is found in it, since a
+/// crate's own subdirectories, e.g. a build script's `src/`, are not
+/// separate crates to test).
+fn find_crate_manifests(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let manifest = d.join("Cargo.toml");
+        if manifest.is_file() {
+            found.push(manifest);
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            if name.starts_with('.') || name == "target" {
+                continue;
+            }
+            stack.push(path);
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Sums every `test result: ok|FAILED. N passed; M failed; K ignored; ...`
+/// line `cargo test`'s human-readable output carries, one per test binary
+/// (unit tests, each integration test file, doctests). Parsed from stdout
+/// text rather than `--format json` because the unstable json output would
+/// add a nightly-only dependency this command does not otherwise need, and
+/// the line format is `cargo`'s own stable, documented summary line.
+fn parse_test_result_lines(stdout: &str) -> (u64, u64, u64) {
+    let mut passed = 0u64;
+    let mut failed = 0u64;
+    let mut ignored = 0u64;
+    for line in stdout.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("test result:") else {
+            continue;
+        };
+        // Each field is "<verdict>. <n> passed" for the first field and
+        // "<n> <word>" for the rest, so the number is always the token
+        // immediately before the field's trailing word rather than the
+        // whole field: stripping the suffix and parsing the remainder
+        // fails on the first field ("ok. 15 passed" is not a bare number
+        // once " passed" is stripped), which the accompanying unit test
+        // pins so this cannot regress silently.
+        for field in rest.split(';') {
+            let words: Vec<&str> = field.split_whitespace().collect();
+            for pair in words.windows(2) {
+                let (n, tag) = (pair[0], pair[1]);
+                let Ok(n) = n.parse::<u64>() else {
+                    continue;
+                };
+                match tag {
+                    "passed" => passed += n,
+                    "failed" => failed += n,
+                    "ignored" => ignored += n,
+                    _ => {},
+                }
+            }
+        }
+    }
+    (passed, failed, ignored)
 }
 
 // ── helpers ──
@@ -1184,6 +1379,155 @@ the same manifest semantics either way.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A real `cargo test` line, captured verbatim from `warm-container-shared`
+    /// (arvo's bench tree) rather than typed from memory of the format.
+    const REAL_OK_LINE: &str =
+        "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; \
+         finished in 0.18s";
+
+    /// The case that must fail: the first field is "ok. 15 passed", not a bare
+    /// number, so a parser that strips " passed" and parses the remainder as a
+    /// whole gets "ok. 15" and silently reports zero. Written against the
+    /// buggy first draft of `parse_test_result_lines` before it was fixed, kept
+    /// here so the fix cannot regress unnoticed.
+    #[test]
+    fn parse_test_result_lines_reads_the_ok_verdict_prefix_correctly() {
+        assert_eq!(parse_test_result_lines(REAL_OK_LINE), (15, 0, 0));
+    }
+
+    #[test]
+    fn parse_test_result_lines_reads_failures_and_ignores() {
+        let line = "test result: FAILED. 3 passed; 2 failed; 1 ignored; 0 measured; \
+                     0 filtered out; finished in 0.02s";
+        assert_eq!(parse_test_result_lines(line), (3, 2, 1));
+    }
+
+    /// Multiple test binaries (unit tests plus an integration test file)
+    /// each print their own `test result:` line; the parser sums across all
+    /// of them rather than reading only the first.
+    #[test]
+    fn parse_test_result_lines_sums_across_multiple_binaries() {
+        let stdout = format!("{REAL_OK_LINE}\n\n{REAL_OK_LINE}\n");
+        assert_eq!(parse_test_result_lines(&stdout), (30, 0, 0));
+    }
+
+    /// Negative control: stdout carrying no `test result:` line at all
+    /// (a build failure, or output from something else entirely) must not
+    /// be misread as zero tests passing; it is zero tests *found*, which is
+    /// the same value and a different meaning, and `cmd_test` is the layer
+    /// that tells them apart via the crate-count, not this function.
+    #[test]
+    fn parse_test_result_lines_on_unrelated_output_finds_nothing() {
+        assert_eq!(
+            parse_test_result_lines("error[E0308]: mismatched types\nsome other text"),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn find_crate_manifests_finds_nested_crates_and_skips_target() {
+        let root = temp_mock("find-manifests");
+        std::fs::create_dir_all(root.join("arms/a/src")).unwrap();
+        std::fs::write(root.join("arms/a/Cargo.toml"), "[package]\nname=\"a\"").unwrap();
+        std::fs::create_dir_all(root.join("support/shared/src")).unwrap();
+        std::fs::write(root.join("support/shared/Cargo.toml"), "[package]\nname=\"shared\"")
+            .unwrap();
+        // A target/ directory containing a vendored crate's manifest must
+        // never be walked into: this is the exact class the tool's own
+        // `tree::discover` refuses to walk for the identical reason.
+        std::fs::create_dir_all(root.join("target/debug/build/decoy/out")).unwrap();
+        std::fs::write(
+            root.join("target/debug/build/decoy/out/Cargo.toml"),
+            "[package]\nname=\"decoy\"",
+        )
+        .unwrap();
+        let found = find_crate_manifests(&root);
+        let rels: Vec<String> = found
+            .iter()
+            .map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(rels, vec!["arms/a/Cargo.toml", "support/shared/Cargo.toml"]);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Negative control on the walker: an empty tree (a bench dir that
+    /// exists but holds nothing yet) must return an empty list rather than
+    /// panicking or fabricating an entry, which is the shape
+    /// `cmd_test` relies on to produce its own "nothing to run" refusal.
+    #[test]
+    fn find_crate_manifests_on_an_empty_tree_finds_nothing() {
+        let root = temp_mock("find-manifests-empty");
+        assert!(find_crate_manifests(&root).is_empty());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Runs `cmd_test` against a real consumer's bench tree rather than a
+    /// synthetic fixture, per the same discipline `tests/real_trees.rs`
+    /// states: a fixture built by the same hands as the code under test
+    /// tends to avoid exactly the shape that breaks it. `MOCKSPACE_REAL_TREES`
+    /// names a workspace root (e.g. `~/Dev/clause-dev`); without it this
+    /// PANICS rather than silently passing, for the reason `real_trees.rs`
+    /// gives: a skip that reads as a pass is how a gate stops being one.
+    ///
+    /// Scoped to one support crate rather than a whole tree, because a real
+    /// tree the size of arvo's (94 arm crates plus 13 support crates, one of
+    /// which is a multi-minute concurrency stress suite) is not what this
+    /// test exists to time; `cmd_test`'s own walk-and-aggregate logic is
+    /// exercised identically at any scale, and this is the smallest real
+    /// input that exercises it against a support crate `mock bench test`
+    /// was specifically built to reach and a bare `cargo test` at the bench
+    /// root cannot.
+    ///
+    /// Run with:
+    ///   MOCKSPACE_REAL_TREES=~/Dev/clause-dev cargo test --lib \
+    ///     bench::tests::cmd_test_finds_and_runs_a_real_arvo_support_crate -- --ignored
+    #[test]
+    #[ignore]
+    fn cmd_test_finds_and_runs_a_real_arvo_support_crate() {
+        let workspace = std::env::var("MOCKSPACE_REAL_TREES")
+            .expect("set MOCKSPACE_REAL_TREES=<path to the clause-dev workspace root>");
+        let source = PathBuf::from(&workspace)
+            .join("arvo/mock/benches/variants/warm-container-shared");
+        assert!(
+            source.join("src/lib.rs").is_file(),
+            "expected {} to exist; is MOCKSPACE_REAL_TREES pointed at the right root?",
+            source.display()
+        );
+
+        let root = temp_mock("cmd-test-real-support-crate");
+        let bench_dir = root.join("benches");
+        std::fs::create_dir_all(bench_dir.join("support/warm-container-shared")).unwrap();
+        std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
+        for entry in ["Cargo.toml", "src"] {
+            copy_recursive(&source.join(entry), &bench_dir.join("support/warm-container-shared").join(entry));
+        }
+
+        let cfg = Config::from_dir(&root);
+        let code = cmd_test(&cfg, &[]);
+        assert_eq!(
+            format!("{code:?}"),
+            success(),
+            "a real, previously-verified-passing crate's tests should make              `mock bench test` succeed"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn copy_recursive(from: &Path, to: &Path) {
+        if from.is_dir() {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap().flatten() {
+                let name = entry.file_name();
+                if name == "target" {
+                    continue;
+                }
+                copy_recursive(&entry.path(), &to.join(name));
+            }
+        } else {
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::copy(from, to).unwrap();
+        }
+    }
 
     fn temp_mock(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(

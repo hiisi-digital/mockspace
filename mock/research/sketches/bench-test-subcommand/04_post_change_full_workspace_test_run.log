@@ -1,0 +1,1012 @@
+warning: unused import: `CrateSourceFile`
+  --> lint-rules/src/file_size.rs:21:24
+   |
+21 | use crate::{CrateLint, CrateSourceFile, Lint, LintContext, LintError, Severity};
+   |                        ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> lint-rules/src/file_size.rs:175:25
+    |
+175 |     fn make_ctx(source: &str) -> LintContext {
+    |                         ^^^^     ^^^^^^^^^^^ the same lifetime is hidden here
+    |                         |
+    |                         the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+    = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+    |
+175 |     fn make_ctx(source: &str) -> LintContext<'_> {
+    |                                             ++++
+
+warning: `mockspace-lint-rules` (lib) generated 1 warning (run `cargo fix --lib -p mockspace-lint-rules` to apply 1 suggestion)
+warning: `mockspace-lint-rules` (lib test) generated 1 warning (run `cargo fix --lib -p mockspace-lint-rules --tests` to apply 1 suggestion)
+   Compiling mockspace v0.0.0 (/private/tmp/claude-501/-Users-orgrinrt-Dev-clause-dev/72eb2106-3756-4021-ac53-3ed816d184dc/scratchpad/mockspace-work)
+warning: struct `DirectState` is never constructed
+  --> bench-matrix/tests/macro_expansion.rs:16:16
+   |
+16 |     pub struct DirectState {
+   |                ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `mockspace-bench-matrix` (test "macro_expansion") generated 1 warning
+warning: unused import: `abi_hash`
+   --> bench-core/src/lib.rs:623:17
+    |
+623 |     use super::{abi_hash, FfiBenchCall};
+    |                 ^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `mockspace-bench-core` (lib test) generated 1 warning (run `cargo fix --lib -p mockspace-bench-core --tests` to apply 1 suggestion)
+warning: unused import: `std::path::Path`
+ --> src/render_md.rs:4:5
+  |
+4 | use std::path::Path;
+  |     ^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: use of deprecated field `config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+   --> src/config.rs:711:13
+    |
+711 |             crates_dir,
+    |             ^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: unused variable: `mock_dir`
+   --> src/render_design.rs:529:5
+    |
+529 |     mock_dir: &Path,
+    |     ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_mock_dir`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `run_commit_msg` is never used
+   --> src/bootstrap/hooks.rs:454:8
+    |
+454 |     fn run_commit_msg(msg: &str) -> i32 {
+    |        ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `mockspace` (lib) generated 3 warnings (run `cargo fix --lib -p mockspace` to apply 2 suggestions)
+warning: use of deprecated field `mockspace::config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+  --> tests/generation_idempotent.rs:45:53
+   |
+45 |     let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+   |                                                     ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated field `mockspace::config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+   --> tests/generation_idempotent.rs:139:53
+    |
+139 |     let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+    |                                                     ^^^^^^^^^^^^^^
+
+warning: use of deprecated field `mockspace::config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+   --> tests/generation_idempotent.rs:194:53
+    |
+194 |     let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+    |                                                     ^^^^^^^^^^^^^^
+
+warning: use of deprecated field `mockspace::config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+   --> tests/generation_idempotent.rs:242:53
+    |
+242 |     let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+    |                                                     ^^^^^^^^^^^^^^
+
+warning: `mockspace` (lib test) generated 4 warnings (3 duplicates)
+warning: use of deprecated field `mockspace::config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+  --> tests/crate_readme_rules.rs:51:53
+   |
+51 |     let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
+   |                                                     ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated field `mockspace::config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+   --> tests/crate_readme_rules.rs:118:32
+    |
+118 |     for entry in fs::read_dir(&cfg.crates_dir).unwrap() {
+    |                                ^^^^^^^^^^^^^^
+
+warning: use of deprecated field `mockspace::config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+   --> tests/crate_readme_rules.rs:142:24
+    |
+142 |     fs::remove_dir_all(cfg.crates_dir.join("fixture-one")).unwrap();
+    |                        ^^^^^^^^^^^^^^
+
+warning: use of deprecated field `mockspace::config::Config::crates_dir`: use `src_dirs`. This is `src_dirs[0]`, so on a grouped project it sees only the first group and reports a subset as if it were the whole. If one directory really is meant, take it as an argument rather than reading the first entry of a list.
+   --> tests/crate_readme_rules.rs:164:24
+    |
+164 |     fs::remove_dir_all(cfg.crates_dir.join("fixture-one")).unwrap();
+    |                        ^^^^^^^^^^^^^^
+
+warning: `mockspace` (test "crate_readme_rules") generated 4 warnings
+warning: `mockspace` (test "generation_idempotent") generated 4 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.61s
+     Running unittests src/lib.rs (target/debug/deps/bitwise_rotate-84c92c733e700499)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/cargo_mock-5249ceeaae757d5f)
+
+running 47 tests
+test cache::tests::cache_root_falls_back_to_home ... ok
+test cache::tests::cache_root_errors_without_home ... ok
+test cache::tests::cache_root_prefers_xdg ... ok
+test discover::tests::mock_root_ignored_when_not_a_dir ... ok
+test discover::tests::none_when_no_config ... ok
+test discover::tests::mock_root_wins_when_a_dir ... ok
+test cache::tests::key_is_deterministic_and_input_sensitive ... ok
+test cache::tests::key_lint_inputs_order_independent ... ok
+test cache::tests::built_binary_short_circuits_when_present ... ok
+test engine::tests::a_run_without_the_flag_is_untouched ... ok
+test engine::tests::a_real_checkout_resolves_to_an_absolute_path ... ok
+test discover::tests::root_plus_subdir_configs_is_an_error ... ok
+test engine::tests::a_directory_that_is_not_a_checkout_is_refused_by_name ... ok
+test engine::tests::a_trailing_flag_with_no_value_takes_nothing ... ok
+test engine::tests::the_flag_is_taken_out_of_the_forwarded_arguments ... ok
+test discover::tests::two_subdir_configs_is_an_error ... ok
+test engine::tests::the_joined_form_is_the_same_flag ... ok
+test engine::tests::the_lint_dep_points_at_the_same_checkout ... ok
+test hash::tests::field_separator_prevents_collision ... ok
+test hash::tests::stable_value ... ok
+test hash::tests::known_vector ... ok
+test discover::tests::locates_root_config_defaulting_mock ... ok
+test discover::tests::locates_subdir_config_defaulting_self ... ok
+test discover::tests::root_config_explicit_mock_dir ... ok
+test pin::tests::rev_resolves_to_single_git_attempt ... ok
+test pin::tests::tag_resolves_to_git_tag_only ... ok
+test pin::tests::version_maps_to_cratesio_then_git_tag ... ok
+test registry::tests::gc_due_throttles ... ok
+test pin::tests::branch_resolution_ttl_roundtrip ... ok
+test registry::tests::record_repin_leaves_old_build_orphaned ... ok
+test registry::tests::record_upserts_consumer_and_build ... ok
+test selfupdate::tests::no_cargo_mock_entry_is_none ... ok
+test registry::tests::load_missing_is_empty ... ok
+test engine::tests::the_sweep_keeps_fresh_builds_and_survives_a_missing_directory ... ok
+test selfupdate::tests::non_branch_installs_are_not_chased ... ok
+test selfupdate::tests::parses_git_branch_install ... ok
+test tests::a_retired_alias_is_detected_only_under_its_table ... ok
+test registry::tests::gc_drops_consumer_whose_root_is_gone ... ok
+test tests::cargo_mock_drops_leading_mock ... ok
+test tests::cargo_mock_without_subcommand ... ok
+test tests::user_dir_flag_is_stripped ... ok
+test registry::tests::roundtrips_through_toml ... ok
+test tests::direct_mock_forwards_all ... ok
+test selfupdate::tests::ttl_marker_roundtrip ... ok
+test registry::tests::gc_evicts_build_whose_consumers_are_all_stale ... ok
+test registry::tests::gc_protects_current_key_even_if_stale ... ok
+test registry::tests::gc_removes_orphan_build_but_keeps_pinned ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/bin/cargo-mock.rs (target/debug/deps/cargo_mock-7d40015a699b3edf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/mock.rs (target/debug/deps/mock-d6641b6c742e3dfc)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mockspace-1411d6644d8e6d43)
+
+running 265 tests
+test agent_mode::tests::a_wrong_value_on_the_right_variable_does_not_match ... ok
+test agent_mode::tests::a_signal_with_no_env_and_no_preset_is_skipped ... ok
+test agent_mode::tests::no_signal_matching_means_a_human_was_in_the_loop ... ok
+test agent_mode::tests::the_ci_preset_covers_the_major_runners ... ok
+test agent_mode::tests::presence_matching_ignores_an_empty_value ... ok
+test agent_mode::tests::an_unknown_preset_is_reported_rather_than_ignored ... ok
+test agent_mode::tests::a_signal_may_name_the_mode_it_selects ... ok
+test agent_mode::tests::value_matching_is_case_and_space_insensitive ... ok
+test agent_mode::tests::the_historical_env_var_still_selects_autonomous ... ok
+test agent_mode::tests::first_match_wins_in_configured_order ... ok
+test autofix::tests::partition_restage_all_clean_when_no_unstaged ... ok
+test autofix::tests::file_under_no_manifest_is_dropped ... ok
+test autofix::tests::member_maps_to_its_own_package_not_an_ancestor ... ok
+test autofix::tests::spurious_empty_when_only_staged_changed ... ok
+test autofix::tests::spurious_is_dirtied_minus_staged_minus_predirty ... ok
+test autofix::tests::partition_restage_excludes_partially_staged_files ... ok
+test bench::tests::cmd_test_finds_and_runs_a_real_arvo_support_crate ... ignored
+test autofix::tests::nearest_manifest_is_found_up_the_tree ... ok
+test autofix::tests::package_dirs_dedupe_and_map_files_to_nearest_manifest ... ok
+test bench::tests::parse_test_result_lines_on_unrelated_output_finds_nothing ... ok
+test bench::tests::an_artifact_outside_the_bench_directory_still_resolves ... ok
+test bench::tests::parse_test_result_lines_reads_failures_and_ignores ... ok
+test bench::tests::parse_test_result_lines_reads_the_ok_verdict_prefix_correctly ... ok
+test bench::tests::find_crate_manifests_on_an_empty_tree_finds_nothing ... ok
+test bench::tests::parse_test_result_lines_sums_across_multiple_binaries ... ok
+test bench::tests::a_manifest_with_no_binary_target_is_explained ... ok
+test bench::tests::several_executables_are_all_returned_so_the_caller_can_refuse ... ok
+test bench::tests::the_executable_path_comes_from_the_artifact_record ... ok
+test bench::tests::the_build_argv_carries_the_profile_and_the_json_format ... ok
+test bench::tests::the_build_argv_does_not_carry_a_profile_setting_we_never_pass ... ok
+test bench::tests::the_profile_env_value_mirrors_the_flags ... ok
+test bench::tests::unrelated_artifact_lines_are_ignored ... ok
+test bench_gen::tests::a_cdylib_under_support_is_refused_naming_the_rule ... ok
+test bench_gen::tests::a_declared_dispatch_list_overrides_the_union ... ok
+test bench_gen::tests::a_bench_using_an_undeclared_workload_is_refused_at_generation ... ok
+test bench_gen::tests::a_path_dep_spec_expands_per_crate_and_a_git_spec_applies_verbatim ... ok
+test bench_gen::tests::a_hooks_lib_is_included_by_path_and_called ... ok
+test bench_gen::tests::an_unknown_stage_is_refused_naming_the_builtins ... ok
+test bench::tests::an_arm_manifest_that_is_not_a_cdylib_is_refused_naming_the_rule ... ok
+test bench_gen::tests::generated_manifests_carry_the_workspace_header_and_the_feature ... ok
+test bench_docs::tests::history_logs_are_discovered_in_both_layouts_with_bench_qualified_keys ... ok
+test bench_gen::tests::dispatch_points_default_to_the_union_of_every_bench ... ok
+test bench_gen::tests::a_wrong_stage_arity_is_refused_with_the_expected_shape ... ok
+test bench_gen::tests::declared_workloads_generate_and_builtins_fill_the_rest ... ok
+test bench::tests::init_scaffolds_a_tree_the_planner_accepts_and_the_generator_serves ... ok
+test bench_gen::tests::the_generated_main_carries_the_dispatch_and_the_default_hooks ... ok
+test bench_gen::tests::the_build_section_overrides_the_generated_dep_spec ... ok
+test bench_gen::tests::write_if_changed_is_idempotent ... ok
+test bench::tests::find_crate_manifests_finds_nested_crates_and_skips_target ... ok
+test bootstrap::gitignore_tests::preserves_existing_entries ... ok
+test bootstrap::gitignore_tests::adds_catch_all_target_to_empty_repo ... ok
+test bootstrap::gitignore_tests::idempotent_when_catch_all_present ... ok
+test bench::tests::add_scaffolds_a_bench_and_an_arm_in_a_nested_tree_and_refuses_duplicates ... ok
+test bootstrap::hooks::byline_hook_tests::an_empty_or_missing_message_file_is_not_the_hooks_business ... ok
+test bootstrap::hooks::byline_hook_tests::the_generated_pre_push_hook_pipes_messages_to_the_launcher ... ok
+test bootstrap::hooks::byline_hook_tests::the_commit_msg_hook_fails_closed_with_no_launcher ... ok
+test bootstrap::lint_crates_tests::absent_section_returns_empty ... ok
+test bootstrap::lint_crates_tests::gen_pre_push_includes_scope_branch ... ok
+test bootstrap::lint_crates_tests::gen_pre_push_passes_bash_syntax_check ... ok
+test bootstrap::lint_crates_tests::inline_table_form ... ok
+test bootstrap::lint_crates_tests::missing_file_returns_empty ... ok
+test bootstrap::lint_crates_tests::sub_table_form_rendered_as_inline ... ok
+test bootstrap::lint_crates_tests::version_string_form ... ok
+test custom_lints::tests::collector_lib_shape ... ok
+test custom_lints::tests::manifest_renames_lint_rules_to_mockspace ... ok
+test custom_lints::tests::patch_section_none_when_checkout_absent_or_not_git ... ok
+test custom_lints::tests::patch_section_points_at_the_checkout_path ... ok
+test deny::tests::check_disabled_is_noop ... ok
+test deny::tests::check_skips_when_no_config ... ok
+test deny::tests::rel_renders_root_as_dot ... ok
+test deny::tests::workspace_roots_does_not_traverse_symlinked_dirs ... ok
+test deny::tests::workspace_roots_finds_nested_and_skips_build_dirs ... ok
+test deny::tests::workspace_roots_respects_depth_bound ... ok
+test deny::tests::workspace_roots_skips_every_vcs_and_vendor_dir ... ok
+test design_round::tests::tests::archive_kind_meta_and_tag_strings ... ok
+test design_round::tests::tests::archive_round_name_empty_dir_returns_none ... ok
+test design_round::tests::tests::archive_round_name_picks_earliest_timestamp ... ok
+test design_round::tests::tests::archive_round_name_skips_non_timestamp_files ... ok
+test design_round::tests::tests::archive_round_name_topic_only ... ok
+test design_round::tests::tests::detect_legacy_filename ... ok
+test design_round::tests::tests::disambiguate_appends_suffix_on_collision ... ok
+test design_round::tests::tests::disambiguate_returns_base_when_free ... ok
+test design_round::tests::tests::disambiguate_walks_past_multiple_collisions ... ok
+test design_round::tests::tests::migrate_changelist_active ... ok
+test design_round::tests::tests::migrate_changelist_deprecated ... ok
+test design_round::tests::tests::migrate_changelist_locked ... ok
+test design_round::tests::tests::migrate_changelist_with_name_prefix ... ok
+test design_round::tests::tests::migrate_not_legacy_returns_none ... ok
+test design_round::tests::tests::migrate_topic_hyphenated ... ok
+test design_round::tests::tests::migrate_topic_simple ... ok
+test design_round::tests::tests::migrate_topic_string_primitive ... ok
+test design_round::tests::tests::rewrite_locked_to_active ... ok
+test design_round::tests::tests::rewrite_new_format_doc_to_locked ... ok
+test design_round::tests::tests::rewrite_new_format_src_to_deprecated ... ok
+test design_round::tests::tests::round_name_from_legacy ... ok
+test design_round::tests::tests::round_name_from_new_format ... ok
+test document::tests::a_crate_overview_is_named_for_the_crate_alone ... ok
+test document::tests::a_deep_dive_is_not_a_link_target ... ok
+test document::tests::an_unordered_project_gets_plain_names ... ok
+test document::tests::crates_at_one_depth_share_a_prefix ... ok
+test document::tests::one_function_names_a_document_and_a_link_to_it ... ok
+test document::tests::the_bands_read_in_order ... ok
+test document::tests::the_index_knows_a_document_that_does_not_exist_yet ... ok
+test entry::cargo_gate::tests::a_manifest_that_is_not_a_workspace_is_not_memberless ... ok
+test entry::cargo_gate::tests::a_members_glob_matching_nothing_is_also_a_pre_taxonomy_state ... ignored, catalogue: members globbing to nothing yields a different cargo diagnostic, so a pre-first-round repo seeding a glob member list is still blocked; needs its own tolerated diagnostic
+test entry::cargo_gate::tests::a_missing_manifest_is_not_forgiven ... ok
+test entry::cargo_gate::tests::a_package_manifest_is_never_memberless ... ok
+test entry::cargo_gate::tests::a_populated_members_list_is_not_memberless ... ok
+test entry::cargo_gate::tests::absent_members_is_memberless ... ok
+test entry::cargo_gate::tests::an_inline_workspace_table_is_memberless ... ok
+test entry::cargo_gate::tests::an_unparseable_manifest_is_not_forgiven ... ok
+test entry::cargo_gate::tests::cargos_real_diagnostic_is_recognised ... ok
+test entry::cargo_gate::tests::empty_members_list_is_memberless ... ok
+test entry::cargo_gate::tests::forgives_failure_actually_forgives_a_memberless_workspace ... ok
+test entry::cargo_gate::tests::forgives_failure_short_circuits_on_a_populated_workspace ... ok
+test entry::cargo_gate::tests::multiline_empty_members_list_is_memberless ... ok
+test entry::cargo_gate::tests::unrelated_failures_are_not_recognised ... ok
+test entry::clean_tests::collects_nested_bench_and_sketch_targets_only ... ok
+test entry::clean_tests::does_not_descend_into_target_dirs ... ok
+test entry::clean_tests::empty_when_no_nested_targets ... ok
+test entry::clean_tests::every_dispatched_subcommand_is_in_the_known_list ... ok
+test entry::clean_tests::levenshtein_basic_distances ... ok
+test entry::clean_tests::requires_sibling_manifest ... ok
+test entry::clean_tests::spares_research_targets_outside_sketches ... ok
+test entry::clean_tests::suggest_subcommand_catches_typos ... ok
+test entry::clean_tests::suggest_subcommand_declines_far_words ... ok
+test entry::dispatch::tests::a_flag_value_is_not_read_as_a_recovery_command ... ok
+test entry::dispatch::tests::gating_commands_are_not_recovery_commands ... ok
+test entry::dispatch::tests::recovery_commands_survive_a_broken_pack ... ok
+test entry::dispatch::tests::the_block_message_names_the_cost_and_the_first_cause ... ok
+test entry::escape_hatch::tests::a_missing_git_is_not_itself_a_reason_to_fail ... ok
+test entry::escape_hatch::tests::doc_only_is_refused_when_source_is_staged ... ok
+test entry::escape_hatch::tests::doc_only_passes_when_only_docs_are_staged ... ok
+test entry::escape_hatch::tests::infra_scope_is_refused_when_crate_files_are_staged ... ok
+test entry::escape_hatch::tests::infra_scope_passes_when_no_crate_files_are_staged ... ok
+test bootstrap::hooks::byline_hook_tests::durable_passes_an_uninitialised_project_outside_the_surface ... ok
+test entry::escape_hatch::tests::scope_is_refused_when_it_omits_a_staged_crate ... ok
+test entry::escape_hatch::tests::the_refusal_names_both_the_claim_and_the_reality ... ok
+test entry::help::tests::a_close_typo_gets_the_command_it_meant ... ok
+test entry::help::tests::a_single_character_does_not_get_a_wild_guess ... ok
+test entry::help::tests::an_abbreviation_gets_the_command_it_starts ... ok
+test entry::help::tests::every_command_suggests_itself ... ok
+test entry::help::tests::every_help_spelling_is_recognised ... ok
+test entry::help::tests::every_listed_command_has_a_summary ... ok
+test entry::help::tests::help_lists_itself_so_the_listing_is_complete ... ok
+test entry::help::tests::nonsense_gets_no_suggestion ... ok
+test entry::help::tests::the_suggestion_is_case_insensitive ... ok
+test entry::message::tests::an_invocation_is_absent_unless_a_hook_supplied_one ... ok
+test entry::message::tests::domain_tokens_parse_in_the_forms_a_hook_would_write ... ok
+test entry::message::tests::every_advertised_domain_token_actually_parses ... ok
+test entry::message::tests::split_batch_falls_back_to_the_default_origin ... ok
+test entry::message::tests::split_batch_keeps_an_empty_message_as_a_record ... ok
+test entry::message::tests::split_batch_on_an_empty_stream_yields_nothing ... ok
+test entry::message::tests::split_batch_reads_many_records_in_order_and_ignores_the_trailing_tail ... ok
+test entry::message::tests::split_batch_splits_on_the_first_separator_only ... ok
+test graph::tests::cycle_does_not_overflow_depth ... ok
+test graph::tests::cycle_does_not_overflow_transitive ... ok
+test graph::tests::diamond_depth ... ok
+test graph::tests::linear_chain_depth ... ok
+test graph::tests::linear_chain_transitive ... ok
+test graph::tests::missing_node_yields_empty ... ok
+test parse::deps_tests::a_dep_outside_a_dependency_table_is_not_an_edge ... ok
+test parse::deps_tests::a_path_dep_on_a_sibling_is_a_dependency_edge ... ok
+test parse::deps_tests::a_source_directory_with_nothing_in_it_contributes_nothing ... ok
+test parse::deps_tests::every_source_directory_contributes_its_packages ... ok
+test parse::deps_tests::the_workspace_form_still_reads ... ok
+test registry::tests::a_builtin_namespace_is_addressed_directly ... ok
+test registry::tests::a_citation_into_an_internal_root_leaves_no_trace_in_prose ... ok
+test registry::tests::a_citation_path_may_have_any_depth ... ok
+test registry::tests::a_column_emptied_by_filtering_drops_like_any_empty_column ... ok
+test registry::tests::a_crate_document_resolves_references_like_any_other ... ok
+test registry::tests::a_crate_reference_resolves_before_its_document_is_written ... ok
+test registry::tests::a_dot_that_is_not_a_method_is_left_alone ... ok
+test registry::tests::a_field_reference_renders_that_field ... ok
+test registry::tests::a_heading_anchor_parses_and_renders ... ok
+test registry::tests::a_hyphenated_crate_short_name_resolves ... ok
+test registry::tests::a_line_anchor_still_parses ... ok
+test registry::tests::a_list_method_reads_a_multi_valued_result ... ok
+test registry::tests::a_method_chain_narrows_what_an_expression_resolved_to ... ok
+test registry::tests::a_namespace_alone_renders_its_table ... ok
+test registry::tests::a_namespace_resolves_without_the_reg_prefix ... ok
+test registry::tests::a_namespace_that_is_also_a_root_is_reported ... ok
+test registry::tests::a_placeholder_is_required_for_a_reference ... ok
+test registry::tests::a_query_renders_one_way_for_a_document_and_another_for_a_terminal ... ok
+test registry::tests::a_resolved_document_reports_nothing ... ok
+test registry::tests::a_row_reference_becomes_a_link ... ok
+test registry::tests::a_rust_path_is_not_a_citation ... ok
+test registry::tests::a_schema_check_that_examined_nothing_is_not_a_pass ... ok
+test registry::tests::a_terminal_shows_link_text_without_its_target ... ok
+test registry::tests::an_internal_field_does_not_resolve_by_reference ... ok
+test registry::tests::an_internal_field_never_becomes_a_column ... ok
+test registry::tests::an_internal_root_is_filtered_per_item_not_per_cell ... ok
+test registry::tests::an_unknown_method_is_reported_rather_than_ignored ... ok
+test registry::tests::an_unknown_row_or_field_is_left_alone_and_reported ... ok
+test registry::tests::an_unknown_single_word_is_left_alone ... ok
+test registry::tests::an_unknown_verb_does_not_resolve ... ok
+test registry::tests::an_unresolved_token_in_a_generated_document_is_reported ... ok
+test registry::tests::code_fences_are_not_rewritten ... ok
+test entry::escape_hatch::tests::scope_passes_when_it_covers_every_staged_crate ... ok
+test registry::tests::heading_slugs_match_the_forge_form ... ok
+test registry::tests::pathof_a_row_is_the_file_that_declares_it ... ok
+test registry::tests::one_syntax_covers_rows_fields_tables_and_files ... ok
+test registry::tests::pathof_an_internal_citation_renders_nothing ... ok
+test registry::tests::prose_is_not_mistaken_for_a_citation_and_eaten ... ok
+test registry::tests::row_data_resolves_against_the_same_index_documents_do ... ok
+test registry::tests::reference_is_builtin_and_renders_as_a_citation ... ok
+test registry::tests::slugs_are_snake_case ... ok
+test registry::tests::select_narrows_the_columns_and_count_ends_a_chain ... ok
+test registry::tests::sourcesof_a_row_is_what_it_rests_on ... ok
+test registry::tests::vocab_and_the_builtin_roots_need_no_declaration ... ok
+test registry::tests::the_reg_prefix_still_resolves ... ok
+test registry::tests::where_filters_a_table_by_substring_or_exactly ... ok
+test bootstrap::hooks::byline_hook_tests::durable_blocks_an_uninitialised_project_at_all_scope ... ok
+test bootstrap::hooks::byline_hook_tests::durable_ignores_a_repo_it_does_not_govern ... ok
+test bootstrap::hooks::byline_hook_tests::the_commit_msg_hook_fails_when_the_lints_reject ... ok
+test bootstrap::hooks::byline_hook_tests::the_commit_msg_hook_hands_the_message_to_the_launcher ... ok
+test bootstrap::hooks::byline_hook_tests::durable_delegates_to_the_generated_hook_when_initialised ... ok
+test bootstrap::hooks::byline_hook_tests::the_pre_push_scan_emits_one_record_per_commit_including_an_empty_message ... ok
+test render_agent::builtins::check_message_tests::a_bash_gh_pr_create_is_submitted ... ok
+test render_agent::builtins::check_message_tests::a_bash_git_commit_is_submitted ... ok
+test render_agent::builtins::check_message_tests::a_body_passed_by_file_is_read_and_submitted ... ok
+test render_agent::builtins::check_message_tests::it_matches_every_tool_not_just_bash ... ok
+test render_agent::builtins::check_message_tests::the_generated_hook_is_valid_bash ... ok
+test render_agent::builtins::check_message_tests::a_heredoc_body_is_visible_because_the_whole_input_is_scanned ... ok
+test render_agent::tests::agent_body_is_not_wrapped_in_bookends ... ok
+test render_agent::tests::agent_frontmatter_gets_variable_substitution ... ok
+test render_agent::tests::agent_frontmatter_keeps_fields_mockspace_does_not_know ... ok
+test render_agent::tests::agent_frontmatter_passes_through_verbatim ... ok
+test render_agent::tests::agent_gate_hook_self_heals_then_blocks ... ok
+test render_agent::tests::agent_gate_is_a_generated_builtin ... ok
+test render_agent::tests::agent_render_adds_separator_when_body_lacks_one ... ok
+test render_agent::tests::agent_render_round_trips_a_real_persona_shape ... ok
+test render_agent::tests::agent_template_with_unterminated_frontmatter_is_treated_as_none ... ok
+test render_agent::tests::agent_template_without_frontmatter_yields_none_to_skip_on ... ok
+test render_agent::tests::builtin_postamble_within_budget ... ok
+test render_agent::tests::builtin_preamble_within_budget ... ok
+test render_agent::tests::canon_design_code_chain_is_a_generated_builtin ... ok
+test render_agent::tests::design_talk_skill_is_absent_unless_opted_in ... ok
+test render_agent::tests::design_talk_skill_ships_its_script_executable_and_its_manifest ... ok
+test render_agent::tests::phase_labels_lock_down_user_visible_strings ... ok
+test render_agent::tests::sketching_and_benchmarking_are_on_by_default ... ok
+test render_agent::tests::sketching_and_benchmarking_can_be_declined ... ok
+test render_agent::tests::the_shame_escape_hatch_stays_writable_while_a_lookalike_is_gated ... ok
+test render_agent::tests::the_skill_catalogue_names_every_builtin_and_nothing_else ... ok
+test render_agent::tests::word_count_ignores_pure_punctuation ... ok
+test render_agent::tests::word_count_strips_html_comments ... ok
+test render_agent::tests::write_guard_phase_detection_is_cwd_independent ... ok
+test render_agent::tests::write_guard_shame_carve_out_matches_a_whole_path_component ... ok
+test render_agent::tests::write_guard_uses_new_phase_labels ... ok
+test render_design::placeholder_spacing_tests::a_different_placeholder_is_left_alone ... ok
+test render_design::placeholder_spacing_tests::a_placeholder_inside_an_expansion_still_substitutes ... ok
+test render_design::placeholder_spacing_tests::a_placeholder_substitutes_with_or_without_spaces ... ok
+test render_design::tests::a_body_line_starting_with_generated_at_is_not_false_skipped ... ok
+test render_design::tests::body_change_is_not_equal ... ok
+test render_design::tests::dot_comment_timestamp_line_is_recognised ... ok
+test render_design::tests::non_timestamp_header_change_is_not_equal ... ok
+test render_design::tests::timestamp_only_change_is_equal ... ok
+test render_design::tests::write_generated_skips_timestamp_only_and_restores_previous ... ok
+test render_agent::builtins::check_message_tests::an_unrelated_bash_command_is_left_alone ... ok
+test render_agent::builtins::check_message_tests::a_passing_verdict_allows_the_tool ... ok
+test render_agent::builtins::check_message_tests::an_mcp_git_commit_tool_is_submitted ... ok
+test render_agent::builtins::check_message_tests::an_unrelated_tool_is_left_alone ... ok
+test render_agent::builtins::check_message_tests::it_fails_closed_with_no_launcher ... ok
+test render_agent::builtins::check_message_tests::without_jq_the_gate_denies_rather_than_allowing_everything ... ok
+test render_agent::builtins::check_message_tests::an_mcp_pull_request_tool_is_submitted_by_name_shape ... ok
+
+test result: ok. 263 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 6.47s
+
+     Running unittests src/main.rs (target/debug/deps/mockspace-3c09fb4e36a617db)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bench_generated_e2e.rs (target/debug/deps/bench_generated_e2e-127f71fac6e28972)
+
+running 1 test
+run plan: 2 bench(es), 2 config(s)
+[1/2] gate n=64 (elapsed 0s)
+  Warmup spawn complete.
+  ── Harness run 1/1 ──
+  pass 1/1 cd=0ms... done (0s elapsed, ~0s left)
+  Total: 0.3s
+  CSV: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/mockspace-bench-e2e-39973/mock/benches/results/.inflight/1787026878-40823/gate/gate_n64.csv (8 rows)
+  Meta: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/mockspace-bench-e2e-39973/mock/benches/results/.inflight/1787026878-40823/gate/gate_n64.meta.json
+  after_cell FAIL: gated: this cell must not reach the ledger
+  history withheld for gate_n64: after_cell returned Fail
+[2/2] hash n=64 (elapsed 0s, eta 0s)
+  Warmup spawn complete.
+  ── Harness run 1/1 ──
+  pass 1/1 cd=0ms... done (0s elapsed, ~0s left)
+  Total: 0.3s
+  CSV: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/mockspace-bench-e2e-39973/mock/benches/results/.inflight/1787026878-40823/hash/hash_n64.csv (8 rows)
+  Meta: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/mockspace-bench-e2e-39973/mock/benches/results/.inflight/1787026878-40823/hash/hash_n64.meta.json
+  after_cell: marker written
+
+bench                             n variant                    median  vs best
+gate                             64 plusone                      0 ns    1.00x
+hash                             64 plusone                      8 ns    1.00x
+
+total: 0.8s
+FAILED: an after_cell hook returned Fail
+test a_config_only_nested_tree_runs_end_to_end_through_the_generated_driver ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.47s
+
+     Running tests/crate_readme_rules.rs (target/debug/deps/crate_readme_rules-f719f31e837e3310)
+
+running 4 tests
+test crate_readme_becomes_a_scoped_rule ... ok
+test a_consumer_rule_is_never_swept ... ok
+test emptying_the_crates_dir_still_sweeps ... ok
+test a_removed_crate_loses_its_rule ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/custom_lint_cdylib.rs (target/debug/deps/custom_lint_cdylib-09755ae899cc65f6)
+
+running 1 test
+test custom_lint_loads_and_dispatches_across_cdylib ... ignored, runs cargo build; run with --ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/generation_idempotent.rs (target/debug/deps/generation_idempotent-09e7b429bfb62112)
+
+running 4 tests
+test per_crate_docs_expand_placeholders ... ok
+test passthrough_templates_expand_placeholders ... ok
+test summary_links_match_the_files_written ... ok
+test per_crate_doc_regeneration_is_timestamp_stable ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/real_trees.rs (target/debug/deps/real_trees-8326a9fbc0337aed)
+
+running 1 test
+test every_real_bench_tree_loads_and_resolves_through_the_benchspace_path ... ignored, needs MOCKSPACE_REAL_TREES pointing at a workspace of consumer clones
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mockspace_bench_core-c88795e04ef33621)
+
+running 14 tests
+test abi_tests::ffi_bench_call_is_four_u64 ... ok
+test byte_routine::tests::dispatch_macro_declared_sizes_only ... ok
+test byte_routine::tests::build_input_differs_across_seeds ... ok
+test byte_routine::tests::heap_build_matches_typed_build ... ok
+test byte_routine::tests::build_input_is_deterministic_per_seed ... ok
+test byte_routine::tests::may_differ_flag_propagates ... ok
+test byte_routine::tests::ops_per_call_is_input_length ... ok
+test byte_routine::tests::timed_accepts_plain_and_wrapped_setup ... ok
+test calibration_tests::above_floor_needs_one_rep ... ok
+test byte_routine::tests::small_sizes_work ... ok
+test calibration_tests::below_floor_scales_to_exceed_it ... ok
+test calibration_tests::timed_calibrated_expands_and_runs ... ok
+test calibration_tests::zero_probe_is_bounded ... ok
+test byte_routine::tests::heap_build_matches_typed_build_at_a_larger_size ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mockspace_bench_harness-b2704c68a4b1786c)
+
+running 131 tests
+test analysis::cost_model_tests::declines_without_spread ... ok
+test analysis::cost_model_tests::fits_a_clean_line ... ok
+test analysis::cost_model_tests::noisy_line_has_high_but_imperfect_r2 ... ok
+test config::tests::a_typo_inside_docgen_is_still_refused ... ok
+test config::tests::a_typo_inside_the_array_of_tables_sizes_form_names_the_key ... ok
+test config::tests::a_flat_tree_config_carries_bench_and_sweep_equal_to_the_section_name ... ok
+test config::role_resolution::delta_is_a_mode_and_is_not_checked_against_the_arms ... ok
+test config::role_resolution::a_size_that_supplies_the_role_arm_is_accepted ... ok
+test config::role_resolution::a_path_arm_resolves_the_same_on_every_platform ... ok
+test config::role_resolution::a_size_that_narrows_its_arms_may_not_keep_a_role_it_excluded ... ok
+test config::tests::a_typoed_bench_key_is_refused_rather_than_defaulted ... ok
+test config::role_resolution::arms_declared_per_size_are_what_a_role_is_checked_against ... ok
+test config::tests::declaring_roles_in_both_forms_is_refused ... ok
+test config::tests::both_sizes_shapes_survive_the_hand_written_deserializer ... ok
+test config::tests::an_unknown_top_level_section_is_refused_and_named ... ok
+test config::tests::flattened_baseline_defaults_delta_to_subtract ... ok
+test config::tests::empty_variant_lists_error_by_name ... ok
+test config::tests::flattened_roles_flow_to_the_config ... ok
+test config::tests::every_field_of_every_denied_struct_still_parses ... ok
+test config::tests::floor_or_delta_without_baseline_is_refused ... ok
+test config::tests::integer_master_seed_still_parses ... ok
+test config::tests::normalise_defaults_to_subtract_and_absent_is_none ... ok
+test config::tests::normalise_section_parses_and_flows_to_config ... ok
+test config::role_resolution::a_normalise_table_role_is_checked ... ok
+test config::tests::resolve_variant_path_shapes ... ok
+test config::tests::flags_default_off_and_parse ... ok
+test config::tests::plain_sizes_array_and_bench_level_variants ... ok
+test config::tests::load_itself_refuses_double_roles_not_only_validate_roles ... ok
+test config::tests::the_arms_spelling_works_per_point_too ... ok
+test config::tests::per_size_variants_override_bench_level ... ok
+test config::tests::the_docgen_section_is_a_feature_and_still_parses ... ok
+test config::tests::timing_override_merges_over_global ... ok
+test disasm::tests::duplicate_pairs_reports_every_matching_pair_once ... ok
+test config::tests::writing_both_spellings_of_one_field_is_refused ... ok
+test disasm::tests::differing_entry_is_never_a_duplicate_even_if_text_matches ... ok
+test disasm::tests::a_genuine_clean_pass_has_no_unreadable_variants ... ok
+test disasm::tests::matching_entry_with_differing_text_is_not_a_duplicate ... ok
+test config::tests::string_master_seed_carries_full_u64_range ... ok
+test disasm::tests::missing_text_is_never_a_duplicate ... ok
+test config::tests::the_arms_spelling_parses_identically_to_variants ... ok
+test disasm::tests::normalize_addresses_folds_a_branch_target_that_shifted_by_an_unrelated_layout_change ... ok
+test disasm::tests::normalize_addresses_leaves_bracketed_memory_operands_alone ... ok
+test disasm::tests::normalize_addresses_leaves_hash_prefixed_immediates_alone ... ok
+test disasm::tests::normalize_addresses_leaves_dollar_prefixed_immediates_alone ... ok
+test disasm::tests::normalize_addresses_leaves_x86_att_displacement_alone ... ok
+test disasm::tests::normalize_disasm_drops_otool_section_header ... ok
+test disasm::tests::normalize_disasm_folds_mangled_name_and_shifted_target_together ... ok
+test disasm::tests::normalize_disasm_keeps_a_genuinely_different_instruction_different ... ok
+test disasm::tests::normalize_disasm_strips_address_and_raw_opcode_columns ... ok
+test disasm::tests::partial_extraction_failure_still_reports_dupes_found_among_the_rest ... ok
+test disasm::tests::same_entry_and_same_text_is_a_duplicate ... ok
+test disasm::tests::symbol_candidates_tries_bare_and_underscore_prefixed ... ok
+test disasm::tests::total_extraction_failure_is_not_a_clean_pass ... ok
+test driver::hooks::tests::a_fail_verdict_sets_the_failure_flag_and_a_note_does_not ... ok
+test driver::hooks::tests::absent_hooks_do_nothing_and_never_fail ... ok
+test driver::hooks::tests::an_on_init_abort_stops_with_its_reason ... ok
+test driver::staging::tests::quarantine_voids_ancient_tree_despite_live_pid ... ok
+test driver::staging::tests::promote_moves_staged_files_and_clears_inflight ... ok
+test driver::staging::tests::quarantine_moves_dead_run_tree_to_void ... ok
+test driver::staging::tests::failed_promote_rolls_canonical_back ... ok
+test driver::tests::each_failure_class_fails_the_exit_alone ... ok
+test driver::tests::flat_output_naming_is_unchanged ... ok
+test driver::tests::history_partitions_per_bench_in_nested_trees_and_stays_put_in_flat_ones ... ok
+test driver::tests::nested_output_naming_uses_the_sweep_stem_and_the_report_suffix ... ok
+test driver::tests::after_init_fires_once_init_completes_and_before_any_cell ... ok
+test driver::tests::an_on_init_abort_stops_the_run_before_selection ... ok
+test driver::tests::selection_matches_exact_keys_and_bench_prefixes ... ok
+test harness::env_meta_json_tests::the_profile_field_carries_the_passed_value_and_is_absent_when_unknown ... ok
+test matrix::tests::bench_section_names_baseline_and_sizes ... ok
+test matrix::tests::bench_section_emits_resolved_floor ... ok
+test matrix::tests::cartesian_product_is_complete ... ok
+test matrix::tests::generate_errors_on_invalid_spec ... ok
+test matrix::tests::features_union_per_composition ... ok
+test matrix::tests::render_escapes_and_unknown_keys ... ok
+test matrix::tests::lib_template_renders_substitutions ... ok
+test matrix::tests::render_preserves_multibyte ... ok
+test driver::tests::on_init_runs_before_preflight_and_after_init_does_not_survive_a_failed_preflight ... ok
+test matrix::tests::validate_rejects_axis_with_no_values ... ok
+test matrix::tests::validate_accepts_a_well_formed_spec ... ok
+test matrix::tests::validate_rejects_empty_axes ... ok
+test matrix::tests::validate_rejects_reserved_subst_key ... ok
+test matrix::tests::validate_rejects_reserved_axis_name ... ok
+test perf::tests::perf_validate_counter_mapping ... ignored, needs sudo + the perf-counters feature; see the doc comment for the command
+test matrix::tests::validate_rejects_subst_key_colliding_with_axis_name ... ok
+test perf::tests::delta_saturates_and_ipc_guards_zero ... ok
+test perf::tests::unavailable_without_feature_reads_zero ... ok
+test driver::staging::tests::quarantine_leaves_live_recent_run_tree_alone ... ok
+test matrix::tests::generate_writes_crates ... ok
+test report::tests::hardware_counters_section_renders_only_when_present ... ok
+test report::tests::ratio_mode_zero_base_does_not_panic ... ok
+test report::tests::setup_iteration_section_renders_with_correct_kstar ... ok
+test sample::tests::csv_parses_perf_columns_and_is_backward_compatible ... ok
+test spec::routine_table_tests::one_row_serves_every_sweep_of_a_nested_bench_and_unlisted_points_fall_through ... ok
+test spec::routine_table_tests::the_point_reaches_the_const_parameter ... ok
+test report::tests::ratio_mode_adds_base_column ... ok
+test tree::invariants::a_collision_between_two_members_names_both_members ... ok
+test tree::invariants::a_literal_member_may_not_leave_the_benches_tree ... ok
+test tree::invariants::a_composed_member_inherits_every_knob_it_does_not_declare ... ok
+test tree::invariants::a_tree_resolving_to_zero_benches_is_an_error ... ok
+test tree::invariants::a_sweep_timing_override_wins_over_the_members_own ... ok
+test tree::invariants::exclude_applies_to_a_literal_member_by_refusing_the_contradiction ... ok
+test tree::invariants::a_member_owns_its_interior_so_a_nested_bench_toml_is_not_a_second_member ... ok
+test tree::tests::a_member_declaring_its_own_benchspace_is_refused ... ok
+test tree::tests::a_root_section_colliding_with_a_member_name_is_refused_naming_both ... ok
+test tree::tests::a_sections_member_composes_with_prefixed_keys_and_its_own_timing ... ok
+test tree::tests::a_narrowed_pattern_ignores_a_non_matching_dir_that_carries_a_bench_toml ... ok
+test tree::invariants::the_walk_skips_target_and_dot_directories ... ok
+test tree::tests::a_wrapper_bench_table_in_a_member_is_not_the_composed_form ... ok
+test report::tests::subtract_mode_omits_base_column ... ok
+test tree::tests::an_explicitly_listed_member_that_is_missing_is_an_error_naming_it ... ok
+test tree::tests::a_sweep_that_narrows_its_arms_may_not_inherit_a_baseline_it_excluded ... ok
+test tree::tests::exclude_removes_a_directory_the_glob_would_take ... ok
+test tree::tests::naming_an_arm_that_does_not_exist_is_refused_listing_what_does ... ok
+test tree::tests::named_sweeps_compose_and_inherit_the_top_level_fields ... ok
+test tree::tests::arms_and_support_are_discovered_and_glob_match_holds_its_grammar ... ok
+test validation::tests::a_skipped_variant_is_not_validated_and_a_clean_run_reports_nothing ... ok
+test tree::tests::the_default_glob_makes_any_subdir_with_a_bench_toml_a_member ... ok
+test validation::tests::cross_variant_comparison_is_skipped_only_by_consent ... ok
+test validation::tests::distinct_exported_names_pass ... ok
+test tree::tests::the_regression_shape_an_undeclared_subdir_is_ignored_without_error ... ok
+test validation::tests::duplicate_exported_names_are_found ... ok
+test validation::tests::from_hex_rejects_malformed ... ok
+test validation::tests::from_hex_round_trips ... ok
+test tree::tests::root_sections_and_members_coexist_and_root_cells_stay_flat ... ok
+test validation::tests::per_variant_validation_runs_regardless_of_cross_variant_agreement ... ok
+test validation::tests::the_validator_is_called_for_every_live_variant_when_outputs_must_agree ... ok
+test validation::tests::tolerance_selects_approximate_comparison_over_byte_exact ... ok
+test report::tests::floor_differences_the_ratio_against_the_named_cell ... ok
+test disasm::tests::objdump_finds_bench_entry_under_this_platforms_symbol_prefix ... ok
+test disasm::tests::different_work_is_not_flagged_duplicate ... ok
+test disasm::tests::identical_work_in_separate_crates_is_flagged_duplicate ... ok
+
+test result: ok. 130 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/smoke.rs (target/debug/deps/smoke-43d8126640762516)
+
+running 6 tests
+test dataset_aggregates_per_variant ... ok
+test bench_result_dataset_helpers_compile ... ok
+test manifest_loads_and_converts_to_config ... ok
+test cache_csv_round_trips ... ok
+test report_renders_expected_sections ... ok
+test report_from_csv_round_trip_emits_findings_md ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+
+     Running unittests src/lib.rs (target/debug/deps/mockspace_bench_macro-4584b3b3fdfc075d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/typed_form.rs (target/debug/deps/typed_form-e496f9356c723afd)
+
+running 4 tests
+test dispatch_at_other_supported_size ... ok
+test dispatch_at_supported_size_copies_input_to_output ... ok
+test macro_generates_abi_hash_export ... ok
+test macro_generates_named_export ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mockspace_bench_matrix-ca255a06cb944c3b)
+
+running 6 tests
+test scaffold::tests::into_ffi_carries_all_four_fields ... ok
+test generate::tests::sizes_literal_renders_a_rust_array ... ok
+test generate::tests::template_takes_a_sizes_placeholder_not_a_fixed_list ... ok
+test generate::tests::a_batch_width_decl_carries_its_own_sizes_into_the_spec ... ok
+test scaffold::tests::stream_sweeps_the_input_and_times_setup ... ok
+test scaffold::tests::warm_times_setup_and_run_and_digest_is_reps_invariant ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/macro_expansion.rs (target/debug/deps/macro_expansion-4b09f1c7e1e8e44c)
+
+running 4 tests
+test cold_matrix_decls_are_correct ... ok
+test warm_matrix_decls_are_correct ... ok
+test stream_matrix_decls_and_scaffold_signature ... ok
+test generated_cells_satisfy_the_scaffold_signature ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/mockspace_lint_rules-1889894e74c535a2)
+
+running 146 tests
+test cfg_test_mod_tests::a_preceding_item_that_is_not_an_attribute_stops_the_walk ... ok
+test cfg_test_mod_tests::a_plain_module_is_not_a_test_module ... ok
+test cfg_test_mod_tests::a_node_that_is_not_a_module_is_never_a_test_module ... ok
+test cfg_test_mod_tests::an_unrelated_attribute_does_not_make_a_module_a_test_module ... ok
+test cfg_test_mod_tests::a_feature_whose_name_contains_test_is_not_a_test_module ... ok
+test cfg_test_mod_tests::a_cfg_attr_is_not_a_cfg ... ok
+test cfg_test_mod_tests::an_inner_attribute_marks_the_module_too ... ok
+test cfg_test_mod_tests::a_comma_inside_a_string_does_not_split_the_predicate ... ok
+test cfg_test_mod_tests::an_any_predicate_offering_test_is_not_a_test_module ... ok
+test cfg_test_mod_tests::a_negated_test_cfg_is_not_a_test_module ... ok
+test cfg_test_mod_tests::an_all_predicate_requiring_test_is_a_test_module ... ok
+test cfg_test_mod_tests::the_attribute_is_found_as_a_preceding_sibling ... ok
+test changelist_doc_gate::is_doc_template_tests::design_md_tmpl_is_gated ... ok
+test cfg_test_mod_tests::the_walk_continues_past_a_stack_of_attributes ... ok
+test changelist_doc_gate::is_doc_template_tests::only_the_shame_template_itself_is_exempt ... ok
+test changelist_doc_gate::is_doc_template_tests::files_outside_crates_are_not_gated ... ok
+test changelist_doc_gate::is_doc_template_tests::plain_md_inside_crates_is_gated ... ok
+test changelist_helpers::tests::parse_new_format_doc_active ... ok
+test changelist_helpers::tests::parse_new_format_doc_locked ... ok
+test changelist_helpers::tests::parse_random_returns_none ... ok
+test cfg_test_mod_tests::the_walk_continues_past_a_comment ... ok
+test changelist_helpers::tests::parse_topic_returns_none ... ok
+test changelist_helpers::tests::parse_new_format_src_deprecated ... ok
+test changelist_immutability::tests::mixed_input_filters_only_additions ... ok
+test changelist_immutability::tests::deletion_included ... ok
+test changelist_immutability::tests::modification_included ... ok
+test changelist_immutability::tests::every_status_transition_is_classified ... ok
+test changelist_immutability::tests::pure_addition_skipped ... ok
+test changelist_immutability::tests::partial_similarity_rename_is_reported ... ok
+test changelist_immutability::tests::rename_uses_new_path ... ok
+test changelist_immutability::tests::stem_rename_with_status_change_is_reported ... ok
+test changelist_lock::is_locked_doc_tests::crate_docs_are_locked_and_only_shame_itself_is_exempt ... ok
+test changelist_lock::is_locked_doc_tests::files_outside_crates_and_non_docs_are_not_locked_docs ... ok
+test changelist_required::tests::a_staged_then_modified_file_reads_as_what_commit_a_commits ... ignored, catalogue: staged-then-modified file under commit -a commits the worktree blob while this reads the index blob; needs the commit shape signal; tracked #41
+test declared_default_severity_tests::a_cross_crate_lint_sees_a_module_file ... ignored, catalogue: cross-crate lints see only crate roots; tracked #33
+test declared_default_severity_tests::a_config_can_turn_off_a_lint_that_declares_a_real_severity ... ok
+test declared_default_severity_tests::a_config_can_turn_on_a_lint_that_declares_off ... ok
+test declared_default_severity_tests::a_config_for_another_lint_does_not_reach_this_one ... ok
+test declared_default_severity_tests::a_lint_declaring_a_real_severity_still_runs_without_a_config ... ok
+test declared_default_severity_tests::a_partially_off_default_does_not_run_at_its_passing_gates ... ignored, catalogue: a partially-off declared default runs at every gate; tracked #28
+test declared_default_severity_tests::a_lint_declaring_off_does_not_run_without_a_config ... ok
+test declared_default_severity_tests::a_pack_reusing_a_builtin_name_is_reported ... ok
+test declared_default_severity_tests::a_duplicate_inside_one_pack_is_reported_too ... ok
+test declared_default_severity_tests::configuring_only_finding_severities_turns_an_off_lint_on ... ok
+test declared_default_severity_tests::configuring_only_parameters_turns_an_off_lint_on ... ok
+test declared_default_severity_tests::cross_crate_config_can_turn_on_a_lint_that_declares_off ... ok
+test declared_default_severity_tests::cross_crate_lints_honour_the_declared_default_too ... ok
+test declared_default_severity_tests::the_builtin_set_alone_has_no_duplicate_names ... ok
+test declared_default_severity_tests::the_crate_root_alone_would_have_missed_it ... ok
+test deprecation_comparison::tests::comparison_section_at_end_of_file ... ok
+test deprecation_comparison::tests::extracts_h3_lowercase ... ok
+test deprecation_comparison::tests::extracts_h2_headers ... ok
+test declared_default_severity_tests::a_crate_scoped_lint_still_runs_once ... ok
+test declared_default_severity_tests::a_per_file_lint_sees_a_module_file ... ok
+test deprecation_comparison::tests::fails_when_comparison_section_missing ... ok
+test deprecation_comparison::tests::fails_when_subheader_missing ... ok
+test deprecation_comparison::tests::fails_when_type_name_missing ... ok
+test deprecation_comparison::tests::finds_comparison_section ... ok
+test deprecation_comparison::tests::finds_comparison_section_case_insensitive ... ok
+test deprecation_comparison::tests::no_comparison_section ... ok
+test deprecation_comparison::tests::passes_when_comparison_is_complete ... ok
+test deprecation_comparison::tests::severity_is_push_gate ... ok
+test deprecation_comparison::tests::src_kind_label_in_messages ... ok
+test deprecation_comparison::tests::subheader_matching_is_case_insensitive ... ok
+test file_size::module_file_tests::a_module_file_over_the_limit_is_reported ... ok
+test deprecation_comparison::tests::integration_no_deprecated_no_errors ... ok
+test file_size::tests::at_default_limit_passes ... ok
+test deprecation_comparison::tests::integration_deprecated_with_active_missing_comparison ... ok
+test deprecation_comparison::tests::integration_deprecated_with_complete_comparison ... ok
+test deprecation_comparison::tests::integration_deprecated_without_active_no_error ... ok
+test file_size::tests::block_comments_not_counted ... ok
+test file_size::tests::blanks_and_comments_not_counted ... ok
+test file_size::tests::configurable_limit ... ok
+test file_size::tests::under_limit_passes ... ok
+test file_size::tests::over_default_limit_fails ... ok
+test fmt_only::tests::an_untracked_file_is_undeterminable_and_therefore_refused ... ok
+test fmt_only::tests::an_unchanged_file_is_fmt_only_without_consulting_rustfmt ... ok
+test forbidden_imports::tests::test_contains_keyword ... ok
+test forbidden_imports::tests::test_contains_type_name ... ok
+test forbidden_imports::tests::test_scope_matches ... ok
+test is_shame_template_tests::only_a_whole_path_component_named_shame_matches ... ok
+test is_shame_template_tests::the_reader_honours_only_the_exact_spelling ... ok
+test line_lint_allowed_tests::comma_list_matches_first ... ok
+test line_lint_allowed_tests::comma_list_matches_second ... ok
+test line_lint_allowed_tests::comma_list_matches_third ... ok
+test line_lint_allowed_tests::empty_parens_matches_nothing ... ok
+test line_lint_allowed_tests::malformed_unclosed_returns_false ... ok
+test line_lint_allowed_tests::multiple_markers_on_line ... ok
+test line_lint_allowed_tests::non_match_returns_false ... ok
+test line_lint_allowed_tests::similar_name_does_not_match_partial ... ok
+test line_lint_allowed_tests::single_name_matches ... ok
+test line_lint_allowed_tests::whitespace_tolerated ... ok
+test no_adhoc_framework::allow_grammar::the_delimiter_is_the_em_dash_and_a_colon_is_content ... ok
+test no_duplicate_fn::is_line_suppressed_tests::does_not_suppress_marker_for_other_rule ... ok
+test no_duplicate_fn::is_line_suppressed_tests::does_not_suppress_unmarked_line ... ok
+test no_duplicate_fn::is_line_suppressed_tests::handles_line_zero_safely ... ok
+test no_duplicate_fn::is_line_suppressed_tests::handles_out_of_range_line_safely ... ok
+test no_duplicate_fn::is_line_suppressed_tests::suppresses_comma_list_with_no_duplicate_fn ... ok
+test no_duplicate_fn::is_line_suppressed_tests::suppresses_when_marker_present ... ok
+test no_em_dashes_in_our_own_text::this_crate_prints_no_em_dashes_at_a_consumer ... ok
+test no_empty_crate::tests::lib_rs_only_with_docs_flags ... ok
+test no_empty_crate::tests::populated_lib_rs_passes ... ok
+test no_empty_crate::tests::reexport_from_submodule_passes ... ok
+test no_empty_crate::tests::truly_empty_crate_still_flags ... ok
+test no_entry_suffix::tests::accepts_descriptor_suffix ... ok
+test no_entry_suffix::tests::catches_entry_suffix ... ok
+test no_entry_suffix::tests::handles_crate_prefixed_call ... ok
+test no_self_define::allow_grammar::a_spaced_hyphen_is_the_accepted_alternative_and_a_bare_marker_is_empty ... ok
+test no_self_define::allow_grammar::the_delimiter_is_the_em_dash_and_a_colon_is_content ... ok
+test pack_tests::a_pack_may_omit_every_kind_but_one ... ok
+test pack_tests::an_empty_pack_contributes_nothing ... ok
+test pack_tests::collecting_two_packs_accumulates ... ok
+test pack_tests::full_pack_contributes_every_kind ... ok
+test fmt_only::tests::a_pure_semantic_edit_is_refused ... ok
+test changelist_required::fmt_only_exemption::a_plain_source_edit_is_still_refused_in_a_frozen_phase ... ok
+test fmt_only::tests::rustfmts_own_output_is_fmt_only ... ok
+test fmt_only::tests::an_edit_smuggled_alongside_formatting_is_refused ... ok
+test repo_lint_tests::a_findings_own_severity_survives_when_no_override_names_the_lint ... ok
+test repo_lint_tests::a_lint_that_declares_a_real_default_still_runs ... ok
+test repo_lint_tests::a_lint_that_declares_itself_off_does_not_run ... ok
+test repo_lint_tests::the_changelist_family_is_registered_as_repo_lints ... ok
+test type_scanner::tests::deduplicates ... ok
+test type_scanner::tests::empty_backticks ... ok
+test type_scanner::tests::extracts_macro_names ... ok
+test type_scanner::tests::extracts_type_names ... ok
+test type_scanner::tests::handles_newline_in_backtick ... ok
+test changelist_required::fmt_only_judges_the_committed_content::a_semantic_edit_in_the_index_is_refused_even_when_the_worktree_is_formatted ... ok
+test type_scanner::tests::handles_unclosed_backtick ... ok
+test type_scanner::tests::macro_with_invalid_name_rejected ... ok
+test type_scanner::tests::mixed_types_and_macros ... ok
+test type_scanner::tests::path_types ... ok
+test type_scanner::tests::properly_paired_backticks_after_break ... ok
+test type_scanner::tests::rejects_non_identifier_content ... ok
+test type_scanner::tests::skips_code_blocks ... ok
+test type_scanner::tests::skips_lowercase_identifiers ... ok
+test type_scanner::tests::sorted_output ... ok
+test undocumented_type::cfg_test_module_tests::a_documented_type_is_not_reported ... ok
+test undocumented_type::cfg_test_module_tests::a_fixture_inside_a_test_module_is_not_public_surface ... ok
+test undocumented_type::cfg_test_module_tests::an_undocumented_type_outside_a_test_module_is_still_reported ... ok
+test undocumented_type::cfg_test_module_tests::a_module_that_is_not_test_only_is_still_walked ... ok
+test repo_lint_tests::a_repo_can_opt_into_a_lint_that_is_off_by_default ... ok
+test repo_lint_tests::an_explicit_base_override_restamps_the_finding ... ok
+test fmt_only::tests::unparseable_source_is_undeterminable_and_therefore_refused ... ok
+test repo_lint_tests::an_off_override_silences_a_lint_that_is_on_by_default ... ok
+test changelist_required::fmt_only_exemption::a_fmt_only_change_passes_the_frozen_phase_and_a_smuggled_edit_does_not ... ok
+test repo_lint_tests::repo_lints_run_when_the_workspace_has_no_crates ... ok
+
+test result: ok. 143 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running unittests src/lib.rs (target/debug/deps/mockspace_manifest-b95e89f013814a7e)
+
+running 21 tests
+test gate::tests::the_removal_set_names_every_repo_location_var ... ok
+test gate::tests::the_fingerprint_changes_with_the_content ... ok
+test gate::tests::the_hook_delegates_before_it_blocks ... ok
+test gate::tests::the_removal_set_spares_identity_and_config ... ok
+test gate::tests::the_version_keys_the_directory ... ok
+test gate::tests::xdg_wins_over_home_but_only_when_set ... ok
+test gate::tests::a_non_project_exits_zero ... ok
+test gate::tests::only_pre_push_captures_and_replays_stdin ... ok
+test gate::tests::the_hook_carries_no_policy ... ok
+test tests::branch_pin ... ok
+test tests::legacy_lock_without_mockspace_is_none ... ok
+test tests::malformed_toml_yields_absent_header ... ok
+test tests::no_pin_key_is_not_a_pin ... ok
+test tests::mock_dir_field ... ok
+test tests::rev_overrides_version ... ok
+test tests::only_top_level_keys_count ... ok
+test tests::rev_pin_custom_url ... ok
+test tests::version_pin_default_url ... ok
+test tests::legacy_lock_rev ... ok
+test gate::tests::installing_twice_writes_once ... ok
+test gate::tests::every_hook_is_valid_bash ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/multiply_xor-84bdb3b5f6b1853d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/self_bench-d35b0bbe22354dbf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests cargo_mock
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mockspace
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests mockspace_bench_core
+
+running 4 tests
+test bench-core/src/byte_routine.rs - byte_routine (line 11) ... ignored
+test bench-core/src/lib.rs - byte_routine_dispatch (line 377) ... ignored
+test bench-core/src/lib.rs - timed (line 510) ... ignored
+test bench-core/src/lib.rs - timed_calibrated (line 569) ... ignored
+
+test result: ok. 0 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.44s; merged doctests compilation took 0.14s
+   Doc-tests mockspace_bench_harness
+
+running 4 tests
+test bench-harness/src/driver/hooks.rs - driver::hooks::Hooks (line 42) ... ignored
+test bench-harness/src/driver/mod.rs - driver (line 11) ... ignored
+test bench-harness/src/spec.rs - spec::RoutineSpec (line 24) ... ignored
+test bench-harness/src/spec.rs - spec::routine_table (line 69) ... ignored
+
+test result: ok. 0 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.45s; merged doctests compilation took 0.14s
+   Doc-tests mockspace_bench_macro
+
+running 2 tests
+test bench-macro/src/lib.rs - (line 28) ... ignored
+test bench-macro/src/lib.rs - (line 7) ... ignored
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.44s; merged doctests compilation took 0.14s
+   Doc-tests mockspace_bench_matrix
+
+running 1 test
+test bench-matrix/src/macros.rs - macros::bench_matrix (line 29) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.44s; merged doctests compilation took 0.14s
+   Doc-tests mockspace_lint_rules
+
+running 3 tests
+test lint-rules/src/lib.rs - (line 16) ... ignored
+test lint-rules/src/lib.rs - (line 24) ... ignored
+test lint-rules/src/lib.rs - lint_pack (line 1339) ... ignored
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.44s; merged doctests compilation took 0.14s
+   Doc-tests mockspace_manifest
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
