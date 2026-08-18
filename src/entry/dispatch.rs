@@ -31,13 +31,6 @@ fn is_recovery_command(args: &[String]) -> bool {
     args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
 }
 
-/// The blocking message for a pack that would not build.
-///
-/// It names the failure, says what it costs, and lists the causes worth
-/// checking first. The stale-branch case leads because it is the one that has
-/// actually happened: a pack pinned to a branch that stopped moving keeps
-/// resolving cleanly to an old head while the engine moves on, so the two
-/// drift apart with nothing in either repository looking wrong.
 /// The value-taking globals the tool consumes before any subcommand sees
 /// them. Their values must never be read as a subcommand name, and must never
 /// be forwarded to one.
@@ -81,6 +74,13 @@ fn subcommand_args<'a>(args: &'a [String], subcmd: &str) -> Vec<&'a str> {
     out
 }
 
+/// The blocking message for a pack that would not build.
+///
+/// It names the failure, says what it costs, and lists the causes worth
+/// checking first. The stale-branch case leads because it is the one that has
+/// actually happened: a pack pinned to a branch that stopped moving keeps
+/// resolving cleanly to an old head while the engine moves on, so the two
+/// drift apart with nothing in either repository looking wrong.
 fn explain_lint_load_failure(cfg: &Config, err: &impl std::fmt::Display) -> String {
     let mut s = String::new();
     s.push_str("this repo's custom lints could not be built, so no lint below\n");
