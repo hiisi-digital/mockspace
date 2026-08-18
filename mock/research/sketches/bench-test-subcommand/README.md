@@ -1,6 +1,6 @@
 # Evidence for the `mock bench test` subcommand
 
-Committed artifacts backing `FINDINGS_bench_tree_test_discovery.md` at the repo root.
+Committed artifacts backing `mock/research/202608180722_bench-tree-test-discovery-findings.md`.
 
 - `01_parse_bug_repro.txt`: the negative-control reproduction of the parser bug
   found and fixed while building the fix (the fix's own first draft silently
