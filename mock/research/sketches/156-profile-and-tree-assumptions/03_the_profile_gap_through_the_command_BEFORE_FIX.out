@@ -1,0 +1,13 @@
+warming every target directory (discarded)...
+arm 1  mock bench test            127s   30 passed
+arm 2  mock bench test --release  135s   30 passed
+arm 3  cargo test --release       5s   30 passed
+
+CONTROL same work: 30 passed / 30 passed / 30 passed
+CONTROL release materially faster: arm1/arm3 = 25x (want >= 5)
+
+VERDICT: arm 2 asks for release and gets arm 1's time, not arm 3's.
+         The flag is accepted and discarded (see 04), so the documented
+         command has no way to reach the profile at all, and its output
+         names neither profile. That is the same missing dimension that
+         retired a true 107s figure in arvo's OPTIONS.md Q52.

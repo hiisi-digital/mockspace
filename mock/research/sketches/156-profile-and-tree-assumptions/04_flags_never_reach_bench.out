@@ -1,0 +1,12 @@
+=== control (a): does a POSITIONAL argument reach bench::cmd? ===
+  'not found in bench.toml' refusal seen: 1 (want 1)
+=== control (b): does a FLAG reach cargo? ===
+  cargo argv observed: test --manifest-path /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/tmp.a5zL5PL5zw/mock/benches/Cargo.toml --release
+  '--release' present in cargo argv: 1 (want 1)
+
+CONTROL: ok. Positionals arrive, and so do flags.
+VERDICT: mock bench test --release now reaches cargo with --release.
+         Before the fix the flag was dropped at the dispatcher, so the
+         extra-forwarding code in cmd_test, cmd_run and cmd_report was
+         unreachable through the CLI: the flag was accepted, discarded,
+         and the debug run reported a pass.

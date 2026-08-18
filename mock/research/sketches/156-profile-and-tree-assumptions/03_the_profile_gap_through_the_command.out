@@ -1,0 +1,15 @@
+warming every target directory (discarded)...
+arm 1  mock bench test            92s   30 passed
+arm 2  mock bench test --release  5s   30 passed
+arm 3  cargo test --release       4s   30 passed
+
+CONTROL same work: 30 passed / 30 passed / 30 passed
+CONTROL release materially faster: arm1/arm3 = 23x (want >= 5)
+CONTROL arm 2 tracks arm 3: 5s against a ceiling of 26s
+
+VERDICT: asking the command for release now gets release. Before the fix
+         arm 2 measured 135s against arm 3's 5s, because the flag was
+         dropped before the subcommand saw it and the run reported a
+         pass regardless. The summary line now also names the profile,
+         so a reader of the count can tell which one produced it.
+RC=0
