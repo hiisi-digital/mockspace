@@ -6,6 +6,13 @@
 #   "The tool passes the effective values on the command line (`--config`),
 #    where a manifest cannot silently drop them"
 #
+# HISTORY. As first written this script asserted the DEFECT: fixture A came
+# back with opt-level=3 while fixture B came back with 0. That run is kept
+# beside it as 01_build_override_dropped_BEFORE_FIX.out. Since the fix
+# (build_argv now takes the effective profile, and consumer_tree_profile reads
+# the tree's own bench.toml) the script asserts the repaired behaviour, so it
+# is a regression check rather than a demonstration.
+#
 # NEGATIVE CONTROL, stated before the run. Two fixtures declare an IDENTICAL
 # `[build] opt-level = 0`. Fixture A has a consumer-owned driver
 # (mock/benches/Cargo.toml exists, which is arvo's shape); fixture B has none,
@@ -62,14 +69,15 @@ echo "declared in both fixtures : profile.release.opt-level=0"
 echo "fixture A (consumer-owned): $GOT_A"
 echo "fixture B (generated)     : $GOT_B"
 echo
-if [ "$GOT_A" = "profile.release.opt-level=3" ] && [ "$GOT_B" = "profile.release.opt-level=0" ]; then
-  echo "CONTROL: ok, the two paths disagree and only the generated one honours [build]."
-  echo "VERDICT: on a consumer-owned-driver tree the [build] override is silently dropped."
-  echo "         build_argv() (src/bench.rs:565) hardcodes PROFILE_ARGS and takes no config;"
-  echo "         profile_args_for() has exactly one production caller, in run_generated"
-  echo "         (src/bench.rs:764). The consumer path never parses bench.toml at all."
+if [ "$GOT_A" = "profile.release.opt-level=0" ] && [ "$GOT_B" = "profile.release.opt-level=0" ]; then
+  echo "CONTROL: ok, the declared 0 is distinguishable from the framework default 3."
+  echo "VERDICT: both driver paths honour [build]. Before the fix, fixture A"
+  echo "         built at 3 while declaring 0, with no error and no warning:"
+  echo "         build_argv() took no config and passed a constant, and"
+  echo "         profile_args_for() was called only from run_generated."
 else
-  echo "CONTROL FAILED or verdict not reproduced: A=$GOT_A B=$GOT_B -- result suppressed."
+  echo "REGRESSION: a [build] override is being dropped. A=$GOT_A B=$GOT_B"
+  echo "            (both must be profile.release.opt-level=0)"
   exit 1
 fi
 rm -rf "$FX" "$SHIMBIN"

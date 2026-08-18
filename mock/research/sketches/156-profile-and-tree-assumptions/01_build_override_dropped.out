@@ -1,18 +1,18 @@
 === fixture A: consumer-owned driver, bench.toml declares opt-level = 0 ===
-  building variant /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/tmp.USBpWbI9D3/A/mock/benches/variants/arm...
-error: cargo build failed for variant /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/tmp.USBpWbI9D3/A/mock/benches/variants/arm
-  cargo was invoked with: profile.release.opt-level=3
+  building variant /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/tmp.Rh5dHuxnTY/A/mock/benches/variants/arm...
+error: cargo build failed for variant /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/tmp.Rh5dHuxnTY/A/mock/benches/variants/arm
+  cargo was invoked with: profile.release.opt-level=0
 === fixture B: generated driver, bench.toml declares opt-level = 0 ===
   building arm hash/arms/plusone...
 error: cargo build failed for arm hash/arms/plusone
   cargo was invoked with: profile.release.opt-level=0
 
 declared in both fixtures : profile.release.opt-level=0
-fixture A (consumer-owned): profile.release.opt-level=3
+fixture A (consumer-owned): profile.release.opt-level=0
 fixture B (generated)     : profile.release.opt-level=0
 
-CONTROL: ok, the two paths disagree and only the generated one honours [build].
-VERDICT: on a consumer-owned-driver tree the [build] override is silently dropped.
-         build_argv() (src/bench.rs:565) hardcodes PROFILE_ARGS and takes no config;
-         profile_args_for() has exactly one production caller, in run_generated
-         (src/bench.rs:764). The consumer path never parses bench.toml at all.
+CONTROL: ok, the declared 0 is distinguishable from the framework default 3.
+VERDICT: both driver paths honour [build]. Before the fix, fixture A
+         built at 3 while declaring 0, with no error and no warning:
+         build_argv() took no config and passed a constant, and
+         profile_args_for() was called only from run_generated.
