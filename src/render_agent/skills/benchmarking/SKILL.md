@@ -22,7 +22,10 @@ measurement is honest.
 sits. Reach for it whenever the question is a comparison across more than one axis.
 
 Commands: `mock bench init` scaffolds, `add <name>` adds a variant, `run [names...]` measures,
-`report` regenerates findings from cache, `list` prints what is registered.
+`report` regenerates findings from cache, `test` runs `cargo test` in every crate under the
+bench tree (a bare `cargo test` at the tree root sees only the driver crate, since arms and
+support crates are path dependencies rather than workspace members, and reports a misleading
+`0 passed` there is nothing to see), `list` prints what is registered.
 
 ## Why the framework and not a timing loop
 
