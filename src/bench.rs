@@ -118,7 +118,8 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
             },
         }
     };
-    let bin_path = match build_variants_and_bin_filtered(&bench_dir, dirs.as_deref()) {
+    let profile = consumer_tree_profile(&bench_dir);
+    let bin_path = match build_variants_and_bin_filtered(&bench_dir, dirs.as_deref(), &profile) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("error: {e}");
@@ -129,7 +130,7 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
     let mut cmd = Command::new(&bin_path);
     cmd.env(
         mockspace_bench_harness::harness::BUILD_PROFILE_ENV,
-        profile_env_value(PROFILE_ARGS.iter().copied()),
+        profile_env_value(profile.iter().map(String::as_str)),
     );
     for n in &names {
         cmd.args(["--only", n]);
@@ -173,7 +174,8 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
         return run_generated(cfg, &bench_dir, &names, &["--report-only"], true);
     }
 
-    let bin_path = match build_bin_only(&bench_dir) {
+    let profile = consumer_tree_profile(&bench_dir);
+    let bin_path = match build_bin_only(&bench_dir, &profile) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("error: {e}");
@@ -184,7 +186,7 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
     let mut cmd = Command::new(&bin_path);
     cmd.env(
         mockspace_bench_harness::harness::BUILD_PROFILE_ENV,
-        profile_env_value(PROFILE_ARGS.iter().copied()),
+        profile_env_value(profile.iter().map(String::as_str)),
     );
     cmd.arg("--report-only");
     for a in _args.iter().filter(|a| !a.starts_with("--")) {
@@ -489,34 +491,39 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
     Ok(dirs)
 }
 
-/// The release profile the framework guarantees, passed on every
-/// build rather than left to the consumer's manifests.
+
+/// The effective release profile for a **consumer-owned-driver** tree.
 ///
-/// A `[profile.release]` table is honoured only in a workspace root,
-/// so a consumer whose manifests never declared one never had the
-/// documented profile at all. That is what was measured: a tree of
-/// ninety-four variant crates, none declaring a profile and none
-/// declaring a workspace, built at cargo's default `lto = false,
-/// codegen-units = 16` while the framework's documentation promised
-/// fat LTO and a single codegen unit.
+/// `[build]` reached only the generated path: `profile_args_for` had one
+/// production caller, inside `run_generated`, while every build on this path
+/// went through `build_argv`, which took no config and passed the framework
+/// constant. So a tree with its own driver could declare `opt-level = 0`,
+/// see no error, and be built at 3, with the run's own metadata then
+/// truthfully recording the 3 that was used and nothing recording that the
+/// declaration had been dropped. `BuildSection`'s doc promises the opposite:
+/// the values travel on the command line "where a manifest cannot silently
+/// drop them".
 ///
-/// A workspace member losing its own profile is a second, related
-/// mechanism. It was not observed in that tree, and it is not silent:
-/// cargo prints `profiles for the non root package will be ignored`.
-///
-/// Codegen-unit partitioning is not stable across builds, so the
-/// default is a reproducibility defect and not only a slower one:
-/// two runs of an unchanged variant can differ in inlining and
-/// layout, which is exactly the contamination per-variant cdylib
-/// isolation exists to prevent.
-const PROFILE_ARGS: [&str; 6] = [
-    "--config",
-    "profile.release.opt-level=3",
-    "--config",
-    "profile.release.lto=\"fat\"",
-    "--config",
-    "profile.release.codegen-units=1",
-];
+/// A tree with no `bench.toml` gets the framework defaults, which is the
+/// documented behaviour rather than a fallback. A `bench.toml` that exists
+/// and does not parse is reported, because defaulting silently on an
+/// unreadable declaration is the failure this function exists to remove.
+fn consumer_tree_profile(bench_dir: &Path) -> Vec<String> {
+    let path = bench_dir.join("bench.toml");
+    if !path.exists() {
+        return profile_args_for(None);
+    }
+    match mockspace_bench_harness::config::BenchManifest::load(&path) {
+        Ok(m) => profile_args_for(m.build.as_ref()),
+        Err(e) => {
+            eprintln!(
+                "warning: {} could not be read ({e}), so [build] could not be applied and the framework's default release profile is in use.",
+                path.display()
+            );
+            profile_args_for(None)
+        },
+    }
+}
 
 /// Every executable cargo reports building for `manifest`.
 ///
@@ -561,21 +568,21 @@ fn built_executables(manifest: &Path, stdout: &[u8]) -> Vec<PathBuf> {
 /// present without spawning cargo. They were previously written out
 /// at both call sites, where dropping them from both left every test
 /// green.
-fn build_argv(manifest: &Path) -> Vec<std::ffi::OsString> {
+fn build_argv(manifest: &Path, profile: &[String]) -> Vec<std::ffi::OsString> {
     let mut argv: Vec<std::ffi::OsString> = ["build", "--release", "--message-format=json-render-diagnostics"]
         .iter()
         .map(Into::into)
         .collect();
-    argv.extend(PROFILE_ARGS.iter().map(Into::into));
+    argv.extend(profile.iter().map(Into::into));
     argv.push("--manifest-path".into());
     argv.push(manifest.as_os_str().to_owned());
     argv
 }
 
 /// Run one cargo build and return its stdout for artifact parsing.
-fn cargo_build_json(manifest: &Path, what: &str) -> Result<Vec<u8>, String> {
+fn cargo_build_json(manifest: &Path, what: &str, profile: &[String]) -> Result<Vec<u8>, String> {
     let out = Command::new("cargo")
-        .args(build_argv(manifest))
+        .args(build_argv(manifest, profile))
         .output()
         .map_err(|e| format!("spawning cargo for {what}: {e}"))?;
     if !out.status.success() {
@@ -589,6 +596,7 @@ fn cargo_build_json(manifest: &Path, what: &str) -> Result<Vec<u8>, String> {
 fn build_variants_and_bin_filtered(
     bench_dir: &Path,
     only_dirs: Option<&[String]>,
+    profile: &[String],
 ) -> Result<PathBuf, String> {
     let variants_dir = bench_dir.join("variants");
     if variants_dir.exists() {
@@ -610,12 +618,12 @@ fn build_variants_and_bin_filtered(
             let manifest = path.join("Cargo.toml");
             if manifest.exists() {
                 eprintln!("  building variant {}...", path.display());
-                cargo_build_json(&manifest, &format!("variant {}", path.display()))?;
+                cargo_build_json(&manifest, &format!("variant {}", path.display()), profile)?;
             }
         }
     }
 
-    build_bin_only(bench_dir)
+    build_bin_only(bench_dir, profile)
 }
 
 /// Build the bench binary and return the path cargo says it wrote.
@@ -625,7 +633,7 @@ fn build_variants_and_bin_filtered(
 /// the absolute path. Splitting them is what let the two drift, with
 /// the locator guessing a name and a directory the build never
 /// promised.
-fn build_bin_only(bench_dir: &Path) -> Result<PathBuf, String> {
+fn build_bin_only(bench_dir: &Path, profile: &[String]) -> Result<PathBuf, String> {
     let manifest = bench_dir.join("Cargo.toml");
     if !manifest.exists() {
         return Err(format!(
@@ -634,7 +642,7 @@ fn build_bin_only(bench_dir: &Path) -> Result<PathBuf, String> {
         ));
     }
     eprintln!("  building bench binary...");
-    let stdout = cargo_build_json(&manifest, "bench binary")?;
+    let stdout = cargo_build_json(&manifest, "bench binary", profile)?;
     let mut bins = built_executables(&manifest, &stdout);
     match bins.len() {
         1 => Ok(bins.remove(0)),
@@ -669,6 +677,32 @@ fn build_bin_only(bench_dir: &Path) -> Result<PathBuf, String> {
 /// values always travel on the command line, where a manifest cannot
 /// silently drop them; the override moves the values, never the
 /// mechanism.
+///
+/// This is the single source of the profile. It was two: a
+/// `PROFILE_ARGS` constant that every build on the consumer-owned
+/// driver path used, and this function, which only the generated path
+/// called. The two agreed on the defaults, so nothing was wrong until
+/// a tree declared `[build]`, at which point one path honoured it and
+/// the other did not.
+///
+/// Why the values travel on the command line at all: a
+/// `[profile.release]` table is honoured only in a workspace root, so
+/// a consumer whose manifests never declared one never had the
+/// documented profile. That is what was measured: a tree of
+/// ninety-four variant crates, none declaring a profile and none
+/// declaring a workspace, built at cargo's default `lto = false,
+/// codegen-units = 16` while the framework's documentation promised
+/// fat LTO and a single codegen unit.
+///
+/// A workspace member losing its own profile is a second, related
+/// mechanism. It was not observed in that tree, and it is not silent:
+/// cargo prints `profiles for the non root package will be ignored`.
+///
+/// Codegen-unit partitioning is not stable across builds, so the
+/// default is a reproducibility defect and not only a slower one:
+/// two runs of an unchanged variant can differ in inlining and
+/// layout, which is exactly the contamination per-variant cdylib
+/// isolation exists to prevent.
 fn profile_args_for(build: Option<&BuildSection>) -> Vec<String> {
     let opt = build.and_then(|b| b.opt_level).unwrap_or(3);
     let lto = build
@@ -1669,13 +1703,13 @@ mod tests {
         );
     }
 
-    /// The profile must reach the argv of every build. Dropping
-    /// `PROFILE_ARGS` from the builder turns this red, which the
-    /// previous test could not do: it asserted the constant against
-    /// itself and never reached a command.
+    /// The profile must reach the argv of every build. Dropping the
+    /// profile from the builder turns this red, which an earlier
+    /// version could not do: it asserted the constant against itself
+    /// and never reached a command.
     #[test]
     fn the_build_argv_carries_the_profile_and_the_json_format() {
-        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"))
+        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"), &profile_args_for(None))
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
@@ -1692,11 +1726,67 @@ mod tests {
         assert_eq!(argv.last().unwrap(), "/x/Cargo.toml");
     }
 
+    /// A `[build]` override in a consumer-owned-driver tree reaches the
+    /// build argv.
+    ///
+    /// The regression: `build_argv` took no config and passed a constant,
+    /// and `profile_args_for` had one caller, in `run_generated`. So the
+    /// generated path honoured `[build]` and the consumer-owned path
+    /// silently ignored it. `BuildSection`'s own doc promises the values
+    /// travel "where a manifest cannot silently drop them"; on one of the
+    /// two paths they were dropped before they got there.
+    #[test]
+    fn a_build_override_reaches_the_argv_on_the_consumer_driver_path() {
+        let dir = std::env::temp_dir().join(format!("ms-build-ovr-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        fs::write(
+            dir.join("bench.toml"),
+            "[build]\nopt-level = 0\nlto = \"off\"\ncodegen-units = 16\n",
+        )
+        .expect("writing bench.toml");
+        let profile = consumer_tree_profile(&dir);
+        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"), &profile)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            argv.contains(&"profile.release.opt-level=0".to_string()),
+            "the declared override must reach the build: {argv:?}"
+        );
+        assert!(
+            !argv.contains(&"profile.release.opt-level=3".to_string()),
+            "the framework default must not survive alongside it: {argv:?}"
+        );
+        // And the record the driver receives must agree with what was built,
+        // or the artifact names a profile that was not used.
+        assert_eq!(
+            profile_env_value(profile.iter().map(String::as_str)),
+            "opt-level=0,lto=\"off\",codegen-units=16"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The control: with no `bench.toml` the framework defaults apply, so
+    /// the test above is detecting the override rather than detecting that
+    /// `consumer_tree_profile` returns something.
+    #[test]
+    fn a_tree_with_no_bench_toml_gets_the_framework_defaults() {
+        let dir = std::env::temp_dir().join(format!("ms-build-def-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::create_dir_all(&dir);
+        let profile = consumer_tree_profile(&dir);
+        assert_eq!(
+            profile_env_value(profile.iter().map(String::as_str)),
+            "opt-level=3,lto=\"fat\",codegen-units=1"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// The control for the test above: a value that is not passed
     /// must not be reported as present, or the assertion is vacuous.
     #[test]
     fn the_build_argv_does_not_carry_a_profile_setting_we_never_pass() {
-        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"))
+        let argv: Vec<String> = build_argv(Path::new("/x/Cargo.toml"), &profile_args_for(None))
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
