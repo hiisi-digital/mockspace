@@ -1,8 +1,12 @@
 #!/bin/sh
-# P3. What the dropped --release costs, measured on a real crate.
+# P3. What the profile is worth, measured on a real crate, through the command.
 #
-# P4 shows `mock bench test --release` never passes --release to cargo. This
-# prices that, three arms on one real crate (arvo's wide-rung-shared, 30
+# HISTORY. As first run, `mock bench test --release` never passed --release to
+# cargo (see 04), so arm 2 came back at arm 1's time. That run is kept beside
+# this as 03_..._BEFORE_FIX.out: 127s / 135s / 5s. Since the flag fix arm 2
+# should track arm 3, and this script asserts that.
+#
+# Three arms on one real crate (arvo's wide-rung-shared, 30
 # tests), all target directories warmed before any arm is timed.
 #
 #   arm 1  mock bench test              the documented way to run the tree
@@ -20,8 +24,10 @@
 # NEGATIVE CONTROL, stated before the run. All three arms must report the same
 # 30 tests passing, or they are not the same work. And arm 3 must be at least
 # five times faster than arm 1: if release is NOT dramatically faster for this
-# crate then the profile does not matter here and there is nothing to report,
-# whatever the tool does with the flag.
+# crate then the profile does not matter here and there is nothing to measure,
+# whatever the tool does with the flag. That ratio is also what keeps the arm-2
+# assertion from being vacuous: arm 2 tracking arm 3 means something only
+# because arm 1 is far away from both.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../../.." && pwd)
 BIN="$ROOT/target/debug/mockspace"
@@ -63,12 +69,20 @@ if [ "$E3" -eq 0 ]; then E3=1; fi
 RATIO=$(( E1 / E3 ))
 echo "CONTROL release materially faster: arm1/arm3 = ${RATIO}x (want >= 5)"
 if [ "$RATIO" -lt 5 ]; then
-  echo "CONTROL FAILED: release is not materially faster here -- nothing to report"; exit 1
+  echo "CONTROL FAILED: release is not materially faster here -- nothing to measure"; exit 1
 fi
+LIMIT=$(( E3 * 4 + 10 ))
+echo "CONTROL arm 2 tracks arm 3: ${E2}s against a ceiling of ${LIMIT}s"
 echo
-echo "VERDICT: arm 2 asks for release and gets arm 1's time, not arm 3's."
-echo "         The flag is accepted and discarded (see 04), so the documented"
-echo "         command has no way to reach the profile at all, and its output"
-echo "         names neither profile. That is the same missing dimension that"
-echo "         retired a true 107s figure in arvo's OPTIONS.md Q52."
+if [ "$E2" -le "$LIMIT" ]; then
+  echo "VERDICT: asking the command for release now gets release. Before the fix"
+  echo "         arm 2 measured 135s against arm 3's 5s, because the flag was"
+  echo "         dropped before the subcommand saw it and the run reported a"
+  echo "         pass regardless. The summary line now also names the profile,"
+  echo "         so a reader of the count can tell which one produced it."
+else
+  echo "REGRESSION: arm 2 took ${E2}s, not tracking arm 3's ${E3}s. The profile"
+  echo "            flag is not reaching cargo again."
+  exit 1
+fi
 rm -rf "$FX"
