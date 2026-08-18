@@ -13,7 +13,7 @@ decision. Confirmed by inspection: `mock/design_rounds/` carries no flat (active
 and the two research documents that actually govern the bench harness rework
 (`mock/research/202608150648_bench-ergonomics-survey.md`,
 `mock/research/202608150809_bench-vocabulary-and-consolidation-design.md`) both state plainly, in
-their own text, "This is a proposal, not a decision; the maintainer ratifies" — read in full before
+their own text, "This is a proposal, not a decision; the maintainer ratifies", read in full before
 any of the work below. Nothing here contradicts that design; the fix is the missing piece its own
 "what this does not change" section (survey section 7) does not claim to have addressed, because it
 was written a day before the rework it describes had landed.
@@ -70,7 +70,7 @@ for every `Cargo.toml` (skipping `target/` and dot directories, the identical ru
 `tree::discover` already uses for the identical reason), runs `cargo test --manifest-path <path>`
 in each crate's own directory, and aggregates. It refuses (nonzero exit) if no crate manifests are
 found at all, if any crate's tests fail, or if every discovered crate reports zero tests between
-them — the same "resolves to zero, and that is a misconfiguration rather than an empty valid state"
+them, the same "resolves to zero, and that is a misconfiguration rather than an empty valid state"
 posture `tree::load` already uses, applied to the test surface it does not reach. A crate reporting
 zero tests on its own (the ordinary case for a cdylib arm) is not itself a failure.
 
@@ -95,7 +95,7 @@ session rather than assumed here.
 `parse_test_result_lines` stripped a trailing `" passed"` from a field and parsed the remainder as a
 whole number; on cargo's real line shape (`"test result: ok. 15 passed; ..."`) the first field is
 `"ok. 15 passed"`, and `"ok. 15"` is not a bare integer, so the parser silently returned `(0, 0, 0)`
-for a genuinely passing crate — the exact "reports success while measuring nothing" shape this whole
+for a genuinely passing crate, the exact "reports success while measuring nothing" shape this whole
 dispatch is about, reintroduced inside the fix for it. Reproduced the failure standalone before
 fixing it (`rustc`'d the old logic against the real line, confirmed `(0, 0, 0)`), fixed it, and kept
 a test carrying a real captured line (`REAL_OK_LINE`, `parse_test_result_lines_reads_the_ok_verdict_prefix_correctly`)
@@ -143,7 +143,7 @@ than silently dropping it, and refuses a literal member with no `bench.toml`. Al
 correct shape (a named error over a silent skip); none of them looked new-and-unattacked.
 
 **`Hooks`' `on_init`/`after_init`**: declared as having "no consumer" and existing for lifecycle
-completeness only — checked whether they are actually wired into the driver or are dead struct
+completeness only. Checked whether they are actually wired into the driver or are dead struct
 fields nobody calls. They are wired (`run_on_init` / `run_after_init` called from `driver/mod.rs` at
 the documented points) and covered by ordering tests
 (`on_init_runs_before_preflight_and_after_init_does_not_survive_a_failed_preflight`,
@@ -158,7 +158,7 @@ the run. Correctly built.
 demonstrably alert to the "reports success, measured nothing" class within the surface their own
 CLI and driver own (the empty-tree refusal explicitly quotes that exact failure shape as the reason
 for the check). The gap that got through is specifically the one class of failure that happens
-**entirely outside mockspace's own command surface** — a human or an agent bypassing `mock bench
+**entirely outside mockspace's own command surface**: a human or an agent bypassing `mock bench
 *` and reaching for the tool they already know (`cargo test`) directly, on a tree shape whose
 non-obviousness (path dependencies, deliberately excluded from workspace membership) is itself a
 mockspace convention. Every other "silent success" class this workspace has already caught and
