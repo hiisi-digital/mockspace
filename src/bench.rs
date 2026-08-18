@@ -207,6 +207,27 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
     }
 }
 
+/// How to describe the profile a `cargo test` run used, for the summary line.
+///
+/// A test count with no profile beside it is not interpretable: the same
+/// thirty tests took 133.72s and 4.99s on one host under the two profiles.
+/// Reported from the flags actually forwarded rather than from a constant, so
+/// it cannot drift from what ran.
+fn describe_cargo_profile(extra: &[&str]) -> String {
+    if extra.iter().any(|e| *e == "--release") {
+        return "cargo test --release, profile: release".to_string();
+    }
+    if let Some(p) = extra.iter().position(|e| *e == "--profile") {
+        if let Some(name) = extra.get(p + 1) {
+            return format!("cargo test --profile {name}, profile: {name}");
+        }
+    }
+    if let Some(named) = extra.iter().find_map(|e| e.strip_prefix("--profile=")) {
+        return format!("cargo test --profile={named}, profile: {named}");
+    }
+    "cargo test, profile: debug (cargo's default)".to_string()
+}
+
 // ── test ──
 
 /// A bench tree is built from many small crates (arms, support
@@ -241,7 +262,8 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let extra: Vec<&str> = args.iter().copied().filter(|a| a.starts_with("--")).collect();
+    let extra: Vec<&str> = args.iter().copied().filter(|a| a.starts_with("-")).collect();
+    let filters: Vec<&str> = args.iter().copied().filter(|a| !a.starts_with("-")).collect();
     let manifests = find_crate_manifests(&bench_dir);
     if manifests.is_empty() {
         eprintln!(
@@ -250,6 +272,41 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+
+    // A name that selects nothing is refused rather than ignored. The first
+    // version dropped every non-flag argument silently, so `mock bench test
+    // <typo>` ran the whole tree and reported a clean pass over crates the
+    // caller had not asked for. `cmd_run` already refuses an unknown bench
+    // name by listing the ones that exist; this is the same refusal.
+    let manifests: Vec<PathBuf> = if filters.is_empty() {
+        manifests
+    } else {
+        let selected: Vec<PathBuf> = manifests
+            .iter()
+            .filter(|m| {
+                let rel = m.strip_prefix(&bench_dir).unwrap_or(m).to_string_lossy().to_string();
+                filters.iter().any(|f| rel.contains(f))
+            })
+            .cloned()
+            .collect();
+        if selected.is_empty() {
+            let available: Vec<String> = manifests
+                .iter()
+                .filter_map(|m| m.parent())
+                .filter_map(|d| d.strip_prefix(&bench_dir).ok())
+                .map(|p| p.display().to_string())
+                .filter(|p| !p.is_empty())
+                .collect();
+            eprintln!(
+                "error: no crate under {} matches {:?}. Available: {}",
+                bench_dir.display(),
+                filters,
+                available.join(", ")
+            );
+            return ExitCode::FAILURE;
+        }
+        selected
+    };
 
     let mut total_passed = 0u64;
     let mut total_failed = 0u64;
@@ -301,9 +358,15 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
         }
     }
 
+    // The profile is named because a bare count is not interpretable without
+    // it. A consumer tree measured 133.72s under the default profile and
+    // 4.99s under release for the identical thirty tests; a downstream reader
+    // handed only the number cannot tell which was run, and a panel in this
+    // workspace retired a true figure on exactly that ambiguity.
     println!(
-        "\n{} crates, {crates_with_tests} carrying tests, {total_passed} passed, {total_failed} failed, {total_ignored} ignored",
-        manifests.len()
+        "\n{} crates, {crates_with_tests} carrying tests, {total_passed} passed, {total_failed} failed, {total_ignored} ignored  [{}]",
+        manifests.len(),
+        describe_cargo_profile(&extra)
     );
 
     if !crates_failed.is_empty() {
@@ -1724,6 +1787,31 @@ mod tests {
         }
         assert!(argv.contains(&"--message-format=json-render-diagnostics".to_string()));
         assert_eq!(argv.last().unwrap(), "/x/Cargo.toml");
+    }
+
+    /// The summary names the profile it ran under, because a bare test count
+    /// is not interpretable without one: the same thirty tests take 133.72s
+    /// and 4.99s on one host under the two profiles, and a panel in this
+    /// workspace retired a true timing on exactly that ambiguity.
+    #[test]
+    fn the_summary_names_the_profile_it_ran_under() {
+        assert!(describe_cargo_profile(&[]).contains("debug"));
+        assert!(describe_cargo_profile(&["--release"]).contains("release"));
+        assert!(describe_cargo_profile(&["--profile", "bench"]).contains("bench"));
+        assert!(describe_cargo_profile(&["--profile=bench"]).contains("bench"));
+    }
+
+    /// The control for the test above. A description that says "debug" for
+    /// everything would pass every assertion in it, so the default must NOT
+    /// claim release and the release form must NOT claim debug.
+    #[test]
+    fn the_profile_description_does_not_name_the_profile_that_was_not_used() {
+        assert!(!describe_cargo_profile(&[]).contains("release"));
+        let rel = describe_cargo_profile(&["--release"]);
+        assert!(
+            !rel.contains("debug"),
+            "the release description must not mention debug: {rel}"
+        );
     }
 
     /// A `[build]` override in a consumer-owned-driver tree reaches the
