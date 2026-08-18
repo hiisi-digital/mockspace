@@ -25,6 +25,69 @@ use mockspace_bench_harness::tree as bench_tree;
 use crate::bench_gen;
 use crate::config::Config;
 
+/// Splits one subcommand's argv into positional names and flags to
+/// forward, with one shared grammar rather than the two independent
+/// ones `cmd_run` and `cmd_test` used to have (`starts_with("--")`
+/// against `starts_with("-")`, so `-r` fell on opposite sides of the
+/// two commands).
+///
+/// A flag is anything starting with `-` (`-r`, `--release`, `--seed`,
+/// ...); everything else is positional. `value_flags` names the flags
+/// in *this* argv position that take the following token as their
+/// value (`--seed <n>` for the driver, `--profile <name>` for cargo):
+/// that following token is forwarded as a flag argument too, rather
+/// than falling through to positional and being read as a bench or
+/// crate name. Before this existed, `mock bench run --seed 0xdead`
+/// sent the driver `--only 0xdead --seed` (the value read as a
+/// positional name, `--seed` left dangling with nothing after it),
+/// and the driver's own printed `replay with --seed {:#x}` could not
+/// be followed through the tool for exactly that reason.
+///
+/// Everything from a bare `--` onward is always a flag argument,
+/// never positional and never itself treated as a value-flag lookup:
+/// it is cargo's separator for arguments the *test binary* receives,
+/// and `describe_cargo_profile` relies on that boundary to avoid
+/// reading a libtest flag as a cargo one.
+fn split_positional_and_flags<'a>(
+    args: &[&'a str],
+    value_flags: &[&str],
+) -> (Vec<&'a str>, Vec<&'a str>) {
+    let mut positional = Vec::new();
+    let mut flags = Vec::new();
+    let mut i = 0;
+    let mut past_separator = false;
+    while i < args.len() {
+        let a = args[i];
+        if past_separator {
+            flags.push(a);
+            i += 1;
+            continue;
+        }
+        if a == "--" {
+            past_separator = true;
+            flags.push(a);
+            i += 1;
+            continue;
+        }
+        if value_flags.contains(&a) {
+            flags.push(a);
+            if let Some(v) = args.get(i + 1) {
+                flags.push(v);
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        if a.starts_with('-') {
+            flags.push(a);
+        } else {
+            positional.push(a);
+        }
+        i += 1;
+    }
+    (positional, flags)
+}
+
 pub fn cmd(cfg: &Config, args: &[&str]) -> ExitCode {
     let sub = args.first().copied().unwrap_or("");
     let rest: Vec<&str> = args.iter().skip(1).copied().collect();
@@ -88,17 +151,9 @@ fn cmd_run(cfg: &Config, args: &[&str]) -> ExitCode {
     }
 
     // Positional args are bench names: they restrict both the run
-    // (forwarded as --only) and the variant builds.
-    let names: Vec<&str> = args
-        .iter()
-        .copied()
-        .filter(|a| !a.starts_with("--"))
-        .collect();
-    let extra: Vec<&str> = args
-        .iter()
-        .copied()
-        .filter(|a| a.starts_with("--"))
-        .collect();
+    // (forwarded as --only) and the variant builds. `--seed` takes its
+    // following token as its value, per split_positional_and_flags.
+    let (names, extra) = split_positional_and_flags(args, &["--seed"]);
 
     // The escape hatch: a consumer-owned driver crate at the bench
     // root drives the run exactly as before. Without one, the driver
@@ -213,16 +268,30 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
 /// thirty tests took 133.72s and 4.99s on one host under the two profiles.
 /// Reported from the flags actually forwarded rather than from a constant, so
 /// it cannot drift from what ran.
+///
+/// Only looks at flags before a bare `--`: everything after it is cargo's
+/// own separator for arguments the test *binary* receives (libtest flags),
+/// never cargo's own. `mock bench test -- --release` runs debug and passes
+/// `--release` to libtest (which has no such flag and would reject it, but
+/// that is cargo's business, not this function's); reporting "profile:
+/// release" for that invocation would describe a build that did not happen.
+/// Recognises `-r` as the short form of `--release`, which cargo itself
+/// accepts and this function previously did not.
 fn describe_cargo_profile(extra: &[&str]) -> String {
-    if extra.iter().any(|e| *e == "--release") {
+    let cargo_args: &[&str] =
+        match extra.iter().position(|e| *e == "--") {
+            Some(i) => &extra[..i],
+            None => extra,
+        };
+    if cargo_args.iter().any(|e| *e == "--release" || *e == "-r") {
         return "cargo test --release, profile: release".to_string();
     }
-    if let Some(p) = extra.iter().position(|e| *e == "--profile") {
-        if let Some(name) = extra.get(p + 1) {
+    if let Some(p) = cargo_args.iter().position(|e| *e == "--profile") {
+        if let Some(name) = cargo_args.get(p + 1) {
             return format!("cargo test --profile {name}, profile: {name}");
         }
     }
-    if let Some(named) = extra.iter().find_map(|e| e.strip_prefix("--profile=")) {
+    if let Some(named) = cargo_args.iter().find_map(|e| e.strip_prefix("--profile=")) {
         return format!("cargo test --profile={named}, profile: {named}");
     }
     "cargo test, profile: debug (cargo's default)".to_string()
@@ -262,9 +331,63 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let extra: Vec<&str> = args.iter().copied().filter(|a| a.starts_with("-")).collect();
-    let filters: Vec<&str> = args.iter().copied().filter(|a| !a.starts_with("-")).collect();
-    let manifests = find_crate_manifests(&bench_dir);
+    // `--profile <name>` takes its following token as its value, per
+    // split_positional_and_flags: without this, `mock bench test --profile
+    // bench` sent "bench" to the crate-name filter (matching nothing, or
+    // matching something the caller never named) instead of leaving it
+    // attached to `--profile`, the same class of bug `cmd_run` had with
+    // `--seed`.
+    let (filters, extra) = split_positional_and_flags(args, &["--profile"]);
+    let mut manifests = find_crate_manifests(&bench_dir);
+
+    // The generated-driver shape has no committed manifest for an arm
+    // that is only a `src/lib.rs`: `mock bench run` generates one on
+    // demand, under `mock/target/`, outside `bench_dir`, which is why
+    // the walk above cannot find it. A freshly `mock bench init`'d tree
+    // therefore has zero Cargo.toml anywhere until something generates
+    // one, and the walk alone reports "nothing to run" on a tree that
+    // plainly has an arm in it. Write the same manifest `mock bench run`
+    // would (never build it; `cargo test` builds what it needs), and
+    // fold it into the set to walk. Skipped entirely on the escape-hatch
+    // shape (a consumer-owned root `Cargo.toml`), since `bench_gen::plan`
+    // does not describe that tree and the walk above already found
+    // everything real in it.
+    if !bench_dir.join("Cargo.toml").is_file() {
+        if let Ok(plan) = bench_gen::plan(&bench_dir) {
+            let dep = bench_gen::mockspace_dep(&plan.manifest);
+            for arm in &plan.arms {
+                if arm.has_manifest {
+                    continue; // already on disk; the walk above found it
+                }
+                let toml = match bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        eprintln!(
+                            "error: generating a manifest for {}/arms/{}: {e}",
+                            arm.bench, arm.arm
+                        );
+                        return ExitCode::FAILURE;
+                    },
+                };
+                let gen_dir = bench_gen::arm_gen_dir(&cfg.mock_dir, arm);
+                if let Err(e) = bench_gen::write_if_changed(&gen_dir.join("Cargo.toml"), &toml) {
+                    eprintln!(
+                        "error: generating a manifest for {}/arms/{}: {e}",
+                        arm.bench, arm.arm
+                    );
+                    return ExitCode::FAILURE;
+                }
+                manifests.push(gen_dir.join("Cargo.toml"));
+            }
+        }
+        // A `plan` error (no bench declared anywhere, an invalid
+        // manifest) is not this command's to report a second time: the
+        // walk above already found whatever is really on disk, and if
+        // that is nothing, the refusal immediately below says so.
+    }
+    manifests.sort();
+    manifests.dedup();
+
     if manifests.is_empty() {
         eprintln!(
             "error: no Cargo.toml found under {}. There is nothing for `mock bench test` to run.",
@@ -314,10 +437,34 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     let mut crates_with_tests = 0usize;
     let mut crates_failed: Vec<PathBuf> = Vec::new();
 
+    // One shared target directory for every crate this command builds,
+    // rather than each crate's own default `target/` next to its manifest.
+    // Without this, running the tree's real shape (arvo's is ninety-five
+    // crates) builds ninety-five separate target directories, none of them
+    // sharing a compiled copy of a common dependency (mockspace-bench-core,
+    // mockspace-bench-harness, ...), which is real disk and real duplicated
+    // compile time on every run.
+    let target_dir = cfg.mock_dir.join("target").join("mockspace-bench-test");
+
     for manifest in &manifests {
         let dir = manifest.parent().unwrap_or(manifest.as_path());
+        let rel = manifest_display(manifest, &bench_dir, &cfg.mock_dir);
+        // Printed before the build starts, and flushed, so a crate that
+        // hangs (this tree has one known case, handled separately) shows
+        // exactly where it is stuck rather than producing total silence
+        // until it is killed. `.output()` below blocks until the child
+        // exits and captures everything at once; nothing between "running"
+        // and the eventual ok/FAIL line is visible without this.
+        // A full line on its own, on stderr, rather than a continuation
+        // meant to share a line with the eventual ok/FAIL (stdout): the two
+        // streams interleave unpredictably in a terminal, and a hung crate
+        // must leave an unambiguous "this is where it is stuck" line behind
+        // regardless of buffering.
+        eprintln!("running {rel}...");
+
         let mut cmd = Command::new("cargo");
         cmd.arg("test").arg("--manifest-path").arg(manifest);
+        cmd.arg("--target-dir").arg(&target_dir);
         for e in &extra {
             cmd.arg(e);
         }
@@ -337,17 +484,10 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
         if passed > 0 || failed > 0 || ignored > 0 {
             crates_with_tests += 1;
         }
-        let rel = manifest.strip_prefix(&bench_dir).unwrap_or(manifest);
         if output.status.success() {
-            println!(
-                "ok    {}  {passed} passed, {failed} failed, {ignored} ignored",
-                rel.display()
-            );
+            println!("ok    {rel}  {passed} passed, {failed} failed, {ignored} ignored");
         } else {
-            println!(
-                "FAIL  {}  {passed} passed, {failed} failed, {ignored} ignored",
-                rel.display()
-            );
+            println!("FAIL  {rel}  {passed} passed, {failed} failed, {ignored} ignored");
             crates_failed.push(manifest.clone());
             if !stdout.trim().is_empty() {
                 eprintln!("{stdout}");
@@ -389,12 +529,40 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Every crate manifest under `dir`, found by the same walk
-/// `tree::discover` uses to find bench directories: skip `target/`
-/// and dot directories, never descend into a directory once it is
-/// itself claimed (here, once a `Cargo.toml` is found in it, since a
-/// crate's own subdirectories, e.g. a build script's `src/`, are not
-/// separate crates to test).
+/// A readable label for a manifest path in `mock bench test`'s output:
+/// relative to `bench_dir` where it lives under the tree the consumer
+/// authors, relative to `mock_dir` where it is a generated arm
+/// manifest (which lives under `mock_dir/target/`, outside
+/// `bench_dir`), or the raw path if neither applies. Without this a
+/// generated arm's line printed its full absolute path, which is
+/// correct and unreadable, and gave no sign that the crate being
+/// tested was one `mock bench test` generated rather than one the
+/// consumer wrote.
+fn manifest_display(manifest: &Path, bench_dir: &Path, mock_dir: &Path) -> String {
+    if let Ok(rel) = manifest.strip_prefix(bench_dir) {
+        return rel.display().to_string();
+    }
+    if let Ok(rel) = manifest.strip_prefix(mock_dir) {
+        return format!("(generated) {}", rel.display());
+    }
+    manifest.display().to_string()
+}
+
+/// Every crate manifest under `dir`, found by walking every
+/// directory (skipping `target/` and dot directories, the same rule
+/// `tree::discover` uses to skip build output and hidden trees) and
+/// recording a `Cargo.toml` wherever one exists.
+///
+/// **This does not stop descending at a found manifest.** A bench
+/// tree's own root carries a `Cargo.toml` (the driver bin crate, or
+/// the consumer-owned escape-hatch crate), and every arm and support
+/// crate lives in a subdirectory of that same root, so stopping at
+/// the first manifest found finds only the driver and nothing it was
+/// meant to reach: arvo's tree has one root manifest and ninety-four
+/// more beneath it, and the earlier form of this function returned
+/// exactly the one. The corrected form treats "this directory is a
+/// crate" and "keep looking for more crates underneath it" as
+/// independent facts, because in this tree shape they always are.
 fn find_crate_manifests(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack: Vec<PathBuf> = vec![dir.to_path_buf()];
@@ -402,7 +570,6 @@ fn find_crate_manifests(dir: &Path) -> Vec<PathBuf> {
         let manifest = d.join("Cargo.toml");
         if manifest.is_file() {
             found.push(manifest);
-            continue;
         }
         let Ok(entries) = fs::read_dir(&d) else {
             continue;
@@ -1179,6 +1346,24 @@ fn cmd_list(cfg: &Config) -> ExitCode {
 // ── add ──
 
 fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
+    // `add` recognises no flags at all, so anything shaped like one is
+    // refused rather than handed to the positional matcher below. Without
+    // this, `mock bench add newb --force` matched the two-argument arm
+    // (`[b, a] => (*b, Some(*a))`) and `name_ok` permits `-`, needed for
+    // real hyphenated names, so `--force` passed validation as an arm name
+    // and the command scaffolded `newb/arms/--force/` and wrote
+    // `arms = ["--force"]` into `newb/bench.toml`, reporting a clean exit
+    // 0 over a tree that now cannot run. There is nothing this subcommand
+    // does with a flag today; a caller reaching for one (a reasonable
+    // guess, since `init` and other tools take `--force`) gets told so
+    // rather than getting silent garbage.
+    if let Some(flag) = args.iter().find(|a| a.starts_with('-')) {
+        eprintln!(
+            "error: `mock bench add` takes no flags; `{flag}` would otherwise be read as a bench or arm name. usage: mock bench add <bench> [<arm>]  (or <bench>/<arm>)"
+        );
+        return ExitCode::FAILURE;
+    }
+
     let bench_dir = cfg.mock_dir.join("benches");
     // A tree whose root carries a variants/ directory is the flat
     // layout; `add` keeps its legacy shape there. Everything else
@@ -1525,6 +1710,14 @@ mod tests {
     #[test]
     fn find_crate_manifests_finds_nested_crates_and_skips_target() {
         let root = temp_mock("find-manifests");
+        // The root itself carries a manifest, exactly as every real bench
+        // tree does (the generated or consumer-owned driver bin crate).
+        // Omitting this is what let the "stop descending at a found
+        // manifest" defect through: every fixture in the first version of
+        // this test lacked the one file that triggers it. See
+        // find_crate_manifests_descends_past_a_root_manifest_to_find_what_is_beneath_it
+        // for the regression this fixture alone would not have caught.
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname=\"driver\"").unwrap();
         std::fs::create_dir_all(root.join("arms/a/src")).unwrap();
         std::fs::write(root.join("arms/a/Cargo.toml"), "[package]\nname=\"a\"").unwrap();
         std::fs::create_dir_all(root.join("support/shared/src")).unwrap();
@@ -1544,19 +1737,207 @@ mod tests {
             .iter()
             .map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(rels, vec!["arms/a/Cargo.toml", "support/shared/Cargo.toml"]);
+        assert_eq!(rels, vec!["Cargo.toml", "arms/a/Cargo.toml", "support/shared/Cargo.toml"]);
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The regression itself, isolated to the one line that caused it: a
+    /// root manifest, alone with nothing else, must not be the only thing
+    /// found once a nested crate exists. The prior version of this
+    /// function returned exactly the root and nothing beneath it whenever
+    /// the root itself had a `Cargo.toml`, which is arvo's tree's actual
+    /// shape (a driver bin crate at the root, ninety-four crates beneath
+    /// it) and is why `mock bench test` found one manifest of ninety-five
+    /// on the tree it was built for.
+    #[test]
+    fn find_crate_manifests_descends_past_a_root_manifest_to_find_what_is_beneath_it() {
+        let root = temp_mock("find-manifests-root-and-nested");
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname=\"driver\"").unwrap();
+        std::fs::create_dir_all(root.join("variants/only-one/src")).unwrap();
+        std::fs::write(root.join("variants/only-one/Cargo.toml"), "[package]\nname=\"only-one\"")
+            .unwrap();
+        let found = find_crate_manifests(&root);
+        assert_eq!(found.len(), 2, "expected the root manifest and the one nested crate, \
+            found {found:?}; a walk that stops at the root would report only the root");
     }
 
     /// Negative control on the walker: an empty tree (a bench dir that
     /// exists but holds nothing yet) must return an empty list rather than
     /// panicking or fabricating an entry, which is the shape
     /// `cmd_test` relies on to produce its own "nothing to run" refusal.
+    /// The second broken tree shape the review named: `mock bench init`
+    /// scaffolds a config-only tree with no `Cargo.toml` anywhere (the
+    /// sample arm is a bare `src/lib.rs`; its manifest is generated on
+    /// demand, the same way `mock bench run` generates one, under
+    /// `mock_dir/target/`, outside `bench_dir`). Before the fix,
+    /// `cmd_test`'s walk found nothing and refused with "no Cargo.toml
+    /// found", on the exact tree `mock bench init` itself produces. This
+    /// checks that the generated arm's manifest lands on disk where
+    /// `mock bench test` looks for it, which is what distinguishes
+    /// "found the crate, it has no tests" (correct, and what this test
+    /// expects) from "found nothing at all" (the bug).
+    #[test]
+    fn cmd_test_generates_a_manifest_for_the_freshly_scaffolded_sample_arm() {
+        let root = temp_mock("cmd-test-after-init");
+        let cfg = Config::from_dir(&root);
+        assert_eq!(format!("{:?}", cmd_init(&cfg)), success());
+
+        let bench_dir = root.join("benches");
+        assert!(
+            !bench_dir.join("Cargo.toml").exists(),
+            "a freshly init'd tree must not have a root Cargo.toml; if it does, this test is no longer exercising the generated-driver shape"
+        );
+
+        let code = cmd_test(&cfg, &[]);
+        // The starter arm has no #[test] in it, so the honest result is
+        // the "carries a single test" refusal, not success; what this
+        // test is actually checking is that the manifest was generated
+        // and reached, which the exit code alone cannot distinguish from
+        // the pre-fix "found nothing" refusal, so it checks the file.
+        let _ = code;
+
+        let plan = bench_gen::plan(&bench_dir).expect("the scaffold loads");
+        assert_eq!(plan.arms.len(), 1, "expected exactly the one scaffolded sample arm");
+        let arm = &plan.arms[0];
+        assert!(!arm.has_manifest, "the scaffolded arm should still have no manifest of its own");
+        let generated = bench_gen::arm_gen_dir(&cfg.mock_dir, arm).join("Cargo.toml");
+        assert!(
+            generated.is_file(),
+            "expected {} to exist after `mock bench test`; the generated-driver shape's \
+             manifests are outside bench_dir and cmd_test must write them before walking, \
+             the same way `mock bench run` does",
+            generated.display()
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The `crates_with_tests == 0` refusal, exercised end to end rather
+    /// than only by shell probes: a tree whose one real, buildable crate
+    /// carries no `#[test]` at all must not report success. Before this
+    /// existed, `mock bench test` on such a tree reported "ok" over a
+    /// crate count that included zero tests, which is exactly the
+    /// `cargo test` at the bench root reads-as-a-pass shape this command
+    /// exists to eliminate, reintroduced one level down.
+    #[test]
+    fn cmd_test_refuses_when_every_discovered_crate_carries_zero_tests() {
+        let root = temp_mock("cmd-test-zero-tests");
+        let bench_dir = root.join("benches");
+        std::fs::create_dir_all(&bench_dir).unwrap();
+        std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
+        write_minimal_driver_crate(&bench_dir);
+        std::fs::create_dir_all(bench_dir.join("support/no-tests-here/src")).unwrap();
+        std::fs::write(
+            bench_dir.join("support/no-tests-here/Cargo.toml"),
+            "[package]\nname=\"no-tests-here\"\nedition=\"2021\"",
+        )
+        .unwrap();
+        std::fs::write(
+            bench_dir.join("support/no-tests-here/src/lib.rs"),
+            "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+        )
+        .unwrap();
+
+        let cfg = Config::from_dir(&root);
+        let code = cmd_test(&cfg, &[]);
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::FAILURE),
+            "a real, compiling, test-free crate must not make `mock bench test` report success"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The unmatched-filter refusal, exercised directly. Filtering happens
+    /// before any crate is built, so this fixture does not need a real
+    /// buildable crate, only a discoverable manifest.
+    #[test]
+    fn cmd_test_refuses_a_filter_that_matches_nothing() {
+        let root = temp_mock("cmd-test-unmatched-filter");
+        let bench_dir = root.join("benches");
+        std::fs::create_dir_all(&bench_dir).unwrap();
+        std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
+        write_minimal_driver_crate(&bench_dir);
+        std::fs::create_dir_all(bench_dir.join("support/real-crate")).unwrap();
+        std::fs::write(
+            bench_dir.join("support/real-crate/Cargo.toml"),
+            "[package]\nname=\"real-crate\"",
+        )
+        .unwrap();
+
+        let cfg = Config::from_dir(&root);
+        let code = cmd_test(&cfg, &["this-name-matches-nothing"]);
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::FAILURE),
+            "a filter matching no discovered crate must be refused rather than silently \
+             running the whole tree"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn find_crate_manifests_on_an_empty_tree_finds_nothing() {
         let root = temp_mock("find-manifests-empty");
         assert!(find_crate_manifests(&root).is_empty());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn split_positional_and_flags_separates_names_from_flags() {
+        let (pos, flags) = split_positional_and_flags(&["warm-container", "--release"], &[]);
+        assert_eq!(pos, vec!["warm-container"]);
+        assert_eq!(flags, vec!["--release"]);
+    }
+
+    /// `-r` and other single-dash flags must land as flags, not names:
+    /// `cmd_run`'s old `starts_with("--")` split let a single-dash flag
+    /// fall through as a positional bench name.
+    #[test]
+    fn split_positional_and_flags_treats_single_dash_as_a_flag_too() {
+        let (pos, flags) = split_positional_and_flags(&["-r", "warm-container"], &[]);
+        assert_eq!(pos, vec!["warm-container"]);
+        assert_eq!(flags, vec!["-r"]);
+    }
+
+    /// The regression: a value-taking flag's value must travel with it,
+    /// never fall through to positional. Before this, `mock bench run
+    /// --seed 0xdead` sent the driver `--only 0xdead --seed`, reading the
+    /// seed value as a bench-name filter and leaving `--seed` with
+    /// nothing after it, so `seed_override` stayed `None` and the
+    /// driver's own `replay with --seed {:#x}` instruction could not be
+    /// followed through the tool.
+    #[test]
+    fn split_positional_and_flags_keeps_a_value_flags_value_attached() {
+        let (pos, flags) = split_positional_and_flags(&["--seed", "0xdead"], &["--seed"]);
+        assert!(pos.is_empty(), "the seed value must not be read as a positional name: {pos:?}");
+        assert_eq!(flags, vec!["--seed", "0xdead"]);
+
+        // A real bench name alongside it is unaffected.
+        let (pos, flags) =
+            split_positional_and_flags(&["warm-container", "--seed", "0xdead"], &["--seed"]);
+        assert_eq!(pos, vec!["warm-container"]);
+        assert_eq!(flags, vec!["--seed", "0xdead"]);
+    }
+
+    /// A value flag at the very end of argv, with nothing after it, must
+    /// not panic and must not consume a token that does not exist.
+    #[test]
+    fn split_positional_and_flags_handles_a_dangling_value_flag() {
+        let (pos, flags) = split_positional_and_flags(&["--seed"], &["--seed"]);
+        assert!(pos.is_empty());
+        assert_eq!(flags, vec!["--seed"]);
+    }
+
+    /// Everything after a bare `--` is a flag argument (libtest's own
+    /// arguments), never positional, and never itself looked up in
+    /// `value_flags`: a libtest argument that happened to share a value
+    /// flag's name must not eat the token after it.
+    #[test]
+    fn split_positional_and_flags_treats_everything_after_the_separator_as_flags() {
+        let (pos, flags) =
+            split_positional_and_flags(&["warm-container", "--", "--seed", "extra"], &["--seed"]);
+        assert_eq!(pos, vec!["warm-container"]);
+        assert_eq!(flags, vec!["--", "--seed", "extra"]);
     }
 
     /// Runs `cmd_test` against a real consumer's bench tree rather than a
@@ -1596,6 +1977,15 @@ mod tests {
         let bench_dir = root.join("benches");
         std::fs::create_dir_all(bench_dir.join("support/warm-container-shared")).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
+        // The root driver manifest, present in every real tree (the
+        // generated driver or the consumer-owned escape hatch). Its
+        // absence here previously hid the fact that the walk stopped
+        // descending the moment it found a root manifest, since a fixture
+        // with none never exercised that branch. Needs a real target
+        // (write_minimal_driver_crate), not a name-only placeholder: a
+        // manifest cargo cannot build breaks every sibling crate's build
+        // too, since cargo walks up looking for a workspace root.
+        write_minimal_driver_crate(&bench_dir);
         for entry in ["Cargo.toml", "src"] {
             copy_recursive(&source.join(entry), &bench_dir.join("support/warm-container-shared").join(entry));
         }
@@ -1605,7 +1995,7 @@ mod tests {
         assert_eq!(
             format!("{code:?}"),
             success(),
-            "a real, previously-verified-passing crate's tests should make              `mock bench test` succeed"
+            "a real, previously-verified-passing crate's tests should make `mock bench test` succeed"
         );
         std::fs::remove_dir_all(&root).ok();
     }
@@ -1634,6 +2024,28 @@ mod tests {
         std::fs::remove_dir_all(&d).ok();
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// A root driver `Cargo.toml` that actually builds, for fixtures whose
+    /// `cmd_test` call really invokes `cargo test`. A `[package]`-only
+    /// manifest with no `[lib]`/`[[bin]]` and no source file parses fine on
+    /// its own but makes `cargo` refuse it outright the moment anything
+    /// tries to build it ("no targets specified in the manifest"), and
+    /// because cargo walks up looking for a workspace root when it builds
+    /// a *sibling* crate too, that refusal is not contained to the root:
+    /// every crate under `bench_dir` fails to build until the root has a
+    /// real target. No `[workspace]` header, matching arvo's actual root
+    /// manifest exactly (`arvo/mock/benches/Cargo.toml` has none); adding
+    /// one here would make this directory try to claim its own
+    /// subdirectories as workspace members and refuse them for not being
+    /// declared, which is the "[workspace] header trap" the ergonomics
+    /// survey names and precisely the opposite failure from the one this
+    /// helper exists to avoid.
+    fn write_minimal_driver_crate(bench_dir: &Path) {
+        std::fs::create_dir_all(bench_dir.join("src")).unwrap();
+        let manifest = "[package]\nname = \"driver\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\nname = \"driver\"\npath = \"src/main.rs\"\n";
+        std::fs::write(bench_dir.join("Cargo.toml"), manifest).unwrap();
+        std::fs::write(bench_dir.join("src/main.rs"), "fn main() {}\n").unwrap();
     }
 
     fn success() -> String {
@@ -1729,6 +2141,39 @@ mod tests {
         std::fs::remove_dir_all(&mock).ok();
     }
 
+    /// A flag reaching `cmd_add` must be refused, not read as a name.
+    /// `name_ok` permits `-`, which real arm names need, and the
+    /// two-argument positional match cannot otherwise tell a flag from a
+    /// name: before this was refused, `mock bench add newb --force`
+    /// scaffolded `newb/arms/--force/` and wrote `arms = ["--force"]`
+    /// into `newb/bench.toml`, exit 0, and `mock bench run newb`
+    /// subsequently ran an arm literally named `--force`.
+    #[test]
+    fn add_refuses_a_flag_instead_of_scaffolding_it_as_a_name() {
+        let mock = temp_mock("add-flag-refused");
+        let cfg = Config::from_dir(&mock);
+        assert_eq!(format!("{:?}", cmd_init(&cfg)), success());
+        let bench_dir = mock.join("benches");
+
+        let code = cmd_add(&cfg, &["newb", "--force"]);
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::FAILURE),
+            "a flag must be refused rather than accepted as an arm name"
+        );
+        assert!(
+            !bench_dir.join("newb").exists(),
+            "nothing should have been scaffolded once the flag was refused"
+        );
+
+        // The same refusal fires wherever the flag sits, not only last.
+        let code = cmd_add(&cfg, &["--force", "newb", "kernel"]);
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
+        assert!(!bench_dir.join("newb").exists());
+
+        std::fs::remove_dir_all(&mock).ok();
+    }
+
     fn write(path: &Path, contents: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, contents).unwrap();
@@ -1799,6 +2244,10 @@ mod tests {
         assert!(describe_cargo_profile(&["--release"]).contains("release"));
         assert!(describe_cargo_profile(&["--profile", "bench"]).contains("bench"));
         assert!(describe_cargo_profile(&["--profile=bench"]).contains("bench"));
+        // `-r` is cargo's own short form of `--release` and was missing
+        // from the earlier version of this function; `mock bench test -r`
+        // ran release and reported "profile: debug (cargo's default)".
+        assert!(describe_cargo_profile(&["-r"]).contains("release"));
     }
 
     /// The control for the test above. A description that says "debug" for
@@ -1812,6 +2261,26 @@ mod tests {
             !rel.contains("debug"),
             "the release description must not mention debug: {rel}"
         );
+    }
+
+    /// A flag after a bare `--` belongs to the test binary (libtest), never
+    /// to cargo, and must not be read as a cargo profile flag. Before this
+    /// was fixed, `mock bench test -- --release` (release meant for
+    /// libtest, which has no such flag) reported "profile: release" for a
+    /// run that was actually debug, because the description scanned the
+    /// whole argv rather than stopping at the separator.
+    #[test]
+    fn a_flag_after_the_separator_does_not_change_the_reported_profile() {
+        let desc = describe_cargo_profile(&["--", "--release"]);
+        assert!(!desc.contains("release"), "the separator must gate --release: {desc}");
+        assert!(desc.contains("debug"), "no real cargo profile flag was given: {desc}");
+
+        // A real cargo flag before the separator still takes effect, and a
+        // libtest flag after it that happens to share `--release`'s name
+        // does not double-count or otherwise confuse the description.
+        let desc = describe_cargo_profile(&["--release", "--", "--release"]);
+        assert!(desc.contains("release"));
+        assert!(!desc.contains("debug"), "{desc}");
     }
 
     /// A `[build]` override in a consumer-owned-driver tree reaches the
