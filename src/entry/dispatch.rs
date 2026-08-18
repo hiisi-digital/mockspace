@@ -38,6 +38,49 @@ fn is_recovery_command(args: &[String]) -> bool {
 /// actually happened: a pack pinned to a branch that stopped moving keeps
 /// resolving cleanly to an old head while the engine moves on, so the two
 /// drift apart with nothing in either repository looking wrong.
+/// The value-taking globals the tool consumes before any subcommand sees
+/// them. Their values must never be read as a subcommand name, and must never
+/// be forwarded to one.
+const VALUE_GLOBALS: [&str; 3] = ["--dir", "--scope", "--mockspace-lint-rules-dep"];
+
+/// Every argument that follows `subcmd`, **flags included**.
+///
+/// `positional_args` exists to FIND the subcommand, so it drops every flag.
+/// Using that same filtered list as the subcommand's argument vector is what
+/// made `mock bench test --release` run a debug pass: the flag was dropped
+/// here, before `bench::cmd` could forward it, so the `extra` forwarding in
+/// `cmd_run`, `cmd_report` and `cmd_test` was unreachable through the only
+/// entry point the tool has. The flag was accepted, discarded, and the run
+/// reported a pass.
+///
+/// A flag before the subcommand is the tool's; a flag after it belongs to the
+/// subcommand and is handed over verbatim. The three value-taking globals are
+/// consumed wherever they appear, so their values cannot leak into the
+/// subcommand's argv.
+fn subcommand_args<'a>(args: &'a [String], subcmd: &str) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let mut skip_next = false;
+    let mut seen = false;
+    for arg in args.iter().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if VALUE_GLOBALS.contains(&arg.as_str()) {
+            skip_next = true;
+            continue;
+        }
+        if !seen {
+            if arg == subcmd {
+                seen = true;
+            }
+            continue;
+        }
+        out.push(arg.as_str());
+    }
+    out
+}
+
 fn explain_lint_load_failure(cfg: &Config, err: &impl std::fmt::Display) -> String {
     let mut s = String::new();
     s.push_str("this repo's custom lints could not be built, so no lint below\n");
@@ -186,7 +229,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 skip_next = false;
                 continue;
             }
-            if arg == "--dir" || arg == "--scope" || arg == "--mockspace-lint-rules-dep" {
+            if VALUE_GLOBALS.contains(&arg.as_str()) {
                 skip_next = true; // skip the value that follows
                 continue;
             }
@@ -413,7 +456,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 };
             },
             "bench" => {
-                let bench_args: Vec<&str> = positional_args.iter().skip(1).copied().collect();
+                // Flags included: see `subcommand_args`. Taking these from
+                // `positional_args` dropped every flag before the subcommand
+                // could forward it.
+                let bench_args = subcommand_args(&args, "bench");
                 return bench::cmd(&cfg, &bench_args);
             },
             other => {
@@ -978,5 +1024,71 @@ mod tests {
         let stale = msg.find("stopped").expect("stale-branch cause present");
         let key = msg.find("package name").expect("key-mismatch cause present");
         assert!(stale < key, "the stale-branch cause should lead: {msg}");
+    }
+
+    /// Everything after the subcommand reaches it, flags included.
+    ///
+    /// The regression: `bench_args` was built from `positional_args`, which
+    /// drops every flag so that a flag is never mistaken for a subcommand
+    /// name. That made `mock bench test --release` run a debug pass and
+    /// report it as a success, and it made the `extra` forwarding in
+    /// `cmd_run`, `cmd_report` and `cmd_test` unreachable through the CLI.
+    #[test]
+    fn a_flag_after_the_subcommand_is_forwarded_to_it() {
+        let args = strs(&["mock", "bench", "test", "--release"]);
+        assert_eq!(subcommand_args(&args, "bench"), vec!["test", "--release"]);
+    }
+
+    /// The control for the test above. Without it, the assertion cannot tell
+    /// "flags are forwarded" from "everything is forwarded": a flag belonging
+    /// to the tool, written before the subcommand, must NOT reach it.
+    #[test]
+    fn a_flag_before_the_subcommand_is_the_tools_and_is_not_forwarded() {
+        let args = strs(&["mock", "--strict", "bench", "test"]);
+        assert_eq!(subcommand_args(&args, "bench"), vec!["test"]);
+    }
+
+    /// A value-taking global is consumed wherever it sits, and its VALUE must
+    /// not leak into the subcommand's argv. A leaked value is worse than a
+    /// leaked flag: `--dir /some/path` would hand cargo a bare path argument.
+    #[test]
+    fn a_value_global_and_its_value_are_consumed_on_both_sides() {
+        let before = strs(&["mock", "--dir", "/w/mock", "bench", "test", "--release"]);
+        assert_eq!(subcommand_args(&before, "bench"), vec!["test", "--release"]);
+        let after = strs(&["mock", "bench", "test", "--dir", "/w/mock", "--release"]);
+        assert_eq!(subcommand_args(&after, "bench"), vec!["test", "--release"]);
+    }
+
+    /// A subcommand that never appears yields nothing, rather than yielding
+    /// the whole command line.
+    #[test]
+    fn an_absent_subcommand_forwards_nothing() {
+        let args = strs(&["mock", "lint", "--strict"]);
+        assert!(subcommand_args(&args, "bench").is_empty());
+    }
+
+    /// The two lists must genuinely differ, or the fix is cosmetic. This
+    /// pins the exact input that used to lose its flag: the positional
+    /// filter drops `--release`, `subcommand_args` keeps it.
+    #[test]
+    fn the_positional_filter_and_the_argument_vector_are_not_the_same_list() {
+        let args = strs(&["mock", "bench", "test", "--release"]);
+        let positional: Vec<&str> = args
+            .iter()
+            .skip(1)
+            .filter(|a| !a.starts_with('-'))
+            .map(String::as_str)
+            .collect();
+        assert_eq!(positional, vec!["bench", "test"], "the old shape drops the flag");
+        let forwarded = subcommand_args(&args, "bench");
+        assert!(
+            forwarded.contains(&"--release"),
+            "the flag must survive: {forwarded:?}"
+        );
+        assert_ne!(positional.get(1..).unwrap_or(&[]), forwarded.as_slice());
+    }
+
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
     }
 }
