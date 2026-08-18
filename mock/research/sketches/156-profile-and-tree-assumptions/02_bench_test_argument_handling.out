@@ -1,19 +1,19 @@
 === arm 1: no argument (baseline) ===
+ok    Cargo.toml  0 passed, 0 failed, 0 ignored
 ok    support/alpha/Cargo.toml  1 passed, 0 failed, 0 ignored
 ok    support/beta/Cargo.toml  1 passed, 0 failed, 0 ignored
-2 crates, 2 carrying tests, 2 passed, 0 failed, 0 ignored
+3 crates, 2 carrying tests, 2 passed, 0 failed, 0 ignored  [cargo test, profile: debug (cargo's default)]
 === arm 2: an argument naming a crate that EXISTS ===
 ok    support/alpha/Cargo.toml  1 passed, 0 failed, 0 ignored
-ok    support/beta/Cargo.toml  1 passed, 0 failed, 0 ignored
-2 crates, 2 carrying tests, 2 passed, 0 failed, 0 ignored
+1 crates, 1 carrying tests, 1 passed, 0 failed, 0 ignored  [cargo test, profile: debug (cargo's default)]
 === arm 3: an argument naming a crate that DOES NOT EXIST ===
-ok    support/alpha/Cargo.toml  1 passed, 0 failed, 0 ignored
-ok    support/beta/Cargo.toml  1 passed, 0 failed, 0 ignored
-2 crates, 2 carrying tests, 2 passed, 0 failed, 0 ignored
 
-CONTROL: ok. Naming an existing crate and naming a nonexistent one both
-         produce output identical to naming nothing.
-VERDICT: the argument is neither a filter nor validated. It is discarded
-         silently, and a typo or a stale crate name reports a clean pass
-         over the whole tree. Same class as the known-unfixed
-         'the driver ignores a bench name argument'.
+
+arm 3 exit status: 1 (must be nonzero: a refusal, not a silent full run)
+
+CONTROL: ok. Arm 2 narrowed to exactly the crate it named; arm 3 refused
+         rather than running the whole tree; arm 1 differs from both.
+VERDICT: the argument is a real filter and an unmatched one is a refusal,
+         not a silent pass. Before the fix (see the BEFORE_FIX output
+         beside this file) naming any crate, real or not, was identical
+         to naming nothing: the argument was read and then discarded.
