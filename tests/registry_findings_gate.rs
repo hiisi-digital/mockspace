@@ -271,3 +271,49 @@ fn a_reference_to_a_row_that_exists_does_not() {
          arm above passes for a binary that fails on every document"
     );
 }
+
+/// An unsubstituted placeholder is not a dangling reference.
+///
+/// Both survive as literal braces in the output, and only one is a lie about
+/// the registry. `{{ reg::spike::nope }}` names a row that does not exist;
+/// `{{abi_count}}` is a template placeholder that resolved to nothing because
+/// the project has nothing to count.
+///
+/// The first version of this gate treated them alike and failed a real repo
+/// whose own config says a project with no packages is ordinary, over fifteen
+/// placeholders in one document. Caught by running against a consumer rather
+/// than a fixture, which is why this arm exists.
+#[test]
+fn an_unsubstituted_placeholder_does_not_fail_the_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root, false);
+    write(
+        &root.join("mock/PROJECT.md.tmpl"),
+        "# fixture\n\nThere are {{abi_count}} of them, in {{architecture_table}}.\n",
+    );
+    assert_eq!(
+        run(root),
+        Some(0),
+        "a placeholder with nothing to substitute is an ordinary state and must \
+         not be reported as the registry lying"
+    );
+}
+
+/// The discriminating pair: same document, one of each.
+#[test]
+fn a_reference_beside_a_placeholder_still_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root, false);
+    write(
+        &root.join("mock/PROJECT.md.tmpl"),
+        "# fixture\n\n{{abi_count}} of them, see {{ reg::spike::no_such_row }}.\n",
+    );
+    assert_eq!(
+        run(root),
+        Some(1),
+        "the reference must still gate when a placeholder sits beside it, or the \
+         distinction has been drawn by ignoring both"
+    );
+}

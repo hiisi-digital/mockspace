@@ -991,6 +991,23 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 }
             }
         }
+        // A reference and a placeholder both survive as literal braces, and only
+        // one of them is a lie about the registry. A reference is
+        // `root::selector`, so it carries `::`; `{{abi_count}}` is a template
+        // placeholder that resolved to nothing because the project has nothing
+        // to count, which is an ordinary state for a project with no packages.
+        //
+        // The first version of this gate did not distinguish them and failed a
+        // repo whose own config says "a project with no packages is ordinary",
+        // over fifteen placeholders in one document. Found by running it against
+        // a real consumer rather than a fixture.
+        let is_reference = |e: &String| e.trim_matches(|c| c == '{' || c == '}').contains("::");
+        let refs_unresolved: usize = unresolved
+            .iter()
+            .map(|(_, v)| v.iter().filter(|e| is_reference(e)).count())
+            .sum();
+        registry_errors += refs_unresolved;
+
         if !unresolved.is_empty() {
             let total: usize = unresolved.iter().map(|(_, v)| v.len()).sum();
             // An error, not a warning, and on the design's own rung: dangling
@@ -1002,13 +1019,21 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             // Reported at the output rather than per render path, because
             // several paths generate documents and two of them silently did not
             // resolve references at all.
-            registry_errors += total;
-            eprintln!(
-                "  ERROR [dangling-reference]: {total} reference(s) resolved to nothing and were \
-                 rendered literally in {} document(s). A reference that resolves to nothing is \
-                 worse than prose, because it looks checked:",
-                unresolved.len()
-            );
+            if refs_unresolved > 0 {
+                eprintln!(
+                    "  ERROR [dangling-reference]: {refs_unresolved} reference(s) resolved to \
+                     nothing and were rendered literally. A reference that resolves to nothing is \
+                     worse than prose, because it looks checked."
+                );
+            }
+            if total > refs_unresolved {
+                eprintln!(
+                    "  warning: {} placeholder(s) rendered literally in {} document(s). Not \
+                     references, so not gated: a project with nothing to substitute is ordinary.",
+                    total - refs_unresolved,
+                    unresolved.len()
+                );
+            }
             for (file, found) in &unresolved {
                 let mut shown: Vec<&str> = found.iter().map(String::as_str).collect();
                 shown.sort_unstable();
