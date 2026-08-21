@@ -69,6 +69,45 @@ documents, and shipping code side by side, and the root name says which kind
 each is. Where several apply, list them in precedence order: the first is the
 one to follow, the rest are context.
 
+## Declaring a namespace
+
+A reference resolves only into a namespace some project declared, so the
+declaration is part of this syntax rather than a separate subject.
+
+```toml
+[[registry.namespace]]
+key = "spike"
+title = "Spikes"
+description = "A focused implementation that answers a question."
+
+[[registry.namespace.field]]
+name = "question"
+type = "string"
+required = true
+description = "The question the spike answers, in one line."
+```
+
+`key` is the array-of-tables name, singular, and it is the first selector
+segment of every reference into the namespace. A file holding `[[spike]]` rows
+validates against the spike schema wherever it sits, so a project files by
+subject rather than by kind and the registry stays queryable by kind.
+
+**A row's identity is its slug**, under the `id` key, snake_case and unique
+within its namespace. Slugs rather than numbers because a number carries no
+meaning and an identifier carrying no meaning has to be managed: never reused,
+never renumbered, never reordered, since any of those silently repoints every
+reference to it.
+
+**There is no `prefix`.** An earlier design derived an identifier pattern from a
+per-namespace prefix, so a row was `SPK-042`. That is gone: the schema generator
+emits the slug grammar directly, and a project still declaring `prefix` has it
+silently ignored, because the namespace struct no longer carries the field.
+
+The older document describing the prefixed form is
+`docs/research/202607181700_registry-of-terms-design.md`. It is kept as the
+record of how this was reasoned and **is superseded on identity by this
+section**. Nothing else in it is contradicted.
+
 ## Anchors: prefer headings to line numbers
 
 `{{ seed::DESIGN::#the-four-lanes }}` cites a heading. `{{ seed::DESIGN::844 }}`
