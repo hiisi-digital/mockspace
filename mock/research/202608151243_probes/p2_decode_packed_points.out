@@ -1,0 +1,46 @@
+control: 1-varying reads ['D'] | 0-varying reads {} | 2-varying reads ['N', 'T'] -> analyser discriminates
+
+section                            bridge                            pts varying / constant
+warm-container-width-l1            Case (warm-container-shared)        6 [W=6] / [D=3,NC=0,OP=0]
+warm-container-width-l2            Case (warm-container-shared)        6 [W=6] / [D=3,NC=1,OP=0]
+warm-container-density-w13         Case (warm-container-shared)        5 [D=5] / [NC=0,OP=0,W=13]
+warm-container-density-w64         Case (warm-container-shared)        5 [D=5] / [NC=0,OP=0,W=64]
+precise-container-width-l1         Case (warm-container-shared)        6 [W=6] / [D=3,NC=0,OP=1]
+warm-elementwise-width-l1          Case (warm-container-shared)        6 [W=6] / [D=4,NC=0,OP=2]
+precise-elementwise-width-l1       Case (warm-container-shared)        6 [W=6] / [D=4,NC=0,OP=3]
+warm-affine-collapse-l1            Case (warm-container-shared)        6 [W=6] / [D=3,NC=0,OP=4]
+precise-widening-theorem-l1        Case (warm-container-shared)        6 [W=6] / [D=1,NC=0,OP=5]
+warm-affine-density-w13            Case (warm-container-shared)        5 [D=5] / [NC=0,OP=4,W=13]
+warm-clamp-arity-w8                ClampCase (warm-clamp-shared)       4 [LOG2A=4] / [NC=0,OP=0,W=8]
+warm-clamp-arity-w13               ClampCase (warm-clamp-shared)       6 [LOG2A=6] / [NC=0,OP=0,W=13]
+warm-clamp-arity-w16               ClampCase (warm-clamp-shared)       6 [LOG2A=6] / [NC=0,OP=0,W=16]
+warm-clamp-arity-w32               ClampCase (warm-clamp-shared)       6 [LOG2A=6] / [NC=0,OP=0,W=32]
+warm-clamp-arity-w60               ClampCase (warm-clamp-shared)       6 [LOG2A=6] / [NC=0,OP=0,W=60]
+warm-clamp-arity-w64               ClampCase (warm-clamp-shared)       6 [LOG2A=6] / [NC=0,OP=0,W=64]
+warm-clamp-chain-l1                ClampCase (warm-clamp-shared)       6 [W=6] / [LOG2A=0,NC=0,OP=1]
+warm-clamp-arity-l2                ClampCase (warm-clamp-shared)       6 [W=6] / [LOG2A=4,NC=1,OP=0]
+wide-rung-width-l1                 WideCase (wide-rung-shared)         6 [W=6] / [D=3,NC=0]
+wide-rung-width-l2                 WideCase (wide-rung-shared)         6 [W=6] / [D=3,NC=1]
+wide-rung-density-w200             WideCase (wide-rung-shared)         4 [D=4] / [NC=0,W=200]
+wide-rung-walk-l2                  WideCase (wide-rung-shared)         6 [W=6] / [D=0,NC=1]
+wide-rung-walk-l1                  WideCase (wide-rung-shared)         6 [W=6] / [D=0,NC=0]
+bitpack-contention                 Contend/WriteContend (N*10+T)      12 [N=4,T=3] / []
+bitpack-contend-decode             Contend/WriteContend (N*10+T)       6 [N=3,T=2] / []
+bitpack-contend-best               Contend/WriteContend (N*10+T)       4 [N=2,T=2] / []
+bitpack-wide                       Contend/WriteContend (N*10+T)       6 [N=3,T=2] / []
+bitpack-write-contend-safe         Contend/WriteContend (N*10+T)       6 [N=2,T=3] / []
+bitpack-write-contend-race         Contend/WriteContend (N*10+T)       6 [N=2,T=3] / []
+satfold-length-l1                  SatFoldCase (satfold-shared)       12 [LI=12] / [AL=0,NC=0,OP=0]
+satfold-length-l1-wrap             SatFoldCase (satfold-shared)        5 [LI=5] / [AL=0,NC=0,OP=1]
+satfold-align-l1                   SatFoldCase (satfold-shared)        4 [LI=4] / [AL=1,NC=0,OP=0]
+satfold-length-dram                SatFoldCase (satfold-shared)        2 [LI=2] / [AL=0,NC=1,OP=0]
+satfold-length-dram-long           SatFoldCase (satfold-shared)        1 [] / [AL=0,LI=11,NC=1,OP=0]
+satfold-length-dram-wrap           SatFoldCase (satfold-shared)        1 [] / [AL=0,LI=11,NC=1,OP=1]
+satfold-const-gate                 SatFoldCase (satfold-shared)        3 [LI=3] / [AL=0,NC=0,OP=0]
+
+sections with a packed key: 36
+sections with a plain point (no packing found): 13
+varying-dimension count histogram: {0: 2, 1: 28, 2: 6}
+constant-field count histogram:    {0: 6, 2: 5, 3: 23, 4: 2}
+total per-sweep CONSTANT settings buried in the integer: 87
+total per-sweep VARYING axes buried in the integer:      40
