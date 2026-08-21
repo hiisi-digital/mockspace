@@ -112,8 +112,31 @@ fn a_duplicate_slug_fails_the_command() {
     );
 }
 
+/// Whether `taplo` resolves on this host.
+///
+/// The clean arm needs it. Without it the schema check cannot run, which is
+/// itself a finding now, so a "clean" registry legitimately exits 1 and the
+/// control goes red for a reason that has nothing to do with duplicates. That
+/// happened: this module's own schema-unavailable gate broke this module's
+/// load-bearing control, and it was invisible on a host that has taplo.
+///
+/// Stated as a precondition rather than skipped, because a control that quietly
+/// does not run is the thing the docstring above says must not happen.
+fn taplo_present() -> bool {
+    std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .any(|d| !d.is_empty() && Path::new(d).join("taplo").exists())
+}
+
 #[test]
 fn a_clean_registry_does_not() {
+    assert!(
+        taplo_present(),
+        "this control cannot discriminate without taplo: the schema check would \
+         be unavailable, which now fails the command, so the arm would be red for \
+         a reason unrelated to duplicate slugs. Install taplo to run this suite."
+    );
     let tmp = tempfile::tempdir().unwrap();
     fixture(tmp.path(), false);
     assert_eq!(
@@ -166,5 +189,85 @@ fn a_project_with_no_registry_does_not_need_the_tool() {
         Some(0),
         "the control: gating an absent tool must not reach a project that \
          declares no namespaces, or every consumer pays for a feature it does not use"
+    );
+}
+
+/// The case that separates the rows guard from a namespace guard.
+///
+/// `a_project_with_no_registry_does_not_need_the_tool` has neither namespaces
+/// nor rows, so it passes on either reading and names the wrong one. This
+/// declares a namespace and writes no rows: under a namespace guard it would
+/// fail, under the rows guard it must not. Verified by hand when the guard was
+/// written, and committed so nobody does that again.
+#[test]
+fn namespaces_with_no_rows_have_no_shape_to_verify() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    write(
+        &root.join("mock/Cargo.toml"),
+        "[workspace]\nmembers = []\nresolver = \"2\"\n",
+    );
+    write(
+        &root.join("mock/mockspace.toml"),
+        r#"project_name = "fixture"
+crate_prefix = "fixture"
+
+[[registry.namespace]]
+key = "spike"
+title = "Spikes"
+description = "A focused implementation that answers a question."
+"#,
+    );
+    // Declared, and deliberately empty: no registry directory at all.
+    assert_eq!(
+        run_without_taplo(root),
+        Some(0),
+        "a namespace with no rows has nothing whose shape could be unverified, \
+         so the absent tool must not gate it"
+    );
+}
+
+/// A reference that resolves to nothing fails the command.
+///
+/// The design puts dangling reference and duplicate identifier on one rung,
+/// both errors, both "because both mean the registry is lying". The first
+/// version of this work gated duplicates and left this as a `warning:`, so half
+/// the sentence was enforced while the failure summary claimed both. A reviewer
+/// found it by reading the design the summary quoted.
+///
+/// The control is the same document with the reference pointing at a row that
+/// exists. Without it, this passes for any binary that fails on every document.
+#[test]
+fn a_reference_to_no_row_fails_the_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root, false);
+    write(
+        &root.join("mock/PROJECT.md.tmpl"),
+        "# fixture\n\nSee {{ reg::spike::no_such_row }} for the answer.\n",
+    );
+    assert_eq!(
+        run(root),
+        Some(1),
+        "a reference resolving to nothing is rendered literally and must fail, \
+         because it looks checked and is not"
+    );
+}
+
+#[test]
+fn a_reference_to_a_row_that_exists_does_not() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root, false);
+    write(
+        &root.join("mock/PROJECT.md.tmpl"),
+        "# fixture\n\nSee {{ reg::spike::first_one }} for the answer.\n",
+    );
+    assert_eq!(
+        run(root),
+        Some(0),
+        "the control: a reference that resolves must not be reported, or the \
+         arm above passes for a binary that fails on every document"
     );
 }

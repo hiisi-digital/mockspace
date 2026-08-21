@@ -35,9 +35,9 @@ pub fn validate_provenance(
         let empty = Vec::new();
         let names = bearing.get(&row.namespace).unwrap_or(&empty);
         for raw in names.iter().filter_map(|n| row.fields.get(n)) {
-        for item in raw.split(", ").filter(|s| !s.trim().is_empty()) {
-            let Some(p) = FileRef::parse(item) else {
-                out.push(RegistryFinding {
+            for item in raw.split(", ").filter(|s| !s.trim().is_empty()) {
+                let Some(p) = FileRef::parse(item) else {
+                    out.push(RegistryFinding {
                     kind: "malformed-provenance",
                     message: format!(
                         "{}: `{item}` is not `root::path::line`. Unparsed, it points nowhere while looking like a citation.",
@@ -45,10 +45,10 @@ pub fn validate_provenance(
                     ),
                     source: Some(row.source.clone()),
                 });
-                continue;
-            };
-            let Some(root_rel) = roots.get(&p.root) else {
-                out.push(RegistryFinding {
+                    continue;
+                };
+                let Some(root_rel) = roots.get(&p.root) else {
+                    out.push(RegistryFinding {
                     kind: "unknown-provenance-root",
                     message: format!(
                         "{}: `{}` names root `{}`, which is not declared in [registry.roots]. Declared roots are what make a reference resolvable rather than a convention.",
@@ -58,25 +58,25 @@ pub fn validate_provenance(
                     ),
                     source: Some(row.source.clone()),
                 });
-                continue;
-            };
-            let target = match resolve_cited_path(&repo_root.join(root_rel), &p.path) {
-                PathResolution::Found(t) => t,
-                PathResolution::Missing => {
-                    out.push(RegistryFinding {
-                        kind:    "unresolvable-provenance",
-                        message: format!(
-                            "{}: `{}` matches no file under root `{}`.",
-                            row.qualified(),
-                            p.render(),
-                            p.root
-                        ),
-                        source:  Some(row.source.clone()),
-                    });
                     continue;
-                },
-                PathResolution::Ambiguous(names) => {
-                    out.push(RegistryFinding {
+                };
+                let target = match resolve_cited_path(&repo_root.join(root_rel), &p.path) {
+                    PathResolution::Found(t) => t,
+                    PathResolution::Missing => {
+                        out.push(RegistryFinding {
+                            kind:    "unresolvable-provenance",
+                            message: format!(
+                                "{}: `{}` matches no file under root `{}`.",
+                                row.qualified(),
+                                p.render(),
+                                p.root
+                            ),
+                            source:  Some(row.source.clone()),
+                        });
+                        continue;
+                    },
+                    PathResolution::Ambiguous(names) => {
+                        out.push(RegistryFinding {
                         kind: "ambiguous-provenance",
                         message: format!(
                             "{}: `{}` matches several files ({}). Give the extension: picking one silently would point the citation somewhere you did not choose.",
@@ -86,11 +86,11 @@ pub fn validate_provenance(
                         ),
                         source: Some(row.source.clone()),
                     });
-                    continue;
-                },
-            };
-            if matches!(p.anchor, Anchor::Line(_)) && !frozen.contains(&p.root) {
-                out.push(RegistryFinding {
+                        continue;
+                    },
+                };
+                if matches!(p.anchor, Anchor::Line(_)) && !frozen.contains(&p.root) {
+                    out.push(RegistryFinding {
                     kind: "fragile-line-citation",
                     message: format!(
                         "{}: `{}` cites a line in root `{}`, which is not declared frozen. Any edit above that line silently repoints the citation while it still resolves. Cite a heading, or declare the root frozen if its files genuinely do not move.",
@@ -100,11 +100,11 @@ pub fn validate_provenance(
                     ),
                     source: Some(row.source.clone()),
                 });
-            }
-            match resolve_anchor(&target, &p.anchor) {
-                Some(_) => {},
-                None => {
-                    out.push(RegistryFinding {
+                }
+                match resolve_anchor(&target, &p.anchor) {
+                    Some(_) => {},
+                    None => {
+                        out.push(RegistryFinding {
                         kind: match p.anchor {
                             Anchor::Heading(_) => "unresolvable-heading",
                             Anchor::Line(_) => "unresolvable-provenance",
@@ -125,9 +125,9 @@ pub fn validate_provenance(
                         },
                         source: Some(row.source.clone()),
                     });
-                },
+                    },
+                }
             }
-        }
         }
     }
     out
@@ -165,9 +165,13 @@ pub const FINDING_KINDS: &[&str] = &[
     "unresolvable-heading",
     "fragile-line-citation",
     // Not produced by `validate`. Reported by the caller when the schema check
-    // could not run at all, and named here so a project can configure its
-    // severity beside the findings it sits with. A run that could not check is
-    // not a run that passed.
+    // could not run at all, and listed here so the set of kinds stays in one
+    // place. A run that could not check is not a run that passed.
+    //
+    // NOTE: nothing reads this list today. The per-finding severity map is
+    // parsed at `config.rs:1017` and never consulted, and two kinds produced by
+    // `namespace_root_collisions` are absent from it with nothing noticing. The
+    // list is documentation until a consumer exists.
     "schema-unavailable",
 ];
 
@@ -190,29 +194,6 @@ pub fn validate(_namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<Regist
         });
     }
     out
-}
-
-/// Findings for references made by a rendered document to rows that do not
-/// exist. Separate from `validate` because it needs the document set, which
-/// only the render pass has.
-pub fn validate_references(
-    text: &str,
-    reg: &Registry,
-    origin: &Path,
-    namespaces: &[RegistryNamespace],
-) -> Vec<RegistryFinding> {
-    let ns_keys: std::collections::BTreeSet<String> =
-        namespaces.iter().map(|n| n.key.clone()).collect();
-    dangling_references(text, reg, &ns_keys)
-        .into_iter()
-        .map(|id| RegistryFinding {
-            kind: "dangling-reference",
-            message: format!(
-                "{id} is referenced but no row declares it. A reference that resolves to nothing is worse than prose, because it looks checked."
-            ),
-            source: Some(origin.to_path_buf()),
-        })
-        .collect()
 }
 
 /// The outcome of delegating schema validation to a TOML validator.

@@ -306,17 +306,6 @@ pub fn with_builtins(declared: &[RegistryNamespace]) -> Vec<RegistryNamespace> {
     out
 }
 
-/// Roots every project gets without declaring them.
-///
-/// `reg` is the registry itself. `mock` is the mock directory, which is where
-/// a project's own design documents live, so `mock::DESIGN::12` works
-/// everywhere without configuration. Deeper paths need no extra root because
-/// the path may have any number of segments: `mock::crates::numeric::DESIGN::12`
-/// resolves the same way.
-///
-/// Anything project-specific is declared rather than baked. Not every project
-/// has a corpus it indexes, so a root named `seed` belongs in that project's
-/// configuration and not in the tool.
 /// Whether a declared field type means "this field holds references".
 ///
 /// Reference validation was keyed on the literal field name `"provenance"`,
@@ -333,9 +322,7 @@ pub fn is_reference_type(t: &str) -> bool {
 }
 
 /// The reference-bearing field names of each namespace, by namespace key.
-pub fn reference_fields(
-    namespaces: &[RegistryNamespace],
-) -> BTreeMap<String, Vec<String>> {
+pub fn reference_fields(namespaces: &[RegistryNamespace]) -> BTreeMap<String, Vec<String>> {
     namespaces
         .iter()
         .map(|ns| {
@@ -351,6 +338,17 @@ pub fn reference_fields(
         .collect()
 }
 
+/// Roots every project gets without declaring them.
+///
+/// `reg` is the registry itself. `mock` is the mock directory, which is where
+/// a project's own design documents live, so `mock::DESIGN::12` works
+/// everywhere without configuration. Deeper paths need no extra root because
+/// the path may have any number of segments: `mock::crates::numeric::DESIGN::12`
+/// resolves the same way.
+///
+/// Anything project-specific is declared rather than baked. Not every project
+/// has a corpus it indexes, so a root named `seed` belongs in that project's
+/// configuration and not in the tool.
 pub fn builtin_roots(mock_dir_rel: &str) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
     m.insert("mock".to_string(), mock_dir_rel.to_string());

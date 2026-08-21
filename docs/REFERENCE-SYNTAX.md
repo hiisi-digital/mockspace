@@ -116,8 +116,16 @@ silently ignored, because the namespace struct no longer carries the field.
 
 The older document describing the prefixed form is
 `docs/research/202607181700_registry-of-terms-design.md`. It is kept as the
-record of how this was reasoned and **is superseded on identity by this
-section**. Nothing else in it is contradicted.
+record of how this was reasoned, and it is superseded on **two** points.
+
+**Identity**, by this section: a row is a slug, not a prefixed number.
+
+**How a reference is recognised**, by the form at the top of this document. That
+design specifies pattern-scanning, where "a bare `SPK-042` becomes a link". This
+one requires braces, and says why: without them a project with a root named
+`core` would silently rewrite prose about `core::mem::12`.
+
+No claim is made here about the rest of it.
 
 ## Anchors: prefer headings to line numbers
 
