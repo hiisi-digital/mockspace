@@ -1,0 +1,6 @@
+#!/usr/bin/env nutshell
+# Runner for the attribution engine's tests. `nutshell` takes a script, not a
+# `-c` string, so the invocation is a file rather than a one-liner.
+use test
+test_run "${NUTSHELL_SCRIPT_DIR}/attribution_test.sh"
+test_summary
