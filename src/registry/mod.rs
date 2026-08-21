@@ -339,6 +339,36 @@ mod tests {
         );
     }
 
+    /// The scalar form of the reference type, which nothing else exercises.
+    ///
+    /// `is_reference_type` matches `ref` and `ref[]`, and both new tests used the
+    /// array. Deleting the `"ref" |` arm broke nothing, which is the definition
+    /// of an unpinned declaration. Verified by hand on a real fixture first;
+    /// committed so the next person does not have to.
+    #[test]
+    fn a_scalar_ref_field_is_validated_like_the_array_form() {
+        let mut ns = ns("law", None);
+        ns.fields = vec![RegistryField {
+            name:        "derives_from".into(),
+            r#type:      "ref".into(),
+            required:    false,
+            description: None,
+            visibility:  FieldVisibility::Public,
+        }];
+        let reg = reg_with("seam", "law", &[("derives_from", "nosuchroot::DESIGN::1")]);
+        let found = validate::validate_provenance(
+            Path::new("."),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &reg,
+            std::slice::from_ref(&ns),
+        );
+        assert!(
+            found.iter().any(|f| f.kind == "unknown-provenance-root"),
+            "a scalar `ref` field went unvalidated: {found:?}"
+        );
+    }
+
     #[test]
     fn an_ordinary_field_holding_the_same_text_is_not_validated() {
         let mut ns = ns("law", None);
