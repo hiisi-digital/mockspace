@@ -195,28 +195,30 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // effective slices for the rest of the function.
     let loaded = if pack_is_empty(pack) {
         match arg_value(&args, "--mockspace-lint-rules-dep") {
-            Some(dep) => match crate::custom_lints::load(&cfg, &cfg.config_path, &dep) {
-                Ok(l) => l,
-                // A pack that will not build is a blocking failure, not a
-                // warning. Reporting it and carrying on runs every remaining
-                // gate with the repo's own lints absent and then reports a
-                // pass, which is the one outcome that cannot be allowed:
-                // silence and success are indistinguishable to the caller. It
-                // shipped that way, and arvo took 194 commits over eight days
-                // with its pack missing before anyone read the line.
-                //
-                // The recovery and inspection commands are exempt, because
-                // some of them are how the failure gets fixed.
-                Err(e) if !is_recovery_command(&args) => {
-                    eprintln!();
-                    eprintln!("BLOCKED: {}", explain_lint_load_failure(&cfg, &e));
-                    return ExitCode::FAILURE;
-                },
-                Err(e) => {
-                    eprintln!("mock: custom lints unavailable: {e}");
-                    eprintln!("mock: continuing because this command does not lint.");
-                    None
-                },
+            Some(dep) => {
+                match crate::custom_lints::load(&cfg, &cfg.config_path, &dep) {
+                    Ok(l) => l,
+                    // A pack that will not build is a blocking failure, not a
+                    // warning. Reporting it and carrying on runs every remaining
+                    // gate with the repo's own lints absent and then reports a
+                    // pass, which is the one outcome that cannot be allowed:
+                    // silence and success are indistinguishable to the caller. It
+                    // shipped that way, and arvo took 194 commits over eight days
+                    // with its pack missing before anyone read the line.
+                    //
+                    // The recovery and inspection commands are exempt, because
+                    // some of them are how the failure gets fixed.
+                    Err(e) if !is_recovery_command(&args) => {
+                        eprintln!();
+                        eprintln!("BLOCKED: {}", explain_lint_load_failure(&cfg, &e));
+                        return ExitCode::FAILURE;
+                    },
+                    Err(e) => {
+                        eprintln!("mock: custom lints unavailable: {e}");
+                        eprintln!("mock: continuing because this command does not lint.");
+                        None
+                    },
+                }
             },
             None => None,
         }
@@ -289,10 +291,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                         // Wants lossy decoding per record once the batch path
                         // owns its own reader.
                         let mut buf = String::new();
-                        if let Err(e) = std::io::Read::read_to_string(
-                            &mut std::io::stdin(),
-                            &mut buf,
-                        ) {
+                        if let Err(e) =
+                            std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+                        {
                             eprintln!("mock check-message: could not read stdin: {e}");
                             return ExitCode::FAILURE;
                         }
@@ -453,8 +454,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
             },
             "lock" | "deprecate" | "unlock" | "close" | "archive" | "migrate" => {
-                let subcmd_opts =
-                    design_round::SubcmdOpts { auto_commit: auto_commit_wanted(&args) };
+                let subcmd_opts = design_round::SubcmdOpts {
+                    auto_commit: auto_commit_wanted(&args),
+                };
                 return match subcmd {
                     "lock" => design_round::cmd_lock(&cfg, &subcmd_opts),
                     "deprecate" => design_round::cmd_deprecate(&cfg, &subcmd_opts),
@@ -660,7 +662,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 &cfg.lint_overrides,
                 &cfg.primitive_introductions,
                 pack,
-                );
+            );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;
@@ -681,7 +683,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 &cfg.lint_overrides,
                 &cfg.primitive_introductions,
                 pack,
-                );
+            );
             if violations > 0 {
                 eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;
@@ -856,6 +858,18 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         &cfg,
     );
 
+    // Registry findings gate. Every one of these prints `ERROR`, and until
+    // 2026-08-22 the command exited 0 anyway, so a dangling reference, a
+    // duplicate slug and a fragile line citation were all indistinguishable
+    // from a clean registry to anything downstream. The design says duplicate
+    // identifier and dangling reference are errors "because both mean the
+    // registry is lying"; the code said so in words and not in status.
+    //
+    // The rule is the one the code already applies when it chooses which word
+    // to print: what is reported as ERROR blocks, what is reported as a warning
+    // does not. Nothing here reclassifies a finding.
+    let mut registry_errors = 0usize;
+
     if !cfg.registry_namespaces.is_empty() {
         eprintln!("--- registry ---");
         let schemas =
@@ -869,6 +883,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             registry.by_namespace.len()
         );
         for f in &cycle_findings {
+            registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         for f in registry::validate_provenance(
@@ -876,14 +891,18 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             &cfg.registry_roots,
             &cfg.frozen_roots,
             &registry,
+            &cfg.registry_namespaces,
         ) {
+            registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots)
         {
+            registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         for f in registry::validate(&cfg.registry_namespaces, &registry) {
+            registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
@@ -896,13 +915,37 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 failures,
             } => {
                 for f in failures {
+                    registry_errors += 1;
                     eprintln!("  ERROR [schema]: {f}");
                 }
             },
             registry::SchemaCheck::Unavailable => {
-                eprintln!(
-                    "  schema check SKIPPED: taplo is not installed. Row shape is unverified; install taplo to close this gap."
-                );
+                // A run that could not check is not a run that passed. The
+                // findings above are two-valued and cannot say "do not trust
+                // this", so an unverifiable row shape reported as success is a
+                // green that means nothing: every required field, every type
+                // and every slug pattern went unchecked.
+                //
+                // Gated on rows existing, not on namespaces existing. Two
+                // namespaces are builtin (`vocab` and `reference`, prepended by
+                // `with_builtins`), so `registry_namespaces` is never empty and
+                // a guard on it fails every project that has no registry at all.
+                // That was the first version of this and the no-registry control
+                // caught it.
+                //
+                // Rows are the thing a schema verifies. No rows, nothing unverified.
+
+                if registry.rows.is_empty() {
+                    eprintln!("  schema check skipped: no rows to verify");
+                } else {
+                    registry_errors += 1;
+                    eprintln!(
+                        "  ERROR [schema-unavailable]: taplo is not installed, so the shape of \
+                         {} row(s) is unverified: required fields, types and slug patterns were \
+                         all unchecked. Install taplo.",
+                        registry.rows.len()
+                    );
+                }
             },
         }
     }
@@ -914,6 +957,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // one written later is ordinary rather than a special case. Then rendered,
     // in one loop, so a document cannot reach the output having skipped a step
     // because its path forgot one. Both were real, repeatedly.
+    // Documents are generated even when the registry is already known to be
+    // lying, and the exit below still fails. That ordering is deliberate: the
+    // dangling-reference scan reads the *output*, because several paths render
+    // documents and two of them silently did not resolve references at all.
+    // Returning early here would trade a precise finding for an earlier exit.
     eprintln!("--- generating documents ---");
     let written = document::render_all(&plan, &placeholders, &registry, &cfg);
     eprintln!("  generated {} documents", written.len());
@@ -945,8 +993,20 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         }
         if !unresolved.is_empty() {
             let total: usize = unresolved.iter().map(|(_, v)| v.len()).sum();
+            // An error, not a warning, and on the design's own rung: dangling
+            // reference and duplicate identifier are both errors "because both
+            // mean the registry is lying". Gating duplicates while warning about
+            // this left half the sentence enforced, and the summary line below
+            // claimed both.
+            //
+            // Reported at the output rather than per render path, because
+            // several paths generate documents and two of them silently did not
+            // resolve references at all.
+            registry_errors += total;
             eprintln!(
-                "  warning: {total} unresolved reference(s) rendered literally in {} document(s):",
+                "  ERROR [dangling-reference]: {total} reference(s) resolved to nothing and were \
+                 rendered literally in {} document(s). A reference that resolves to nothing is \
+                 worse than prose, because it looks checked:",
                 unresolved.len()
             );
             for (file, found) in &unresolved {
@@ -963,6 +1023,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     eprintln!("--- generating agent rules ---");
     let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry);
     eprintln!("  generated {agent_count} agent files");
+
+    if registry_errors > 0 {
+        eprintln!(
+            "\nregistry: {registry_errors} error(s). A reference that does not resolve, or an \
+             identifier declared twice, means the registry is lying about what it holds."
+        );
+        return ExitCode::FAILURE;
+    }
 
     ExitCode::SUCCESS
 }
@@ -1029,10 +1097,15 @@ mod tests {
         // was checked, not merely that something failed.
         assert!(msg.contains("Nothing was checked"), "message: {msg}");
         // The underlying compiler output survives, indented rather than lost.
-        assert!(msg.contains("no rules expected `cross_lints`"), "message: {msg}");
+        assert!(
+            msg.contains("no rules expected `cross_lints`"),
+            "message: {msg}"
+        );
         // The stale-pin cause leads, because it is the one that has happened.
         let stale = msg.find("stopped").expect("stale-branch cause present");
-        let key = msg.find("package name").expect("key-mismatch cause present");
+        let key = msg
+            .find("package name")
+            .expect("key-mismatch cause present");
         assert!(stale < key, "the stale-branch cause should lead: {msg}");
     }
 
@@ -1089,13 +1162,17 @@ mod tests {
             .filter(|a| !a.starts_with('-'))
             .map(String::as_str)
             .collect();
-        assert_eq!(positional, vec!["bench", "test"], "the old shape drops the flag");
+        assert_eq!(
+            positional,
+            vec!["bench", "test"],
+            "the old shape drops the flag"
+        );
         let forwarded = subcommand_args(&args, "bench");
         assert!(
             forwarded.contains(&"--release"),
             "the flag must survive: {forwarded:?}"
         );
-        assert_ne!(positional.get(1..).unwrap_or(&[]), forwarded.as_slice());
+        assert_ne!(positional.get(1 ..).unwrap_or(&[]), forwarded.as_slice());
     }
 
     fn strs(v: &[&str]) -> Vec<String> {
@@ -1110,7 +1187,6 @@ mod tests {
 /// worse than merely fragile: a later `git reset` brings the source file back
 /// while leaving the target sitting there untracked, so the round is in two
 /// phases at once and neither the tool nor the person can tell which is meant.
-///
 // FIXME: this wants to be the default and cannot be until the commit path
 // changes. `design_round::git::commit_or_suggest` builds the commit with
 // `commit-tree` plus `update-ref`, which is plumbing, so it runs no hook and
@@ -1141,7 +1217,11 @@ mod auto_commit_tests {
     #[test]
     fn a_transition_does_not_commit_unless_asked() {
         assert!(!auto_commit_wanted(&args(&["mock", "lock"])));
-        assert!(auto_commit_wanted(&args(&["mock", "lock", "--auto-commit"])));
+        assert!(auto_commit_wanted(&args(&[
+            "mock",
+            "lock",
+            "--auto-commit"
+        ])));
     }
 
     /// The flag has to be found wherever it sits, since that is how it gets
@@ -1154,11 +1234,28 @@ mod auto_commit_tests {
     /// subject never read.
     #[test]
     fn the_flag_is_found_anywhere_and_nothing_else_stands_in_for_it() {
-        assert!(auto_commit_wanted(&args(&["mock", "--auto-commit", "close"])));
-        assert!(auto_commit_wanted(&args(&["mock", "close", "--strict", "--auto-commit"])));
+        assert!(auto_commit_wanted(&args(&[
+            "mock",
+            "--auto-commit",
+            "close"
+        ])));
+        assert!(auto_commit_wanted(&args(&[
+            "mock",
+            "close",
+            "--strict",
+            "--auto-commit"
+        ])));
         assert!(!auto_commit_wanted(&args(&["mock", "close", "--strict"])));
-        assert!(!auto_commit_wanted(&args(&["mock", "close", "--auto-comit"])));
-        assert!(!auto_commit_wanted(&args(&["mock", "close", "--no-commit"])));
+        assert!(!auto_commit_wanted(&args(&[
+            "mock",
+            "close",
+            "--auto-comit"
+        ])));
+        assert!(!auto_commit_wanted(&args(&[
+            "mock",
+            "close",
+            "--no-commit"
+        ])));
     }
 
     /// Catalogued, tracked with the `FIXME` on `auto_commit_wanted`. Committing

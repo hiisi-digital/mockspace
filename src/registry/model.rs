@@ -224,7 +224,9 @@ pub fn builtin_vocab() -> RegistryNamespace {
             f("note", false, "A distinction worth preserving that the one-liner flattens away."),
             RegistryField {
                 name: "provenance".to_string(),
-                r#type: "string[]".to_string(),
+                // Declared rather than hardcoded: this is the builtin that used
+                // to be recognised by its name alone.
+                r#type: "ref[]".to_string(),
                 required: false,
                 description: Some(
                     "Where the term is defined, when it comes from somewhere rather than being defined by the design itself."
@@ -302,6 +304,38 @@ pub fn with_builtins(declared: &[RegistryNamespace]) -> Vec<RegistryNamespace> {
         out.insert(0, builtin_vocab());
     }
     out
+}
+
+/// Whether a declared field type means "this field holds references".
+///
+/// Reference validation was keyed on the literal field name `"provenance"`,
+/// which works for exactly one consumer: one whose every reference-bearing
+/// field happens to be called that. The registry design says provenance is
+/// deliberately *not* universal, because baking one consumer's field into the
+/// mechanism warps the feature around it, and the hardcoded name was doing
+/// precisely that.
+///
+/// A type says what a field *is*, so a project may call its reference-bearing
+/// fields whatever its subject calls them, and may have more than one.
+pub fn is_reference_type(t: &str) -> bool {
+    matches!(t, "ref" | "ref[]")
+}
+
+/// The reference-bearing field names of each namespace, by namespace key.
+pub fn reference_fields(namespaces: &[RegistryNamespace]) -> BTreeMap<String, Vec<String>> {
+    namespaces
+        .iter()
+        .map(|ns| {
+            (
+                ns.key.clone(),
+                ns.fields
+                    .iter()
+                    .filter(|f| is_reference_type(&f.r#type))
+                    .map(|f| f.name.clone())
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 /// Roots every project gets without declaring them.

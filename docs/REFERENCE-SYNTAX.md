@@ -69,6 +69,64 @@ documents, and shipping code side by side, and the root name says which kind
 each is. Where several apply, list them in precedence order: the first is the
 one to follow, the rest are context.
 
+## Declaring a namespace
+
+A reference resolves only into a namespace some project declared, so the
+declaration is part of this syntax rather than a separate subject.
+
+```toml
+[[registry.namespace]]
+key = "spike"
+title = "Spikes"
+description = "A focused implementation that answers a question."
+
+[[registry.namespace.field]]
+name = "question"
+type = "string"
+required = true
+description = "The question the spike answers, in one line."
+```
+
+A field's `type` is `string`, `integer`, `boolean`, `string[]`, or **`ref` and
+`ref[]` for a field that holds references**. A reference is a string on the wire,
+so the reference types validate as strings; what the type adds is meaning, and
+it is what makes a citation in that field get checked.
+
+**Name the field whatever the subject calls it.** Reference validation was once
+keyed on the literal name `provenance`, which checked one field for one consumer
+and silently ignored every other reference-bearing field a project declared. A
+project may now declare several, called `rests_on`, `supersedes`, `evidenced_by`
+or anything else, and each is validated because its type says what it is.
+
+`key` is the array-of-tables name, singular, and it is the first selector
+segment of every reference into the namespace. A file holding `[[spike]]` rows
+validates against the spike schema wherever it sits, so a project files by
+subject rather than by kind and the registry stays queryable by kind.
+
+**A row's identity is its slug**, under the `id` key, snake_case and unique
+within its namespace. Slugs rather than numbers because a number carries no
+meaning and an identifier carrying no meaning has to be managed: never reused,
+never renumbered, never reordered, since any of those silently repoints every
+reference to it.
+
+**There is no `prefix`.** An earlier design derived an identifier pattern from a
+per-namespace prefix, so a row was `SPK-042`. That is gone: the schema generator
+emits the slug grammar directly, and a project still declaring `prefix` has it
+silently ignored, because the namespace struct no longer carries the field.
+
+The older document describing the prefixed form is
+`docs/research/202607181700_registry-of-terms-design.md`. It is kept as the
+record of how this was reasoned, and it is superseded on **two** points.
+
+**Identity**, by this section: a row is a slug, not a prefixed number.
+
+**How a reference is recognised**, by the form at the top of this document. That
+design specifies pattern-scanning, where "a bare `SPK-042` becomes a link". This
+one requires braces, and says why: without them a project with a root named
+`core` would silently rewrite prose about `core::mem::12`.
+
+No claim is made here about the rest of it.
+
 ## Anchors: prefer headings to line numbers
 
 `{{ seed::DESIGN::#the-four-lanes }}` cites a heading. `{{ seed::DESIGN::844 }}`
