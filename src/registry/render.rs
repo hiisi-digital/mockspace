@@ -53,7 +53,10 @@ pub fn generate_schemas(
             let ty = match f.r#type.as_str() {
                 "integer" => "\"type\": \"integer\"".to_string(),
                 "boolean" => "\"type\": \"boolean\"".to_string(),
-                "string[]" => {
+                // A reference is a string on the wire. The type exists to say what
+                // the string means, so validation can find it without knowing
+                // what the project called the field.
+                "string[]" | "ref[]" => {
                     "\"type\": \"array\", \"items\": { \"type\": \"string\" }".to_string()
                 },
                 _ => "\"type\": \"string\"".to_string(),

@@ -889,6 +889,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             &cfg.registry_roots,
             &cfg.frozen_roots,
             &registry,
+            &cfg.registry_namespaces,
         ) {
             registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);

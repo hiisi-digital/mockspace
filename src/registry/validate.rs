@@ -21,13 +21,20 @@ pub fn validate_provenance(
     roots: &BTreeMap<String, String>,
     frozen: &BTreeSet<String>,
     reg: &Registry,
+    namespaces: &[super::RegistryNamespace],
 ) -> Vec<RegistryFinding> {
     let mut out = Vec::new();
+    // Which fields hold references is read off each namespace's declared field
+    // TYPES. Keying on the literal name `provenance` validated one field for one
+    // consumer, and silently ignored every other reference-bearing field a
+    // project declared. The design says provenance is deliberately not
+    // universal; the hardcoded name made it universal anyway.
+    let bearing = super::reference_fields(namespaces);
 
     for row in reg.rows.values() {
-        let Some(raw) = row.fields.get("provenance") else {
-            continue;
-        };
+        let empty = Vec::new();
+        let names = bearing.get(&row.namespace).unwrap_or(&empty);
+        for raw in names.iter().filter_map(|n| row.fields.get(n)) {
         for item in raw.split(", ").filter(|s| !s.trim().is_empty()) {
             let Some(p) = FileRef::parse(item) else {
                 out.push(RegistryFinding {
@@ -120,6 +127,7 @@ pub fn validate_provenance(
                     });
                 },
             }
+        }
         }
     }
     out

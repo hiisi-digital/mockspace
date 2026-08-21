@@ -87,6 +87,17 @@ required = true
 description = "The question the spike answers, in one line."
 ```
 
+A field's `type` is `string`, `integer`, `boolean`, `string[]`, or **`ref` and
+`ref[]` for a field that holds references**. A reference is a string on the wire,
+so the reference types validate as strings; what the type adds is meaning, and
+it is what makes a citation in that field get checked.
+
+**Name the field whatever the subject calls it.** Reference validation was once
+keyed on the literal name `provenance`, which checked one field for one consumer
+and silently ignored every other reference-bearing field a project declared. A
+project may now declare several, called `rests_on`, `supersedes`, `evidenced_by`
+or anything else, and each is validated because its type says what it is.
+
 `key` is the array-of-tables name, singular, and it is the first selector
 segment of every reference into the namespace. A file holding `[[spike]]` rows
 validates against the spike schema wherever it sits, so a project files by
