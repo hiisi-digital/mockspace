@@ -19,9 +19,14 @@ use test
 
 # Sourced by path rather than reached with `use`, because `use <name>` searches
 # nutshell's own library set and this one is mockspace's. A consumer repository
-# reaches it as `use mockspace::attribution` with mockspace in its nut.toml;
-# from inside mockspace there is no dep to name.
-source "${NUTSHELL_SCRIPT_DIR}/../lib/attribution.sh"
+# reaches it as `use mockspace::attribution`, with mockspace in its nut.toml and
+# the commit pinned in nut.lock; from inside mockspace there is no dep to name
+# and no namespace for the repository's own `lib/`.
+#
+# Anchored to this file rather than to NUTSHELL_SCRIPT_DIR, which names the
+# entry point and moved out from under this the moment the runner became
+# `./test` at the repository root.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/attribution.sh"
 
 # The guard that has to come before every assertion below.
 #
