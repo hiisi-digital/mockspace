@@ -78,6 +78,28 @@ fn run(root: &Path) -> Option<i32> {
         .code()
 }
 
+/// The same run with `taplo` removed from `PATH` and nothing else touched.
+///
+/// Emptying `PATH` outright was the first attempt and it was wrong: the run
+/// shells out to `cargo` too, so the binary panicked before reaching the schema
+/// check and both arms failed together. The control caught it. Filtering only
+/// the directories that actually hold `taplo` removes the one tool under test
+/// and leaves every other lookup working.
+fn run_without_taplo(root: &Path) -> Option<i32> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let kept: Vec<&str> = path
+        .split(':')
+        .filter(|d| !d.is_empty() && !Path::new(d).join("taplo").exists())
+        .collect();
+    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+        .current_dir(root.join("mock"))
+        .env("PATH", kept.join(":"))
+        .output()
+        .ok()?
+        .status
+        .code()
+}
+
 #[test]
 fn a_duplicate_slug_fails_the_command() {
     let tmp = tempfile::tempdir().unwrap();
@@ -99,5 +121,50 @@ fn a_clean_registry_does_not() {
         Some(0),
         "the control: without this passing, the test above is equally consistent \
          with a binary that fails on every registry"
+    );
+}
+
+/// A run that could not check row shape is not a run that passed.
+///
+/// The schema check shells out to `taplo`. When it is absent the check cannot
+/// run, and until 2026-08-22 that printed `SKIPPED` and exited 0: every
+/// required field, every type and every slug pattern went unverified and the
+/// command reported success. That is the two-valued-outcome problem in the one
+/// place it is most dangerous, because the registry looks checked.
+///
+/// Gating applies only where namespaces are declared, which is the only place
+/// row shape exists to verify. The control below is the same tree with the same
+/// empty `PATH` and no namespace, and it must still pass.
+#[test]
+fn an_unverifiable_schema_check_fails_the_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), false);
+    assert_eq!(
+        run_without_taplo(tmp.path()),
+        Some(1),
+        "with no taplo on PATH the row shape is unchecked, and an unchecked \
+         registry must not report success"
+    );
+}
+
+#[test]
+fn a_project_with_no_registry_does_not_need_the_tool() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".git")).unwrap();
+    write(
+        &root.join("mock/Cargo.toml"),
+        "[workspace]\nmembers = []\nresolver = \"2\"\n",
+    );
+    // No `[[registry.namespace]]`: nothing here has a row shape to verify.
+    write(
+        &root.join("mock/mockspace.toml"),
+        "project_name = \"fixture\"\ncrate_prefix = \"fixture\"\n",
+    );
+    assert_eq!(
+        run_without_taplo(root),
+        Some(0),
+        "the control: gating an absent tool must not reach a project that \
+         declares no namespaces, or every consumer pays for a feature it does not use"
     );
 }

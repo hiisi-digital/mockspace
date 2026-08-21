@@ -917,9 +917,33 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 }
             },
             registry::SchemaCheck::Unavailable => {
-                eprintln!(
-                    "  schema check SKIPPED: taplo is not installed. Row shape is unverified; install taplo to close this gap."
-                );
+                // A run that could not check is not a run that passed. The
+                // findings above are two-valued and cannot say "do not trust
+                // this", so an unverifiable row shape reported as success is a
+                // green that means nothing: every required field, every type
+                // and every slug pattern went unchecked.
+                //
+                // Gated on rows existing, not on namespaces existing. Two
+                // namespaces are builtin (`vocab` and `reference`, prepended by
+                // `with_builtins`), so `registry_namespaces` is never empty and
+                // a guard on it fails every project that has no registry at all.
+                // That was the first version of this and the no-registry control
+                // caught it.
+                //
+                // Rows are the thing a schema verifies. No rows, nothing unverified.
+                if !registry.rows.is_empty() {
+                    registry_errors += 1;
+                }
+                if registry.rows.is_empty() {
+                    eprintln!("  schema check skipped: no rows to verify");
+                } else {
+                    eprintln!(
+                        "  ERROR [schema-unavailable]: taplo is not installed, so the shape of \
+                         {} row(s) is unverified: required fields, types and slug patterns were \
+                         all unchecked. Install taplo.",
+                        registry.rows.len()
+                    );
+                }
             },
         }
     }

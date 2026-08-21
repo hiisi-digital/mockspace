@@ -156,6 +156,11 @@ pub const FINDING_KINDS: &[&str] = &[
     "ambiguous-provenance",
     "unresolvable-heading",
     "fragile-line-citation",
+    // Not produced by `validate`. Reported by the caller when the schema check
+    // could not run at all, and named here so a project can configure its
+    // severity beside the findings it sits with. A run that could not check is
+    // not a run that passed.
+    "schema-unavailable",
 ];
 
 /// Validate what the generated schemas cannot.
