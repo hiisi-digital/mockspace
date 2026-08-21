@@ -856,6 +856,18 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         &cfg,
     );
 
+    // Registry findings gate. Every one of these prints `ERROR`, and until
+    // 2026-08-22 the command exited 0 anyway, so a dangling reference, a
+    // duplicate slug and a fragile line citation were all indistinguishable
+    // from a clean registry to anything downstream. The design says duplicate
+    // identifier and dangling reference are errors "because both mean the
+    // registry is lying"; the code said so in words and not in status.
+    //
+    // The rule is the one the code already applies when it chooses which word
+    // to print: what is reported as ERROR blocks, what is reported as a warning
+    // does not. Nothing here reclassifies a finding.
+    let mut registry_errors = 0usize;
+
     if !cfg.registry_namespaces.is_empty() {
         eprintln!("--- registry ---");
         let schemas =
@@ -869,6 +881,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             registry.by_namespace.len()
         );
         for f in &cycle_findings {
+            registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         for f in registry::validate_provenance(
@@ -877,13 +890,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             &cfg.frozen_roots,
             &registry,
         ) {
+            registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots)
         {
+            registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         for f in registry::validate(&cfg.registry_namespaces, &registry) {
+            registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
         match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
@@ -896,6 +912,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 failures,
             } => {
                 for f in failures {
+                    registry_errors += 1;
                     eprintln!("  ERROR [schema]: {f}");
                 }
             },
@@ -963,6 +980,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     eprintln!("--- generating agent rules ---");
     let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry);
     eprintln!("  generated {agent_count} agent files");
+
+    if registry_errors > 0 {
+        eprintln!(
+            "\nregistry: {registry_errors} error(s). A reference that does not resolve, or an \
+             identifier declared twice, means the registry is lying about what it holds."
+        );
+        return ExitCode::FAILURE;
+    }
 
     ExitCode::SUCCESS
 }
