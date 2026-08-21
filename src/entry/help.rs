@@ -129,7 +129,7 @@ pub(crate) fn print_help() -> ExitCode {
     println!("    --lint-only        lint without regenerating anything");
     println!("    --commit           lint at the commit gate's severities");
     println!("    --strict           lint at the push gate's severities");
-    println!("    --auto-commit      commit the state transition a subcommand makes");
+    println!("    --no-commit        leave the state transition a subcommand makes uncommitted");
     println!("    --nuke             wipe crate source, leaving stub lib.rs files");
     println!("    -h, --help         show this message");
     println!();
