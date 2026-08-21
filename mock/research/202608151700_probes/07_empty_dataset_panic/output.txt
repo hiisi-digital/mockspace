@@ -1,0 +1,9 @@
+NEGATIVE CONTROL (mode matches, two arms):
+  mode=warm, samples are warm: Ok, 2 variant(s), 82 report lines
+
+the cases:
+  mode=warm, samples say cold: PANICKED
+  no samples at all: PANICKED
+  mode field garbled (probe 03's shear): PANICKED
+
+A regenerated report is `mock bench report`, which reads a committed CSV.

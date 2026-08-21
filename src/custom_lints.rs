@@ -237,13 +237,21 @@ fn gen_collect_lib(lints_dir: &Path, lint_files: &[String], packs: &[(String, St
 
     let mut lint_mods = Vec::new();
     let mut cross_mods = Vec::new();
+    let mut repo_mods = Vec::new();
+    let mut message_mods = Vec::new();
     for name in lint_files {
-        let (has_lint, has_cross) = scan_lint_functions(lints_dir, name);
-        if has_lint {
+        let found = scan_lint_functions(lints_dir, name);
+        if found.lint {
             lint_mods.push(name.as_str());
         }
-        if has_cross {
+        if found.cross_lint {
             cross_mods.push(name.as_str());
+        }
+        if found.repo_lint {
+            repo_mods.push(name.as_str());
+        }
+        if found.message_lint {
+            message_mods.push(name.as_str());
         }
     }
     let pack_idents: Vec<String> = packs.iter().map(|(n, _)| n.replace('-', "_")).collect();
@@ -261,6 +269,12 @@ fn gen_collect_lib(lints_dir: &Path, lint_files: &[String], packs: &[(String, St
     }
     for m in &cross_mods {
         out.push_str(&format!("    pack.workspace_lints.push({m}::cross_lint());\n"));
+    }
+    for m in &repo_mods {
+        out.push_str(&format!("    pack.repo_lints.push({m}::repo_lint());\n"));
+    }
+    for m in &message_mods {
+        out.push_str(&format!("    pack.message_lints.push({m}::message_lint());\n"));
     }
     for id in &pack_idents {
         out.push_str(&format!("    {id}::collect(pack);\n"));
@@ -399,6 +413,72 @@ mod tests {
         assert!(src.contains("some_pack::collect(pack);"));
         // foo has no cross_lint(), so no per-file workspace push for it
         assert!(!src.contains("pack.workspace_lints.push(foo::cross_lint());"));
+    }
+
+    /// All four entry points, which the scanner recognised as two until
+    /// recently. `RepoLint` is the one handed paths rather than packages, so it
+    /// is the only kind a repository with no packages can register, and it was
+    /// reachable from an imported pack and from nowhere else.
+    ///
+    /// The trap is in the names. `cross_lint(`, `repo_lint(` and
+    /// `message_lint(` all end in `lint(`, so a probe for the plain kind that
+    /// is not anchored on the space after `fn` claims every file that defines
+    /// any of them. That is what the negatives below are for, and the scanner
+    /// carries a comment about it while pinning nothing.
+    #[test]
+    fn every_entry_point_is_recognised_and_none_stands_in_for_another() {
+        let dir = tempfile::tempdir().unwrap();
+        let lints = dir.path().join("lints");
+        std::fs::create_dir_all(&lints).unwrap();
+
+        for (stem, decl) in [
+            ("plain", "pub fn lint()"),
+            ("cross", "pub fn cross_lint()"),
+            ("repo", "pub fn repo_lint()"),
+            ("msg", "pub fn message_lint()"),
+        ] {
+            std::fs::write(lints.join(format!("{stem}.rs")), format!("{decl} {{ todo!() }}\n"))
+                .unwrap();
+        }
+
+        let modules: Vec<String> =
+            ["plain", "cross", "repo", "msg"].iter().map(|s| s.to_string()).collect();
+        let src = gen_collect_lib(&lints, &modules, &[]);
+
+        assert!(src.contains("pack.crate_lints.push(plain::lint());"));
+        assert!(src.contains("pack.workspace_lints.push(cross::cross_lint());"));
+        assert!(src.contains("pack.repo_lints.push(repo::repo_lint());"));
+        assert!(src.contains("pack.message_lints.push(msg::message_lint());"));
+
+        // the part with teeth: a file defining only one kind registers only
+        // that kind, so a suffix match on `lint(` cannot pass this
+        assert!(!src.contains("pack.crate_lints.push(cross::lint());"));
+        assert!(!src.contains("pack.crate_lints.push(repo::lint());"));
+        assert!(!src.contains("pack.crate_lints.push(msg::lint());"));
+        assert!(!src.contains("pack.repo_lints.push(plain::repo_lint());"));
+        assert!(!src.contains("pack.message_lints.push(plain::message_lint());"));
+    }
+
+    /// A file may define more than one, and each is pushed once onto its own
+    /// list. The control for the test above, which uses one kind per file and
+    /// so cannot tell "recognises each" from "recognises whichever it sees
+    /// first".
+    #[test]
+    fn one_file_may_register_several_kinds() {
+        let dir = tempfile::tempdir().unwrap();
+        let lints = dir.path().join("lints");
+        std::fs::create_dir_all(&lints).unwrap();
+        std::fs::write(
+            lints.join("both.rs"),
+            "pub fn lint() { todo!() }\npub fn repo_lint() { todo!() }\n",
+        )
+        .unwrap();
+
+        let src = gen_collect_lib(&lints, &["both".to_string()], &[]);
+        assert!(src.contains("pack.crate_lints.push(both::lint());"));
+        assert!(src.contains("pack.repo_lints.push(both::repo_lint());"));
+        assert!(!src.contains("pack.workspace_lints.push(both::cross_lint());"));
+        assert!(!src.contains("pack.message_lints.push(both::message_lint());"));
     }
 
     #[test]

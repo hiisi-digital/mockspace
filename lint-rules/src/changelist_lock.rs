@@ -17,9 +17,9 @@
 //! Severity: Error (blocks commit, push, and build).
 
 use std::path::Path;
-use std::process::Command;
 
 use crate::changelist_helpers::{self, Phase};
+use crate::src_layout::{self, SrcLayout};
 use crate::{Lint, RepoLint, LintError, RepoContext};
 
 const LINT_NAME: &str = "changelist-lock";
@@ -42,6 +42,7 @@ impl RepoLint for ChangelistLock {
         // there were no crates, which silently disabled the gate in a repo whose
         // taxonomy had not been settled yet.
         let workspace_root = ctx.mock_dir;
+        let layout = SrcLayout::new(workspace_root, ctx.src_dirs);
 
         let design_rounds = workspace_root.join("design_rounds");
         let phase = changelist_helpers::current_phase(&design_rounds);
@@ -64,11 +65,11 @@ impl RepoLint for ChangelistLock {
 
         // Check doc templates if doc CL is locked.
         if doc_locked {
-            let doc_files = get_modified_crate_files(workspace_root, true);
+            let doc_files = get_modified_crate_files(workspace_root, &layout, true);
             let cl_name = locked_doc_name.as_deref().unwrap_or("doc changelist");
 
             for (file, source) in doc_files {
-                let crate_name = extract_crate_name(&file).unwrap_or_else(|| "unknown".to_string());
+                let crate_name = layout.package_name(&file).unwrap_or_else(|| "unknown".to_string());
                 errors.push(LintError::error(
                     crate_name,
                     0,
@@ -89,12 +90,12 @@ impl RepoLint for ChangelistLock {
         if src_locked {
             let src_files = crate::fmt_only::drop_fmt_only(
                 workspace_root,
-                get_modified_crate_files(workspace_root, false),
+                get_modified_crate_files(workspace_root, &layout, false),
             );
             let cl_name = locked_src_name.as_deref().unwrap_or("src changelist");
 
             for (file, source) in src_files {
-                let crate_name = extract_crate_name(&file).unwrap_or_else(|| "unknown".to_string());
+                let crate_name = layout.package_name(&file).unwrap_or_else(|| "unknown".to_string());
                 errors.push(LintError::error(
                     crate_name,
                     0,
@@ -113,121 +114,82 @@ impl RepoLint for ChangelistLock {
     }
 }
 
-/// Get modified files in crates/. If `docs` is true, return doc templates
-/// (excluding SHAME.md.tmpl). If false, return .rs source files.
-
-fn get_modified_crate_files(workspace_root: &Path, docs: bool) -> Vec<(String, String)> {
-    let mut files: Vec<(String, String)> = Vec::new();
-    let filter = if docs { is_locked_doc } else { is_crate_source };
-
-    // Staged changes
-    if let Some(output) = run_git(workspace_root, &[
-        "diff",
-        "--cached",
-        "--name-only",
-        "--relative",
-        "--",
-        "crates/",
-    ]) {
-        for line in output.lines() {
-            let file = line.trim();
-            if filter(file) {
-                add_unique(&mut files, file, "staged");
-            }
-        }
-    }
-
-    // Unstaged tracked changes
-    if let Some(output) = run_git(workspace_root, &[
-        "diff",
-        "--name-only",
-        "--relative",
-        "--",
-        "crates/",
-    ]) {
-        for line in output.lines() {
-            let file = line.trim();
-            if filter(file) {
-                add_unique(&mut files, file, "unstaged");
-            }
-        }
-    }
-
-    // Untracked files
-    if let Some(output) = run_git(workspace_root, &[
-        "ls-files",
-        "--others",
-        "--exclude-standard",
-        "--",
-        "crates/",
-    ]) {
-        for line in output.lines() {
-            let file = line.trim();
-            if filter(file) {
-                add_unique(&mut files, file, "untracked");
-            }
-        }
-    }
-
-    files
+/// Modified files under the project's source directories. `docs` picks the doc
+/// templates a lock freezes; otherwise the source a lock closes.
+fn get_modified_crate_files(
+    workspace_root: &Path,
+    layout: &SrcLayout,
+    docs: bool,
+) -> Vec<(String, String)> {
+    src_layout::changed_files(workspace_root, layout, |f| {
+        if docs { is_locked_doc(layout, f) } else { is_source(layout, f) }
+    })
 }
 
-/// A file is a locked doc if it's a `.md` or `.md.tmpl` inside `crates/`,
-/// excluding `SHAME.md.tmpl`.
-fn is_locked_doc(file: &str) -> bool {
-    if file.is_empty() || !file.starts_with("crates/") {
+/// A doc a lock freezes: a `.md` or `.md.tmpl` under a source directory, with
+/// `SHAME.md.tmpl` carved out because that file is where gaps found during
+/// execution are written down, which is exactly when the lock is on.
+fn is_locked_doc(layout: &SrcLayout, file: &str) -> bool {
+    if !layout.holds(file) {
         return false;
     }
     let is_doc = file.ends_with(".md.tmpl") || file.ends_with(".md");
     is_doc && !crate::is_shame_template(file)
 }
 
-fn is_crate_source(file: &str) -> bool {
-    !file.is_empty() && file.starts_with("crates/") && file.ends_with(".rs")
-}
-
-fn add_unique(list: &mut Vec<(String, String)>, file: &str, source: &str) {
-    if !list.iter().any(|(f, _)| f == file) {
-        list.push((file.to_string(), source.to_string()));
-    }
-}
-
-fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-/// Extract crate name from a path like `crates/<crate-name>/DESIGN.md.tmpl`.
-fn extract_crate_name(path: &str) -> Option<String> {
-    let after_crates = path.strip_prefix("crates/")?;
-    let end = after_crates.find('/')?;
-    Some(after_crates[.. end].to_string())
+// FIXME: `.rs` is rust's convention standing in for the project's. `src_dirs`
+// says where source is and nothing says what counts as source there, so a
+// project writing zig or typescript gets a lock that guards none of it while
+// reporting cleanly. Same gap as `changelist_required.rs`, same fix: an
+// extension set per source directory, or a language key carrying one.
+fn is_source(layout: &SrcLayout, file: &str) -> bool {
+    layout.holds(file) && file.ends_with(".rs")
 }
 
 #[cfg(test)]
 mod is_locked_doc_tests {
-    use super::is_locked_doc;
+    use std::path::{Path, PathBuf};
+
+    use super::{is_locked_doc, is_source};
+    use crate::src_layout::SrcLayout;
+
+    fn default_layout() -> SrcLayout {
+        SrcLayout::new(Path::new("/m"), &[PathBuf::from("/m/crates")])
+    }
+
+    fn renamed_layout() -> SrcLayout {
+        SrcLayout::new(Path::new("/m"), &[PathBuf::from("/m/libs")])
+    }
 
     #[test]
     fn crate_docs_are_locked_and_only_shame_itself_is_exempt() {
-        assert!(is_locked_doc("crates/foo/DESIGN.md.tmpl"));
-        assert!(is_locked_doc("crates/foo/README.md"));
-        assert!(!is_locked_doc("crates/foo/SHAME.md.tmpl"));
-        assert!(!is_locked_doc("crates/SHAME.md.tmpl"));
+        let l = default_layout();
+        assert!(is_locked_doc(&l, "crates/foo/DESIGN.md.tmpl"));
+        assert!(is_locked_doc(&l, "crates/foo/README.md"));
+        assert!(!is_locked_doc(&l, "crates/foo/SHAME.md.tmpl"));
+        assert!(!is_locked_doc(&l, "crates/SHAME.md.tmpl"));
         // A suffix match would exempt these, opening the lock gate for
         // templates nobody carved out.
-        assert!(is_locked_doc("crates/foo/NOT_SHAME.md.tmpl"));
-        assert!(is_locked_doc("crates/foo/DESIGN_SHAME.md.tmpl"));
+        assert!(is_locked_doc(&l, "crates/foo/NOT_SHAME.md.tmpl"));
+        assert!(is_locked_doc(&l, "crates/foo/DESIGN_SHAME.md.tmpl"));
     }
 
     #[test]
     fn files_outside_crates_and_non_docs_are_not_locked_docs() {
-        assert!(!is_locked_doc(""));
-        assert!(!is_locked_doc("design_rounds/foo.md"));
-        assert!(!is_locked_doc("crates/foo/src/lib.rs"));
+        let l = default_layout();
+        assert!(!is_locked_doc(&l, ""));
+        assert!(!is_locked_doc(&l, "design_rounds/foo.md"));
+        assert!(!is_locked_doc(&l, "crates/foo/src/lib.rs"));
+    }
+
+    /// The reason the layout is threaded through at all: a project that moved
+    /// its packages is locked where they are, and not where they used to be.
+    #[test]
+    fn a_renamed_source_directory_is_where_the_lock_applies() {
+        let l = renamed_layout();
+        assert!(is_locked_doc(&l, "libs/foo/DESIGN.md.tmpl"));
+        assert!(is_source(&l, "libs/foo/src/lib.rs"));
+        assert!(!is_locked_doc(&l, "crates/foo/DESIGN.md.tmpl"));
+        assert!(!is_source(&l, "crates/foo/src/lib.rs"));
     }
 }
