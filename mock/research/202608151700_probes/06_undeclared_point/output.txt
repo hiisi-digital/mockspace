@@ -1,0 +1,22 @@
+=== NEGATIVE CONTROL: the declared point n=64 ===
+symbols an arm exports that name its point set: none
+  bench_entry / bench_name / bench_abi_hash is the whole ABI
+  n=64: returned, run_ticks=1 out=559671559948311552
+control exit=0
+
+=== an undeclared manifest point n=128 ===
+symbols an arm exports that name its point set: none
+  bench_entry / bench_name / bench_abi_hash is the whole ABI
+
+thread '<unnamed>' (41875289) panicked at src/lib.rs:6:1:
+bench_entry(only64): unsupported n=128, declared sizes: [64]. Add the size to the #[bench_variant(... sizes = [...])] attribute, or pick an existing one in your bench.toml.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (41875289) panicked at library/core/src/panicking.rs:225:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:        0x1025a5c54 - <std::sys::backtrace::BacktraceLock::print::DisplayBacktrace as core::fmt::Display>::fmt
+   ... 17 frames ...
+  12:        0x102588c00 - _bench_entry
+thread caused non-unwinding panic. aborting.
+exit=134

@@ -1,0 +1,25 @@
+--- rendered ---
+manifest_key = "warm-container-width-l1"
+title = "Warm/Precise container rule"
+runid = "1755500000-4242"
+resolved_seed = "0xffffffffffffffff"
+
+[axes.n]
+value = 130003
+
+[axes.nc]
+value = 8192
+label = "small"
+
+[[arms_dropped]]
+arm = "lanes-deferred"
+reason = "structural: validate_output rejected seed 7"
+
+[arm_dylib_hash]
+headroom = "0x0000000000000007"
+kernel = "0xdeadbeefcafe1234"
+
+round trip OK, including u64::MAX seed and high-bit-set hashes
+negative control: missing required field correctly refused: TomlError { message: "missing field `manifest_key`", raw: Some("\n        title = \"x\"\n        runid = \"y\"\n        resolved_seed = \"0x1\"\n        dep_spec = \"z\"\n        arms_dropped = []\n\n        [axes]\n        [arm_dylib_hash]\n    "), keys: [], span: Some(0..119) }
+negative control: empty axes map deserializes fine (non-empty is a design rule, not free)
+ALL CHECKS PASSED

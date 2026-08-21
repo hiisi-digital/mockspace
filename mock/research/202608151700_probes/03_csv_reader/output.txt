@@ -1,0 +1,8 @@
+CONTROL well-formed rows: [("packed", 100.0, 110.0, 7788), ("dense", 200.0, 210.0, 7788)]
+garbled algo_ns:          [("packed", 0.0, 110.0, 7788), ("dense", 200.0, 210.0, 7788)]
+pre-digest CSV:           [("packed", 100.0, 110.0, 0), ("dense", 200.0, 210.0, 0)]
+arm name with a comma:    [("packed", 110.0, 0.0, 0)]
+truncated row:            [("packed", 100.0, 110.0, 0)]
+
+Reading: (variant, algo_ns, e2e_ns, digest).
+A 0.0 ns arm is not a missing measurement, it is the fastest arm.

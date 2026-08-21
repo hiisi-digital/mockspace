@@ -1,0 +1,2 @@
+I: PASS - one struct const param, index-keyed FFI, controls hold
+I: index/value collision on vehje's own point list at indices [1, 2, 4, 8]

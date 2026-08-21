@@ -1,0 +1,10 @@
+[package]
+name = "arm"
+version = "0.0.0"
+edition = "2024"
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+mockspace-bench-core = { path = "/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/tmp.jaXPSOgNym/pr21/bench-core", features = ["std"] }
+mockspace-bench-macro = { path = "/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/tmp.jaXPSOgNym/pr21/bench-macro" }
+[workspace]
