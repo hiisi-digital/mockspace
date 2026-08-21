@@ -63,11 +63,12 @@ pub mod path_filter;
 mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
+pub mod src_layout;
 pub mod type_scanner;
 mod undocumented_type;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub use path_filter::{PathFilter, PathFilters, glob_match};
 
@@ -1237,6 +1238,16 @@ pub struct RepoContext<'a> {
     /// Every crate directory name in the workspace. Empty is a legitimate
     /// state, and a repo lint must behave correctly when it is.
     pub all_crates:    &'a BTreeSet<String>,
+    /// Every directory holding source packages, absolute, in config order.
+    ///
+    /// The same list `mockspace.toml` names and `Config::src_dirs` carries, in
+    /// the same form, so there is one spelling of it rather than an absolute
+    /// one out here and a relative one in the lints. A lint wanting a git
+    /// pathspec strips `mock_dir` off itself.
+    ///
+    /// Empty is legitimate and means a project with no source at all, which is
+    /// what a documentation repository is.
+    pub src_dirs:      &'a [PathBuf],
     /// The invocation that triggered this run, when there was one and the lint
     /// asked for it via [`Lint::invocation_wanted`].
     pub invocation:    Option<Invocation<'a>>,
@@ -1998,10 +2009,12 @@ mod repo_lint_tests {
         let tmp = std::env::temp_dir().join(format!("ms_repo_lint_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let no_crates = BTreeSet::new();
+        let no_src: [PathBuf; 0] = [];
         let ctx = RepoContext {
             mock_dir:   &tmp,
             repo_root:  &tmp,
             all_crates: &no_crates,
+            src_dirs:   &no_src,
             invocation: None,
         };
 
@@ -2056,10 +2069,12 @@ mod repo_lint_tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let no_crates = BTreeSet::new();
+        let no_src: [PathBuf; 0] = [];
         let ctx = RepoContext {
             mock_dir:   &tmp,
             repo_root:  &tmp,
             all_crates: &no_crates,
+            src_dirs:   &no_src,
             invocation: None,
         };
         let extra: Vec<Box<dyn RepoLint>> = vec![lint];

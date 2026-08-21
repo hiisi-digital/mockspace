@@ -277,6 +277,7 @@ pub fn run_lints(
         mock_dir:   workspace_root,
         repo_root:  workspace_root.parent().unwrap_or(workspace_root),
         all_crates: &all_crate_names,
+        src_dirs:   src_dirs,
         invocation: None,
     };
     all_errors.extend(mockspace_lint_rules::check_repo_with_extra(
