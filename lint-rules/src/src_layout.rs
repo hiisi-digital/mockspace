@@ -13,6 +13,14 @@
 //! directory it does not have, which is to say gates that found nothing and
 //! said nothing, which is the shape a working gate has too.
 //!
+//! **This fixes where the source is and not what counts as source there.** The
+//! gates still decide that with `ends_with(".rs")`, which nothing in
+//! `mockspace.toml` names, so a project writing zig or typescript under a
+//! declared source directory still gets the failure described above with the
+//! other half of the cause. Two `FIXME`s mark it, and
+//! `a_source_gate_guards_the_extensions_the_project_writes` asserts the
+//! intended behaviour and is ignored until there is one.
+//!
 //! So the fact lives here once and the lints ask. What stays with each lint is
 //! the part that really is its own, which is what it considers a file worth
 //! caring about: source for one, doc templates for another.
@@ -246,5 +254,26 @@ mod tests {
     fn a_source_directory_outside_the_mock_dir_contributes_nothing_addressable() {
         let l = SrcLayout::new(Path::new("/m"), &[PathBuf::from("/elsewhere/crates")]);
         assert!(l.is_empty());
+    }
+
+    /// Catalogued. The layout answers where source lives and the gates still
+    /// decide what counts as source with `.rs`, so half the hardcode this module
+    /// exists to remove is still standing one layer up.
+    ///
+    /// The assertion is what a project should be able to say. Un-ignore it once
+    /// a source directory can carry the extensions its language uses; the two
+    /// `FIXME`s in `changelist_required.rs` and `changelist_lock.rs` are the
+    /// sites that would then read it.
+    #[test]
+    #[ignore = "catalogue: a source directory cannot declare which extensions \
+                are source in it, so a non-rust project's gate matches nothing"]
+    fn a_source_gate_guards_the_extensions_the_project_writes() {
+        let l = layout(&["src"]);
+        // what the gates ask today, spelled out, so the gap is visible here
+        let is_source_today = |f: &str| l.holds(f) && f.ends_with(".rs");
+        assert!(
+            is_source_today("src/main.zig"),
+            "a zig project's source is not guarded, and the gate reports cleanly"
+        );
     }
 }
