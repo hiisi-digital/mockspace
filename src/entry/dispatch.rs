@@ -149,8 +149,19 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         match find_mockspace_root() {
             Some(dir) => dir,
             None => {
+                // No config, so the only question left is whether this looks
+                // like a mock directory at all. `design_rounds/` answers it:
+                // mockspace creates that directory and nothing else does, so a
+                // directory holding one is a mock directory whatever language
+                // the project is written in.
+                //
+                // This used to ask whether `crates/` was there, which is one
+                // language's convention standing in for the question. It said
+                // yes to any rust project that had never adopted mockspace, and
+                // no to every project that had adopted it and written its source
+                // somewhere else.
                 let cwd = std::env::current_dir().unwrap();
-                if cwd.join("crates").is_dir() {
+                if cwd.join("design_rounds").is_dir() {
                     cwd
                 } else {
                     eprintln!(

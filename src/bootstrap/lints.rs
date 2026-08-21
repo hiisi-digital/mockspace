@@ -92,17 +92,38 @@ pub(crate) fn is_valid_rust_ident(s: &str) -> bool {
         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
-/// Scan a `.rs` file to determine which custom lint functions it defines.
+/// Which custom lint entry points a repo's own `mock/lints/*.rs` file defines.
 ///
-/// Looks for `pub fn lint()` and `pub fn cross_lint()` signatures.
-pub(crate) fn scan_lint_functions(lints_dir: &Path, stem: &str) -> (bool, bool) {
+/// One field per lint kind in [`LintPack`]. A repo that can only register some
+/// of the kinds cannot express the others at all, which is the defect this
+/// struct exists to remove: `RepoLint` and `MessageLint` were reachable only
+/// from a pack crate, so a repository whose lintable material is documentation
+/// rather than source had no way to write a lint for it locally.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LintEntryPoints {
+    /// `pub fn lint()` -> a lint handed one package at a time.
+    pub(crate) lint:         bool,
+    /// `pub fn cross_lint()` -> a lint handed every package at once.
+    pub(crate) cross_lint:   bool,
+    /// `pub fn repo_lint()` -> a lint handed repository paths, with no packages.
+    pub(crate) repo_lint:    bool,
+    /// `pub fn message_lint()` -> a lint handed an authored message.
+    pub(crate) message_lint: bool,
+}
+
+/// Scan a `.rs` file to determine which custom lint functions it defines.
+pub(crate) fn scan_lint_functions(lints_dir: &Path, stem: &str) -> LintEntryPoints {
     let path = lints_dir.join(format!("{stem}.rs"));
     let content = fs::read_to_string(&path).unwrap_or_default();
 
-    let has_lint = content.contains("pub fn lint(");
-    let has_cross_lint = content.contains("pub fn cross_lint(");
-
-    (has_lint, has_cross_lint)
+    LintEntryPoints {
+        // `cross_lint(` and `message_lint(` both end in `lint(`, so the plain
+        // lint probe must not match them. Anchored on the space after `fn`.
+        lint:         content.contains("pub fn lint("),
+        cross_lint:   content.contains("pub fn cross_lint("),
+        repo_lint:    content.contains("pub fn repo_lint("),
+        message_lint: content.contains("pub fn message_lint("),
+    }
 }
 
 
