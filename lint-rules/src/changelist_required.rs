@@ -1,8 +1,12 @@
-//! Cross-crate lint: source code changes require the IMPL phase.
+//! Repo lint: source code changes require the IMPL phase.
 //!
-//! Source changes (`*.rs` in `crates/`) are only allowed during
-//! `Phase::Src` (label IMPL): when a doc CL is locked AND an unlocked
-//! src CL exists.
+//! A `*.rs` file under one of the project's declared source directories may
+//! only change during `Phase::Src` (label IMPL), which is when a doc CL is
+//! locked and an unlocked src CL exists.
+//!
+//! Which directories those are comes from `src_dirs` rather than from the word
+//! `crates`, so a project that renamed or grouped its packages is guarded where
+//! its source actually is. `src_layout` holds that.
 //!
 //! Enforcement is global: not just staged files, but ANY untracked or
 //! unstaged source changes will block the commit. Revert disallowed
@@ -14,6 +18,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::changelist_helpers::{self, Phase};
+use crate::src_layout::{self, SrcLayout};
 use crate::{Lint, RepoLint, LintError, RepoContext};
 
 const LINT_NAME: &str = "changelist-required";
@@ -36,6 +41,7 @@ impl RepoLint for ChangelistRequired {
         // there were no crates, which silently disabled the gate in a repo whose
         // taxonomy had not been settled yet.
         let workspace_root = ctx.mock_dir;
+        let layout = SrcLayout::new(workspace_root, ctx.src_dirs);
 
         let design_rounds = workspace_root.join("design_rounds");
         let phase = changelist_helpers::current_phase(&design_rounds);
@@ -48,7 +54,9 @@ impl RepoLint for ChangelistRequired {
         // Check if any .rs source files are modified.
         let modified = crate::fmt_only::drop_fmt_only(
             workspace_root,
-            get_all_modified_rs_files(workspace_root),
+            src_layout::changed_files(workspace_root, &layout, |f| {
+                layout.holds(f) && f.ends_with(".rs")
+            }),
         );
 
         modified
@@ -56,11 +64,10 @@ impl RepoLint for ChangelistRequired {
             .filter(|(file, source)| {
                 // Skip nuked crates: intentionally wiped source is not a
                 // phase violation. Check the crate's lib.rs for the nuke marker.
-                let crate_name = extract_crate_name(file).unwrap_or_default();
-                let librs = workspace_root
-                    .join("crates")
-                    .join(&crate_name)
-                    .join("src/lib.rs");
+                let librs = layout
+                    .package_dir(workspace_root, file)
+                    .map(|d| d.join("src/lib.rs"))
+                    .unwrap_or_default();
                 let nuked = std::fs::read_to_string(&librs)
                     .map(|s| s.contains("Nuked by"))
                     .unwrap_or(false);
@@ -80,7 +87,8 @@ impl RepoLint for ChangelistRequired {
                 !content.map(|s| declares_nothing(&s)).unwrap_or(false)
             })
             .map(|(file, source)| {
-                let crate_name = extract_crate_name(&file).unwrap_or_else(|| "unknown".to_string());
+                let crate_name =
+                    layout.package_name(&file).unwrap_or_else(|| "unknown".to_string());
 
                 let phase_hint = match phase {
                     Phase::Topic => {
@@ -118,83 +126,6 @@ impl RepoLint for ChangelistRequired {
     }
 }
 
-/// Get all modified .rs files in crates/ (staged + unstaged + untracked).
-
-fn get_all_modified_rs_files(workspace_root: &Path) -> Vec<(String, String)> {
-    let mut files: Vec<(String, String)> = Vec::new();
-
-    // Staged changes
-    if let Some(output) = run_git(workspace_root, &[
-        "diff",
-        "--cached",
-        "--name-only",
-        "--relative",
-        "--",
-        "crates/",
-    ]) {
-        for line in output.lines() {
-            let file = line.trim();
-            if is_crate_source(file) {
-                add_unique(&mut files, file, "staged");
-            }
-        }
-    }
-
-    // Unstaged tracked changes
-    if let Some(output) = run_git(workspace_root, &[
-        "diff",
-        "--name-only",
-        "--relative",
-        "--",
-        "crates/",
-    ]) {
-        for line in output.lines() {
-            let file = line.trim();
-            if is_crate_source(file) {
-                add_unique(&mut files, file, "unstaged");
-            }
-        }
-    }
-
-    // Untracked files
-    if let Some(output) = run_git(workspace_root, &[
-        "ls-files",
-        "--others",
-        "--exclude-standard",
-        "--",
-        "crates/",
-    ]) {
-        for line in output.lines() {
-            let file = line.trim();
-            if is_crate_source(file) {
-                add_unique(&mut files, file, "untracked");
-            }
-        }
-    }
-
-    files
-}
-
-fn is_crate_source(file: &str) -> bool {
-    !file.is_empty() && file.starts_with("crates/") && file.ends_with(".rs")
-}
-
-fn add_unique(list: &mut Vec<(String, String)>, file: &str, source: &str) {
-    if !list.iter().any(|(f, _)| f == file) {
-        list.push((file.to_string(), source.to_string()));
-    }
-}
-
-fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-/// Extract crate name from a path like `crates/<crate-name>/src/lib.rs`.
 /// The content that would actually be committed.
 ///
 /// For a staged entry that is the blob in the index, which is what a plain
@@ -270,15 +201,67 @@ fn declares_nothing(src: &str) -> bool {
     true
 }
 
-fn extract_crate_name(path: &str) -> Option<String> {
-    let after_crates = path.strip_prefix("crates/")?;
-    let end = after_crates.find('/')?;
-    Some(after_crates[.. end].to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The gate end to end against a project that does not use the word
+    /// `crates`, which is the case the whole `src_layout` change exists for.
+    ///
+    /// This walks the real path rather than the predicates: a `RepoContext`
+    /// carrying `src_dirs`, a git repository on disk, a frozen phase, and a
+    /// finding that has to name the package. The control is the same repository
+    /// read through a layout that still says `crates`, where the gate must find
+    /// nothing at all, because finding nothing is exactly what shipped before
+    /// this and is the failure nobody would have seen.
+    #[test]
+    fn a_project_that_renamed_its_source_directory_is_gated_where_its_source_is() {
+        let root = std::env::temp_dir().join(format!("clr-renamed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("libs/widget/src")).unwrap();
+        std::fs::create_dir_all(root.join("design_rounds")).unwrap();
+        // both changelists locked, so the phase is CLOSED and no source may move
+        for name in ["202601010000_changelist.doc.lock.md", "202601010001_changelist.src.lock.md"]
+        {
+            std::fs::write(root.join("design_rounds").join(name), "locked\n").unwrap();
+        }
+        std::fs::write(root.join("libs/widget/src/lib.rs"), "pub fn a() {}\n").unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@example.com"],
+            vec!["config", "user.name", "t"],
+            vec!["add", "-A"],
+            vec!["commit", "-q", "-m", "seed", "--no-gpg-sign"],
+        ] {
+            Command::new("git").args(&args).current_dir(&root).output().unwrap();
+        }
+        std::fs::write(root.join("libs/widget/src/lib.rs"), "pub fn a() {}\npub fn b() {}\n")
+            .unwrap();
+
+        let run = |dirs: &[std::path::PathBuf]| {
+            let crates = std::collections::BTreeSet::new();
+            ChangelistRequired.check_repo(&RepoContext {
+                mock_dir:   &root,
+                repo_root:  &root,
+                all_crates: &crates,
+                src_dirs:   dirs,
+                invocation: None,
+            })
+        };
+
+        let found = run(&[root.join("libs")]);
+        assert_eq!(found.len(), 1, "expected the edit under libs/ to be gated: {found:?}");
+        assert_eq!(found[0].crate_name, "widget");
+
+        // The control, and the reason this test is worth its runtime.
+        assert!(
+            run(&[root.join("crates")]).is_empty(),
+            "a layout naming a directory this project does not have must find \
+             nothing, which is what the old hardcoded gate did here"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// Catalogued gap, tracked #41. Under `git commit -a` the commit carries
     /// the worktree blob of a staged-then-modified file, so the content this
@@ -370,10 +353,12 @@ mod fmt_only_exemption {
 
     fn blocked(root: &std::path::Path) -> Vec<LintError> {
         let crates = std::collections::BTreeSet::new();
+        let src_dirs = [root.join("crates")];
         let ctx = RepoContext {
             mock_dir:   root,
             repo_root:  root,
             all_crates: &crates,
+            src_dirs:   &src_dirs,
             invocation: None,
         };
         ChangelistRequired.check_repo(&ctx)
@@ -477,10 +462,12 @@ mod fmt_only_judges_the_committed_content {
 
     fn gate(root: &std::path::Path) -> Vec<LintError> {
         let crates = std::collections::BTreeSet::new();
+        let src_dirs = [root.join("crates")];
         ChangelistRequired.check_repo(&RepoContext {
             mock_dir:   root,
             repo_root:  root,
             all_crates: &crates,
+            src_dirs:   &src_dirs,
             invocation: None,
         })
     }

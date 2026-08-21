@@ -237,13 +237,21 @@ fn gen_collect_lib(lints_dir: &Path, lint_files: &[String], packs: &[(String, St
 
     let mut lint_mods = Vec::new();
     let mut cross_mods = Vec::new();
+    let mut repo_mods = Vec::new();
+    let mut message_mods = Vec::new();
     for name in lint_files {
-        let (has_lint, has_cross) = scan_lint_functions(lints_dir, name);
-        if has_lint {
+        let found = scan_lint_functions(lints_dir, name);
+        if found.lint {
             lint_mods.push(name.as_str());
         }
-        if has_cross {
+        if found.cross_lint {
             cross_mods.push(name.as_str());
+        }
+        if found.repo_lint {
+            repo_mods.push(name.as_str());
+        }
+        if found.message_lint {
+            message_mods.push(name.as_str());
         }
     }
     let pack_idents: Vec<String> = packs.iter().map(|(n, _)| n.replace('-', "_")).collect();
@@ -261,6 +269,12 @@ fn gen_collect_lib(lints_dir: &Path, lint_files: &[String], packs: &[(String, St
     }
     for m in &cross_mods {
         out.push_str(&format!("    pack.workspace_lints.push({m}::cross_lint());\n"));
+    }
+    for m in &repo_mods {
+        out.push_str(&format!("    pack.repo_lints.push({m}::repo_lint());\n"));
+    }
+    for m in &message_mods {
+        out.push_str(&format!("    pack.message_lints.push({m}::message_lint());\n"));
     }
     for id in &pack_idents {
         out.push_str(&format!("    {id}::collect(pack);\n"));

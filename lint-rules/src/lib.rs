@@ -59,14 +59,18 @@ mod no_primitive_key;
 mod no_raw_error_outside_primitives;
 mod no_self_define;
 mod no_todo;
+pub mod path_filter;
 mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
+pub mod src_layout;
 pub mod type_scanner;
 mod undocumented_type;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+pub use path_filter::{PathFilter, PathFilters, glob_match};
 
 use tree_sitter::Tree;
 
@@ -872,6 +876,11 @@ pub struct LintConfig {
     pub findings: HashMap<String, HashMap<String, Severity>>,
     /// Per-lint parameters: lint_name -> { key -> value }.
     pub params:   HashMap<String, HashMap<String, String>>,
+    /// Which paths each lint may be shown: lint_name -> filter.
+    ///
+    /// The runner applies these before calling a lint, so no lint implements path scoping
+    /// and one written without knowing this exists still respects it. See [`path_filter`].
+    pub paths:    PathFilters,
 }
 
 impl LintConfig {
@@ -882,13 +891,25 @@ impl LintConfig {
             base:     HashMap::new(),
             findings: HashMap::new(),
             params:   HashMap::new(),
+            paths:    PathFilters::new(),
         }
     }
 
     /// Whether this config has any overrides at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.base.is_empty() && self.findings.is_empty() && self.params.is_empty()
+        self.base.is_empty()
+            && self.findings.is_empty()
+            && self.params.is_empty()
+            && self.paths.is_empty()
+    }
+
+    /// The path filter for one lint, when it has one that would change anything. An empty
+    /// filter reads as absent, so the runner skips the work instead of filtering a list
+    /// down to itself.
+    #[must_use]
+    pub fn filter_for(&self, lint_name: &str) -> Option<&PathFilter> {
+        self.paths.get(lint_name).filter(|f| !f.is_empty())
     }
 
     /// Build a LintConfig from a simple base-only HashMap (backwards compat).
@@ -897,6 +918,7 @@ impl LintConfig {
             base,
             findings: HashMap::new(),
             params: HashMap::new(),
+            paths: PathFilters::new(),
         }
     }
 }
@@ -1216,6 +1238,16 @@ pub struct RepoContext<'a> {
     /// Every crate directory name in the workspace. Empty is a legitimate
     /// state, and a repo lint must behave correctly when it is.
     pub all_crates:    &'a BTreeSet<String>,
+    /// Every directory holding source packages, absolute, in config order.
+    ///
+    /// The same list `mockspace.toml` names and `Config::src_dirs` carries, in
+    /// the same form, so there is one spelling of it rather than an absolute
+    /// one out here and a relative one in the lints. A lint wanting a git
+    /// pathspec strips `mock_dir` off itself.
+    ///
+    /// Empty is legitimate and means a project with no source at all, which is
+    /// what a documentation repository is.
+    pub src_dirs:      &'a [PathBuf],
     /// The invocation that triggered this run, when there was one and the lint
     /// asked for it via [`Lint::invocation_wanted`].
     pub invocation:    Option<Invocation<'a>>,
@@ -1471,20 +1503,65 @@ pub fn all_lints() -> Vec<Box<dyn CrateLint>> {
 /// file once and every per-file lint shares the trees; the parse used to live
 /// inside this function, which priced a crate at one parse per file per lint,
 /// a loop on the wrong side of the work.
+/// # Where the path filter gets applied, and why to both dispatch shapes
+///
+/// The filter has to reach the crate-scoped case as well as the per-file one, or it would
+/// be a rule any lint could step around by declaring `per_file = false` and walking
+/// `all_sources` for itself. So a filtered crate-scoped lint gets a context whose
+/// `all_sources` holds only what it may see, and whose `source` and `tree` point at the
+/// first surviving file rather than at a crate root it was configured not to look at.
+///
+/// That costs a clone of each surviving file, paid only by a lint someone actually
+/// configured a filter for: [`LintConfig::filter_for`] hands back `None` for every other
+/// lint and this takes the borrowed path.
+///
+/// A lint whose filter admits nothing is skipped rather than run against an empty crate,
+/// since "nothing to look at" and "looked and found nothing" are different answers and
+/// something like `no-empty-crate` reports on the second.
 fn check_every_file(
     lint: &dyn CrateLint,
     ctx: &LintContext,
     parsed: &[(&CrateSourceFile, Tree)],
+    filter: Option<&PathFilter>,
 ) -> Vec<LintError> {
+    let kept: Vec<&(&CrateSourceFile, Tree)> = match filter {
+        None => parsed.iter().collect(),
+        Some(f) => parsed.iter().filter(|(file, _)| f.allows(&file.rel_path)).collect(),
+    };
+
+    if filter.is_some() && kept.is_empty() {
+        return Vec::new();
+    }
+
+    if !lint.per_file() {
+        // an unfiltered crate-scoped lint gets the context untouched, which is the path
+        // every lint took before filters existed
+        let Some(f) = filter else {
+            return lint.check(ctx);
+        };
+        let owned: Vec<CrateSourceFile> =
+            ctx.all_sources.iter().filter(|s| f.allows(&s.rel_path)).cloned().collect();
+        if owned.is_empty() {
+            return Vec::new();
+        }
+        let (root_source, root_tree) = (&kept[0].0.text, &kept[0].1);
+        return lint.check(&LintContext {
+            source: root_source,
+            tree: root_tree,
+            all_sources: &owned,
+            ..*ctx
+        });
+    }
+
     // An empty parse set means a caller built the context without
     // `all_sources`, so the old behaviour is what it expects rather than no
     // coverage at all.
-    if !lint.per_file() || parsed.is_empty() {
+    if parsed.is_empty() {
         return lint.check(ctx);
     }
 
     let mut errors = Vec::new();
-    for (file, tree) in parsed {
+    for (file, tree) in kept {
         let path = file.rel_path.to_string_lossy();
         let per_file = LintContext {
             source: &file.text,
@@ -1597,8 +1674,9 @@ pub fn check_crate_with_extra(
     let parsed = parse_sources(ctx.all_sources);
 
     for lint in lints.iter().map(Box::as_ref).chain(extra_lints.iter().map(Box::as_ref)) {
+        let filter = overrides.and_then(|cfg| cfg.filter_for(lint.name()));
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            check_every_file(lint, ctx, &parsed)
+            check_every_file(lint, ctx, &parsed, filter)
         });
     }
     errors
@@ -1931,10 +2009,12 @@ mod repo_lint_tests {
         let tmp = std::env::temp_dir().join(format!("ms_repo_lint_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let no_crates = BTreeSet::new();
+        let no_src: [PathBuf; 0] = [];
         let ctx = RepoContext {
             mock_dir:   &tmp,
             repo_root:  &tmp,
             all_crates: &no_crates,
+            src_dirs:   &no_src,
             invocation: None,
         };
 
@@ -1989,10 +2069,12 @@ mod repo_lint_tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
         let no_crates = BTreeSet::new();
+        let no_src: [PathBuf; 0] = [];
         let ctx = RepoContext {
             mock_dir:   &tmp,
             repo_root:  &tmp,
             all_crates: &no_crates,
+            src_dirs:   &no_src,
             invocation: None,
         };
         let extra: Vec<Box<dyn RepoLint>> = vec![lint];
@@ -2183,7 +2265,7 @@ mod declared_default_severity_tests {
         let mut base = ctx();
         base.all_sources = &files;
 
-        let found = check_every_file(&no_todo::NoTodo, &base, &parse_sources(&files));
+        let found = check_every_file(&no_todo::NoTodo, &base, &parse_sources(&files), None);
         assert_eq!(found.len(), 1, "expected the module file's todo macro, got {found:?}");
         assert_eq!(
             found[0].path.as_deref(),
@@ -2204,8 +2286,94 @@ mod declared_default_severity_tests {
         base.all_sources = &files;
 
         let root_only = parse_sources(&files[.. 1]);
-        let found = check_every_file(&no_todo::NoTodo, &base, &root_only);
+        let found = check_every_file(&no_todo::NoTodo, &base, &root_only, None);
         assert!(found.is_empty(), "the crate root is clean, so this should find nothing");
+    }
+
+    #[test]
+    fn an_excluded_file_is_never_shown_to_a_per_file_lint() {
+        // the same dirty fixture as above, which without a filter yields exactly one
+        // finding. excluding the file that carries it is the whole mechanism, and the test
+        // above is the control that says the finding is there to be suppressed.
+        let files = crate_with_a_dirty_module();
+        let mut base = ctx();
+        base.all_sources = &files;
+        let filter = PathFilter { include: vec![], exclude: vec!["src/env.rs".into()] };
+
+        let found =
+            check_every_file(&no_todo::NoTodo, &base, &parse_sources(&files), Some(&filter));
+        assert!(found.is_empty(), "the only dirty file was excluded, got {found:?}");
+    }
+
+    #[test]
+    fn a_crate_scoped_lint_cannot_walk_past_its_filter() {
+        // the hole worth pinning: a crate-scoped lint ignores the per-file dispatch and
+        // reads `all_sources` itself, so unless the runner narrows that too, declaring
+        // `per_file = false` is a way around the config.
+        struct CountsSources(std::sync::atomic::AtomicUsize);
+        impl Lint for CountsSources {
+            fn name(&self) -> &'static str {
+                "counts-sources"
+            }
+
+            fn per_file(&self) -> bool {
+                false
+            }
+        }
+        impl CrateLint for CountsSources {
+            fn check(&self, ctx: &LintContext) -> Vec<LintError> {
+                self.0.store(ctx.all_sources.len(), std::sync::atomic::Ordering::SeqCst);
+                Vec::new()
+            }
+        }
+
+        let files = crate_with_a_dirty_module();
+        let mut base = ctx();
+        base.all_sources = &files;
+        let lint = CountsSources(std::sync::atomic::AtomicUsize::new(0));
+        let parsed = parse_sources(&files);
+
+        check_every_file(&lint, &base, &parsed, None);
+        assert_eq!(lint.0.load(std::sync::atomic::Ordering::SeqCst), 2, "unfiltered control");
+
+        let filter = PathFilter { include: vec!["src/lib.rs".into()], exclude: vec![] };
+        check_every_file(&lint, &base, &parsed, Some(&filter));
+        assert_eq!(
+            lint.0.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "a crate-scoped lint must be handed the narrowed all_sources, not the full one",
+        );
+    }
+
+    #[test]
+    fn a_filter_that_admits_nothing_skips_the_lint_rather_than_running_it_empty() {
+        // "nothing to look at" and "looked and found nothing" are different answers, and a
+        // lint like no-empty-crate reports on the second. a filter has to produce the first.
+        struct AlwaysFires;
+        impl Lint for AlwaysFires {
+            fn name(&self) -> &'static str {
+                "always-fires"
+            }
+
+            fn per_file(&self) -> bool {
+                false
+            }
+        }
+        impl CrateLint for AlwaysFires {
+            fn check(&self, _ctx: &LintContext) -> Vec<LintError> {
+                vec![LintError::error("c".into(), 1, "always-fires", "fired".into())]
+            }
+        }
+
+        let files = crate_with_a_dirty_module();
+        let mut base = ctx();
+        base.all_sources = &files;
+        let parsed = parse_sources(&files);
+
+        assert_eq!(check_every_file(&AlwaysFires, &base, &parsed, None).len(), 1, "control");
+
+        let filter = PathFilter { include: vec!["nothing/matches/this".into()], exclude: vec![] };
+        assert!(check_every_file(&AlwaysFires, &base, &parsed, Some(&filter)).is_empty());
     }
 
     #[test]
@@ -2303,13 +2471,13 @@ mod declared_default_severity_tests {
         let files = crate_with_a_dirty_module();
         let mut base = ctx();
         base.all_sources = &files;
-        assert_eq!(check_every_file(&CrateScoped, &base, &parse_sources(&files)).len(), 1);
+        assert_eq!(check_every_file(&CrateScoped, &base, &parse_sources(&files), None).len(), 1);
     }
 
     fn config_of(name: &str, severity: Severity) -> LintConfig {
         let mut base = HashMap::new();
         base.insert(name.to_string(), severity);
-        LintConfig { base, findings: HashMap::new(), params: HashMap::new() }
+        LintConfig { base, findings: HashMap::new(), params: HashMap::new(), paths: PathFilters::new() }
     }
 
     /// Count findings from one extra lint, ignoring whatever the builtin set
@@ -2380,7 +2548,7 @@ mod declared_default_severity_tests {
             kinds.insert("some-kind".to_string(), Severity::HARD_ERROR);
             kinds
         });
-        let cfg = LintConfig { base: HashMap::new(), findings, params: HashMap::new() };
+        let cfg = LintConfig { base: HashMap::new(), findings, params: HashMap::new(), paths: PathFilters::new() };
         assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 1);
     }
 
@@ -2394,7 +2562,7 @@ mod declared_default_severity_tests {
             keys.insert("rules".to_string(), "something".to_string());
             keys
         });
-        let cfg = LintConfig { base: HashMap::new(), findings: HashMap::new(), params };
+        let cfg = LintConfig { base: HashMap::new(), findings: HashMap::new(), params, paths: PathFilters::new() };
         assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 1);
     }
 
