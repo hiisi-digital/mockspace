@@ -1,0 +1,14 @@
+[workspace]
+[package]
+name = "arm_declares_thin"
+version = "0.0.0"
+edition = "2021"
+publish = false
+[lib]
+name = "arm_declares_thin"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+[profile.release]
+opt-level = 1
+lto = "thin"
+codegen-units = 16

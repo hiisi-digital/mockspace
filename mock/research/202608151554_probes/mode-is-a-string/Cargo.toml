@@ -1,0 +1,14 @@
+[package]
+name = "probe-mode-is-a-string"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+mockspace-bench-harness = { path = "../../../../bench-harness" }
+
+[[bin]]
+name = "probe-mode-is-a-string"
+path = "src/main.rs"
+
+[workspace]
