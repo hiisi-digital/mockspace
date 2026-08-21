@@ -100,7 +100,9 @@ Transitions are subcommands, not manual renames:
 | `cargo mock archive`      | Archive an abandoned round into a `<timestamp>-abandoned/` subdir | any                     |
 | `cargo mock migrate`      | Rename legacy `YYYY-MM-DD_*.md` files to the compact format       | any                     |
 
-All transition subcommands accept `--auto-commit` to create a surgical git commit of only the renamed files, using a temporary `GIT_INDEX_FILE` so any staged changes remain untouched.
+All transition subcommands accept `--auto-commit`, which commits only the renamed files. A temporary `GIT_INDEX_FILE` is used, so whatever is staged stays staged and is not swept into the commit.
+
+**That commit is written with git plumbing, so no hook runs and it is not signed.** `commit-tree` plus `update-ref` is what builds it, which means `core.hooksPath`, `pre-commit`, `commit-msg` and `commit.gpgsign` are all bypassed. If a repository relies on any of those, do the commit by hand: without the flag the subcommand prints the exact command to run.
 
 The "## Comparison to deprecated changelist" section of the active CL plus `BACKLOG.md.tmpl` together are the repository's memory of decisions not yet implemented.
 
@@ -207,6 +209,18 @@ build = "warn"
 push = "error"
 ```
 
+Which files a lint sees, on the same table:
+
+```toml
+[lints.no-todo]
+include = ["src/**"]
+exclude = ["**/generated/**", "*.pb.rs"]
+```
+
+Paths are the ones a lint would report, so crate-relative (`src/lib.rs`) rather than repo-relative. `?` matches one character inside a segment, `*` a run of them without crossing a `/`, and `**` any number of whole segments including none; a pattern with no `/` in it matches the basename at any depth, as gitignore does. Character classes, brace expansion and negation are not implemented. Naming a lint here is enough to ask for it, so a lint that is off by default runs if the only thing said about it is a path filter.
+
+`include` and `exclude` apply to per-package and cross-package lints. **They are read and then ignored for repository lints**, whose dispatch has no file list to filter.
+
 Levels: `off`, `info`, `warn`, `error`. The four built-in design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`) are always on and non-negotiable.
 
 The v2 source-level directive vocabulary (`lint:allow`, `lint:scope-add`, `lint:defer`, `lint:file-disable`, `lint:prop`) and the `[primitive-introductions]` retirement are covered in [`MIGRATION-v1-to-v2-lints.md`](MIGRATION-v1-to-v2-lints.md). Consumers picking up the v2 engine should read it once per repo.
@@ -241,7 +255,16 @@ define_thing = "thing | ⚙ | #FFF | #000"
 Three sources contribute rules:
 
 1. **Built-in lints** from `mockspace_lint_rules` (sibling crate under `lint-rules/`). Universal quality lints (`no-empty-crate`, `file-size`, `undocumented-type`, etc.) and design-round state-machine lints.
-2. **Custom lints** in `mock/lints/<name>.rs`. Each file defines `pub fn lint() -> Box<dyn mockspace_lint_rules::Lint>` (per-crate) or `pub fn cross_lint() -> Box<dyn mockspace_lint_rules::CrossCrateLint>` (cross-crate). Files suffixed `_cross` are treated as cross-crate. The engine discovers them and compiles them into one cdylib alongside the built-in lints.
+2. **Custom lints** in `mock/lints/<name>.rs`. A file defines any of four entry points, and may define more than one:
+
+   | Function | Kind | Handed |
+   |---|---|---|
+   | `pub fn lint()` | per-package | one package's sources |
+   | `pub fn cross_lint()` | cross-package | every package at once |
+   | `pub fn repo_lint()` | repository | paths, and no packages |
+   | `pub fn message_lint()` | message | an authored commit message or PR body |
+
+   `repo_lint()` is the one to reach for in a repository that has no packages, since it is the only kind whose input does not come from the package list. The engine discovers whichever are present and compiles them into one cdylib alongside the built-in lints.
 3. **Config-driven rules** under `[lints.forbidden-imports]` and friends in `mockspace.toml`.
 
 Each lint has a `commit` / `build` / `push` level. Violations at `error` fail the pipeline; `warn` prints without failing; `info` is purely informational.
@@ -328,5 +351,5 @@ Glob patterns use bash `[[ == ]]` matching semantics: `*`, `?`, `[...]`. Pattern
 
 - It is not a project scaffolder. It assumes `mock/` already exists with a `mockspace.toml` and at least one crate.
 - It does not touch `.git/hooks/`. User hooks are preserved in every mode.
-- It does not push to remote or create commits, except opt-in via `--auto-commit` on transition subcommands (and even then only surgically, without touching the working index).
+- It does not push to remote or create commits, except opt-in via `--auto-commit` on transition subcommands, and even then only the renamed files, leaving the working index alone. That commit skips hooks and signing; see the note above the pipeline section.
 - It does not impose content opinions. Crate layouts, naming, lint rules specific to a domain: all yours.

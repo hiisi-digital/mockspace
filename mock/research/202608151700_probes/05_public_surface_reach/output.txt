@@ -1,0 +1,44 @@
+=== NEGATIVE CONTROLS ===
+  (1) drive: CALLED 4 4 9 7  (must be CALLED with nonzero consumer calls)
+  (2) fabricated name: UNREFERENCED 0 0 0 0  (must be UNREFERENCED)
+  both pass
+
+item                           declared in                        class          fw_refs/fw_calls  cons_refs/cons_calls
+ticks_to_us                    bench-core/src/counter.rs          UNREFERENCED   0/0  0/0
+CostModel                      bench-harness/src/analysis.rs      REEXPORT-ONLY  1/0  0/0
+DataSetMeta                    bench-harness/src/analysis.rs      REEXPORT-ONLY  1/0  0/0
+Stats                          bench-harness/src/analysis.rs      REEXPORT-ONLY  1/0  0/0
+VariantAnalysis                bench-harness/src/analysis.rs      REEXPORT-ONLY  1/0  0/0
+fit_cost_model                 bench-harness/src/analysis.rs      REEXPORT-ONLY  1/0  0/0
+lag1_autocorrelation           bench-harness/src/analysis.rs      REEXPORT-ONLY  1/0  0/0
+sign_test                      bench-harness/src/analysis.rs      REEXPORT-ONLY  1/0  0/0
+CachedBatch                    bench-harness/src/cache.rs         REEXPORT-ONLY  1/0  0/0
+apply_drift                    bench-harness/src/cache.rs         REEXPORT-ONLY  1/0  0/0
+config_hash                    bench-harness/src/cache.rs         REEXPORT-ONLY  1/0  0/0
+consensus_drift                bench-harness/src/cache.rs         REEXPORT-ONLY  1/0  0/0
+dylib_hash                     bench-harness/src/cache.rs         REEXPORT-ONLY  1/0  0/0
+global_mean                    bench-harness/src/cache.rs         REEXPORT-ONLY  1/0  0/0
+global_mean_for_mode           bench-harness/src/cache.rs         REEXPORT-ONLY  1/0  0/0
+DispatchSection                bench-harness/src/config.rs        UNREFERENCED   0/0  0/0
+DocgenSection                  bench-harness/src/config.rs        UNREFERENCED   0/0  0/0
+NormaliseSection               bench-harness/src/config.rs        UNREFERENCED   0/0  0/0
+detect_regressions_window      bench-harness/src/history.rs       REEXPORT-ONLY  1/0  0/0
+InlineResult                   bench-harness/src/inline_bench.rs  REEXPORT-ONLY  1/0  0/0
+InlineVariant                  bench-harness/src/inline_bench.rs  REEXPORT-ONLY  1/0  0/0
+run_inline                     bench-harness/src/inline_bench.rs  REEXPORT-ONLY  1/0  0/0
+report_from_csv                bench-harness/src/lib.rs           UNREFERENCED   0/0  0/0
+GeneratedVariant               bench-harness/src/matrix.rs        UNREFERENCED   0/0  0/0
+render_bench_section           bench-harness/src/matrix.rs        UNREFERENCED   0/0  0/0
+render_variant                 bench-harness/src/matrix.rs        UNREFERENCED   0/0  0/0
+VariantResult                  bench-harness/src/meta_report.rs   REEXPORT-ONLY  1/0  0/0
+classify_family                bench-harness/src/meta_report.rs   REEXPORT-ONLY  1/0  0/0
+VariantQuality                 bench-harness/src/quality.rs       REEXPORT-ONLY  1/0  0/0
+VariantSpec                    bench-harness/src/spec.rs          REEXPORT-ONLY  1/0  0/0
+arm_dylib_name                 bench-harness/src/tree.rs          UNREFERENCED   0/0  0/0
+AllocHandle                    bench-harness/src/workload.rs      REEXPORT-ONLY  1/0  0/0
+OneOf                          bench-harness/src/workload.rs      REEXPORT-ONLY  1/0  0/0
+ProgramBuilder                 bench-harness/src/workload.rs      REEXPORT-ONLY  1/0  0/0
+Shuffle                        bench-harness/src/workload.rs      REEXPORT-ONLY  1/0  0/0
+WorkloadCtx                    bench-harness/src/workload.rs      REEXPORT-ONLY  1/0  0/0
+WorkloadItemKind               bench-harness/src/workload.rs      REEXPORT-ONLY  1/0  0/0
+domain_work                    bench-harness/src/workload.rs      REEXPORT-ONLY  1/0  0/0

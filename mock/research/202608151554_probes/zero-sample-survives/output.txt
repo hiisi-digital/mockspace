@@ -1,0 +1,16 @@
+C1 clean mean reads ~100ns              : PASS (100.00)
+C2 dropping 3 of 20 does not move it    : PASS (100.00)
+
+controls pass.
+
+F1 3 of 20 samples arriving as short lines:
+   reported mean 85.00ns against the true 100.00ns  (-15.0%)
+   the run reports 20 samples either way
+
+F2 nothing in the analysis names the zeros:
+   mean 85.00  best20% 25.00  worst20% 100.00  count 20
+
+F3 the digest column sits OUTSIDE the `parts.len() >= 9` guard.
+   A short line yields digest = 0 for every arm, so two arms that
+   never reported a digest compare equal. Change 1 of this round
+   makes that comparison load-bearing for the first time.

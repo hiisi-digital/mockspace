@@ -149,8 +149,19 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         match find_mockspace_root() {
             Some(dir) => dir,
             None => {
+                // No config, so the only question left is whether this looks
+                // like a mock directory at all. `design_rounds/` answers it:
+                // mockspace creates that directory and nothing else does, so a
+                // directory holding one is a mock directory whatever language
+                // the project is written in.
+                //
+                // This used to ask whether `crates/` was there, which is one
+                // language's convention standing in for the question. It said
+                // yes to any rust project that had never adopted mockspace, and
+                // no to every project that had adopted it and written its source
+                // somewhere else.
                 let cwd = std::env::current_dir().unwrap();
-                if cwd.join("crates").is_dir() {
+                if cwd.join("design_rounds").is_dir() {
                     cwd
                 } else {
                     eprintln!(
@@ -442,9 +453,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
             },
             "lock" | "deprecate" | "unlock" | "close" | "archive" | "migrate" => {
-                let subcmd_opts = design_round::SubcmdOpts {
-                    auto_commit: args.iter().any(|a| a == "--auto-commit"),
-                };
+                let subcmd_opts =
+                    design_round::SubcmdOpts { auto_commit: auto_commit_wanted(&args) };
                 return match subcmd {
                     "lock" => design_round::cmd_lock(&cfg, &subcmd_opts),
                     "deprecate" => design_round::cmd_deprecate(&cfg, &subcmd_opts),
@@ -1090,5 +1100,77 @@ mod tests {
 
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+}
+
+/// Whether a state transition should commit the rename it makes.
+///
+/// Opt-in, and it should not be. Each of these subcommands is one atomic rename
+/// whose whole value is that the rename is recorded, and an uncommitted one is
+/// worse than merely fragile: a later `git reset` brings the source file back
+/// while leaving the target sitting there untracked, so the round is in two
+/// phases at once and neither the tool nor the person can tell which is meant.
+///
+// FIXME: this wants to be the default and cannot be until the commit path
+// changes. `design_round::git::commit_or_suggest` builds the commit with
+// `commit-tree` plus `update-ref`, which is plumbing, so it runs no hook and
+// honours no `commit.gpgsign`. Verified rather than inferred: a `pre-commit`
+// set to `exit 1` does not fire and the resulting object carries no `gpgsig`
+// header. That was tolerable while nobody typed the flag. Turned on by default
+// it makes every `lock`, `close`, `archive`, `unlock`, `deprecate` and
+// `migrate` write an unhooked, unsigned commit to somebody's branch, which is
+// the `--no-verify` this project forbids, shipped on by default by the tool
+// that enforces the ban.
+//
+// Two ways out, and the choice is not the agent's: commit through porcelain so
+// the hooks and the signature happen, which risks the pre-commit gate refusing
+// the very transition that is changing the phase it reads; or keep the
+// plumbing and say in the help text and the guide that this path skips both.
+fn auto_commit_wanted(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--auto-commit")
+}
+
+#[cfg(test)]
+mod auto_commit_tests {
+    use super::auto_commit_wanted;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_transition_does_not_commit_unless_asked() {
+        assert!(!auto_commit_wanted(&args(&["mock", "lock"])));
+        assert!(auto_commit_wanted(&args(&["mock", "lock", "--auto-commit"])));
+    }
+
+    /// The flag has to be found wherever it sits, since that is how it gets
+    /// typed, and it has to be the flag rather than anything that resembles it.
+    ///
+    /// The second half is the part with teeth. A predicate written as "does not
+    /// contain the opt-out" passes this file for every argument on earth that
+    /// omits the opt-out, including a typo, which is how the previous version of
+    /// this test managed to assert nothing at all while naming a flag its
+    /// subject never read.
+    #[test]
+    fn the_flag_is_found_anywhere_and_nothing_else_stands_in_for_it() {
+        assert!(auto_commit_wanted(&args(&["mock", "--auto-commit", "close"])));
+        assert!(auto_commit_wanted(&args(&["mock", "close", "--strict", "--auto-commit"])));
+        assert!(!auto_commit_wanted(&args(&["mock", "close", "--strict"])));
+        assert!(!auto_commit_wanted(&args(&["mock", "close", "--auto-comit"])));
+        assert!(!auto_commit_wanted(&args(&["mock", "close", "--no-commit"])));
+    }
+
+    /// Catalogued, tracked with the `FIXME` on `auto_commit_wanted`. Committing
+    /// by default is the behaviour wanted and cannot ship while the commit path
+    /// is `commit-tree` plus `update-ref`, which runs no hook and produces no
+    /// signature. Un-ignore this when that path changes; it is the whole of the
+    /// behaviour change and it already asserts the intended answer.
+    #[test]
+    #[ignore = "catalogue: a transition should commit by default, and cannot \
+                until the commit path stops bypassing hooks and signing"]
+    fn a_transition_commits_unless_told_otherwise() {
+        assert!(auto_commit_wanted(&args(&["mock", "lock"])));
+        assert!(!auto_commit_wanted(&args(&["mock", "lock", "--no-commit"])));
     }
 }

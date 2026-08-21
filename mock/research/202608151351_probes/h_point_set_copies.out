@@ -1,0 +1,22 @@
+control: a set difference reports the removed element and a length difference reports one
+
+integer point literals maintained by hand, by location
+  1. bench.toml [[sizes]] rows                  : 256
+  2. src/main.rs routine-table rows             : 256
+  3. #[bench_variant(sizes=[..])] over  81 arms  : 1328
+  4. ALL_KEYS in 3 shared crates             : 131
+  TOTAL                                         : 1971
+  distinct (bench, point) pairs they describe   : 256
+
+do copies 1 and 4 agree, per family with an ALL_KEYS table?
+  warm-container-shared    manifest  57  ALL_KEYS  57  only-in-ALL_KEYS []  only-in-manifest []
+  warm-clamp-shared        manifest  46  ALL_KEYS  46  only-in-ALL_KEYS []  only-in-manifest []
+  wide-rung-shared         manifest  28  ALL_KEYS  28  only-in-ALL_KEYS []  only-in-manifest []
+
+largest per-arm sizes attributes (each is the whole family's point set):
+  warm-container-headroom: 57
+  warm-container-kernel: 57
+  warm-container-lanes-deferred: 57
+  warm-container-minimum: 57
+  warm-container-native: 57
+  warm-container-plusone: 57
