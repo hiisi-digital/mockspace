@@ -1,0 +1,20 @@
+live match arms                : 256
+commented-out arms             : 2
+bench.toml size rows           : 256
+one-to-one                     : True
+distinct sections              : 47
+distinct (section, type) pairs : 47
+type is a function of section  : True   (negative control: False would mean the point selects the type)
+distinct bridge types          : 15
+
+warm-container family (type Case): 10 sections, 57 arms
+    6  precise-container-width-l1
+    6  precise-elementwise-width-l1
+    6  precise-widening-theorem-l1
+    6  warm-affine-collapse-l1
+    5  warm-affine-density-w13
+    5  warm-container-density-w13
+    5  warm-container-density-w64
+    6  warm-container-width-l1
+    6  warm-container-width-l2
+    6  warm-elementwise-width-l1
