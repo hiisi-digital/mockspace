@@ -1,0 +1,13 @@
+error: attempted to repeat an expression containing no syntax variables matched as repeating at this depth
+  --> b_macro_cannot_iterate_const.rs:10:10
+   |
+ 7 |     ($arr:ident) => {
+   |       --- this similarly named macro metavariable is unrepeatable
+...
+10 |         $( const _X: usize = $arr[0]; )*
+   |          ^^^^^^^^^^^^^^^^^^^^^---^^^^^^
+   |                               |
+   |                               argument not found
+
+error: aborting due to 1 previous error
+

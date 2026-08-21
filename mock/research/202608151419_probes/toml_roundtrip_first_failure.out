@@ -1,0 +1,7 @@
+First run of the probe, before the hex-string fix, using a plain
+`u64` field for the dylib hash. Committed as the record of the
+blocker this probe found and then closed.
+
+thread 'main' (40928049) panicked at src/main.rs:57:45:
+serialize: OutOfRange(Some("u64"))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
