@@ -20,9 +20,16 @@
 //!
 //! # What a pattern matches against
 //!
-//! The path the lint would report: crate-relative for a crate lint (`src/lib.rs`),
-//! repo-relative for a repo lint. Separators are always `/`, on windows too, so one config
-//! file describes one project everywhere.
+//! The path the lint would report, crate-relative, as `src/lib.rs` rather than
+//! `crates/thing/src/lib.rs`. Separators are always `/`, on windows too, so one config file
+//! describes one project everywhere.
+//!
+//! **Crate lints only, and repo lints are not filtered at all.** An earlier version of this
+//! paragraph said repo-relative for a repo lint, which was a claim about a dispatch that does
+//! not consult this module: `check_repo_with_extra` hands the lint a `RepoContext` and no file
+//! list, because a repo lint walks the worktree itself. So `include` and `exclude` under a repo
+//! lint's name are silently inert, and naming that here is the least this can do until the
+//! filter reaches them. Tracked by the ignored test in `path_filter_reach_tests` below.
 //!
 //! # The syntax, and what it does not have
 //!

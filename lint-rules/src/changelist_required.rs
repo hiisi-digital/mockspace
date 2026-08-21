@@ -54,6 +54,15 @@ impl RepoLint for ChangelistRequired {
         // Check if any .rs source files are modified.
         let modified = crate::fmt_only::drop_fmt_only(
             workspace_root,
+            // FIXME: `.rs` is the half of this that is still rust's convention
+            // rather than the project's. The directories now come from
+            // `src_dirs`; what counts as source in them does not, and nothing
+            // in `mockspace.toml` names it. A project writing zig or typescript
+            // under a declared source directory gets a gate that matches
+            // nothing, passes, and looks exactly like a gate that works, which
+            // is verbatim the failure `src_layout` was written to end. Wants an
+            // extension set per source directory, or a language key carrying
+            // one. Catalogued at `a_source_gate_guards_the_extensions_the_project_writes`.
             src_layout::changed_files(workspace_root, &layout, |f| {
                 layout.holds(f) && f.ends_with(".rs")
             }),

@@ -1529,6 +1529,13 @@ fn check_every_file(
         Some(f) => parsed.iter().filter(|(file, _)| f.allows(&file.rel_path)).collect(),
     };
 
+    // `parsed` and `ctx.all_sources` describe the same files for every real
+    // caller, since `check_crate_with_extra` derives the first from the second.
+    // Where they could disagree, `kept` is the one the crate-scoped branch below
+    // reads a root from and `owned` is the one it hands over, so an empty
+    // `parsed` against a non-empty `all_sources` would index nothing. Returning
+    // here rather than falling through keeps that unreachable rather than
+    // relying on the caller to keep it so.
     if filter.is_some() && kept.is_empty() {
         return Vec::new();
     }
@@ -1749,6 +1756,7 @@ fn run_with_overrides(
         cfg.base.contains_key(lint.name())
             || cfg.findings.contains_key(lint.name())
             || cfg.params.contains_key(lint.name())
+            || cfg.paths.contains_key(lint.name())
     });
     if !named_in_config && lint.default_severity().is_off() {
         return;
@@ -2081,6 +2089,53 @@ mod repo_lint_tests {
         let errors = check_repo_with_extra(&ctx, false, cfg, &extra);
         let _ = std::fs::remove_dir_all(&tmp);
         errors
+    }
+
+    /// Naming a lint in any section counts as asking for it, and `paths` is a
+    /// section. It was added without being added here, so a lint that is off
+    /// until asked and is asked with nothing but a path filter stayed off,
+    /// which is the same defect this enumeration already exists to prevent one
+    /// section over.
+    #[test]
+    fn a_path_filter_alone_is_enough_to_ask_for_an_off_by_default_lint() {
+        let mut cfg = LintConfig::empty();
+        cfg.paths.insert("off-by-default".to_string(), PathFilter {
+            include: vec!["**/*.rs".to_string()],
+            exclude: Vec::new(),
+        });
+        let errors = run_one(Box::new(OffByDefault), Some(&cfg));
+        assert_eq!(
+            errors.len(),
+            1,
+            "a lint named only under [lints.<name>] include/exclude must run; \
+             it did not, so the filter section is configuration nothing reads"
+        );
+    }
+
+    /// The control. Nothing in the config at all leaves it off, so the test
+    /// above is measuring the filter section rather than measuring that this
+    /// lint runs no matter what.
+    #[test]
+    fn an_unmentioned_off_by_default_lint_stays_off() {
+        assert!(run_one(Box::new(OffByDefault), None).is_empty());
+        assert!(run_one(Box::new(OffByDefault), Some(&LintConfig::empty())).is_empty());
+    }
+
+    /// Catalogued. `include` and `exclude` under a repo lint's name parse, are
+    /// carried into `LintConfig`, and are then consulted by nobody, because
+    /// `check_repo_with_extra` hands the lint a context and no file list. The
+    /// assertion is what it should do; un-ignore it when the filter reaches
+    /// repo lints. `path_filter`'s module doc names the same gap.
+    #[test]
+    #[ignore = "catalogue: include/exclude under a repo lint's name are inert, \
+                since the repo dispatch consults no filter"]
+    fn a_repo_lint_excluded_from_everything_does_not_run() {
+        let mut cfg = LintConfig::empty();
+        cfg.paths.insert("off-by-default".to_string(), PathFilter {
+            include: Vec::new(),
+            exclude: vec!["**".to_string()],
+        });
+        assert!(run_one(Box::new(OffByDefault), Some(&cfg)).is_empty());
     }
 
     #[test]

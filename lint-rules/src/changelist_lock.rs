@@ -137,6 +137,11 @@ fn is_locked_doc(layout: &SrcLayout, file: &str) -> bool {
     is_doc && !crate::is_shame_template(file)
 }
 
+// FIXME: `.rs` is rust's convention standing in for the project's. `src_dirs`
+// says where source is and nothing says what counts as source there, so a
+// project writing zig or typescript gets a lock that guards none of it while
+// reporting cleanly. Same gap as `changelist_required.rs`, same fix: an
+// extension set per source directory, or a language key carrying one.
 fn is_source(layout: &SrcLayout, file: &str) -> bool {
     layout.holds(file) && file.ends_with(".rs")
 }
