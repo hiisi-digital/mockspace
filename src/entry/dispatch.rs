@@ -453,9 +453,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return pdf::cmd_pdf(&cfg.docs_dir, &cfg.repo_root, &extra);
             },
             "lock" | "deprecate" | "unlock" | "close" | "archive" | "migrate" => {
-                let subcmd_opts = design_round::SubcmdOpts {
-                    auto_commit: args.iter().any(|a| a == "--auto-commit"),
-                };
+                let subcmd_opts =
+                    design_round::SubcmdOpts { auto_commit: auto_commit_wanted(&args) };
                 return match subcmd {
                     "lock" => design_round::cmd_lock(&cfg, &subcmd_opts),
                     "deprecate" => design_round::cmd_deprecate(&cfg, &subcmd_opts),
@@ -1101,5 +1100,52 @@ mod tests {
 
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+}
+
+/// Whether a state transition should commit the rename it makes.
+///
+/// It should, unless asked not to. Each of these subcommands is one atomic
+/// rename whose whole value is that the rename is recorded, and an uncommitted
+/// one is worse than merely fragile: a later `git reset` brings the source file
+/// back while leaving the target sitting there untracked, so the round is in two
+/// phases at once and neither the tool nor the person can tell which is meant.
+///
+/// `--no-commit` opts out, for a transition that belongs inside a larger commit
+/// somebody is assembling by hand. `--auto-commit` still parses and now asks for
+/// what already happens, so a script passing it keeps working.
+fn auto_commit_wanted(args: &[String]) -> bool {
+    !args.iter().any(|a| a == "--no-commit")
+}
+
+#[cfg(test)]
+mod auto_commit_tests {
+    use super::auto_commit_wanted;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_transition_commits_unless_told_otherwise() {
+        assert!(auto_commit_wanted(&args(&["mock", "lock"])));
+        assert!(!auto_commit_wanted(&args(&["mock", "lock", "--no-commit"])));
+    }
+
+    /// The flag this replaced. It used to turn committing on and now describes
+    /// what happens anyway, which is the only reading under which a script that
+    /// passes it still gets what it asked for.
+    #[test]
+    fn the_legacy_flag_parses_and_asks_for_the_default() {
+        assert!(auto_commit_wanted(&args(&["mock", "lock", "--auto-commit"])));
+    }
+
+    /// The control for the one that matters. Opting out has to survive other
+    /// flags around it, since that is how it will actually be typed.
+    #[test]
+    fn opting_out_is_found_wherever_it_sits() {
+        assert!(!auto_commit_wanted(&args(&["mock", "--no-commit", "close"])));
+        assert!(!auto_commit_wanted(&args(&["mock", "close", "--strict", "--no-commit"])));
+        assert!(auto_commit_wanted(&args(&["mock", "close", "--strict"])));
     }
 }
