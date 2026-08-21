@@ -1,0 +1,20 @@
+control: an injected pair appears on exactly one side of the diff
+
+(bench, point) pairs in the Rust table : 256
+(bench, point) pairs in bench.toml      : 256
+
+in Rust, not declared in bench.toml (dead match arms): 6
+    ('bitpack-contention', 163848)
+    ('bitpack-contention', 10485768)
+    ('bitpack-contention', 41943048)
+    ('bitpack-contention', 83886088)
+    ('satfold-length-dram-wrap', 3101)
+    ('satfold-length-dram-wrap', 7101)
+
+declared in bench.toml, no Rust arm (runtime failure): 6
+    ('spectral-bisection', 16)
+    ('spectral-bisection', 32)
+    ('spectral-bisection', 64)
+    ('structural-decomposition', 16)
+    ('structural-decomposition', 32)
+    ('structural-decomposition', 64)
