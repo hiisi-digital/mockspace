@@ -1,0 +1,13 @@
+control: keyed row parsed as ('warm-container-width-l1', '80003', 'Case') | byte row matched by the byte pattern only | comment matched by neither
+
+=== arvo/mock/benches/src/main.rs
+  total lines: 672 {'prose': 186, 'loop_or_other_code': 222, 'table_other': 8, 'table_row': 256}
+  keyed table rows: 256 over 47 bench names
+  bench names needing more than one bridge type: 0 {}
+  distinct bridge types used: 15
+  => information content of the table: one type per bench name (47 data) plus one const argument per row (256 data)
+
+=== hilavitkutin/mock/benches/src/main.rs
+  total lines: 311 {'prose': 67, 'loop_or_other_code': 207, 'table_other': 19, 'table_row_byte': 18}
+  may_differ names hardcoded in Rust: 13
+    ['dispatch_dynamic', 'hash_algos', 'fxpmul_strategy', 'cache_layout', 'iter_patterns', 'ema_formulation', 'modulo_strategy', 'branch_predictability', 'fold_strategy', 'rotate_strategy', 'shift_amount_origin', 'match_arm_count', 'float_width']

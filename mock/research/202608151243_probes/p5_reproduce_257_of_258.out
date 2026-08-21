@@ -1,0 +1,5 @@
+control: identical blocks read as 1 distinct arm set, differing blocks as 2
+
+benches using the per-size arm-list form: 258
+of those, benches whose arm set actually differs between sizes: 1
+    ('arvo', 'bitpack-write-contend-race', 2)
