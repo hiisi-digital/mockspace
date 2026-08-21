@@ -1,0 +1,25 @@
+#!/usr/bin/env nutshell
+# =============================================================================
+# mockspace/test - the shell suite
+# =============================================================================
+# Every `#[test]` function under tests/*.sh. The rust side is `cargo test`; this
+# is the half of the repository that is nutshell, and it is `./test` because
+# that is the entry point nutshell's own manual tells a reader to look for.
+#
+# Usage:
+#   ./test                      everything
+#   ./test tests/attribution_test.sh   one file
+# =============================================================================
+
+use test
+
+if [[ $# -gt 0 ]]; then
+    for f in "$@"; do test_run "$f"; done
+else
+    for f in "${NUTSHELL_SCRIPT_DIR}"/tests/*_test.sh; do
+        [[ -e "$f" ]] || continue
+        test_run "$f"
+    done
+fi
+
+test_summary
