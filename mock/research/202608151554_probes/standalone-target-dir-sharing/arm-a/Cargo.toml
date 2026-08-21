@@ -1,0 +1,18 @@
+# A STANDALONE arm package, the shape every consumer arm actually has:
+# its own [workspace] marker, built by --manifest-path, never by -p.
+[workspace]
+[package]
+name = "arm_a"
+version = "0.0.0"
+edition = "2021"
+publish = false
+[lib]
+name = "arm_a"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+[dependencies]
+support = { path = "../support", features = ["fast"] }
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
