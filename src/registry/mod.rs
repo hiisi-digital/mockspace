@@ -302,6 +302,68 @@ mod tests {
         }
     }
 
+    /// A field holds references because its declared TYPE says so, never
+    /// because it is called `provenance`.
+    ///
+    /// Reference validation used to read one hardcoded field name. That works
+    /// for a project whose every reference-bearing field happens to carry that
+    /// name, and silently ignores the rest, which the registry design warns
+    /// against in its own words: provenance is deliberately not universal
+    /// because baking one consumer's field into the mechanism warps the feature
+    /// around it.
+    ///
+    /// The control below is the same field, same bad citation, declared as an
+    /// ordinary `string[]`. It must produce nothing. Without it this test is
+    /// equally consistent with a validator that reports every field.
+    #[test]
+    fn a_field_typed_as_a_reference_is_validated_whatever_it_is_called() {
+        let mut ns = ns("law", None);
+        ns.fields = vec![RegistryField {
+            name:        "rests_on".into(),
+            r#type:      "ref[]".into(),
+            required:    false,
+            description: None,
+            visibility:  FieldVisibility::Public,
+        }];
+        let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
+        let found = validate::validate_provenance(
+            Path::new("."),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &reg,
+            std::slice::from_ref(&ns),
+        );
+        assert!(
+            found.iter().any(|f| f.kind == "unknown-provenance-root"),
+            "a `ref[]` field named something other than `provenance` went unvalidated: {found:?}"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_field_holding_the_same_text_is_not_validated() {
+        let mut ns = ns("law", None);
+        ns.fields = vec![RegistryField {
+            name:        "rests_on".into(),
+            r#type:      "string[]".into(),
+            required:    false,
+            description: None,
+            visibility:  FieldVisibility::Public,
+        }];
+        let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
+        let found = validate::validate_provenance(
+            Path::new("."),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &reg,
+            std::slice::from_ref(&ns),
+        );
+        assert!(
+            found.is_empty(),
+            "the control: prose that merely looks like a citation, in a field \
+             nobody declared as holding references, must not be reported: {found:?}"
+        );
+    }
+
     #[test]
     fn an_internal_field_never_becomes_a_column() {
         // The field stays validated and greppable in the source; what it does
