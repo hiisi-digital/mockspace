@@ -1,0 +1,9 @@
+[package]
+name = "precedence-probe"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+mockspace-bench-harness = { path = "/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/tmp.jaXPSOgNym/devnow/bench-harness" }
+
+[workspace]

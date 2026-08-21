@@ -1,0 +1,20 @@
+error: generic parameters may not be used in const operations
+  --> d_recursive_arity.rs:10:26
+   |
+10 |     acc.push(run::<{ PTS[I - 1] }>());
+   |                          ^ cannot perform const operation using `I`
+   |
+   = help: const parameters may only be used as standalone arguments here, i.e. `I`
+   = help: add `#![feature(generic_const_exprs)]` to allow generic const expressions
+
+error: generic parameters may not be used in const operations
+  --> d_recursive_arity.rs:11:14
+   |
+11 |     walk::<{ I - 1 }>(acc);
+   |              ^ cannot perform const operation using `I`
+   |
+   = help: const parameters may only be used as standalone arguments here, i.e. `I`
+   = help: add `#![feature(generic_const_exprs)]` to allow generic const expressions
+
+error: aborting due to 2 previous errors
+
