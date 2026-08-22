@@ -264,3 +264,41 @@ fn a_partial_slug_match_is_not_a_referrer() {
         "a slug that merely starts with the target must not count"
     );
 }
+
+/// The view a lint and a tool are handed must carry the same reverse edges
+/// `refsto` computes, or a check and a document disagree about the same data.
+#[test]
+fn the_view_carries_the_rows_and_the_reverse_edges() {
+    let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot[]")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("slot", "audio", &[]),
+        ("answer", "niri", &[("slot", "display")]),
+        ("answer", "wlr", &[("slot", "display, audio")]),
+    ]);
+    let v = build_view(&r, &nss);
+    assert_eq!(v.len(), 4);
+    assert_eq!(v.rows_in("slot"), ["slot::audio", "slot::display"]);
+    assert_eq!(v.referrers("slot::display"), ["answer::niri", "answer::wlr"]);
+    assert_eq!(v.referrers("slot::audio"), ["answer::wlr"]);
+    assert_eq!(v.field("answer::niri", "slot"), Some("display"));
+    // The same question `refsto` answers, from the same data.
+    assert_eq!(v.referrers("slot::display"), referrers(&r, &nss, "slot::display"));
+}
+
+/// The control: a field that is not typed as a namespace contributes no edge,
+/// so a view built by scanning every field would fail this.
+#[test]
+fn an_untyped_field_contributes_no_edge_to_the_view() {
+    let nss = [ns("slot", &[]), ns("answer", &[("slot", "string")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("answer", "niri", &[("slot", "display")]),
+    ]);
+    let v = build_view(&r, &nss);
+    assert_eq!(v.len(), 2, "the rows are still there");
+    assert!(
+        v.referrers("slot::display").is_empty(),
+        "an ordinary string field must not become a relation"
+    );
+}

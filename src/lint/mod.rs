@@ -125,6 +125,9 @@ pub fn run_lints(
     lint_proc_macro_source: bool,
     crate_prefix: &str,
     lint_overrides: &LintConfig,
+    // The registry, flattened, so a repo lint can check it. Built by the caller,
+    // which is the only place the declared field types are in scope.
+    registry: &mockspace_lint_rules::RegistryView,
     primitive_introductions: &std::collections::BTreeMap<String, Vec<String>>,
     pack: &LintPack,
 ) -> usize {
@@ -279,6 +282,7 @@ pub fn run_lints(
         all_crates: &all_crate_names,
         src_dirs,
         invocation: None,
+        registry,
     };
     all_errors.extend(mockspace_lint_rules::check_repo_with_extra(
         &repo_ctx,

@@ -115,6 +115,7 @@ fn a_tool_crate_loads_and_dispatches_across_the_cdylib() {
         src_dirs:   &dirs,
         args:       &args,
         stdin:      None,
+        registry:   &Default::default(),
     };
     let report = tool.run(&ctx);
     assert_eq!(report.output, "args=2", "the argument vector must reach the tool");

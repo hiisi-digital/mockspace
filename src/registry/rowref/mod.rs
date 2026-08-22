@@ -293,3 +293,43 @@ pub fn referrers(reg: &Registry, namespaces: &[RegistryNamespace], qualified: &s
 mod render_tests;
 #[cfg(test)]
 mod tests;
+
+/// The flattened, reverse-edged view a lint or a tool checks the registry with.
+///
+/// Built here rather than in the lint crate because computing the reverse edges
+/// needs the declared field types, which are configuration. Handing over the
+/// answer keeps that knowledge in one place, and a lint asking "what references
+/// this" cannot get a different answer from `refsto` in a document.
+pub fn build_view(
+    reg: &Registry,
+    namespaces: &[RegistryNamespace],
+) -> mockspace_lint_rules::RegistryView {
+    let rows: BTreeMap<String, mockspace_lint_rules::RowFields> = reg
+        .rows
+        .iter()
+        .map(|(q, row)| (q.clone(), row.fields.clone()))
+        .collect();
+    // One pass over the bearing fields rather than `referrers` per row, which
+    // would be quadratic on a corpus of a few thousand rows.
+    let bearing = row_reference_fields(namespaces);
+    let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for row in reg.rows.values() {
+        let empty = Vec::new();
+        for (name, target) in bearing.get(&row.namespace).unwrap_or(&empty) {
+            let Some(raw) = row.fields.get(name) else {
+                continue;
+            };
+            for slug in raw.split(", ").map(str::trim).filter(|s| !s.is_empty()) {
+                edges
+                    .entry(format!("{target}::{slug}"))
+                    .or_default()
+                    .push(row.qualified());
+            }
+        }
+    }
+    for v in edges.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+    mockspace_lint_rules::RegistryView::new(rows, edges)
+}
