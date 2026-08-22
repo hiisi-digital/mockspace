@@ -17,6 +17,7 @@ pub mod bench;
 pub mod bench_gen;
 pub mod bench_docs;
 pub mod bootstrap;
+pub mod build_dir;
 pub mod config;
 pub mod custom_lints;
 pub mod deny;

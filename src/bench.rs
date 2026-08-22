@@ -444,7 +444,7 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     // sharing a compiled copy of a common dependency (mockspace-bench-core,
     // mockspace-bench-harness, ...), which is real disk and real duplicated
     // compile time on every run.
-    let target_dir = cfg.mock_dir.join("target").join("mockspace-bench-test");
+    let target_dir = crate::build_dir::target_dir(&cfg.mock_dir).join("mockspace-bench-test");
 
     for manifest in &manifests {
         let dir = manifest.parent().unwrap_or(manifest.as_path());

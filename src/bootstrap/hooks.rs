@@ -3,7 +3,7 @@ use super::*;
 
 /// Where generated hooks live. Build artifact, gitignored.
 pub(crate) fn generated_hooks_dir(mock_dir: &Path) -> PathBuf {
-    mock_dir.join("target").join("hooks")
+    crate::build_dir::target_dir(mock_dir).join("hooks")
 }
 
 pub(crate) fn ensure_generated_hooks(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>) {

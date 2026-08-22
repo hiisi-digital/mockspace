@@ -76,7 +76,7 @@ pub fn load(
         return Ok(None);
     }
 
-    let gen_dir = cfg.mock_dir.join("target").join("mockspace-lints");
+    let gen_dir = crate::build_dir::target_dir(&cfg.mock_dir).join("mockspace-lints");
     write_cdylib_crate(
         &gen_dir,
         &lints_dir,

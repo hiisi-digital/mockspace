@@ -137,6 +137,13 @@ fn without_the_variable_the_artifact_lands_under_the_generated_crate() {
         cdylibs_under(&mock.join("target").join("mockspace-lints")) > 0,
         "with no variable set, cargo's default puts it under the generated crate"
     );
+    // and the build tree it just made is out of the desktop index, without the
+    // project having had to know the indexer exists. two throwaway trees with
+    // no marker put four mdworkers and mds on the cpu at once.
+    assert!(
+        mock.join("target").join(".metadata_never_index").is_file(),
+        "the engine marks the build tree it creates"
+    );
 }
 
 /// How many loadable libraries sit anywhere under `root`.
