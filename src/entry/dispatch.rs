@@ -10,6 +10,10 @@ fn pack_is_empty(pack: &LintPack) -> bool {
         && pack.workspace_lints.is_empty()
         && pack.repo_lints.is_empty()
         && pack.message_lints.is_empty()
+        // Tools count. A statically-linked pack carrying only tools is not
+        // empty, and treating it as empty would discard it and try to load a
+        // cdylib over the top.
+        && pack.tools.is_empty()
 }
 
 /// The value following `flag` in `args`, if present.
@@ -29,6 +33,27 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
 fn is_recovery_command(args: &[String]) -> bool {
     const RECOVERY: &[&str] = &["clean", "activate", "deactivate", "status", "migrate"];
     args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
+}
+
+/// Whether `subcmd` is both a builtin name and the name of a discovered tool,
+/// which means the tool can never be reached: the literal match arm for the
+/// builtin claims the name first, so the catch-all arm that would dispatch to
+/// the tool is never entered for it.
+///
+/// Checked here, against the one name actually about to be dispatched, rather
+/// than inside `tool::run`'s catch-all arm: `other` in that arm is never one
+/// of the fifteen literal match-arm names, so a check placed there can never
+/// see a collision, which is exactly the bug this replaces.
+///
+/// **Does not cover `help`.** `mock help` returns before this function is
+/// ever reached (see the `FIXME` above `help::is_help_request`), so a tool
+/// named `help` is shadowed too, silently, and this function cannot see it
+/// happen. It still correctly reports `true` for `("help", pack)` if asked,
+/// which is why `help_itself_is_a_shadowing_name_too` below is a fact about
+/// this function's logic and not evidence that the real dispatch path
+/// catches the case.
+fn tool_is_shadowed_by_a_builtin(subcmd: &str, pack: &LintPack) -> bool {
+    super::tool::builtin_collision(subcmd) && pack.tools.iter().any(|t| t.name() == subcmd)
 }
 
 /// The value-taking globals the tool consumes before any subcommand sees
@@ -129,6 +154,17 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // found", which is the right answer to "run the workflow here" and the wrong
     // answer to "what does this tool do" -- the question a reader outside a project
     // is most likely to be asking, and often the first thing anyone types.
+    // FIXME: a tool directory literally named `help` is still silently
+    // unreachable, and `tool_is_shadowed_by_a_builtin` below can never catch
+    // it: `mock help` returns here before `mock_dir` is even resolved, let
+    // alone before any pack is loaded, so this fires first every time. The
+    // flag spellings (`--help`, `-h`, `-?`) cannot collide with anything (no
+    // filesystem lets a directory be named `--help`), so only the bare word
+    // is at risk, and closing it would mean resolving `mock_dir` and running
+    // `bootstrap::tool_names` (cheap, filesystem-only, no pack needed) before
+    // this check, without breaking `mock --help` working outside a project at
+    // all, which is what this ordering exists for. Left as the one case the
+    // relocated collision check does not reach.
     if args.iter().skip(1).any(|a| help::is_help_request(a)) {
         return help::print_help();
     }
@@ -255,6 +291,15 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     };
 
     if let Some(&subcmd) = positional_args.first() {
+        if tool_is_shadowed_by_a_builtin(subcmd, pack) {
+            eprintln!(
+                "mock: `{subcmd}` is a builtin subcommand, so the tool at \
+                 {}/tools/{subcmd} can never be reached.",
+                cfg.mock_dir.display()
+            );
+            eprintln!("  rename the directory; the directory name is the subcommand.");
+            return ExitCode::from(2);
+        }
         match subcmd {
             // Lint one authored message. The commit-msg and pre-push hooks call
             // this, and so will the agent hooks, so every surface reaches the
@@ -475,10 +520,17 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return bench::cmd(&cfg, &bench_args);
             },
             other => {
+                // A tool is a subcommand this binary does not know at compile
+                // time. Its name is its directory under `<mock>/tools/`, so the
+                // check is a directory listing rather than a build: a typo must
+                // not compile a cdylib to discover it was a typo.
+                if bootstrap::tool_names(&cfg.mock_dir).iter().any(|n| n == other) {
+                    return super::tool::run(&cfg, pack, other, &subcommand_args(&args, other));
+                }
                 // An unrecognised first positional is a mistyped subcommand,
                 // not a reason to silently run the default full regeneration
                 // (slow, and not what was asked). Report and exit non-zero.
-                return super::help::unknown_subcommand(other);
+                return super::help::unknown_subcommand(other, &bootstrap::tool_names(&cfg.mock_dir));
             },
         }
     }
@@ -1247,6 +1299,81 @@ mod tests {
 
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    // -- a tool sharing a name with a builtin is refused before it is ever
+    //    reached, rather than inside `tool::run`'s catch-all arm, which can
+    //    never see the case: `other` there is never one of the sixteen names
+    //    a literal arm or `help::is_help_request` already claimed. ----------
+
+    struct NamedTool(&'static str);
+    impl mockspace_lint_rules::tool::Tool for NamedTool {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+
+        fn description(&self) -> &'static str {
+            "a probe tool"
+        }
+
+        fn not_a_lint(&self) -> mockspace_lint_rules::tool::NotALint {
+            mockspace_lint_rules::tool::NotALint::NoFailingCase
+        }
+
+        fn run(
+            &self,
+            _ctx: &mockspace_lint_rules::tool::ToolContext<'_>,
+        ) -> mockspace_lint_rules::tool::ToolReport {
+            mockspace_lint_rules::tool::ToolReport::reported("", 1)
+        }
+    }
+
+    fn pack_with(names: &[&'static str]) -> LintPack {
+        let mut pack = LintPack::default();
+        for n in names {
+            pack.tools.push(Box::new(NamedTool(n)));
+        }
+        pack
+    }
+
+    #[test]
+    fn a_tool_named_after_a_builtin_is_shadowed() {
+        // The case that must fail: without the check this returns `false`,
+        // `check` reaches its literal match arm every time, and the tool at
+        // `mock/tools/check/` is silently unreachable forever.
+        let pack = pack_with(&["check"]);
+        assert!(tool_is_shadowed_by_a_builtin("check", &pack));
+    }
+
+    #[test]
+    fn help_itself_is_a_shadowing_name_too() {
+        // A fact about the predicate's own logic, not about the real dispatch
+        // path: `mock help` is intercepted at `help::is_help_request`, before
+        // this function is ever reached (tracked with a `FIXME` there), so a
+        // tool named `help` is shadowed in practice by a route this test does
+        // not exercise. What this pins is that the predicate itself does not
+        // special-case "help" as though it were an ordinary tool name; if the
+        // real interception is ever relocated, the predicate is already
+        // correct for the case it would then need to cover.
+        let pack = pack_with(&["help"]);
+        assert!(tool_is_shadowed_by_a_builtin("help", &pack));
+    }
+
+    #[test]
+    fn an_ordinary_tool_name_is_not_shadowed() {
+        // The negative arm. Without it the predicate could return `true` for
+        // everything and the test above would still pass.
+        let pack = pack_with(&["phrase-search"]);
+        assert!(!tool_is_shadowed_by_a_builtin("phrase-search", &pack));
+    }
+
+    #[test]
+    fn a_builtin_name_with_no_matching_tool_is_not_a_collision() {
+        // A collision needs both halves: the name has to be a builtin AND a
+        // registered tool. `check` alone, with no tool by that name, is just
+        // the ordinary builtin and must not be refused.
+        let pack = pack_with(&["phrase-search"]);
+        assert!(!tool_is_shadowed_by_a_builtin("check", &pack));
     }
 }
 

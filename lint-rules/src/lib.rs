@@ -64,6 +64,7 @@ mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
 pub mod src_layout;
+pub mod tool;
 pub mod type_scanner;
 mod undocumented_type;
 
@@ -71,6 +72,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 pub use path_filter::{PathFilter, PathFilters, glob_match};
+pub use tool::{
+    ArgSpec, NotALint, Outcome, Tool, ToolContext, ToolReport, contract_faults,
+    duplicate_tool_names, missing_required, usage_line,
+};
 
 use tree_sitter::Tree;
 
@@ -1383,6 +1388,7 @@ macro_rules! lint_pack {
         $(workspace_lints: [ $( $ws:expr ),* $(,)? ] $(,)?)?
         $(repo_lints: [ $( $repo:expr ),* $(,)? ] $(,)?)?
         $(message_lints: [ $( $msg:expr ),* $(,)? ] $(,)?)?
+        $(tools: [ $( $tool:expr ),* $(,)? ] $(,)?)?
     ) => {
         /// Contribute this pack's lints to the host's collection.
         ///
@@ -1393,6 +1399,7 @@ macro_rules! lint_pack {
             $( $( pack.workspace_lints.push(::std::boxed::Box::new($ws)); )* )?
             $( $( pack.repo_lints.push(::std::boxed::Box::new($repo)); )* )?
             $( $( pack.message_lints.push(::std::boxed::Box::new($msg)); )* )?
+            $( $( pack.tools.push(::std::boxed::Box::new($tool)); )* )?
         }
     };
 }
@@ -1412,6 +1419,14 @@ pub struct LintPack {
     pub repo_lints:      Vec<Box<dyn RepoLint>>,
     /// Lints handed an authored message.
     pub message_lints:   Vec<Box<dyn MessageLint>>,
+    /// Tools: checks invoked as `mock <name>` because they cannot be lints.
+    ///
+    /// Not lints, and carried here anyway, because they arrive through the same
+    /// cdylib and the boundary passes one value. Splitting them into a second
+    /// pack would mean a second collector symbol, a second dlopen, and two
+    /// lifetimes to keep straight, to express a distinction the `Tool` trait
+    /// already makes.
+    pub tools:           Vec<Box<dyn tool::Tool>>,
 }
 
 /// Every lint name registered more than once across the builtin sets and a

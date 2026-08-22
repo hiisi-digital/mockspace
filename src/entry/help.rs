@@ -143,9 +143,13 @@ pub(crate) fn print_help() -> ExitCode {
 }
 
 /// Report an unrecognised subcommand, suggesting the nearest known one.
-pub(crate) fn unknown_subcommand(given: &str) -> ExitCode {
+///
+/// `tools` is the project's own `<mock>/tools/` directory names. They are
+/// subcommands this binary cannot know at compile time, and leaving them out
+/// would tell a reader who mistyped one that their tool does not exist.
+pub(crate) fn unknown_subcommand(given: &str, tools: &[String]) -> ExitCode {
     eprintln!("mock: `{given}` is not a subcommand.");
-    if let Some(s) = crate::entry::suggest_subcommand(given) {
+    if let Some(s) = suggest_among(given, tools) {
         eprintln!();
         eprintln!("  did you mean `mock {s}`?");
     }
@@ -154,8 +158,39 @@ pub(crate) fn unknown_subcommand(given: &str) -> ExitCode {
     for name in known_commands() {
         eprintln!("  {name}");
     }
+    if !tools.is_empty() {
+        eprintln!();
+        eprintln!("tools in this project:");
+        for name in tools {
+            eprintln!("  {name}");
+        }
+    }
     eprintln!("\n(run `cargo mock` with no subcommand to regenerate docs and agent rules)");
     ExitCode::from(2)
+}
+
+/// The nearest name among the builtins and this project's tools.
+///
+/// A tool is as likely to be mistyped as a builtin, and it is the one the
+/// reader is less sure of the spelling of, since they may have written it
+/// themselves that morning.
+fn suggest_among(given: &str, tools: &[String]) -> Option<String> {
+    let builtin = crate::entry::suggest_subcommand(given).map(str::to_string);
+    let lowered = given.to_ascii_lowercase();
+    let nearest_tool = tools
+        .iter()
+        .map(|t| (t, crate::entry::levenshtein(&lowered, &t.to_ascii_lowercase())))
+        .min_by_key(|(_, d)| *d)
+        .filter(|(t, d)| *d <= (lowered.len() / 2).max(2) || t.starts_with(&lowered));
+    match (builtin, nearest_tool) {
+        (Some(b), Some((t, dt))) => {
+            let db = crate::entry::levenshtein(&lowered, &b.to_ascii_lowercase());
+            Some(if dt < db { t.clone() } else { b })
+        },
+        (Some(b), None) => Some(b),
+        (None, Some((t, _))) => Some(t.clone()),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -229,6 +264,50 @@ mod tests {
                 !c.summary.ends_with('.'),
                 "{}'s summary should not end with a period",
                 c.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_mistyped_tool_name_suggests_the_tool() {
+        // A tool is a subcommand this binary cannot know at compile time, so
+        // without this the reader who mistyped their own tool is told it does
+        // not exist.
+        let tools = vec!["phrase-search".to_string(), "corpus-talk".to_string()];
+        assert_eq!(
+            super::suggest_among("phrase-serach", &tools),
+            Some("phrase-search".to_string())
+        );
+        assert_eq!(super::suggest_among("corpus", &tools), Some("corpus-talk".to_string()));
+    }
+
+    #[test]
+    fn a_builtin_still_wins_when_it_is_the_nearer_name() {
+        // The case that must fail if tools were simply preferred: `stat` is
+        // one edit from a builtin and nowhere near either tool.
+        let tools = vec!["phrase-search".to_string(), "corpus-talk".to_string()];
+        assert_eq!(super::suggest_among("stauts", &tools), Some("status".to_string()));
+        assert_eq!(super::suggest_among("lck", &tools), Some("lock".to_string()));
+    }
+
+    #[test]
+    fn nonsense_gets_no_suggestion_even_with_tools_present() {
+        // The negative arm. Adding a candidate set must not make every input
+        // resolve to whichever tool happened to be nearest.
+        let tools = vec!["phrase-search".to_string()];
+        assert_eq!(super::suggest_among("xyzzy", &tools), None);
+        assert_eq!(super::suggest_among("frobnicate-everything", &tools), None);
+    }
+
+    #[test]
+    fn with_no_tools_the_suggestion_is_exactly_what_it_was_before() {
+        // Existing consumers have no tools directory, so this pins that the
+        // whole mechanism is inert for them.
+        for probe in ["lck", "helpp", "statsu", "dep", "xyzzy", "q"] {
+            assert_eq!(
+                super::suggest_among(probe, &[]).as_deref(),
+                crate::entry::suggest_subcommand(probe),
+                "`{probe}` must be unchanged when a project declares no tools"
             );
         }
     }
