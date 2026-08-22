@@ -169,6 +169,7 @@ pub const FINDING_KINDS: &[&str] = &[
     "unknown-row-reference",
     "unknown-field-type",
     "namespace-shadows-type",
+    "row-reference-to-a-value-namespace",
     // Not produced by `validate`. Reported by the caller when the schema check
     // could not run at all, and listed here so the set of kinds stays in one
     // place. A run that could not check is not a run that passed.

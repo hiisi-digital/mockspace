@@ -132,11 +132,24 @@ is refused rather than accepted as a second spelling, because one thing written 
 ways has to be normalised everywhere it is read and the normalisations drift.
 
 A slug naming no row is reported, with the nearest existing slug named where there
-is a near one, so a typo and a genuinely absent row do not read alike.
+is a near one, so a typo and a genuinely absent row do not read alike. It also keeps
+its reference form wherever it is rendered, rather than vanishing, so the
+unresolved-token check reports it a second time in the generated document.
 
 A namespace whose key is also a builtin type name is refused at the declaration. A
 field declaring that type would mean the builtin, silently, and nothing could ever
 reference the namespace.
+
+**A namespace declaring `value_field` cannot be referenced this way**, and that is
+refused at the declaration too. A reference into such a namespace renders that
+field's text rather than a link, which is right for a constant stated once and
+wrong for a relation: the reference exists to link, and the text arrives in a table
+cell after the cell's own escaping has run, so a value carrying a pipe ends the
+column early.
+
+**A target rendered with `render = "embed"` has no page**, so a reference into it is
+the slug as plain text rather than a link. That holds for a table cell and for a
+`{{ ns::slug }}` in prose alike.
 
 ### Asking what points at a row
 

@@ -127,6 +127,14 @@ fn regex_lite_replace(s: &str, from: &str, to: &str) -> String {
 /// Reconstructing it is what put `LAW.md` in a link while the file was written
 /// as `902_LAW.md`.
 fn doc_target(ns: &RegistryNamespace, row: &RegistryRow, cfg: &crate::config::Config) -> String {
+    // An embed namespace has no page, so there is nothing to link to. Empty is
+    // the signal, and `Resolved::Row` renders the slug as plain text when it
+    // sees one. Before this, a reference into an embed namespace produced a
+    // link to a file the generator never writes, which `RenderMode::Embed`'s
+    // own documentation says does not happen.
+    if !ns.render.has_page() {
+        return String::new();
+    }
     let file = cfg
         .doc_index
         .registry_doc(&ns.key)
@@ -738,16 +746,20 @@ pub fn resolve_typed(
                             raw.split(", ")
                                 .map(str::trim)
                                 .filter(|v| !v.is_empty())
-                                .filter_map(|slug| {
+                                .map(|slug| {
+                                    let expr = format!("{target}::{slug}");
+                                    // A slug that resolves to nothing keeps its
+                                    // reference form rather than vanishing. The
+                                    // table cell for the same datum emits the
+                                    // reference and is caught by the
+                                    // unresolved-token scan; dropping it here
+                                    // made one path loud and the other silent
+                                    // about the identical bad value, and a
+                                    // field of two slugs rendered as one.
                                     resolve_expr(
-                                        &format!("{target}::{slug}"),
-                                        by_key,
-                                        reg,
-                                        roots,
-                                        repo_root,
-                                        docs_dir,
-                                        cfg,
+                                        &expr, by_key, reg, roots, repo_root, docs_dir, cfg,
                                     )
+                                    .unwrap_or_else(|| format!("{{{{ {expr} }}}}"))
                                 })
                                 .collect(),
                         ));
