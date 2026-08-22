@@ -30,6 +30,26 @@ pub struct RegistryField {
     /// Whether this field reaches the generated documentation at all.
     #[serde(default)]
     pub visibility:  FieldVisibility,
+    /// The closed set of values this field may hold, where there is one.
+    ///
+    /// Empty means the field is free text, which is the default and stays the
+    /// common case. A non-empty list makes an unlisted value a load error and
+    /// an `enum` in the generated schema, so an editor refuses it where it is
+    /// typed.
+    ///
+    /// This exists because a closed set stated only in a `description` is not a
+    /// contract. A project shipped four of them that way, and a typo in any one
+    /// passed every gate: the row loaded, the schema check passed, the document
+    /// rendered, and a lint keyed on the field silently ignored the value it did
+    /// not recognise, so a defect the lint existed to catch became invisible
+    /// rather than louder.
+    ///
+    /// Where the set is large enough to want descriptions of its own, or where
+    /// members carry fields, it wants a namespace and a typed row reference
+    /// instead. This is for the small closed sets that do not: two rungs, three
+    /// kinds, four owners.
+    #[serde(default)]
+    pub values:      Vec<String>,
 }
 
 /// Whether a field's values are for readers or only for the project itself.
@@ -203,6 +223,7 @@ pub fn builtin_vocab() -> RegistryNamespace {
             required,
             description: Some(description.to_string()),
             visibility: FieldVisibility::Public,
+            values: Vec::new(),
         }
     };
     RegistryNamespace {
@@ -233,6 +254,7 @@ pub fn builtin_vocab() -> RegistryNamespace {
                         .to_string(),
                 ),
                 visibility: FieldVisibility::Public,
+            values: Vec::new(),
             },
         ],
     }
@@ -253,6 +275,7 @@ pub fn builtin_reference() -> RegistryNamespace {
             required,
             description: Some(description.to_string()),
             visibility: FieldVisibility::Public,
+            values: Vec::new(),
         }
     };
     RegistryNamespace {

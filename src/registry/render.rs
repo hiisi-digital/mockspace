@@ -84,6 +84,18 @@ pub fn generate_schemas(
                 },
                 FieldVisibility::Public => "",
             };
+            // A closed value set becomes an `enum`, so the editor refuses an
+            // unlisted value at the point it is typed. The Rust-side check in
+            // `validate_closed_values` is the one that always runs; this is the
+            // half that answers before a save.
+            let enum_clause = if f.values.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ",\n          \"enum\": [{}]",
+                    f.values.iter().map(|v| json_string(v)).collect::<Vec<_>>().join(", ")
+                )
+            };
             let desc = f
                 .description
                 .as_ref()
@@ -95,7 +107,7 @@ pub fn generate_schemas(
                 })
                 .unwrap_or_default();
             props.push_str(&format!(
-                ",\n        {}: {{\n          {ty}{desc}\n        }}",
+                ",\n        {}: {{\n          {ty}{enum_clause}{desc}\n        }}",
                 json_string(&f.name)
             ));
             if f.required {
