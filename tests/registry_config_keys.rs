@@ -207,3 +207,69 @@ fn every_field_a_real_instance_carries_is_a_known_key() {
          {found:?}\ngenerated config:\n{text}"
     );
 }
+
+// --- `[ref.roots.<name>]` ------------------------------------------------------
+
+/// Every key `RawRefRoot` carries is accepted.
+///
+/// The control for the arm below: without it, a rejection is equally consistent
+/// with a check that rejects everything in these tables.
+#[test]
+fn every_key_a_ref_root_declares_is_known() {
+    let found = config_unknown_keys(
+        r#"
+[ref.roots.seed]
+path = "mock/research/seed"
+frozen = true
+links = false
+label = "Prior research"
+internal = true
+"#,
+    );
+    assert!(
+        found.is_empty(),
+        "a ref root using its whole declared surface must be clean, or the arm \
+         below establishes nothing: {found:?}"
+    );
+}
+
+/// A root-level key written one line too far down lands in a ref-root table,
+/// where nothing reads it.
+///
+/// This is the case the check exists for and it is not hypothetical. `canon_paths`
+/// went in below a `[ref.roots.*]` header, was read as a key of that root, and
+/// was discarded in silence, so the feature it configures stayed off while the
+/// config plainly said it was on. TOML gives a bare key to whichever table header
+/// precedes it, and these tables sit near the top of a config, which is exactly
+/// where root-level settings are also written.
+#[test]
+fn a_root_level_key_that_landed_in_a_ref_root_is_reported() {
+    let found = config_unknown_keys(
+        r#"
+[ref.roots.seed]
+path = "mock/research/seed"
+frozen = true
+canon_paths = ["mock/registry/*.toml"]
+"#,
+    );
+    assert_eq!(found.len(), 1, "expected exactly one finding: {found:?}");
+    assert_eq!(found[0].kind, "unknown-config-key");
+    assert!(
+        found[0].message.contains("canon_paths") && found[0].message.contains("ref.roots.seed"),
+        "the finding names the key and the table it fell into: {}",
+        found[0].message
+    );
+    assert!(
+        found[0].message.contains("precedes it"),
+        "and says why it happened, because the author's mistake is invisible in \
+         the file: {}",
+        found[0].message
+    );
+}
+
+/// A ref root that is not a table is skipped rather than crashing.
+#[test]
+fn a_malformed_ref_roots_section_is_not_a_panic() {
+    assert!(config_unknown_keys("[ref]\nroots = 3\n").is_empty());
+    assert!(config_unknown_keys("ref = 3\n").is_empty());
+}

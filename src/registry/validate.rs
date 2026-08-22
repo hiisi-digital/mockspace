@@ -210,6 +210,17 @@ const NAMESPACE_KEYS: &[&str] = &[
 /// Keys a `[[registry.namespace.field]]` table may carry. Mirrors `RegistryField`.
 const FIELD_KEYS: &[&str] = &["name", "type", "required", "description", "visibility"];
 
+/// Keys a `[ref.roots.<name>]` table may carry. Mirrors `RawRefRoot`.
+///
+/// Checked for the same reason the two above are, and found the same way: a
+/// root-level key written one line too far down the file lands inside whichever
+/// table precedes it. `canon_paths` went in under a `[ref.roots.*]` table, was
+/// read as a key of that root, and was discarded without a word, so the feature
+/// it configures stayed off while the config plainly said otherwise. That cost
+/// a debugging cycle to find and would have cost more had the feature been one
+/// whose absence is quiet.
+const REF_ROOT_KEYS: &[&str] = &["path", "frozen", "links", "label", "internal"];
+
 /// Report keys in the config's namespace declarations that deserialize into
 /// nothing.
 ///
@@ -230,6 +241,38 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
     let Ok(doc) = config_text.parse::<toml_edit::DocumentMut>() else {
         return out; // a config that does not parse is somebody else's error
     };
+
+    // `[ref.roots.<name>]` first, because a stray key lands here by accident
+    // rather than by being written here on purpose: TOML gives a bare key to
+    // whichever table header precedes it, and these tables sit near the top of
+    // a config where root-level keys are also written.
+    if let Some(roots) = doc
+        .get("ref")
+        .and_then(|i| i.as_table())
+        .and_then(|t| t.get("roots"))
+        .and_then(|i| i.as_table())
+    {
+        for (name, item) in roots.iter() {
+            let Some(table) = item.as_table() else {
+                continue;
+            };
+            for (k, _) in table.iter() {
+                if !REF_ROOT_KEYS.contains(&k) {
+                    out.push(RegistryFinding {
+                        kind:    "unknown-config-key",
+                        message: format!(
+                            "[ref.roots.{name}] declares `{k}`, which mockspace does not read \
+                             there. It is discarded silently. A bare key belongs to whichever \
+                             table header precedes it, so a root-level setting written below one \
+                             of these lands here and has no effect at all."
+                        ),
+                        source:  None,
+                    });
+                }
+            }
+        }
+    }
+
     let Some(reg) = doc.get("registry").and_then(|i| i.as_table()) else {
         return out;
     };
