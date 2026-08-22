@@ -226,6 +226,15 @@ pub struct ToolContext<'a> {
     pub args:       &'a [&'a str],
     /// Piped input, when there was any.
     pub stdin:      Option<&'a str>,
+    // FIXME: no registry access. A tool that inventories claims, or answers
+    // "has this already been said" (exactly what `claim-inventory` and
+    // `already-said` in `entry::tool`'s own test data name as plausible
+    // tools), needs to read the same registry data `mock query` reads, and
+    // there is currently no field here for it. Those two names are test
+    // fixtures rather than real tools precisely because this context cannot
+    // build them. Wants a `registry` field (or a read-only handle into
+    // whatever `registry::cmd_query` resolves against) before a query-shaped
+    // tool can be written at all.
 }
 
 /// What a tool returns.
@@ -321,6 +330,24 @@ pub trait Tool {
         false
     }
 
+    /// Flag names that consume the token after them, so [`missing_required`]
+    /// does not read that token as satisfying a positional argument.
+    ///
+    /// Declared rather than inferred: [`missing_required`] cannot tell
+    /// `--root src` from `-q needle` apart by shape alone, since both are one
+    /// flag followed by one plain word, and guessing which flags take a value
+    /// is exactly the kind of inference this contract avoids elsewhere.
+    /// Mirrors the dispatcher's own value-taking globals (`--dir`, `--scope`,
+    /// `--mockspace-lint-rules-dep`), which are consumed the same way one
+    /// layer up, before a tool ever sees its argument vector.
+    ///
+    /// Empty by default: a tool with no value-taking flags of its own needs
+    /// nothing here, and every tool that predates this method keeps its
+    /// current (correct) behaviour.
+    fn value_flags(&self) -> &[&'static str] {
+        &[]
+    }
+
     /// Do the work.
     ///
     /// Called only after the engine has checked that every required argument in
@@ -345,11 +372,36 @@ pub fn usage_line(tool: &dyn Tool) -> String {
 /// Which required arguments are missing from `args`.
 ///
 /// Positional and in order: the nth declared argument is satisfied by the nth
-/// non-flag word. Flags are skipped rather than counted, because a tool that
-/// takes `-q` should not have it swallow the phrase it was asked to search for.
+/// non-flag word. Two kinds of token are skipped rather than counted: a bare
+/// flag, because a tool that takes `-q` should not have it swallow the phrase
+/// it was asked to search for, and a flag declared in [`Tool::value_flags`]
+/// together with the one token after it, because that token is the flag's
+/// value rather than a positional word.
+///
+/// Without the second half, `mock search --root src` counted `src` as the
+/// tool's positional argument. It is `--root`'s value; the tool never
+/// declared `--root` as anything the engine understands, so nothing told this
+/// function to skip it, and a required `phrase` read as supplied when it was
+/// not.
 #[must_use]
 pub fn missing_required<'t>(tool: &'t dyn Tool, args: &[&str]) -> Vec<&'t ArgSpec> {
-    let supplied = args.iter().filter(|a| !a.starts_with('-')).count();
+    let value_flags = tool.value_flags();
+    let mut supplied = 0usize;
+    let mut skip_next = false;
+    for a in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if value_flags.contains(a) {
+            skip_next = true;
+            continue;
+        }
+        if a.starts_with('-') {
+            continue;
+        }
+        supplied += 1;
+    }
     tool.args()
         .iter()
         .enumerate()
@@ -366,13 +418,21 @@ pub fn missing_required<'t>(tool: &'t dyn Tool, args: &[&str]) -> Vec<&'t ArgSpe
 ///
 /// This is what stops that declaration being what a declaration becomes when
 /// nothing reads it: a field that can hold any value while everything still
-/// compiles. Both variants are checked against something the tool actually
-/// does, rather than against another declaration.
+/// compiles. **Only one of the two variants is checked against something the
+/// tool actually does; the other is checked against a second declaration**,
+/// and that is a real gap rather than a stated equivalence.
 ///
-/// [`NotALint::TakesAQuestion`] is checkable statically, from
-/// [`Tool::args`]. [`NotALint::NoFailingCase`] can only be checked against a
-/// real run, so it is checked at every invocation, which is cheap and fires
-/// exactly when the lie would have mattered.
+/// [`NotALint::NoFailingCase`] is checked against a real run: a tool that
+/// declared no failing case and then returned a blocking finding has been
+/// caught doing the thing, not merely declaring around it.
+///
+/// [`NotALint::TakesAQuestion`] is checked against [`Tool::args`], which is
+/// itself only a declaration. This catches a tool that claims to ask a
+/// question while declaring no required argument to ask it with, but it does
+/// **not** catch a tool that declares a required argument and then ignores
+/// it, never reading it from `ctx.args`. Closing that gap would mean running
+/// the tool under varied inputs and diffing its behaviour, which this
+/// contract does not attempt.
 ///
 /// `report` is `None` when auditing at registration, where no run has happened.
 #[must_use]
@@ -485,6 +545,33 @@ mod tests {
         }
         fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
             ToolReport::reported("3 hits", 241)
+        }
+    }
+
+    /// Declares one required positional and one flag that takes a value.
+    struct RootedSearch;
+    impl Tool for RootedSearch {
+        fn name(&self) -> &'static str {
+            "rooted-search"
+        }
+        fn description(&self) -> &'static str {
+            "find a phrase under a declared root"
+        }
+        fn not_a_lint(&self) -> NotALint {
+            NotALint::TakesAQuestion
+        }
+        fn args(&self) -> &[ArgSpec] {
+            &[ArgSpec {
+                name:        "phrase",
+                required:    true,
+                description: "the phrase to look for",
+            }]
+        }
+        fn value_flags(&self) -> &[&'static str] {
+            &["--root"]
+        }
+        fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
+            ToolReport::reported("", 1)
         }
     }
 
@@ -636,39 +723,22 @@ mod tests {
         assert_eq!(warn.findings().len(), 1);
     }
 
-    #[test]
-    fn a_clean_verdict_carries_what_it_examined() {
-        // A clean verdict over an empty population is vacuous, and this count
-        // is the only thing that distinguishes it from a real pass.
-        let vacuous = Outcome::Clean {
-            examined: 0,
-        };
-        let real = Outcome::Clean {
-            examined: 241,
-        };
-        match (&vacuous, &real) {
-            (
-                Outcome::Clean {
-                    examined: a,
-                },
-                Outcome::Clean {
-                    examined: b,
-                },
-            ) => {
-                assert_eq!(*a, 0);
-                assert_eq!(*b, 241);
-            },
-            _ => panic!("wrong variant"),
-        }
-    }
+    // `a_clean_verdict_carries_what_it_examined` deleted: it constructed
+    // `Outcome::Clean { examined: 0 }` and `{ examined: 241 }`, destructured
+    // them, and asserted the fields equalled the literals its own definition
+    // set two lines above. No value of anything in this crate could make it
+    // fail; it was not weak coverage, it was decoration. The real property
+    // (a clean verdict over zero is reported differently from a real pass) is
+    // exercised where it actually decides something: `entry::tool::run`'s
+    // dispatch-level tests in `src/entry/tool.rs`.
 
     // -- argument declaration ------------------------------------------------
 
     #[test]
     fn a_missing_required_argument_is_reported_before_the_tool_runs() {
         assert_eq!(missing_required(&PhraseSearch, &[]).len(), 1);
-        assert_eq!(missing_required(&PhraseSearch, &["needle"]).len(), 0);
-        // the optional one being absent is not a fault
+        // the required one supplied, and the optional one absent, is not a
+        // fault: `missing_required` only ever reports the required argument.
         assert_eq!(missing_required(&PhraseSearch, &["needle"]).len(), 0);
     }
 
@@ -682,6 +752,38 @@ mod tests {
         assert_eq!(missing[0].name, "phrase");
         // and a flag alongside a real argument is still fine
         assert_eq!(missing_required(&PhraseSearch, &["-q", "needle"]).len(), 0);
+    }
+
+    #[test]
+    fn a_declared_value_flags_value_does_not_satisfy_a_required_argument() {
+        // The case that must fail: without `value_flags` telling this
+        // function that `--root` consumes the token after it, `src` is the
+        // only non-flag word in `["--root", "src"]` and is miscounted as the
+        // phrase, exactly as `mock search --root src` was.
+        let missing = missing_required(&RootedSearch, &["--root", "src"]);
+        assert_eq!(missing.len(), 1, "the flag's value must not stand in for the phrase");
+        assert_eq!(missing[0].name, "phrase");
+        // supplying the phrase alongside the flag and its value is fine,
+        // whichever order they arrive in
+        assert_eq!(missing_required(&RootedSearch, &["--root", "src", "needle"]).len(), 0);
+        assert_eq!(missing_required(&RootedSearch, &["needle", "--root", "src"]).len(), 0);
+    }
+
+    #[test]
+    fn an_undeclared_value_flag_still_has_its_value_miscounted() {
+        // Documenting the boundary rather than hiding it: `PhraseSearch`
+        // never declares `--root`, so this function has no way to know it
+        // takes a value, and `src` is read as the phrase. Declaring a tool's
+        // own value-taking flags is the tool author's responsibility, exactly
+        // as it is for the dispatcher's own value-taking globals. If this
+        // ever tightens (a global default flag shape, say), the tightening
+        // is the fix, not this assertion.
+        let missing = missing_required(&PhraseSearch, &["--root", "src"]);
+        assert_eq!(
+            missing.len(),
+            0,
+            "an undeclared value flag's value reads as the positional"
+        );
     }
 
     #[test]
