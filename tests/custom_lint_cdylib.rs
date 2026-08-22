@@ -22,11 +22,18 @@ fn custom_lint_loads_and_dispatches_across_cdylib() {
     // a real lint using the same imports the consumer lints use.
     fs::write(
         lints.join("trivial.rs"),
-        r#"use mockspace::{Lint, LintContext, LintError};
-pub fn lint() -> Box<dyn Lint> { Box::new(Trivial) }
+        // The fixture is a string, so nothing type-checks it at compile time
+        // and `#[ignore]` means nothing ran it. It sat broken from the commit
+        // that split `Lint` into `Lint` + `CrateLint`, which updated this
+        // file's prose and not the source inside it. That is the whole failure
+        // mode: a test that reads as coverage, compiles, and cannot pass.
+        r#"use mockspace::{CrateLint, Lint, LintContext, LintError};
+pub fn lint() -> Box<dyn CrateLint> { Box::new(Trivial) }
 struct Trivial;
 impl Lint for Trivial {
     fn name(&self) -> &'static str { "trivial-cdylib-probe" }
+}
+impl CrateLint for Trivial {
     fn check(&self, _ctx: &LintContext) -> Vec<LintError> { Vec::new() }
 }
 "#,
