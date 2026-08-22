@@ -76,7 +76,7 @@ pub fn load(
         return Ok(None);
     }
 
-    let gen_dir = crate::build_dir::target_dir(&cfg.mock_dir).join("mockspace-lints");
+    let gen_dir = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-lints"]);
     write_cdylib_crate(
         &gen_dir,
         &lints_dir,
@@ -373,12 +373,19 @@ fn build_cdylib(gen_dir: &Path, crate_name: &str) -> Result<PathBuf, String> {
         return Err("building the custom-lint cdylib failed; see cargo output above".to_string());
     }
 
-    found.ok_or_else(|| {
+    let dylib = found.ok_or_else(|| {
         format!(
             "cargo reported success but emitted no cdylib artifact for \
              `{crate_name}`, so the build produced nothing this engine can load"
         )
-    })
+    })?;
+    // NOTE: the path is known now, so the tree cargo actually wrote is known
+    // too, and that is the one worth keeping out of the desktop index. Under
+    // CARGO_TARGET_DIR it is nowhere this engine computed, so marking
+    // `<mock>/target` marks an almost-empty directory and leaves the large one
+    // indexed. Only reachable here because the path came from cargo.
+    crate::build_dir::mark_target_root_of(&dylib);
+    Ok(dylib)
 }
 
 /// One line of cargo's json, to the cdylib path it names, or nothing.

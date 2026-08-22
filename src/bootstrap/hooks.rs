@@ -7,8 +7,7 @@ pub(crate) fn generated_hooks_dir(mock_dir: &Path) -> PathBuf {
 }
 
 pub(crate) fn ensure_generated_hooks(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>) {
-    let out_dir = generated_hooks_dir(mock_dir);
-    let _ = fs::create_dir_all(&out_dir);
+    let out_dir = crate::build_dir::ensure_under_target(mock_dir, &["hooks"]);
 
     let mock_rel = mock_dir
         .strip_prefix(repo_root)

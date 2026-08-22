@@ -5,6 +5,12 @@ kamu. **Not a bench**: no harness, no arms, no competitors, no artifact trail.
 It answers "is this worth optimising at all" and nothing finer. Re-run it rather
 than trusting the numbers below, that is what it is there for.
 
+**One correction to the script itself.** The warm-gate block ran `cargo mock
+check` in the caller's cwd rather than in `$PROJ`, so as first committed it
+measured whatever directory you happened to be standing in. Fixed. The 1.0 to
+1.2s figure came from a run made by hand in kamu, which is what the fixed script
+now reproduces.
+
 ## The numbers
 
 | what | cost |
@@ -54,8 +60,15 @@ engine generates the tree, so the engine should mark it, and no project should
 have to know the desktop indexer exists. That is `build_dir::target_dir` now.
 
 The other half was the check script in kamu building a fresh tree per arm at
-cargo's default parallelism, six of them fanned out. Already fixed there: one
-tree, reused, children capped.
+cargo's default parallelism. Already fixed there: one tree, reused, children
+capped.
+
+**I wrote "six of them fanned out at once" here and in that commit's message and
+it is false.** The script's arm loop is a plain `for` with a blocking
+`subprocess.run` per arm, so it was six *sequential* cold builds, each at cargo's
+default job count. Quite bad enough without the embellishment. A reviewer caught
+it by reading `main()`, which is where I should have got the claim from rather
+than from what the fix felt like it was for.
 
 ## What is still open
 

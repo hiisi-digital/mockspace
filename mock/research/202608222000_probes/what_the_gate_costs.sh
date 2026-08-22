@@ -9,8 +9,11 @@ PROJ="${1:?give me a project root with a mock/ in it}"
 export CARGO_BUILD_JOBS=2
 
 echo "== warm gate, whole thing, 3 runs =="
+# NOTE: `cd` into the project. The first version of this ran in whatever cwd
+# the caller happened to be in, so the number it produced was the denominator
+# behind "30ms is 3% of a gate" and was not reproducible from the script.
 for _ in 1 2 3; do
-    /usr/bin/time -p nice -n 10 cargo mock check >/dev/null 2>/tmp/g.$$ || true
+    ( cd "$PROJ/mock" && /usr/bin/time -p nice -n 10 cargo mock check >/dev/null ) 2>/tmp/g.$$ || true
     grep '^real' /tmp/g.$$
 done < /dev/null
 

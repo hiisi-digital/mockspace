@@ -20,6 +20,12 @@
 //! NOTE: the second arm is what tells the two fixes apart. under `--target-dir`
 //! the tool still runs and the artifact is under the generated crate, so arm one
 //! passes and arm two fails.
+//!
+//! NOTE: the third arm exists because the first version of this file asserted
+//! the index marker only in the control, where the shared dir and
+//! `<mock>/target` are the same directory. That is setup that helps: the whole
+//! point of the marker is the large tree, and under `CARGO_TARGET_DIR` the large
+//! tree is the one this engine never computed a path for.
 
 use std::fs;
 use std::path::Path;
@@ -108,6 +114,17 @@ fn a_tool_runs_with_cargo_target_dir_set_in_the_environment() {
         cdylibs_under(&mock.join("target").join("mockspace-lints")),
         0,
         "and nothing should have been built under the generated crate"
+    );
+
+    // arm three, and it is the one the first version of this file got wrong.
+    // the marker was asserted only in the control below, where the shared dir
+    // and `<mock>/target` are the same place. here they are not, and the tree
+    // worth keeping out of the index is the shared one: the other holds a
+    // manifest and a lib.rs.
+    assert!(
+        elsewhere.join(".metadata_never_index").is_file(),
+        "the tree cargo actually wrote must be the one taken out of the index: {}",
+        elsewhere.display()
     );
 }
 
