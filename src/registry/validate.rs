@@ -173,7 +173,95 @@ pub const FINDING_KINDS: &[&str] = &[
     // `namespace_root_collisions` are absent from it with nothing noticing. The
     // list is documentation until a consumer exists.
     "schema-unavailable",
+    // Produced by `config_unknown_keys`, over the config file rather than the
+    // row data, which no generated schema covers.
+    "unknown-config-key",
 ];
+
+/// Keys a `[[registry.namespace]]` table may carry. Mirrors `RegistryNamespace`.
+///
+/// Hand-kept, and constrained rather than trusted: `finding_kinds_are_producible`
+/// and `namespace_keys_match_the_struct` in the tests below fail when this drifts
+/// from the struct it mirrors. A list nobody checks is a comment with a type, and
+/// this file already carries one that says so about itself.
+const NAMESPACE_KEYS: &[&str] = &[
+    "key",
+    "title",
+    "description",
+    "value_field",
+    "render",
+    "group_by",
+    "field",
+];
+
+/// Keys a `[[registry.namespace.field]]` table may carry. Mirrors `RegistryField`.
+const FIELD_KEYS: &[&str] = &["name", "type", "required", "description", "visibility"];
+
+/// Report keys in the config's namespace declarations that deserialize into
+/// nothing.
+///
+/// The registry's row data is covered by generated schemas run through a TOML
+/// validator, which is why this file deliberately does not re-check what a schema
+/// can express. **The config file is not covered by any of that.** `serde` does
+/// not deny unknown fields here, so a key that mockspace does not implement, or a
+/// key with a typo in it, is read and discarded in silence.
+///
+/// That is not hypothetical. The largest registry in the workspace declares
+/// `prefix` on twelve of its fifteen namespaces. Mockspace has no such field, so
+/// all twelve are discarded, and the rows in those namespaces carry plain slugs
+/// with no prefix in them: the declaration does nothing and its author cannot
+/// tell. Whether `prefix` should exist is a separate question this does not
+/// answer. What it ends is the silence.
+pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
+    let mut out = Vec::new();
+    let Ok(doc) = config_text.parse::<toml_edit::DocumentMut>() else {
+        return out; // a config that does not parse is somebody else's error
+    };
+    let Some(reg) = doc.get("registry").and_then(|i| i.as_table()) else {
+        return out;
+    };
+    let Some(spaces) = reg.get("namespace").and_then(|i| i.as_array_of_tables()) else {
+        return out;
+    };
+    for table in spaces.iter() {
+        let ns = table
+            .get("key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<no key>")
+            .to_string();
+        for (k, _) in table.iter() {
+            if !NAMESPACE_KEYS.contains(&k) {
+                out.push(RegistryFinding {
+                    kind:    "unknown-config-key",
+                    message: format!(
+                        "[[registry.namespace]] `{ns}` declares `{k}`, which mockspace does not \
+                         read. It is discarded silently, so the declaration has no effect. Remove \
+                         it, or fix the spelling if it is a typo."
+                    ),
+                    source:  None,
+                });
+            }
+        }
+        if let Some(fields) = table.get("field").and_then(|i| i.as_array_of_tables()) {
+            for f in fields.iter() {
+                let name = f.get("name").and_then(|v| v.as_str()).unwrap_or("<no name>");
+                for (k, _) in f.iter() {
+                    if !FIELD_KEYS.contains(&k) {
+                        out.push(RegistryFinding {
+                            kind:    "unknown-config-key",
+                            message: format!(
+                                "[[registry.namespace.field]] `{ns}.{name}` declares `{k}`, which \
+                                 mockspace does not read. It is discarded silently."
+                            ),
+                            source:  None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
 
 /// Validate what the generated schemas cannot.
 pub fn validate(_namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<RegistryFinding> {

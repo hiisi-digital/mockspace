@@ -905,6 +905,21 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
+        // A warning rather than an error, and the choice is deliberate under the
+        // rule stated above: what prints ERROR blocks, and an inert key does not
+        // stop the registry from being correct. It stops the author from knowing
+        // their declaration does nothing, which is a different harm and is ended
+        // by saying so once per run.
+        //
+        // Escalating it belongs to whoever owns a consumer, not to this file. The
+        // largest registry in the workspace carries twelve of these, and breaking
+        // its build to make a point about a key that was already doing nothing
+        // would be the gate arriving as a surprise rather than as a decision.
+        if let Ok(text) = std::fs::read_to_string(&cfg.config_path) {
+            for f in registry::config_unknown_keys(&text) {
+                eprintln!("  warning [{}]: {}", f.kind, f.message);
+            }
+        }
         match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
             registry::SchemaCheck::Ran {
                 failures,
