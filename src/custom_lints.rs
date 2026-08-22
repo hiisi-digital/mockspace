@@ -317,12 +317,33 @@ fn gen_collect_lib(
 }
 
 /// `cargo build` the cdylib and return the built library path.
+///
+/// **`--target-dir` is passed explicitly, and it is not tidiness.** The search
+/// below looks in `<gen_dir>/target/release`, and cargo honours
+/// `CARGO_TARGET_DIR` from the environment, which is set on any machine sharing
+/// one build directory across worktrees. Inherited, the artifact lands
+/// somewhere else and this function has two failure modes, one loud and one
+/// silent:
+///
+///   - nothing is there, and the caller blocks with "cargo reported success but
+///     no lint cdylib was found", which is confusing but at least stops;
+///   - **a previous run's artifact is still there, and it is loaded.** The
+///     engine then runs a stale copy of the project's lints and tools with no
+///     warning at all. Observed twice in one sitting: a tool's source was
+///     edited, rebuilt, and every run kept answering from the old cdylib, which
+///     looks exactly like the edit not working.
+///
+/// A command-line `--target-dir` wins over the environment variable, so passing
+/// it makes the artifact land where the search looks regardless of what the
+/// caller has set.
 fn build_cdylib(gen_dir: &Path) -> Result<PathBuf, String> {
     let status = Command::new("cargo")
         .arg("build")
         .arg("--release")
         .arg("--manifest-path")
         .arg(gen_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(gen_dir.join("target"))
         .status()
         .map_err(|e| format!("could not run cargo build for the lint cdylib: {e}"))?;
     if !status.success() {
