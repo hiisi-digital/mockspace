@@ -235,8 +235,19 @@ set -e
 {user_section}
 MOCK_DIR="{mock_rel}"
 
-# Only run mockspace validation when staged files touch the mock workspace.
+# Only run mockspace validation when staged files touch the design surface.
 STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
+
+# The config counts as the surface, wherever it sits. `mockspace.toml` may live
+# at the repository root rather than inside the mock directory, and that is its
+# home once relocated, so the check above misses it entirely. A commit that adds
+# a required field, changes a field type or renames a namespace invalidates
+# every row in the registry at once, and it was the one commit that ran no
+# validation at all. The durable hook already checked both; this one did not.
+if [ -z "$STAGED" ]; then
+    STAGED=$(git diff --cached --name-only -- '*mockspace.toml' 2>/dev/null || true)
+fi
+
 [ -z "$STAGED" ] && exit 0
 
 echo "pre-commit: mockspace changes detected, running validation..."
@@ -781,4 +792,85 @@ mod byline_hook_tests {
         );
     }
 
+}
+
+#[cfg(test)]
+mod generated_pre_commit_tests {
+    use super::*;
+    use std::process::Command;
+
+    /// A real git repository with the generated hook in it, run for real.
+    ///
+    /// Asserting on the generated text would pass for a script that never runs,
+    /// which is the defect being fixed: the hook was syntactically fine and
+    /// exited 0 before reaching anything.
+    fn run_hook(stage: &[(&str, &str)], mock_rel: &str) -> String {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("git runs")
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@example.invalid"]);
+        git(&["config", "user.name", "t"]);
+        for (path, body) in stage {
+            let p = root.join(path);
+            if let Some(parent) = p.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&p, body).unwrap();
+            git(&["add", path]);
+        }
+        let hook = root.join("hook.sh");
+        fs::write(&hook, gen_pre_commit(mock_rel, &root.join("no-user-hook"))).unwrap();
+        let out = Command::new("bash")
+            .arg(&hook)
+            .current_dir(root)
+            .output()
+            .expect("bash runs");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    }
+
+    /// The discriminator: the line the hook prints once it has decided to run.
+    const ENTERED: &str = "mockspace changes detected";
+
+    #[test]
+    fn a_staged_config_at_the_repository_root_enters_the_gate() {
+        let out = run_hook(&[("mockspace.toml", "project_name = \"x\"\n")], "mock");
+        assert!(
+            out.contains(ENTERED),
+            "`mockspace.toml` at the repository root is the design surface once \
+             relocated, and a commit changing a field type there invalidates \
+             every registry row at once. The hook matched only paths under the \
+             mock directory, so this was the one commit that ran no validation. \
+             Hook said:\n{out}"
+        );
+    }
+
+    #[test]
+    fn a_staged_config_inside_the_mock_directory_enters_the_gate() {
+        let out = run_hook(&[("mock/mockspace.toml", "project_name = \"x\"\n")], "mock");
+        assert!(out.contains(ENTERED), "hook said:\n{out}");
+    }
+
+    /// The control. Without it the two above are equally consistent with a hook
+    /// that enters the gate for every commit, which guards nothing and would
+    /// make every unrelated commit pay for a build.
+    #[test]
+    fn a_commit_touching_nothing_of_the_surface_exits_early() {
+        let out = run_hook(&[("src/unrelated.rs", "fn main() {}\n")], "mock");
+        assert!(
+            !out.contains(ENTERED),
+            "work outside the design surface passes untouched, or the two arms \
+             above establish nothing. Hook said:\n{out}"
+        );
+    }
 }
