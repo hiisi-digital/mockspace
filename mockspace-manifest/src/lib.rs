@@ -61,7 +61,11 @@ pub struct Pin {
 /// `mockspace_version` nested inside some later `[table]` is ignored, which is
 /// exactly the pin contract's "top-level only" rule. Unknown keys (the many
 /// other things a mockspace.toml carries) are ignored.
-#[derive(Debug, Default, Clone, Deserialize)]
+// Serialize as well as Deserialize, so a consumer can derive this header's
+// key set from the type rather than retyping it. The engine's config check
+// does exactly that: these keys are read by the launcher and not by the
+// engine, so without them it reports every project's own pin as unknown.
+#[derive(Debug, Default, Clone, Deserialize, serde::Serialize)]
 pub struct ManifestHeader {
     #[serde(default)]
     pub mock_dir:          Option<String>,

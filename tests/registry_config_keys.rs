@@ -273,3 +273,52 @@ fn a_malformed_ref_roots_section_is_not_a_panic() {
     assert!(config_unknown_keys("[ref]\nroots = 3\n").is_empty());
     assert!(config_unknown_keys("ref = 3\n").is_empty());
 }
+
+/// The three shapes the first version of the `[ref.roots.*]` check could not
+/// see, each measured at zero findings before this landed.
+///
+/// The middle one is the motivating defect's own home: `canon_paths` is a root
+/// key, so a typo in it at the root was still discarded in silence while the
+/// check that exists to end that silence reported nothing.
+#[test]
+fn the_silence_ends_at_the_root_and_inside_an_inline_table() {
+    // a root written inline is the same configuration as a `[ref.roots.x]`
+    // header, and `as_table` returned None for it
+    let f = config_unknown_keys("[ref.roots]\nseed = { path = \"p\", canon_paths = [\"x\"] }\n");
+    assert_eq!(f.len(), 1, "inline root: {f:?}");
+    assert!(f[0].message.contains("canon_paths"), "{:?}", f[0]);
+
+    // the document root, which nothing looked at
+    let f = config_unknown_keys("canon_pathz = [\"x\"]\n");
+    assert_eq!(f.len(), 1, "root typo: {f:?}");
+    assert!(f[0].message.contains("canon_pathz"), "{:?}", f[0]);
+
+    // `[ref]` itself carries only `roots`
+    let f = config_unknown_keys("[ref]\nbogus = 1\n");
+    assert_eq!(f.len(), 1, "ref level: {f:?}");
+    assert!(f[0].message.contains("bogus"), "{:?}", f[0]);
+}
+
+/// The control, and it is the one that matters: a real config must produce
+/// nothing. A root check that reports every section header would fail the gate
+/// on every project in the workspace, which is a worse defect than the silence.
+///
+/// The two pin keys at the top are not decoration. Run against a real config
+/// this reported both of them, because the launcher reads them and the engine
+/// does not, and a fixture built only from what the engine knows would never
+/// have shown it.
+#[test]
+fn a_real_config_is_clean_at_every_level() {
+    let real = "\
+mockspace_branch = \"dev\"\n\
+mock_dir = \"mock\"\n\
+project_name = \"probe\"\n\
+canon_paths = [\"mock/registry/*.toml\"]\n\
+src_dirs = [\"crates\"]\n\
+\n[domain_kinds]\nx = \"y\"\n\
+\n[lints.no-alloc]\ncommit = \"error\"\n\
+\n[ref.roots.seed]\npath = \"mock/research/seed\"\nfrozen = true\nlinks = false\nlabel = \"Prior research\"\ninternal = true\n\
+\n[[registry.namespace]]\nkey = \"law\"\n";
+    let f = config_unknown_keys(real);
+    assert!(f.is_empty(), "a real config must be clean: {f:?}");
+}

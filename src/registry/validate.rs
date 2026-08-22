@@ -219,10 +219,68 @@ const FIELD_KEYS: &[&str] = &["name", "type", "required", "description", "visibi
 /// it configures stayed off while the config plainly said otherwise. That cost
 /// a debugging cycle to find and would have cost more had the feature been one
 /// whose absence is quiet.
-const REF_ROOT_KEYS: &[&str] = &["path", "frozen", "links", "label", "internal"];
+pub(crate) const REF_ROOT_KEYS: &[&str] = &["path", "frozen", "links", "label", "internal"];
 
-/// Report keys in the config's namespace declarations that deserialize into
-/// nothing.
+/// Keys the document **root** may carry. Mirrors `RawConfig`, plus the one
+/// section it deliberately does not deserialize.
+///
+/// This is the half the first version of this check missed, and it is the half
+/// the motivating defect was in: `canon_paths` is a root key, so a typo in it
+/// at the root was still discarded in silence after `[ref.roots.*]` was covered.
+///
+/// It also carries the keys the **launcher** reads rather than the engine: the
+/// engine pin and `mock_dir`. Those are `mockspace_manifest::ManifestHeader`'s
+/// fields, and leaving them out reported every project's own pin as unknown.
+/// Caught by running this against a real config rather than against a fixture,
+/// which is the only reason it was caught at all.
+///
+/// `lints` is here because `config.rs` reads it through `toml_edit` directly
+/// rather than through `RawConfig`, its values being heterogeneous. It is a
+/// real key and belongs in the list; the test below knows it is the exception.
+pub(crate) const ROOT_KEYS: &[&str] = &[
+    "project_name",
+    "crate_prefix",
+    "abi_version",
+    "src_dirs",
+    "proc_macro_crates",
+    "lint_proc_macro_source",
+    "module_crates",
+    "unprefixed_crates",
+    "layers",
+    "primary_domain_macro",
+    "primary_domain_label",
+    "install_git_hooks",
+    "install_cargo_config",
+    "install_agent_files",
+    "auto_fmt",
+    "auto_clippy_fix",
+    "deny_check",
+    "domain_kinds",
+    "known_macros",
+    "agent_macros",
+    "macro_styles",
+    "crate_colors",
+    "crate_grouping",
+    "primitive-introductions",
+    "canon_paths",
+    "panel_consolidate_every",
+    "registry",
+    "deep_dive_index",
+    "ref",
+    "ordered_docs",
+    "primary_docs",
+    "lints",
+    // the launcher's, from `mockspace_manifest::ManifestHeader`
+    "mock_dir",
+    "mockspace_git",
+    "mockspace_version",
+    "mockspace_rev",
+    "mockspace_branch",
+    "mockspace_tag",
+];
+
+/// Report keys anywhere in the config that deserialize into nothing: at the
+/// document root, in `[ref.roots.*]`, and in the namespace declarations.
 ///
 /// The registry's row data is covered by generated schemas run through a TOML
 /// validator, which is why this file deliberately does not re-check what a schema
@@ -242,18 +300,54 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
         return out; // a config that does not parse is somebody else's error
     };
 
-    // `[ref.roots.<name>]` first, because a stray key lands here by accident
-    // rather than by being written here on purpose: TOML gives a bare key to
-    // whichever table header precedes it, and these tables sit near the top of
-    // a config where root-level keys are also written.
+    // The document root. A key here is the case the motivating defect was
+    // actually in, and the first version of this check did not look.
+    for (k, _) in doc.iter() {
+        if !ROOT_KEYS.contains(&k) {
+            out.push(RegistryFinding {
+                kind:    "unknown-config-key",
+                message: format!(
+                    "the config declares `{k}` at its root, which mockspace does not read. \
+                     It is discarded silently."
+                ),
+                source:  None,
+            });
+        }
+    }
+
+    // `[ref]` itself. `roots` is the only thing it carries, so anything else
+    // here is a key that read as configuration and was not.
+    if let Some(refs) = doc.get("ref").and_then(|i| i.as_table_like()) {
+        for (k, _) in refs.iter() {
+            if k != "roots" {
+                out.push(RegistryFinding {
+                    kind:    "unknown-config-key",
+                    message: format!(
+                        "[ref] declares `{k}`, which mockspace does not read there. It is \
+                         discarded silently; the only key `[ref]` carries is `roots`."
+                    ),
+                    source:  None,
+                });
+            }
+        }
+    }
+
+    // `[ref.roots.<name>]`, because a stray key lands here by accident rather
+    // than by being written here on purpose: TOML gives a bare key to whichever
+    // table header precedes it, and these tables sit near the top of a config
+    // where root-level keys are also written.
+    //
+    // NOTE: `as_table_like` rather than `as_table` throughout. A root written
+    // inline, `seed = { path = "p" }`, is the same configuration and the first
+    // version skipped it in silence, which is the silence this exists to end.
     if let Some(roots) = doc
         .get("ref")
-        .and_then(|i| i.as_table())
+        .and_then(|i| i.as_table_like())
         .and_then(|t| t.get("roots"))
-        .and_then(|i| i.as_table())
+        .and_then(|i| i.as_table_like())
     {
         for (name, item) in roots.iter() {
-            let Some(table) = item.as_table() else {
+            let Some(table) = item.as_table_like() else {
                 continue;
             };
             for (k, _) in table.iter() {
