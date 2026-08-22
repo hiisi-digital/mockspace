@@ -255,6 +255,8 @@ mod tests {
                 all_crates: &crates,
                 src_dirs:   dirs,
                 invocation: None,
+                canon_paths: &[],
+                open_panels: &[],
                 registry:   &Default::default(),
             })
         };
@@ -370,6 +372,8 @@ mod fmt_only_exemption {
             all_crates: &crates,
             src_dirs:   &src_dirs,
             invocation: None,
+            canon_paths: &[],
+            open_panels: &[],
             registry:   &Default::default(),
         };
         ChangelistRequired.check_repo(&ctx)
@@ -480,6 +484,8 @@ mod fmt_only_judges_the_committed_content {
             all_crates: &crates,
             src_dirs:   &src_dirs,
             invocation: None,
+            canon_paths: &[],
+            open_panels: &[],
             registry:   &Default::default(),
         })
     }

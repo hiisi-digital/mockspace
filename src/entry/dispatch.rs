@@ -456,6 +456,28 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 }
                 return ExitCode::SUCCESS;
             },
+            "tools" => {
+                let long = args.iter().any(|a| a == "--long");
+                let listings = crate::tool_catalogue::enumerate(pack);
+                let dupes = crate::tool_catalogue::duplicates(pack);
+                if !dupes.is_empty() {
+                    eprintln!(
+                        "mock: {} project tool name(s) registered more than once: {}",
+                        dupes.len(),
+                        dupes.join(", ")
+                    );
+                    eprintln!("  `mock <name>` would run whichever loaded first.");
+                }
+                print!(
+                    "{}",
+                    if long {
+                        crate::tool_catalogue::render_long(&listings)
+                    } else {
+                        crate::tool_catalogue::render_table(&listings)
+                    }
+                );
+                return ExitCode::SUCCESS;
+            },
             "query" => {
                 // The argument after the subcommand, not a fixed position:
                 // `--dir` and friends may precede it.
@@ -518,6 +540,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 // could forward it.
                 let bench_args = subcommand_args(&args, "bench");
                 return bench::cmd(&cfg, &bench_args);
+            },
+            "panel" => {
+                let panel_args = subcommand_args(&args, "panel");
+                return super::panel::run(&cfg, &panel_args);
             },
             other => {
                 // A tool is a subcommand this binary does not know at compile
@@ -682,6 +708,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // against, rather than a second reading of the same files.
     let lint_registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
     let lint_registry_view = registry::build_view(&lint_registry, &cfg.registry_namespaces);
+    // The panel ledger lives here rather than in the lint crate, so the answer
+    // is computed once and handed over, the same way the registry view is.
+    let open_panels: Vec<String> = crate::panel::load_all(&cfg.mock_dir)
+        .into_iter()
+        .filter(crate::panel::is_open)
+        .map(|p| p.slug)
+        .collect();
 
     match scope_arg {
         Some("") => {
@@ -691,7 +724,38 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             return ExitCode::FAILURE;
         },
         Some("infra") => {
-            eprintln!("  scope: infra (no crate lints)");
+            // No crate lints, and the repo lints still run. They are about
+            // repository state rather than about any crate, and an
+            // infrastructure-only commit is exactly the shape that touches the
+            // things they guard: the canon, the config, the design documents,
+            // the registry. Printing a line and running nothing made them
+            // inert on the commits that matter most, which is the failure the
+            // `RepoLint` trait was introduced to end and this quietly
+            // reintroduced.
+            eprintln!("  scope: infra (repo lints only)");
+            let empty: Vec<String> = Vec::new();
+            let violations = lint::run_lints(
+                &crates,
+                &cfg.src_dirs,
+                &cfg.mock_dir,
+                mode,
+                Some(&empty),
+                doc_only,
+                &cfg.proc_macro_crates,
+                cfg.lint_proc_macro_source,
+                &cfg.crate_prefix,
+                &cfg.lint_overrides,
+                &lint_registry_view,
+                &cfg.canon_paths,
+                &open_panels,
+                &cfg.primitive_introductions,
+                pack,
+            );
+            if violations > 0 {
+                eprintln!("lint check failed: {violations} violation(s)");
+                return ExitCode::FAILURE;
+            }
+            eprintln!("  all repo lints passed");
         },
         Some(crate_list) => {
             let names: Vec<String> = crate_list
@@ -719,6 +783,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
                 &lint_registry_view,
+                &cfg.canon_paths,
+                &open_panels,
                 &cfg.primitive_introductions,
                 pack,
             );
@@ -741,6 +807,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
                 &lint_registry_view,
+                &cfg.canon_paths,
+                &open_panels,
                 &cfg.primitive_introductions,
                 pack,
             );
@@ -1170,7 +1238,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
 
     // --- Agent rules and skills ---
     eprintln!("--- generating agent rules ---");
-    let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry);
+    let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry, pack);
     eprintln!("  generated {agent_count} agent files");
 
     if registry_errors > 0 {

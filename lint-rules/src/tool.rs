@@ -352,11 +352,20 @@ pub trait Tool {
     fn run(&self, ctx: &ToolContext<'_>) -> ToolReport;
 }
 
-/// Render the usage line for a tool from its declared arguments.
+/// Render a usage line from a bare name and a set of declared arguments,
+/// with no [`Tool`] object required.
+///
+/// Factored out of [`usage_line`] so a caller describing something that is
+/// not a `dyn Tool`, a builtin subcommand, say, can render the identical
+/// usage shape from the same two facts every [`Tool`] already carries: its
+/// name and its declared arguments. Both callers now go through one
+/// definition, so a builtin and a project tool render usage identically by
+/// construction rather than by two authors independently matching the
+/// bracket convention.
 #[must_use]
-pub fn usage_line(tool: &dyn Tool) -> String {
-    let mut s = format!("mock {}", tool.name());
-    for a in tool.args() {
+pub fn usage_from(name: &str, args: &[ArgSpec]) -> String {
+    let mut s = format!("mock {name}");
+    for a in args {
         if a.required {
             s.push_str(&format!(" <{}>", a.name));
         } else {
@@ -364,6 +373,12 @@ pub fn usage_line(tool: &dyn Tool) -> String {
         }
     }
     s
+}
+
+/// Render the usage line for a tool from its declared arguments.
+#[must_use]
+pub fn usage_line(tool: &dyn Tool) -> String {
+    usage_from(tool.name(), tool.args())
 }
 
 /// Which required arguments are missing from `args`.
@@ -789,6 +804,43 @@ mod tests {
     fn usage_distinguishes_required_from_optional() {
         assert_eq!(usage_line(&PhraseSearch), "mock phrase-search <phrase> [dir]");
         assert_eq!(usage_line(&LiesAboutAsking), "mock lies-about-asking");
+    }
+
+    #[test]
+    fn usage_from_agrees_with_usage_line_for_every_shape_it_covers() {
+        // `usage_line` is defined in terms of `usage_from` now; this pins that
+        // the delegation is real rather than two copies that happen to agree
+        // today. A tool with no name and args tuple, and a callable that only
+        // has `name()` and `args()` (never a `dyn Tool`), must render
+        // identically to the `dyn Tool` path.
+        assert_eq!(usage_from("phrase-search", PhraseSearch.args()), usage_line(&PhraseSearch));
+        assert_eq!(usage_from("rooted-search", RootedSearch.args()), usage_line(&RootedSearch));
+        assert_eq!(
+            usage_from("lies-about-asking", LiesAboutAsking.args()),
+            usage_line(&LiesAboutAsking)
+        );
+    }
+
+    #[test]
+    fn usage_from_needs_no_tool_at_all() {
+        // The case `usage_line` cannot express: a builtin subcommand that
+        // never implements `Tool`, described only by a name and a slice of
+        // `ArgSpec`. If this could not be written, the factoring above would
+        // have bought nothing.
+        let args = [
+            ArgSpec {
+                name:        "slug",
+                required:    true,
+                description: "which panel",
+            },
+            ArgSpec {
+                name:        "note",
+                required:    false,
+                description: "what was decided",
+            },
+        ];
+        assert_eq!(usage_from("panel-consolidate", &args), "mock panel-consolidate <slug> [note]");
+        assert_eq!(usage_from("status", &[]), "mock status");
     }
 
     // -- name collisions -----------------------------------------------------

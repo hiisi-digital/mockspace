@@ -20,7 +20,7 @@ pub(crate) const BUILTIN_SKILL_DIRS: &[&str] = &[
     "design-talk",
 ];
 
-pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
+pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> BuiltinTemplates {
     let mock_rel = cfg
         .mock_dir
         .strip_prefix(&cfg.repo_root)
@@ -152,7 +152,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
         ns_doc.push_str("- none declared\n");
     }
 
-    let rules = vec![
+    let mut rules = vec![
         BuiltinRule {
             name: "reference-syntax".to_string(),
             apply_to: vec!["**/*.md".to_string(), "**/*.md.tmpl".to_string(), "**/*.toml".to_string()],
@@ -547,6 +547,52 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             body: "## Per-crate documentation templates\nREADME.md.tmpl files are SHORT (3-10 lines). They contain the crate's purpose, what it depends on, and what depends on it. They are inserted into the generated DESIGN.md via {{crate_summaries}}. Do not put detailed design information here -- that goes in DESIGN.md.tmpl or DEEPDIVE_*.md.tmpl.".to_string(),
         },
     ];
+
+    // On by default, from `mock/agent/config.toml`. A generated snapshot of
+    // `mock tools`, with the live command named as the thing to trust once
+    // this snapshot is older than the last change to what tools exist. See
+    // `crate::tool_catalogue` for why a snapshot rather than only the
+    // instruction to run the command: this project's own convention
+    // (`reference-syntax`, above) already generates a live-at-render-time
+    // answer the same way, and an immediate answer beats a mandatory extra
+    // command for the common case where nothing has changed since the last
+    // `cargo mock`.
+    if cfg.agent.tool_catalogue {
+        let snapshot =
+            crate::tool_catalogue::render_table(&crate::tool_catalogue::enumerate(pack));
+        rules.push(BuiltinRule {
+            name: "tool-catalogue".to_string(),
+            apply_to: vec!["**".to_string()],
+            body: format!(
+                "## Tool catalogue\n\n{}\n\n{}\n\n```\n{}```\n",
+                "Never hand-write, from memory, a list of the subcommands or project tools this mockspace exposes. Run `mock tools` for the summary below, or `mock tools --long` for full usage and declared arguments.",
+                "The listing below is a snapshot taken at the last `cargo mock` run. It goes stale the moment a tool is added, renamed, or removed without a fresh run; that is exactly why the live command is named above rather than only this list. Prefer `mock tools` over this snapshot whenever the two might disagree.",
+                snapshot
+            ),
+        });
+    }
+
+    // Off by default, from `mock/agent/config.toml`. Describes how a panel
+    // (several personas working one question) mints and consolidates seats
+    // against a formalised inventory, and states the one discipline the
+    // mechanism cannot enforce by itself: that a panel never writes canon
+    // directly. See `crate::panel` for the whole mechanism, and
+    // `crate::entry::check`'s panel-discipline row for the mechanical half of
+    // the canon rule.
+    if cfg.agent.panel_discipline {
+        rules.push(BuiltinRule {
+            name: "panel-discipline".to_string(),
+            apply_to: vec!["**".to_string()],
+            body: format!(
+                "## How a panel works\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+                "A panel is several personas working one question: arguing, converging, proposing. They talk, they converge, they propose and present. They do not write canon.",
+                "Every seat is minted, never counted or guessed. `mock panel seat <slug> <persona> <topic...>` allocates the next seat number from the panel's own inventory file, one past whatever is already recorded there. Two dispatches minting at once are serialised by a lock on the inventory, so the second waits for the first and reads the number the first wrote. The number never comes from a caller's own tally. Ninety-nine is the last seat a panel may ever mint; past it, the panel is over, not paused, and the next step is closing it or opening a new one for whatever remains.",
+                "Consolidation is enforced, not optional. Once a panel has minted enough seats since its last consolidation, minting refuses until `mock panel consolidate <slug> <note...>` records what was decided. `mock panel status [slug]` reports whether a panel is presently open (has minted seats no consolidation covers yet) and how many seats remain before the next one is due.",
+                "Everything is logged into one formalised inventory file per panel, `<mock>/panel/<slug>.toml`: every seat, every consolidation, in order. It is the whole ledger, and it is what `mock check` reads to decide whether canon is being touched while a panel is still open.",
+                "No panel writes canon directly. A panel talks, converges, and proposes; only the coordinating human or agent adds what it produced into the project's canonical registries or documents, and only once the panel has consolidated. `mock check` refuses a change touching a configured canon path while any panel is open, as the mechanical half of this; the rest is discipline this rule states so every panel member reads it too."
+            ),
+        });
+    }
 
     // --- Builtin Skills ---
 
