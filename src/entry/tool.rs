@@ -52,28 +52,49 @@ pub(crate) fn builtin_collision(name: &str) -> bool {
 /// looking for a name mismatch in a repo where nothing had been compiled.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum NotFound {
-    /// No tool registered at all, in a repo whose `tools/` directory exists.
-    /// The cdylib is only built when the engine is handed
+    /// Nothing was compiled, because nothing asked for it. The cdylib carrying a
+    /// project's tools is built only when the engine is handed
     /// `--mockspace-lint-rules-dep`, which the launcher supplies and a
     /// directly-invoked binary does not.
     NothingBuilt,
+    /// The cdylib was asked for and registered no tool at all. A different
+    /// situation with a different remedy: the crate is missing its
+    /// `lint_pack!`, or its package name does not match its directory.
+    RegisteredNothing,
     /// Other tools registered and this name did not, so the tool's own
     /// `name()` and its directory disagree.
     NameMismatch,
 }
 
-pub(crate) fn why_not_found(pack: &LintPack) -> NotFound {
-    if pack.tools.is_empty() {
-        NotFound::NothingBuilt
-    } else {
-        NotFound::NameMismatch
+/// Why `name` is not in the pack, from the fact rather than from a proxy.
+///
+/// `dep_supplied` is whether `--mockspace-lint-rules-dep` was on the command
+/// line, which is the thing that decides whether a cdylib is built at all.
+///
+/// The first version asked only whether the pack was empty, and inferred
+/// "nothing was built" from it. Those come apart in a real case: a tool
+/// directory whose crate compiles but registers nothing yields an empty pack
+/// **under the launcher**, and the reader was then told to run it through the
+/// launcher, which is what they had just done. The discriminator was on the
+/// command line the whole time, and this function's own doc comment named it.
+pub(crate) fn why_not_found(pack: &LintPack, dep_supplied: bool) -> NotFound {
+    match (dep_supplied, pack.tools.is_empty()) {
+        (false, _) => NotFound::NothingBuilt,
+        (true, true) => NotFound::RegisteredNothing,
+        (true, false) => NotFound::NameMismatch,
     }
 }
 
 /// Run the tool named `name`, having already established that a directory of
 /// that name exists, and that its name does not collide with a builtin (the
 /// dispatcher refuses that before this is ever called).
-pub(crate) fn run(cfg: &Config, pack: &LintPack, name: &str, args: &[&str]) -> ExitCode {
+pub(crate) fn run(
+    cfg: &Config,
+    pack: &LintPack,
+    name: &str,
+    args: &[&str],
+    dep_supplied: bool,
+) -> ExitCode {
     let dupes = duplicate_tool_names(&pack.tools);
     if !dupes.is_empty() {
         eprintln!(
@@ -95,17 +116,32 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, name: &str, args: &[&str]) -> E
         //
         // Where some tools registered and this one did not, a name mismatch is
         // the likely cause and the message below says so.
-        if matches!(why_not_found(pack), NotFound::NothingBuilt) {
-            eprintln!(
-                "mock: `{}/tools/{name}` exists and nothing was built from it.",
-                cfg.mock_dir.display()
-            );
-            eprintln!(
-                "  a project's tools are compiled into a cdylib the launcher asks for, so \
-                 run this through `cargo mock {name}` rather than the engine binary \
-                 directly."
-            );
-            return ExitCode::from(2);
+        match why_not_found(pack, dep_supplied) {
+            NotFound::NothingBuilt => {
+                eprintln!(
+                    "mock: `{}/tools/{name}` exists and nothing was built from it.",
+                    cfg.mock_dir.display()
+                );
+                eprintln!(
+                    "  a project's tools are compiled into a cdylib the launcher asks for, so \
+                     run this through `cargo mock {name}` rather than the engine binary \
+                     directly."
+                );
+                return ExitCode::from(2);
+            },
+            NotFound::RegisteredNothing => {
+                eprintln!(
+                    "mock: `{}/tools/{name}` was built and registered no tool at all.",
+                    cfg.mock_dir.display()
+                );
+                eprintln!(
+                    "  the crate compiled, so this is not a build that did not happen: check \
+                     that it invokes `lint_pack!` and that its package name matches its \
+                     directory."
+                );
+                return ExitCode::from(2);
+            },
+            NotFound::NameMismatch => {},
         }
         eprintln!(
             "mock: `{}/tools/{name}` was built, but no tool in it declares \
@@ -379,7 +415,7 @@ mod not_found_tests {
     /// that does not match.
     #[test]
     fn an_empty_tool_set_means_nothing_was_built() {
-        assert_eq!(why_not_found(&LintPack::default()), NotFound::NothingBuilt);
+        assert_eq!(why_not_found(&LintPack::default(), false), NotFound::NothingBuilt);
     }
 
     /// The control, and the arm that makes the one above an assertion rather
@@ -389,6 +425,6 @@ mod not_found_tests {
     fn a_registered_tool_under_another_name_is_a_mismatch() {
         let mut pack = LintPack::default();
         pack.tools.push(Box::new(Registered));
-        assert_eq!(why_not_found(&pack), NotFound::NameMismatch);
+        assert_eq!(why_not_found(&pack, true), NotFound::NameMismatch);
     }
 }

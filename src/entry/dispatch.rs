@@ -551,7 +551,17 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 // check is a directory listing rather than a build: a typo must
                 // not compile a cdylib to discover it was a typo.
                 if bootstrap::tool_names(&cfg.mock_dir).iter().any(|n| n == other) {
-                    return super::tool::run(&cfg, pack, other, &subcommand_args(&args, other));
+                    // Whether a cdylib was even asked for is the fact the
+                    // not-found message turns on, and it is on this command
+                    // line rather than inferable from an empty pack.
+                    let dep_supplied = arg_value(&args, "--mockspace-lint-rules-dep").is_some();
+                    return super::tool::run(
+                        &cfg,
+                        pack,
+                        other,
+                        &subcommand_args(&args, other),
+                        dep_supplied,
+                    );
                 }
                 // An unrecognised first positional is a mistyped subcommand,
                 // not a reason to silently run the default full regeneration
