@@ -152,6 +152,32 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
         ns_doc.push_str("- none declared\n");
     }
 
+    // **Where this project's canon is, from its own config.**
+    //
+    // `canon_paths` is what `mock check` refuses a write to while a panel
+    // is open, so it is the one place that already knows, and until now
+    // this rule asserted `<mock>/canon/` regardless. A project whose canon
+    // is a typed registry got a rule naming a directory it does not have,
+    // two lines from a config that says so, and every agent session loaded
+    // it.
+    let declared_canon: Vec<String> = cfg.canon_paths.clone();
+    // The directory convention still applies where nothing else is
+    // declared, which is the common case and the default this ships.
+    let canon_is_the_reserved_directory = declared_canon.is_empty()
+        || declared_canon
+            .iter()
+            .any(|p| p.contains("/canon/") || p.trim_end_matches('/').ends_with("/canon"));
+    let canon_location = if declared_canon.is_empty() {
+        format!("`{mock_rel}/canon/`, a directory reserved for it alone")
+    } else {
+        let named = declared_canon
+            .iter()
+            .map(|p| format!("`{p}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{named}, which this project declares as its canon")
+    };
+
     let mut rules = vec![
         BuiltinRule {
             name: "reference-syntax".to_string(),
@@ -295,10 +321,17 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 format!("{mock_rel}/crates/**/*.md.tmpl"),
                 format!("{mock_rel}/crates/**/*.rs"),
                 format!("{mock_rel}/research/**"),
-                format!("{mock_rel}/canon/**"),
                 format!("{mock_rel}/design_rounds/**"),
-            ],
-            body: substitute_builtin_vars(
+            ]
+            .into_iter()
+            .chain(if declared_canon.is_empty() {
+                vec![format!("{mock_rel}/canon/**")]
+            } else {
+                declared_canon.clone()
+            })
+            .collect(),
+            body: {
+                let body = substitute_builtin_vars(
                 concat!(
                     "## The canon, design, code chain\n",
                     "\n",
@@ -306,11 +339,8 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     "\n",
                     "**Canon is the theory: the intent, the choices made, and the reasoning behind them, in ",
                     "the abstract.** It governs what the design is and how the design converges. It is not a ",
-                    "spec sheet. It lives at `{mock_dir}/canon/`, a directory reserved for it alone, the same ",
-                    "way `{mock_dir}/crates/`, `{mock_dir}/research/`, and `{mock_dir}/design_rounds/` are ",
-                    "each reserved for what they hold. Canon scattered across research notes in whatever shape ",
-                    "each round left it is not canon; it is drift with a confident name. Its own internal ",
-                    "shape is below.\n",
+                    "spec sheet. It lives at {canon_location}. Canon scattered across research notes in ",
+                    "whatever shape each round left it is not canon; it is drift with a confident name.\n",
                     "\n",
                     "**Design is the spec.** In this project that is `{mock_dir}/crates/**/*.md.tmpl` and its ",
                     "siblings. A design says what a specific thing is, concretely enough that a competent ",
@@ -473,8 +503,15 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     "how canon and designs are written regardless, because that is what the rule says, not ",
                     "because something currently catches a violation of it.\n",
                 ),
-                &mock_rel, project_name, crate_prefix,
-            ),
+                    &mock_rel, project_name, crate_prefix,
+                )
+                .replace("{canon_location}", &canon_location);
+                if canon_is_the_reserved_directory {
+                    body
+                } else {
+                    drop_directory_convention(body)
+                }
+            },
         },
         BuiltinRule {
             name: "design-round-consumes-its-inheritance".to_string(),
@@ -558,8 +595,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
     // command for the common case where nothing has changed since the last
     // `cargo mock`.
     if cfg.agent.tool_catalogue {
-        let snapshot =
-            crate::tool_catalogue::render_table(&crate::tool_catalogue::enumerate(pack));
+        let snapshot = crate::tool_catalogue::render_table(&crate::tool_catalogue::enumerate(pack));
         rules.push(BuiltinRule {
             name: "tool-catalogue".to_string(),
             apply_to: vec!["**".to_string()],
@@ -1128,3 +1164,140 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
+
+/// Everything from the directory-convention heading up to the next `##`.
+///
+/// The tier argument, canon governs design governs code and the mutation order
+/// that follows from it, is true of every project. **The shape of the reserved
+/// directory is not**: a project declaring its canon somewhere else, a typed
+/// registry say, has no `archive/`, no `examples/`, and no `.md` files to have
+/// an opinion about. Shipping that section to it describes a tree it does not
+/// have, which is what this rule did to one project for as long as that project
+/// has existed.
+fn drop_directory_convention(body: String) -> String {
+    let Some(start) = body.find("### The shape of ") else {
+        return body;
+    };
+    let rest = &body[start ..];
+    // the next top-level heading, since the cut section has `###` children
+    let end = rest[3 ..].find("\n## ").map(|i| start + 3 + i + 1);
+    match end {
+        Some(e) => format!("{}{}", &body[.. start], &body[e ..]),
+        None => body[.. start].to_string(),
+    }
+}
+
+#[cfg(test)]
+mod canon_location_is_derived {
+    //! The canon rule reads where the canon is, rather than asserting it.
+    //!
+    //! It used to name `<mock>/canon/` nine times whatever the project said,
+    //! and ship the reserved-directory convention to a project with no such
+    //! directory. kamu declares `canon_paths = ["mock/registry/*.toml"]` two
+    //! lines from where the rule was read, and every session there loaded a
+    //! rule describing a tree that does not exist.
+    use super::*;
+
+    fn rule_for(canon_paths: Vec<String>) -> BuiltinRule {
+        // Through a real config file rather than a hand-built struct, so the
+        // test exercises the same `canon_paths` parse a project does.
+        let tmp = tempfile::tempdir().unwrap();
+        let mock = tmp.path().join("mock");
+        std::fs::create_dir_all(&mock).unwrap();
+        let declared = if canon_paths.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "canon_paths = [{}]\n",
+                canon_paths
+                    .iter()
+                    .map(|p| format!("\"{p}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        std::fs::write(
+            mock.join("mockspace.toml"),
+            format!("project_name = \"probe\"\n{declared}"),
+        )
+        .unwrap();
+        let cfg = crate::config::Config::from_dir(&mock);
+        assert_eq!(
+            cfg.canon_paths, canon_paths,
+            "control: the config parsed what we wrote"
+        );
+        generate_builtin_templates(&cfg, &LintPack::default())
+            .rules
+            .into_iter()
+            .find(|r| r.name == "canon-design-code-chain")
+            .expect("the rule is always minted")
+    }
+
+    #[test]
+    fn a_project_declaring_its_own_canon_is_told_where_it_is() {
+        let r = rule_for(vec!["mock/registry/*.toml".into()]);
+        assert!(r.body.contains("mock/registry/*.toml"), "{}", r.body);
+        assert!(
+            r.apply_to.iter().any(|p| p == "mock/registry/*.toml"),
+            "and the rule applies to it: {:?}",
+            r.apply_to
+        );
+    }
+
+    #[test]
+    fn and_is_not_told_about_a_directory_it_does_not_have() {
+        // the arm that matters. the tier argument is universal and stays; the
+        // reserved-directory convention describes a tree this project has none
+        // of, and shipping it is the defect.
+        let r = rule_for(vec!["mock/registry/*.toml".into()]);
+        assert!(
+            !r.body.contains("### The shape of"),
+            "the directory convention must not ship: {}",
+            r.body
+        );
+        for absent in ["/canon/archive/", "/canon/examples/"] {
+            assert!(
+                !r.body.contains(absent),
+                "{absent} must not appear: {}",
+                r.body
+            );
+        }
+        // and the universal half survives the cut
+        assert!(
+            r.body.contains("The canon, design, code chain"),
+            "{}",
+            r.body
+        );
+        assert!(
+            r.body.contains("Code is last"),
+            "the tiers survive: {}",
+            r.body
+        );
+    }
+
+    #[test]
+    fn declaring_nothing_keeps_the_reserved_directory_convention() {
+        // the control. without it both arms above pass on a rule that simply
+        // never mentions a canon directory at all.
+        let r = rule_for(Vec::new());
+        assert!(r.body.contains("### The shape of"), "{}", r.body);
+        assert!(
+            r.body.contains("a directory reserved for it alone"),
+            "{}",
+            r.body
+        );
+        assert!(
+            r.apply_to.iter().any(|p| p.ends_with("/canon/**")),
+            "{:?}",
+            r.apply_to
+        );
+    }
+
+    #[test]
+    fn a_project_whose_canon_is_that_directory_keeps_it_too() {
+        // declaring the conventional location explicitly must not lose the
+        // convention, else the check is on emptiness rather than on location.
+        let r = rule_for(vec!["mock/canon/**".into()]);
+        assert!(r.body.contains("### The shape of"), "{}", r.body);
+    }
+}
