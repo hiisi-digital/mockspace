@@ -18,39 +18,88 @@
 //! clone's path passes on one machine and fails everywhere else, which is worse
 //! than a test that says plainly it did not run.
 //!
+//! It carries `#[ignore]` rather than a skip-and-return, and it panics rather
+//! than returning when the variable is absent: `cargo test` captures stdout and
+//! stderr for a test that passes, so a skip notice printed from inside a `#[test]`
+//! that then returns `ok` is invisible under a plain `cargo test` and reads
+//! exactly like a real pass. A failing test's captured output is always shown,
+//! `#[ignore]` keeps it out of a default run, and `--ignored` still reports
+//! *why* nothing ran the moment the variable is missing, because the panic
+//! message is exactly what a failing test prints.
+//!
 //! Set it to the project's `mock/` directory:
 //!
 //! ```text
 //! MOCKSPACE_FOREIGN_REGISTRY=~/Dev/clause-dev/ikiuni_renderer/mock \
-//!     cargo test --test foreign_registry_loads -- --nocapture
+//!     cargo test --test foreign_registry_loads -- --ignored
 //! ```
 //!
 //! Anything this finds that is genuinely a defect gets a minimal fixture
 //! committed here, so the finding survives without the sibling clone.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-fn foreign_mock_dir() -> Option<PathBuf> {
-    let raw = std::env::var("MOCKSPACE_FOREIGN_REGISTRY").ok()?;
+use mockspace::registry::{Registry, RegistryNamespace};
+
+fn foreign_mock_dir() -> PathBuf {
+    let raw = std::env::var("MOCKSPACE_FOREIGN_REGISTRY").unwrap_or_else(|_| {
+        panic!(
+            "set MOCKSPACE_FOREIGN_REGISTRY to another project's mock/ directory \
+             to run this. It panics rather than returning, because a silent \
+             return reads as a pass and verifies nothing."
+        )
+    });
     let expanded = if let Some(rest) = raw.strip_prefix("~/") {
-        PathBuf::from(std::env::var("HOME").ok()?).join(rest)
+        PathBuf::from(std::env::var("HOME").expect("HOME is set")).join(rest)
     } else {
         PathBuf::from(raw)
     };
-    expanded.is_dir().then_some(expanded)
+    if !expanded.is_dir() {
+        panic!(
+            "MOCKSPACE_FOREIGN_REGISTRY={} is not a directory",
+            expanded.display()
+        );
+    }
+    expanded
+}
+
+/// Every declared namespace with a `.toml` under `registry/` and no rows
+/// loaded for it, by key.
+///
+/// Shared between the arm that reads a real corpus and the arm that builds
+/// one, so a defect in this detection breaks both rather than only the arm
+/// that happens to be skipped by default. Presence is checked on disk rather
+/// than assumed from a row count, because a flat total treats a small,
+/// correctly-empty registry the same as a namespace the loader silently
+/// dropped, and the two are not the same finding.
+fn namespaces_with_files_but_no_rows(
+    mock_dir: &Path,
+    namespaces: &[RegistryNamespace],
+    reg: &Registry,
+) -> Vec<String> {
+    let registry_root = mock_dir.join("registry");
+    let mut out = Vec::new();
+    for ns in namespaces {
+        let flat = registry_root.join(format!("{}.toml", ns.key));
+        let nested = registry_root.join(&ns.key);
+        let has_files = flat.is_file()
+            || std::fs::read_dir(&nested)
+                .map(|d| {
+                    d.filter_map(Result::ok)
+                        .any(|e| e.path().extension().is_some_and(|x| x == "toml"))
+                })
+                .unwrap_or(false);
+        if has_files && reg.by_namespace.get(&ns.key).is_none_or(Vec::is_empty) {
+            out.push(ns.key.clone());
+        }
+    }
+    out
 }
 
 #[test]
+#[ignore = "set MOCKSPACE_FOREIGN_REGISTRY to a mock/ directory to run this"]
 fn a_foreign_registry_parses_and_its_references_resolve() {
-    let Some(mock_dir) = foreign_mock_dir() else {
-        eprintln!(
-            "SKIPPED: set MOCKSPACE_FOREIGN_REGISTRY to another project's mock/ \
-             directory to run this. Skipping is reported rather than passing \
-             silently, because a green test that did nothing is the failure this \
-             file is about."
-        );
-        return;
-    };
+    let mock_dir = foreign_mock_dir();
 
     // No assertion on where mockspace.toml sits. `Config::from_dir` looks in
     // the mock dir first and then at the repo root, deliberately, because the
@@ -84,74 +133,85 @@ fn a_foreign_registry_parses_and_its_references_resolve() {
     // corpus already known to be large, and reports a small-but-correct registry
     // as a defect. It did: pointed at a project part-way through adopting the
     // registry it failed on seven rows that were all genuinely there.
-    //
-    // The property that holds at any size is that a namespace with files under
-    // `registry/` loads rows from them. A loader that dropped a whole namespace
-    // silently is exactly what this arm is for, and that is invisible to a total.
+    let empty = namespaces_with_files_but_no_rows(&mock_dir, namespaces, &reg);
+    assert!(
+        empty.is_empty(),
+        "{empty:?} have files under {}/registry and loaded no rows: the loader \
+         dropped them without saying so.",
+        mock_dir.display()
+    );
+
+    // A namespace can only fail the check above if at least one has files at
+    // all. Without this, a project whose registry is entirely absent (every
+    // namespace vacuous) would pass the assertion above having exercised
+    // nothing, which is the exact silent-vacuity failure this file exists to
+    // avoid on its own coverage.
     let registry_root = mock_dir.join("registry");
-    let mut with_files = Vec::new();
-    for ns in namespaces {
-        let flat = registry_root.join(format!("{}.toml", ns.key));
-        let nested = registry_root.join(&ns.key);
-        let has_files = flat.is_file()
-            || std::fs::read_dir(&nested)
+    let any_files = namespaces.iter().any(|ns| {
+        registry_root.join(format!("{}.toml", ns.key)).is_file()
+            || std::fs::read_dir(registry_root.join(&ns.key))
                 .map(|d| {
                     d.filter_map(Result::ok)
                         .any(|e| e.path().extension().is_some_and(|x| x == "toml"))
                 })
-                .unwrap_or(false);
-        if has_files {
-            with_files.push(ns.key.clone());
-        }
-    }
-
+                .unwrap_or(false)
+    });
     assert!(
-        !with_files.is_empty(),
+        any_files,
         "no namespace has any .toml under {}, so nothing here could fail. \
          Point the variable at a project whose registry is populated.",
         registry_root.display()
     );
 
-    let empty: Vec<&String> = with_files
-        .iter()
-        .filter(|k| reg.by_namespace.get(*k).is_none_or(|v| v.is_empty()))
-        .collect();
-    assert!(
-        empty.is_empty(),
-        "{empty:?} have files under {} and loaded no rows: the loader dropped \
-         them without saying so.",
-        registry_root.display()
-    );
-
-    // A slug declared twice cannot be referenced, and no per-file schema can
-    // see it, so it is checked here rather than left to the schema pass.
-    assert!(
-        reg.duplicates.is_empty(),
-        "duplicate slugs: {:?}",
-        reg.duplicates
-    );
-
+    // Two checks, not one. `validate` covers duplicate identifiers (a slug
+    // declared twice cannot be referenced, and no per-file schema can see it,
+    // since each file is valid on its own); reference resolution is
+    // `validate_provenance`, which this test's own name promises and an
+    // earlier version never called. An earlier version of this test also
+    // asserted `reg.duplicates.is_empty()` directly, immediately before
+    // asserting `validate(...).is_empty()`: the second cannot fail once the
+    // first has passed, since `validate` builds its only finding kind from
+    // that same field. The one assertion below is the whole check.
     let findings = mockspace::registry::validate(namespaces, &reg);
-    for f in &findings {
+    let provenance_findings = mockspace::registry::validate_provenance(
+        &cfg.repo_root,
+        &cfg.registry_roots,
+        &cfg.frozen_roots,
+        &reg,
+        namespaces,
+    );
+    for f in findings.iter().chain(&provenance_findings) {
         eprintln!("finding: {f:?}");
     }
     assert!(
         findings.is_empty(),
-        "{} finding(s) against a registry this code did not write. Each is either \
-         a real defect in the loader or a shape the design permits and the loader \
-         rejects. Copy a minimal reproduction into this repository's fixtures \
-         before fixing either side.",
+        "{} finding(s) from `validate` against a registry this code did not \
+         write. Each is either a real defect in the loader or a shape the \
+         design permits and the loader rejects. Copy a minimal reproduction \
+         into this repository's fixtures before fixing either side.",
         findings.len()
+    );
+    assert!(
+        provenance_findings.is_empty(),
+        "{} finding(s) from `validate_provenance`, i.e. a reference this \
+         registry declares that does not resolve. Each is either a real defect \
+         or a shape the design permits and the resolver rejects. Copy a \
+         minimal reproduction into this repository's fixtures before fixing \
+         either side.",
+        provenance_findings.len()
     );
 }
 
 /// The drop-detection arm, on a fixture this test builds, so it runs always.
 ///
 /// The test above is opt-in and therefore usually skipped, which would leave
-/// its most important assertion unexercised on every ordinary run. This builds
-/// the case that must fail: a namespace declared, with a `.toml` on disk under
-/// it, that yields no rows. Run by hand while writing the arm; kept here so it
-/// stays run.
+/// the loader's most important property unexercised on every ordinary run.
+/// This builds the case that must fail: a namespace declared, with a `.toml`
+/// on disk under it, that yields no rows, and runs it through the exact
+/// detection function the opt-in arm uses (`namespaces_with_files_but_no_rows`
+/// above) rather than re-deriving the same judgement independently. A defect
+/// in that shared function now fails here too, on every ordinary run, instead
+/// of only in the arm nobody runs by default.
 #[test]
 fn a_declared_namespace_with_files_and_no_rows_is_a_finding() {
     let dir = tempfile::tempdir().expect("a temporary tree");
@@ -180,17 +240,17 @@ fn a_declared_namespace_with_files_and_no_rows_is_a_finding() {
     );
 
     let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
-    assert!(
-        reg.by_namespace
-            .get("ghostns")
-            .is_none_or(|v| v.is_empty()),
-        "the fixture was meant to yield no rows and yielded some, so the arm it \
-         exists to exercise cannot fire"
+    let found = namespaces_with_files_but_no_rows(mock, &cfg.registry_namespaces, &reg);
+    assert_eq!(
+        found,
+        vec!["ghostns".to_string()],
+        "a namespace with a .toml file and no rows must be the one thing this \
+         detection reports; got {found:?}"
     );
 
-    // And the control on the control: the same shape WITH a row must load, or
-    // the emptiness above would be telling us about the fixture rather than
-    // about the loader.
+    // And the control on the control: the same shape WITH a row must no longer
+    // be reported, or the report above was telling us about the fixture
+    // rather than about the detection.
     // `id`, not `slug`. The TOML key that carries a row's identity is `id`,
     // while the struct field holding it is `slug`, and the two names are not
     // the same word anywhere in between. Writing `slug` here produced a row
@@ -206,5 +266,11 @@ fn a_declared_namespace_with_files_and_no_rows_is_a_finding() {
         reg.by_namespace.get("ghostns").map(Vec::len),
         Some(1),
         "a well-formed row did not load, so the emptiness above was the fixture"
+    );
+    let found = namespaces_with_files_but_no_rows(mock, &cfg.registry_namespaces, &reg);
+    assert!(
+        found.is_empty(),
+        "a namespace with a real row must not be reported as files-with-no-rows: \
+         {found:?}"
     );
 }
