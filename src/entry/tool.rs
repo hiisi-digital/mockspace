@@ -32,23 +32,23 @@ use mockspace_lint_rules::tool::{
 /// win would break `mock check` in whatever repo declared it; silently letting
 /// the builtin win would leave a tool that is present, compiled, and
 /// unreachable, which is worse because nothing reports it.
-fn builtin_collision(name: &str) -> bool {
+///
+/// **Called from [`super::dispatch`], before the subcommand is matched, not
+/// from here.** `run` is reached only through the dispatcher's catch-all arm,
+/// which is reached only for a name no literal match arm (and no
+/// [`super::help::is_help_request`] check ahead of it) already claimed. So by
+/// the time `name` reaches this function it can never equal a builtin name,
+/// and a check here would be provably dead code: exactly the bug this
+/// function used to be. See `tool_is_shadowed_by_a_builtin` in `dispatch.rs`
+/// for the real enforcement point.
+pub(crate) fn builtin_collision(name: &str) -> bool {
     super::help::known_commands().contains(&name) || super::help::is_help_request(name)
 }
 
 /// Run the tool named `name`, having already established that a directory of
-/// that name exists.
+/// that name exists, and that its name does not collide with a builtin (the
+/// dispatcher refuses that before this is ever called).
 pub(crate) fn run(cfg: &Config, pack: &LintPack, name: &str, args: &[&str]) -> ExitCode {
-    if builtin_collision(name) {
-        eprintln!(
-            "mock: `{name}` is a builtin subcommand, so the tool at \
-             {}/tools/{name} can never be reached.",
-            cfg.mock_dir.display()
-        );
-        eprintln!("  rename the directory; the directory name is the subcommand.");
-        return ExitCode::from(2);
-    }
-
     let dupes = duplicate_tool_names(&pack.tools);
     if !dupes.is_empty() {
         eprintln!(
@@ -143,10 +143,15 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, name: &str, args: &[&str]) -> E
             examined,
         } => {
             if *examined == 0 {
-                // Not a pass. A clean verdict over nothing is the shape that
-                // reads green and establishes nothing, and it is worth saying
-                // out loud every time.
-                eprintln!("{name}: examined nothing, so this is not a pass.");
+                // Exits SUCCESS, deliberately: an empty population is
+                // sometimes the honest state of the world (a documentation
+                // repository has no crates, and `ToolContext::all_crates` says
+                // so truthfully), and the engine has no way to tell that case
+                // apart from a tool whose glob or directory got renamed out
+                // from under it. So this cannot refuse; it can only say, every
+                // time, that zero examined establishes nothing, which is worth
+                // reading even when the exit code says the run was fine.
+                eprintln!("{}", examined_nothing_message(name));
             } else {
                 eprintln!("{name}: clean, {examined} examined.");
             }
@@ -175,6 +180,24 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, name: &str, args: &[&str]) -> E
             }
         },
     }
+}
+
+/// The message printed for a clean verdict over zero, alongside the
+/// [`ExitCode::SUCCESS`] this always returns with.
+///
+/// Kept as a pure function rather than inlined, so the wording can be pinned
+/// without capturing stderr: this used to read `"examined nothing, so this is
+/// not a pass"` printed one line above an exit code that said the opposite.
+/// The words claimed a failure; the process claimed success. Fixed by
+/// rewording rather than by refusing (see the call site for why refusing is
+/// not available here), so the pin is on the words never asserting something
+/// the exit code contradicts.
+fn examined_nothing_message(name: &str) -> String {
+    format!(
+        "{name}: examined nothing. A clean verdict over an empty population \
+         proves nothing about the corpus; check the tool's inputs if this is \
+         unexpected."
+    )
 }
 
 /// Whether to read standard input, given what the tool asked for and what
@@ -248,6 +271,23 @@ mod tests {
         for name in ["phrase-search", "corpus-talk", "claim-inventory", "already-said"] {
             assert!(!builtin_collision(name), "`{name}` should be allowed");
         }
+    }
+
+    #[test]
+    fn the_zero_examined_message_never_claims_a_failure() {
+        // The case that must fail: the old wording was
+        // "{name}: examined nothing, so this is not a pass.", printed one
+        // line above `ExitCode::SUCCESS`. Two facts in direct contradiction,
+        // and a reader has to trust one of them; a shell or CI reading the
+        // exit code trusts the wrong one.
+        let msg = examined_nothing_message("audit");
+        assert!(
+            !msg.to_lowercase().contains("not a pass"),
+            "the message must not assert the opposite of the exit code it \
+             is printed beside: {msg:?}"
+        );
+        assert!(msg.contains("examined nothing"), "{msg:?}");
+        assert!(msg.contains("audit"), "the tool's own name must appear: {msg:?}");
     }
 
     #[test]
