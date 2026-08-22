@@ -45,20 +45,21 @@
         }
         // cadence 0 disables the cadence check entirely, isolating this
         // assertion to the cap alone.
-        assert_eq!(mint_seat(&mut inv, "p", "t", 0, 0), Err(MintRefusal::SeatCapReached));
+        assert_eq!(mint_seat(&mut inv, "p", "t", NO_GATE, 0), Err(MintRefusal::SeatCapReached));
         assert_eq!(inv.seats.len(), 99, "a refused mint must not append anything");
     }
 
+    /// A cadence larger than any test here mints, for the tests whose subject
+    /// is not the cadence. Zero used to serve that purpose and no longer can,
+    /// because zero is refused.
+    const NO_GATE: u32 = 1000;
+
     // -- consolidation cadence -------------------------------------------
 
-    #[test]
-    fn cadence_zero_never_demands_a_consolidation() {
-        let mut inv = PanelInventory::default();
-        for _ in 0 .. 50 {
-            mint_seat(&mut inv, "p", "t", 0, 0).unwrap();
-        }
-        assert_eq!(inv.seats.len(), 50);
-    }
+    // `cadence_zero_never_demands_a_consolidation` stood here and asserted
+    // that a cadence of zero mints forever. That is the escape hatch rather
+    // than a feature, and `a_cadence_of_zero_is_refused` below replaces it
+    // with the opposite assertion.
 
     #[test]
     fn minting_is_refused_once_the_cadence_is_met_and_recovers_after_consolidating() {
@@ -109,7 +110,7 @@
     #[test]
     fn consolidating_twice_with_no_new_seats_records_nothing_the_second_time() {
         let mut inv = PanelInventory::default();
-        mint_seat(&mut inv, "p", "t", 0, 0).unwrap();
+        mint_seat(&mut inv, "p", "t", NO_GATE, 0).unwrap();
         assert_eq!(consolidate(&mut inv, "first", 0), Some(1));
         assert_eq!(consolidate(&mut inv, "second", 0), None, "nothing new since the first");
         assert_eq!(inv.consolidations.len(), 1, "a no-op consolidation must not append");
@@ -125,11 +126,11 @@
     #[test]
     fn a_panel_is_open_the_moment_it_has_an_unconsolidated_seat() {
         let mut inv = PanelInventory::default();
-        mint_seat(&mut inv, "p", "t", 0, 0).unwrap();
+        mint_seat(&mut inv, "p", "t", NO_GATE, 0).unwrap();
         assert!(is_open(&inv));
         consolidate(&mut inv, "n", 0);
         assert!(!is_open(&inv), "consolidating must close it");
-        mint_seat(&mut inv, "p", "t", 0, 0).unwrap();
+        mint_seat(&mut inv, "p", "t", NO_GATE, 0).unwrap();
         assert!(is_open(&inv), "a new seat after consolidation reopens it");
     }
 
@@ -168,7 +169,7 @@
             slug: "alpha".to_string(),
             ..PanelInventory::default()
         };
-        mint_seat(&mut a, "p", "t", 0, 0).unwrap();
+        mint_seat(&mut a, "p", "t", NO_GATE, 0).unwrap();
         save(&inventory_path(tmp.path(), "alpha"), &a).unwrap();
 
         let b = PanelInventory {
@@ -189,3 +190,110 @@
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(load_all(tmp.path()), Vec::new());
     }
+
+/// Concurrent mints take distinct seats and none is lost.
+///
+/// **This is the reproduction, kept.** Before the lock, two `mock panel seat`
+/// invocations racing each other both printed "seat 2/99 minted" and the file
+/// afterwards held one of them: two agents told they hold the same seat, and a
+/// ledger that had silently dropped a record while reporting success. Which of
+/// the two survived differed between runs.
+///
+/// Eight threads rather than two, because a two-thread race reproduces
+/// intermittently and this must fail every time the lock is removed.
+#[test]
+fn concurrent_mints_take_distinct_seats_and_none_is_lost() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = inventory_path(tmp.path(), "race");
+    // A cadence past the number of seats, so this measures the lock rather
+    // than tripping the consolidation gate partway through.
+    const N: u32 = 8;
+
+    let taken: Vec<u32> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0 .. N)
+            .map(|i| {
+                let path = path.clone();
+                s.spawn(move || {
+                    with_locked(&path, "race", |inv| {
+                        mint_seat(inv, &format!("p{i}"), "t", N + 1, 0).map_err(|r| r.to_string())
+                    })
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .filter_map(|h| h.join().unwrap().ok())
+            .collect()
+    });
+
+    let mut sorted = taken.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        taken.len(),
+        "two threads were told they hold the same seat: {taken:?}"
+    );
+    assert_eq!(taken.len(), N as usize, "a mint failed: {taken:?}");
+
+    let inv = load(&path, "race").unwrap();
+    assert_eq!(
+        inv.seats.len(),
+        N as usize,
+        "the ledger lost a record it had reported minting"
+    );
+    let mut numbers: Vec<u32> = inv.seats.iter().map(|s| s.number).collect();
+    numbers.sort_unstable();
+    assert_eq!(
+        numbers,
+        (1 ..= N).collect::<Vec<_>>(),
+        "the seats are not one through {N} with no gaps"
+    );
+}
+
+/// A cadence of zero is refused rather than read as no enforcement.
+///
+/// The seat cap is a `const` on the stated grounds that letting a project raise
+/// it would let the failure mode configure its own escape hatch. A cadence a
+/// panel can set to zero, in the file this tool rewrites for it, is that escape
+/// hatch and it is one line long.
+#[test]
+fn a_cadence_of_zero_is_refused() {
+    let mut inv = PanelInventory {
+        slug: "p".into(),
+        ..PanelInventory::default()
+    };
+    assert!(matches!(
+        mint_seat(&mut inv, "a", "t", 0, 0),
+        Err(MintRefusal::CadenceDisabled)
+    ));
+
+    // And through the panel's own override, which is the reachable half: the
+    // project default is in a config a person edits, the override is in a file
+    // the tool itself writes.
+    let mut own = PanelInventory {
+        slug: "p".into(),
+        consolidate_every: Some(0),
+        ..PanelInventory::default()
+    };
+    assert!(matches!(
+        mint_seat(&mut own, "a", "t", 10, 0),
+        Err(MintRefusal::CadenceDisabled)
+    ));
+}
+
+/// The control: an ordinary cadence still mints, so the refusal above is not
+/// equally consistent with a gate that refuses everything.
+#[test]
+fn an_ordinary_cadence_still_mints() {
+    let mut inv = PanelInventory {
+        slug: "p".into(),
+        ..PanelInventory::default()
+    };
+    assert_eq!(mint_seat(&mut inv, "a", "t", 2, 0), Ok(1));
+    assert_eq!(mint_seat(&mut inv, "b", "t", 2, 0), Ok(2));
+    assert!(matches!(
+        mint_seat(&mut inv, "c", "t", 2, 0),
+        Err(MintRefusal::ConsolidationDue { .. })
+    ));
+}

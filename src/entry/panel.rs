@@ -71,25 +71,23 @@ fn cmd_seat(cfg: &Config, args: &[&str]) -> ExitCode {
     }
     let topic = topic_words.join(" ");
 
-    let (path, mut inv) = match load_or_report(cfg, slug) {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
-
-    match panel::mint_seat(&mut inv, persona, &topic, cfg.panel_consolidate_every, now_unix()) {
+    // Load, mint and save under one lock. Doing them separately is a
+    // read-modify-write, and two dispatches racing it both mint the same
+    // number while the second write erases the first.
+    let path = panel::inventory_path(&cfg.mock_dir, slug);
+    let cadence = cfg.panel_consolidate_every;
+    match panel::with_locked(&path, slug, |inv| {
+        panel::mint_seat(inv, persona, &topic, cadence, now_unix()).map_err(|r| r.to_string())
+    }) {
         Ok(number) => {
-            if let Err(e) = panel::save(&path, &inv) {
-                eprintln!("mock panel seat: {e}");
-                return ExitCode::FAILURE;
-            }
             println!(
                 "mock panel: seat {number}/{} minted on `{slug}` for {persona}: {topic}",
                 panel::SEAT_CAP
             );
             ExitCode::SUCCESS
         },
-        Err(refusal) => {
-            eprintln!("mock panel seat: refused on `{slug}`: {refusal}");
+        Err(why) => {
+            eprintln!("mock panel seat: refused on `{slug}`: {why}");
             ExitCode::from(2)
         },
     }
@@ -110,22 +108,17 @@ fn cmd_consolidate(cfg: &Config, args: &[&str]) -> ExitCode {
     }
     let note = note_words.join(" ");
 
-    let (path, mut inv) = match load_or_report(cfg, slug) {
-        Ok(v) => v,
-        Err(code) => return code,
-    };
-
-    match panel::consolidate(&mut inv, &note, now_unix()) {
-        Some(through) => {
-            if let Err(e) = panel::save(&path, &inv) {
-                eprintln!("mock panel consolidate: {e}");
-                return ExitCode::FAILURE;
-            }
+    let path = panel::inventory_path(&cfg.mock_dir, slug);
+    match panel::with_locked(&path, slug, |inv| {
+        panel::consolidate(inv, &note, now_unix())
+            .ok_or_else(|| "nothing new to consolidate".to_string())
+    }) {
+        Ok(through) => {
             println!("mock panel: `{slug}` consolidated through seat {through}");
             ExitCode::SUCCESS
         },
-        None => {
-            eprintln!("mock panel consolidate: nothing new to consolidate on `{slug}`");
+        Err(why) => {
+            eprintln!("mock panel consolidate: {why} on `{slug}`");
             ExitCode::from(2)
         },
     }

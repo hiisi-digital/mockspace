@@ -50,6 +50,12 @@ use serde::{Deserialize, Serialize};
 /// doc for why.
 pub const SEAT_CAP: u32 = 99;
 
+/// How long a mint waits for another process to release the inventory lock.
+///
+/// Bounded rather than unbounded: a lock left behind by a killed process would
+/// otherwise stop every future mint with nothing said about why.
+const LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// How many seats mint before a consolidation is required, when neither the
 /// inventory nor `mockspace.toml` says otherwise.
 pub const DEFAULT_CONSOLIDATE_EVERY: u32 = 10;
@@ -125,11 +131,22 @@ pub enum MintRefusal {
     /// since the panel opened, if it has never consolidated), which meets
     /// or exceeds `cadence`. Consolidate before minting again.
     ConsolidationDue { minted: u32, cadence: u32 },
+    /// The cadence resolved to zero, in the project config or in the panel's
+    /// own inventory. Refused rather than read as "no enforcement", because a
+    /// gate a panel can switch off in the file the tool rewrites for it is not
+    /// a gate.
+    CadenceDisabled,
 }
 
 impl std::fmt::Display for MintRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::CadenceDisabled => write!(
+                f,
+                "the consolidation cadence is 0, which would switch the gate off. Set it to \
+                 the number of seats a consolidation should cover, or remove it to take the \
+                 project default"
+            ),
             Self::SeatCapReached => {
                 write!(f, "seat cap ({SEAT_CAP}) reached; this panel is done minting")
             },
@@ -224,15 +241,22 @@ pub fn mint_seat(
         return Err(MintRefusal::SeatCapReached);
     };
 
+    // A cadence of zero is refused rather than read as "no enforcement". The
+    // seat cap is a `const` on the stated grounds that letting a project raise
+    // it would let the failure mode configure its own escape hatch; a cadence
+    // a panel can set to zero in the file the tool itself rewrites is that
+    // escape hatch, one line long, in both the project config and the panel's
+    // own inventory.
     let cadence = effective_cadence(inv, project_default_cadence);
-    if cadence > 0 {
-        let minted = seats_since_last_consolidation(inv);
-        if minted >= cadence {
-            return Err(MintRefusal::ConsolidationDue {
-                minted,
-                cadence,
-            });
-        }
+    if cadence == 0 {
+        return Err(MintRefusal::CadenceDisabled);
+    }
+    let minted = seats_since_last_consolidation(inv);
+    if minted >= cadence {
+        return Err(MintRefusal::ConsolidationDue {
+            minted,
+            cadence,
+        });
     }
 
     inv.seats.push(Seat {
@@ -300,7 +324,82 @@ pub fn save(path: &Path, inv: &PanelInventory) -> Result<(), String> {
     }
     let text = toml_edit::ser::to_string_pretty(inv)
         .map_err(|e| format!("serialising {}: {e}", path.display()))?;
-    std::fs::write(path, text).map_err(|e| format!("writing {}: {e}", path.display()))
+    // Written beside the target and renamed over it. `fs::write` truncates
+    // first and then writes, so a reader arriving between the two sees an
+    // empty ledger and a writer that dies between them leaves one. A rename
+    // within a directory is atomic, so the file is either the old inventory
+    // or the new one and never a partial third thing.
+    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, text).map_err(|e| format!("writing {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("renaming {} onto {}: {e}", tmp.display(), path.display())
+    })
+}
+
+/// Run `f` against this panel's inventory while holding an exclusive lock on
+/// it, and save whatever `f` leaves behind.
+///
+/// **Load, mint, save is a read-modify-write, and moving the counter out of an
+/// agent's head into a file does not make it atomic.** Two dispatches minting
+/// at once both read the same highest seat, both compute the same next number,
+/// and the second write erases the first: two agents told they hold seat N and
+/// a ledger containing one of them. Reproduced before this existed, twice,
+/// with the losing seat differing between runs.
+///
+/// The lock is a sibling file created with `create_new`, which is atomic on
+/// every platform this runs on: whoever creates it holds the lock, and
+/// everyone else waits. It carries the holder's process id so a stale one
+/// names who left it.
+///
+/// Bounded rather than blocking forever, because a lock left by a killed
+/// process would otherwise stop every future mint with no diagnosis. On
+/// timeout the caller is told which process holds it and where the file is.
+pub fn with_locked<T>(
+    path: &Path,
+    slug: &str,
+    f: impl FnOnce(&mut PanelInventory) -> Result<T, String>,
+) -> Result<T, String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+    }
+    let lock = path.with_extension("toml.lock");
+    let mut waited = std::time::Duration::ZERO;
+    let step = std::time::Duration::from_millis(20);
+    let guard = loop {
+        match std::fs::File::create_new(&lock) {
+            Ok(mut file) => {
+                use std::io::Write;
+                let _ = write!(file, "{}", std::process::id());
+                break lock.clone();
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if waited >= LOCK_TIMEOUT {
+                    let held = std::fs::read_to_string(&lock).unwrap_or_default();
+                    return Err(format!(
+                        "`{slug}` is locked by process {} and has been for {}s. If that \
+                         process is gone, remove {} and run again.",
+                        held.trim(),
+                        LOCK_TIMEOUT.as_secs(),
+                        lock.display()
+                    ));
+                }
+                std::thread::sleep(step);
+                waited += step;
+            },
+            Err(e) => return Err(format!("locking {}: {e}", lock.display())),
+        }
+    };
+
+    let result = (|| {
+        let mut inv = load(path, slug)?;
+        let value = f(&mut inv)?;
+        save(path, &inv)?;
+        Ok(value)
+    })();
+    let _ = std::fs::remove_file(&guard);
+    result
 }
 
 /// Every panel inventory declared under `<mock_dir>/panel/`, loaded. Used by
