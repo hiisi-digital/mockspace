@@ -54,7 +54,7 @@ mod render;
 mod resolve;
 mod resolved;
 mod rowref;
-mod validate;
+pub(crate) mod validate;
 
 pub use load::*;
 pub use model::*;

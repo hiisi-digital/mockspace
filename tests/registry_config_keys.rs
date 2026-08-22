@@ -207,3 +207,118 @@ fn every_field_a_real_instance_carries_is_a_known_key() {
          {found:?}\ngenerated config:\n{text}"
     );
 }
+
+// --- `[ref.roots.<name>]` ------------------------------------------------------
+
+/// Every key `RawRefRoot` carries is accepted.
+///
+/// The control for the arm below: without it, a rejection is equally consistent
+/// with a check that rejects everything in these tables.
+#[test]
+fn every_key_a_ref_root_declares_is_known() {
+    let found = config_unknown_keys(
+        r#"
+[ref.roots.seed]
+path = "mock/research/seed"
+frozen = true
+links = false
+label = "Prior research"
+internal = true
+"#,
+    );
+    assert!(
+        found.is_empty(),
+        "a ref root using its whole declared surface must be clean, or the arm \
+         below establishes nothing: {found:?}"
+    );
+}
+
+/// A root-level key written one line too far down lands in a ref-root table,
+/// where nothing reads it.
+///
+/// This is the case the check exists for and it is not hypothetical. `canon_paths`
+/// went in below a `[ref.roots.*]` header, was read as a key of that root, and
+/// was discarded in silence, so the feature it configures stayed off while the
+/// config plainly said it was on. TOML gives a bare key to whichever table header
+/// precedes it, and these tables sit near the top of a config, which is exactly
+/// where root-level settings are also written.
+#[test]
+fn a_root_level_key_that_landed_in_a_ref_root_is_reported() {
+    let found = config_unknown_keys(
+        r#"
+[ref.roots.seed]
+path = "mock/research/seed"
+frozen = true
+canon_paths = ["mock/registry/*.toml"]
+"#,
+    );
+    assert_eq!(found.len(), 1, "expected exactly one finding: {found:?}");
+    assert_eq!(found[0].kind, "unknown-config-key");
+    assert!(
+        found[0].message.contains("canon_paths") && found[0].message.contains("ref.roots.seed"),
+        "the finding names the key and the table it fell into: {}",
+        found[0].message
+    );
+    assert!(
+        found[0].message.contains("precedes it"),
+        "and says why it happened, because the author's mistake is invisible in \
+         the file: {}",
+        found[0].message
+    );
+}
+
+/// A ref root that is not a table is skipped rather than crashing.
+#[test]
+fn a_malformed_ref_roots_section_is_not_a_panic() {
+    assert!(config_unknown_keys("[ref]\nroots = 3\n").is_empty());
+    assert!(config_unknown_keys("ref = 3\n").is_empty());
+}
+
+/// The three shapes the first version of the `[ref.roots.*]` check could not
+/// see, each measured at zero findings before this landed.
+///
+/// The middle one is the motivating defect's own home: `canon_paths` is a root
+/// key, so a typo in it at the root was still discarded in silence while the
+/// check that exists to end that silence reported nothing.
+#[test]
+fn the_silence_ends_at_the_root_and_inside_an_inline_table() {
+    // a root written inline is the same configuration as a `[ref.roots.x]`
+    // header, and `as_table` returned None for it
+    let f = config_unknown_keys("[ref.roots]\nseed = { path = \"p\", canon_paths = [\"x\"] }\n");
+    assert_eq!(f.len(), 1, "inline root: {f:?}");
+    assert!(f[0].message.contains("canon_paths"), "{:?}", f[0]);
+
+    // the document root, which nothing looked at
+    let f = config_unknown_keys("canon_pathz = [\"x\"]\n");
+    assert_eq!(f.len(), 1, "root typo: {f:?}");
+    assert!(f[0].message.contains("canon_pathz"), "{:?}", f[0]);
+
+    // `[ref]` itself carries only `roots`
+    let f = config_unknown_keys("[ref]\nbogus = 1\n");
+    assert_eq!(f.len(), 1, "ref level: {f:?}");
+    assert!(f[0].message.contains("bogus"), "{:?}", f[0]);
+}
+
+/// The control, and it is the one that matters: a real config must produce
+/// nothing. A root check that reports every section header would fail the gate
+/// on every project in the workspace, which is a worse defect than the silence.
+///
+/// The two pin keys at the top are not decoration. Run against a real config
+/// this reported both of them, because the launcher reads them and the engine
+/// does not, and a fixture built only from what the engine knows would never
+/// have shown it.
+#[test]
+fn a_real_config_is_clean_at_every_level() {
+    let real = "\
+mockspace_branch = \"dev\"\n\
+mock_dir = \"mock\"\n\
+project_name = \"probe\"\n\
+canon_paths = [\"mock/registry/*.toml\"]\n\
+src_dirs = [\"crates\"]\n\
+\n[domain_kinds]\nx = \"y\"\n\
+\n[lints.no-alloc]\ncommit = \"error\"\n\
+\n[ref.roots.seed]\npath = \"mock/research/seed\"\nfrozen = true\nlinks = false\nlabel = \"Prior research\"\ninternal = true\n\
+\n[[registry.namespace]]\nkey = \"law\"\n";
+    let f = config_unknown_keys(real);
+    assert!(f.is_empty(), "a real config must be clean: {f:?}");
+}
