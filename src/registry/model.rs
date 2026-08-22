@@ -33,9 +33,14 @@ pub struct RegistryField {
     /// The closed set of values this field may hold, where there is one.
     ///
     /// Empty means the field is free text, which is the default and stays the
-    /// common case. A non-empty list makes an unlisted value a load error and
-    /// an `enum` in the generated schema, so an editor refuses it where it is
-    /// typed.
+    /// common case. A non-empty list becomes an `enum` in the generated schema,
+    /// which is what refuses an unlisted value, at the point it is typed.
+    ///
+    /// **The schema is the whole enforcement.** An earlier version of this line
+    /// said a load error as well, and named a Rust-side function that has never
+    /// existed. What backs it instead is that `SchemaCheck::Unavailable` is a
+    /// hard error where rows exist, so the contract does not lapse on a machine
+    /// with no validator.
     ///
     /// This exists because a closed set stated only in a `description` is not a
     /// contract. A project shipped four of them that way, and a typo in any one

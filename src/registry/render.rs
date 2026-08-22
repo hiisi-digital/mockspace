@@ -56,23 +56,60 @@ pub fn generate_schemas(
             // a schema over one file can know, and is checked separately.
             let row_ref = super::row_reference_target(&f.r#type)
                 .filter(|(target, _)| namespaces.iter().any(|n| n.key == *target));
+            // A closed value set becomes an `enum`, so the editor refuses an
+            // unlisted value at the point it is typed. Enforcement is the schema
+            // and only the schema; there is no Rust-side half, and an earlier
+            // comment here named a `validate_closed_values` that has never
+            // existed. `SchemaCheck::Unavailable` is a hard error where rows
+            // exist, so the contract does not lapse silently on a machine
+            // without a validator.
+            let enum_body = if f.values.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\"enum\": [{}]",
+                    f.values
+                        .iter()
+                        .map(|v| json_string(v))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            // **An array's `enum` constrains its MEMBERS, so it goes inside
+            // `items`.** Appended at the property level next to
+            // `"type": "array"` it says the array itself must equal one of the
+            // listed strings, which no array can, so every row carrying the
+            // field fails with an opaque validator error. The first version of
+            // this did that for all four array shapes and was tested on only
+            // the one scalar shape where it happens to be right.
+            let member = |base: &str| -> String {
+                if enum_body.is_empty() {
+                    format!("\"type\": \"array\", \"items\": {{ {base} }}")
+                } else {
+                    format!("\"type\": \"array\", \"items\": {{ {base}, {enum_body} }}")
+                }
+            };
+            let scalar = |base: &str| -> String {
+                if enum_body.is_empty() {
+                    base.to_string()
+                } else {
+                    format!("{base},\n          {enum_body}")
+                }
+            };
             let ty = match (row_ref, f.r#type.as_str()) {
                 (Some((_, true)), _) => {
-                    "\"type\": \"array\", \"items\": { \"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\" }"
-                        .to_string()
+                    member("\"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\"")
                 },
                 (Some((_, false)), _) => {
-                    "\"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\"".to_string()
+                    scalar("\"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\"")
                 },
-                (None, "integer") => "\"type\": \"integer\"".to_string(),
-                (None, "boolean") => "\"type\": \"boolean\"".to_string(),
+                (None, "integer") => scalar("\"type\": \"integer\""),
+                (None, "boolean") => scalar("\"type\": \"boolean\""),
                 // A citation is a string on the wire. The type exists to say what
                 // the string means, so validation can find it without knowing
                 // what the project called the field.
-                (None, "string[]") | (None, "ref[]") => {
-                    "\"type\": \"array\", \"items\": { \"type\": \"string\" }".to_string()
-                },
-                _ => "\"type\": \"string\"".to_string(),
+                (None, "string[]") | (None, "ref[]") => member("\"type\": \"string\""),
+                _ => scalar("\"type\": \"string\""),
             };
             // An internal field stays in the schema: it is valid data, checked
             // like any other, and only its rendering differs. Saying so in the
@@ -83,18 +120,6 @@ pub fn generate_schemas(
                     " (internal: recorded and checked, never rendered into the generated documents)"
                 },
                 FieldVisibility::Public => "",
-            };
-            // A closed value set becomes an `enum`, so the editor refuses an
-            // unlisted value at the point it is typed. The Rust-side check in
-            // `validate_closed_values` is the one that always runs; this is the
-            // half that answers before a save.
-            let enum_clause = if f.values.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    ",\n          \"enum\": [{}]",
-                    f.values.iter().map(|v| json_string(v)).collect::<Vec<_>>().join(", ")
-                )
             };
             let desc = f
                 .description
@@ -107,7 +132,7 @@ pub fn generate_schemas(
                 })
                 .unwrap_or_default();
             props.push_str(&format!(
-                ",\n        {}: {{\n          {ty}{enum_clause}{desc}\n        }}",
+                ",\n        {}: {{\n          {ty}{desc}\n        }}",
                 json_string(&f.name)
             ));
             if f.required {
@@ -453,4 +478,96 @@ pub fn format_citation(row: &RegistryRow) -> String {
         out.push_str(&format!(" ({y})"));
     }
     out
+}
+
+#[cfg(test)]
+mod closed_value_set_placement {
+    //! Where a `values` list lands in the emitted schema, for every field type
+    //! it can sit on.
+    //!
+    //! The first version put the `enum` next to `"type": "array"` for all four
+    //! array shapes, which no array value can satisfy, so every row carrying
+    //! such a field would have failed with an opaque validator error. It was
+    //! tested on `string` alone, where the placement happens to be right: one
+    //! of six shapes, and the five untested ones were the broken ones.
+    use super::*;
+    use crate::registry::{FieldVisibility, RegistryField, RegistryNamespace, RenderMode};
+
+    fn schema_for(ty: &str, values: &[&str]) -> String {
+        let ns = RegistryNamespace {
+            key:         "probe".into(),
+            title:       None,
+            description: None,
+            value_field: None,
+            render:      RenderMode::Page,
+            group_by:    None,
+            fields:      vec![RegistryField {
+                name:        "f".into(),
+                r#type:      ty.into(),
+                required:    false,
+                description: None,
+                visibility:  FieldVisibility::Public,
+                values:      values.iter().map(|s| s.to_string()).collect(),
+            }],
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let n = generate_schemas(tmp.path(), &tmp.path().join("mock"), &[ns]);
+        assert!(n > 0, "control: the generator wrote something");
+        let dir = tmp
+            .path()
+            .join("target")
+            .join("mockspace")
+            .join("registry-schemas");
+        let mut out = String::new();
+        for e in std::fs::read_dir(&dir).unwrap().flatten() {
+            out.push_str(&std::fs::read_to_string(e.path()).unwrap());
+        }
+        out
+    }
+
+    /// The `f` property's own body. The document wraps every namespace in
+    /// `"type": "array", "items": {...}`, so a search over the whole file
+    /// cannot tell a field's array from that one, which is how the first
+    /// version of this test managed to pass on a scalar.
+    fn property(schema: &str) -> String {
+        let i = schema.find("\"f\": {").expect("the probe field is emitted");
+        let rest = &schema[i ..];
+        let j = rest.find("\n        }").expect("its body closes");
+        rest[.. j].to_string()
+    }
+
+    #[test]
+    fn an_arrays_enum_constrains_its_members_and_a_scalars_constrains_itself() {
+        for (ty, json) in [
+            ("string", "\"type\": \"string\""),
+            ("integer", "\"type\": \"integer\""),
+            ("boolean", "\"type\": \"boolean\""),
+        ] {
+            let p = property(&schema_for(ty, &["a", "b"]));
+            assert_eq!(
+                p,
+                format!("\"f\": {{\n          {json},\n          \"enum\": [\"a\", \"b\"]"),
+                "{ty}: a scalar's enum sits on the property"
+            );
+        }
+        for ty in ["string[]", "ref[]"] {
+            let p = property(&schema_for(ty, &["a", "b"]));
+            assert_eq!(
+                p,
+                "\"f\": {\n          \"type\": \"array\", \"items\": { \"type\": \"string\", \"enum\": [\"a\", \"b\"] }",
+                "{ty}: an array's enum constrains its members, so it goes inside items, \
+                 never beside `type: array` where no array value can satisfy it"
+            );
+        }
+    }
+
+    #[test]
+    fn no_values_means_no_enum_at_any_type() {
+        // the control. without it every arm above passes on a generator that
+        // emits an enum unconditionally.
+        for ty in ["string", "integer", "boolean", "string[]", "ref[]"] {
+            let p = property(&schema_for(ty, &[]));
+            assert!(!p.contains("enum"), "{ty}: {p}");
+        }
+    }
 }
