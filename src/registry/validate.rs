@@ -208,7 +208,8 @@ const NAMESPACE_KEYS: &[&str] = &[
 ];
 
 /// Keys a `[[registry.namespace.field]]` table may carry. Mirrors `RegistryField`.
-const FIELD_KEYS: &[&str] = &["name", "type", "required", "description", "visibility"];
+const FIELD_KEYS: &[&str] =
+    &["name", "type", "required", "description", "visibility", "values"];
 
 /// Report keys in the config's namespace declarations that deserialize into
 /// nothing.
