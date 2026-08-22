@@ -301,6 +301,7 @@ mod tests {
             required:    false,
             description: None,
             visibility:  vis,
+            values:      Vec::new(),
         }
     }
 
@@ -326,6 +327,7 @@ mod tests {
             required:    false,
             description: None,
             visibility:  FieldVisibility::Public,
+            values:      Vec::new(),
         }];
         let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -356,6 +358,7 @@ mod tests {
             required:    false,
             description: None,
             visibility:  FieldVisibility::Public,
+            values:      Vec::new(),
         }];
         let reg = reg_with("seam", "law", &[("derives_from", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -387,6 +390,7 @@ mod tests {
             required:    false,
             description: None,
             visibility:  FieldVisibility::Public,
+            values:      Vec::new(),
         }];
         let reg = reg_with("seam", "law", &[("provenance", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -422,6 +426,7 @@ mod tests {
             required:    false,
             description: None,
             visibility:  FieldVisibility::Public,
+            values:      Vec::new(),
         }];
         let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -974,6 +979,7 @@ mod tests {
                 required:    false,
                 description: None,
                 visibility:  FieldVisibility::Public,
+                values:      Vec::new(),
             },
             RegistryField {
                 name:        "crates".into(),
@@ -981,6 +987,7 @@ mod tests {
                 required:    false,
                 description: None,
                 visibility:  FieldVisibility::Public,
+                values:      Vec::new(),
             },
         ];
         for (slug, name, crates) in [
