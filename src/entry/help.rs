@@ -37,15 +37,17 @@ use mockspace_lint_rules::tool::ArgSpec;
 /// [`mockspace_lint_rules::tool::contract_faults`]; a builtin's `args` are
 /// not checked against anything, because a builtin is dispatched by hand in
 /// `dispatch.rs` rather than through the tool contract. See
-/// `no_builtin_declares_a_required_positional_argument` below for what that
-/// means and why it is pinned rather than merely noted.
+/// `every_builtin_declaring_a_required_argument_is_named_here_deliberately`
+/// below for what that means and why it is pinned rather than merely noted.
 pub(crate) struct Cmd {
     pub(crate) name:    &'static str,
     pub(crate) summary: &'static str,
     /// Declared positional arguments, in the same [`ArgSpec`] shape a project
-    /// tool uses. Every builtin below takes its input as flags rather than
-    /// positionals, so every entry declares none; the field exists so a
-    /// future builtin that does take one has somewhere honest to say so,
+    /// tool uses. Most builtins take their input as flags rather than
+    /// positionals and declare none; `panel` is the exception and takes a
+    /// verb. The test named above pins the exact set that declares anything,
+    /// so a second one cannot appear unnoticed, and the field exists so a
+    /// builtin that does take one has somewhere honest to say so,
     /// and so [`usage_from`](mockspace_lint_rules::tool::usage_from) renders
     /// a builtin's usage line exactly the way it renders a tool's.
     pub(crate) args:    &'static [ArgSpec],

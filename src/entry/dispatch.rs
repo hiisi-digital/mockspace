@@ -708,6 +708,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // against, rather than a second reading of the same files.
     let lint_registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
     let lint_registry_view = registry::build_view(&lint_registry, &cfg.registry_namespaces);
+    // The panel ledger lives here rather than in the lint crate, so the answer
+    // is computed once and handed over, the same way the registry view is.
+    let open_panels: Vec<String> = crate::panel::load_all(&cfg.mock_dir)
+        .into_iter()
+        .filter(crate::panel::is_open)
+        .map(|p| p.slug)
+        .collect();
 
     match scope_arg {
         Some("") => {
@@ -717,7 +724,38 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             return ExitCode::FAILURE;
         },
         Some("infra") => {
-            eprintln!("  scope: infra (no crate lints)");
+            // No crate lints, and the repo lints still run. They are about
+            // repository state rather than about any crate, and an
+            // infrastructure-only commit is exactly the shape that touches the
+            // things they guard: the canon, the config, the design documents,
+            // the registry. Printing a line and running nothing made them
+            // inert on the commits that matter most, which is the failure the
+            // `RepoLint` trait was introduced to end and this quietly
+            // reintroduced.
+            eprintln!("  scope: infra (repo lints only)");
+            let empty: Vec<String> = Vec::new();
+            let violations = lint::run_lints(
+                &crates,
+                &cfg.src_dirs,
+                &cfg.mock_dir,
+                mode,
+                Some(&empty),
+                doc_only,
+                &cfg.proc_macro_crates,
+                cfg.lint_proc_macro_source,
+                &cfg.crate_prefix,
+                &cfg.lint_overrides,
+                &lint_registry_view,
+                &cfg.canon_paths,
+                &open_panels,
+                &cfg.primitive_introductions,
+                pack,
+            );
+            if violations > 0 {
+                eprintln!("lint check failed: {violations} violation(s)");
+                return ExitCode::FAILURE;
+            }
+            eprintln!("  all repo lints passed");
         },
         Some(crate_list) => {
             let names: Vec<String> = crate_list
@@ -745,6 +783,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
                 &lint_registry_view,
+                &cfg.canon_paths,
+                &open_panels,
                 &cfg.primitive_introductions,
                 pack,
             );
@@ -767,6 +807,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
                 &lint_registry_view,
+                &cfg.canon_paths,
+                &open_panels,
                 &cfg.primitive_introductions,
                 pack,
             );

@@ -33,6 +33,7 @@
 //! The engine compiles every pack's lints together with any in-tree
 //! `mock/lints/*.rs` files into one cdylib and runs the union.
 
+pub mod canon_not_while_panel_open;
 pub mod registry_view;
 pub use registry_view::{RegistryView, RowFields};
 pub mod fmt_only;
@@ -1258,6 +1259,12 @@ pub struct RepoContext<'a> {
     /// The invocation that triggered this run, when there was one and the lint
     /// asked for it via [`Lint::invocation_wanted`].
     pub invocation:    Option<Invocation<'a>>,
+    /// The globs a project declares as its canon, from `canon_paths`. Empty
+    /// where a project has not said what its canon is, which is most of them.
+    pub canon_paths:   &'a [String],
+    /// The slugs of every panel presently open, computed by the engine because
+    /// the panel ledger lives there. Empty where none is.
+    pub open_panels:   &'a [String],
     /// The project's registry, flattened, with the reverse edges computed.
     ///
     /// Empty where the project declares no registry, which is legitimate and
@@ -1653,6 +1660,7 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
     vec![
         Box::new(changelist_doc_gate::ChangelistDocGate),
         Box::new(changelist_lock::ChangelistLock),
+        Box::new(canon_not_while_panel_open::CanonNotWhilePanelOpen),
         Box::new(changelist_required::ChangelistRequired),
         Box::new(changelist_immutability::ChangelistImmutability),
     ]
@@ -2046,6 +2054,8 @@ mod repo_lint_tests {
             all_crates: &no_crates,
             src_dirs:   &no_src,
             invocation: None,
+            canon_paths: &[],
+            open_panels: &[],
             registry:   &Default::default(),
         };
 
@@ -2107,6 +2117,8 @@ mod repo_lint_tests {
             all_crates: &no_crates,
             src_dirs:   &no_src,
             invocation: None,
+            canon_paths: &[],
+            open_panels: &[],
             registry:   &Default::default(),
         };
         let extra: Vec<Box<dyn RepoLint>> = vec![lint];
