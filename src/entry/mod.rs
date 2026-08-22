@@ -25,13 +25,14 @@ use crate::{
 };
 
 mod cargo_gate;
-mod help;
+pub(crate) mod help;
 pub(crate) mod escape_hatch;
 mod message;
 mod dispatch;
 pub(crate) use dispatch::*;
 mod nuke;
 pub(crate) use nuke::*;
+mod panel;
 mod subcmd;
 pub(crate) use subcmd::*;
 mod tool;

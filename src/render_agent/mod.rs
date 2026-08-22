@@ -5,6 +5,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use mockspace_lint_rules::LintPack;
+
 use crate::config::Config;
 use crate::model::*;
 use crate::render_design;
@@ -38,12 +40,13 @@ pub fn generate_agent_rules(
     crates: &CrateMap,
     cfg: &Config,
     registry: &crate::registry::Registry,
+    pack: &LintPack,
 ) -> usize {
     let repo_root = &cfg.repo_root;
     let agent_dir = cfg.mock_dir.join("agent");
 
     // Phase 9: generate builtin templates (always, even without agent/ directory)
-    let builtins = generate_builtin_templates(cfg);
+    let builtins = generate_builtin_templates(cfg, pack);
 
     // Collect consumer rule/skill names to determine overrides
     let consumer_rule_names = collect_consumer_rule_names(&agent_dir);

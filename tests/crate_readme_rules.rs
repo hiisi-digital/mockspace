@@ -49,7 +49,7 @@ fn fixture(root: &Path) -> Config {
 
 fn render(cfg: &Config) {
     let crates = mockspace::parse::discover_crates(&cfg.crates_dir, &cfg.crate_prefix);
-    render_agent::generate_agent_rules(&crates, cfg, &Default::default());
+    render_agent::generate_agent_rules(&crates, cfg, &Default::default(), &Default::default());
 }
 
 #[test]

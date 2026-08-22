@@ -27,6 +27,7 @@ mod entry;
 pub mod graph;
 pub mod lint;
 pub mod model;
+pub mod panel;
 pub mod parse;
 pub mod pdf;
 pub mod registry;
@@ -34,6 +35,7 @@ pub mod render;
 pub mod render_agent;
 pub mod render_design;
 pub mod render_md;
+pub mod tool_catalogue;
 
 /// Path to the mockspace source directory, captured at compile time.
 ///

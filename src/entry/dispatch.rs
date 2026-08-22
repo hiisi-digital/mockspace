@@ -456,6 +456,28 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 }
                 return ExitCode::SUCCESS;
             },
+            "tools" => {
+                let long = args.iter().any(|a| a == "--long");
+                let listings = crate::tool_catalogue::enumerate(pack);
+                let dupes = crate::tool_catalogue::duplicates(pack);
+                if !dupes.is_empty() {
+                    eprintln!(
+                        "mock: {} project tool name(s) registered more than once: {}",
+                        dupes.len(),
+                        dupes.join(", ")
+                    );
+                    eprintln!("  `mock <name>` would run whichever loaded first.");
+                }
+                print!(
+                    "{}",
+                    if long {
+                        crate::tool_catalogue::render_long(&listings)
+                    } else {
+                        crate::tool_catalogue::render_table(&listings)
+                    }
+                );
+                return ExitCode::SUCCESS;
+            },
             "query" => {
                 // The argument after the subcommand, not a fixed position:
                 // `--dir` and friends may precede it.
@@ -518,6 +540,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 // could forward it.
                 let bench_args = subcommand_args(&args, "bench");
                 return bench::cmd(&cfg, &bench_args);
+            },
+            "panel" => {
+                let panel_args = subcommand_args(&args, "panel");
+                return super::panel::run(&cfg, &panel_args);
             },
             other => {
                 // A tool is a subcommand this binary does not know at compile
@@ -1170,7 +1196,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
 
     // --- Agent rules and skills ---
     eprintln!("--- generating agent rules ---");
-    let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry);
+    let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry, pack);
     eprintln!("  generated {agent_count} agent files");
 
     if registry_errors > 0 {
