@@ -152,12 +152,31 @@ mod tests {
     /// The control on that: a row that does not exist also answers empty, so a
     /// check distinguishing the two must ask `row()` first rather than reading
     /// emptiness as absence.
+    ///
+    /// The fixture carries an edge naming a row nothing declares, which is what
+    /// makes this an assertion rather than a restatement of the fixture. It
+    /// passed on a fixture with no such edge, and the builder that fills this
+    /// view was emitting exactly that edge at the time.
     #[test]
     fn a_row_that_does_not_exist_also_has_no_referrers() {
-        let v = view();
-        assert!(v.referrers("slot::nosuch").is_empty());
-        assert!(v.row("slot::nosuch").is_none());
+        let mut rows = BTreeMap::new();
+        rows.insert("slot::audio".to_string(), RowFields::new());
+        // The caller passed an edge to a row that is not in `rows`. A view is
+        // handed what it is handed, so this pins what it answers rather than
+        // what a well-behaved caller would have built.
+        let referrers = [("slot::ghost".to_string(), vec!["answer::niri".to_string()])]
+            .into_iter()
+            .collect();
+        let v = RegistryView::new(rows, referrers);
+        assert!(v.row("slot::ghost").is_none(), "the row is not there");
         assert!(v.row("slot::audio").is_some());
+        assert_eq!(
+            v.referrers("slot::ghost"),
+            ["answer::niri"],
+            "and the view reports what it was given, so a check reading emptiness \
+             as absence would be wrong here. Asking `row()` is what distinguishes \
+             the two, and `build_view` is what must not hand over this edge."
+        );
     }
 
     #[test]

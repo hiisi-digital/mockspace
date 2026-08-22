@@ -255,8 +255,8 @@ mod tests {
                 all_crates: &crates,
                 src_dirs:   dirs,
                 invocation: None,
-            registry: &Default::default(),
-        })
+                registry:   &Default::default(),
+            })
         };
 
         let found = run(&[root.join("libs")]);
@@ -370,7 +370,7 @@ mod fmt_only_exemption {
             all_crates: &crates,
             src_dirs:   &src_dirs,
             invocation: None,
-            registry: &Default::default(),
+            registry:   &Default::default(),
         };
         ChangelistRequired.check_repo(&ctx)
     }
@@ -480,7 +480,7 @@ mod fmt_only_judges_the_committed_content {
             all_crates: &crates,
             src_dirs:   &src_dirs,
             invocation: None,
-            registry: &Default::default(),
+            registry:   &Default::default(),
         })
     }
 

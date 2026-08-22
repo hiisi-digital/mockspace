@@ -2046,7 +2046,7 @@ mod repo_lint_tests {
             all_crates: &no_crates,
             src_dirs:   &no_src,
             invocation: None,
-            registry: &Default::default(),
+            registry:   &Default::default(),
         };
 
         let extra: Vec<Box<dyn RepoLint>> = vec![Box::new(AlwaysReports)];
@@ -2107,7 +2107,7 @@ mod repo_lint_tests {
             all_crates: &no_crates,
             src_dirs:   &no_src,
             invocation: None,
-            registry: &Default::default(),
+            registry:   &Default::default(),
         };
         let extra: Vec<Box<dyn RepoLint>> = vec![lint];
         let errors = check_repo_with_extra(&ctx, false, cfg, &extra);
