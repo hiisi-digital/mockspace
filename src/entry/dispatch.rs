@@ -10,6 +10,10 @@ fn pack_is_empty(pack: &LintPack) -> bool {
         && pack.workspace_lints.is_empty()
         && pack.repo_lints.is_empty()
         && pack.message_lints.is_empty()
+        // Tools count. A statically-linked pack carrying only tools is not
+        // empty, and treating it as empty would discard it and try to load a
+        // cdylib over the top.
+        && pack.tools.is_empty()
 }
 
 /// The value following `flag` in `args`, if present.
@@ -475,10 +479,17 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return bench::cmd(&cfg, &bench_args);
             },
             other => {
+                // A tool is a subcommand this binary does not know at compile
+                // time. Its name is its directory under `<mock>/tools/`, so the
+                // check is a directory listing rather than a build: a typo must
+                // not compile a cdylib to discover it was a typo.
+                if bootstrap::tool_names(&cfg.mock_dir).iter().any(|n| n == other) {
+                    return super::tool::run(&cfg, pack, other, &subcommand_args(&args, other));
+                }
                 // An unrecognised first positional is a mistyped subcommand,
                 // not a reason to silently run the default full regeneration
                 // (slow, and not what was asked). Report and exit non-zero.
-                return super::help::unknown_subcommand(other);
+                return super::help::unknown_subcommand(other, &bootstrap::tool_names(&cfg.mock_dir));
             },
         }
     }
