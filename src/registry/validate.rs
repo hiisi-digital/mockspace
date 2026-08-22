@@ -51,9 +51,10 @@ pub fn validate_provenance(
                     out.push(RegistryFinding {
                     kind: "unknown-provenance-root",
                     message: format!(
-                        "{}: `{}` names root `{}`, which is not declared in [registry.roots]. Declared roots are what make a reference resolvable rather than a convention.",
+                        "{}: `{}` names root `{}`, which has no [ref.roots.{}] table. Declared roots are what make a reference resolvable rather than a convention.",
                         row.qualified(),
                         p.render(),
+                        p.root,
                         p.root
                     ),
                     source: Some(row.source.clone()),
@@ -168,10 +169,17 @@ pub const FINDING_KINDS: &[&str] = &[
     // could not run at all, and listed here so the set of kinds stays in one
     // place. A run that could not check is not a run that passed.
     //
-    // NOTE: nothing reads this list today. The per-finding severity map is
-    // parsed at `config.rs:1017` and never consulted, and two kinds produced by
-    // `namespace_root_collisions` are absent from it with nothing noticing. The
-    // list is documentation until a consumer exists.
+    // NOTE: the per-finding severity map (`table.findings`, parsed at
+    // `config.rs:1017`) is a real, working mechanism elsewhere: ordinary lints
+    // registered with `mockspace_lint_rules::run_lint` consult it already. No
+    // registry check is dispatched that way, though: `run_inner` in
+    // `dispatch.rs` calls these functions by hand and prints their findings
+    // directly, which is why the map went unconsulted for this whole list.
+    // `unknown-config-key` is now the one exception (severity is read at that
+    // call site under the lint name `registry-config-keys`). Every other kind
+    // here still has no consumer, and two kinds produced by
+    // `namespace_root_collisions` are absent from this list entirely with
+    // nothing noticing.
     "schema-unavailable",
     // Produced by `config_unknown_keys`, over the config file rather than the
     // row data, which no generated schema covers.

@@ -149,3 +149,61 @@ fn the_kind_this_produces_is_published() {
         found[0].kind
     );
 }
+
+/// The list this check reads is caught against a real struct value, not only
+/// against `KNOWN_GOOD`.
+///
+/// `the_known_key_list_has_not_drifted_from_the_struct` above proves
+/// `NAMESPACE_KEYS` and `FIELD_KEYS` agree with `KNOWN_GOOD`, which is a third
+/// hand-maintained list: nothing forces it to be updated in step with either
+/// list, or with the struct they both claim to mirror. A field added to
+/// `RegistryNamespace` or `RegistryField`, left off `NAMESPACE_KEYS`/
+/// `FIELD_KEYS` and never written into `KNOWN_GOOD` passes that test
+/// unnoticed, because `KNOWN_GOOD` never mentions the new field either.
+///
+/// This constructs a real `RegistryNamespace` populating every field it has,
+/// serialises it with `serde` rather than typing it out by hand, and checks
+/// the result. A field the struct actually carries reaches the emitted TOML
+/// on its own; nothing here has to remember it exists.
+#[test]
+fn every_field_a_real_instance_carries_is_a_known_key() {
+    #[derive(serde::Serialize)]
+    struct SerReg {
+        registry: SerRegBody,
+    }
+    #[derive(serde::Serialize)]
+    struct SerRegBody {
+        namespace: Vec<mockspace::registry::RegistryNamespace>,
+    }
+
+    let ns = mockspace::registry::RegistryNamespace {
+        key:         "law".into(),
+        title:       Some("Laws".into()),
+        description: Some("what holds".into()),
+        value_field: Some("statement".into()),
+        render:      mockspace::registry::RenderMode::Page,
+        group_by:    Some("domain".into()),
+        fields:      vec![mockspace::registry::RegistryField {
+            name:        "statement".into(),
+            r#type:      "string".into(),
+            required:    true,
+            description: Some("the law".into()),
+            visibility:  mockspace::registry::FieldVisibility::Public,
+        }],
+    };
+
+    let text = toml_edit::ser::to_string_pretty(&SerReg {
+        registry: SerRegBody {
+            namespace: vec![ns],
+        },
+    })
+    .expect("a real RegistryNamespace instance serialises");
+
+    let found = config_unknown_keys(&text);
+    assert!(
+        found.is_empty(),
+        "a field RegistryNamespace or RegistryField actually carries is reported \
+         as unknown, so NAMESPACE_KEYS or FIELD_KEYS has drifted from the struct: \
+         {found:?}\ngenerated config:\n{text}"
+    );
+}

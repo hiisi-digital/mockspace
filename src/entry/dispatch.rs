@@ -905,20 +905,50 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
-        // A warning rather than an error, and the choice is deliberate under the
-        // rule stated above: what prints ERROR blocks, and an inert key does not
-        // stop the registry from being correct. It stops the author from knowing
-        // their declaration does nothing, which is a different harm and is ended
-        // by saying so once per run.
+        // A warning by default, and the choice is deliberate under the rule
+        // stated above: what prints ERROR blocks, and an inert key does not stop
+        // the registry from being correct. It stops the author from knowing their
+        // declaration does nothing, which is a different harm and is ended by
+        // saying so once per run.
         //
-        // Escalating it belongs to whoever owns a consumer, not to this file. The
-        // largest registry in the workspace carries twelve of these, and breaking
-        // its build to make a point about a key that was already doing nothing
-        // would be the gate arriving as a surprise rather than as a decision.
-        if let Ok(text) = std::fs::read_to_string(&cfg.config_path) {
-            for f in registry::config_unknown_keys(&text) {
-                eprintln!("  warning [{}]: {}", f.kind, f.message);
-            }
+        // Escalating or silencing it is a project's own call, and it is made the
+        // ordinary way: naming `registry-config-keys` in `[lints]`, the same as
+        // any other lint. This does not go through the general lint dispatch
+        // (there is no `Lint` impl here to register), so the severity map is
+        // consulted by hand at this one call site; nothing else in `FINDING_KINDS`
+        // is wired to it yet.
+        let key_severity = cfg
+            .lint_overrides
+            .base
+            .get("registry-config-keys")
+            .copied()
+            .unwrap_or(Severity::ADVISORY);
+        match std::fs::read_to_string(&cfg.config_path) {
+            Ok(text) => {
+                for f in registry::config_unknown_keys(&text) {
+                    match key_severity.effective(mode) {
+                        Level::Pass => {},
+                        Level::Info | Level::Warn => {
+                            eprintln!("  warning [{}]: {}", f.kind, f.message);
+                        },
+                        Level::Error => {
+                            registry_errors += 1;
+                            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+                        },
+                    }
+                }
+            },
+            Err(e) => {
+                // A check that could not run is not a check that passed: the
+                // same reasoning `SchemaCheck::Unavailable` already applies to
+                // the schema gate applies here, so absence is reported rather
+                // than swallowed.
+                eprintln!(
+                    "  warning: could not read {} to check for unknown config \
+                     keys: {e}",
+                    cfg.config_path.display()
+                );
+            },
         }
         match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
             registry::SchemaCheck::Ran {
