@@ -233,3 +233,37 @@ fn a_bad_declaration_does_not_suppress_a_bad_slug_elsewhere() {
         "and the unrelated bad slug must be reported in the same run: {err}"
     );
 }
+
+/// The view a lint and a tool are handed, built from a real directory.
+///
+/// The unit tests build a `Registry` in memory; this one goes through the
+/// loader, which is the path the engine actually takes, so a view that is
+/// correct over a hand-built fixture and empty over a real one is caught here.
+///
+/// **What this does not reach**: the two lines that assign the view into
+/// `RepoContext` and `ToolContext`. Exercising those needs a compiled tool or
+/// lint cdylib in a temporary project, and the fixture for that did not come up
+/// in the time available. The assignment is two lines and is visible in the
+/// diff, and it is unverified by a test.
+#[test]
+fn the_view_built_from_a_real_directory_carries_the_edges() {
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(
+        tmp.path(),
+        TWO_NAMESPACES,
+        &format!("{GOOD_ROWS}\n[[slot]]\nid = \"audio\"\nuse = \"sound\"\n"),
+    );
+    let mock = tmp.path().join("mock");
+    let cfg = mockspace::config::Config::from_dir(&mock);
+    let reg = mockspace::registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let view = mockspace::registry::build_view(&reg, &cfg.registry_namespaces);
+
+    assert_eq!(view.len(), 3, "two slots and one answer");
+    assert_eq!(view.rows_in("slot"), ["slot::audio", "slot::display"]);
+    assert_eq!(view.referrers("slot::display"), ["answer::niri"]);
+    assert!(
+        view.referrers("slot::audio").is_empty(),
+        "the slot nothing answers is the finding, and it is an empty list"
+    );
+    assert_eq!(view.field("answer::niri", "slot"), Some("display"));
+}

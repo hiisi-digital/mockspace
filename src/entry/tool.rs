@@ -112,12 +112,15 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, name: &str, args: &[&str]) -> E
     } else {
         None
     };
+    let registry = crate::registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let view = crate::registry::build_view(&registry, &cfg.registry_namespaces);
     let ctx = ToolContext {
         mock_dir:   &cfg.mock_dir,
         repo_root:  &cfg.repo_root,
         all_crates: &all_crate_names,
         src_dirs:   &cfg.src_dirs,
         args,
+        registry:   &view,
         stdin:      stdin.as_deref(),
     };
 

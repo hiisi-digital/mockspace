@@ -264,3 +264,84 @@ fn a_partial_slug_match_is_not_a_referrer() {
         "a slug that merely starts with the target must not count"
     );
 }
+
+/// The view a lint and a tool are handed must carry the same reverse edges
+/// `refsto` computes, or a check and a document disagree about the same data.
+#[test]
+fn the_view_carries_the_rows_and_the_reverse_edges() {
+    let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot[]")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("slot", "audio", &[]),
+        ("answer", "niri", &[("slot", "display")]),
+        ("answer", "wlr", &[("slot", "display, audio")]),
+    ]);
+    let v = build_view(&r, &nss);
+    assert_eq!(v.len(), 4);
+    assert_eq!(v.rows_in("slot"), ["slot::audio", "slot::display"]);
+    assert_eq!(v.referrers("slot::display"), ["answer::niri", "answer::wlr"]);
+    assert_eq!(v.referrers("slot::audio"), ["answer::wlr"]);
+    assert_eq!(v.field("answer::niri", "slot"), Some("display"));
+    // The same question `refsto` answers, from the same data.
+    assert_eq!(v.referrers("slot::display"), referrers(&r, &nss, "slot::display"));
+}
+
+/// The control: a field that is not typed as a namespace contributes no edge,
+/// so a view built by scanning every field would fail this.
+#[test]
+fn an_untyped_field_contributes_no_edge_to_the_view() {
+    let nss = [ns("slot", &[]), ns("answer", &[("slot", "string")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("answer", "niri", &[("slot", "display")]),
+    ]);
+    let v = build_view(&r, &nss);
+    assert_eq!(v.len(), 2, "the rows are still there");
+    assert!(
+        v.referrers("slot::display").is_empty(),
+        "an ordinary string field must not become a relation"
+    );
+}
+
+/// A dangling reference is not an edge, and this is the input the two
+/// implementations disagreed on.
+///
+/// `refsto` refuses a target that is not a row, deliberately: a row that does
+/// not exist is not a row with no referrers. `build_view` had no such guard and
+/// happily reported `answer::niri` as referring to a slot nothing declares, so a
+/// lint and a document gave different answers about the same data, which is the
+/// one thing the view exists to prevent.
+///
+/// Dangling references are a live state rather than a hypothetical: the loader
+/// has an `unknown-row-reference` finding because they occur, and the view is
+/// built before that finding can stop anything.
+#[test]
+fn a_dangling_reference_is_not_an_edge_in_either_direction() {
+    let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("answer", "niri", &[("slot", "ghost")]),
+    ]);
+    assert!(
+        referrers(&r, &nss, "slot::ghost").is_empty(),
+        "the function a document uses"
+    );
+    assert!(
+        build_view(&r, &nss).referrers("slot::ghost").is_empty(),
+        "and the view a lint uses, which reported the edge before this"
+    );
+}
+
+/// The control: the same shape with the target present is an edge on both
+/// sides, so the test above is not equally consistent with a walk that emits
+/// nothing.
+#[test]
+fn a_reference_to_a_row_that_exists_is_an_edge_in_both() {
+    let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("answer", "niri", &[("slot", "display")]),
+    ]);
+    assert_eq!(referrers(&r, &nss, "slot::display"), ["answer::niri"]);
+    assert_eq!(build_view(&r, &nss).referrers("slot::display"), ["answer::niri"]);
+}

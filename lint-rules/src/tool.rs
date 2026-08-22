@@ -226,15 +226,12 @@ pub struct ToolContext<'a> {
     pub args:       &'a [&'a str],
     /// Piped input, when there was any.
     pub stdin:      Option<&'a str>,
-    // FIXME: no registry access. A tool that inventories claims, or answers
-    // "has this already been said" (exactly what `claim-inventory` and
-    // `already-said` in `entry::tool`'s own test data name as plausible
-    // tools), needs to read the same registry data `mock query` reads, and
-    // there is currently no field here for it. Those two names are test
-    // fixtures rather than real tools precisely because this context cannot
-    // build them. Wants a `registry` field (or a read-only handle into
-    // whatever `registry::cmd_query` resolves against) before a query-shaped
-    // tool can be written at all.
+    /// The project's registry, flattened, with the reverse edges computed.
+    ///
+    /// A tool that inventories what the registry holds, or answers whether a
+    /// subject is already taken, reads the same rows `mock query` resolves
+    /// against. Empty where the project declares no registry.
+    pub registry:   &'a crate::RegistryView,
 }
 
 /// What a tool returns.
@@ -502,6 +499,7 @@ mod tests {
         args: &'a [&'a str],
         crates: &'a BTreeSet<String>,
         dirs: &'a [PathBuf],
+        registry: &'a crate::RegistryView,
     ) -> ToolContext<'a> {
         ToolContext {
             mock_dir: Path::new("/mock"),
@@ -510,6 +508,7 @@ mod tests {
             src_dirs: dirs,
             args,
             stdin: None,
+            registry,
         }
     }
 
@@ -639,7 +638,7 @@ mod tests {
     #[test]
     fn an_honest_tool_passes_the_audit() {
         let (c, d) = empty();
-        let r = PhraseSearch.run(&ctx(&["needle"], &c, &d));
+        let r = PhraseSearch.run(&ctx(&["needle"], &c, &d, &Default::default()));
         assert_eq!(contract_faults(&PhraseSearch, Some(&r)), Vec::<String>::new());
     }
 
@@ -655,7 +654,7 @@ mod tests {
     #[test]
     fn a_tool_declaring_no_failing_case_that_blocks_a_gate_is_caught() {
         let (c, d) = empty();
-        let r = LiesAboutGating.run(&ctx(&[], &c, &d));
+        let r = LiesAboutGating.run(&ctx(&[], &c, &d, &Default::default()));
         let found = contract_faults(&LiesAboutGating, Some(&r));
         assert_eq!(found.len(), 1, "expected one fault, got {found:?}");
         assert!(found[0].contains("has a failing case"), "{found:?}");
@@ -667,7 +666,7 @@ mod tests {
         // design, so a naive audit reports every tool whose instrument broke as
         // a liar, which would teach authors to swallow control failures.
         let (c, d) = empty();
-        let r = BrokenInstrument.run(&ctx(&[], &c, &d));
+        let r = BrokenInstrument.run(&ctx(&[], &c, &d, &Default::default()));
         assert_eq!(contract_faults(&BrokenInstrument, Some(&r)), Vec::<String>::new());
         assert!(r.outcome.blocks(LintMode::Commit), "inconclusive must block");
     }
@@ -681,7 +680,7 @@ mod tests {
         // and the same tool IS caught once a run exists, so the emptiness above
         // is deferral rather than blindness
         let (c, d) = empty();
-        let r = LiesAboutGating.run(&ctx(&[], &c, &d));
+        let r = LiesAboutGating.run(&ctx(&[], &c, &d, &Default::default()));
         assert_eq!(contract_faults(&LiesAboutGating, Some(&r)).len(), 1);
     }
 

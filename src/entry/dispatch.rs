@@ -677,6 +677,12 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // --- Lints ---
     eprintln!("--- running lints ---");
 
+    // The registry, flattened once for both arms. A repo lint checking it gets
+    // the same rows and the same reverse edges a document's `refsto` resolves
+    // against, rather than a second reading of the same files.
+    let lint_registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let lint_registry_view = registry::build_view(&lint_registry, &cfg.registry_namespaces);
+
     match scope_arg {
         Some("") => {
             eprintln!(
@@ -712,6 +718,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 cfg.lint_proc_macro_source,
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
+                &lint_registry_view,
                 &cfg.primitive_introductions,
                 pack,
             );
@@ -733,6 +740,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 cfg.lint_proc_macro_source,
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
+                &lint_registry_view,
                 &cfg.primitive_introductions,
                 pack,
             );

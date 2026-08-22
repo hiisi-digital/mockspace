@@ -253,6 +253,41 @@ fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+/// Call `emit(target, source)` once for every reverse edge in the registry.
+///
+/// One definition of what an edge is, because there were two: `referrers`
+/// scanned for one target and `build_view` collected them all, each splitting
+/// the field's own way. They agreed, and the only assertion tying them covered
+/// one identifier on one fixture, so an edit to either spelling would have left
+/// the test green while a document and a lint diverged.
+///
+/// **An edge whose target is not a row is not emitted.** A field naming a slug
+/// nothing declares is a dangling reference, which the loader already reports
+/// as `unknown-row-reference`; treating it as an edge would answer a question
+/// about a row that does not exist, and it is what made a lint disagree with
+/// `refsto` about the same data.
+fn for_each_edge(
+    reg: &Registry,
+    namespaces: &[RegistryNamespace],
+    mut emit: impl FnMut(String, String),
+) {
+    let bearing = row_reference_fields(namespaces);
+    for row in reg.rows.values() {
+        let empty = Vec::new();
+        for (name, target) in bearing.get(&row.namespace).unwrap_or(&empty) {
+            let Some(raw) = row.fields.get(name) else {
+                continue;
+            };
+            for slug in raw.split(", ").map(str::trim).filter(|s| !s.is_empty()) {
+                let q = format!("{target}::{slug}");
+                if reg.rows.contains_key(&q) {
+                    emit(q, row.qualified());
+                }
+            }
+        }
+    }
+}
+
 /// Every row that references `qualified` through a typed row-reference field.
 ///
 /// The direction the data is not stored in. A row states what it references;
@@ -263,29 +298,12 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// Returned as `namespace::slug`, sorted, each appearing once however many of
 /// its fields point at the target.
 pub fn referrers(reg: &Registry, namespaces: &[RegistryNamespace], qualified: &str) -> Vec<String> {
-    let Some((target_ns, target_slug)) = qualified.split_once("::") else {
-        return Vec::new();
-    };
-    let bearing = row_reference_fields(namespaces);
     let mut out = BTreeSet::new();
-    for row in reg.rows.values() {
-        let empty = Vec::new();
-        for (name, target) in bearing.get(&row.namespace).unwrap_or(&empty) {
-            if target != target_ns {
-                continue;
-            }
-            let Some(raw) = row.fields.get(name) else {
-                continue;
-            };
-            if raw
-                .split(", ")
-                .map(str::trim)
-                .any(|item| item == target_slug)
-            {
-                out.insert(row.qualified());
-            }
+    for_each_edge(reg, namespaces, |target, source| {
+        if target == qualified {
+            out.insert(source);
         }
-    }
+    });
     out.into_iter().collect()
 }
 
@@ -293,3 +311,32 @@ pub fn referrers(reg: &Registry, namespaces: &[RegistryNamespace], qualified: &s
 mod render_tests;
 #[cfg(test)]
 mod tests;
+
+/// The flattened, reverse-edged view a lint or a tool checks the registry with.
+///
+/// Built here rather than in the lint crate because computing the reverse edges
+/// needs the declared field types, which are configuration. Handing over the
+/// answer keeps that knowledge in one place, and a lint asking "what references
+/// this" cannot get a different answer from `refsto` in a document.
+pub fn build_view(
+    reg: &Registry,
+    namespaces: &[RegistryNamespace],
+) -> mockspace_lint_rules::RegistryView {
+    let rows: BTreeMap<String, mockspace_lint_rules::RowFields> = reg
+        .rows
+        .iter()
+        .map(|(q, row)| (q.clone(), row.fields.clone()))
+        .collect();
+    // One pass over every edge rather than `referrers` per row, which would be
+    // quadratic on a corpus of a few thousand rows. Same definition of an edge
+    // either way, because both go through `for_each_edge`.
+    let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for_each_edge(reg, namespaces, |target, source| {
+        edges.entry(target).or_default().push(source);
+    });
+    for v in edges.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+    mockspace_lint_rules::RegistryView::new(rows, edges)
+}

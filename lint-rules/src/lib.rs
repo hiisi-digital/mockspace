@@ -33,6 +33,8 @@
 //! The engine compiles every pack's lints together with any in-tree
 //! `mock/lints/*.rs` files into one cdylib and runs the union.
 
+pub mod registry_view;
+pub use registry_view::{RegistryView, RowFields};
 pub mod fmt_only;
 mod actionable_errors;
 mod changelist_doc_gate;
@@ -1256,6 +1258,11 @@ pub struct RepoContext<'a> {
     /// The invocation that triggered this run, when there was one and the lint
     /// asked for it via [`Lint::invocation_wanted`].
     pub invocation:    Option<Invocation<'a>>,
+    /// The project's registry, flattened, with the reverse edges computed.
+    ///
+    /// Empty where the project declares no registry, which is legitimate and
+    /// which every accessor answers without a special case.
+    pub registry:      &'a crate::RegistryView,
 }
 
 /// A lint handed an authored message rather than anything in the worktree.
@@ -2039,6 +2046,7 @@ mod repo_lint_tests {
             all_crates: &no_crates,
             src_dirs:   &no_src,
             invocation: None,
+            registry:   &Default::default(),
         };
 
         let extra: Vec<Box<dyn RepoLint>> = vec![Box::new(AlwaysReports)];
@@ -2099,6 +2107,7 @@ mod repo_lint_tests {
             all_crates: &no_crates,
             src_dirs:   &no_src,
             invocation: None,
+            registry:   &Default::default(),
         };
         let extra: Vec<Box<dyn RepoLint>> = vec![lint];
         let errors = check_repo_with_extra(&ctx, false, cfg, &extra);
