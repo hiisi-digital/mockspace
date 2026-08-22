@@ -23,40 +23,6 @@ pub(crate) fn print_row(section: &str, result: CheckResult, msg: &str) {
     eprintln!("  {} {:<10} {}", result.icon(), section, msg);
 }
 
-/// Which of `changed_paths` fall inside `canon_paths`, when a panel is
-/// currently open: the mechanical half of the panel-discipline rule shipped
-/// by `crate::render_agent`, which states in prose that a panel converges
-/// and proposes but never writes canon itself.
-///
-/// `None` whenever there is nothing to flag: no canon declared (the check
-/// is a no-op until a project says what its canon is), or no panel open (a
-/// canon edit outside any open panel is exactly what the discipline asks
-/// for), or a canon declared and a panel open but nothing changed touches
-/// it. `Some` names every offending path, so the row can say which files
-/// rather than only that something matched.
-///
-/// A pure function taking every fact as an argument rather than reading git
-/// or the panel directory itself, so it is testable without either: see
-/// this module's tests for the case that must fail (a canon path changed
-/// while a panel is open) alongside the two that must not (no panel open;
-/// no canon path touched).
-#[must_use]
-pub(crate) fn canon_violation(
-    changed_paths: &[String],
-    canon_paths: &[String],
-    any_panel_open: bool,
-) -> Option<Vec<String>> {
-    if canon_paths.is_empty() || !any_panel_open {
-        return None;
-    }
-    let hits: Vec<String> = changed_paths
-        .iter()
-        .filter(|p| canon_paths.iter().any(|g| mockspace_lint_rules::glob_match(g, p)))
-        .cloned()
-        .collect();
-    (!hits.is_empty()).then_some(hits)
-}
-
 /// Every path the working tree differs from HEAD by, repo-root-relative.
 ///
 /// `-z` rather than the default porcelain format: `git` C-quotes a path with a
@@ -494,6 +460,14 @@ pub(crate) fn is_cleanable_target(target_dir: &Path, repo_root: &Path) -> bool {
 
 #[cfg(test)]
 mod panel_discipline_tests {
+    // The shipped function, not a copy of it. The four canon-violation tests
+    // below were written against a local duplicate that nothing called: the
+    // readiness report at
+    // `panel_discipline` imports the lint-rules one inside its own body, so the
+    // duplicate was dead and these were verifying an implementation no run
+    // reaches. Deleting the duplicate is what surfaced it.
+    use mockspace_lint_rules::canon_not_while_panel_open::canon_violation;
+
     use super::*;
 
     #[test]
