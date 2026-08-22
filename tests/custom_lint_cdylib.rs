@@ -3,8 +3,10 @@
 //! `mockspace-lint-rules`, dlopen it, and confirm a real `Box<dyn Lint>`
 //! crosses the boundary and dispatches.
 //!
-//! `#[ignore]` because it runs a `cargo build` (slow, and needs the toolchain);
-//! run explicitly with `cargo test -p mockspace --test custom_lint_cdylib -- --ignored`.
+//! `#[ignore]` because it runs a `cargo build` (slow, and needs the toolchain).
+//! Not manual-only, though: `tests/rust_e2e_test.sh` runs it with `--ignored`
+//! every time `./test` does, which is the whole reason it exists. This test
+//! sat broken for weeks with no runner ever reaching it; that file is the fix.
 //! Catalogue: this guards the dissolve-proxy deal-breaker (custom lints must
 //! work through the shared engine). Tracked with the launcher work.
 

@@ -7,7 +7,9 @@
 //! it the rest is a set of checks over a mechanism nobody has run.
 //!
 //! `#[ignore]` because it runs `cargo build`, matching `custom_lint_cdylib.rs`.
-//! Run with `cargo test -p mockspace --test tool_cdylib -- --ignored`.
+//! `tests/rust_e2e_test.sh` runs this with `--ignored` every time `./test`
+//! does, so it stays reachable by the command this repository's own workflow
+//! already expects a human to run, rather than by a flag nothing invokes.
 
 use std::fs;
 use std::path::Path;
