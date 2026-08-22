@@ -301,6 +301,26 @@ pub trait Tool {
         ""
     }
 
+    /// Whether this tool wants piped standard input.
+    ///
+    /// **Opt-in, and the default is what stops `mock <tool>` hanging.** Reading
+    /// stdin whenever it is not a terminal sounds like the careful version and
+    /// is the opposite: every non-interactive caller (a git hook, CI, an agent,
+    /// a shell pipeline whose writer has not finished) hands over a pipe that
+    /// does not close, and the read blocks forever while looking exactly like
+    /// a slow tool.
+    ///
+    /// Found by hanging. The first version of this contract had no such flag
+    /// and read stdin whenever `!is_terminal()`, which deadlocked the very
+    /// first end-to-end invocation from a non-interactive shell.
+    ///
+    /// Same shape and same reason as [`crate::Lint::invocation_wanted`], which
+    /// is opt-in because most lints do not care and the engine does not always
+    /// have one to give.
+    fn wants_stdin(&self) -> bool {
+        false
+    }
+
     /// Do the work.
     ///
     /// Called only after the engine has checked that every required argument in

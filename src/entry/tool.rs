@@ -18,6 +18,8 @@
 
 #![allow(unused_imports)]
 use super::*;
+use std::io::IsTerminal;
+
 use mockspace_lint_rules::tool::{
     NotALint, Outcome, Tool, ToolContext, ToolReport, contract_faults, duplicate_tool_names,
     missing_required, usage_line,
@@ -105,7 +107,11 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, name: &str, args: &[&str]) -> E
     let crates = crate::parse::discover_crates_in(&cfg.src_dirs, &cfg.crate_prefix);
     let all_crate_names: std::collections::BTreeSet<String> = crates.keys().cloned().collect();
 
-    let stdin = read_stdin_if_piped();
+    let stdin = if should_read_stdin(tool.wants_stdin(), std::io::stdin().is_terminal()) {
+        read_stdin()
+    } else {
+        None
+    };
     let ctx = ToolContext {
         mock_dir:   &cfg.mock_dir,
         repo_root:  &cfg.repo_root,
@@ -171,15 +177,29 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, name: &str, args: &[&str]) -> E
     }
 }
 
-/// Read piped stdin, or `None` when stdin is a terminal.
+/// Whether to read standard input, given what the tool asked for and what
+/// stdin is attached to.
 ///
-/// A tool reading a terminal would hang waiting for input nobody is typing,
-/// which looks exactly like the tool being slow.
-fn read_stdin_if_piped() -> Option<String> {
-    use std::io::{IsTerminal, Read};
-    if std::io::stdin().is_terminal() {
-        return None;
-    }
+/// A pure function because the bug it encodes is a logic error rather than an
+/// I/O one, and because the version that blocked could not be tested at all.
+///
+/// **Both conditions are required, and `wants` is the one that matters.** The
+/// first version of this read whenever stdin was not a terminal, on the
+/// reasoning that a pipe means somebody piped something. That is false: a git
+/// hook, a CI step and an agent all hand over a pipe whose writer may never
+/// write and may never close, so the read blocks forever and the tool looks
+/// slow rather than stuck. It deadlocked the first end-to-end invocation.
+///
+/// The terminal check stays as the second condition, for the interactive case:
+/// a tool that wants stdin, run by hand with nothing piped, should not sit
+/// waiting for input nobody is typing.
+fn should_read_stdin(wants: bool, is_terminal: bool) -> bool {
+    wants && !is_terminal
+}
+
+/// Read standard input to end.
+fn read_stdin() -> Option<String> {
+    use std::io::Read;
     let mut s = String::new();
     std::io::stdin().read_to_string(&mut s).ok()?;
     Some(s)
@@ -188,6 +208,16 @@ fn read_stdin_if_piped() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stdin_is_read_only_when_the_tool_asked_for_it() {
+        // The whole truth table, because the bug was one cell of it: a tool
+        // that never asked, handed a pipe, read it and blocked forever.
+        assert!(!should_read_stdin(false, false), "the cell that hung");
+        assert!(!should_read_stdin(false, true));
+        assert!(should_read_stdin(true, false), "asked for, and piped");
+        assert!(!should_read_stdin(true, true), "asked for, but interactive");
+    }
 
     #[test]
     fn every_builtin_subcommand_is_refused_as_a_tool_name() {

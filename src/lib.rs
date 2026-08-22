@@ -71,3 +71,11 @@ pub use mockspace_lint_rules::{
     LintMode,
     Severity,
 };
+/// The tool contract, re-exported whole rather than item by item.
+///
+/// A tool crate spells this `mockspace::tool::Tool`, because the generated
+/// cdylib renames `mockspace-lint-rules` to `mockspace` so consumer source
+/// reads the same whether it is compiled into the engine or dlopened beside
+/// it. Re-exporting the module here keeps that one spelling true from both
+/// sides.
+pub use mockspace_lint_rules::tool;
