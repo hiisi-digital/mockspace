@@ -6,7 +6,9 @@ use mockspace_lint_rules::LintPack;
 
 use crate::config::Config;
 use crate::{
+    Level,
     LintMode,
+    Severity,
     bench,
     bootstrap,
     design_round,

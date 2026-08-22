@@ -16,7 +16,7 @@ pub const REGISTRY_ROOT: &str = "reg";
 pub const CRATE_ROOT: &str = "crates";
 
 /// One field a namespace declares beyond the universal `id`.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RegistryField {
     pub name:        String,
     /// `string`, `integer`, `boolean`, `string[]`. Anything richer belongs in
@@ -33,7 +33,7 @@ pub struct RegistryField {
 }
 
 /// Whether a field's values are for readers or only for the project itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FieldVisibility {
     /// Rendered as a column, like any other field.
@@ -57,7 +57,7 @@ fn default_field_type() -> String {
 }
 
 /// Where a namespace's table appears in the generated documentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RenderMode {
     /// A generated page per namespace. Row references link to it.
@@ -76,7 +76,7 @@ impl RenderMode {
 }
 
 /// A declared namespace: one kind of thing the registry holds.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RegistryNamespace {
     /// The array-of-tables key, singular: `spike` for `[[spike]]`. Also the
     /// first selector segment of every reference into it.
