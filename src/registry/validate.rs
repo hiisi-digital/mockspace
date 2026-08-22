@@ -165,6 +165,10 @@ pub const FINDING_KINDS: &[&str] = &[
     "ambiguous-provenance",
     "unresolvable-heading",
     "fragile-line-citation",
+    "malformed-row-reference",
+    "unknown-row-reference",
+    "unknown-field-type",
+    "namespace-shadows-type",
     // Not produced by `validate`. Reported by the caller when the schema check
     // could not run at all, and listed here so the set of kinds stays in one
     // place. A run that could not check is not a run that passed.

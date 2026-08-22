@@ -497,6 +497,45 @@ fn resolve_sourcesof(
     Some(rendered.join(", "))
 }
 
+/// What references the named row, resolved as links to the referring rows.
+///
+/// The inverse of a typed row-reference field, derived rather than stored. A
+/// row states what it points at; nothing states what points at it, so there is
+/// no second list to fall out of step with the first.
+///
+/// This is the direction most questions are asked in. A field typed `slot`
+/// lets a row say which slot it answers; `refsto(slot::display)` is how a
+/// reader finds out whether anything answers that slot at all, and an empty
+/// result is the finding rather than an absence of one.
+fn resolve_refsto(
+    expr: &str,
+    by_key: &BTreeMap<&str, &RegistryNamespace>,
+    reg: &Registry,
+    roots: &BTreeMap<String, String>,
+    repo_root: &Path,
+    docs_dir: &Path,
+    cfg: &crate::config::Config,
+) -> Option<Vec<String>> {
+    let mut segs: Vec<&str> = expr.split("::").map(str::trim).collect();
+    if segs.first() == Some(&REGISTRY_ROOT) {
+        segs.remove(0);
+    }
+    if segs.len() != 2 || !by_key.contains_key(segs[0]) {
+        return None;
+    }
+    let qualified = format!("{}::{}", segs[0], segs[1]);
+    // A row that does not exist is not a row with no referrers. Returning an
+    // empty list for it would answer a question about nothing, and the empty
+    // answer is the one a reader is most likely to act on.
+    reg.get(&qualified)?;
+    Some(
+        super::referrers(reg, &cfg.registry_namespaces, &qualified)
+            .into_iter()
+            .filter_map(|q| resolve_expr(&q, by_key, reg, roots, repo_root, docs_dir, cfg))
+            .collect(),
+    )
+}
+
 /// A path as the repository sees it, which is how a document should name one.
 fn rel_to_repo(path: &Path, repo_root: &Path) -> String {
     path.strip_prefix(repo_root)
@@ -563,6 +602,14 @@ pub fn resolve_typed(
     {
         return resolve_pathof(inner.trim(), by_key, reg, repo_root, cfg).map(Resolved::Path);
     }
+    if let Some(inner) = expr
+        .strip_prefix("refsto(")
+        .and_then(|r| r.strip_suffix(')'))
+    {
+        return resolve_refsto(inner.trim(), by_key, reg, roots, repo_root, docs_dir, cfg)
+            .map(Resolved::List);
+    }
+
     if let Some(inner) = expr
         .strip_prefix("sourcesof(")
         .and_then(|r| r.strip_suffix(')'))
@@ -672,6 +719,38 @@ pub fn resolve_typed(
                         .any(|f| f.name == parts[3] && f.visibility == FieldVisibility::Internal)
                     {
                         return None;
+                    }
+                    // A field typed as a namespace holds slugs, and a slug is
+                    // not what a reader wants to see. Rendered as links, so a
+                    // field reference and the same field's table cell agree:
+                    // one of them showing bare slugs while the other links was
+                    // the first thing this produced.
+                    if let Some(target) = ns
+                        .fields
+                        .iter()
+                        .find(|f| f.name == parts[3])
+                        .and_then(|f| super::row_reference_target(&f.r#type))
+                        .map(|(t, _)| t)
+                        .filter(|t| cfg.registry_namespaces.iter().any(|n| n.key == *t))
+                    {
+                        let raw = row.fields.get(parts[3])?;
+                        return Some(Resolved::List(
+                            raw.split(", ")
+                                .map(str::trim)
+                                .filter(|v| !v.is_empty())
+                                .filter_map(|slug| {
+                                    resolve_expr(
+                                        &format!("{target}::{slug}"),
+                                        by_key,
+                                        reg,
+                                        roots,
+                                        repo_root,
+                                        docs_dir,
+                                        cfg,
+                                    )
+                                })
+                                .collect(),
+                        ));
                     }
                     return row.fields.get(parts[3]).cloned().map(Resolved::Field);
                 }

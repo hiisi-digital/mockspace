@@ -957,6 +957,25 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             registry_errors += 1;
             eprintln!("  ERROR [{}]: {}", f.kind, f.message);
         }
+        // The declarations first, then the data. A field whose type names no
+        // namespace cannot hold a checkable row reference, so reporting the
+        // rows in it as unknown references would bury the one finding that
+        // explains the rest.
+        let type_findings: Vec<_> = registry::unknown_field_types(&cfg.registry_namespaces)
+            .into_iter()
+            .chain(registry::namespace_type_collisions(&cfg.registry_namespaces))
+            .collect();
+        let types_are_sound = type_findings.is_empty();
+        for f in type_findings {
+            registry_errors += 1;
+            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+        }
+        if types_are_sound {
+            for f in registry::validate_row_references(&registry, &cfg.registry_namespaces) {
+                registry_errors += 1;
+                eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+            }
+        }
         // A warning by default, and the choice is deliberate under the rule
         // stated above: what prints ERROR blocks, and an inert key does not stop
         // the registry from being correct. It stops the author from knowing their

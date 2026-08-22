@@ -87,16 +87,68 @@ required = true
 description = "The question the spike answers, in one line."
 ```
 
-A field's `type` is `string`, `integer`, `boolean`, `string[]`, or **`ref` and
-`ref[]` for a field that holds references**. A reference is a string on the wire,
-so the reference types validate as strings; what the type adds is meaning, and
-it is what makes a citation in that field get checked.
+A field's `type` is `string`, `integer`, `boolean`, `string[]`, **`ref` and
+`ref[]` for a field that holds citations**, or **the name of a namespace, for a
+field that holds rows of it**. A citation and a row reference are both strings on
+the wire, so both validate as strings; what the type adds is meaning, and it is
+what makes the field get checked at all.
+
+A type naming neither a builtin nor a declared namespace is reported. It used to
+become a plain string, so a misspelled type, or one naming a namespace that was
+never declared, produced a field that read as constrained and was not.
 
 **Name the field whatever the subject calls it.** Reference validation was once
 keyed on the literal name `provenance`, which checked one field for one consumer
 and silently ignored every other reference-bearing field a project declared. A
 project may now declare several, called `rests_on`, `supersedes`, `evidenced_by`
 or anything else, and each is validated because its type says what it is.
+
+### A field that holds rows
+
+Declare the field's type as the namespace it points into. The singular form holds
+one, the `[]` form holds several.
+
+```toml
+[[registry.namespace.field]]
+name = "slot"
+type = "slot"
+description = "The slot this answers."
+
+[[registry.namespace.field]]
+name = "supersedes"
+type = "ruling[]"
+description = "Rulings this one replaces."
+```
+
+```toml
+[[answer]]
+id = "niri"
+slot = "display"          # a bare slug, never "slot::display"
+```
+
+**The value is a bare slug.** The type already names the namespace, and writing it
+again in every value is a second place for the two to disagree; a qualified value
+is refused rather than accepted as a second spelling, because one thing written two
+ways has to be normalised everywhere it is read and the normalisations drift.
+
+A slug naming no row is reported, with the nearest existing slug named where there
+is a near one, so a typo and a genuinely absent row do not read alike.
+
+A namespace whose key is also a builtin type name is refused at the declaration. A
+field declaring that type would mean the builtin, silently, and nothing could ever
+reference the namespace.
+
+### Asking what points at a row
+
+`{{ refsto(x) }}` is the inverse, derived from the typed fields rather than stored,
+so there is no second list to keep in step. A row states what it points at; what
+points at it is computed.
+
+This is the direction most questions are asked in. Where a namespace enumerates
+what a project must answer, `refsto` over one of its rows is how a reader finds out
+whether anything answers it, and **an empty result is the finding** rather than an
+absence of one. A row that does not exist does not resolve at all, so a typo cannot
+read as a gap.
 
 `key` is the array-of-tables name, singular, and it is the first selector
 segment of every reference into the namespace. A file holding `[[spike]]` rows
@@ -175,7 +227,9 @@ Reported: a reference to a row nothing declares; a field a row does not carry;
 a slug declared twice in one namespace, which no per-file schema can catch
 because each file is valid alone; a citation that does not parse; a root nobody
 declared; a citation matching several files; and one whose line is past the end
-of its file.
+of its file. A row reference naming no row, or written qualified rather than as a
+bare slug. A field type naming neither a builtin nor a namespace, and a namespace
+whose key shadows a builtin type.
 
 Everything a JSON Schema can express (required fields, slug shape, types,
 unknown keys) is checked by running the generated schema through a TOML
