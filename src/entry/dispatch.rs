@@ -726,6 +726,23 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         .map(|p| p.slug)
         .collect();
 
+    // The registry gate, before the lints that read it.
+    //
+    // A lint handed a registry that is lying reports about the lie rather than
+    // about the repository, so the shape of the data is settled first and this
+    // returns rather than falling through. The pre-commit hook invokes
+    // `--lint-only --commit`, which is the path that until 2026-08-22 ran no
+    // registry validation at all.
+    //
+    // Reference cycles are the one finding kind this is weaker on than a
+    // generation run, because resolution does not happen here. Said in
+    // `registry_gate`'s own documentation rather than left to be found.
+    let registry_errors = registry_gate(&cfg, &lint_registry, &[], mode);
+    if registry_errors > 0 {
+        eprintln!("registry check failed: {registry_errors} error(s)");
+        return ExitCode::FAILURE;
+    }
+
     match scope_arg {
         Some("") => {
             eprintln!(
@@ -1008,149 +1025,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // does not. Nothing here reclassifies a finding.
     let mut registry_errors = 0usize;
 
-    if !cfg.registry_namespaces.is_empty() {
-        eprintln!("--- registry ---");
-        let schemas =
-            registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
-        if schemas > 0 {
-            eprintln!("  generated {schemas} schema files");
-        }
-        eprintln!(
-            "  {} rows across {} namespaces",
-            registry.rows.len(),
-            registry.by_namespace.len()
-        );
-        for f in &cycle_findings {
-            registry_errors += 1;
-            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-        }
-        for f in registry::validate_provenance(
-            &cfg.repo_root,
-            &cfg.registry_roots,
-            &cfg.frozen_roots,
-            &registry,
-            &cfg.registry_namespaces,
-        ) {
-            registry_errors += 1;
-            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-        }
-        for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots)
-        {
-            registry_errors += 1;
-            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-        }
-        for f in registry::validate(&cfg.registry_namespaces, &registry) {
-            registry_errors += 1;
-            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-        }
-        // The declarations, then the data. There is no gate between them:
-        // `row_reference_fields` already skips a field whose type names no
-        // namespace, so an unknown type suppresses its own field's rows and
-        // nothing else. A project-wide gate stood here and suppressed genuine
-        // findings in unrelated namespaces, which cost an author a second round
-        // of failures after fixing a typo somewhere they were not looking.
-        let declarations = registry::unknown_field_types(&cfg.registry_namespaces)
-            .into_iter()
-            .chain(registry::namespace_type_collisions(&cfg.registry_namespaces))
-            .chain(registry::value_field_targets(&cfg.registry_namespaces));
-        for f in declarations
-            .chain(registry::validate_row_references(
-                &registry,
-                &cfg.registry_namespaces,
-            ))
-        {
-            registry_errors += 1;
-            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-        }
-        // A warning by default, and the choice is deliberate under the rule
-        // stated above: what prints ERROR blocks, and an inert key does not stop
-        // the registry from being correct. It stops the author from knowing their
-        // declaration does nothing, which is a different harm and is ended by
-        // saying so once per run.
-        //
-        // Escalating or silencing it is a project's own call, and it is made the
-        // ordinary way: naming `registry-config-keys` in `[lints]`, the same as
-        // any other lint. This does not go through the general lint dispatch
-        // (there is no `Lint` impl here to register), so the severity map is
-        // consulted by hand at this one call site; nothing else in `FINDING_KINDS`
-        // is wired to it yet.
-        let key_severity = cfg
-            .lint_overrides
-            .base
-            .get("registry-config-keys")
-            .copied()
-            .unwrap_or(Severity::ADVISORY);
-        match std::fs::read_to_string(&cfg.config_path) {
-            Ok(text) => {
-                for f in registry::config_unknown_keys(&text) {
-                    match key_severity.effective(mode) {
-                        Level::Pass => {},
-                        Level::Info | Level::Warn => {
-                            eprintln!("  warning [{}]: {}", f.kind, f.message);
-                        },
-                        Level::Error => {
-                            registry_errors += 1;
-                            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-                        },
-                    }
-                }
-            },
-            Err(e) => {
-                // A check that could not run is not a check that passed: the
-                // same reasoning `SchemaCheck::Unavailable` already applies to
-                // the schema gate applies here, so absence is reported rather
-                // than swallowed.
-                eprintln!(
-                    "  warning: could not read {} to check for unknown config \
-                     keys: {e}",
-                    cfg.config_path.display()
-                );
-            },
-        }
-        match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
-            registry::SchemaCheck::Ran {
-                failures,
-            } if failures.is_empty() => {
-                eprintln!("  schema check passed");
-            },
-            registry::SchemaCheck::Ran {
-                failures,
-            } => {
-                for f in failures {
-                    registry_errors += 1;
-                    eprintln!("  ERROR [schema]: {f}");
-                }
-            },
-            registry::SchemaCheck::Unavailable => {
-                // A run that could not check is not a run that passed. The
-                // findings above are two-valued and cannot say "do not trust
-                // this", so an unverifiable row shape reported as success is a
-                // green that means nothing: every required field, every type
-                // and every slug pattern went unchecked.
-                //
-                // Gated on rows existing, not on namespaces existing. Two
-                // namespaces are builtin (`vocab` and `reference`, prepended by
-                // `with_builtins`), so `registry_namespaces` is never empty and
-                // a guard on it fails every project that has no registry at all.
-                // That was the first version of this and the no-registry control
-                // caught it.
-                //
-                // Rows are the thing a schema verifies. No rows, nothing unverified.
-
-                if registry.rows.is_empty() {
-                    eprintln!("  schema check skipped: no rows to verify");
-                } else {
-                    registry_errors += 1;
-                    eprintln!(
-                        "  ERROR [schema-unavailable]: taplo is not installed, so the shape of \
-                         {} row(s) is unverified: required fields, types and slug patterns were \
-                         all unchecked. Install taplo.",
-                        registry.rows.len()
-                    );
-                }
-            },
-        }
-    }
+    // Printed and counted by one function, shared with the commit gate.
+    registry_errors += registry_gate(&cfg, &registry, &cycle_findings, mode);
 
     // --- Every markdown document, through one pipeline ---
     //
@@ -1572,4 +1448,172 @@ mod auto_commit_tests {
         assert!(auto_commit_wanted(&args(&["mock", "lock"])));
         assert!(!auto_commit_wanted(&args(&["mock", "lock", "--no-commit"])));
     }
+}
+
+/// Every registry finding, printed, counted, and returned as an error count.
+///
+/// Extracted so the commit gate and the generation run cannot drift. Until
+/// 2026-08-22 this ran only during generation, so `--lint-only`, which is what
+/// the pre-commit hook invokes, committed a registry with a missing required
+/// field, a duplicate slug or a dangling row reference without a word. The
+/// lints that read the registry ran against the lying data and passed.
+///
+/// `cycles` is what reference resolution found, and the commit gate does not
+/// resolve, so it passes an empty slice. That is the one finding kind this is
+/// weaker on there, and it is named rather than left to be discovered. Every
+/// other validator reads field text that resolution does not rewrite:
+/// provenance is stored as `root::path::anchor` and a row reference as a bare
+/// slug, neither of which is a `{{ }}` template.
+fn registry_gate(
+    cfg: &Config,
+    registry: &registry::Registry,
+    cycles: &[registry::RegistryFinding],
+    mode: LintMode,
+) -> usize {
+    if cfg.registry_namespaces.is_empty() {
+        return 0;
+    }
+    let mut errors = 0usize;
+    eprintln!("--- registry ---");
+    let schemas =
+        registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+    if schemas > 0 {
+        eprintln!("  generated {schemas} schema files");
+    }
+    eprintln!(
+        "  {} rows across {} namespaces",
+        registry.rows.len(),
+        registry.by_namespace.len()
+    );
+    for f in cycles {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    for f in registry::validate_provenance(
+        &cfg.repo_root,
+        &cfg.registry_roots,
+        &cfg.frozen_roots,
+        registry,
+        &cfg.registry_namespaces,
+    ) {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots)
+    {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    for f in registry::validate(&cfg.registry_namespaces, registry) {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    // The declarations, then the data. There is no gate between them:
+    // `row_reference_fields` already skips a field whose type names no
+    // namespace, so an unknown type suppresses its own field's rows and
+    // nothing else. A project-wide gate stood here and suppressed genuine
+    // findings in unrelated namespaces, which cost an author a second round
+    // of failures after fixing a typo somewhere they were not looking.
+    let declarations = registry::unknown_field_types(&cfg.registry_namespaces)
+        .into_iter()
+        .chain(registry::namespace_type_collisions(&cfg.registry_namespaces))
+        .chain(registry::value_field_targets(&cfg.registry_namespaces));
+    for f in declarations
+        .chain(registry::validate_row_references(
+            registry,
+            &cfg.registry_namespaces,
+        ))
+    {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    // A warning by default, and the choice is deliberate under the rule
+    // stated above: what prints ERROR blocks, and an inert key does not stop
+    // the registry from being correct. It stops the author from knowing their
+    // declaration does nothing, which is a different harm and is ended by
+    // saying so once per run.
+    //
+    // Escalating or silencing it is a project's own call, and it is made the
+    // ordinary way: naming `registry-config-keys` in `[lints]`, the same as
+    // any other lint. This does not go through the general lint dispatch
+    // (there is no `Lint` impl here to register), so the severity map is
+    // consulted by hand at this one call site; nothing else in `FINDING_KINDS`
+    // is wired to it yet.
+    let key_severity = cfg
+        .lint_overrides
+        .base
+        .get("registry-config-keys")
+        .copied()
+        .unwrap_or(Severity::ADVISORY);
+    match std::fs::read_to_string(&cfg.config_path) {
+        Ok(text) => {
+            for f in registry::config_unknown_keys(&text) {
+                match key_severity.effective(mode) {
+                    Level::Pass => {},
+                    Level::Info | Level::Warn => {
+                        eprintln!("  warning [{}]: {}", f.kind, f.message);
+                    },
+                    Level::Error => {
+                        errors += 1;
+                        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+                    },
+                }
+            }
+        },
+        Err(e) => {
+            // A check that could not run is not a check that passed: the
+            // same reasoning `SchemaCheck::Unavailable` already applies to
+            // the schema gate applies here, so absence is reported rather
+            // than swallowed.
+            eprintln!(
+                "  warning: could not read {} to check for unknown config \
+                 keys: {e}",
+                cfg.config_path.display()
+            );
+        },
+    }
+    match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
+        registry::SchemaCheck::Ran {
+            failures,
+        } if failures.is_empty() => {
+            eprintln!("  schema check passed");
+        },
+        registry::SchemaCheck::Ran {
+            failures,
+        } => {
+            for f in failures {
+                errors += 1;
+                eprintln!("  ERROR [schema]: {f}");
+            }
+        },
+        registry::SchemaCheck::Unavailable => {
+            // A run that could not check is not a run that passed. The
+            // findings above are two-valued and cannot say "do not trust
+            // this", so an unverifiable row shape reported as success is a
+            // green that means nothing: every required field, every type
+            // and every slug pattern went unchecked.
+            //
+            // Gated on rows existing, not on namespaces existing. Two
+            // namespaces are builtin (`vocab` and `reference`, prepended by
+            // `with_builtins`), so `registry_namespaces` is never empty and
+            // a guard on it fails every project that has no registry at all.
+            // That was the first version of this and the no-registry control
+            // caught it.
+            //
+            // Rows are the thing a schema verifies. No rows, nothing unverified.
+
+            if registry.rows.is_empty() {
+                eprintln!("  schema check skipped: no rows to verify");
+            } else {
+                errors += 1;
+                eprintln!(
+                    "  ERROR [schema-unavailable]: taplo is not installed, so the shape of \
+                     {} row(s) is unverified: required fields, types and slug patterns were \
+                     all unchecked. Install taplo.",
+                    registry.rows.len()
+                );
+            }
+        },
+    }
+    errors
 }
