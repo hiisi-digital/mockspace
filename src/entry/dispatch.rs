@@ -726,7 +726,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         .map(|p| p.slug)
         .collect();
 
-    // The registry gate, before the lints that read it.
+    // The registry gate, on the lint path only, before the lints that read it.
     //
     // A lint handed a registry that is lying reports about the lie rather than
     // about the repository, so the shape of the data is settled first and this
@@ -734,13 +734,32 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // `--lint-only --commit`, which is the path that until 2026-08-22 ran no
     // registry validation at all.
     //
-    // Reference cycles are the one finding kind this is weaker on than a
-    // generation run, because resolution does not happen here. Said in
-    // `registry_gate`'s own documentation rather than left to be found.
-    let registry_errors = registry_gate(&cfg, &lint_registry, &[], mode);
-    if registry_errors > 0 {
-        eprintln!("registry check failed: {registry_errors} error(s)");
-        return ExitCode::FAILURE;
+    // `if lint_only` is load-bearing and is not a shortcut. A generation run
+    // reaches its own call further down, and it must not return early: the
+    // ordering comment above `render_all` says documents are generated even
+    // when the registry is known to be lying, because the dangling-reference
+    // scan reads the OUTPUT. An unconditional gate here writes no documents, so
+    // one duplicate slug hides every dangling reference in the repository. That
+    // is what the first version of this did.
+    //
+    // Two finding kinds this is weaker on than a generation run, both because
+    // resolution has not run. Enumerated rather than summarised, because the
+    // first version claimed there was one and the claim was false.
+    //
+    //   - Reference cycles. Nothing has resolved, so nothing detected a loop.
+    //   - Any reference-bearing field holding a `{{ }}` template. `resolve_data`
+    //     maps every field of every row through `resolve_once`, and
+    //     `validate_provenance` selects fields by declared type, so on a
+    //     generation run the validator sees the substituted text and here it
+    //     sees the template. It reads `{{ pathof(seed` as a root name and
+    //     reports `unknown-provenance-root`, which is a false positive rather
+    //     than a weaker check.
+    if lint_only {
+        let registry_errors = registry_gate(&cfg, &lint_registry, &[], mode);
+        if registry_errors > 0 {
+            eprintln!("registry check failed: {registry_errors} error(s)");
+            return ExitCode::FAILURE;
+        }
     }
 
     match scope_arg {
@@ -1459,11 +1478,25 @@ mod auto_commit_tests {
 /// lints that read the registry ran against the lying data and passed.
 ///
 /// `cycles` is what reference resolution found, and the commit gate does not
-/// resolve, so it passes an empty slice. That is the one finding kind this is
-/// weaker on there, and it is named rather than left to be discovered. Every
-/// other validator reads field text that resolution does not rewrite:
-/// provenance is stored as `root::path::anchor` and a row reference as a bare
-/// slug, neither of which is a `{{ }}` template.
+/// resolve, so it passes an empty slice.
+///
+/// **Two ways the commit gate differs from a generation run, and both are here
+/// because an earlier version of this comment claimed there was one.** It said
+/// every other validator reads field text that resolution does not rewrite.
+/// `resolve_data` maps *every* field of *every* row through `resolve_once`
+/// (`registry/resolve.rs`), so that is false of any field at all.
+///
+///   - **Reference cycles go undetected**, since nothing resolved.
+///   - **A reference-bearing field holding a `{{ }}` template is a false
+///     positive.** `validate_provenance` picks fields by declared type, so on a
+///     generation run it reads substituted text and here it reads the template,
+///     parses `{{ pathof(seed` as a root name, and reports
+///     `unknown-provenance-root` against a registry that generates cleanly.
+///
+/// What makes the second one invisible in this repository's consumer is a
+/// property of that consumer's data rather than of this code: kamu has zero
+/// `{{` in any of its rows today. Its `registry-queries` skill teaches writing
+/// them in reference fields, so the case is reachable rather than theoretical.
 fn registry_gate(
     cfg: &Config,
     registry: &registry::Registry,

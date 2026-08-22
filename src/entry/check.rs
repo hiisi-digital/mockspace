@@ -461,11 +461,11 @@ pub(crate) fn is_cleanable_target(target_dir: &Path, repo_root: &Path) -> bool {
 #[cfg(test)]
 mod panel_discipline_tests {
     // The shipped function, not a copy of it. The four canon-violation tests
-    // below were written against a local duplicate that nothing called: the
-    // readiness report at
-    // `panel_discipline` imports the lint-rules one inside its own body, so the
-    // duplicate was dead and these were verifying an implementation no run
-    // reaches. Deleting the duplicate is what surfaced it.
+    // below were written against a local duplicate that nothing called:
+    // `cmd_check`, the only live caller, imports the lint-rules one inside its
+    // own body and shadowed it there. So the duplicate was dead and these tests
+    // were verifying an implementation no run reaches. Deleting the duplicate
+    // is what surfaced them.
     use mockspace_lint_rules::canon_not_while_panel_open::canon_violation;
 
     use super::*;

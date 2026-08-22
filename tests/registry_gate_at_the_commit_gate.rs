@@ -108,8 +108,13 @@ fn commit_gate(root: &Path) -> Output {
 ///
 /// The required-field arm is taplo's finding, so without it that arm cannot
 /// distinguish its subject from the schema-unavailable finding, which fires on
-/// every arm including the control. Stated as a precondition rather than
-/// skipped silently.
+/// every arm including the control.
+///
+/// Every caller asserts on this rather than returning early. The first version
+/// printed a line and returned, so on a host without taplo the control and the
+/// required-field arm both passed having asserted nothing, while this very
+/// docstring claimed otherwise. `tests/registry_findings_gate.rs` had already
+/// solved it and written down why; this file regressed the pattern.
 fn taplo_present() -> bool {
     std::env::var("PATH")
         .unwrap_or_default()
@@ -120,10 +125,13 @@ fn taplo_present() -> bool {
 /// The control, and the one that makes the other three mean anything.
 #[test]
 fn a_sound_registry_passes_the_commit_gate() {
-    if !taplo_present() {
-        eprintln!("taplo absent: the schema check reports unavailable, which fails every arm");
-        return;
-    }
+    assert!(
+        taplo_present(),
+        "taplo absent: the schema check reports unavailable, which fails every arm. \
+         Stated as a precondition rather than skipped: a control that quietly does \
+         not run is exactly the failure this file exists to catch, and it is \
+         invisible on a host that has taplo. Install taplo to run this suite."
+    );
     let tmp = tempfile::tempdir().unwrap();
     fixture(tmp.path(), &Lie::None);
     let out = commit_gate(tmp.path());
@@ -137,10 +145,13 @@ fn a_sound_registry_passes_the_commit_gate() {
 
 #[test]
 fn a_missing_required_field_fails_the_commit_gate() {
-    if !taplo_present() {
-        eprintln!("taplo absent: required fields are checked by taplo, so this arm cannot run");
-        return;
-    }
+    assert!(
+        taplo_present(),
+        "taplo absent: required fields are checked by taplo, so this arm cannot run. \
+         Stated as a precondition rather than skipped: a control that quietly does \
+         not run is exactly the failure this file exists to catch, and it is \
+         invisible on a host that has taplo. Install taplo to run this suite."
+    );
     let tmp = tempfile::tempdir().unwrap();
     fixture(tmp.path(), &Lie::MissingRequired);
     let out = commit_gate(tmp.path());
@@ -188,5 +199,89 @@ fn a_dangling_row_reference_fails_the_commit_gate() {
     assert!(
         err.contains("no_such_spike"),
         "the offending slug must appear, or the author has to find it:\n{err}"
+    );
+}
+
+// --- The generation path must not inherit any of this -------------------------
+
+/// A generation run, which is `mockspace` with no `--lint-only`.
+fn generation_run(root: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+        .current_dir(root.join("mock"))
+        .output()
+        .expect("the binary runs")
+}
+
+/// A lying registry still gets its documents written, and still exits non-zero.
+///
+/// This is the regression test for the first version of the gate above, which
+/// called the same function unconditionally and returned before `render_all`.
+/// The ordering it broke is deliberate and documented beside `render_all`: the
+/// dangling-reference scan reads the **output**, because several paths render
+/// documents and two of them silently did not resolve references at all. Return
+/// early and one duplicate slug hides every dangling reference in the
+/// repository until somebody fixes it and runs the command again.
+///
+/// Nothing in this suite could see that, because no test anywhere asserted that
+/// documents are produced at all. Every registry test asserted an exit code,
+/// and the exit code was unchanged.
+#[test]
+fn a_lying_registry_still_generates_its_documents() {
+    assert!(
+        taplo_present(),
+        "without taplo the schema check reports unavailable, which fails the run \
+         for a reason unrelated to the duplicate slug this arm is about. \
+         Install taplo to run this suite."
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), &Lie::DuplicateSlug);
+
+    let out = generation_run(tmp.path());
+    let err = String::from_utf8_lossy(&out.stderr);
+
+    assert!(
+        !out.status.success(),
+        "a duplicate slug is still an error and the run still fails:\n{err}"
+    );
+    assert!(
+        err.contains("generating documents"),
+        "generation must be reached even though the registry is known to be \
+         lying, or the dangling-reference scan that reads the output cannot \
+         run:\n{err}"
+    );
+
+    // `docs/` sits at the repository root, not under the mock directory.
+    let docs = tmp.path().join("docs");
+    let written: Vec<_> = fs::read_dir(&docs)
+        .map(|d| d.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(
+        !written.is_empty(),
+        "documents must land on disk, not merely be announced. {} held {:?}",
+        docs.display(),
+        written
+    );
+}
+
+/// The gate is entered once per run, not once per call site.
+///
+/// The first version called it on both paths with no condition, so a generation
+/// run printed `--- registry ---` twice, ran every validator twice and spawned
+/// `taplo` twice. Cheap to reintroduce and invisible in an exit code, so it is
+/// pinned by counting rather than left to be noticed in a log.
+#[test]
+fn the_registry_gate_runs_once_per_generation_run() {
+    assert!(
+        taplo_present(),
+        "the count includes the schema check, which is taplo's. Install taplo to \
+         run this suite."
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), &Lie::None);
+    let err = String::from_utf8_lossy(&generation_run(tmp.path()).stderr).into_owned();
+    let banners = err.matches("--- registry ---").count();
+    assert_eq!(
+        banners, 1,
+        "expected one registry section in a generation run, got {banners}:\n{err}"
     );
 }
