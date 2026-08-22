@@ -23,11 +23,8 @@ pub fn generate_schemas(
     // the hooks, and never beside the registry data they validate: a generated
     // file sitting in a source tree invites hand-edits that the next
     // regeneration silently discards.
-    let dir = repo_root
-        .join("target")
-        .join("mockspace")
-        .join("registry-schemas");
-    if fs::create_dir_all(&dir).is_err() {
+    let dir = crate::build_dir::ensure_under_target(repo_root, &["mockspace", "registry-schemas"]);
+    if !dir.is_dir() {
         return 0;
     }
 

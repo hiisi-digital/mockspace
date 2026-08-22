@@ -32,8 +32,9 @@
 //! toolchain (capture it at engine-build time, pin it in the generated crate).
 //! Tracked as a follow-up.
 
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use mockspace_lint_rules::LintPack;
 
@@ -75,7 +76,7 @@ pub fn load(
         return Ok(None);
     }
 
-    let gen_dir = cfg.mock_dir.join("target").join("mockspace-lints");
+    let gen_dir = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-lints"]);
     write_cdylib_crate(
         &gen_dir,
         &lints_dir,
@@ -85,7 +86,7 @@ pub fn load(
         lint_rules_dep,
         cfg,
     )?;
-    let dylib = build_cdylib(&gen_dir)?;
+    let dylib = build_cdylib(&gen_dir, &gen_crate_name(&cfg.mock_dir))?;
 
     // SAFETY: the cdylib is our own generated crate, built moments ago from
     // this repo's lint sources against the same pinned mockspace-lint-rules
@@ -110,10 +111,7 @@ fn write_cdylib_crate(
     std::fs::create_dir_all(gen_dir.join("src"))
         .map_err(|e| format!("could not create {}: {e}", gen_dir.display()))?;
 
-    // A crate name unique to this project so builds in a shared target dir
-    // (a future optimisation) never collide. A run-local hash suffices; this
-    // is not a persisted key.
-    let crate_name = format!("mockspace-lints-{:016x}", path_hash(&cfg.mock_dir));
+    let crate_name = gen_crate_name(&cfg.mock_dir);
     // A leading empty `[workspace]` makes this generated crate its own workspace
     // root. Without it, sitting under `<mock>/target/`, cargo treats it as a
     // member of the consumer's mock workspace and refuses to build it
@@ -316,41 +314,113 @@ fn gen_collect_lib(
     out
 }
 
+/// Name of the generated crate. Unique per project so several of them can share
+/// one target dir without colliding, which is the point of not pinning
+/// `--target-dir` below. Run-local hash, not a persisted key.
+fn gen_crate_name(mock_dir: &Path) -> String {
+    format!("mockspace-lints-{:016x}", path_hash(mock_dir))
+}
+
 /// `cargo build` the cdylib and return the built library path.
-fn build_cdylib(gen_dir: &Path) -> Result<PathBuf, String> {
-    let status = Command::new("cargo")
+///
+/// **The path comes from cargo, not from a directory listing.** Two reasons,
+/// and the second is the one that bit:
+///
+///   - cargo honours `CARGO_TARGET_DIR`, which is set on any machine sharing
+///     one build dir across worktrees, so the artifact need not be under
+///     `gen_dir` and a listing there finds nothing;
+///   - worse, where a previous run left a file in the expected place, that
+///     stale copy loads and the engine answers from an old build of the
+///     project's lints and tools, silently. Reads exactly like an edit not
+///     taking effect, and cost two rounds chasing a phantom loader bug.
+///
+/// Pinning `--target-dir` fixes both and forecloses the cache: every fresh
+/// clone, worktree and fixture then pays a cold release build of the whole dep
+/// graph, which is what saturated a laptop. Taking the path out of
+/// `--message-format json` fixes both and keeps the cache, because the path
+/// comes from the run that produced it and cannot be a leftover.
+fn build_cdylib(gen_dir: &Path, crate_name: &str) -> Result<PathBuf, String> {
+    // json-render-diagnostics puts artifacts on stdout and still renders
+    // warnings and errors to stderr the way a human expects.
+    let mut child = Command::new("cargo")
         .arg("build")
         .arg("--release")
         .arg("--manifest-path")
         .arg(gen_dir.join("Cargo.toml"))
-        .status()
+        .arg("--message-format")
+        .arg("json-render-diagnostics")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
         .map_err(|e| format!("could not run cargo build for the lint cdylib: {e}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "cargo build gave no stdout to read artifacts from".to_string())?;
+    let mut found = None;
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        if let Some(p) = cdylib_artifact(&line, crate_name) {
+            found = Some(p);
+        }
+    }
+
+    // NOTE: stdout drained first, else a full pipe deadlocks the wait
+    let status = child
+        .wait()
+        .map_err(|e| format!("could not wait on cargo build for the lint cdylib: {e}"))?;
     if !status.success() {
         return Err("building the custom-lint cdylib failed; see cargo output above".to_string());
     }
-    // cdylib lands in <gen_dir>/target/release/ with the platform library prefix
-    // and extension.
-    let rel = gen_dir.join("target").join("release");
-    for (prefix, ext) in [("lib", "dylib"), ("lib", "so"), ("", "dll")] {
-        if let Ok(rd) = std::fs::read_dir(&rel) {
-            for e in rd.flatten() {
-                let p = e.path();
-                let name = p
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if name.starts_with(&format!("{prefix}mockspace_lints_"))
-                    && p.extension().map(|x| x == ext).unwrap_or(false)
-                {
-                    return Ok(p);
-                }
-            }
-        }
+
+    let dylib = found.ok_or_else(|| {
+        format!(
+            "cargo reported success but emitted no cdylib artifact for \
+             `{crate_name}`, so the build produced nothing this engine can load"
+        )
+    })?;
+    // NOTE: the path is known now, so the tree cargo actually wrote is known
+    // too, and that is the one worth keeping out of the desktop index. Under
+    // CARGO_TARGET_DIR it is nowhere this engine computed, so marking
+    // `<mock>/target` marks an almost-empty directory and leaves the large one
+    // indexed. Only reachable here because the path came from cargo.
+    crate::build_dir::mark_target_root_of(&dylib);
+    Ok(dylib)
+}
+
+/// One line of cargo's json, to the cdylib path it names, or nothing.
+///
+/// NOTE: cargo normalises a lib target's name, so the package
+/// `mockspace-lints-<hash>` arrives here as `mockspace_lints_<hash>`. matching
+/// on the package name finds nothing at all, silently, which is why the
+/// substitution is done rather than assumed.
+fn cdylib_artifact(line: &str, crate_name: &str) -> Option<PathBuf> {
+    let msg: serde_json::Value = serde_json::from_str(line).ok()?;
+    if msg.get("reason")? != "compiler-artifact" {
+        return None;
     }
-    Err(format!(
-        "cargo reported success but no lint cdylib was found in {}",
-        rel.display()
-    ))
+    let target = msg.get("target")?;
+    if target.get("name")? != crate_name.replace('-', "_").as_str() {
+        return None;
+    }
+    if !target
+        .get("kind")?
+        .as_array()?
+        .iter()
+        .any(|k| k == "cdylib")
+    {
+        return None;
+    }
+    // one target can emit several files; take the loadable one
+    msg.get("filenames")?
+        .as_array()?
+        .iter()
+        .filter_map(|f| f.as_str())
+        .map(PathBuf::from)
+        .find(|p| {
+            p.extension()
+                .is_some_and(|e| e == "dylib" || e == "so" || e == "dll")
+        })
 }
 
 /// dlopen the cdylib, call its collector, and return the loaded lints holding
@@ -420,6 +490,53 @@ fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // one real `compiler-artifact` line, out of a live
+    // `cargo build --message-format json-render-diagnostics`. hand-written json
+    // here would only test that the test agrees with itself.
+    const ARTIFACT: &str = r#"{"reason":"compiler-artifact","package_id":"path+file:///p/mock/target/mockspace-lints#mockspace-lints-40d923802ebb4e36@0.0.0","manifest_path":"/p/mock/target/mockspace-lints/Cargo.toml","target":{"kind":["cdylib"],"crate_types":["cdylib"],"name":"mockspace_lints_40d923802ebb4e36","src_path":"/p/mock/target/mockspace-lints/src/lib.rs","edition":"2024","doc":false,"doctest":false,"test":true},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":false},"features":[],"filenames":["/elsewhere/release/libmockspace_lints_40d923802ebb4e36.dylib"],"executable":null,"fresh":true}"#;
+
+    #[test]
+    fn the_artifact_path_comes_from_cargo_not_from_a_directory() {
+        // the whole mechanism: the path is wherever cargo put it, which under
+        // an inherited CARGO_TARGET_DIR is not under gen_dir at all.
+        assert_eq!(
+            cdylib_artifact(ARTIFACT, "mockspace-lints-40d923802ebb4e36"),
+            Some(PathBuf::from(
+                "/elsewhere/release/libmockspace_lints_40d923802ebb4e36.dylib"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_lib_target_name_is_normalised_so_the_package_name_never_matches() {
+        // cargo turns `mockspace-lints-<hash>` into `mockspace_lints_<hash>`.
+        // matching the package name finds nothing, silently, and the engine
+        // then reports a successful build with no artifact. drop the
+        // substitution and this arm is what goes red.
+        assert!(ARTIFACT.contains(r#""name":"mockspace_lints_40d923802ebb4e36""#));
+        assert!(cdylib_artifact(ARTIFACT, "mockspace-lints-40d923802ebb4e36").is_some());
+    }
+
+    #[test]
+    fn another_projects_artifact_is_not_ours() {
+        // several generated crates can share one target dir, which is why the
+        // name is hashed per project in the first place.
+        assert!(cdylib_artifact(ARTIFACT, "mockspace-lints-0000000000000000").is_none());
+    }
+
+    #[test]
+    fn nothing_but_a_cdylib_artifact_answers() {
+        // controls. without these, a filter that always took the first
+        // filename would pass every arm above.
+        let lib = ARTIFACT.replace(r#""kind":["cdylib"]"#, r#""kind":["lib"]"#);
+        assert!(cdylib_artifact(&lib, "mockspace-lints-40d923802ebb4e36").is_none());
+        let other = ARTIFACT.replace("compiler-artifact", "build-script-executed");
+        assert!(cdylib_artifact(&other, "mockspace-lints-40d923802ebb4e36").is_none());
+        assert!(cdylib_artifact("not json at all", "mockspace-lints-40d923802ebb4e36").is_none());
+        let rlib = ARTIFACT.replace(".dylib", ".rlib");
+        assert!(cdylib_artifact(&rlib, "mockspace-lints-40d923802ebb4e36").is_none());
+    }
 
     #[test]
     fn collector_lib_shape() {

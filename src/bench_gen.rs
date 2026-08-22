@@ -400,14 +400,13 @@ pub fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
 /// tree, like the generated lint crate, never in the consumer's
 /// source tree.
 pub fn driver_gen_dir(mock_dir: &Path) -> PathBuf {
-    mock_dir.join("target").join("mockspace-bench")
+    crate::build_dir::target_dir(mock_dir).join("mockspace-bench")
 }
 
 /// Where a generated arm manifest lives (the crate points back at
 /// the consumer's `src/lib.rs` by path).
 pub fn arm_gen_dir(mock_dir: &Path, arm: &ArmSource) -> PathBuf {
-    mock_dir
-        .join("target")
+    crate::build_dir::target_dir(mock_dir)
         .join("mockspace-bench-arms")
         .join(&arm.bench)
         .join(&arm.arm)
