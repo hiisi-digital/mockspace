@@ -34,6 +34,11 @@ it_runs_the_ignored_tool_cdylib_suite() {
 # below were not, which is the identical mistake this file's own header
 # describes. A discriminating arm nothing runs is a claim, not a check.
 #[test]
+it_runs_the_ignored_generation_idempotence_suite() {
+    assert_ok cargo test -p mockspace --test generation_idempotent -- --ignored
+}
+
+#[test]
 it_runs_the_ignored_shared_target_dir_suite() {
     assert_ok cargo test -p mockspace --test cdylib_found_under_a_shared_target_dir -- --ignored
 }
