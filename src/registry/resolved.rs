@@ -65,6 +65,13 @@ impl Resolved {
                 rows,
                 ..
             } => render_markdown_table(columns, rows),
+            // An empty target means the namespace has no page, so the slug is
+            // the whole answer. A link needs somewhere to point.
+            Resolved::Row {
+                slug,
+                target,
+                ..
+            } if target.is_empty() => slug.clone(),
             Resolved::Row {
                 slug,
                 target,
@@ -114,7 +121,9 @@ impl Resolved {
                 for (k, v) in fields {
                     out.push_str(&format!("  {k:<width$}  {}\n", unlink(v)));
                 }
-                out.push_str(&format!("\n  in {target}\n"));
+                if !target.is_empty() {
+                    out.push_str(&format!("\n  in {target}\n"));
+                }
                 out
             },
             Resolved::Field(v) => format!("{v}\n"),

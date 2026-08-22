@@ -112,8 +112,31 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
                     .join(", ")
             )
         };
+        // The relations, from the declared types. A reader authoring a row needs
+        // to know which of its fields take a slug from another namespace, and
+        // the alternative to generating it here is a hand-written list that
+        // stops matching the config the first time a field is added.
+        let relations: Vec<String> = ns
+            .fields
+            .iter()
+            .filter_map(|f| {
+                let (target, many) = crate::registry::row_reference_target(&f.r#type)?;
+                cfg.registry_namespaces
+                    .iter()
+                    .any(|n| n.key == target)
+                    .then(|| {
+                        let card = if many { "slugs" } else { "a slug" };
+                        format!("`{}` takes {card} from `{target}`", f.name)
+                    })
+            })
+            .collect();
+        let relation_note = if relations.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", relations.join("; "))
+        };
         ns_doc.push_str(&format!(
-            "- `{}::<slug>`: {}{}{}\n",
+            "- `{}::<slug>`: {}{}{}{}\n",
             ns.key,
             ns.description
                 .clone()
@@ -121,6 +144,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
                 .trim_end_matches('.')
                 .to_string(),
             value,
+            relation_note,
             internal_note
         ));
     }
@@ -133,7 +157,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             name: "reference-syntax".to_string(),
             apply_to: vec!["**/*.md".to_string(), "**/*.md.tmpl".to_string(), "**/*.toml".to_string()],
             body: format!(
-                "## Reference syntax\n\n                 Write a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry\n                 field declared to hold one. It resolves when documents are generated, and it is checked:\n                 a reference that points nowhere is reported rather than rendered as something that looks\n                 fine.\n\n                 The braces are required. They make a reference something you state rather than something\n                 the renderer guesses from a pattern, so prose about code is never rewritten by accident.\n                 References inside code fences are left alone.\n\n                 ### Roots in this project\n\n{roots_doc}\n                 A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`) or a line\n                 number. **Prefer the heading.** A line number fails silently: an edit above it shifts the\n                 target, the citation still resolves, and it now points at different content. A heading\n                 fails loudly when renamed, which is a report rather than a lie. Line numbers are honest\n                 only in a root declared frozen.\n\n                 A path may have any depth and the extension may be omitted, so `mock::DESIGN::12` finds\n                 `DESIGN.md.tmpl` without you tracking which form exists where. Two matches is an error\n                 rather than a guess.\n\n                 ### Registry namespaces in this project\n\n{ns_doc}\n                 A namespace is addressed by its own name: `law::keys`, `vocab::xpbd`. There is no\n                 prefix, because slot zero is either a declared root or a declared namespace and the\n                 two cannot collide. The older `reg::law::keys` still resolves.\n\n                 `{{{{ <ns> }}}}` renders that namespace's whole table inline. `{{{{ <ns>::<slug>::<field> }}}}`\n                 renders one field, which is how a document states a value once and every mention of it\n                 stays current instead of drifting into a copy.\n\n                 Two functions answer questions about a thing rather than rendering it.\n                 `{{{{ pathof(x) }}}}` is where x is DECLARED, the file to open to change it: a crate's\n                 directory, a cited file, or the TOML a registry row sits in. `{{{{ sourcesof(x) }}}}` is\n                 what x RESTS ON, its provenance, plural because provenance is an array.\n\n                 A postfix chain narrows the result: `pathof(crates::store).dir()`. Four methods read a\n                 path (`dir`, `filename`, `stem`, `ext`) and three read a list (`first`, `last`,\n                 `count`), applied left to right. An unknown method is reported rather than ignored,\n                 because a method that silently does nothing reads as one that worked.\n\n                 Registry rows are identified by a snake_case slug, never a number. A number carries no\n                 meaning and so has to be managed: never reused, never renumbered, never reordered, since\n                 any of those silently repoints every reference to it.\n"
+                "## Reference syntax\n\n                 Write a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry\n                 field declared to hold one. It resolves when documents are generated, and it is checked:\n                 a reference that points nowhere is reported rather than rendered as something that looks\n                 fine.\n\n                 The braces are required. They make a reference something you state rather than something\n                 the renderer guesses from a pattern, so prose about code is never rewritten by accident.\n                 References inside code fences are left alone.\n\n                 ### Roots in this project\n\n{roots_doc}\n                 A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`) or a line\n                 number. **Prefer the heading.** A line number fails silently: an edit above it shifts the\n                 target, the citation still resolves, and it now points at different content. A heading\n                 fails loudly when renamed, which is a report rather than a lie. Line numbers are honest\n                 only in a root declared frozen.\n\n                 A path may have any depth and the extension may be omitted, so `mock::DESIGN::12` finds\n                 `DESIGN.md.tmpl` without you tracking which form exists where. Two matches is an error\n                 rather than a guess.\n\n                 ### Registry namespaces in this project\n\n{ns_doc}\n                 A namespace is addressed by its own name: `law::keys`, `vocab::xpbd`. There is no\n                 prefix, because slot zero is either a declared root or a declared namespace and the\n                 two cannot collide. The older `reg::law::keys` still resolves.\n\n                 `{{{{ <ns> }}}}` renders that namespace's whole table inline. `{{{{ <ns>::<slug>::<field> }}}}`\n                 renders one field, which is how a document states a value once and every mention of it\n                 stays current instead of drifting into a copy.\n\n                 ### Fields that hold a row\n\n                 A field's declared `type` is either a builtin (`string`, `string[]`, `integer`,\n                 `boolean`, `ref`, `ref[]`) or **the name of a namespace**, and the second form makes\n                 the field hold references to rows in that namespace. `type = \"slot\"` holds one,\n                 `type = \"slot[]\"` holds several.\n\n                 The value is a bare slug, `\"display\"`, never `\"slot::display\"`: the type already says\n                 which namespace, and one thing written two ways is one thing that can disagree with\n                 itself. A slug naming no row is reported, so a relation cannot rot the way a\n                 hand-maintained list does. A type naming neither a builtin nor a namespace is reported\n                 too, rather than quietly becoming a string field that constrains nothing. So is a\n                 target declaring `value_field`, which renders a value rather than a link and so\n                 cannot carry a relation.\n\n                 Three functions answer questions about a thing rather than rendering it.\n                 `{{{{ pathof(x) }}}}` is where x is DECLARED, the file to open to change it: a crate's\n                 directory, a cited file, or the TOML a registry row sits in. `{{{{ sourcesof(x) }}}}` is\n                 what x RESTS ON, its provenance, plural because provenance is an array.\n                 `{{{{ refsto(x) }}}}` is what POINTS AT x, derived from the typed fields above rather\n                 than stored, so nothing has to be kept in step. It is the direction most questions are\n                 asked in, and an empty answer is the finding: nothing answers that row.\n\n                 A postfix chain narrows the result: `pathof(crates::store).dir()`. Four methods read a\n                 path (`dir`, `filename`, `stem`, `ext`) and three read a list (`first`, `last`,\n                 `count`), applied left to right. An unknown method is reported rather than ignored,\n                 because a method that silently does nothing reads as one that worked.\n\n                 Registry rows are identified by a snake_case slug, never a number. A number carries no\n                 meaning and so has to be managed: never reused, never renumbered, never reordered, since\n                 any of those silently repoints every reference to it.\n"
             ),
         },
         BuiltinRule {

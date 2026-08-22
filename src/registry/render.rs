@@ -50,13 +50,26 @@ pub fn generate_schemas(
         let mut required = vec!["id".to_string()];
 
         for f in &ns.fields {
-            let ty = match f.r#type.as_str() {
-                "integer" => "\"type\": \"integer\"".to_string(),
-                "boolean" => "\"type\": \"boolean\"".to_string(),
-                // A reference is a string on the wire. The type exists to say what
+            // A row reference is a slug on the wire, so the schema carries the
+            // slug pattern and the editor rejects a malformed one where it is
+            // typed. Whether the slug names a row that exists is not something
+            // a schema over one file can know, and is checked separately.
+            let row_ref = super::row_reference_target(&f.r#type)
+                .filter(|(target, _)| namespaces.iter().any(|n| n.key == *target));
+            let ty = match (row_ref, f.r#type.as_str()) {
+                (Some((_, true)), _) => {
+                    "\"type\": \"array\", \"items\": { \"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\" }"
+                        .to_string()
+                },
+                (Some((_, false)), _) => {
+                    "\"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\"".to_string()
+                },
+                (None, "integer") => "\"type\": \"integer\"".to_string(),
+                (None, "boolean") => "\"type\": \"boolean\"".to_string(),
+                // A citation is a string on the wire. The type exists to say what
                 // the string means, so validation can find it without knowing
                 // what the project called the field.
-                "string[]" | "ref[]" => {
+                (None, "string[]") | (None, "ref[]") => {
                     "\"type\": \"array\", \"items\": { \"type\": \"string\" }".to_string()
                 },
                 _ => "\"type\": \"string\"".to_string(),
@@ -273,6 +286,20 @@ fn render_rows(
         }
     }
 
+    // Which of this namespace's fields hold row references, by field name.
+    // Read from the declared types once rather than per cell.
+    let row_refs: BTreeMap<&str, &str> = ns
+        .fields
+        .iter()
+        .filter_map(|f| {
+            let (target, _) = super::row_reference_target(&f.r#type)?;
+            cfg.registry_namespaces
+                .iter()
+                .any(|n| n.key == target)
+                .then_some((f.name.as_str(), target))
+        })
+        .collect();
+
     let mut out = String::new();
     out.push_str("| ");
     out.push_str(&columns.join(" | "));
@@ -298,6 +325,26 @@ fn render_rows(
                     // alternative of a separate anchor block below the table
                     // duplicates every row to say nothing new.
                     return format!("<a id=\"{}\"></a>{}", row.anchor(), row.slug);
+                }
+                // A row reference is stored as a bare slug and rendered as a
+                // reference, which the pass that follows turns into a link to
+                // the target row. Emitting the reference rather than the link
+                // keeps one implementation of what a row link is, including
+                // the document-index lookup and the embed-mode case where a
+                // link has no target.
+                if let Some(target) = row_refs.get(c.as_str()) {
+                    let cell = row
+                        .fields
+                        .get(c)
+                        .map(String::as_str)
+                        .unwrap_or("")
+                        .split(", ")
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|slug| format!("{{{{ {target}::{slug} }}}}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return cell;
                 }
                 let raw = visible_value(row.fields.get(c).map(String::as_str).unwrap_or(""), cfg);
                 // A pipe inside a cell would end the column early, and a

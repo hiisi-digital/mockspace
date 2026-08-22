@@ -53,6 +53,7 @@ mod refs;
 mod render;
 mod resolve;
 mod resolved;
+mod rowref;
 mod validate;
 
 pub use load::*;
@@ -61,6 +62,7 @@ pub use refs::*;
 pub use render::*;
 pub use resolve::*;
 pub use resolved::*;
+pub use rowref::*;
 pub use validate::*;
 
 #[cfg(test)]
