@@ -329,6 +329,25 @@ fn the_binary_leaves_a_tree_it_just_generated_alone() {
         after_first, after_second,
         "a second generation on an unchanged tree must write nothing"
     );
+
+    // **And the sweep took nothing that was generated.** Comparing run one
+    // against run two cannot see that: a file deleted on *both* runs is
+    // identical in both snapshots and invisible by construction. A reviewer
+    // proved it by mutating the sweep to also delete `STRUCTURE.md` and
+    // watching this test stay green.
+    //
+    // So the check is against what the generator is known to produce rather
+    // than against itself. `STRUCTURE.md` and the graph are written by three
+    // different call sites, which is the spread that matters: the defect this
+    // guards against is a generator whose paths never reach the keep set, and
+    // the one that actually had it was the bench-doc generator.
+    for expected in ["PROJECT.md", "STRUCTURE.md", "STRUCTURE.GRAPH.dot"] {
+        assert!(
+            after_second.contains_key(expected),
+            "{expected} is generated and must survive the sweep; kept: {:?}",
+            after_second.keys().collect::<Vec<_>>()
+        );
+    }
 }
 
 /// Every top-level file under `dir`, by name and content.

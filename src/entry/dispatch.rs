@@ -973,7 +973,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     // --- Bench results documentation (opt in via bench.toml [docgen]) ---
-    crate::bench_docs::generate(&cfg);
+    generated.extend(crate::bench_docs::generate(&cfg));
 
     // STRUCTURE.md is markdown, so it goes through the same pipeline as every
     // other document rather than being written here. Computed now because it

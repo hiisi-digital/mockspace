@@ -1179,8 +1179,21 @@ fn drop_directory_convention(body: String) -> String {
         return body;
     };
     let rest = &body[start ..];
-    // the next top-level heading, since the cut section has `###` children
-    let end = rest[3 ..].find("\n## ").map(|i| start + 3 + i + 1);
+    // **The next heading at any level, not the next top-level one.**
+    //
+    // The first version looked only for `\n## `. This rule's body has exactly
+    // one `##`, its title, and every other section is `###`, so the search
+    // always missed and the `None` arm took the rest of the document with it:
+    // nine sections became one, and the mutation order, which is the most
+    // load-bearing part of the rule, went with them. The PR that introduced
+    // this said in as many words that the mutation order stays.
+    //
+    // NOTE: skip one byte rather than three before searching, so a heading
+    // immediately after the cut point is still found.
+    let end = ["\n## ", "\n### "]
+        .iter()
+        .filter_map(|h| rest[1 ..].find(h).map(|i| start + 1 + i + 1))
+        .min();
     match end {
         Some(e) => format!("{}{}", &body[.. start], &body[e ..]),
         None => body[.. start].to_string(),
@@ -1255,23 +1268,44 @@ mod canon_location_is_derived {
             "the directory convention must not ship: {}",
             r.body
         );
-        for absent in ["/canon/archive/", "/canon/examples/"] {
+        assert!(
+            !r.body.contains("/canon/examples/"),
+            "the examples convention goes with it: {}",
+            r.body
+        );
+
+        // **What the universal half is, checked where it actually lives.**
+        //
+        // The first version asserted only the title and one line of the intro
+        // prose, both of which sit *before* the cut point, so they passed while
+        // the cut took nine sections and left one. The mutation order went with
+        // them, which is the most load-bearing part of this rule, in the one
+        // project the change was made for. A law that cannot reach what the
+        // code does is not a law.
+        for kept in [
+            "The canon, design, code chain",
+            "Code is last",
+            "### The reproduction property",
+            "### The mutation order",
+            "### Telling which tier a document is",
+            "### Two rules that hold now",
+            "### No tooling enforces any of this yet",
+        ] {
             assert!(
-                !r.body.contains(absent),
-                "{absent} must not appear: {}",
+                r.body.contains(kept),
+                "`{kept}` is universal and must survive the cut: {}",
                 r.body
             );
         }
-        // and the universal half survives the cut
+
+        // and something was actually cut, else every arm above passes on a
+        // body the cut never touched
+        let full = rule_for(Vec::new()).body;
         assert!(
-            r.body.contains("The canon, design, code chain"),
-            "{}",
-            r.body
-        );
-        assert!(
-            r.body.contains("Code is last"),
-            "the tiers survive: {}",
-            r.body
+            r.body.len() < full.len(),
+            "the cut must remove something: {} against {}",
+            r.body.len(),
+            full.len()
         );
     }
 
