@@ -458,30 +458,6 @@ mod byline_hook_tests {
         code
     }
 
-    /// Run `msg` through BOTH the generated and the durable commit-msg hooks,
-    /// assert they agree (both layers must enforce), return the shared code.
-    /// Run `msg` through the generated commit-msg hook.
-    ///
-    /// The generated hook is the byline authority. The durable hook no longer
-    /// duplicates the check: it delegates to this one when the repo is
-    /// initialised and blocks when it is not, which `durable_gate_tests` covers.
-    /// Comparing the two layers, as this helper used to, asserted a duplication
-    /// that was itself the problem.
-    fn run_commit_msg(msg: &str) -> i32 {
-        let dir = scratch("msg");
-        let msgfile = dir.join("COMMIT_EDITMSG");
-        std::fs::write(&msgfile, msg).unwrap();
-        let code = run_script(
-            &gen_commit_msg(&dir.join("no-user-hook")),
-            &[&msgfile],
-            "",
-            None,
-            None,
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-        code
-    }
-
     /// A PATH with git + coreutils but WITHOUT the cargo bin, so the durable
     /// pre-push prelude takes the no-launcher branch deterministically.
     fn launcher_free_path() -> String {

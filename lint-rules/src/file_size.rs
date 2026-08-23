@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 
-use crate::{CrateLint, CrateSourceFile, Lint, LintContext, LintError, Severity};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 pub struct FileSize {
     max_lines:       usize,
@@ -176,8 +176,9 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+    use crate::CrateSourceFile;
 
-    fn make_ctx(source: &str) -> LintContext {
+    fn make_ctx(source: &str) -> LintContext<'_> {
         make_ctx_with(source, &[])
     }
 
@@ -285,6 +286,7 @@ mod module_file_tests {
     use std::collections::BTreeSet;
 
     use super::*;
+    use crate::CrateSourceFile;
 
     /// A crate whose root is small but whose module file is far over the limit.
     ///

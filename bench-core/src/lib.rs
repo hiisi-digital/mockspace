@@ -625,7 +625,7 @@ macro_rules! __bench_calibrated_body {
 
 #[cfg(test)]
 mod abi_tests {
-    use super::{abi_hash, FfiBenchCall};
+    use super::FfiBenchCall;
 
     // The FFI wire struct is four u64 fields; pin the size so an accidental
     // field change forces a deliberate abi_hash() update and a variant rebuild.

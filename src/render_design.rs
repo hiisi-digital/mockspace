@@ -287,7 +287,7 @@ impl Placeholders {
             primary_items: compute_primary_items_per_crate(crates, cfg),
             crate_layers: compute_crate_layers(crates, cfg),
             deep_dives: collect_deep_dives(&cfg.src_dirs),
-            crate_summaries: compute_crate_summaries(&cfg.mock_dir, &cfg.crate_prefix, cfg, crates),
+            crate_summaries: compute_crate_summaries(&cfg.crate_prefix, cfg, crates),
         }
     }
 
@@ -530,12 +530,7 @@ pub fn generate_deep_dives_md(cfg: &Config) -> String {
 }
 
 /// Compute crate summaries from per-crate README.md.tmpl files.
-fn compute_crate_summaries(
-    mock_dir: &Path,
-    crate_prefix: &str,
-    cfg: &Config,
-    crates: &CrateMap,
-) -> String {
+fn compute_crate_summaries(crate_prefix: &str, cfg: &Config, crates: &CrateMap) -> String {
     let mut depth_cache = BTreeMap::new();
     // Every source directory, for the same reason as `collect_deep_dives`: the
     // hardcoded single root ignored the configured ones entirely.

@@ -11,8 +11,6 @@
 
 use super::*;
 
-use super::*;
-
 pub(super) fn ns(key: &str, fields: &[(&str, &str)]) -> RegistryNamespace {
     RegistryNamespace {
         key:         key.into(),

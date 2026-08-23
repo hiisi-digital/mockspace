@@ -6,7 +6,6 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
-use std::path::Path;
 
 use crate::config::Config;
 use crate::graph;
