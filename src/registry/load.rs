@@ -62,6 +62,7 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
 
     let mut files = Vec::new();
     collect_toml_files(&root, &mut files);
+    reg.files_read = files.clone();
 
     for path in files {
         let Ok(text) = fs::read_to_string(&path) else {

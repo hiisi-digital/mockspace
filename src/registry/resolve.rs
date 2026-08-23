@@ -447,7 +447,12 @@ fn resolve_pathof(
         for name in [parts[1].to_string(), prefixed] {
             // Across every source directory, for the same reason as
             // `resolve_crate_ref`: the expression names a crate, not a group.
-            if let Some(dir) = cfg.src_dirs.iter().map(|d| d.join(&name)).find(|d| d.is_dir()) {
+            if let Some(dir) = cfg
+                .src_dirs
+                .iter()
+                .map(|d| d.join(&name))
+                .find(|d| d.is_dir())
+            {
                 return Some(rel_to_repo(&dir, repo_root));
             }
         }
@@ -878,6 +883,8 @@ pub fn resolve_data(
         rows:         BTreeMap::new(),
         by_namespace: reg.by_namespace.clone(),
         duplicates:   reg.duplicates.clone(),
+        // The same corpus, resolved, so it was read from the same files.
+        files_read:   reg.files_read.clone(),
     };
     for (id, row) in &reg.rows {
         let mut r = row.clone();
@@ -943,6 +950,12 @@ fn resolve_row(
         rows:         BTreeMap::new(),
         by_namespace: reg.by_namespace.clone(),
         duplicates:   BTreeMap::new(),
+        // Deliberately empty rather than cloned. This view is built once per
+        // row, and the comment above records that cloning the whole registry
+        // here was quadratic at real row counts. Nothing reads `files_read`
+        // off a per-row view; the corpus-level answer is on the registry the
+        // loader returned.
+        files_read:   Vec::new(),
     };
     for value in row.fields.values() {
         for (dep, _) in find_registry_refs(value, &ns_keys) {

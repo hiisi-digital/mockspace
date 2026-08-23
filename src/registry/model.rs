@@ -195,6 +195,27 @@ pub struct Registry {
     /// reference cannot be resolved. No per-file schema can catch it, because
     /// each file is valid on its own.
     pub duplicates:   BTreeMap<String, Vec<PathBuf>>,
+    /// Every `.toml` the loader opened under `registry/`, in the order it
+    /// found them.
+    ///
+    /// **Populated by `load_registry` and empty on every derived view.** The
+    /// resolved whole-registry view carries it forward; the per-row view built
+    /// during resolution leaves it empty, because cloning it per row was the
+    /// quadratic cost that view exists to avoid. So an empty value means "not a
+    /// loaded registry", never "a registry with no files".
+    ///
+    /// It is the list of files the loader *found and attempted*, assigned
+    /// before the read loop. A file that fails `read_to_string` is listed and
+    /// contributed nothing, which is the honest shape for a coverage check:
+    /// the file is there and its rows are not.
+    ///
+    /// Recorded so that a caller asking "which files did this cover" gets the
+    /// loader's own answer instead of walking the tree again. A second walk is
+    /// a second implementation of the same decision, and the two drift: the
+    /// loader recurses to unbounded depth and takes a row's namespace from the
+    /// array-of-tables key, so any model built from path shape disagrees with
+    /// it on a nested file and on a file whose name does not match its rows.
+    pub files_read:   Vec<PathBuf>,
 }
 
 impl Registry {
