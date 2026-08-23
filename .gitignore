@@ -1,24 +1,3 @@
-/target
-# Matches `<repo>/mock/target/` AND any nested
-# `<crate>/mock/target/` produced by test fixtures that invoke
-# `cargo mock install` against a tempdir-shaped path. The `**/`
-# prefix is required: a bare `mock/target/` pattern with an
-# internal slash is anchored to the gitignore's own directory by
-# git's fnmatch FNM_PATHNAME semantics, so it would not match
-# nested copies under `mock/crates/<name>/mock/target/`.
-**/mock/target/
-/mock/Cargo.lock
-# The lint cdylib pack is its own workspace root (excluded from the tool
-# workspace); its build dir and lock live beside its manifest.
-/mock/crates/mockspace-builtin-lints/target/
-/mock/crates/mockspace-builtin-lints/Cargo.lock
-.DS_Store
-# spotlight marker the per-agent worktrees carry; never part of a tree.
-.metadata_never_index
-*.swp
-*.swo
-*.rs.bk
-
 # === mockspace-managed build artifacts (do not edit) ===
 # Catch-all: every cargo build dir, including nested ones under benches/,
 # tests/, and research sketches. A leading-slash /target would miss those.
