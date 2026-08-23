@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-#![allow(unused_imports)]
-
 use super::*;
 
 /// Generate the check-message.sh hook: route every authored message a tool is

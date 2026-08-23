@@ -12,10 +12,9 @@
 //! verb, load the named inventory, call the pure function, save it back,
 //! and report what happened in words.
 
-#![allow(unused_imports)]
 use super::*;
 
-use crate::panel::{self, MintRefusal, PanelInventory};
+use crate::panel::{self, PanelInventory};
 
 /// Unix seconds, for stamping a seat or a consolidation. The one place in
 /// this CLI layer that reads the clock, so every call below it stays a pure

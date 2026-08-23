@@ -21,13 +21,11 @@
 //! under a name its own source does not contain, which is a thing nobody can
 //! grep for. Rather than pick a winner, the mismatch is refused and named.
 
-#![allow(unused_imports)]
 use super::*;
 use std::io::IsTerminal;
 
 use mockspace_lint_rules::tool::{
-    NotALint, Outcome, Tool, ToolContext, ToolReport, contract_faults, duplicate_tool_names,
-    missing_required, usage_line,
+    Outcome, ToolContext, contract_faults, duplicate_tool_names, missing_required, usage_line,
 };
 
 /// Every subcommand name a tool may not take, because the engine already

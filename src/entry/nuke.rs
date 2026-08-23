@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-#![allow(unused_imports)]
-
 use super::*;
 
 /// Check if every crate in the workspace has been nuked.
