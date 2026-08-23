@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! End-to-end validation of the `tools/` path: a real crate under
 //! `<mock>/tools/<name>/`, discovered by directory, compiled into the same
 //! cdylib the custom lints use, dlopened, and dispatched as `Box<dyn Tool>`.

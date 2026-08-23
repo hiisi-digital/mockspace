@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Hardware performance counter reads + deterministic PRNG.
 //! CNTVCT_EL0 on aarch64 (24MHz, 41.67ns/tick).
 //! rdtsc on x86_64 (reference frequency).

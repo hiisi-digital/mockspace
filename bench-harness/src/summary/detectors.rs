@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Highlight detectors for [`super::RunSummary`]. Each pattern-matches the run statistics and,
 //! when it fires, returns a templated [`super::Highlight`]. Split from `summary.rs` per the
 //! file-size rule; child-module access reaches the parent RunSummary's private helpers.

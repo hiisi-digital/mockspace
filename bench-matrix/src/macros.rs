@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! The `bench_matrix!` declarative macro: the ergonomic front-end that emits the
 //! `setup` / `cell_<tag>` / `matrix_decls()` boilerplate the engine consumes.
 //!

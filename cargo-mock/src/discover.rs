@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Locating the repo, the `mockspace.toml`, and the mock dir from any working
 //! directory. All discovery uses absolute paths so cwd never matters, and it
 //! is strictly read-only: nothing is moved or written during resolution.
