@@ -63,32 +63,37 @@ fn foreign_mock_dir() -> PathBuf {
     expanded
 }
 
-/// Every declared namespace with a `.toml` under `registry/` and no rows
-/// loaded for it, by key.
+/// Every declared namespace the loader read a file for and produced no rows
+/// for, by key.
 ///
 /// Shared between the arm that reads a real corpus and the arm that builds
 /// one, so a defect in this detection breaks both rather than only the arm
-/// that happens to be skipped by default. Presence is checked on disk rather
-/// than assumed from a row count, because a flat total treats a small,
-/// correctly-empty registry the same as a namespace the loader silently
-/// dropped, and the two are not the same finding.
+/// that happens to be skipped by default.
+///
+/// **Presence comes from `reg.files_read`, which is the loader's own record.**
+/// An earlier version walked `registry/` itself and modelled a namespace's
+/// files as `registry/<key>.toml` or a direct child of `registry/<key>/`. That
+/// is a second implementation of a decision the loader had already made, and
+/// the two disagreed in both directions: the loader recurses to unbounded
+/// depth, so a namespace whose files sit at `registry/law/2026/deep.toml` read
+/// as having none and a genuine drop there was invisible; and the loader takes
+/// a row's namespace from the array-of-tables key rather than the path, so a
+/// populated `registry/everything.toml` holding `[[law]]` read as no files at
+/// all and failed the coverage assertion on a registry that had loaded fine.
+/// Both are pinned as tests below. The file already condemned this exact
+/// mistake in its own earlier revision and then committed it here.
 fn namespaces_with_files_but_no_rows(
-    mock_dir: &Path,
     namespaces: &[RegistryNamespace],
     reg: &Registry,
 ) -> Vec<String> {
-    let registry_root = mock_dir.join("registry");
     let mut out = Vec::new();
     for ns in namespaces {
-        let flat = registry_root.join(format!("{}.toml", ns.key));
-        let nested = registry_root.join(&ns.key);
-        let has_files = flat.is_file()
-            || std::fs::read_dir(&nested)
-                .map(|d| {
-                    d.filter_map(Result::ok)
-                        .any(|e| e.path().extension().is_some_and(|x| x == "toml"))
-                })
-                .unwrap_or(false);
+        // A namespace has files if any file the loader read declares it, which
+        // is the same question the loader answered when it built `by_namespace`.
+        let has_files = reg
+            .files_read
+            .iter()
+            .any(|p| file_declares_namespace(p, &ns.key));
         if has_files && reg.by_namespace.get(&ns.key).is_none_or(Vec::is_empty) {
             out.push(ns.key.clone());
         }
@@ -96,9 +101,22 @@ fn namespaces_with_files_but_no_rows(
     out
 }
 
+/// Whether `path` contains an array-of-tables named `key`, which is what makes
+/// the loader attribute a row in it to that namespace.
+fn file_declares_namespace(path: &Path, key: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    doc.get(key)
+        .is_some_and(|i| i.as_array_of_tables().is_some())
+}
+
 #[test]
 #[ignore = "set MOCKSPACE_FOREIGN_REGISTRY to a mock/ directory to run this"]
-fn a_foreign_registry_parses_and_its_references_resolve() {
+fn a_foreign_registry_parses_and_validates() {
     let mock_dir = foreign_mock_dir();
 
     // No assertion on where mockspace.toml sits. `Config::from_dir` looks in
@@ -133,7 +151,7 @@ fn a_foreign_registry_parses_and_its_references_resolve() {
     // corpus already known to be large, and reports a small-but-correct registry
     // as a defect. It did: pointed at a project part-way through adopting the
     // registry it failed on seven rows that were all genuinely there.
-    let empty = namespaces_with_files_but_no_rows(&mock_dir, namespaces, &reg);
+    let empty = namespaces_with_files_but_no_rows(namespaces, &reg);
     assert!(
         empty.is_empty(),
         "{empty:?} have files under {}/registry and loaded no rows: the loader \
@@ -141,37 +159,26 @@ fn a_foreign_registry_parses_and_its_references_resolve() {
         mock_dir.display()
     );
 
-    // A namespace can only fail the check above if at least one has files at
-    // all. Without this, a project whose registry is entirely absent (every
-    // namespace vacuous) would pass the assertion above having exercised
-    // nothing, which is the exact silent-vacuity failure this file exists to
-    // avoid on its own coverage.
-    let registry_root = mock_dir.join("registry");
-    let any_files = namespaces.iter().any(|ns| {
-        registry_root.join(format!("{}.toml", ns.key)).is_file()
-            || std::fs::read_dir(registry_root.join(&ns.key))
-                .map(|d| {
-                    d.filter_map(Result::ok)
-                        .any(|e| e.path().extension().is_some_and(|x| x == "toml"))
-                })
-                .unwrap_or(false)
-    });
+    // A namespace can only fail the check above if the loader read a file for
+    // at least one. Without this, a project whose registry is entirely absent
+    // would pass having exercised nothing, which is the silent vacuity this
+    // file exists to avoid on its own coverage.
     assert!(
-        any_files,
-        "no namespace has any .toml under {}, so nothing here could fail. \
-         Point the variable at a project whose registry is populated.",
-        registry_root.display()
+        !reg.files_read.is_empty(),
+        "the loader read no .toml under {}/registry, so nothing above could \
+         fail. Point the variable at a project whose registry is populated.",
+        mock_dir.display()
     );
+    eprintln!("files read:          {}", reg.files_read.len());
 
-    // Two checks, not one. `validate` covers duplicate identifiers (a slug
-    // declared twice cannot be referenced, and no per-file schema can see it,
-    // since each file is valid on its own); reference resolution is
-    // `validate_provenance`, which this test's own name promises and an
-    // earlier version never called. An earlier version of this test also
-    // asserted `reg.duplicates.is_empty()` directly, immediately before
-    // asserting `validate(...).is_empty()`: the second cannot fail once the
-    // first has passed, since `validate` builds its only finding kind from
-    // that same field. The one assertion below is the whole check.
+    // Three checks, not one, and the third is the one this test is named for.
+    //
+    // `validate` covers duplicate identifiers: a slug declared twice cannot be
+    // referenced, and no per-file schema can see it, since each file is valid
+    // on its own. An earlier version also asserted `reg.duplicates.is_empty()`
+    // immediately before `validate(...).is_empty()`, where the second cannot
+    // fail once the first has passed, since `validate` builds its only finding
+    // kind from that same field. That pair is gone.
     let findings = mockspace::registry::validate(namespaces, &reg);
     let provenance_findings = mockspace::registry::validate_provenance(
         &cfg.repo_root,
@@ -191,6 +198,39 @@ fn a_foreign_registry_parses_and_its_references_resolve() {
          into this repository's fixtures before fixing either side.",
         findings.len()
     );
+
+    // How many reference values `validate_provenance` actually looked at.
+    //
+    // **Without this the assertion below cannot fail on a corpus that declares
+    // no reference-typed fields, and it reads as though every reference
+    // resolved.** `validate_provenance` iterates the fields whose declared
+    // type is `ref` or `ref[]`; a project declaring none gives it nothing to
+    // inspect, it returns no findings, and the assertion passes having proved
+    // nothing about references at all. The one large foreign corpus available
+    // is exactly that project: fifteen namespaces, 2686 rows, thirty-six
+    // `string[]` fields and zero of type `ref`.
+    //
+    // So the count is reported and asserted separately from the resolution. A
+    // corpus with no references makes the resolution claim *silent* rather
+    // than satisfied, and silence is not a pass.
+    let ref_fields = mockspace::registry::reference_fields(namespaces);
+    let inspected: usize = reg
+        .rows
+        .values()
+        .map(|row| {
+            ref_fields
+                .get(&row.namespace)
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .filter(|f| row.fields.contains_key(f.as_str()))
+                        .count()
+                })
+                .unwrap_or(0)
+        })
+        .sum();
+    eprintln!("reference values:    {inspected}");
+
     assert!(
         provenance_findings.is_empty(),
         "{} finding(s) from `validate_provenance`, i.e. a reference this \
@@ -200,9 +240,54 @@ fn a_foreign_registry_parses_and_its_references_resolve() {
          either side.",
         provenance_findings.len()
     );
+    // **Not asserted, and the distinction is the point.** A corpus with no
+    // reference-typed fields makes the resolution claim *silent* rather than
+    // satisfied, and an unmeasured dimension claims nothing. So the count is
+    // reported, the assertion above stands only for what it inspected, and the
+    // property itself is covered unconditionally by
+    // `a_citation_that_resolves_to_nothing_is_a_finding` below, on a fixture
+    // that does declare one.
+    //
+    // The arm was previously named for references resolving. It could not keep
+    // that promise on an arbitrary corpus, and did not keep it on the only one
+    // available.
+    if inspected == 0 {
+        eprintln!(
+            "NOTE: this corpus declares no `ref` or `ref[]` fields, so \
+             validate_provenance inspected nothing and this run says nothing \
+             about reference resolution."
+        );
+    }
+
+    // The fourth validator, which nothing here asserts on and which is reported
+    // because its findings are real. `config_unknown_keys` reads keys the
+    // config declares and mockspace does not implement, discarded in silence.
+    // Its own documentation names this corpus: twelve of fifteen namespaces
+    // declare `prefix`, mockspace has no such field, and all twelve are
+    // dropped without a word.
+    //
+    // Asserting zero here would fail on the one corpus available, over a
+    // finding that is about that project's config rather than about this
+    // loader. Saying nothing at all was the earlier state, and it let the PR
+    // body claim "validation returns no findings" while a validator nobody
+    // called returned twelve.
+    if let Ok(text) = std::fs::read_to_string(mock_dir.join("mockspace.toml")) {
+        let unknown = mockspace::registry::config_unknown_keys(&text);
+        eprintln!("config unknown keys: {}", unknown.len());
+        for f in &unknown {
+            eprintln!("  {}", f.message);
+        }
+    }
 }
 
 /// The drop-detection arm, on a fixture this test builds, so it runs always.
+///
+/// **Named for the detection, not for a finding.** No production validator
+/// reports this condition: `validate`, `validate_provenance`,
+/// `config_unknown_keys` and `namespace_root_collisions` all return nothing on
+/// this fixture. It is reported by `namespaces_with_files_but_no_rows` in this
+/// file and nowhere else, and an earlier name said "is a finding", which told a
+/// reader the drop was caught in the library when it is caught only here.
 ///
 /// The test above is opt-in and therefore usually skipped, which would leave
 /// the loader's most important property unexercised on every ordinary run.
@@ -213,14 +298,26 @@ fn a_foreign_registry_parses_and_its_references_resolve() {
 /// in that shared function now fails here too, on every ordinary run, instead
 /// of only in the arm nobody runs by default.
 #[test]
-fn a_declared_namespace_with_files_and_no_rows_is_a_finding() {
+fn the_drop_detection_reports_a_namespace_with_files_and_no_rows() {
     let dir = tempfile::tempdir().expect("a temporary tree");
     let mock = dir.path();
     std::fs::create_dir_all(mock.join("registry/ghostns")).unwrap();
 
-    // Valid TOML, and not a row: the array-of-tables key is what makes a row,
-    // so a file of loose keys parses and declares nothing.
-    std::fs::write(mock.join("registry/ghostns/a.toml"), "x = 1\n").unwrap();
+    // A real silent drop: the file declares the namespace's array of tables, so
+    // the loader reads it and attributes it to `ghostns`, and the table carries
+    // no `id`, so no row comes out and nothing is said about it.
+    //
+    // An earlier fixture wrote loose keys (`x = 1`) instead. That is a file
+    // which declares nothing, and under a detection that follows the table key
+    // it is correctly not a drop, so it stopped being the case this test is
+    // named for. The change is the point: the old path-shaped detection called
+    // any `.toml` in the namespace's directory a drop, including files that
+    // were never rows.
+    std::fs::write(
+        mock.join("registry/ghostns/a.toml"),
+        "[[ghostns]]\nname = \"no id\"\n",
+    )
+    .unwrap();
     std::fs::write(
         mock.join("mockspace.toml"),
         "[[registry.namespace]]\nkey = \"ghostns\"\ntitle = \"Ghost\"\n",
@@ -236,11 +333,14 @@ fn a_declared_namespace_with_files_and_no_rows_is_a_finding() {
         cfg.registry_namespaces.iter().any(|n| n.key == "ghostns"),
         "the fixture's own declaration did not parse, so this proves nothing \
          about the loader. Parsed: {:?}",
-        cfg.registry_namespaces.iter().map(|n| &n.key).collect::<Vec<_>>()
+        cfg.registry_namespaces
+            .iter()
+            .map(|n| &n.key)
+            .collect::<Vec<_>>()
     );
 
     let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
-    let found = namespaces_with_files_but_no_rows(mock, &cfg.registry_namespaces, &reg);
+    let found = namespaces_with_files_but_no_rows(&cfg.registry_namespaces, &reg);
     assert_eq!(
         found,
         vec!["ghostns".to_string()],
@@ -267,10 +367,203 @@ fn a_declared_namespace_with_files_and_no_rows_is_a_finding() {
         Some(1),
         "a well-formed row did not load, so the emptiness above was the fixture"
     );
-    let found = namespaces_with_files_but_no_rows(mock, &cfg.registry_namespaces, &reg);
+    let found = namespaces_with_files_but_no_rows(&cfg.registry_namespaces, &reg);
     assert!(
         found.is_empty(),
         "a namespace with a real row must not be reported as files-with-no-rows: \
          {found:?}"
+    );
+}
+
+/// A citation that resolves to nothing is a finding, on a fixture this test
+/// builds, so reference resolution is covered on every ordinary run.
+///
+/// **This is the arm the opt-in test cannot be.** `validate_provenance` only
+/// inspects fields whose declared type is `ref` or `ref[]`, so a corpus that
+/// declares none gives it nothing to look at and it returns no findings. The
+/// one large foreign registry available declares thirty-six `string[]` fields
+/// and zero reference-typed ones, which made the opt-in assertion pass while
+/// examining nothing, under a test named for references resolving.
+///
+/// The fixture declares a root, puts one file under it, and cites it twice:
+/// once at a path that exists and once at a path that does not. One finding is
+/// therefore the expected count, and it is what distinguishes a resolver that
+/// reports everything from one that reports nothing.
+#[test]
+fn a_citation_that_resolves_to_nothing_is_a_finding() {
+    let dir = tempfile::tempdir().expect("a temporary tree");
+    let mock = dir.path();
+    std::fs::create_dir_all(mock.join("registry")).unwrap();
+    std::fs::create_dir_all(mock.join("notes")).unwrap();
+
+    std::fs::write(
+        mock.join("notes/present.md"),
+        "# A heading\n\nSomething to cite.\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        mock.join("mockspace.toml"),
+        r#"
+[ref.roots.notes]
+path = "notes"
+
+[[registry.namespace]]
+key = "ruling"
+title = "Ruling"
+
+[[registry.namespace.field]]
+name = "provenance"
+type = "ref[]"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        mock.join("registry/ruling.toml"),
+        "[[ruling]]\nid = \"k1\"\nprovenance = [\"notes::present::#a-heading\"]\n\n\
+         [[ruling]]\nid = \"k2\"\nprovenance = [\"notes::absent::#a-heading\"]\n",
+    )
+    .unwrap();
+
+    let cfg = mockspace::config::Config::from_dir(mock);
+
+    // The control that the fixture declares what it means to. Without it a typo
+    // in the type name leaves `reference_fields` empty, the resolver inspects
+    // nothing, and the count below is zero for a reason that has nothing to do
+    // with resolution. It has already earned its place: an earlier revision
+    // wrote `[[registry.namespace.fields]]`, plural, and this is what said so.
+    let ref_fields = mockspace::registry::reference_fields(&cfg.registry_namespaces);
+    assert_eq!(
+        ref_fields.get("ruling").map(Vec::as_slice),
+        Some(["provenance".to_string()].as_slice()),
+        "the fixture's reference-typed field did not parse, so nothing below \
+         inspects a citation. Parsed: {ref_fields:?}"
+    );
+
+    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+    assert_eq!(reg.rows.len(), 2, "the fixture's own rows did not load");
+
+    let findings = mockspace::registry::validate_provenance(
+        &cfg.repo_root,
+        &cfg.registry_roots,
+        &cfg.frozen_roots,
+        &reg,
+        &cfg.registry_namespaces,
+    );
+    for f in &findings {
+        eprintln!("finding: {f:?}");
+    }
+    assert_eq!(
+        findings.len(),
+        1,
+        "one of the two citations names a file that is not there, so exactly \
+         one finding is expected. Zero means the resolver inspected nothing; \
+         two means it rejected the citation that does resolve. Got: {findings:?}"
+    );
+    assert!(
+        findings[0].message.contains("k2"),
+        "the finding must be against the citation that points nowhere, not the \
+         one that resolves: {:?}",
+        findings[0]
+    );
+}
+
+/// The drop detection sees a silent drop in a file nested deeper than one
+/// directory.
+///
+/// `collect_toml_files` recurses to unbounded depth on purpose. An earlier
+/// version of the detection modelled a namespace's files as
+/// `registry/<key>.toml` or a *direct* child of `registry/<key>/`, so a file at
+/// `registry/law/2026/deep.toml` matched neither and the namespace read as
+/// having no files at all. A genuine drop there was invisible to the very check
+/// written to catch it.
+///
+/// **The assertion is that the drop is reported, not that nothing is.** An
+/// earlier revision of this test asserted `found.is_empty()` on a fixture whose
+/// rows all loaded, which passes when the detection works and equally when it
+/// is blind, and it did: restoring the path-shaped model left it green. That is
+/// the tautological-assertion class this file exists to keep out.
+#[test]
+fn the_drop_detection_sees_a_drop_in_a_file_nested_two_levels_deep() {
+    let dir = tempfile::tempdir().expect("a temporary tree");
+    let mock = dir.path();
+    std::fs::create_dir_all(mock.join("registry/law/2026")).unwrap();
+    std::fs::write(
+        mock.join("mockspace.toml"),
+        "[[registry.namespace]]\nkey = \"law\"\ntitle = \"Law\"\n",
+    )
+    .unwrap();
+
+    // Declares `law` and yields no row, because the table carries no `id`.
+    std::fs::write(
+        mock.join("registry/law/2026/deep.toml"),
+        "[[law]]\nname = \"no id\"\n",
+    )
+    .unwrap();
+
+    let cfg = mockspace::config::Config::from_dir(mock);
+    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+
+    // Premise, not subject: the loader reached the nested file.
+    assert!(
+        reg.files_read.iter().any(|p| p.ends_with("deep.toml")),
+        "the loader's own record does not name the nested file: {:?}",
+        reg.files_read
+    );
+    assert!(
+        reg.by_namespace.get("law").is_none_or(Vec::is_empty),
+        "the fixture's row loaded, so there is no drop here to detect"
+    );
+
+    let found = namespaces_with_files_but_no_rows(&cfg.registry_namespaces, &reg);
+    assert_eq!(
+        found,
+        vec!["law".to_string()],
+        "a namespace whose only file is two directories down, declaring rows \
+         that did not load, must be reported. Empty means the detection cannot \
+         see past the first level; got {found:?}"
+    );
+}
+
+/// The drop detection follows the array-of-tables key, not the file name.
+///
+/// A row's namespace comes from the TOML key that declares it, so a single
+/// `registry/everything.toml` holding `[[law]]` is an ordinary way to keep a
+/// registry. The earlier path-shaped detection saw no file named for `law` and
+/// no directory called `law`, concluded the namespace had no files, and could
+/// therefore miss a drop in it entirely.
+///
+/// Asserts the drop is reported, for the reason given on the test above.
+#[test]
+fn the_drop_detection_follows_the_table_key_not_the_file_name() {
+    let dir = tempfile::tempdir().expect("a temporary tree");
+    let mock = dir.path();
+    std::fs::create_dir_all(mock.join("registry")).unwrap();
+    std::fs::write(
+        mock.join("mockspace.toml"),
+        "[[registry.namespace]]\nkey = \"law\"\ntitle = \"Law\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        mock.join("registry/everything.toml"),
+        "[[law]]\nname = \"no id\"\n",
+    )
+    .unwrap();
+
+    let cfg = mockspace::config::Config::from_dir(mock);
+    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+
+    assert!(
+        reg.by_namespace.get("law").is_none_or(Vec::is_empty),
+        "the fixture's row loaded, so there is no drop here to detect"
+    );
+
+    let found = namespaces_with_files_but_no_rows(&cfg.registry_namespaces, &reg);
+    assert_eq!(
+        found,
+        vec!["law".to_string()],
+        "a namespace whose rows are declared in a differently-named file, and \
+         did not load, must be reported. Empty means the detection is keyed on \
+         the file name rather than the table key; got {found:?}"
     );
 }

@@ -195,6 +195,15 @@ pub struct Registry {
     /// reference cannot be resolved. No per-file schema can catch it, because
     /// each file is valid on its own.
     pub duplicates:   BTreeMap<String, Vec<PathBuf>>,
+    /// Every `.toml` the loader actually read, in the order it read them.
+    ///
+    /// Recorded so that a caller asking "which files did this cover" gets the
+    /// loader's own answer instead of walking the tree again. A second walk is
+    /// a second implementation of the same decision, and the two drift: the
+    /// loader recurses to unbounded depth and takes a row's namespace from the
+    /// array-of-tables key, so any model built from path shape disagrees with
+    /// it on a nested file and on a file whose name does not match its rows.
+    pub files_read:   Vec<PathBuf>,
 }
 
 impl Registry {
