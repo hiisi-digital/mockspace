@@ -905,16 +905,20 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // The placeholder vocabulary is identical for every template in a run and
     // some of it scans the mock tree, so compute it once here.
     let placeholders = render_design::Placeholders::compute(&crates, &cfg);
-    eprintln!("--- cleaning docs/ ---");
-    if let Ok(entries) = fs::read_dir(&cfg.docs_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                let _ = fs::remove_file(&path);
-            }
-        }
-    }
-    eprintln!("  cleaned top-level files");
+    // **The sweep of stale documents happens AFTER generation, not before.**
+    //
+    // It used to run here, deleting every top-level file in `docs/` before a
+    // line was written. That defeated `write_generated`'s timestamp skip
+    // completely and silently: the skip compares against the previous version
+    // on disk, and there was never one, so every run rewrote all sixteen
+    // documents with nothing but a new `Generated at:` and left the consumer's
+    // tree dirty. `write_generated`'s own docs say a run must be safe on a
+    // clean tree, and the SVG path twenty lines below already snapshots for
+    // exactly this reason, on one file.
+    //
+    // Sweeping afterwards keeps what the clean was actually for, a document
+    // that is no longer generated, and takes nothing that is.
+    let mut generated: Vec<PathBuf> = Vec::new();
 
     // --- Dependency graph ---
     eprintln!("--- generating dependency graph ---");
@@ -926,6 +930,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         .docs_dir
         .join(render_design::ordered_doc_name("STRUCTURE.GRAPH.dot", &cfg));
     render_design::write_generated(&dot_path, &dot);
+    generated.push(dot_path.clone());
     eprintln!("  {}", dot_path.display());
 
     // Generate PNG and SVG from DOT
@@ -934,6 +939,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             &format!("STRUCTURE.GRAPH.{ext}"),
             &cfg,
         ));
+        // Both the png and the svg are generated, so both are kept by the
+        // sweep at the end. Pushed before the `dot` call rather than after,
+        // because a graphviz that is not installed leaves the previous copy in
+        // place and the sweep must not take it.
+        generated.push(out.clone());
         // `dot -o` renders straight to the final path, so snapshot the previous
         // version before it is clobbered; otherwise the regeneration has nothing
         // to be compared against and every run rewrites the timestamp.
@@ -963,7 +973,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     // --- Bench results documentation (opt in via bench.toml [docgen]) ---
-    crate::bench_docs::generate(&cfg);
+    generated.extend(crate::bench_docs::generate(&cfg));
 
     // STRUCTURE.md is markdown, so it goes through the same pipeline as every
     // other document rather than being written here. Computed now because it
@@ -1061,6 +1071,25 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // Returning early here would trade a precise finding for an earlier exit.
     eprintln!("--- generating documents ---");
     let written = document::render_all(&plan, &placeholders, &registry, &cfg);
+    generated.extend(written.iter().cloned());
+
+    // The sweep the clean at the top of this function used to be. A top-level
+    // file nothing generated this run is a document that stopped being
+    // generated, which is the only thing that block was ever for.
+    eprintln!("--- sweeping docs/ ---");
+    let keep: std::collections::HashSet<&Path> = generated.iter().map(|p| p.as_path()).collect();
+    let mut swept = 0usize;
+    if let Ok(entries) = fs::read_dir(&cfg.docs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && !keep.contains(path.as_path()) {
+                if fs::remove_file(&path).is_ok() {
+                    swept += 1;
+                }
+            }
+        }
+    }
+    eprintln!("  swept {swept} document(s) nothing generates any more");
     eprintln!("  generated {} documents", written.len());
 
     // --- Unresolved references in what was just written ---
