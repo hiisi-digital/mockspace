@@ -85,7 +85,7 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
         },
     }
 
-    // FIXME: this file is 560 lines, over the 500-line limit, and this block
+    // FIXME: this file is over the 500-line limit and this block
     // is what pushed it there. The seam is obvious: the panel row is
     // self-contained and wants its own module beside the lint of the same
     // name. Not done here because the fix round was already large and a move

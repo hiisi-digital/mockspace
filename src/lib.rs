@@ -5,16 +5,16 @@
 
 //! Mockspace: design-round workflow engine for mock workspaces.
 //!
-//! Provides the complete pipeline for mock-first design workflows:
+//! What the engine carries:
 //! - Rust AST parsing (tree-sitter)
 //! - Pluggable lint system with per-gate severity
 //! - Doc generation from templates
 //! - Agent file generation (Claude + Copilot)
-//! - Dependency graph visualization
+//! - Dependency graph computation feeding the generated docs
 //! - Dylib module ABI verification
 //! - Git hook installation and management
-//! - Nuke/restore for reproducibility testing
-//! - **Bootstrap**: auto-setup of cargo alias and git hooks via `build.rs`
+//! - Nuke: wipe crate source back to stubs, to rewrite from the docs
+//! - The repo-side gate: durable hooks, the generated validator, `core.hooksPath`
 
 pub mod agent_mode;
 pub mod autofix;
@@ -49,7 +49,6 @@ pub mod tool_catalogue;
 /// path, or the installed launcher's own build directory.
 pub const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 
-// Re-export lint rules for convenience
 /// Entry point: parses CLI args and runs the mockspace pipeline.
 ///
 /// Called by mockspace's own `main.rs` and by the `cargo-mock` launcher,

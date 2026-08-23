@@ -430,14 +430,12 @@ allow
     )
 }
 
-/// Generate the no-yagni-guard.sh hook content.
 /// The durable agent-side gate. Fires on Bash; for a git commit or push,
 /// it refuses to let the agent proceed unless the mockspace validation
 /// machinery is intact (the generated validator exists and core.hooksPath
-/// is wired to it). If broken by a `target/` clean it self-heals via a
-/// `cargo check`, and blocks hard if that fails. Native mockspace, so it
+/// is wired to it). If broken by a `target/` clean it self-heals by running
+/// the launcher, and blocks hard if that fails. Native mockspace, so it
 /// travels with `.claude/hooks/` and survives independently of git config.
-/// The self-heal step runs the launcher rather than `cargo check`.
 ///
 /// It used to run `cargo check` in the mock workspace, on the reasoning that
 /// `build.rs` re-ran the bootstrap and re-activated the gate. That bootstrap
@@ -499,6 +497,7 @@ deny "mockspace gate is broken and self-heal failed: the git validator at $valid
     .to_string()
 }
 
+/// Generate the no-yagni-guard.sh hook content.
 pub(crate) fn builtin_no_yagni() -> String {
     r##"#!/usr/bin/env bash
 # Built-in mockspace hook: flag YAGNI reasoning in commit messages

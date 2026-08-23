@@ -33,7 +33,9 @@ const COUNTABLE_KINDS: &[&str] = &[
 pub struct ExportCount;
 
 impl Lint for ExportCount {
-    /// Crate-scoped. The guideline counts a crate's exports. Per file it would count each module's, which is a different number about a different thing.
+    /// Crate-scoped. The guideline counts a crate's exports. Per file it
+    /// would count each module's, which is a different number about a
+    /// different thing.
     fn per_file(&self) -> bool {
         false
     }
