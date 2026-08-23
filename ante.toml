@@ -1,0 +1,53 @@
+# Copyright headers, kept current by `ante` rather than by hand.
+#
+# The whole file is the configuration. `ante` reads its settings from a
+# `deno.json` or a `package.json` where a project has one, and this crate has
+# neither, so the standalone form is what applies. An `[ante]` table is also
+# accepted, which is what lets one file move between the two shapes unchanged.
+#
+# Run `ante check` to see what is out of date and `ante fix` to write it. The
+# point of having it configured at all is that a year rolling over, a
+# contributor arriving, or an address changing is a re-run rather than a
+# hand-edit of a hundred and sixty files.
+
+# MPL-2.0, matching `license` in Cargo.toml, which is the one that governs.
+# The URL is derived from the identifier and is not stated here, so the two
+# cannot disagree.
+spdxLicense = "MPL-2.0"
+
+maintainerEmail = "contact@hiisi.digital"
+
+# Contributors come from git rather than from a list somebody maintains, which
+# is the reason to run this tool at all: a list in a config file is a second
+# copy of what the history already knows, and it goes stale silently.
+contributorSelection = "commits"
+maxContributors = 3
+
+# Every tree that holds this project's own Rust. Written out per crate rather
+# than as one `**/*.rs`, because that would sweep the generated lint crate under
+# `mock/target/`, every dependency checkout cargo happens to leave in a target
+# directory, and the fixture crates the tests build.
+include = [
+  "src/**/*.rs",
+  "lint-rules/src/**/*.rs",
+  "bench-core/src/**/*.rs",
+  "bench-harness/src/**/*.rs",
+  "bench-macro/src/**/*.rs",
+  "bench-matrix/src/**/*.rs",
+  "cargo-mock/src/**/*.rs",
+  "mockspace-manifest/src/**/*.rs",
+  "tests/**/*.rs",
+]
+
+# Build output, and anything this project generates rather than writes.
+#
+# `mock/` is the design tree: templates, design rounds and research. Nothing in
+# it is source and the generated documents under `docs/` are overwritten on
+# every run, so a header written into either is either destroyed on the next
+# generation or copied into every consumer that renders the template.
+exclude = [
+  "**/target/**",
+  "mock/**",
+  "docs/**",
+  "**/node_modules/**",
+]
