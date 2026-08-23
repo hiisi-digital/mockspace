@@ -10,14 +10,29 @@
 //! workspace, or that silently skipped a tree it could not enter, would read
 //! exactly like one that works.
 //!
-//! These arms never let cargo build anything: each fixture's crates are
-//! deliberately unbuildable stubs, and the assertions are on which trees the
-//! command NAMES. Building them would test cargo rather than the discovery,
-//! and would put minutes on a suite that is checking a directory walk.
+//! The fixtures are minimal crates, and cargo does build them: an earlier
+//! version of this comment claimed they were unbuildable stubs and that no arm
+//! let cargo build anything, which was simply false, and the runs leave a
+//! `target/` behind to prove it. They are kept minimal so that stays cheap.
+//!
+//! The assertions are on which trees the command NAMES and on the status it
+//! exits with. The second was missing entirely at first: mutating the failure
+//! path to `SUCCESS` left all five arms green, which for a test runner is the
+//! one property that must not be able to break silently.
 
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::Mutex;
+
+/// One arm at a time.
+///
+/// Every arm spawns cargo against one shared `CARGO_TARGET_DIR`, with fixture
+/// crates that share package names across arms at different paths. Run
+/// concurrently they contend, and the arm asserting a failing tree fails the
+/// run passed alone and failed in the suite, which is the worst way for a test
+/// to be wrong: it accuses the code and the fault is in the harness.
+static LOCK: Mutex<()> = Mutex::new(());
 
 fn write(p: &Path, s: &str) {
     fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -57,13 +72,23 @@ fn fixture(root: &Path, member: Option<&str>, tools: &[&str], benches: &[&str]) 
     }
 }
 
+/// Run it, returning the whole `Output` so an arm can assert the status.
+///
+/// `text()` alone discards `Output::status`, which is how every arm here came
+/// to assert what was printed and none to assert whether the command
+/// succeeded.
 fn run(root: &Path) -> Output {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     Command::new(env!("CARGO_BIN_EXE_mockspace"))
         .args(["--dir", "mock", "test"])
         .current_dir(root)
         .env("CARGO_BUILD_JOBS", "2")
         .output()
         .unwrap()
+}
+
+fn ok(o: &Output) -> bool {
+    o.status.success()
 }
 
 fn text(o: &Output) -> String {
@@ -75,13 +100,42 @@ fn text(o: &Output) -> String {
 }
 
 #[test]
-fn it_names_every_tool_and_bench_tree() {
+fn it_names_every_tool_tree() {
     let tmp = tempfile::tempdir().unwrap();
-    fixture(tmp.path(), None, &["alpha", "zeta"], &["one_arm"]);
-    let t = text(&run(tmp.path()));
-    for name in ["alpha", "zeta", "one_arm"] {
+    fixture(tmp.path(), None, &["alpha", "zeta"], &[]);
+    let o = run(tmp.path());
+    let t = text(&o);
+    for name in ["alpha", "zeta"] {
         assert!(t.contains(name), "did not name `{name}`:\n{t}");
     }
+    assert!(ok(&o), "every tree is green and it did not exit zero:\n{t}");
+}
+
+#[test]
+fn it_exits_non_zero_when_a_tree_fails() {
+    // The property a test runner exists for, and the one no arm asserted. With
+    // the failure path mutated to SUCCESS every other arm here stayed green.
+    let tmp = tempfile::tempdir().unwrap();
+    // A crate name no other arm uses. Every arm builds into one shared
+    // CARGO_TARGET_DIR, so two crates called `alpha` at different temporary
+    // paths collide on cargo's fingerprint, and this arm reused the artifact
+    // another arm had built from an EMPTY lib.rs: the tests ran, zero of them
+    // failed, and the tree passed. It passed alone and failed in the suite,
+    // which is the worst shape for a wrong test, because it accuses the code.
+    fixture(tmp.path(), None, &["gamma_that_fails"], &[]);
+    // A test that fails rather than a crate that does not build, so the failure
+    // is the suite's rather than the compiler's.
+    fs::write(
+        tmp.path().join("mock/tools/gamma_that_fails/src/lib.rs"),
+        "#[test]\nfn fails() { panic!(\"this arm must make the run fail\"); }\n",
+    )
+    .unwrap();
+    let o = run(tmp.path());
+    assert!(
+        !ok(&o),
+        "a failing tree did not fail the run:\n{}",
+        text(&o)
+    );
 }
 
 #[test]
@@ -93,7 +147,14 @@ fn it_does_not_claim_a_tree_that_is_not_there() {
     let tmp = tempfile::tempdir().unwrap();
     fixture(tmp.path(), None, &["alpha"], &[]);
     let t = text(&run(tmp.path()));
-    assert!(t.contains("alpha"), "did not name the tree that is there:\n{t}");
+    // `=== tool :` rather than the bare name, because the same name appears in
+    // the orphan report below and one substring cannot mean both "discovered"
+    // and "rejected". A regression classifying every tool as an orphan kept the
+    // bare-name form of this arm green.
+    assert!(
+        t.contains("=== tool :") && t.contains("alpha"),
+        "did not discover the tree that is there:\n{t}"
+    );
     assert!(!t.contains("zeta"), "named a tree that is not there:\n{t}");
 }
 
@@ -146,9 +207,53 @@ fn a_crate_that_is_neither_member_nor_root_is_named_with_its_fix() {
     fs::write(&manifest, stripped).unwrap();
 
     let t = text(&run(tmp.path()));
-    assert!(t.contains("alpha"), "the unreachable crate went unmentioned:\n{t}");
+    assert!(
+        t.contains("cannot be tested where they sit") && t.contains("alpha"),
+        "the unreachable crate was not reported as one:\n{t}"
+    );
     assert!(
         t.contains("[workspace]"),
         "it did not name the one-line fix:\n{t}"
+    );
+    assert!(
+        !t.contains("=== tool : ") || !t.contains("/alpha ==="),
+        "an orphan was also reported as a discovered tree:\n{t}"
+    );
+}
+
+#[test]
+fn it_reaches_a_bench_tree_that_has_no_manifest_anywhere() {
+    // The defect this arm exists for. `mock bench init` scaffolds
+    // `benches/<bench>/arms/<arm>/` with no Cargo.toml anywhere, because the
+    // arm manifests are generated on demand under `target/`. A one-level walk
+    // for a directory containing a manifest therefore finds nothing on the
+    // canonical layout and reports nothing to run, on a tree that plainly has
+    // an arm in it, which `src/bench.rs` records having already fixed once.
+    //
+    // So the bench third is delegated to `mock bench test` rather than walked,
+    // and this asserts the tree is reached at all rather than silently absent.
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), None, &[], &[]);
+    write(
+        &tmp.path().join("mock/benches/sample/arms/sample/src/lib.rs"),
+        "pub fn nothing() {}\n",
+    );
+    let t = text(&run(tmp.path()));
+    assert!(
+        t.contains("benches"),
+        "a bench tree with no manifest was not reached:\n{t}"
+    );
+}
+
+#[test]
+fn it_says_there_is_nothing_when_there_is_nothing() {
+    // The control for the arm above: without it, a version that always prints
+    // the bench heading would satisfy it.
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), None, &[], &[]);
+    let t = text(&run(tmp.path()));
+    assert!(
+        t.contains("no tree to test"),
+        "an empty workspace did not say so:\n{t}"
     );
 }

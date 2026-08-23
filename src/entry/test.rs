@@ -49,18 +49,28 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     // there. Skipped with a note instead.
     let ws = cfg.mock_dir.join("Cargo.toml");
     if ws.exists() {
-        let text = std::fs::read_to_string(&ws).unwrap_or_default();
-        if workspace_has_members(&text) {
+        // Asked of `cargo_gate`, which parses the manifest with `toml_edit`
+        // rather than scanning it for substrings, and which the readiness
+        // report already consumes. A second implementation of this question was
+        // wrong on two real manifests: a `[package]` beside an empty `members`
+        // reported as memberless when `cargo test` there passes, and a
+        // commented-out `members` line read as live.
+        //
+        // The first version of this file justified the hand-rolled scan as
+        // needing no dependency. `toml_edit` is a direct dependency of this
+        // crate, so that was not true either.
+        if crate::entry::cargo_gate::is_memberless_virtual_workspace(&cfg.mock_dir) {
+            println!(
+                "note: {} declares no workspace member, so there is nothing for a plain\n      \
+                 cargo test to reach. The trees below are the ones that matter here.",
+                ws.display()
+            );
+        } else {
             trees.push(Tree {
                 what:    "workspace members",
                 dir:     cfg.mock_dir.clone(),
                 because: "reached by a plain cargo test",
             });
-        } else {
-            println!(
-                "note: {} declares no workspace member, so there is nothing for a plain\n                       cargo test to reach. The trees below are the ones that matter here.",
-                ws.display()
-            );
         }
     }
 
@@ -87,13 +97,15 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         });
     }
 
-    for dir in crate_dirs(&cfg.mock_dir.join("benches")) {
-        trees.push(Tree {
-            what:    "bench",
-            dir,
-            because: "compiled per arm, never a member",
-        });
-    }
+    // Benches are NOT walked here. `mock bench test` already runs them, and it
+    // does the one thing a directory walk cannot: a freshly `mock bench init`ed
+    // tree has no manifest anywhere, because the arm manifests are generated on
+    // demand under `target/`. So the walk finds nothing on the canonical layout
+    // and reports it as nothing to run, which is the exact failure `bench.rs`
+    // records having already fixed once.
+    let bench_dir = cfg.mock_dir.join("benches");
+    let has_benches = bench_dir.exists()
+        && std::fs::read_dir(&bench_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
 
     // The generated lint crate, which exists only after something generates it.
     // Not generated here: generating is the lint path's job and doing it from
@@ -126,12 +138,21 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         eprintln!();
     }
 
-    if trees.is_empty() {
+    if trees.is_empty() && !has_benches {
         eprintln!("mock test: no tree to test under {}", cfg.mock_dir.display());
         return ExitCode::FAILURE;
     }
 
     let mut failed = Vec::new();
+
+    if has_benches {
+        println!("\n=== benches : {} ===", bench_dir.display());
+        println!("    (compiled per arm with generated manifests, never a member)");
+        if crate::bench::cmd(cfg, &["test"]) != ExitCode::SUCCESS {
+            failed.push(format!("benches at {}", bench_dir.display()));
+        }
+    }
+
     for t in &trees {
         println!("\n=== {} : {} ===", t.what, t.dir.display());
         println!("    ({})", t.because);
@@ -177,25 +198,6 @@ fn crate_dirs(root: &Path) -> Vec<PathBuf> {
 }
 
 
-/// Whether a manifest declares at least one workspace member.
-///
-/// Text rather than a TOML parse, because this needs no dependency and the
-/// question is coarse: `members = []` and an absent `members` are the same
-/// answer, and both mean a `cargo test` there errors rather than running
-/// nothing.
-fn workspace_has_members(manifest: &str) -> bool {
-    let Some(rest) = manifest.split_once("members").map(|(_, r)| r) else {
-        // No `members` key at all. A non-virtual manifest with a `[package]`
-        // is testable on its own; a bare `[workspace]` is not.
-        return manifest.contains("[package]");
-    };
-    let Some((_, after)) = rest.split_once('[') else {
-        return false;
-    };
-    let list = after.split(']').next().unwrap_or("");
-    list.contains('"')
-}
-
 /// Whether a crate sits inside a workspace directory without being a member and
 /// without declaring itself a root.
 fn is_orphaned(crate_dir: &Path, mock_dir: &Path) -> bool {
@@ -211,31 +213,4 @@ fn is_orphaned(crate_dir: &Path, mock_dir: &Path) -> bool {
         return false;
     };
     !ws.contains(&format!("\"{}\"", rel.display()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_empty_member_list_is_not_members() {
-        assert!(!workspace_has_members("[workspace]\nmembers = []\n"));
-    }
-
-    #[test]
-    fn a_populated_member_list_is() {
-        assert!(workspace_has_members("[workspace]\nmembers = [\"crates/a\"]\n"));
-    }
-
-    #[test]
-    fn a_plain_package_manifest_is_testable_on_its_own() {
-        // The control for the two above: without it, `workspace_has_members`
-        // returning false for everything would satisfy both.
-        assert!(workspace_has_members("[package]\nname = \"x\"\n"));
-    }
-
-    #[test]
-    fn a_bare_workspace_with_no_members_key_is_not() {
-        assert!(!workspace_has_members("[workspace]\nresolver = \"2\"\n"));
-    }
 }
