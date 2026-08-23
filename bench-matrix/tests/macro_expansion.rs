@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! End-to-end test of the `bench_matrix!` macro: that it expands to the same
 //! `setup` / `cell_<tag>` / `matrix_decls()` surface the engine consumes, that the
 //! `MatrixDecl` data it emits is correct, and that the generated cell functions

@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Self-bench for mockspace. Compares two u64 hash-mixing functions
 //! through the full bench harness pipeline (orchestrator, worker
 //! subprocess, dlopen, CSV cache, findings.md). First real consumer

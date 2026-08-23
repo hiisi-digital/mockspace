@@ -27,24 +27,45 @@ maxContributors = 3
 # than as one `**/*.rs`, because that would sweep the generated lint crate under
 # `mock/target/`, every dependency checkout cargo happens to leave in a target
 # directory, and the fixture crates the tests build.
+#
+# A review found the first version of this list claiming to be every such tree
+# and missing four: a build script, three `tests/` directories, and the bench
+# workspace entirely. The claim was the defect rather than the omissions, since
+# a list that says it is complete is the one nobody re-derives.
 include = [
   "src/**/*.rs",
   "lint-rules/src/**/*.rs",
   "bench-core/src/**/*.rs",
   "bench-harness/src/**/*.rs",
+  "bench-harness/build.rs",
   "bench-macro/src/**/*.rs",
   "bench-matrix/src/**/*.rs",
   "cargo-mock/src/**/*.rs",
   "mockspace-manifest/src/**/*.rs",
+  "benches/**/*.rs",
   "tests/**/*.rs",
+  "bench-matrix/tests/**/*.rs",
+  "lint-rules/tests/**/*.rs",
+  "mockspace-manifest/tests/**/*.rs",
 ]
 
-# Build output, and anything this project generates rather than writes.
+# Build output, and the trees whose contents are not shipped source.
 #
-# `mock/` is the design tree: templates, design rounds and research. Nothing in
-# it is source and the generated documents under `docs/` are overwritten on
-# every run, so a header written into either is either destroyed on the next
-# generation or copied into every consumer that renders the template.
+# `mock/` holds 148 Rust files and the first version of this said "Nothing in it
+# is source", which is false and is the sentence the next editor would have
+# acted on. What is true is narrower and is the actual reason: almost all of
+# them are throwaway probes and sketches under `mock/research/`, which exist to
+# check one thing and are audit trail rather than product, and the rest are
+# templates rendered into consumers, where a header would be copied into every
+# repository that renders them.
+#
+# `mock/crates/` is a real question this does not answer. Those are the tool's
+# own mockspace-side crates and they are shipped Rust by any ordinary reading.
+# Excluding them may still be right, and it wants deciding on its own rather
+# than riding in on a wrong sentence about the directory above them.
+#
+# `docs/` is generated on every run, so a header written there is destroyed by
+# the next generation.
 exclude = [
   "**/target/**",
   "mock/**",
