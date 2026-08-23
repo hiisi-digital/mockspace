@@ -13,6 +13,8 @@
 /mock/crates/mockspace-builtin-lints/target/
 /mock/crates/mockspace-builtin-lints/Cargo.lock
 .DS_Store
+# spotlight marker the per-agent worktrees carry; never part of a tree.
+.metadata_never_index
 *.swp
 *.swo
 *.rs.bk
