@@ -8,21 +8,25 @@
 [![GitHub Issues](https://img.shields.io/github/issues/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/issues)
 ![License](https://img.shields.io/github/license/hiisi-digital/mockspace?color=%23009689)
 
-> A design-first workflow engine for Rust projects. Opinion-free about what you build; opinionated about how the design converges.
+> A design-first workflow engine for Rust projects. It has no opinion about what you build, and a fairly strong one about how the design gets there.
 
 </div>
 
 ## What it is
 
-`mockspace` lives in a `mock/` directory next to your code and enforces a file-based state machine that walks design work through topic exploration, locked doc-side planning, source application, and archival. Templates under `mock/` become a generated documentation tree and a crate dependency graph. A configurable lint pipeline runs on every build with per-gate severity (commit, build, push), so a rule can be a hint at commit time and a hard error before push.
+`mockspace` lives in a `mock/` directory next to your code. It walks design work through a state machine, from exploring a topic, to a locked plan for the docs, to applying that plan to source, to archiving the whole thing. Templates under `mock/` become a generated documentation tree and a crate dependency graph, and a lint pipeline runs on every build with a severity per gate, so the same rule can be a hint while you commit and a hard error before you push.
 
-The framework is built around a few claims about how design work should behave. Source code is never the authority. The design template is the canonical artifact, source is regenerable from it, and the lint pack ensures the two stay in agreement. Workflow transitions move through subcommands that rename files atomically and validate invariants, never through hand-edited filename suffixes. State machines rot when invariants are advisory; mockspace lints them.
+Underneath it there are a few claims about how design work should behave, and they are worth stating plainly because they are what you are agreeing to. Source is never the authority. The design template is the artifact that counts, source follows from it, and the lints keep the two honest with each other. Transitions happen through subcommands that rename files and check invariants, never by editing a filename suffix yourself, because a state machine whose invariants are advisory stops being one fairly quickly.
 
-None of that is opinionated about what you build. Crate naming, numeric discipline, framework choice, lint rules specific to your domain are entirely yours. Mockspace only cares that whatever you decide is captured, reviewed, locked, and reproducible.
+None of that says anything about what you build. Crate naming, numeric discipline, which frameworks you pull in, the lints particular to your domain: all yours. `mockspace` only cares that whatever you decided got written down, reviewed, locked and is reproducible afterwards.
+
+**What it costs is worth being upfront about.** The ceremony is real, and on a small project it will feel like more than it gives you. You write the plan before the code, and you cannot skip that when you are in a hurry, which is the point and is also occasionally infuriating.
 
 ## Status
 
-Pre-1.0. The tool is in active use across a stack of consumer crates and evolves alongside them. Expect breaking changes; pin to a git revision when consuming. The plugin ABI v1 redesign and the workflow upgrade to first-class tasks/phases/manifests/epochs are in flight (see `docs/research/`).
+Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Pin to a git revision when you consume it.
+
+I'd caution against adopting this just yet for anything you cannot afford to have shift under you. The plugin ABI v1 redesign and the workflow upgrade to first-class tasks, phases, manifests and epochs are both in flight, and either will move things (see `docs/research/`).
 
 ## Contents
 
@@ -154,14 +158,16 @@ For the full subcommand surface, configuration reference, lint authoring, and te
 
 ## When mockspace is a good fit
 
-- Multi-crate Rust workspaces where design decisions are consequential and need a paper trail.
-- Projects that want invariants enforced mechanically rather than socially.
-- Workspaces where keeping a generated documentation tree in sync with source is more sustainable than maintaining both by hand.
+- Multi-crate Rust workspaces where the design decisions are consequential enough that you want a paper trail of them.
+- Projects that would rather have invariants enforced mechanically than socially, because the social version keeps not working.
+- Workspaces where keeping generated documentation in step with source by hand has stopped being sustainable.
 
-When it is not a fit:
+Where it isn't:
 
-- Single-file scripts, one-crate demos, or quick prototypes.
-- Projects where design evolves purely through code without a docs dimension.
+- Single-file scripts, one-crate demos and quick prototypes. The ceremony costs more than it returns and you'll resent it.
+- Projects where the design genuinely does live in the code, and writing it down twice would be writing it down twice.
+
+If what you actually want is a source linter, this is probably not it either. `mockspace` will lint your source, but there are more established, more proven and better-documented tools for that in whatever language you're in, and you should use one of those. What this is for is the part above the source: the design, the plan, and whether the two still agree with each other a month later.
 
 ## Optional: AI assistant integration
 
