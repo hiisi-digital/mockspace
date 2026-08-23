@@ -5,6 +5,8 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use mockspace_lint_rules::LintPack;
+
 use crate::config::Config;
 use crate::model::*;
 use crate::render_design;
@@ -38,12 +40,13 @@ pub fn generate_agent_rules(
     crates: &CrateMap,
     cfg: &Config,
     registry: &crate::registry::Registry,
+    pack: &LintPack,
 ) -> usize {
     let repo_root = &cfg.repo_root;
     let agent_dir = cfg.mock_dir.join("agent");
 
     // Phase 9: generate builtin templates (always, even without agent/ directory)
-    let builtins = generate_builtin_templates(cfg);
+    let builtins = generate_builtin_templates(cfg, pack);
 
     // Collect consumer rule/skill names to determine overrides
     let consumer_rule_names = collect_consumer_rule_names(&agent_dir);
@@ -335,9 +338,15 @@ pub fn generate_agent_rules(
 
             let skill_name = skill_entry.file_name().to_string_lossy().to_string();
 
+            // Substitute across the WHOLE template before splitting, matching the
+            // personas phase. A skill's `description` is the line an agent reads
+            // to decide whether the skill applies, so it is the one place in a
+            // skill most likely to want the project's own name, and it was the
+            // one place not getting it: the body was rendered and the
+            // frontmatter was parsed straight off the raw text.
             let raw = fs::read_to_string(&skill_path).expect("failed to read skill template");
+            let raw = render_agent_body(&raw, &vars, cfg, registry);
             let (frontmatter, body) = split_frontmatter(&raw);
-            let body = render_agent_body(&body, &vars, cfg, registry);
             let name = parse_field(&frontmatter, "skill_name").unwrap_or(skill_name.clone());
             let desc = parse_field(&frontmatter, "skill_description").unwrap_or_default();
 

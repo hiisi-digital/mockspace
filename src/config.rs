@@ -224,6 +224,23 @@ pub struct Config {
     /// supplements the detected set rather than replacing it,
     /// letting both paths coexist during the migration.
     pub primitive_introductions: BTreeMap<String, Vec<String>>,
+
+    /// Glob patterns (the same syntax [`mockspace_lint_rules::glob_match`]
+    /// already implements for lint path filters) naming this project's own
+    /// canon: whatever it considers the settled, ratified design surface
+    /// that a panel converges toward but never edits directly.
+    ///
+    /// Empty by default, which makes the panel-discipline check in
+    /// `crate::entry::check` a no-op: a project that has not said what its
+    /// canon is has nothing this can protect, and inventing a default (the
+    /// most common candidate is a repo-specific convention, not a mockspace
+    /// one) would be a guess this crate has no standing to make.
+    pub canon_paths: Vec<String>,
+
+    /// How many seats a panel may mint before `mock panel seat` refuses
+    /// until a consolidation is recorded. See `crate::panel` for the whole
+    /// mechanism this gates.
+    pub panel_consolidate_every: u32,
 }
 
 /// Everything `mock/agent/config.toml` declares.
@@ -252,6 +269,22 @@ pub struct AgentConfig {
 
     /// On by default, same reasoning as `sketching_skill`.
     pub benchmarking_skill: bool,
+
+    /// On by default: a generated rule pointing at `mock tools` rather than
+    /// a hand-maintained list. The knob exists for the same reason the other
+    /// two do, no builtin prose lands in a consumer's context without one,
+    /// not because there is a real cost to leaving it on.
+    pub tool_catalogue: bool,
+
+    /// Off by default. Ships the panel-discipline rule: how a panel mints
+    /// and consolidates seats, the seat cap, and that a panel converges and
+    /// proposes but never writes canon itself. Off by default because the
+    /// whole mechanism (`crate::panel`, `mock panel`, `Config::canon_paths`)
+    /// presumes a project that runs multi-persona panels at all, which is
+    /// not every consumer's shape; a rule describing a workflow nobody is
+    /// using is noise in the agent's context, the same reasoning
+    /// `accelerated_interactive_design_talks` is off by default for.
+    pub panel_discipline: bool,
 }
 
 // Not derived: the derive would default every bool to false, and the two
@@ -264,6 +297,8 @@ impl Default for AgentConfig {
             accelerated_interactive_design_talks: false,
             sketching_skill: true,
             benchmarking_skill: true,
+            tool_catalogue: true,
+            panel_discipline: false,
         }
     }
 }
@@ -342,6 +377,12 @@ struct RawAgentConfig {
 
     /// Opt out of the benchmarking skill builtin; absent means on.
     agent_benchmarking_skill: Option<bool>,
+
+    /// Opt out of the tool-catalogue rule builtin; absent means on.
+    agent_tool_catalogue: Option<bool>,
+
+    /// Opt in to the panel-discipline rule builtin; absent means off.
+    agent_panel_discipline: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]
@@ -368,6 +409,7 @@ struct RawModeSignalToml {
 /// One declared reference root. A table rather than a bare string so a root
 /// can gain options without breaking every project that declared one.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(default)]
 struct RawRefRoot {
     path:   String,
@@ -418,6 +460,7 @@ fn default_root_links() -> bool {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(default)]
 struct RawRef {
     /// Named roots a citation may use, relative to the repository root. The
@@ -427,6 +470,7 @@ struct RawRef {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(default)]
 struct RawRegistry {
     #[serde(rename = "namespace")]
@@ -434,6 +478,7 @@ struct RawRegistry {
 }
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(default)]
 struct RawConfig {
     project_name:           Option<String>,
@@ -480,6 +525,16 @@ struct RawConfig {
     // by bare-primitive lints to skip per-primitive per-crate.
     #[serde(rename = "primitive-introductions", alias = "primitive_introductions")]
     primitive_introductions: Option<BTreeMap<String, Vec<String>>>,
+
+    /// Glob patterns naming this project's own canon. See
+    /// `Config::canon_paths`.
+    #[serde(default)]
+    canon_paths: Vec<String>,
+
+    /// How many seats a panel mints before a consolidation is required.
+    /// Absent means the built-in default; see `crate::panel::DEFAULT_CONSOLIDATE_EVERY`.
+    #[serde(default)]
+    panel_consolidate_every: Option<u32>,
 
     /// Registry namespaces: the kinds of thing this project's documents refer
     /// to by identifier. Absent means the project does not use the registry,
@@ -698,6 +753,8 @@ impl Config {
                 .unwrap_or(false),
             sketching_skill: raw_agent.agent_sketching_skill.unwrap_or(true),
             benchmarking_skill: raw_agent.agent_benchmarking_skill.unwrap_or(true),
+            tool_catalogue: raw_agent.agent_tool_catalogue.unwrap_or(true),
+            panel_discipline: raw_agent.agent_panel_discipline.unwrap_or(false),
         };
 
         // Builtins first, then the project's own, so a project may repoint a
@@ -788,6 +845,10 @@ impl Config {
             primary_domain_label,
             crate_grouping: raw.crate_grouping.unwrap_or_default(),
             primitive_introductions: raw.primitive_introductions.unwrap_or_default(),
+            canon_paths: raw.canon_paths,
+            panel_consolidate_every: raw
+                .panel_consolidate_every
+                .unwrap_or(crate::panel::DEFAULT_CONSOLIDATE_EVERY),
         }
     }
 
@@ -1095,5 +1156,104 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
             return Some(dir.to_path_buf());
         }
         dir = dir.parent()?;
+    }
+}
+
+#[cfg(test)]
+mod key_lists_cannot_rot {
+    //! The two hand-kept key lists in `registry::validate` mirror the structs
+    //! here. A list nobody checks is a comment with a type, and that file says
+    //! so about its neighbour fifteen lines above one of them.
+    //!
+    //! So neither list is trusted: a real instance is serialised and every key
+    //! it emits has to be in the list. A field added to either struct reaches
+    //! the emitted TOML on its own, and nothing here has to remember it exists.
+    use super::*;
+
+    /// Every key the struct has, including the `Option` ones that are `None`.
+    ///
+    /// NOTE: json rather than toml, and it matters. `toml_edit::ser` omits a
+    /// `None`, so a new `Option` field would emit nothing and this would stay
+    /// green while a config declaring that key was reported as unknown, which
+    /// is the exact failure these tests exist to catch. `serde_json` emits it
+    /// as null, so the key is there whether or not it has a value.
+    fn declared_keys<T: serde::Serialize>(v: &T) -> Vec<String> {
+        match serde_json::to_value(v).expect("serialises") {
+            serde_json::Value::Object(m) => m.keys().cloned().collect(),
+            other => panic!("expected an object, got {other}"),
+        }
+    }
+
+    #[test]
+    fn every_key_a_ref_root_carries_is_in_ref_root_keys() {
+        let keys = declared_keys(&RawRefRoot::default());
+        assert!(!keys.is_empty(), "control: the instance declares something");
+        for k in &keys {
+            assert!(
+                crate::registry::validate::REF_ROOT_KEYS.contains(&k.as_str()),
+                "`{k}` is a field of RawRefRoot and is missing from REF_ROOT_KEYS, so a \
+                 config declaring it would be reported as unknown and fail the gate"
+            );
+        }
+    }
+
+    #[test]
+    fn ref_root_keys_names_nothing_the_struct_dropped() {
+        // the other direction. a key left in the list after its field went
+        // away is a key the check silently permits forever.
+        let keys = declared_keys(&RawRefRoot::default());
+        for k in crate::registry::validate::REF_ROOT_KEYS {
+            assert!(
+                keys.iter().any(|e| e == k),
+                "REF_ROOT_KEYS names `{k}`, which RawRefRoot no longer carries"
+            );
+        }
+    }
+
+    #[test]
+    fn every_key_the_launcher_reads_is_in_root_keys() {
+        // these live in `mockspace_manifest` because the launcher reads them
+        // before the engine exists. Omitting them made this check report every
+        // project's own engine pin as an unknown key.
+        let keys = declared_keys(&mockspace_manifest::ManifestHeader::default());
+        assert!(!keys.is_empty(), "control: the header declares something");
+        for k in &keys {
+            assert!(
+                crate::registry::validate::ROOT_KEYS.contains(&k.as_str()),
+                "`{k}` is a field of ManifestHeader and is missing from ROOT_KEYS"
+            );
+        }
+    }
+
+    #[test]
+    fn every_key_the_root_carries_is_in_root_keys() {
+        let keys = declared_keys(&RawConfig::default());
+        assert!(!keys.is_empty(), "control: the instance declares something");
+        for k in &keys {
+            assert!(
+                crate::registry::validate::ROOT_KEYS.contains(&k.as_str()),
+                "`{k}` is a field of RawConfig and is missing from ROOT_KEYS, so a config \
+                 declaring it would be reported as unknown and fail the gate"
+            );
+        }
+    }
+
+    #[test]
+    fn root_keys_names_nothing_the_struct_dropped() {
+        let keys = declared_keys(&RawConfig::default());
+        let launcher = declared_keys(&mockspace_manifest::ManifestHeader::default());
+        for k in crate::registry::validate::ROOT_KEYS {
+            // `lints` is read through toml_edit rather than through RawConfig,
+            // deliberately, its values being heterogeneous. It is the one
+            // documented exception and the test knows it by name rather than
+            // by a rule that would hide the next one.
+            if *k == "lints" || launcher.iter().any(|l| l == k) {
+                continue;
+            }
+            assert!(
+                keys.iter().any(|e| e == k),
+                "ROOT_KEYS names `{k}`, which RawConfig no longer carries"
+            );
+        }
     }
 }

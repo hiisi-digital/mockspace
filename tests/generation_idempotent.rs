@@ -3,8 +3,12 @@
 //! Every generated file carries a `Generated at:` timestamp line, so a
 //! naive rewrite dirties the tree on every run even when nothing changed.
 //! `write_generated` skips a write whose only difference is that line.
-//! This exercises the real generation path end to end (no proxy), twice,
-//! and asserts the second run leaves the file byte-identical.
+//! The first test here calls `document::render_all` directly, which is the
+//! writer and not the generation path. It passed for as long as it has existed
+//! while `cargo mock` rewrote every document on every run, because the wipe
+//! that defeated the skip lived in `entry::dispatch` and nothing here went
+//! through it. Its docstring claimed end to end and it was not; the binary test
+//! at the bottom of this file is.
 
 use std::fs;
 use std::path::Path;
@@ -270,4 +274,93 @@ fn summary_links_match_the_files_written() {
         checked > 0,
         "no links in the summaries, so this proved nothing"
     );
+}
+
+/// The whole binary, twice, on a tree it just generated.
+///
+/// **This is the arm the direct-call tests above cannot be.** `docs/` used to be
+/// wiped at the top of `entry::dispatch` before a line was written, so
+/// `write_generated` compared every document against nothing and rewrote all of
+/// them with a fresh `Generated at:` on every run. Sixteen files dirtied per run
+/// in a real project, forever, and every test of the writer passed throughout.
+///
+/// Anything that reintroduces a pre-generation clean reddens this and nothing
+/// else in the file.
+#[test]
+#[ignore = "runs the binary and shells out; run with --ignored"]
+fn the_binary_leaves_a_tree_it_just_generated_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    // A real repository and a real workspace manifest, because this runs the
+    // binary rather than a library entry point and the binary checks for both.
+    // The other tests in this file get away with an empty `.git` directory,
+    // which is part of why they never exercised the path that was broken.
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()
+        .expect("git init");
+    let mock = root.join("mock");
+    write(&mock.join("mockspace.toml"), "project_name = \"probe\"\n");
+    write(&mock.join("Cargo.toml"), "[workspace]\nmembers = []\nresolver = \"2\"\n");
+    write(&mock.join("PROJECT.md.tmpl"), "# Probe\n\nA body that does not change.\n");
+
+    let run = || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_mockspace"))
+            .arg("--dir")
+            .arg(&mock)
+            .output()
+            .expect("the binary runs")
+    };
+
+    run();
+    let after_first = snapshot(&root.join("docs"));
+    assert!(
+        !after_first.is_empty(),
+        "control: the first run must generate something, else this passes on an empty directory"
+    );
+
+    // A second later, so a rewritten timestamp differs from the first.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    run();
+    let after_second = snapshot(&root.join("docs"));
+
+    assert_eq!(
+        after_first, after_second,
+        "a second generation on an unchanged tree must write nothing"
+    );
+
+    // **And the sweep took nothing that was generated.** Comparing run one
+    // against run two cannot see that: a file deleted on *both* runs is
+    // identical in both snapshots and invisible by construction. A reviewer
+    // proved it by mutating the sweep to also delete `STRUCTURE.md` and
+    // watching this test stay green.
+    //
+    // So the check is against what the generator is known to produce rather
+    // than against itself. `STRUCTURE.md` and the graph are written by three
+    // different call sites, which is the spread that matters: the defect this
+    // guards against is a generator whose paths never reach the keep set, and
+    // the one that actually had it was the bench-doc generator.
+    for expected in ["PROJECT.md", "STRUCTURE.md", "STRUCTURE.GRAPH.dot"] {
+        assert!(
+            after_second.contains_key(expected),
+            "{expected} is generated and must survive the sweep; kept: {:?}",
+            after_second.keys().collect::<Vec<_>>()
+        );
+    }
+}
+
+/// Every top-level file under `dir`, by name and content.
+fn snapshot(dir: &Path) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(rd) = fs::read_dir(dir) else { return out };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_file() {
+            if let Ok(s) = fs::read_to_string(&p) {
+                out.insert(p.file_name().unwrap().to_string_lossy().to_string(), s);
+            }
+        }
+    }
+    out
 }

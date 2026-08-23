@@ -58,7 +58,45 @@ Three sources contribute rules:
 - **Consumer lints** in `mock/lints/<name>.rs`. Each file exports a Rust function returning a lint trait object. The engine discovers them and compiles them, together with any imported packs, into one lint library it loads at run time.
 - **Config-driven rules** under `[lints.<rule-name>]` in `mock/mockspace.toml`. The `forbidden-imports` rule covers the common case of "this scope must not import these paths".
 
+Checks that cannot be expressed as lints, or cannot be timed at a gate, are tools instead. See below.
+
 Each lint declares a severity per gate. The same lint can be `info` at commit, `warn` at build, and `error` at push. The four design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`) are always on and non-negotiable.
+
+## Tools
+
+A lint runs at a gate and answers a question nobody asked. Some checks cannot: they need a question from the person running them, or they answer with a ranking rather than a verdict. Those are **tools**, invoked as `mock <name>`.
+
+A tool is a crate under `mock/tools/<name>/`, and the directory name is the subcommand. It is compiled into the same library the consumer lints are, so a tool may declare its own dependencies and may ship a lint alongside itself.
+
+```rust
+// mock/tools/phrase-search/src/lib.rs
+use mockspace::tool::{ArgSpec, NotALint, Tool, ToolContext, ToolReport};
+
+pub struct PhraseSearch;
+
+impl Tool for PhraseSearch {
+    fn name(&self) -> &'static str { "phrase-search" }
+    fn description(&self) -> &'static str { "find a phrase across wrapped lines" }
+    fn not_a_lint(&self) -> NotALint { NotALint::TakesAQuestion }
+    fn args(&self) -> &[ArgSpec] {
+        &[ArgSpec { name: "phrase", required: true, description: "what to look for" }]
+    }
+    fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
+        ToolReport::reported(format!("searching for {}", ctx.args.join(" ")), 1)
+    }
+}
+
+mockspace::lint_pack! { tools: [PhraseSearch] }
+```
+
+`not_a_lint` has no default and takes one of two values, because the question it asks is the one that keeps the gate populated:
+
+- `TakesAQuestion`, when a required argument comes from the person. A gate has nobody to ask.
+- `NoFailingCase`, when the answer is the output and no threshold separates pass from fail.
+
+Neither is a matter of taste and both are checked. A tool claiming to take a question and declaring no required argument is refused; one claiming no failing case and returning a gate-blocking finding is reported. **Being slow, or needing git history, are not reasons.** A repo lint is handed the repository root and may run git itself, so a check with those properties is a lint.
+
+A tool returns one of three outcomes rather than a list of findings. `Clean` carries what it examined, because a clean verdict over nothing is not a pass. `Findings` carries `LintError`s, the same type a lint produces, so a tool that turns out to be gateable becomes a lint without rewriting them. `Inconclusive` says the run establishes nothing, and it fails: a check that silently did not run is worse than no check, since both print the same green.
 
 ## Generated documentation
 

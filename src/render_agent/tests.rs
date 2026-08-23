@@ -251,7 +251,7 @@ fn agent_gate_hook_self_heals_then_blocks() {
 fn canon_design_code_chain_is_a_generated_builtin() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cfg = Config::from_dir(&tmp.path().join("mock"));
-    let builtins = generate_builtin_templates(&cfg);
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     let rule = builtins
         .rules
         .iter()
@@ -478,7 +478,7 @@ fn skill_fixture_config(config: &str) -> std::path::PathBuf {
 fn design_talk_skill_is_absent_unless_opted_in() {
     for declared in [None, Some(false)] {
         let cfg = crate::config::Config::from_dir(&skill_fixture(declared));
-        let builtins = generate_builtin_templates(&cfg);
+        let builtins = generate_builtin_templates(&cfg, &LintPack::default());
         assert!(
             !builtins.skills.iter().any(|s| s.dir_name == "design-talk"),
             "off by default, and off when declared false ({declared:?})"
@@ -489,7 +489,7 @@ fn design_talk_skill_is_absent_unless_opted_in() {
 #[test]
 fn design_talk_skill_ships_its_script_executable_and_its_manifest() {
     let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
-    let builtins = generate_builtin_templates(&cfg);
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
 
     let skill = builtins
         .skills
@@ -529,7 +529,7 @@ fn the_skill_catalogue_names_every_builtin_and_nothing_else() {
     // never be swept when its knob turns off; a catalogue name nothing
     // generates would sweep a directory no knob can bring back.
     let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
-    let builtins = generate_builtin_templates(&cfg);
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
 
     for skill in &builtins.skills {
         assert!(
@@ -555,7 +555,7 @@ fn sketching_and_benchmarking_can_be_declined() {
     let cfg = crate::config::Config::from_dir(&skill_fixture_config(
         "agent_sketching_skill = false\nagent_benchmarking_skill = false\n",
     ));
-    let builtins = generate_builtin_templates(&cfg);
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     for name in ["sketching", "benchmarking"] {
         assert!(
             !builtins.skills.iter().any(|s| s.dir_name == name),
@@ -571,7 +571,7 @@ fn sketching_and_benchmarking_are_on_by_default() {
     // or not a human is in the loop. An absent key or file means on.
     for declared in [None, Some(false), Some(true)] {
         let cfg = crate::config::Config::from_dir(&skill_fixture(declared));
-        let builtins = generate_builtin_templates(&cfg);
+        let builtins = generate_builtin_templates(&cfg, &LintPack::default());
         for want in ["sketching", "benchmarking"] {
             let skill = builtins
                 .skills
@@ -744,4 +744,125 @@ fn the_shame_escape_hatch_stays_writable_while_a_lookalike_is_gated() {
         !write_guard_allows("crates/foo/NOT_SHAME.md.tmpl"),
         "a lookalike is not the escape hatch and stays gated"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The tool-catalogue and panel-discipline builtin rules
+// ---------------------------------------------------------------------------
+
+struct StubTool;
+impl mockspace_lint_rules::tool::Tool for StubTool {
+    fn name(&self) -> &'static str {
+        "phrase-search"
+    }
+    fn description(&self) -> &'static str {
+        "find a phrase across hard-wrapped lines"
+    }
+    fn not_a_lint(&self) -> mockspace_lint_rules::tool::NotALint {
+        mockspace_lint_rules::tool::NotALint::TakesAQuestion
+    }
+    fn args(&self) -> &[mockspace_lint_rules::tool::ArgSpec] {
+        &[mockspace_lint_rules::tool::ArgSpec {
+            name:        "phrase",
+            required:    true,
+            description: "the phrase to look for",
+        }]
+    }
+    fn run(
+        &self,
+        _ctx: &mockspace_lint_rules::tool::ToolContext<'_>,
+    ) -> mockspace_lint_rules::tool::ToolReport {
+        mockspace_lint_rules::tool::ToolReport::reported("", 1)
+    }
+}
+
+fn pack_with_stub_tool() -> LintPack {
+    LintPack {
+        tools: vec![Box::new(StubTool)],
+        ..LintPack::default()
+    }
+}
+
+#[test]
+fn tool_catalogue_rule_is_on_by_default_and_off_when_declared_false() {
+    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+    assert!(
+        builtins.rules.iter().any(|r| r.name == "tool-catalogue"),
+        "on by default, no config.toml at all"
+    );
+
+    let mock = skill_fixture_config("agent_tool_catalogue = false\n");
+    let cfg = crate::config::Config::from_dir(&mock);
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+    assert!(
+        !builtins.rules.iter().any(|r| r.name == "tool-catalogue"),
+        "declared false must turn it off"
+    );
+}
+
+#[test]
+fn tool_catalogue_rule_embeds_a_live_snapshot_not_a_fixed_string() {
+    // The claim this rule makes about itself ("never drifts, computed from
+    // what actually exists") is only true if a project tool passed into the
+    // generator actually shows up in the generated body. Without this, the
+    // rule could just as well be static prose that happens to also print a
+    // command name.
+    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let builtins = generate_builtin_templates(&cfg, &pack_with_stub_tool());
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "tool-catalogue")
+        .expect("on by default");
+    assert!(
+        rule.body.contains("phrase-search"),
+        "the declared project tool must appear in the generated snapshot:\n{}",
+        rule.body
+    );
+    assert!(rule.body.contains("mock lock"), "a builtin must appear too:\n{}", rule.body);
+
+    // and the negative: an empty pack's rule says nothing about a tool that
+    // was never declared
+    let builtins_empty = generate_builtin_templates(&cfg, &LintPack::default());
+    let rule_empty = builtins_empty.rules.iter().find(|r| r.name == "tool-catalogue").unwrap();
+    assert!(!rule_empty.body.contains("phrase-search"));
+}
+
+#[test]
+fn panel_discipline_rule_is_off_by_default_and_on_when_opted_in() {
+    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+    assert!(
+        !builtins.rules.iter().any(|r| r.name == "panel-discipline"),
+        "off by default"
+    );
+
+    let mock = skill_fixture_config("agent_panel_discipline = true\n");
+    let cfg = crate::config::Config::from_dir(&mock);
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+    assert!(
+        builtins.rules.iter().any(|r| r.name == "panel-discipline"),
+        "declared true must turn it on"
+    );
+}
+
+#[test]
+fn panel_discipline_rule_states_the_seat_cap_and_the_canon_prohibition() {
+    let mock = skill_fixture_config("agent_panel_discipline = true\n");
+    let cfg = crate::config::Config::from_dir(&mock);
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "panel-discipline")
+        .expect("opted in");
+    assert!(rule.body.contains("Ninety-nine"), "the seat cap must be stated:\n{}", rule.body);
+    assert!(
+        rule.body.contains("do not write canon") || rule.body.contains("never writes canon"),
+        "the canon prohibition must be stated in words a reader cannot miss:\n{}",
+        rule.body
+    );
+    assert!(rule.body.contains("mock panel seat"));
+    assert!(rule.body.contains("mock panel consolidate"));
 }

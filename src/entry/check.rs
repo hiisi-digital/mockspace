@@ -23,7 +23,34 @@ pub(crate) fn print_row(section: &str, result: CheckResult, msg: &str) {
     eprintln!("  {} {:<10} {}", result.icon(), section, msg);
 }
 
+/// Every path the working tree differs from HEAD by, repo-root-relative.
+///
+/// `-z` rather than the default porcelain format: `git` C-quotes a path with a
+/// non-ASCII character under `core.quotePath`, so `mock/canon/lähde.md` arrives
+/// as `"mock/canon/l\303\244hde.md"` and stripping the quotes leaves the
+/// escapes, which match no glob. `-z` emits raw bytes with a NUL terminator and
+/// no quoting, and its status field is two characters and a space like the
+/// other form.
+///
+/// A rename record is two NUL-separated entries, the new path then the old. The
+/// old one no longer exists, so only the first is kept, which falls out of
+/// reading the status code rather than needing a special case.
+fn worktree_paths(porcelain_z: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = porcelain_z.split('\0').filter(|s| !s.is_empty());
+    while let Some(entry) = it.next() {
+        let Some(rest) = entry.get(3 ..) else { continue };
+        if entry.starts_with('R') || entry.get(1 .. 2) == Some("R") {
+            // The record that follows is the source path, which is gone.
+            let _ = it.next();
+        }
+        out.push(rest.to_string());
+    }
+    out
+}
+
 pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
+    use mockspace_lint_rules::canon_not_while_panel_open::canon_violation;
     use mockspace_lint_rules::changelist_helpers;
 
     eprintln!("--- mockspace readiness check ---");
@@ -52,6 +79,68 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
         _ => {
             print_row("git", CheckResult::Warn, "not a git repo (or git failed)");
         },
+    }
+
+    // FIXME: this file is 560 lines, over the 500-line limit, and this block
+    // is what pushed it there. The seam is obvious: the panel row is
+    // self-contained and wants its own module beside the lint of the same
+    // name. Not done here because the fix round was already large and a move
+    // during it would have buried the changes that matter.
+    //
+    // --- panel discipline: canon is not written while a panel is open ---
+    //
+    // Silent (no row at all) when `canon_paths` is empty: a project that has
+    // not said what its canon is has declared nothing this can protect, and
+    // printing a row about an unconfigured feature on every run of every
+    // consumer that never opted in would be noise nobody asked for.
+    if !cfg.canon_paths.is_empty() {
+        let open: Vec<String> = crate::panel::load_all(&cfg.mock_dir)
+            .into_iter()
+            .filter(crate::panel::is_open)
+            .map(|p| p.slug)
+            .collect();
+        let any_panel_open = !open.is_empty();
+        // The working tree rather than the index, deliberately, and the
+        // opposite choice from the lint of the same name. A person asking
+        // whether the repository is ready is asking about what is in front of
+        // them; a commit is judged on what it stages, and the lint that runs at
+        // commit time reads that instead.
+        let porcelain = Command::new("git")
+            .args(["status", "--porcelain", "-z"])
+            .current_dir(&cfg.repo_root)
+            .output();
+        let changed = match porcelain {
+            Ok(o) if o.status.success() => Some(worktree_paths(&String::from_utf8_lossy(&o.stdout))),
+            // A git call that failed established nothing. Reporting it as a
+            // pass is a positive assertion this did not make.
+            _ => None,
+        };
+        match changed
+            .as_deref()
+            .and_then(|c| canon_violation(c, &cfg.canon_paths, any_panel_open))
+        {
+            Some(hits) => {
+                print_row(
+                    "panel",
+                    CheckResult::Fail,
+                    &format!(
+                        "canon touched while a panel is open: {}. consolidate the panel (or make this edit outside it) before proceeding",
+                        hits.join(", ")
+                    ),
+                );
+                any_fail = true;
+            },
+            None if changed.is_none() => {
+                print_row(
+                    "panel",
+                    CheckResult::Warn,
+                    "could not read the working tree, so canon was not checked",
+                );
+            },
+            None => {
+                print_row("panel", CheckResult::Pass, "no canon path touched by an open panel");
+            },
+        }
     }
 
     // --- git: current branch + remote sync ---
@@ -367,4 +456,85 @@ pub(crate) fn is_cleanable_target(target_dir: &Path, repo_root: &Path) -> bool {
             Some("benches") | Some("tests") | Some("sketches")
         )
     })
+}
+
+#[cfg(test)]
+mod panel_discipline_tests {
+    // The shipped function, not a copy of it. The four canon-violation tests
+    // below were written against a local duplicate that nothing called:
+    // `cmd_check`, the only live caller, imports the lint-rules one inside its
+    // own body and shadowed it there. So the duplicate was dead and these tests
+    // were verifying an implementation no run reaches. Deleting the duplicate
+    // is what surfaced them.
+    use mockspace_lint_rules::canon_not_while_panel_open::canon_violation;
+
+    use super::*;
+
+    #[test]
+    fn no_canon_configured_is_never_a_violation() {
+        // The no-op default: a project that has not said what its canon is
+        // has nothing this can protect, regardless of what changed or
+        // whether a panel is open.
+        assert_eq!(
+            canon_violation(&["mock/canon/law.md".to_string()], &[], true),
+            None
+        );
+    }
+
+    #[test]
+    fn a_canon_path_touched_with_no_panel_open_is_not_a_violation() {
+        // The discipline is "not while a panel is open", not "never". An
+        // edit made with no panel open at all is exactly what is asked for.
+        assert_eq!(
+            canon_violation(
+                &["mock/canon/law.md".to_string()],
+                &["mock/canon/**".to_string()],
+                false
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_canon_path_touched_while_a_panel_is_open_is_the_violation() {
+        // The case that must fail: canon configured, a panel open, and a
+        // changed path matching the glob.
+        let hits = canon_violation(
+            &["mock/canon/law.md".to_string(), "src/lib.rs".to_string()],
+            &["mock/canon/**".to_string()],
+            true,
+        );
+        assert_eq!(hits, Some(vec!["mock/canon/law.md".to_string()]), "only the canon path, not every changed path");
+    }
+
+    #[test]
+    fn a_change_outside_every_configured_glob_is_not_a_violation() {
+        // The negative arm distinguishing "a panel is open and something
+        // changed" from "a panel is open and canon changed". Without this,
+        // `any_panel_open` alone could be doing all the work.
+        assert_eq!(
+            canon_violation(&["src/lib.rs".to_string()], &["mock/canon/**".to_string()], true),
+            None
+        );
+    }
+
+    #[test]
+    fn worktree_paths_reads_ordinary_and_renamed_records() {
+        // `-z`: NUL-separated, no quoting, and a rename is two records with the
+        // new path first.
+        let porcelain = " M src/lib.rs\0?? mock/canon/new.md\0R  mock/canon/law.md\0mock/canon/old.md\0";
+        assert_eq!(
+            worktree_paths(porcelain),
+            vec![
+                "src/lib.rs".to_string(),
+                "mock/canon/new.md".to_string(),
+                "mock/canon/law.md".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn worktree_paths_on_an_empty_status_is_empty() {
+        assert_eq!(worktree_paths(""), Vec::<String>::new());
+    }
 }

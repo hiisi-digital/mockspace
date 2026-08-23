@@ -51,9 +51,10 @@ pub fn validate_provenance(
                     out.push(RegistryFinding {
                     kind: "unknown-provenance-root",
                     message: format!(
-                        "{}: `{}` names root `{}`, which is not declared in [registry.roots]. Declared roots are what make a reference resolvable rather than a convention.",
+                        "{}: `{}` names root `{}`, which has no [ref.roots.{}] table. Declared roots are what make a reference resolvable rather than a convention.",
                         row.qualified(),
                         p.render(),
+                        p.root,
                         p.root
                     ),
                     source: Some(row.source.clone()),
@@ -164,16 +165,254 @@ pub const FINDING_KINDS: &[&str] = &[
     "ambiguous-provenance",
     "unresolvable-heading",
     "fragile-line-citation",
+    "malformed-row-reference",
+    "unknown-row-reference",
+    "unknown-field-type",
+    "namespace-shadows-type",
+    "row-reference-to-a-value-namespace",
     // Not produced by `validate`. Reported by the caller when the schema check
     // could not run at all, and listed here so the set of kinds stays in one
     // place. A run that could not check is not a run that passed.
     //
-    // NOTE: nothing reads this list today. The per-finding severity map is
-    // parsed at `config.rs:1017` and never consulted, and two kinds produced by
-    // `namespace_root_collisions` are absent from it with nothing noticing. The
-    // list is documentation until a consumer exists.
+    // NOTE: the per-finding severity map (`table.findings`, parsed at
+    // `config.rs:1017`) is a real, working mechanism elsewhere: ordinary lints
+    // registered with `mockspace_lint_rules::run_lint` consult it already. No
+    // registry check is dispatched that way, though: `run_inner` in
+    // `dispatch.rs` calls these functions by hand and prints their findings
+    // directly, which is why the map went unconsulted for this whole list.
+    // `unknown-config-key` is now the one exception (severity is read at that
+    // call site under the lint name `registry-config-keys`). Every other kind
+    // here still has no consumer, and two kinds produced by
+    // `namespace_root_collisions` are absent from this list entirely with
+    // nothing noticing.
     "schema-unavailable",
+    // Produced by `config_unknown_keys`, over the config file rather than the
+    // row data, which no generated schema covers.
+    "unknown-config-key",
 ];
+
+/// Keys a `[[registry.namespace]]` table may carry. Mirrors `RegistryNamespace`.
+///
+/// Hand-kept, and constrained rather than trusted: `finding_kinds_are_producible`
+/// and `namespace_keys_match_the_struct` in the tests below fail when this drifts
+/// from the struct it mirrors. A list nobody checks is a comment with a type, and
+/// this file already carries one that says so about itself.
+const NAMESPACE_KEYS: &[&str] = &[
+    "key",
+    "title",
+    "description",
+    "value_field",
+    "render",
+    "group_by",
+    "field",
+];
+
+/// Keys a `[[registry.namespace.field]]` table may carry. Mirrors `RegistryField`.
+const FIELD_KEYS: &[&str] =
+    &["name", "type", "required", "description", "visibility", "values"];
+
+/// Keys a `[ref.roots.<name>]` table may carry. Mirrors `RawRefRoot`.
+///
+/// Checked for the same reason the two above are, and found the same way: a
+/// root-level key written one line too far down the file lands inside whichever
+/// table precedes it. `canon_paths` went in under a `[ref.roots.*]` table, was
+/// read as a key of that root, and was discarded without a word, so the feature
+/// it configures stayed off while the config plainly said otherwise. That cost
+/// a debugging cycle to find and would have cost more had the feature been one
+/// whose absence is quiet.
+pub(crate) const REF_ROOT_KEYS: &[&str] = &["path", "frozen", "links", "label", "internal"];
+
+/// Keys the document **root** may carry. Mirrors `RawConfig`, plus the one
+/// section it deliberately does not deserialize.
+///
+/// This is the half the first version of this check missed, and it is the half
+/// the motivating defect was in: `canon_paths` is a root key, so a typo in it
+/// at the root was still discarded in silence after `[ref.roots.*]` was covered.
+///
+/// It also carries the keys the **launcher** reads rather than the engine: the
+/// engine pin and `mock_dir`. Those are `mockspace_manifest::ManifestHeader`'s
+/// fields, and leaving them out reported every project's own pin as unknown.
+/// Caught by running this against a real config rather than against a fixture,
+/// which is the only reason it was caught at all.
+///
+/// `lints` is here because `config.rs` reads it through `toml_edit` directly
+/// rather than through `RawConfig`, its values being heterogeneous. It is a
+/// real key and belongs in the list; the test below knows it is the exception.
+pub(crate) const ROOT_KEYS: &[&str] = &[
+    "project_name",
+    "crate_prefix",
+    "abi_version",
+    "src_dirs",
+    "proc_macro_crates",
+    "lint_proc_macro_source",
+    "module_crates",
+    "unprefixed_crates",
+    "layers",
+    "primary_domain_macro",
+    "primary_domain_label",
+    "install_git_hooks",
+    "install_cargo_config",
+    "install_agent_files",
+    "auto_fmt",
+    "auto_clippy_fix",
+    "deny_check",
+    "domain_kinds",
+    "known_macros",
+    "agent_macros",
+    "macro_styles",
+    "crate_colors",
+    "crate_grouping",
+    "primitive-introductions",
+    "canon_paths",
+    "panel_consolidate_every",
+    "registry",
+    "deep_dive_index",
+    "ref",
+    "ordered_docs",
+    "primary_docs",
+    "lints",
+    // the launcher's, from `mockspace_manifest::ManifestHeader`
+    "mock_dir",
+    "mockspace_git",
+    "mockspace_version",
+    "mockspace_rev",
+    "mockspace_branch",
+    "mockspace_tag",
+];
+
+/// Report keys anywhere in the config that deserialize into nothing: at the
+/// document root, in `[ref.roots.*]`, and in the namespace declarations.
+///
+/// The registry's row data is covered by generated schemas run through a TOML
+/// validator, which is why this file deliberately does not re-check what a schema
+/// can express. **The config file is not covered by any of that.** `serde` does
+/// not deny unknown fields here, so a key that mockspace does not implement, or a
+/// key with a typo in it, is read and discarded in silence.
+///
+/// That is not hypothetical. The largest registry in the workspace declares
+/// `prefix` on twelve of its fifteen namespaces. Mockspace has no such field, so
+/// all twelve are discarded, and the rows in those namespaces carry plain slugs
+/// with no prefix in them: the declaration does nothing and its author cannot
+/// tell. Whether `prefix` should exist is a separate question this does not
+/// answer. What it ends is the silence.
+pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
+    let mut out = Vec::new();
+    let Ok(doc) = config_text.parse::<toml_edit::DocumentMut>() else {
+        return out; // a config that does not parse is somebody else's error
+    };
+
+    // The document root. A key here is the case the motivating defect was
+    // actually in, and the first version of this check did not look.
+    for (k, _) in doc.iter() {
+        if !ROOT_KEYS.contains(&k) {
+            out.push(RegistryFinding {
+                kind:    "unknown-config-key",
+                message: format!(
+                    "the config declares `{k}` at its root, which mockspace does not read. \
+                     It is discarded silently."
+                ),
+                source:  None,
+            });
+        }
+    }
+
+    // `[ref]` itself. `roots` is the only thing it carries, so anything else
+    // here is a key that read as configuration and was not.
+    if let Some(refs) = doc.get("ref").and_then(|i| i.as_table_like()) {
+        for (k, _) in refs.iter() {
+            if k != "roots" {
+                out.push(RegistryFinding {
+                    kind:    "unknown-config-key",
+                    message: format!(
+                        "[ref] declares `{k}`, which mockspace does not read there. It is \
+                         discarded silently; the only key `[ref]` carries is `roots`."
+                    ),
+                    source:  None,
+                });
+            }
+        }
+    }
+
+    // `[ref.roots.<name>]`, because a stray key lands here by accident rather
+    // than by being written here on purpose: TOML gives a bare key to whichever
+    // table header precedes it, and these tables sit near the top of a config
+    // where root-level keys are also written.
+    //
+    // NOTE: `as_table_like` rather than `as_table` throughout. A root written
+    // inline, `seed = { path = "p" }`, is the same configuration and the first
+    // version skipped it in silence, which is the silence this exists to end.
+    if let Some(roots) = doc
+        .get("ref")
+        .and_then(|i| i.as_table_like())
+        .and_then(|t| t.get("roots"))
+        .and_then(|i| i.as_table_like())
+    {
+        for (name, item) in roots.iter() {
+            let Some(table) = item.as_table_like() else {
+                continue;
+            };
+            for (k, _) in table.iter() {
+                if !REF_ROOT_KEYS.contains(&k) {
+                    out.push(RegistryFinding {
+                        kind:    "unknown-config-key",
+                        message: format!(
+                            "[ref.roots.{name}] declares `{k}`, which mockspace does not read \
+                             there. It is discarded silently. A bare key belongs to whichever \
+                             table header precedes it, so a root-level setting written below one \
+                             of these lands here and has no effect at all."
+                        ),
+                        source:  None,
+                    });
+                }
+            }
+        }
+    }
+
+    let Some(reg) = doc.get("registry").and_then(|i| i.as_table()) else {
+        return out;
+    };
+    let Some(spaces) = reg.get("namespace").and_then(|i| i.as_array_of_tables()) else {
+        return out;
+    };
+    for table in spaces.iter() {
+        let ns = table
+            .get("key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<no key>")
+            .to_string();
+        for (k, _) in table.iter() {
+            if !NAMESPACE_KEYS.contains(&k) {
+                out.push(RegistryFinding {
+                    kind:    "unknown-config-key",
+                    message: format!(
+                        "[[registry.namespace]] `{ns}` declares `{k}`, which mockspace does not \
+                         read. It is discarded silently, so the declaration has no effect. Remove \
+                         it, or fix the spelling if it is a typo."
+                    ),
+                    source:  None,
+                });
+            }
+        }
+        if let Some(fields) = table.get("field").and_then(|i| i.as_array_of_tables()) {
+            for f in fields.iter() {
+                let name = f.get("name").and_then(|v| v.as_str()).unwrap_or("<no name>");
+                for (k, _) in f.iter() {
+                    if !FIELD_KEYS.contains(&k) {
+                        out.push(RegistryFinding {
+                            kind:    "unknown-config-key",
+                            message: format!(
+                                "[[registry.namespace.field]] `{ns}.{name}` declares `{k}`, which \
+                                 mockspace does not read. It is discarded silently."
+                            ),
+                            source:  None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
 
 /// Validate what the generated schemas cannot.
 pub fn validate(_namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<RegistryFinding> {

@@ -53,7 +53,8 @@ mod refs;
 mod render;
 mod resolve;
 mod resolved;
-mod validate;
+mod rowref;
+pub(crate) mod validate;
 
 pub use load::*;
 pub use model::*;
@@ -61,6 +62,7 @@ pub use refs::*;
 pub use render::*;
 pub use resolve::*;
 pub use resolved::*;
+pub use rowref::*;
 pub use validate::*;
 
 #[cfg(test)]
@@ -299,6 +301,7 @@ mod tests {
             required:    false,
             description: None,
             visibility:  vis,
+            values:      Vec::new(),
         }
     }
 
@@ -324,6 +327,7 @@ mod tests {
             required:    false,
             description: None,
             visibility:  FieldVisibility::Public,
+            values:      Vec::new(),
         }];
         let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -354,6 +358,7 @@ mod tests {
             required:    false,
             description: None,
             visibility:  FieldVisibility::Public,
+            values:      Vec::new(),
         }];
         let reg = reg_with("seam", "law", &[("derives_from", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -369,6 +374,49 @@ mod tests {
         );
     }
 
+    /// The message names where a root is actually declared, `[ref.roots.*]`,
+    /// never `[registry.roots]`. Roots live under `[ref]`
+    /// (`RawConfig::ref_cfg`, `#[serde(rename = "ref")]`); `[[registry.namespace]]`
+    /// is namespaces, and nothing in the config ever reads a `roots` key there.
+    /// A reader following the old message wrote exactly that and stayed silent
+    /// on both sides: serde discarded the misplaced table and this check still
+    /// reported the root unknown.
+    #[test]
+    fn the_unknown_root_message_names_the_real_table() {
+        let mut ns = ns("law", None);
+        ns.fields = vec![RegistryField {
+            name:        "provenance".into(),
+            r#type:      "ref".into(),
+            required:    false,
+            description: None,
+            visibility:  FieldVisibility::Public,
+            values:      Vec::new(),
+        }];
+        let reg = reg_with("seam", "law", &[("provenance", "nosuchroot::DESIGN::1")]);
+        let found = validate::validate_provenance(
+            Path::new("."),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &reg,
+            std::slice::from_ref(&ns),
+        );
+        let msg = &found
+            .iter()
+            .find(|f| f.kind == "unknown-provenance-root")
+            .expect("a reference to an undeclared root is reported")
+            .message;
+        assert!(
+            msg.contains("[ref.roots"),
+            "the message does not name [ref.roots.*], where a root is actually \
+             declared: {msg}"
+        );
+        assert!(
+            !msg.contains("[registry.roots]"),
+            "the message still points at [registry.roots], which is not where \
+             roots are read from: {msg}"
+        );
+    }
+
     #[test]
     fn an_ordinary_field_holding_the_same_text_is_not_validated() {
         let mut ns = ns("law", None);
@@ -378,6 +426,7 @@ mod tests {
             required:    false,
             description: None,
             visibility:  FieldVisibility::Public,
+            values:      Vec::new(),
         }];
         let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -930,6 +979,7 @@ mod tests {
                 required:    false,
                 description: None,
                 visibility:  FieldVisibility::Public,
+                values:      Vec::new(),
             },
             RegistryField {
                 name:        "crates".into(),
@@ -937,6 +987,7 @@ mod tests {
                 required:    false,
                 description: None,
                 visibility:  FieldVisibility::Public,
+                values:      Vec::new(),
             },
         ];
         for (slug, name, crates) in [

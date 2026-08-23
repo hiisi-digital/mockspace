@@ -167,10 +167,17 @@ fn benchmark_dot(benchmark: &str, rows: &[Row]) -> String {
 /// Generate `docs/BENCHES.md` plus per-benchmark dot/png artifacts.
 /// Called from the docs regeneration pass; a consumer without bench
 /// docgen enabled (or without history) generates nothing.
-pub fn generate(cfg: &Config) {
+/// Returns every path it wrote into `docs_dir`.
+///
+/// NOTE: the caller sweeps `docs_dir` of anything nothing generated, so a
+/// generator that writes there and reports nothing has its output deleted on
+/// the same run. That was true of this one and went unseen only because no
+/// project in the workspace opts into `[docgen]` yet.
+pub fn generate(cfg: &Config) -> Vec<std::path::PathBuf> {
+    let mut wrote: Vec<std::path::PathBuf> = Vec::new();
     let bench_dir = cfg.mock_dir.join("benches");
     if !docgen_enabled(&bench_dir) {
-        return;
+        return wrote;
     }
     let logs = discover_history_logs(&bench_dir);
     if logs.is_empty() {
@@ -179,7 +186,7 @@ pub fn generate(cfg: &Config) {
             bench_dir.join(".bench_history").display(),
             bench_dir.join("history").display()
         );
-        return;
+        return wrote;
     }
 
     eprintln!("--- generating BENCHES.md ---");
@@ -235,6 +242,8 @@ pub fn generate(cfg: &Config) {
             benchmark_dot(&benchmark, &rows)
         );
         render_design::write_generated(&dot_path, &dot_content);
+        wrote.push(dot_path.clone());
+        wrote.push(png_path.clone());
         let rendered = Command::new("dot")
             .arg("-Tpng")
             .arg("-Gdpi=150")
@@ -256,7 +265,9 @@ pub fn generate(cfg: &Config) {
         .docs_dir
         .join(render_design::ordered_doc_name("BENCHES.md", cfg));
     render_design::write_generated(&md_path, &md);
+    wrote.push(md_path.clone());
     eprintln!("  {}", md_path.display());
+    wrote
 }
 
 #[cfg(test)]

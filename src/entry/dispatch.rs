@@ -10,6 +10,10 @@ fn pack_is_empty(pack: &LintPack) -> bool {
         && pack.workspace_lints.is_empty()
         && pack.repo_lints.is_empty()
         && pack.message_lints.is_empty()
+        // Tools count. A statically-linked pack carrying only tools is not
+        // empty, and treating it as empty would discard it and try to load a
+        // cdylib over the top.
+        && pack.tools.is_empty()
 }
 
 /// The value following `flag` in `args`, if present.
@@ -29,6 +33,27 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
 fn is_recovery_command(args: &[String]) -> bool {
     const RECOVERY: &[&str] = &["clean", "activate", "deactivate", "status", "migrate"];
     args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
+}
+
+/// Whether `subcmd` is both a builtin name and the name of a discovered tool,
+/// which means the tool can never be reached: the literal match arm for the
+/// builtin claims the name first, so the catch-all arm that would dispatch to
+/// the tool is never entered for it.
+///
+/// Checked here, against the one name actually about to be dispatched, rather
+/// than inside `tool::run`'s catch-all arm: `other` in that arm is never one
+/// of the fifteen literal match-arm names, so a check placed there can never
+/// see a collision, which is exactly the bug this replaces.
+///
+/// **Does not cover `help`.** `mock help` returns before this function is
+/// ever reached (see the `FIXME` above `help::is_help_request`), so a tool
+/// named `help` is shadowed too, silently, and this function cannot see it
+/// happen. It still correctly reports `true` for `("help", pack)` if asked,
+/// which is why `help_itself_is_a_shadowing_name_too` below is a fact about
+/// this function's logic and not evidence that the real dispatch path
+/// catches the case.
+fn tool_is_shadowed_by_a_builtin(subcmd: &str, pack: &LintPack) -> bool {
+    super::tool::builtin_collision(subcmd) && pack.tools.iter().any(|t| t.name() == subcmd)
 }
 
 /// The value-taking globals the tool consumes before any subcommand sees
@@ -129,6 +154,17 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // found", which is the right answer to "run the workflow here" and the wrong
     // answer to "what does this tool do" -- the question a reader outside a project
     // is most likely to be asking, and often the first thing anyone types.
+    // FIXME: a tool directory literally named `help` is still silently
+    // unreachable, and `tool_is_shadowed_by_a_builtin` below can never catch
+    // it: `mock help` returns here before `mock_dir` is even resolved, let
+    // alone before any pack is loaded, so this fires first every time. The
+    // flag spellings (`--help`, `-h`, `-?`) cannot collide with anything (no
+    // filesystem lets a directory be named `--help`), so only the bare word
+    // is at risk, and closing it would mean resolving `mock_dir` and running
+    // `bootstrap::tool_names` (cheap, filesystem-only, no pack needed) before
+    // this check, without breaking `mock --help` working outside a project at
+    // all, which is what this ordering exists for. Left as the one case the
+    // relocated collision check does not reach.
     if args.iter().skip(1).any(|a| help::is_help_request(a)) {
         return help::print_help();
     }
@@ -255,6 +291,15 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     };
 
     if let Some(&subcmd) = positional_args.first() {
+        if tool_is_shadowed_by_a_builtin(subcmd, pack) {
+            eprintln!(
+                "mock: `{subcmd}` is a builtin subcommand, so the tool at \
+                 {}/tools/{subcmd} can never be reached.",
+                cfg.mock_dir.display()
+            );
+            eprintln!("  rename the directory; the directory name is the subcommand.");
+            return ExitCode::from(2);
+        }
         match subcmd {
             // Lint one authored message. The commit-msg and pre-push hooks call
             // this, and so will the agent hooks, so every surface reaches the
@@ -411,6 +456,28 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 }
                 return ExitCode::SUCCESS;
             },
+            "tools" => {
+                let long = args.iter().any(|a| a == "--long");
+                let listings = crate::tool_catalogue::enumerate(pack);
+                let dupes = crate::tool_catalogue::duplicates(pack);
+                if !dupes.is_empty() {
+                    eprintln!(
+                        "mock: {} project tool name(s) registered more than once: {}",
+                        dupes.len(),
+                        dupes.join(", ")
+                    );
+                    eprintln!("  `mock <name>` would run whichever loaded first.");
+                }
+                print!(
+                    "{}",
+                    if long {
+                        crate::tool_catalogue::render_long(&listings)
+                    } else {
+                        crate::tool_catalogue::render_table(&listings)
+                    }
+                );
+                return ExitCode::SUCCESS;
+            },
             "query" => {
                 // The argument after the subcommand, not a fixed position:
                 // `--dir` and friends may precede it.
@@ -474,11 +541,32 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 let bench_args = subcommand_args(&args, "bench");
                 return bench::cmd(&cfg, &bench_args);
             },
+            "panel" => {
+                let panel_args = subcommand_args(&args, "panel");
+                return super::panel::run(&cfg, &panel_args);
+            },
             other => {
+                // A tool is a subcommand this binary does not know at compile
+                // time. Its name is its directory under `<mock>/tools/`, so the
+                // check is a directory listing rather than a build: a typo must
+                // not compile a cdylib to discover it was a typo.
+                if bootstrap::tool_names(&cfg.mock_dir).iter().any(|n| n == other) {
+                    // Whether a cdylib was even asked for is the fact the
+                    // not-found message turns on, and it is on this command
+                    // line rather than inferable from an empty pack.
+                    let dep_supplied = arg_value(&args, "--mockspace-lint-rules-dep").is_some();
+                    return super::tool::run(
+                        &cfg,
+                        pack,
+                        other,
+                        &subcommand_args(&args, other),
+                        dep_supplied,
+                    );
+                }
                 // An unrecognised first positional is a mistyped subcommand,
                 // not a reason to silently run the default full regeneration
                 // (slow, and not what was asked). Report and exit non-zero.
-                return super::help::unknown_subcommand(other);
+                return super::help::unknown_subcommand(other, &bootstrap::tool_names(&cfg.mock_dir));
             },
         }
     }
@@ -625,6 +713,55 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // --- Lints ---
     eprintln!("--- running lints ---");
 
+    // The registry, flattened once for both arms. A repo lint checking it gets
+    // the same rows and the same reverse edges a document's `refsto` resolves
+    // against, rather than a second reading of the same files.
+    let lint_registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+    let lint_registry_view = registry::build_view(&lint_registry, &cfg.registry_namespaces);
+    // The panel ledger lives here rather than in the lint crate, so the answer
+    // is computed once and handed over, the same way the registry view is.
+    let open_panels: Vec<String> = crate::panel::load_all(&cfg.mock_dir)
+        .into_iter()
+        .filter(crate::panel::is_open)
+        .map(|p| p.slug)
+        .collect();
+
+    // The registry gate, on the lint path only, before the lints that read it.
+    //
+    // A lint handed a registry that is lying reports about the lie rather than
+    // about the repository, so the shape of the data is settled first and this
+    // returns rather than falling through. The pre-commit hook invokes
+    // `--lint-only --commit`, which is the path that until 2026-08-22 ran no
+    // registry validation at all.
+    //
+    // `if lint_only` is load-bearing and is not a shortcut. A generation run
+    // reaches its own call further down, and it must not return early: the
+    // ordering comment above `render_all` says documents are generated even
+    // when the registry is known to be lying, because the dangling-reference
+    // scan reads the OUTPUT. An unconditional gate here writes no documents, so
+    // one duplicate slug hides every dangling reference in the repository. That
+    // is what the first version of this did.
+    //
+    // Two finding kinds this is weaker on than a generation run, both because
+    // resolution has not run. Enumerated rather than summarised, because the
+    // first version claimed there was one and the claim was false.
+    //
+    //   - Reference cycles. Nothing has resolved, so nothing detected a loop.
+    //   - Any reference-bearing field holding a `{{ }}` template. `resolve_data`
+    //     maps every field of every row through `resolve_once`, and
+    //     `validate_provenance` selects fields by declared type, so on a
+    //     generation run the validator sees the substituted text and here it
+    //     sees the template. It reads `{{ pathof(seed` as a root name and
+    //     reports `unknown-provenance-root`, which is a false positive rather
+    //     than a weaker check.
+    if lint_only {
+        let registry_errors = registry_gate(&cfg, &lint_registry, &[], mode);
+        if registry_errors > 0 {
+            eprintln!("registry check failed: {registry_errors} error(s)");
+            return ExitCode::FAILURE;
+        }
+    }
+
     match scope_arg {
         Some("") => {
             eprintln!(
@@ -633,7 +770,38 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             return ExitCode::FAILURE;
         },
         Some("infra") => {
-            eprintln!("  scope: infra (no crate lints)");
+            // No crate lints, and the repo lints still run. They are about
+            // repository state rather than about any crate, and an
+            // infrastructure-only commit is exactly the shape that touches the
+            // things they guard: the canon, the config, the design documents,
+            // the registry. Printing a line and running nothing made them
+            // inert on the commits that matter most, which is the failure the
+            // `RepoLint` trait was introduced to end and this quietly
+            // reintroduced.
+            eprintln!("  scope: infra (repo lints only)");
+            let empty: Vec<String> = Vec::new();
+            let violations = lint::run_lints(
+                &crates,
+                &cfg.src_dirs,
+                &cfg.mock_dir,
+                mode,
+                Some(&empty),
+                doc_only,
+                &cfg.proc_macro_crates,
+                cfg.lint_proc_macro_source,
+                &cfg.crate_prefix,
+                &cfg.lint_overrides,
+                &lint_registry_view,
+                &cfg.canon_paths,
+                &open_panels,
+                &cfg.primitive_introductions,
+                pack,
+            );
+            if violations > 0 {
+                eprintln!("lint check failed: {violations} violation(s)");
+                return ExitCode::FAILURE;
+            }
+            eprintln!("  all repo lints passed");
         },
         Some(crate_list) => {
             let names: Vec<String> = crate_list
@@ -660,6 +828,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 cfg.lint_proc_macro_source,
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
+                &lint_registry_view,
+                &cfg.canon_paths,
+                &open_panels,
                 &cfg.primitive_introductions,
                 pack,
             );
@@ -681,6 +852,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 cfg.lint_proc_macro_source,
                 &cfg.crate_prefix,
                 &cfg.lint_overrides,
+                &lint_registry_view,
+                &cfg.canon_paths,
+                &open_panels,
                 &cfg.primitive_introductions,
                 pack,
             );
@@ -731,16 +905,20 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // The placeholder vocabulary is identical for every template in a run and
     // some of it scans the mock tree, so compute it once here.
     let placeholders = render_design::Placeholders::compute(&crates, &cfg);
-    eprintln!("--- cleaning docs/ ---");
-    if let Ok(entries) = fs::read_dir(&cfg.docs_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                let _ = fs::remove_file(&path);
-            }
-        }
-    }
-    eprintln!("  cleaned top-level files");
+    // **The sweep of stale documents happens AFTER generation, not before.**
+    //
+    // It used to run here, deleting every top-level file in `docs/` before a
+    // line was written. That defeated `write_generated`'s timestamp skip
+    // completely and silently: the skip compares against the previous version
+    // on disk, and there was never one, so every run rewrote all sixteen
+    // documents with nothing but a new `Generated at:` and left the consumer's
+    // tree dirty. `write_generated`'s own docs say a run must be safe on a
+    // clean tree, and the SVG path twenty lines below already snapshots for
+    // exactly this reason, on one file.
+    //
+    // Sweeping afterwards keeps what the clean was actually for, a document
+    // that is no longer generated, and takes nothing that is.
+    let mut generated: Vec<PathBuf> = Vec::new();
 
     // --- Dependency graph ---
     eprintln!("--- generating dependency graph ---");
@@ -752,6 +930,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         .docs_dir
         .join(render_design::ordered_doc_name("STRUCTURE.GRAPH.dot", &cfg));
     render_design::write_generated(&dot_path, &dot);
+    generated.push(dot_path.clone());
     eprintln!("  {}", dot_path.display());
 
     // Generate PNG and SVG from DOT
@@ -760,6 +939,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             &format!("STRUCTURE.GRAPH.{ext}"),
             &cfg,
         ));
+        // Both the png and the svg are generated, so both are kept by the
+        // sweep at the end. Pushed before the `dot` call rather than after,
+        // because a graphviz that is not installed leaves the previous copy in
+        // place and the sweep must not take it.
+        generated.push(out.clone());
         // `dot -o` renders straight to the final path, so snapshot the previous
         // version before it is clobbered; otherwise the regeneration has nothing
         // to be compared against and every run rewrites the timestamp.
@@ -789,7 +973,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     // --- Bench results documentation (opt in via bench.toml [docgen]) ---
-    crate::bench_docs::generate(&cfg);
+    generated.extend(crate::bench_docs::generate(&cfg));
 
     // STRUCTURE.md is markdown, so it goes through the same pipeline as every
     // other document rather than being written here. Computed now because it
@@ -870,85 +1054,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // does not. Nothing here reclassifies a finding.
     let mut registry_errors = 0usize;
 
-    if !cfg.registry_namespaces.is_empty() {
-        eprintln!("--- registry ---");
-        let schemas =
-            registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
-        if schemas > 0 {
-            eprintln!("  generated {schemas} schema files");
-        }
-        eprintln!(
-            "  {} rows across {} namespaces",
-            registry.rows.len(),
-            registry.by_namespace.len()
-        );
-        for f in &cycle_findings {
-            registry_errors += 1;
-            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-        }
-        for f in registry::validate_provenance(
-            &cfg.repo_root,
-            &cfg.registry_roots,
-            &cfg.frozen_roots,
-            &registry,
-            &cfg.registry_namespaces,
-        ) {
-            registry_errors += 1;
-            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-        }
-        for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots)
-        {
-            registry_errors += 1;
-            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-        }
-        for f in registry::validate(&cfg.registry_namespaces, &registry) {
-            registry_errors += 1;
-            eprintln!("  ERROR [{}]: {}", f.kind, f.message);
-        }
-        match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
-            registry::SchemaCheck::Ran {
-                failures,
-            } if failures.is_empty() => {
-                eprintln!("  schema check passed");
-            },
-            registry::SchemaCheck::Ran {
-                failures,
-            } => {
-                for f in failures {
-                    registry_errors += 1;
-                    eprintln!("  ERROR [schema]: {f}");
-                }
-            },
-            registry::SchemaCheck::Unavailable => {
-                // A run that could not check is not a run that passed. The
-                // findings above are two-valued and cannot say "do not trust
-                // this", so an unverifiable row shape reported as success is a
-                // green that means nothing: every required field, every type
-                // and every slug pattern went unchecked.
-                //
-                // Gated on rows existing, not on namespaces existing. Two
-                // namespaces are builtin (`vocab` and `reference`, prepended by
-                // `with_builtins`), so `registry_namespaces` is never empty and
-                // a guard on it fails every project that has no registry at all.
-                // That was the first version of this and the no-registry control
-                // caught it.
-                //
-                // Rows are the thing a schema verifies. No rows, nothing unverified.
-
-                if registry.rows.is_empty() {
-                    eprintln!("  schema check skipped: no rows to verify");
-                } else {
-                    registry_errors += 1;
-                    eprintln!(
-                        "  ERROR [schema-unavailable]: taplo is not installed, so the shape of \
-                         {} row(s) is unverified: required fields, types and slug patterns were \
-                         all unchecked. Install taplo.",
-                        registry.rows.len()
-                    );
-                }
-            },
-        }
-    }
+    // Printed and counted by one function, shared with the commit gate.
+    registry_errors += registry_gate(&cfg, &registry, &cycle_findings, mode);
 
     // --- Every markdown document, through one pipeline ---
     //
@@ -964,6 +1071,25 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // Returning early here would trade a precise finding for an earlier exit.
     eprintln!("--- generating documents ---");
     let written = document::render_all(&plan, &placeholders, &registry, &cfg);
+    generated.extend(written.iter().cloned());
+
+    // The sweep the clean at the top of this function used to be. A top-level
+    // file nothing generated this run is a document that stopped being
+    // generated, which is the only thing that block was ever for.
+    eprintln!("--- sweeping docs/ ---");
+    let keep: std::collections::HashSet<&Path> = generated.iter().map(|p| p.as_path()).collect();
+    let mut swept = 0usize;
+    if let Ok(entries) = fs::read_dir(&cfg.docs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && !keep.contains(path.as_path()) {
+                if fs::remove_file(&path).is_ok() {
+                    swept += 1;
+                }
+            }
+        }
+    }
+    eprintln!("  swept {swept} document(s) nothing generates any more");
     eprintln!("  generated {} documents", written.len());
 
     // --- Unresolved references in what was just written ---
@@ -1046,7 +1172,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
 
     // --- Agent rules and skills ---
     eprintln!("--- generating agent rules ---");
-    let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry);
+    let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry, pack);
     eprintln!("  generated {agent_count} agent files");
 
     if registry_errors > 0 {
@@ -1203,6 +1329,81 @@ mod tests {
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
     }
+
+    // -- a tool sharing a name with a builtin is refused before it is ever
+    //    reached, rather than inside `tool::run`'s catch-all arm, which can
+    //    never see the case: `other` there is never one of the sixteen names
+    //    a literal arm or `help::is_help_request` already claimed. ----------
+
+    struct NamedTool(&'static str);
+    impl mockspace_lint_rules::tool::Tool for NamedTool {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+
+        fn description(&self) -> &'static str {
+            "a probe tool"
+        }
+
+        fn not_a_lint(&self) -> mockspace_lint_rules::tool::NotALint {
+            mockspace_lint_rules::tool::NotALint::NoFailingCase
+        }
+
+        fn run(
+            &self,
+            _ctx: &mockspace_lint_rules::tool::ToolContext<'_>,
+        ) -> mockspace_lint_rules::tool::ToolReport {
+            mockspace_lint_rules::tool::ToolReport::reported("", 1)
+        }
+    }
+
+    fn pack_with(names: &[&'static str]) -> LintPack {
+        let mut pack = LintPack::default();
+        for n in names {
+            pack.tools.push(Box::new(NamedTool(n)));
+        }
+        pack
+    }
+
+    #[test]
+    fn a_tool_named_after_a_builtin_is_shadowed() {
+        // The case that must fail: without the check this returns `false`,
+        // `check` reaches its literal match arm every time, and the tool at
+        // `mock/tools/check/` is silently unreachable forever.
+        let pack = pack_with(&["check"]);
+        assert!(tool_is_shadowed_by_a_builtin("check", &pack));
+    }
+
+    #[test]
+    fn help_itself_is_a_shadowing_name_too() {
+        // A fact about the predicate's own logic, not about the real dispatch
+        // path: `mock help` is intercepted at `help::is_help_request`, before
+        // this function is ever reached (tracked with a `FIXME` there), so a
+        // tool named `help` is shadowed in practice by a route this test does
+        // not exercise. What this pins is that the predicate itself does not
+        // special-case "help" as though it were an ordinary tool name; if the
+        // real interception is ever relocated, the predicate is already
+        // correct for the case it would then need to cover.
+        let pack = pack_with(&["help"]);
+        assert!(tool_is_shadowed_by_a_builtin("help", &pack));
+    }
+
+    #[test]
+    fn an_ordinary_tool_name_is_not_shadowed() {
+        // The negative arm. Without it the predicate could return `true` for
+        // everything and the test above would still pass.
+        let pack = pack_with(&["phrase-search"]);
+        assert!(!tool_is_shadowed_by_a_builtin("phrase-search", &pack));
+    }
+
+    #[test]
+    fn a_builtin_name_with_no_matching_tool_is_not_a_collision() {
+        // A collision needs both halves: the name has to be a builtin AND a
+        // registered tool. `check` alone, with no tool by that name, is just
+        // the ordinary builtin and must not be refused.
+        let pack = pack_with(&["phrase-search"]);
+        assert!(!tool_is_shadowed_by_a_builtin("check", &pack));
+    }
 }
 
 /// Whether a state transition should commit the rename it makes.
@@ -1295,4 +1496,186 @@ mod auto_commit_tests {
         assert!(auto_commit_wanted(&args(&["mock", "lock"])));
         assert!(!auto_commit_wanted(&args(&["mock", "lock", "--no-commit"])));
     }
+}
+
+/// Every registry finding, printed, counted, and returned as an error count.
+///
+/// Extracted so the commit gate and the generation run cannot drift. Until
+/// 2026-08-22 this ran only during generation, so `--lint-only`, which is what
+/// the pre-commit hook invokes, committed a registry with a missing required
+/// field, a duplicate slug or a dangling row reference without a word. The
+/// lints that read the registry ran against the lying data and passed.
+///
+/// `cycles` is what reference resolution found, and the commit gate does not
+/// resolve, so it passes an empty slice.
+///
+/// **Two ways the commit gate differs from a generation run, and both are here
+/// because an earlier version of this comment claimed there was one.** It said
+/// every other validator reads field text that resolution does not rewrite.
+/// `resolve_data` maps *every* field of *every* row through `resolve_once`
+/// (`registry/resolve.rs`), so that is false of any field at all.
+///
+///   - **Reference cycles go undetected**, since nothing resolved.
+///   - **A reference-bearing field holding a `{{ }}` template is a false
+///     positive.** `validate_provenance` picks fields by declared type, so on a
+///     generation run it reads substituted text and here it reads the template,
+///     parses `{{ pathof(seed` as a root name, and reports
+///     `unknown-provenance-root` against a registry that generates cleanly.
+///
+/// What makes the second one invisible in this repository's consumer is a
+/// property of that consumer's data rather than of this code: kamu has zero
+/// `{{` in any of its rows today. Its `registry-queries` skill teaches writing
+/// them in reference fields, so the case is reachable rather than theoretical.
+fn registry_gate(
+    cfg: &Config,
+    registry: &registry::Registry,
+    cycles: &[registry::RegistryFinding],
+    mode: LintMode,
+) -> usize {
+    if cfg.registry_namespaces.is_empty() {
+        return 0;
+    }
+    let mut errors = 0usize;
+    eprintln!("--- registry ---");
+    let schemas =
+        registry::generate_schemas(&cfg.repo_root, &cfg.mock_dir, &cfg.registry_namespaces);
+    if schemas > 0 {
+        eprintln!("  generated {schemas} schema files");
+    }
+    eprintln!(
+        "  {} rows across {} namespaces",
+        registry.rows.len(),
+        registry.by_namespace.len()
+    );
+    for f in cycles {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    for f in registry::validate_provenance(
+        &cfg.repo_root,
+        &cfg.registry_roots,
+        &cfg.frozen_roots,
+        registry,
+        &cfg.registry_namespaces,
+    ) {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots)
+    {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    for f in registry::validate(&cfg.registry_namespaces, registry) {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    // The declarations, then the data. There is no gate between them:
+    // `row_reference_fields` already skips a field whose type names no
+    // namespace, so an unknown type suppresses its own field's rows and
+    // nothing else. A project-wide gate stood here and suppressed genuine
+    // findings in unrelated namespaces, which cost an author a second round
+    // of failures after fixing a typo somewhere they were not looking.
+    let declarations = registry::unknown_field_types(&cfg.registry_namespaces)
+        .into_iter()
+        .chain(registry::namespace_type_collisions(&cfg.registry_namespaces))
+        .chain(registry::value_field_targets(&cfg.registry_namespaces));
+    for f in declarations
+        .chain(registry::validate_row_references(
+            registry,
+            &cfg.registry_namespaces,
+        ))
+    {
+        errors += 1;
+        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+    }
+    // A warning by default, and the choice is deliberate under the rule
+    // stated above: what prints ERROR blocks, and an inert key does not stop
+    // the registry from being correct. It stops the author from knowing their
+    // declaration does nothing, which is a different harm and is ended by
+    // saying so once per run.
+    //
+    // Escalating or silencing it is a project's own call, and it is made the
+    // ordinary way: naming `registry-config-keys` in `[lints]`, the same as
+    // any other lint. This does not go through the general lint dispatch
+    // (there is no `Lint` impl here to register), so the severity map is
+    // consulted by hand at this one call site; nothing else in `FINDING_KINDS`
+    // is wired to it yet.
+    let key_severity = cfg
+        .lint_overrides
+        .base
+        .get("registry-config-keys")
+        .copied()
+        .unwrap_or(Severity::ADVISORY);
+    match std::fs::read_to_string(&cfg.config_path) {
+        Ok(text) => {
+            for f in registry::config_unknown_keys(&text) {
+                match key_severity.effective(mode) {
+                    Level::Pass => {},
+                    Level::Info | Level::Warn => {
+                        eprintln!("  warning [{}]: {}", f.kind, f.message);
+                    },
+                    Level::Error => {
+                        errors += 1;
+                        eprintln!("  ERROR [{}]: {}", f.kind, f.message);
+                    },
+                }
+            }
+        },
+        Err(e) => {
+            // A check that could not run is not a check that passed: the
+            // same reasoning `SchemaCheck::Unavailable` already applies to
+            // the schema gate applies here, so absence is reported rather
+            // than swallowed.
+            eprintln!(
+                "  warning: could not read {} to check for unknown config \
+                 keys: {e}",
+                cfg.config_path.display()
+            );
+        },
+    }
+    match registry::check_schemas(&cfg.repo_root, &cfg.registry_namespaces) {
+        registry::SchemaCheck::Ran {
+            failures,
+        } if failures.is_empty() => {
+            eprintln!("  schema check passed");
+        },
+        registry::SchemaCheck::Ran {
+            failures,
+        } => {
+            for f in failures {
+                errors += 1;
+                eprintln!("  ERROR [schema]: {f}");
+            }
+        },
+        registry::SchemaCheck::Unavailable => {
+            // A run that could not check is not a run that passed. The
+            // findings above are two-valued and cannot say "do not trust
+            // this", so an unverifiable row shape reported as success is a
+            // green that means nothing: every required field, every type
+            // and every slug pattern went unchecked.
+            //
+            // Gated on rows existing, not on namespaces existing. Two
+            // namespaces are builtin (`vocab` and `reference`, prepended by
+            // `with_builtins`), so `registry_namespaces` is never empty and
+            // a guard on it fails every project that has no registry at all.
+            // That was the first version of this and the no-registry control
+            // caught it.
+            //
+            // Rows are the thing a schema verifies. No rows, nothing unverified.
+
+            if registry.rows.is_empty() {
+                eprintln!("  schema check skipped: no rows to verify");
+            } else {
+                errors += 1;
+                eprintln!(
+                    "  ERROR [schema-unavailable]: taplo is not installed, so the shape of \
+                     {} row(s) is unverified: required fields, types and slug patterns were \
+                     all unchecked. Install taplo.",
+                    registry.rows.len()
+                );
+            }
+        },
+    }
+    errors
 }

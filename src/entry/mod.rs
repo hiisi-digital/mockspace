@@ -6,7 +6,9 @@ use mockspace_lint_rules::LintPack;
 
 use crate::config::Config;
 use crate::{
+    Level,
     LintMode,
+    Severity,
     bench,
     bootstrap,
     design_round,
@@ -23,15 +25,17 @@ use crate::{
 };
 
 mod cargo_gate;
-mod help;
+pub(crate) mod help;
 pub(crate) mod escape_hatch;
 mod message;
 mod dispatch;
 pub(crate) use dispatch::*;
 mod nuke;
 pub(crate) use nuke::*;
+mod panel;
 mod subcmd;
 pub(crate) use subcmd::*;
+mod tool;
 mod resolve;
 pub(crate) use resolve::*;
 mod check;

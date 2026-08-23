@@ -17,6 +17,7 @@ pub mod bench;
 pub mod bench_gen;
 pub mod bench_docs;
 pub mod bootstrap;
+pub mod build_dir;
 pub mod config;
 pub mod custom_lints;
 pub mod deny;
@@ -27,6 +28,7 @@ mod entry;
 pub mod graph;
 pub mod lint;
 pub mod model;
+pub mod panel;
 pub mod parse;
 pub mod pdf;
 pub mod registry;
@@ -34,6 +36,7 @@ pub mod render;
 pub mod render_agent;
 pub mod render_design;
 pub mod render_md;
+pub mod tool_catalogue;
 
 /// Path to the mockspace source directory, captured at compile time.
 ///
@@ -71,3 +74,11 @@ pub use mockspace_lint_rules::{
     LintMode,
     Severity,
 };
+/// The tool contract, re-exported whole rather than item by item.
+///
+/// A tool crate spells this `mockspace::tool::Tool`, because the generated
+/// cdylib renames `mockspace-lint-rules` to `mockspace` so consumer source
+/// reads the same whether it is compiled into the engine or dlopened beside
+/// it. Re-exporting the module here keeps that one spelling true from both
+/// sides.
+pub use mockspace_lint_rules::tool;

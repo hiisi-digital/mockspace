@@ -33,6 +33,9 @@
 //! The engine compiles every pack's lints together with any in-tree
 //! `mock/lints/*.rs` files into one cdylib and runs the union.
 
+pub mod canon_not_while_panel_open;
+pub mod registry_view;
+pub use registry_view::{RegistryView, RowFields};
 pub mod fmt_only;
 mod actionable_errors;
 mod changelist_doc_gate;
@@ -64,6 +67,7 @@ mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
 pub mod src_layout;
+pub mod tool;
 pub mod type_scanner;
 mod undocumented_type;
 
@@ -71,6 +75,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 pub use path_filter::{PathFilter, PathFilters, glob_match};
+pub use tool::{
+    ArgSpec, NotALint, Outcome, Tool, ToolContext, ToolReport, contract_faults,
+    duplicate_tool_names, missing_required, usage_line,
+};
 
 use tree_sitter::Tree;
 
@@ -1251,6 +1259,17 @@ pub struct RepoContext<'a> {
     /// The invocation that triggered this run, when there was one and the lint
     /// asked for it via [`Lint::invocation_wanted`].
     pub invocation:    Option<Invocation<'a>>,
+    /// The globs a project declares as its canon, from `canon_paths`. Empty
+    /// where a project has not said what its canon is, which is most of them.
+    pub canon_paths:   &'a [String],
+    /// The slugs of every panel presently open, computed by the engine because
+    /// the panel ledger lives there. Empty where none is.
+    pub open_panels:   &'a [String],
+    /// The project's registry, flattened, with the reverse edges computed.
+    ///
+    /// Empty where the project declares no registry, which is legitimate and
+    /// which every accessor answers without a special case.
+    pub registry:      &'a crate::RegistryView,
 }
 
 /// A lint handed an authored message rather than anything in the worktree.
@@ -1383,6 +1402,7 @@ macro_rules! lint_pack {
         $(workspace_lints: [ $( $ws:expr ),* $(,)? ] $(,)?)?
         $(repo_lints: [ $( $repo:expr ),* $(,)? ] $(,)?)?
         $(message_lints: [ $( $msg:expr ),* $(,)? ] $(,)?)?
+        $(tools: [ $( $tool:expr ),* $(,)? ] $(,)?)?
     ) => {
         /// Contribute this pack's lints to the host's collection.
         ///
@@ -1393,6 +1413,7 @@ macro_rules! lint_pack {
             $( $( pack.workspace_lints.push(::std::boxed::Box::new($ws)); )* )?
             $( $( pack.repo_lints.push(::std::boxed::Box::new($repo)); )* )?
             $( $( pack.message_lints.push(::std::boxed::Box::new($msg)); )* )?
+            $( $( pack.tools.push(::std::boxed::Box::new($tool)); )* )?
         }
     };
 }
@@ -1412,6 +1433,14 @@ pub struct LintPack {
     pub repo_lints:      Vec<Box<dyn RepoLint>>,
     /// Lints handed an authored message.
     pub message_lints:   Vec<Box<dyn MessageLint>>,
+    /// Tools: checks invoked as `mock <name>` because they cannot be lints.
+    ///
+    /// Not lints, and carried here anyway, because they arrive through the same
+    /// cdylib and the boundary passes one value. Splitting them into a second
+    /// pack would mean a second collector symbol, a second dlopen, and two
+    /// lifetimes to keep straight, to express a distinction the `Tool` trait
+    /// already makes.
+    pub tools:           Vec<Box<dyn tool::Tool>>,
 }
 
 /// Every lint name registered more than once across the builtin sets and a
@@ -1631,6 +1660,7 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
     vec![
         Box::new(changelist_doc_gate::ChangelistDocGate),
         Box::new(changelist_lock::ChangelistLock),
+        Box::new(canon_not_while_panel_open::CanonNotWhilePanelOpen),
         Box::new(changelist_required::ChangelistRequired),
         Box::new(changelist_immutability::ChangelistImmutability),
     ]
@@ -2024,6 +2054,9 @@ mod repo_lint_tests {
             all_crates: &no_crates,
             src_dirs:   &no_src,
             invocation: None,
+            canon_paths: &[],
+            open_panels: &[],
+            registry:   &Default::default(),
         };
 
         let extra: Vec<Box<dyn RepoLint>> = vec![Box::new(AlwaysReports)];
@@ -2084,6 +2117,9 @@ mod repo_lint_tests {
             all_crates: &no_crates,
             src_dirs:   &no_src,
             invocation: None,
+            canon_paths: &[],
+            open_panels: &[],
+            registry:   &Default::default(),
         };
         let extra: Vec<Box<dyn RepoLint>> = vec![lint];
         let errors = check_repo_with_extra(&ctx, false, cfg, &extra);

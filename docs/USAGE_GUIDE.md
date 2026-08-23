@@ -133,6 +133,12 @@ Common flags:
 
 The generated `pre-commit` hook runs `cargo mock` scoped to changed crates with `--commit`. The generated `pre-push` hook runs `cargo mock --lint-only --strict`.
 
+This table (and the one above it) is not the exhaustive command reference; run `mock tools` for that, or `mock tools --long` for full usage and declared arguments per command. It never goes stale the way a hand-written list does, because it is computed from the same declarations the engine dispatches against.
+
+## Panels
+
+`mock panel {seat,consolidate,status}` mints panel seats against a formalised inventory at `<mock>/panel/<slug>.toml`, capped at 99 seats with an enforced consolidation cadence (`panel_consolidate_every` below, default 10). `mock check` refuses a change touching a configured `canon_paths` glob while any panel is open. See `mock tools --long` for the full contract (usage, declared arguments, and the longer help body), and `mock/agent/config.toml`'s `agent_panel_discipline` to ship the generated rule describing the discipline to an agent.
+
 ## Configuration: `mockspace.toml`
 
 Placed at `mock/mockspace.toml`. Common fields:
@@ -155,6 +161,9 @@ install_agent_files = "replace"
 auto_fmt = true                       # cargo fmt staged workspace roots pre-commit
 auto_clippy_fix = true                # cargo clippy --fix staged workspace roots pre-commit
 deny_check = true                     # cargo deny check on push (needs a deny.toml)
+
+canon_paths = ["mock/canon/**"]       # what `mock check` protects from an open panel
+panel_consolidate_every = 10          # seats a panel mints before a consolidation is due
 ```
 
 Install modes (applied when generated content overwrites existing files):

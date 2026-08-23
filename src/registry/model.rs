@@ -16,7 +16,7 @@ pub const REGISTRY_ROOT: &str = "reg";
 pub const CRATE_ROOT: &str = "crates";
 
 /// One field a namespace declares beyond the universal `id`.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RegistryField {
     pub name:        String,
     /// `string`, `integer`, `boolean`, `string[]`. Anything richer belongs in
@@ -30,10 +30,35 @@ pub struct RegistryField {
     /// Whether this field reaches the generated documentation at all.
     #[serde(default)]
     pub visibility:  FieldVisibility,
+    /// The closed set of values this field may hold, where there is one.
+    ///
+    /// Empty means the field is free text, which is the default and stays the
+    /// common case. A non-empty list becomes an `enum` in the generated schema,
+    /// which is what refuses an unlisted value, at the point it is typed.
+    ///
+    /// **The schema is the whole enforcement.** An earlier version of this line
+    /// said a load error as well, and named a Rust-side function that has never
+    /// existed. What backs it instead is that `SchemaCheck::Unavailable` is a
+    /// hard error where rows exist, so the contract does not lapse on a machine
+    /// with no validator.
+    ///
+    /// This exists because a closed set stated only in a `description` is not a
+    /// contract. A project shipped four of them that way, and a typo in any one
+    /// passed every gate: the row loaded, the schema check passed, the document
+    /// rendered, and a lint keyed on the field silently ignored the value it did
+    /// not recognise, so a defect the lint existed to catch became invisible
+    /// rather than louder.
+    ///
+    /// Where the set is large enough to want descriptions of its own, or where
+    /// members carry fields, it wants a namespace and a typed row reference
+    /// instead. This is for the small closed sets that do not: two rungs, three
+    /// kinds, four owners.
+    #[serde(default)]
+    pub values:      Vec<String>,
 }
 
 /// Whether a field's values are for readers or only for the project itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FieldVisibility {
     /// Rendered as a column, like any other field.
@@ -57,7 +82,7 @@ fn default_field_type() -> String {
 }
 
 /// Where a namespace's table appears in the generated documentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RenderMode {
     /// A generated page per namespace. Row references link to it.
@@ -76,7 +101,7 @@ impl RenderMode {
 }
 
 /// A declared namespace: one kind of thing the registry holds.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RegistryNamespace {
     /// The array-of-tables key, singular: `spike` for `[[spike]]`. Also the
     /// first selector segment of every reference into it.
@@ -203,6 +228,7 @@ pub fn builtin_vocab() -> RegistryNamespace {
             required,
             description: Some(description.to_string()),
             visibility: FieldVisibility::Public,
+            values: Vec::new(),
         }
     };
     RegistryNamespace {
@@ -233,6 +259,7 @@ pub fn builtin_vocab() -> RegistryNamespace {
                         .to_string(),
                 ),
                 visibility: FieldVisibility::Public,
+            values: Vec::new(),
             },
         ],
     }
@@ -253,6 +280,7 @@ pub fn builtin_reference() -> RegistryNamespace {
             required,
             description: Some(description.to_string()),
             visibility: FieldVisibility::Public,
+            values: Vec::new(),
         }
     };
     RegistryNamespace {

@@ -20,7 +20,7 @@ pub(crate) const BUILTIN_SKILL_DIRS: &[&str] = &[
     "design-talk",
 ];
 
-pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
+pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> BuiltinTemplates {
     let mock_rel = cfg
         .mock_dir
         .strip_prefix(&cfg.repo_root)
@@ -112,8 +112,31 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
                     .join(", ")
             )
         };
+        // The relations, from the declared types. A reader authoring a row needs
+        // to know which of its fields take a slug from another namespace, and
+        // the alternative to generating it here is a hand-written list that
+        // stops matching the config the first time a field is added.
+        let relations: Vec<String> = ns
+            .fields
+            .iter()
+            .filter_map(|f| {
+                let (target, many) = crate::registry::row_reference_target(&f.r#type)?;
+                cfg.registry_namespaces
+                    .iter()
+                    .any(|n| n.key == target)
+                    .then(|| {
+                        let card = if many { "slugs" } else { "a slug" };
+                        format!("`{}` takes {card} from `{target}`", f.name)
+                    })
+            })
+            .collect();
+        let relation_note = if relations.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", relations.join("; "))
+        };
         ns_doc.push_str(&format!(
-            "- `{}::<slug>`: {}{}{}\n",
+            "- `{}::<slug>`: {}{}{}{}\n",
             ns.key,
             ns.description
                 .clone()
@@ -121,6 +144,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
                 .trim_end_matches('.')
                 .to_string(),
             value,
+            relation_note,
             internal_note
         ));
     }
@@ -128,12 +152,38 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
         ns_doc.push_str("- none declared\n");
     }
 
-    let rules = vec![
+    // **Where this project's canon is, from its own config.**
+    //
+    // `canon_paths` is what `mock check` refuses a write to while a panel
+    // is open, so it is the one place that already knows, and until now
+    // this rule asserted `<mock>/canon/` regardless. A project whose canon
+    // is a typed registry got a rule naming a directory it does not have,
+    // two lines from a config that says so, and every agent session loaded
+    // it.
+    let declared_canon: Vec<String> = cfg.canon_paths.clone();
+    // The directory convention still applies where nothing else is
+    // declared, which is the common case and the default this ships.
+    let canon_is_the_reserved_directory = declared_canon.is_empty()
+        || declared_canon
+            .iter()
+            .any(|p| p.contains("/canon/") || p.trim_end_matches('/').ends_with("/canon"));
+    let canon_location = if declared_canon.is_empty() {
+        format!("`{mock_rel}/canon/`, a directory reserved for it alone")
+    } else {
+        let named = declared_canon
+            .iter()
+            .map(|p| format!("`{p}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{named}, which this project declares as its canon")
+    };
+
+    let mut rules = vec![
         BuiltinRule {
             name: "reference-syntax".to_string(),
             apply_to: vec!["**/*.md".to_string(), "**/*.md.tmpl".to_string(), "**/*.toml".to_string()],
             body: format!(
-                "## Reference syntax\n\n                 Write a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry\n                 field declared to hold one. It resolves when documents are generated, and it is checked:\n                 a reference that points nowhere is reported rather than rendered as something that looks\n                 fine.\n\n                 The braces are required. They make a reference something you state rather than something\n                 the renderer guesses from a pattern, so prose about code is never rewritten by accident.\n                 References inside code fences are left alone.\n\n                 ### Roots in this project\n\n{roots_doc}\n                 A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`) or a line\n                 number. **Prefer the heading.** A line number fails silently: an edit above it shifts the\n                 target, the citation still resolves, and it now points at different content. A heading\n                 fails loudly when renamed, which is a report rather than a lie. Line numbers are honest\n                 only in a root declared frozen.\n\n                 A path may have any depth and the extension may be omitted, so `mock::DESIGN::12` finds\n                 `DESIGN.md.tmpl` without you tracking which form exists where. Two matches is an error\n                 rather than a guess.\n\n                 ### Registry namespaces in this project\n\n{ns_doc}\n                 A namespace is addressed by its own name: `law::keys`, `vocab::xpbd`. There is no\n                 prefix, because slot zero is either a declared root or a declared namespace and the\n                 two cannot collide. The older `reg::law::keys` still resolves.\n\n                 `{{{{ <ns> }}}}` renders that namespace's whole table inline. `{{{{ <ns>::<slug>::<field> }}}}`\n                 renders one field, which is how a document states a value once and every mention of it\n                 stays current instead of drifting into a copy.\n\n                 Two functions answer questions about a thing rather than rendering it.\n                 `{{{{ pathof(x) }}}}` is where x is DECLARED, the file to open to change it: a crate's\n                 directory, a cited file, or the TOML a registry row sits in. `{{{{ sourcesof(x) }}}}` is\n                 what x RESTS ON, its provenance, plural because provenance is an array.\n\n                 A postfix chain narrows the result: `pathof(crates::store).dir()`. Four methods read a\n                 path (`dir`, `filename`, `stem`, `ext`) and three read a list (`first`, `last`,\n                 `count`), applied left to right. An unknown method is reported rather than ignored,\n                 because a method that silently does nothing reads as one that worked.\n\n                 Registry rows are identified by a snake_case slug, never a number. A number carries no\n                 meaning and so has to be managed: never reused, never renumbered, never reordered, since\n                 any of those silently repoints every reference to it.\n"
+                "## Reference syntax\n\n                 Write a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry\n                 field declared to hold one. It resolves when documents are generated, and it is checked:\n                 a reference that points nowhere is reported rather than rendered as something that looks\n                 fine.\n\n                 The braces are required. They make a reference something you state rather than something\n                 the renderer guesses from a pattern, so prose about code is never rewritten by accident.\n                 References inside code fences are left alone.\n\n                 ### Roots in this project\n\n{roots_doc}\n                 A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`) or a line\n                 number. **Prefer the heading.** A line number fails silently: an edit above it shifts the\n                 target, the citation still resolves, and it now points at different content. A heading\n                 fails loudly when renamed, which is a report rather than a lie. Line numbers are honest\n                 only in a root declared frozen.\n\n                 A path may have any depth and the extension may be omitted, so `mock::DESIGN::12` finds\n                 `DESIGN.md.tmpl` without you tracking which form exists where. Two matches is an error\n                 rather than a guess.\n\n                 ### Registry namespaces in this project\n\n{ns_doc}\n                 A namespace is addressed by its own name: `law::keys`, `vocab::xpbd`. There is no\n                 prefix, because slot zero is either a declared root or a declared namespace and the\n                 two cannot collide. The older `reg::law::keys` still resolves.\n\n                 `{{{{ <ns> }}}}` renders that namespace's whole table inline. `{{{{ <ns>::<slug>::<field> }}}}`\n                 renders one field, which is how a document states a value once and every mention of it\n                 stays current instead of drifting into a copy.\n\n                 ### Fields that hold a row\n\n                 A field's declared `type` is either a builtin (`string`, `string[]`, `integer`,\n                 `boolean`, `ref`, `ref[]`) or **the name of a namespace**, and the second form makes\n                 the field hold references to rows in that namespace. `type = \"slot\"` holds one,\n                 `type = \"slot[]\"` holds several.\n\n                 The value is a bare slug, `\"display\"`, never `\"slot::display\"`: the type already says\n                 which namespace, and one thing written two ways is one thing that can disagree with\n                 itself. A slug naming no row is reported, so a relation cannot rot the way a\n                 hand-maintained list does. A type naming neither a builtin nor a namespace is reported\n                 too, rather than quietly becoming a string field that constrains nothing. So is a\n                 target declaring `value_field`, which renders a value rather than a link and so\n                 cannot carry a relation.\n\n                 Three functions answer questions about a thing rather than rendering it.\n                 `{{{{ pathof(x) }}}}` is where x is DECLARED, the file to open to change it: a crate's\n                 directory, a cited file, or the TOML a registry row sits in. `{{{{ sourcesof(x) }}}}` is\n                 what x RESTS ON, its provenance, plural because provenance is an array.\n                 `{{{{ refsto(x) }}}}` is what POINTS AT x, derived from the typed fields above rather\n                 than stored, so nothing has to be kept in step. It is the direction most questions are\n                 asked in, and an empty answer is the finding: nothing answers that row.\n\n                 A postfix chain narrows the result: `pathof(crates::store).dir()`. Four methods read a\n                 path (`dir`, `filename`, `stem`, `ext`) and three read a list (`first`, `last`,\n                 `count`), applied left to right. An unknown method is reported rather than ignored,\n                 because a method that silently does nothing reads as one that worked.\n\n                 Registry rows are identified by a snake_case slug, never a number. A number carries no\n                 meaning and so has to be managed: never reused, never renumbered, never reordered, since\n                 any of those silently repoints every reference to it.\n"
             ),
         },
         BuiltinRule {
@@ -271,10 +321,17 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
                 format!("{mock_rel}/crates/**/*.md.tmpl"),
                 format!("{mock_rel}/crates/**/*.rs"),
                 format!("{mock_rel}/research/**"),
-                format!("{mock_rel}/canon/**"),
                 format!("{mock_rel}/design_rounds/**"),
-            ],
-            body: substitute_builtin_vars(
+            ]
+            .into_iter()
+            .chain(if declared_canon.is_empty() {
+                vec![format!("{mock_rel}/canon/**")]
+            } else {
+                declared_canon.clone()
+            })
+            .collect(),
+            body: {
+                let body = substitute_builtin_vars(
                 concat!(
                     "## The canon, design, code chain\n",
                     "\n",
@@ -282,11 +339,8 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
                     "\n",
                     "**Canon is the theory: the intent, the choices made, and the reasoning behind them, in ",
                     "the abstract.** It governs what the design is and how the design converges. It is not a ",
-                    "spec sheet. It lives at `{mock_dir}/canon/`, a directory reserved for it alone, the same ",
-                    "way `{mock_dir}/crates/`, `{mock_dir}/research/`, and `{mock_dir}/design_rounds/` are ",
-                    "each reserved for what they hold. Canon scattered across research notes in whatever shape ",
-                    "each round left it is not canon; it is drift with a confident name. Its own internal ",
-                    "shape is below.\n",
+                    "spec sheet. It lives at {canon_location}. Canon scattered across research notes in ",
+                    "whatever shape each round left it is not canon; it is drift with a confident name.\n",
                     "\n",
                     "**Design is the spec.** In this project that is `{mock_dir}/crates/**/*.md.tmpl` and its ",
                     "siblings. A design says what a specific thing is, concretely enough that a competent ",
@@ -449,8 +503,15 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
                     "how canon and designs are written regardless, because that is what the rule says, not ",
                     "because something currently catches a violation of it.\n",
                 ),
-                &mock_rel, project_name, crate_prefix,
-            ),
+                    &mock_rel, project_name, crate_prefix,
+                )
+                .replace("{canon_location}", &canon_location);
+                if canon_is_the_reserved_directory {
+                    body
+                } else {
+                    drop_directory_convention(body)
+                }
+            },
         },
         BuiltinRule {
             name: "design-round-consumes-its-inheritance".to_string(),
@@ -523,6 +584,51 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
             body: "## Per-crate documentation templates\nREADME.md.tmpl files are SHORT (3-10 lines). They contain the crate's purpose, what it depends on, and what depends on it. They are inserted into the generated DESIGN.md via {{crate_summaries}}. Do not put detailed design information here -- that goes in DESIGN.md.tmpl or DEEPDIVE_*.md.tmpl.".to_string(),
         },
     ];
+
+    // On by default, from `mock/agent/config.toml`. A generated snapshot of
+    // `mock tools`, with the live command named as the thing to trust once
+    // this snapshot is older than the last change to what tools exist. See
+    // `crate::tool_catalogue` for why a snapshot rather than only the
+    // instruction to run the command: this project's own convention
+    // (`reference-syntax`, above) already generates a live-at-render-time
+    // answer the same way, and an immediate answer beats a mandatory extra
+    // command for the common case where nothing has changed since the last
+    // `cargo mock`.
+    if cfg.agent.tool_catalogue {
+        let snapshot = crate::tool_catalogue::render_table(&crate::tool_catalogue::enumerate(pack));
+        rules.push(BuiltinRule {
+            name: "tool-catalogue".to_string(),
+            apply_to: vec!["**".to_string()],
+            body: format!(
+                "## Tool catalogue\n\n{}\n\n{}\n\n```\n{}```\n",
+                "Never hand-write, from memory, a list of the subcommands or project tools this mockspace exposes. Run `mock tools` for the summary below, or `mock tools --long` for full usage and declared arguments.",
+                "The listing below is a snapshot taken at the last `cargo mock` run. It goes stale the moment a tool is added, renamed, or removed without a fresh run; that is exactly why the live command is named above rather than only this list. Prefer `mock tools` over this snapshot whenever the two might disagree.",
+                snapshot
+            ),
+        });
+    }
+
+    // Off by default, from `mock/agent/config.toml`. Describes how a panel
+    // (several personas working one question) mints and consolidates seats
+    // against a formalised inventory, and states the one discipline the
+    // mechanism cannot enforce by itself: that a panel never writes canon
+    // directly. See `crate::panel` for the whole mechanism, and
+    // `crate::entry::check`'s panel-discipline row for the mechanical half of
+    // the canon rule.
+    if cfg.agent.panel_discipline {
+        rules.push(BuiltinRule {
+            name: "panel-discipline".to_string(),
+            apply_to: vec!["**".to_string()],
+            body: format!(
+                "## How a panel works\n\n{}\n\n{}\n\n{}\n\n{}\n\n{}",
+                "A panel is several personas working one question: arguing, converging, proposing. They talk, they converge, they propose and present. They do not write canon.",
+                "Every seat is minted, never counted or guessed. `mock panel seat <slug> <persona> <topic...>` allocates the next seat number from the panel's own inventory file, one past whatever is already recorded there. Two dispatches minting at once are serialised by a lock on the inventory, so the second waits for the first and reads the number the first wrote. The number never comes from a caller's own tally. Ninety-nine is the last seat a panel may ever mint; past it, the panel is over, not paused, and the next step is closing it or opening a new one for whatever remains.",
+                "Consolidation is enforced, not optional. Once a panel has minted enough seats since its last consolidation, minting refuses until `mock panel consolidate <slug> <note...>` records what was decided. `mock panel status [slug]` reports whether a panel is presently open (has minted seats no consolidation covers yet) and how many seats remain before the next one is due.",
+                "Everything is logged into one formalised inventory file per panel, `<mock>/panel/<slug>.toml`: every seat, every consolidation, in order. It is the whole ledger, and it is what `mock check` reads to decide whether canon is being touched while a panel is still open.",
+                "No panel writes canon directly. A panel talks, converges, and proposes; only the coordinating human or agent adds what it produced into the project's canonical registries or documents, and only once the panel has consolidated. `mock check` refuses a change touching a configured canon path while any panel is open, as the mechanical half of this; the rest is discipline this rule states so every panel member reads it too."
+            ),
+        });
+    }
 
     // --- Builtin Skills ---
 
@@ -1058,3 +1164,174 @@ pub(crate) fn generate_builtin_templates(cfg: &Config) -> BuiltinTemplates {
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
+
+/// Everything from the directory-convention heading up to the next `##`.
+///
+/// The tier argument, canon governs design governs code and the mutation order
+/// that follows from it, is true of every project. **The shape of the reserved
+/// directory is not**: a project declaring its canon somewhere else, a typed
+/// registry say, has no `archive/`, no `examples/`, and no `.md` files to have
+/// an opinion about. Shipping that section to it describes a tree it does not
+/// have, which is what this rule did to one project for as long as that project
+/// has existed.
+fn drop_directory_convention(body: String) -> String {
+    let Some(start) = body.find("### The shape of ") else {
+        return body;
+    };
+    let rest = &body[start ..];
+    // **The next heading at any level, not the next top-level one.**
+    //
+    // The first version looked only for `\n## `. This rule's body has exactly
+    // one `##`, its title, and every other section is `###`, so the search
+    // always missed and the `None` arm took the rest of the document with it:
+    // nine sections became one, and the mutation order, which is the most
+    // load-bearing part of the rule, went with them. The PR that introduced
+    // this said in as many words that the mutation order stays.
+    //
+    // NOTE: skip one byte rather than three before searching, so a heading
+    // immediately after the cut point is still found.
+    let end = ["\n## ", "\n### "]
+        .iter()
+        .filter_map(|h| rest[1 ..].find(h).map(|i| start + 1 + i + 1))
+        .min();
+    match end {
+        Some(e) => format!("{}{}", &body[.. start], &body[e ..]),
+        None => body[.. start].to_string(),
+    }
+}
+
+#[cfg(test)]
+mod canon_location_is_derived {
+    //! The canon rule reads where the canon is, rather than asserting it.
+    //!
+    //! It used to name `<mock>/canon/` nine times whatever the project said,
+    //! and ship the reserved-directory convention to a project with no such
+    //! directory. kamu declares `canon_paths = ["mock/registry/*.toml"]` two
+    //! lines from where the rule was read, and every session there loaded a
+    //! rule describing a tree that does not exist.
+    use super::*;
+
+    fn rule_for(canon_paths: Vec<String>) -> BuiltinRule {
+        // Through a real config file rather than a hand-built struct, so the
+        // test exercises the same `canon_paths` parse a project does.
+        let tmp = tempfile::tempdir().unwrap();
+        let mock = tmp.path().join("mock");
+        std::fs::create_dir_all(&mock).unwrap();
+        let declared = if canon_paths.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "canon_paths = [{}]\n",
+                canon_paths
+                    .iter()
+                    .map(|p| format!("\"{p}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        std::fs::write(
+            mock.join("mockspace.toml"),
+            format!("project_name = \"probe\"\n{declared}"),
+        )
+        .unwrap();
+        let cfg = crate::config::Config::from_dir(&mock);
+        assert_eq!(
+            cfg.canon_paths, canon_paths,
+            "control: the config parsed what we wrote"
+        );
+        generate_builtin_templates(&cfg, &LintPack::default())
+            .rules
+            .into_iter()
+            .find(|r| r.name == "canon-design-code-chain")
+            .expect("the rule is always minted")
+    }
+
+    #[test]
+    fn a_project_declaring_its_own_canon_is_told_where_it_is() {
+        let r = rule_for(vec!["mock/registry/*.toml".into()]);
+        assert!(r.body.contains("mock/registry/*.toml"), "{}", r.body);
+        assert!(
+            r.apply_to.iter().any(|p| p == "mock/registry/*.toml"),
+            "and the rule applies to it: {:?}",
+            r.apply_to
+        );
+    }
+
+    #[test]
+    fn and_is_not_told_about_a_directory_it_does_not_have() {
+        // the arm that matters. the tier argument is universal and stays; the
+        // reserved-directory convention describes a tree this project has none
+        // of, and shipping it is the defect.
+        let r = rule_for(vec!["mock/registry/*.toml".into()]);
+        assert!(
+            !r.body.contains("### The shape of"),
+            "the directory convention must not ship: {}",
+            r.body
+        );
+        assert!(
+            !r.body.contains("/canon/examples/"),
+            "the examples convention goes with it: {}",
+            r.body
+        );
+
+        // **What the universal half is, checked where it actually lives.**
+        //
+        // The first version asserted only the title and one line of the intro
+        // prose, both of which sit *before* the cut point, so they passed while
+        // the cut took nine sections and left one. The mutation order went with
+        // them, which is the most load-bearing part of this rule, in the one
+        // project the change was made for. A law that cannot reach what the
+        // code does is not a law.
+        for kept in [
+            "The canon, design, code chain",
+            "Code is last",
+            "### The reproduction property",
+            "### The mutation order",
+            "### Telling which tier a document is",
+            "### Two rules that hold now",
+            "### No tooling enforces any of this yet",
+        ] {
+            assert!(
+                r.body.contains(kept),
+                "`{kept}` is universal and must survive the cut: {}",
+                r.body
+            );
+        }
+
+        // and something was actually cut, else every arm above passes on a
+        // body the cut never touched
+        let full = rule_for(Vec::new()).body;
+        assert!(
+            r.body.len() < full.len(),
+            "the cut must remove something: {} against {}",
+            r.body.len(),
+            full.len()
+        );
+    }
+
+    #[test]
+    fn declaring_nothing_keeps_the_reserved_directory_convention() {
+        // the control. without it both arms above pass on a rule that simply
+        // never mentions a canon directory at all.
+        let r = rule_for(Vec::new());
+        assert!(r.body.contains("### The shape of"), "{}", r.body);
+        assert!(
+            r.body.contains("a directory reserved for it alone"),
+            "{}",
+            r.body
+        );
+        assert!(
+            r.apply_to.iter().any(|p| p.ends_with("/canon/**")),
+            "{:?}",
+            r.apply_to
+        );
+    }
+
+    #[test]
+    fn a_project_whose_canon_is_that_directory_keeps_it_too() {
+        // declaring the conventional location explicitly must not lose the
+        // convention, else the check is on emptiness rather than on location.
+        let r = rule_for(vec!["mock/canon/**".into()]);
+        assert!(r.body.contains("### The shape of"), "{}", r.body);
+    }
+}
