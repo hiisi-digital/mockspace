@@ -80,7 +80,6 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
         writeln!(md).unwrap();
     }
 
-    // Table of contents
     writeln!(md, "## Table of Contents").unwrap();
     writeln!(md).unwrap();
 

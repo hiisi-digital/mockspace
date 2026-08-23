@@ -616,7 +616,8 @@ pub fn run_orchestrator(
             let seed = seeds[pass_idx];
             let pass_num = pass_idx / nc + 1;
 
-            // Randomise variant order
+            // reshuffled per pass so a variant's position in the pass cannot
+            // bias its numbers.
             let mut variant_order: Vec<usize> = (0 .. nv).collect();
             let mut h = mix(seed);
             for i in (1 .. nv).rev() {

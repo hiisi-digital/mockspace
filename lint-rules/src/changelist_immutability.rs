@@ -53,7 +53,6 @@ impl RepoLint for ChangelistImmutability {
 
         let phase = changelist_helpers::current_phase(&design_rounds);
 
-        // Get all modified files in design_rounds/.
         let modified = get_modified_in_design_rounds(workspace_root);
         if modified.is_empty() {
             return Vec::new();

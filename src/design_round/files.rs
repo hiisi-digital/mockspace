@@ -116,7 +116,7 @@ pub(crate) fn legacy_to_new_filename(name: &str) -> Option<String> {
         return Some(format!("{timestamp}_changelist.doc.{status_suffix}"));
     }
 
-    // It's a topic. Extract name (strip .md suffix).
+    // not a changelist, so what is left is a topic.
     let topic_name = rest.strip_suffix(".md")?;
     if topic_name.is_empty() {
         return None;

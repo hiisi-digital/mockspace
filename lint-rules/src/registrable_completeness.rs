@@ -91,7 +91,6 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         return;
     }
 
-    // skip exempt macros
     if EXEMPT_MACROS.contains(&macro_name) {
         return;
     }
