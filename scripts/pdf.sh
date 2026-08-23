@@ -14,6 +14,8 @@
 #   --open              Open the PDF after generation (macOS: open, Linux: xdg-open)
 #   --no-toc            Skip table of contents
 #   --engine <engine>   PDF engine: xelatex (default) or pdflatex
+#   --dry-run           Print the project name and the files that would be
+#                       combined, then stop. Needs no LaTeX engine.
 
 set -euo pipefail
 
@@ -25,6 +27,7 @@ TITLE=""
 OPEN_AFTER=false
 WITH_TOC=true
 PDF_ENGINE=""  # auto-detected below
+DRY_RUN=false
 
 # ─── argument parsing ─────────────────────────────────────────────────────────
 
@@ -36,6 +39,7 @@ while [[ $# -gt 0 ]]; do
         --open)     OPEN_AFTER=true; shift ;;
         --no-toc)   WITH_TOC=false; shift ;;
         --engine)   PDF_ENGINE="$2"; shift 2 ;;  # xelatex, pdflatex, lualatex, tectonic
+        --dry-run)  DRY_RUN=true; shift ;;
         *) echo "error: unknown option: $1" >&2; exit 1 ;;
     esac
 done
@@ -66,7 +70,10 @@ DOT_FILE="$DOCS_DIR/STRUCTURE.GRAPH.dot"
 
 # ─── auto-detect PDF engine if not specified ──────────────────────────────────
 
-if [[ -z "$PDF_ENGINE" ]]; then
+# A dry run combines nothing and typesets nothing, so it must not require an
+# engine. Otherwise the one mode that exists to be checked on a machine without
+# a TeX distribution is the one mode that cannot run there.
+if [[ -z "$PDF_ENGINE" ]] && ! $DRY_RUN; then
     for candidate in xelatex lualatex pdflatex tectonic; do
         if command -v "$candidate" &>/dev/null; then
             PDF_ENGINE="$candidate"
@@ -84,9 +91,17 @@ fi
 
 # ─── extract project name from the DOT file ───────────────────────────────────
 
+# The name is quoted whenever it is not a bare identifier, and graphviz accepts
+# both, so the quotes come off here rather than travelling into the title and
+# the running header.
+#
+# `|| true` because the fallback below is otherwise unreachable: under pipefail
+# a dot file with no digraph line fails the pipeline, which under `set -e` ends
+# the script before the line that exists to handle exactly that case.
 PROJECT_NAME=$(grep -m1 '^digraph ' "$DOT_FILE" \
     | sed 's/^digraph[[:space:]]*//' \
-    | sed 's/[[:space:]]*{.*//')
+    | sed 's/[[:space:]]*{.*//' \
+    | sed 's/^"//; s/"$//' || true)
 [[ -z "$PROJECT_NAME" ]] && PROJECT_NAME="$(basename "$REPO_ROOT")"
 
 [[ -z "$TITLE"    ]] && TITLE="$PROJECT_NAME: Design Documentation"
@@ -136,6 +151,38 @@ for crate_node in "${ordered_crates[@]}"; do
     done
 done
 
+# The registry's own documents.
+#
+# A project whose canon is a typed registry keeps it in these, and the selection
+# above knows only about crates, so without this the generated book contains
+# every crate's documentation and none of the canon.
+#
+# Two passes, because neither source is complete on its own. The config says
+# which namespaces the project declares and in what order, and that order is
+# worth keeping. It does not say which namespaces mockspace supplies itself,
+# and those pages are canon too: reading only the config left the reference
+# namespace out of the book, which is the same defect this whole section
+# exists to fix, one namespace narrower.
+CONFIG="$REPO_ROOT/mockspace.toml"
+if [[ -f "$CONFIG" ]]; then
+    while IFS= read -r ns; do
+        [[ -z "$ns" ]] && continue
+        upper="$(printf '%s' "$ns" | tr '[:lower:]' '[:upper:]')"
+        [[ -f "$DOCS_DIR/${upper}.md" ]] && files+=("$DOCS_DIR/${upper}.md")
+    done < <(sed -n 's/^[[:space:]]*key[[:space:]]*=[[:space:]]*"\([a-z_]*\)"[[:space:]]*$/\1/p' "$CONFIG")
+fi
+
+# Then every registry page the pass above did not name, recognised by the line
+# each one carries and no other document does. Which namespaces are builtin is
+# mockspace's to decide and changes without any project's config changing, so a
+# list of them here would be a second copy that goes stale silently: the book
+# would simply stop carrying a chapter and nothing would say so. The dedup below
+# drops the ones already picked up, keeping the declared order for those.
+for page in "$DOCS_DIR"/*.md; do
+    [[ -f "$page" ]] || continue
+    grep -q '^[0-9][0-9]* rows\. Identifiers are permanent:' "$page" && files+=("$page")
+done
+
 # Reference appendices
 for footer in STRUCTURE.md DESIGN-DEEP-DIVES.md; do
     [[ -f "$DOCS_DIR/$footer" ]] && files+=("$DOCS_DIR/$footer")
@@ -157,6 +204,13 @@ for f in "${files[@]}"; do
 done
 
 echo "files   : ${#unique_files[@]} markdown files"
+
+if $DRY_RUN; then
+    for f in "${unique_files[@]}"; do
+        echo "file    : $f"
+    done
+    exit 0
+fi
 
 # ─── preprocess: patch SVG image refs → PNG (LaTeX cannot embed SVG) ──────────
 
