@@ -86,7 +86,8 @@ fi
 
 PROJECT_NAME=$(grep -m1 '^digraph ' "$DOT_FILE" \
     | sed 's/^digraph[[:space:]]*//' \
-    | sed 's/[[:space:]]*{.*//')
+    | sed 's/[[:space:]]*{.*//' \
+    | sed 's/^"//; s/"$//')
 [[ -z "$PROJECT_NAME" ]] && PROJECT_NAME="$(basename "$REPO_ROOT")"
 
 [[ -z "$TITLE"    ]] && TITLE="$PROJECT_NAME: Design Documentation"
@@ -135,6 +136,23 @@ for crate_node in "${ordered_crates[@]}"; do
         [[ -f "$f" ]] && files+=("$f")
     done
 done
+
+# The registry's own documents, in the order the project declares its
+# namespaces.
+#
+# A project whose canon is a typed registry keeps it in these, and the selection
+# above knows only about crates, so without this the generated book contains
+# every crate's documentation and none of the canon. Read from the config rather
+# than listed here, because which namespaces exist is the project's to say and a
+# list in this script would be a second copy of it that goes stale.
+CONFIG="$REPO_ROOT/mockspace.toml"
+if [[ -f "$CONFIG" ]]; then
+    while IFS= read -r ns; do
+        [[ -z "$ns" ]] && continue
+        upper="$(printf '%s' "$ns" | tr '[:lower:]' '[:upper:]')"
+        [[ -f "$DOCS_DIR/${upper}.md" ]] && files+=("$DOCS_DIR/${upper}.md")
+    done < <(sed -n 's/^key = "\([a-z_]*\)"$/\1/p' "$CONFIG")
+fi
 
 # Reference appendices
 for footer in STRUCTURE.md DESIGN-DEEP-DIVES.md; do
