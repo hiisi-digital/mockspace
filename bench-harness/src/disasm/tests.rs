@@ -284,7 +284,7 @@ const DYLIB_EXT: &str = "so";
 /// path whose length tracks `crate_name`'s length would make the
 /// panic branch's compiled size depend on the crate name too, which
 /// is exactly the kind of test-harness-introduced noise this module
-/// exists to be robust against in the dylibs under test, not to add on
+/// exists to be insensitive to in the dylibs under test, not to add on
 /// top in the fixture that builds them. `--crate-name` still varies
 /// per call and is what the mangled symbols and metadata hash key off.
 fn build_cdylib(dir: &Path, crate_name: &str, source: &str) -> Option<PathBuf> {

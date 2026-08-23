@@ -18,7 +18,7 @@
 //! ## Origin
 //!
 //! Framework was originally written by orgrinrt under MIT in
-//! `polka-dots/mock/benches/bench-core/` (the substrate that drove
+//! `polka-dots/mock/benches/bench-core/` (the work that drove
 //! arvo's strategy-marker design). Relicensed by the original author
 //! under MPL-2.0 for the mockspace stack. Lifted here so every
 //! mockspace consumer gets the canonical surface instead of re-rolling
