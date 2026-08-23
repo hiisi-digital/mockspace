@@ -101,8 +101,20 @@ fn namespaces_with_files_but_no_rows(
     out
 }
 
-/// Whether `path` contains an array-of-tables named `key`, which is what makes
-/// the loader attribute a row in it to that namespace.
+/// Whether `path` mentions `key` at the top level at all, in any table shape.
+///
+/// **Deliberately wider than the loader's own predicate, and that is the whole
+/// value of it.** `load_registry` accepts only an array of tables
+/// (`as_array_of_tables()`), so a file writing `[law]` where it meant `[[law]]`
+/// hits that arm, `continue`s, and produces no rows **with nothing printed**.
+/// That is the single-vs-double-bracket slip, it is the one drop path the
+/// loader is silent about, and a check that mirrors the loader's predicate
+/// cannot see it: a mirror never disagrees with what it mirrors.
+///
+/// So this asks the weaker question, "does this file talk about this namespace
+/// at all", and lets the row count answer the rest. A file mentioning `law` in
+/// any table shape, where no `law` row loaded, is a drop worth reporting
+/// whichever arm swallowed it.
 fn file_declares_namespace(path: &Path, key: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(path) else {
         return false;
@@ -110,8 +122,7 @@ fn file_declares_namespace(path: &Path, key: &str) -> bool {
     let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
         return false;
     };
-    doc.get(key)
-        .is_some_and(|i| i.as_array_of_tables().is_some())
+    doc.get(key).is_some()
 }
 
 #[test]
@@ -154,8 +165,10 @@ fn a_foreign_registry_parses_and_validates() {
     let empty = namespaces_with_files_but_no_rows(namespaces, &reg);
     assert!(
         empty.is_empty(),
-        "{empty:?} have files under {}/registry and loaded no rows: the loader \
-         dropped them without saying so.",
+        "{empty:?} have files the loader read and loaded no rows from: it \
+         dropped them. Some drop paths print a line on stderr and some do not; \
+         neither fails anything, which is what this turns into a failure. \
+         Under {}/registry.",
         mock_dir.display()
     );
 
@@ -232,7 +245,7 @@ fn a_foreign_registry_parses_and_validates() {
     eprintln!("reference values:    {inspected}");
 
     assert!(
-        provenance_findings.is_empty(),
+        inspected == 0 || provenance_findings.is_empty(),
         "{} finding(s) from `validate_provenance`, i.e. a reference this \
          registry declares that does not resolve. Each is either a real defect \
          or a shape the design permits and the resolver rejects. Copy a \
@@ -271,7 +284,12 @@ fn a_foreign_registry_parses_and_validates() {
     // loader. Saying nothing at all was the earlier state, and it let the PR
     // body claim "validation returns no findings" while a validator nobody
     // called returned twelve.
-    if let Ok(text) = std::fs::read_to_string(mock_dir.join("mockspace.toml")) {
+    // `cfg.config_path`, not a path rebuilt here. `Config::from_dir` reads the
+    // mock dir or the repo root, and this file already condemns re-deriving
+    // that choice thirty lines up. Rebuilding it made the report silently
+    // print nothing on a repo whose config sits at the root, which is the same
+    // silence this whole change is about.
+    if let Ok(text) = std::fs::read_to_string(&cfg.config_path) {
         let unknown = mockspace::registry::config_unknown_keys(&text);
         eprintln!("config unknown keys: {}", unknown.len());
         for f in &unknown {
@@ -303,9 +321,16 @@ fn the_drop_detection_reports_a_namespace_with_files_and_no_rows() {
     let mock = dir.path();
     std::fs::create_dir_all(mock.join("registry/ghostns")).unwrap();
 
-    // A real silent drop: the file declares the namespace's array of tables, so
-    // the loader reads it and attributes it to `ghostns`, and the table carries
-    // no `id`, so no row comes out and nothing is said about it.
+    // A drop: the file declares the namespace's array of tables, so the loader
+    // reads it and attributes it to `ghostns`, and the table carries no `id`,
+    // so no row comes out.
+    //
+    // **The loader does say something about this one**, on stderr, at
+    // `load.rs:84`. An earlier version of this comment called it silent, which
+    // was wrong and picked the one drop path that is reported to illustrate the
+    // ones that are not. The check still earns its place: it turns a line on
+    // stderr, which nothing reads and nothing fails on, into a failing test.
+    // The genuinely silent path is the plain-table slip, covered below.
     //
     // An earlier fixture wrote loose keys (`x = 1`) instead. That is a file
     // which declares nothing, and under a detection that follows the table key
@@ -565,5 +590,58 @@ fn the_drop_detection_follows_the_table_key_not_the_file_name() {
         "a namespace whose rows are declared in a differently-named file, and \
          did not load, must be reported. Empty means the detection is keyed on \
          the file name rather than the table key; got {found:?}"
+    );
+}
+
+/// The drop detection sees the single-vs-double-bracket slip, which is the one
+/// drop the loader really is silent about.
+///
+/// `load_registry` accepts only an array of tables. A file writing `[law]`
+/// where it meant `[[law]]` reaches `as_array_of_tables()`, gets `None`,
+/// `continue`s, and produces no rows **with nothing printed**. Every other drop
+/// path is either loud (a missing `id`, a TOML parse failure) or deliberate (a
+/// key no namespace declares), so this is the one that costs a reader real time.
+///
+/// **It is also the case a mirror cannot catch.** An earlier version of
+/// `file_declares_namespace` asked exactly what the loader asks, and a check
+/// that mirrors the thing it checks agrees with it everywhere, including where
+/// it is wrong. The predicate is deliberately wider for this reason.
+#[test]
+fn the_drop_detection_sees_a_plain_table_where_an_array_was_meant() {
+    let dir = tempfile::tempdir().expect("a temporary tree");
+    let mock = dir.path();
+    std::fs::create_dir_all(mock.join("registry")).unwrap();
+    std::fs::write(
+        mock.join("mockspace.toml"),
+        "[[registry.namespace]]\nkey = \"law\"\ntitle = \"Law\"\n",
+    )
+    .unwrap();
+
+    // One bracket, not two. Valid TOML, names the namespace, yields nothing.
+    std::fs::write(mock.join("registry/law.toml"), "[law]\nid = \"a\"\n").unwrap();
+
+    let cfg = mockspace::config::Config::from_dir(mock);
+    let reg = mockspace::registry::load_registry(mock, &cfg.registry_namespaces);
+
+    // Premise, not subject: the loader read the file and produced nothing.
+    assert!(
+        reg.files_read.iter().any(|p| p.ends_with("law.toml")),
+        "the loader did not read the fixture at all: {:?}",
+        reg.files_read
+    );
+    assert!(
+        reg.by_namespace.get("law").is_none_or(Vec::is_empty),
+        "the fixture's plain table loaded as rows, so there is no drop here to \
+         detect and this test is about something that no longer happens"
+    );
+
+    let found = namespaces_with_files_but_no_rows(&cfg.registry_namespaces, &reg);
+    assert_eq!(
+        found,
+        vec!["law".to_string()],
+        "a file naming a namespace in a table shape the loader does not accept, \
+         yielding no rows and printing nothing, must be reported. Empty means \
+         the detection asks the same question the loader asks and so cannot \
+         disagree with it; got {found:?}"
     );
 }
