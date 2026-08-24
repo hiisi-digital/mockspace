@@ -38,10 +38,25 @@ pub struct Merge {
 impl Merge {
     /// Read the merge state of the repository containing `dir`.
     pub fn detect(dir: &Path) -> Self {
-        // `--verify` keeps this quiet and false outside a merge: MERGE_HEAD
-        // exists only while one is in flight. An octopus merge writes several
-        // lines and every one of them is a parent.
-        let Some(heads) = git(dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]) else {
+        // The file, not `rev-parse --verify MERGE_HEAD`, which returns the
+        // FIRST line only. An octopus writes one sha per parent, and reading
+        // just the first would silently gate every file inherited from the
+        // second onward. It exists only while a merge is in flight, so its
+        // absence is the whole of the off-the-merge-path test.
+        let Some(path) = git(dir, &["rev-parse", "--git-path", "MERGE_HEAD"]) else {
+            return Self::default();
+        };
+        // `--git-path` answers relative to the working directory it was asked
+        // from, so from a subdirectory it prints `../.git/MERGE_HEAD`. That is
+        // `dir`, which is where the query ran. Every test here detects from a
+        // subdirectory for exactly this reason.
+        let path = Path::new(path.trim());
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            dir.join(path)
+        };
+        let Ok(heads) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
         let mut parents: Vec<String> =
@@ -145,13 +160,32 @@ mod tests {
             r
         }
 
+        /// Refuses a git that failed. A no-op that exits non-zero looks
+        /// exactly like a step that worked, and a fixture built on one asserts
+        /// against state nobody set up: that is how the `--ours` case below
+        /// came to re-assert the `--theirs` case on identical content.
         fn git(&self, args: &[&str]) -> String {
             let out = Command::new("git")
                 .args(args)
                 .current_dir(&self.root)
                 .output()
                 .unwrap_or_else(|e| panic!("git {args:?}: {e}"));
+            assert!(
+                out.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
             String::from_utf8_lossy(&out.stdout).to_string()
+        }
+
+        /// The same, for a command whose failure is the expected outcome.
+        fn git_may_fail(&self, args: &[&str]) -> bool {
+            Command::new("git")
+                .args(args)
+                .current_dir(&self.root)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
         }
 
         fn mock(&self) -> PathBuf {
@@ -181,12 +215,7 @@ mod tests {
             self.write(rel, trunk_body);
             self.commit("on trunk");
             self.git(&["switch", "-q", "feature"]);
-            let out = Command::new("git")
-                .args(["merge", "--no-commit", "--no-ff", "trunk"])
-                .current_dir(&self.root)
-                .output()
-                .unwrap();
-            !out.status.success()
+            !self.git_may_fail(&["merge", "--no-commit", "--no-ff", "trunk"])
         }
     }
 
@@ -242,7 +271,7 @@ mod tests {
         assert!(conflicted, "the fixture was meant to conflict");
 
         r.write("crates/foo/src/lib.rs", "a third thing nobody committed\n");
-        r.git(&["add", "crates/foo/src/lib.rs"]);
+        r.git(&["add", "mock/crates/foo/src/lib.rs"]);
 
         let m = Merge::detect(&r.mock());
         assert!(m.in_progress());
@@ -253,22 +282,71 @@ mod tests {
     }
 
     #[test]
-    fn resolving_a_conflict_by_taking_one_side_whole_is_inherited() {
-        // and the other half of the same fixture: `--theirs` reproduces a
-        // parent byte for byte, so it is not an authored change however it was
-        // reached.
+    fn resolving_a_conflict_by_taking_the_other_side_whole_is_inherited() {
+        // `--theirs` reproduces a parent byte for byte, so it is not an
+        // authored change however it was reached.
         let r = Repo::new("theirs-resolve");
         assert!(r.diverge_and_merge("crates/foo/src/lib.rs", "trunk\n", "branch\n"));
         r.git(&["checkout", "--theirs", "--", "mock/crates/foo/src/lib.rs"]);
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
 
         let m = Merge::detect(&r.mock());
+        assert_eq!(
+            std::fs::read_to_string(r.mock().join("crates/foo/src/lib.rs")).unwrap(),
+            "trunk\n",
+            "the resolution did not take the other side"
+        );
         assert!(m.inherited(&r.mock(), "crates/foo/src/lib.rs"));
+    }
 
-        // taking our own side is the same statement about the other parent
+    #[test]
+    fn resolving_a_conflict_by_keeping_our_own_side_is_inherited() {
+        // its own fixture, and that is the point rather than tidiness. Staging
+        // a resolution collapses the conflict stages, so a second `checkout
+        // --ours` in the same tree is a no-op that changes nothing and leaves
+        // the previous assertion re-run on identical content. This is the only
+        // case where the staged blob matches HEAD rather than MERGE_HEAD, so
+        // without a fresh conflict nothing anywhere covers HEAD as a parent.
+        let r = Repo::new("ours-resolve");
+        assert!(r.diverge_and_merge("crates/foo/src/lib.rs", "trunk\n", "branch\n"));
         r.git(&["checkout", "--ours", "--", "mock/crates/foo/src/lib.rs"]);
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
+
+        let m = Merge::detect(&r.mock());
+        assert_eq!(
+            std::fs::read_to_string(r.mock().join("crates/foo/src/lib.rs")).unwrap(),
+            "branch\n",
+            "the resolution did not keep our own side"
+        );
         assert!(m.inherited(&r.mock(), "crates/foo/src/lib.rs"));
+    }
+
+    #[test]
+    fn an_octopus_merge_counts_every_parent_and_not_only_the_first() {
+        // `git rev-parse --verify MERGE_HEAD` prints the first line only, so a
+        // reader built on it treats parent two onward as absent and gates
+        // every file inherited from them. Reading the file is what makes this
+        // pass, and swapping it back for `--verify` is what this catches.
+        let r = Repo::new("octopus");
+        r.write("crates/foo/src/lib.rs", "base\n");
+        r.commit("base");
+        r.git(&["switch", "-q", "-c", "one"]);
+        r.write("crates/foo/src/from_one.rs", "one\n");
+        r.commit("on one");
+        r.git(&["switch", "-q", "trunk"]);
+        r.git(&["switch", "-q", "-c", "two"]);
+        r.write("crates/foo/src/from_two.rs", "two\n");
+        r.commit("on two");
+        r.git(&["switch", "-q", "trunk"]);
+        r.git(&["merge", "--no-commit", "--no-ff", "one", "two"]);
+
+        let m = Merge::detect(&r.mock());
+        assert!(m.in_progress(), "the fixture did not leave a merge in flight");
+        assert_eq!(m.parents.len(), 3, "HEAD plus both merged heads");
+        // the file from the SECOND merged head is the one a first-line-only
+        // reader would report as an authored change
+        assert!(m.inherited(&r.mock(), "crates/foo/src/from_two.rs"));
+        assert!(m.inherited(&r.mock(), "crates/foo/src/from_one.rs"));
     }
 
     #[test]
