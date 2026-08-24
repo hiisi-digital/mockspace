@@ -28,7 +28,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use mockspace_manifest::gate::HOOK_VERSION;
-use renki::{Anchor, Hooks, Resolved, Tool, Workdir};
+use renki::{Anchor, Cli, Hooks, Locate, Resolved, Tool, Workdir};
 
 /// The canonical mockspace repository: the engine source when a manifest sets
 /// no `mockspace_git`.
@@ -45,6 +45,16 @@ pub const TOOL: Tool = Tool {
     cache_namespace: "mockspace",
     default_url:     CANONICAL_URL,
     launcher_crate:  "cargo-mock",
+    dir_flag:        Cli::DIR_FLAG,
+    engine_flag:     Cli::ENGINE_FLAG,
+    // `mock_dir`, not renki's conventional `workdir`. The key is a contract
+    // with `lib/mock.sh` and with every hook and shell helper that sources it,
+    // all of which parse `mock_dir=` and have done since before the launcher
+    // was extracted. renki makes the keys fields for exactly this.
+    locate:          Locate {
+        workdir_key: "mock_dir",
+        ..Locate::DEFAULT
+    },
     workdir:         Some(Workdir {
         key:          "mock_dir",
         // at the repo root, `mock` is what almost every consumer uses; in a
@@ -64,7 +74,9 @@ pub const TOOL: Tool = Tool {
 /// The launcher entry, shared by both installed binaries. Each bin is a
 /// two-line shim over this.
 pub fn run_cli() -> ExitCode {
-    renki::run(&TOOL)
+    // SAFETY: this is the process entry. Nothing else has run, so no other
+    // thread exists to observe the environment renki scrubs.
+    unsafe { renki::run(&TOOL) }
 }
 
 /// The lint-rules dependency, pinned to the same revision the engine was built

@@ -342,7 +342,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 [[package]]
 name = "renki"
 version = "0.0.0"
-source = "git+ssh://git@github.com/orgrinrt/renki.git?branch=dev#45fa8068d4e64ce0d8f76ad53bc3583cc2ae3b7e"
+source = "git+ssh://git@github.com/orgrinrt/renki.git?rev=4e7b6c8c7b07#4e7b6c8c7b079c0ffa5c43c087499fd1663178b3"
 dependencies = [
  "serde",
  "toml",
