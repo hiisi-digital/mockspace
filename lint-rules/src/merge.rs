@@ -20,8 +20,10 @@
 //! So the excuse is per file and is exactly that test. It never fires outside a
 //! merge, and it never fires on a hand resolution.
 
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The parents of a merge in progress, or nothing when no merge is in flight.
 ///
@@ -102,9 +104,116 @@ impl Merge {
         if staged.is_none() && at_parents.iter().all(Option::is_none) {
             return false;
         }
-        at_parents.iter().any(|p| *p == staged)
+        if at_parents.iter().any(|p| *p == staged) {
+            return true;
+        }
+        self.is_the_auto_merge(dir, file, staged.as_deref())
+    }
+
+    /// Whether the staged content is exactly what git's own three-way merge
+    /// produces for this path.
+    ///
+    /// The byte-identical test above catches a file only one side touched and a
+    /// conflict resolved by taking one side whole. It does not catch the common
+    /// case: **both sides changed the file in different places, and git
+    /// combined them**. That result matches neither parent while still being
+    /// something git assembled and nobody wrote, and treating it as authored
+    /// gates most of what an ordinary merge stages.
+    ///
+    /// So the question is asked of git directly. Reproduce the merge for this
+    /// one path from the three blobs and compare. A clean reproduction that
+    /// equals what is staged is git's own work. A hand resolution differs,
+    /// which is the whole point, and where it does not differ it *is* the auto
+    /// merge and excusing it is right.
+    ///
+    /// Two parents only. An octopus has no single base, and the byte-identical
+    /// test above still serves it.
+    fn is_the_auto_merge(&self, dir: &Path, file: &str, staged: Option<&str>) -> bool {
+        let (Some(staged), [ours, theirs]) = (staged, &self.parents[..]) else {
+            return false;
+        };
+        let Some(base) = git(dir, &["merge-base", ours, theirs]) else {
+            return false;
+        };
+        let base = base.trim();
+        // `merge-file` wants three files. The blobs go to a scratch directory
+        // that is removed whatever happens below.
+        //
+        // The name carries a counter and not the path, because two calls about
+        // the same path must not share a directory: the first one's cleanup
+        // deletes the second one's inputs mid-run, and the second then reports
+        // an authored change. Found exactly that way, as a test that failed
+        // beside its neighbours and passed alone.
+        static NTH: AtomicU64 = AtomicU64::new(0);
+        let scratch = std::env::temp_dir().join(format!(
+            "mockspace-merge-{}-{}",
+            std::process::id(),
+            NTH.fetch_add(1, Ordering::Relaxed)
+        ));
+        if std::fs::create_dir_all(&scratch).is_err() {
+            return false;
+        }
+        let write = |name: &str, rev: &str| -> Option<PathBuf> {
+            let at = scratch.join(name);
+            // An absent side is an empty file, which is what `merge-file`
+            // means by one side having nothing there.
+            let body = match blob(dir, &format!("{rev}:"), file) {
+                Some(_) => git_bytes(dir, &["show", &format!("{rev}:./{file}")])?,
+                None => Vec::new(),
+            };
+            std::fs::write(&at, body).ok()?;
+            Some(at)
+        };
+        let verdict = (|| {
+            let o = write("ours", ours)?;
+            let b = write("base", base)?;
+            let t = write("theirs", theirs)?;
+            let out = Command::new("git")
+                .arg("merge-file")
+                .arg("-p")
+                .arg("--quiet")
+                .arg(&o)
+                .arg(&b)
+                .arg(&t)
+                .current_dir(dir)
+                .output()
+                .ok()?;
+            // A non-zero status is a conflict count, and a conflicted
+            // reproduction is not what got staged whatever it looks like.
+            if !out.status.success() {
+                return Some(false);
+            }
+            let produced = git_hash_object(dir, &out.stdout)?;
+            Some(produced == staged)
+        })()
+        .unwrap_or(false);
+        let _ = std::fs::remove_dir_all(&scratch);
+        verdict
     }
 }
+
+/// The object id `content` would have as a blob, without writing it.
+fn git_hash_object(dir: &Path, content: &[u8]) -> Option<String> {
+    let mut child = Command::new("git")
+        .args(["hash-object", "--stdin"])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    child.stdin.take()?.write_all(content).ok()?;
+    let out = child.wait_with_output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn git_bytes(cwd: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    let out = Command::new("git").args(args).current_dir(cwd).output().ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
 
 /// The object id of `file` at `rev`, or `None` where the path is absent there.
 ///
@@ -258,6 +367,70 @@ mod tests {
         assert!(
             m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
             "a file the branch never touched is not an authored change"
+        );
+    }
+
+    #[test]
+    fn a_file_both_sides_changed_in_different_places_is_inherited() {
+        // The common shape of an ordinary merge, and the one a byte comparison
+        // against each parent cannot see: git combines two non-overlapping
+        // hunks, so the result matches neither side while still being nobody's
+        // work. Without this, most of what a real merge stages reads as
+        // authored and the gate fires on all of it.
+        let r = Repo::new("automerge");
+        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
+        r.commit("base");
+        r.git(&["switch", "-q", "-c", "feature"]);
+        r.write("crates/foo/src/lib.rs", "one\nBRANCH\nthree\nfour\nfive\nsix\nseven\n");
+        r.commit("on the branch");
+        r.git(&["switch", "-q", "trunk"]);
+        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nTRUNK\n");
+        r.commit("on trunk");
+        r.git(&["switch", "-q", "feature"]);
+        r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
+
+        let body = std::fs::read_to_string(r.mock().join("crates/foo/src/lib.rs")).unwrap();
+        assert!(
+            body.contains("BRANCH") && body.contains("TRUNK"),
+            "the fixture did not auto-merge both hunks: {body:?}"
+        );
+
+        let m = Merge::detect(&r.mock());
+        assert!(m.in_progress());
+        assert!(
+            m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            "git assembled this and nobody wrote it"
+        );
+    }
+
+    #[test]
+    fn an_edit_made_on_top_of_an_auto_merge_is_not_inherited() {
+        // The control on the case above, and the one that keeps the reproduction
+        // honest: take git's own combined result and change one line of it. It
+        // still matches neither parent, exactly as the auto merge did, and it is
+        // an authored change.
+        let r = Repo::new("automerge-then-edit");
+        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
+        r.commit("base");
+        r.git(&["switch", "-q", "-c", "feature"]);
+        r.write("crates/foo/src/lib.rs", "one\nBRANCH\nthree\nfour\nfive\nsix\nseven\n");
+        r.commit("on the branch");
+        r.git(&["switch", "-q", "trunk"]);
+        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nTRUNK\n");
+        r.commit("on trunk");
+        r.git(&["switch", "-q", "feature"]);
+        r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
+
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\nBRANCH\nthree\nSMUGGLED\nfive\nsix\nTRUNK\n",
+        );
+        r.git(&["add", "mock/crates/foo/src/lib.rs"]);
+
+        let m = Merge::detect(&r.mock());
+        assert!(
+            !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            "a line nobody committed on either side rode in under a merge"
         );
     }
 
