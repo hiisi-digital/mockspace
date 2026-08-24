@@ -152,16 +152,8 @@ cfgrel="${cfg#"$root"/}"
 /// block at the repo's configured `uninitialised_blocks` scope when it does not.
 #[must_use]
 pub fn durable_hook(name: &str, hook_version: u32) -> String {
-    let stdin_capture = if name == "pre-push" {
-        "PREPUSH_STDIN=$(cat)\n"
-    } else {
-        ""
-    };
-    let stdin_replay = if name == "pre-push" {
-        "printf '%s\\n' \"$PREPUSH_STDIN\" | "
-    } else {
-        ""
-    };
+    let stdin_capture = if name == "pre-push" { "PREPUSH_STDIN=$(cat)\n" } else { "" };
+    let stdin_replay = if name == "pre-push" { "printf '%s\\n' \"$PREPUSH_STDIN\" | " } else { "" };
     format!(
         r##"#!/usr/bin/env bash
 {MANAGED_MARKER}
@@ -220,10 +212,10 @@ exit 1
 pub fn fingerprint(content: &str) -> u64 {
     // FNV-1a: vendored rather than pulled in, since this crate is deliberately
     // dependency-light and the hash only needs to be stable, not strong.
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
     for b in content.as_bytes() {
         h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
     }
     h
 }
@@ -251,10 +243,10 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
             fingerprint(&content)
         );
 
-        if let Ok(current) = std::fs::read_to_string(&path) {
-            if current.contains(&fp_line) {
-                continue;
-            }
+        if let Ok(current) = std::fs::read_to_string(&path)
+            && current.contains(&fp_line)
+        {
+            continue;
         }
 
         let final_content = content.replacen(MANAGED_MARKER, &fp_line, 1);
@@ -276,60 +268,19 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
     actions
 }
 
-/// The repo-location variables git exports into hook processes. A child `git`
-/// spawned from a hook inherits them, and any invocation whose working
-/// directory differs from the hook's then resolves against the wrong tree.
+/// The repo-location `GIT_*` variables, and dropping them.
 ///
-/// Public so the removal set is testable without mutating the environment;
-/// the membership tests below pin it against accidental narrowing.
-pub const GIT_REPO_ENV: &[&str] = &[
-    "GIT_DIR",
-    "GIT_COMMON_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_PREFIX",
-];
-
-/// Drop the repo-location `GIT_*` variables git exports into hooks, so every
-/// child `git` rediscovers the repo from its own working directory.
+/// Re-exported rather than restated: `renki` owns this because every launcher
+/// built on it runs as a grandchild of a git hook and needs the same scrub, and
+/// two copies of the list is how one of them quietly narrows.
 ///
-/// Both binaries run routinely as grandchildren of a git hook, and the engine
-/// spawns `git` with `current_dir` set to the mock workspace, not the repo
-/// root. With `GIT_DIR` inherited and `GIT_WORK_TREE` unset, git treats that
-/// working directory as the top of the work tree: every index path
-/// (`mock/crates/...`) then misses the `crates/...` pathspec, and the
-/// changelist gates read the whole tree as untracked. With a *relative*
-/// `GIT_DIR=.git` the same inheritance makes those invocations fail outright
-/// and the gates run blind. Found live: a worktree commit reported all 84 doc
-/// templates as `(untracked) changed`.
-///
-/// Dropping `GIT_INDEX_FILE` means a `git commit -a` temporary index is not
-/// consulted. For *detection* that changes nothing: the gates scan staged,
-/// unstaged and untracked state alike, so a change is flagged either way. For
-/// *content* it can: a file staged and then further modified reads as its
-/// index blob while a `commit -a` in flight would commit the worktree blob
-/// (see `staged_or_worktree` in the changelist-required lint, where the case
-/// is catalogued).
-///
-/// This also strips a `GIT_DIR`/`GIT_WORK_TREE` pair a user exported on
-/// purpose (the bare dotfiles-repo pattern); running `mock` inside such an
-/// environment falls back to ordinary repo discovery from the working
-/// directory.
-///
-/// # Safety
-///
-/// Call first thing in the process entry, before any other thread exists.
-/// The environment is process-global and unsynchronised; mutating it while
-/// another thread reads it (including indirectly, through `Command::spawn`
-/// or any libc function that walks `environ`) is undefined behaviour.
-pub unsafe fn sanitize_git_env() {
-    for var in GIT_REPO_ENV {
-        // SAFETY: the caller guarantees no other thread exists yet.
-        unsafe { std::env::remove_var(var) };
-    }
-}
+/// Why it matters here: the engine spawns `git` with its working directory set
+/// to the mock workspace rather than the repo root. With `GIT_DIR` inherited
+/// and `GIT_WORK_TREE` unset, git reads that directory as the top of the work
+/// tree, so every index path misses its pathspec and the changelist gates read
+/// the whole tree as untracked. Found live, on a worktree commit that reported
+/// all 84 doc templates as changed and untracked.
+pub use renki::{GIT_REPO_ENV, sanitize_git_env};
 
 /// Point the repo's `core.hooksPath` at `dir`, unless it already points somewhere
 /// mockspace owns.
@@ -483,38 +434,4 @@ mod tests {
     // without touching the process environment, which the test harness's
     // sibling threads read concurrently (env mutation under the default
     // multi-threaded harness is undefined behaviour).
-    #[test]
-    fn the_removal_set_names_every_repo_location_var() {
-        for var in [
-            "GIT_DIR",
-            "GIT_COMMON_DIR",
-            "GIT_WORK_TREE",
-            "GIT_INDEX_FILE",
-            "GIT_OBJECT_DIRECTORY",
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-            "GIT_PREFIX",
-        ] {
-            assert!(
-                GIT_REPO_ENV.contains(&var),
-                "{var} is repo-location and must be sanitized"
-            );
-        }
-    }
-
-    #[test]
-    fn the_removal_set_spares_identity_and_config() {
-        for var in [
-            "GIT_AUTHOR_NAME",
-            "GIT_AUTHOR_EMAIL",
-            "GIT_COMMITTER_NAME",
-            "GIT_COMMITTER_EMAIL",
-            "GIT_CONFIG_PARAMETERS",
-            "GIT_SSH_COMMAND",
-        ] {
-            assert!(
-                !GIT_REPO_ENV.contains(&var),
-                "{var} is not repo-location and must survive sanitizing"
-            );
-        }
-    }
 }

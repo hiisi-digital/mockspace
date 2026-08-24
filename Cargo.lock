@@ -35,6 +35,7 @@ name = "cargo-mock"
 version = "0.0.0"
 dependencies = [
  "mockspace-manifest",
+ "renki",
  "serde",
  "tempfile",
  "toml",
@@ -251,6 +252,7 @@ dependencies = [
 name = "mockspace-manifest"
 version = "0.0.0"
 dependencies = [
+ "renki",
  "serde",
  "tempfile",
  "toml",
@@ -337,6 +339,15 @@ name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+
+[[package]]
+name = "renki"
+version = "0.0.0"
+source = "git+ssh://git@github.com/orgrinrt/renki.git?branch=dev#4aa9e97b04ab241d7ddbf7a8aec258a3b5b7818f"
+dependencies = [
+ "serde",
+ "toml",
+]
 
 [[package]]
 name = "rustix"

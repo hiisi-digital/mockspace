@@ -2,17 +2,17 @@
 name = "mockspace-manifest"
 version = "0.0.0"
 edition = "2024"
-# The one shared reader of a repo's mockspace.toml header and its engine pin,
-# so the launcher and the engine parse the same format exactly once instead of
-# each hand-rolling it. Published because the launcher (cargo-mock) is
-# published and depends on it; kept tiny (serde + toml only) so the launcher
-# stays fast to install.
+# The launcher-owned half of a repo's mockspace.toml, declared as a type so the
+# engine's config gate knows those keys are not its own, plus the durable hook
+# gate both sides plant. Published because the launcher (cargo-mock) is
+# published and depends on it.
 publish = true
-description = "Shared mockspace.toml manifest header + engine-pin schema, parsed once for the mockspace launcher and engine."
+description = "The mockspace.toml keys the mockspace launcher reads, and the durable git-hook gate, shared between the launcher and the engine."
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
 
 [dependencies]
+renki = { git = "ssh://git@github.com/orgrinrt/renki.git", branch = "dev" }
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }
 
