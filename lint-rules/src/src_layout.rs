@@ -33,6 +33,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::merge;
+
 /// The source directories a project declares, relative to its mock directory.
 ///
 /// Relative because that is what git wants as a pathspec under `--relative`, and
@@ -158,12 +160,159 @@ pub fn changed_files(
         }
     }
 
+    // What a merge brought in is not what an author wrote, and the phase gates
+    // judge authored changes. Only the staged walk is asked, because that is
+    // the only one a merge writes to; an unstaged or untracked file during a
+    // merge was dirty beforehand and is nobody's resolution.
+    //
+    // Costs one `git rev-parse` off the merge path and nothing per file, since
+    // `Merge::detect` finds no MERGE_HEAD and `inherited` is then constant.
+    let merge = merge::Merge::detect(mock_dir);
+    if merge.in_progress() {
+        files.retain(|(file, source)| source != "staged" || !merge.inherited(mock_dir, file));
+    }
+
     files
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
     let output = Command::new("git").args(args).current_dir(cwd).output().ok()?;
     Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(test)]
+mod merge_walk_tests {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    use super::*;
+
+    /// A repo with a `mock/crates/foo` package, on branch `trunk`.
+    struct Repo {
+        root: PathBuf,
+    }
+
+    impl Drop for Repo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    impl Repo {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("mockspace-walk-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("mock/crates/foo/src")).unwrap();
+            let r = Repo {
+                root,
+            };
+            r.git(&["init", "-q", "-b", "trunk"]);
+            r.git(&["config", "user.email", "t@example.com"]);
+            r.git(&["config", "user.name", "t"]);
+            r.git(&["config", "commit.gpgsign", "false"]);
+            r
+        }
+
+        fn git(&self, args: &[&str]) {
+            Command::new("git").args(args).current_dir(&self.root).output().unwrap();
+        }
+
+        fn mock(&self) -> PathBuf {
+            self.root.join("mock")
+        }
+
+        fn write(&self, rel: &str, body: &str) {
+            let p = self.mock().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+
+        fn commit(&self, msg: &str) {
+            self.git(&["add", "-A"]);
+            self.git(&["commit", "-q", "-m", msg, "--no-gpg-sign"]);
+        }
+
+        fn layout(&self) -> SrcLayout {
+            SrcLayout::new(&self.mock(), &[self.mock().join("crates")])
+        }
+
+        fn walk(&self) -> Vec<(String, String)> {
+            changed_files(&self.mock(), &self.layout(), |_| true)
+        }
+    }
+
+    /// The whole reason the merge filter exists. A merge of trunk into a
+    /// feature branch stages doc templates and source at once, and no phase
+    /// permits both, so before this no design round could carry a merge.
+    #[test]
+    fn a_merge_that_staged_both_a_doc_template_and_source_reports_neither() {
+        let r = Repo::new("both");
+        r.write("crates/foo/src/lib.rs", "pub fn a() {}\n");
+        r.write("crates/foo/DESIGN.md.tmpl", "base\n");
+        r.write("crates/foo/README.md", "base\n");
+        r.commit("base");
+        r.git(&["switch", "-q", "-c", "feature"]);
+        r.write("crates/foo/README.md", "the branch moved something else\n");
+        r.commit("on the branch");
+        r.git(&["switch", "-q", "trunk"]);
+        r.write("crates/foo/src/lib.rs", "pub fn a() {}\npub fn trunk_added() {}\n");
+        r.write("crates/foo/DESIGN.md.tmpl", "trunk rewrote the design\n");
+        r.commit("on trunk");
+        r.git(&["switch", "-q", "feature"]);
+        r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
+
+        let files = r.walk();
+        assert!(
+            files.is_empty(),
+            "a merge authored nothing, yet the walk reported {files:?}"
+        );
+    }
+
+    /// The control that makes the assertion above mean something: the same
+    /// walk, in the same merge, still reports a file somebody resolved by hand.
+    #[test]
+    fn a_hand_resolved_file_in_the_same_merge_is_still_reported() {
+        let r = Repo::new("hand");
+        r.write("crates/foo/src/lib.rs", "base\n");
+        r.write("crates/foo/src/quiet.rs", "base\n");
+        r.commit("base");
+        r.git(&["switch", "-q", "-c", "feature"]);
+        r.write("crates/foo/src/lib.rs", "branch\n");
+        r.commit("on the branch");
+        r.git(&["switch", "-q", "trunk"]);
+        r.write("crates/foo/src/lib.rs", "trunk\n");
+        r.write("crates/foo/src/quiet.rs", "trunk took this one alone\n");
+        r.commit("on trunk");
+        r.git(&["switch", "-q", "feature"]);
+        r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
+        r.write("crates/foo/src/lib.rs", "a third body nobody committed\n");
+        r.git(&["add", "mock/crates/foo/src/lib.rs"]);
+
+        let files = r.walk();
+        let names: Vec<&str> = files.iter().map(|(f, _)| f.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["crates/foo/src/lib.rs"],
+            "the hand resolution must stay gated and the inherited file must not"
+        );
+    }
+
+    /// And off a merge the walk is exactly what it always was, so the filter
+    /// cannot be excusing anything in an ordinary commit.
+    #[test]
+    fn off_a_merge_an_ordinary_staged_edit_is_still_reported() {
+        let r = Repo::new("plain");
+        r.write("crates/foo/src/lib.rs", "pub fn a() {}\n");
+        r.commit("base");
+        r.write("crates/foo/src/lib.rs", "pub fn b() {}\n");
+        r.git(&["add", "-A"]);
+
+        assert_eq!(
+            r.walk(),
+            vec![("crates/foo/src/lib.rs".to_string(), "staged".to_string())]
+        );
+    }
 }
 
 #[cfg(test)]

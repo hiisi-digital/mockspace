@@ -400,6 +400,26 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "catalogue: a clean merge runs pre-merge-commit, which is not \
+                installed, so its staged source and doc templates reach a commit \
+                in any phase. Closing it needs a reader that does not depend on \
+                MERGE_HEAD, which is unset at that point."]
+    fn a_clean_merge_is_gated_too() {
+        // Measured on git 2.55: a merge that resolves without conflict never
+        // runs `pre-commit`. It runs `pre-merge-commit`, which nothing here
+        // writes, so every phase gate is silent for that commit. A conflicted
+        // merge finished with `git commit` does run `pre-commit`, which is why
+        // the hole shows up only sometimes and why it was not noticed while
+        // the merge filter was being built for the conflicted case.
+        //
+        // The assertion is what closing it looks like, not what today does.
+        assert!(
+            HOOK_NAMES.contains(&"pre-merge-commit"),
+            "a clean merge reaches a commit with no gate run against it"
+        );
+    }
+
+    #[test]
     fn a_non_project_exits_zero() {
         let h = durable_hook("pre-commit", 3);
         assert!(h.contains(r#"[ -z "$cfg" ] && exit 0"#));
