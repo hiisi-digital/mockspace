@@ -34,6 +34,7 @@ mod nuke;
 pub(crate) use nuke::*;
 mod panel;
 mod subcmd;
+mod test;
 pub(crate) use subcmd::*;
 mod tool;
 mod resolve;

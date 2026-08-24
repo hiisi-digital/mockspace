@@ -541,6 +541,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 let bench_args = subcommand_args(&args, "bench");
                 return bench::cmd(&cfg, &bench_args);
             },
+            "test" => {
+                let test_args = subcommand_args(&args, "test");
+                return super::test::run(&cfg, &test_args);
+            },
             "panel" => {
                 let panel_args = subcommand_args(&args, "panel");
                 return super::panel::run(&cfg, &panel_args);

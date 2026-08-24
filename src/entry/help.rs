@@ -167,6 +167,27 @@ const COMMANDS: &[Cmd] = &[
                   declared under <mock>/panel/.",
     },
     Cmd {
+        name:    "test",
+        summary: "run the tests of every tree mockspace owns, not only the members",
+        args:    &[],
+        help:    "Runs `cargo test` over each tree separately: the mock \
+                  workspace's own members, every tool crate under \
+                  <mock>/tools/, every bench crate under <mock>/benches/, and \
+                  the generated lint crate carrying <mock>/lints/*.rs.\n\n\
+                  Only the first is reached by a plain `cargo test` in <mock>/. \
+                  The other three are compiled by mockspace outside the \
+                  workspace, so a repository can hold tools, benches and lints \
+                  with tests and run none of them while appearing to. A \
+                  repository whose `members` list is empty runs nothing at \
+                  all.\n\n\
+                  Everything after `test` is forwarded to each cargo \
+                  invocation, so `mock test --release` and `mock test -- \
+                  --nocapture` both work.\n\n\
+                  The lint tree needs the generated crate to exist; `mock \
+                  check` generates it. It is reported as absent rather than \
+                  generated here, so one path knows how.",
+    },
+    Cmd {
         name:    "pdf",
         summary: "render the design documents to PDF",
         args:    &[],
