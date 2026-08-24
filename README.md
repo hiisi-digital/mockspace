@@ -3,8 +3,6 @@
 <div align="center" style="text-align: center;">
 
 [![GitHub Stars](https://img.shields.io/github/stars/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/stargazers)
-[![Crates.io](https://img.shields.io/crates/v/mockspace)](https://crates.io/crates/mockspace)
-[![docs.rs](https://img.shields.io/docsrs/mockspace)](https://docs.rs/mockspace)
 [![GitHub Issues](https://img.shields.io/github/issues/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/issues)
 ![License](https://img.shields.io/github/license/hiisi-digital/mockspace?color=%23009689)
 

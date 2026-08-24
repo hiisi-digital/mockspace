@@ -9,7 +9,6 @@ publish = true
 description = "Launcher for the mockspace design-round workflow engine: resolves the per-repo pinned mockspace, builds it once per version into a shared cache, and runs it from any working directory."
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
-readme = "README.md"
 categories = ["development-tools", "command-line-utilities"]
 keywords = ["mockspace", "cargo-subcommand", "design-rounds", "workflow"]
 
@@ -19,14 +18,17 @@ keywords = ["mockspace", "cargo-subcommand", "design-rounds", "workflow"]
 # the library, so the two binaries share one implementation without cargo's
 # "same file in multiple targets" warning.
 
-# Curated-minimal dependencies only. The pin table is still hand-parsed (a
-# handful of top-level keys), cargo's own install-root lock and atomic binary
-# install cover concurrency, and the cache key uses a vendored stable FNV hash.
-# The one structured file the launcher owns, the global registry, is real TOML
-# with several tables, so it uses serde + toml rather than a hand-rolled parser;
-# both are pulled `default-features = false` with only the features the registry
-# needs, keeping the published launcher fast to install and tiny to audit.
+# The launcher machinery is `renki` and is shared with every other tool built
+# the same way. What is left here is mockspace's own: the tool descriptor, the
+# four hooks, and the legacy Cargo.lock pin, which needs a TOML reader of its
+# own. `mockspace-manifest` comes along for the durable hook gate.
 [dependencies]
+# Pinned by revision rather than by branch. renki is unpublished and still at
+# `0.0.0`, so a branch pin is not a version constraint at all: the lockfile
+# latches whatever `dev` pointed at the day it resolved, and the next
+# `cargo update` moves it onto whatever `dev` points at then. That is the
+# launcher every consumer repo installs.
+renki = { git = "ssh://git@github.com/orgrinrt/renki.git", rev = "4e7b6c8c7b07" }
 mockspace-manifest = { path = "../mockspace-manifest" }
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
