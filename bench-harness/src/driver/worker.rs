@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Worker-mode dispatch for the library driver: parse the worker
 //! args the orchestrator passed, rebuild the routine and workload
 //! from the manifest, and run the worker loop.

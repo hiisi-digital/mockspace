@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! A dlopen'd sibling "runtime" cdylib that a boundary bench crosses into.
 //!
 //! A boundary bench measures the cost of the host-to-runtime C ABI call itself:

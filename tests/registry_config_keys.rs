@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! A key in `mockspace.toml` that mockspace does not read is reported, not eaten.
 //!
 //! The registry's row data is covered by generated schemas run through a TOML

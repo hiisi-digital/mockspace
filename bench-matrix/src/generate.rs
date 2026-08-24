@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! `generate_all`: map each `MatrixDecl` onto one `harness::MatrixSpec` per sweep
 //! value and let the harness transport write the isolated variant crates and the
 //! `bench.toml` sections. The single canonical `LIB_TEMPLATE` lives here, owned by

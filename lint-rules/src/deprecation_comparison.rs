@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Cross-crate lint: active changelists must compare to deprecated ones.
 //!
 //! When a changelist is deprecated and a new one created in its place,

@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! The canonical measurement wrappers. Every generated variant's timed region is
 //! a call into one of these, so the anti-hoist chain, the shared seed table, the
 //! S timing, the reps-invariant fidelity digest, and the fold-one-keep-alive rule

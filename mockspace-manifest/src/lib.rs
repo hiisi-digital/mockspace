@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! The shared reader of a repo's `mockspace.toml` header and its engine pin.
 //!
 //! Both the launcher (`cargo-mock`) and the engine (`mockspace`) need to read

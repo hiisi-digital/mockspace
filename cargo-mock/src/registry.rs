@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! The global launcher registry: a machine-wide record of which repos consume
 //! which built engine, used to garbage-collect engine builds nothing pins
 //! anymore and, forward-looking, to index every repo the launcher has seen.

@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Workload: stage-based program definitions with Shuffle/Chain/OneOf
 //! strategies. Persistent allocations for warm mode. Fresh clones for
 //! cold mode. Defined once, run both ways automatically.

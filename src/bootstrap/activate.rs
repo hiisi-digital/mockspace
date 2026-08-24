@@ -1,4 +1,10 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 #![allow(unused_imports)]
+
 use super::*;
 
 /// Point `core.hooksPath` at the durable fallback hooks and record the

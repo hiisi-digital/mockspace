@@ -1,0 +1,74 @@
+# Copyright headers, kept current by `ante` rather than by hand.
+#
+# The whole file is the configuration. `ante` reads its settings from a
+# `deno.json` or a `package.json` where a project has one, and this crate has
+# neither, so the standalone form is what applies. An `[ante]` table is also
+# accepted, which is what lets one file move between the two shapes unchanged.
+#
+# Run `ante check` to see what is out of date and `ante fix` to write it. The
+# point of having it configured at all is that a year rolling over, a
+# contributor arriving, or an address changing is a re-run rather than a
+# hand-edit of a hundred and sixty files.
+
+# MPL-2.0, matching `license` in Cargo.toml, which is the one that governs.
+# The URL is derived from the identifier and is not stated here, so the two
+# cannot disagree.
+spdxLicense = "MPL-2.0"
+
+maintainerEmail = "contact@hiisi.digital"
+
+# Contributors come from git rather than from a list somebody maintains, which
+# is the reason to run this tool at all: a list in a config file is a second
+# copy of what the history already knows, and it goes stale silently.
+contributorSelection = "commits"
+maxContributors = 3
+
+# Every tree that holds this project's own Rust. Written out per crate rather
+# than as one `**/*.rs`, because that would sweep the generated lint crate under
+# `mock/target/`, every dependency checkout cargo happens to leave in a target
+# directory, and the fixture crates the tests build.
+#
+# A review found the first version of this list claiming to be every such tree
+# and missing four: a build script, three `tests/` directories, and the bench
+# workspace entirely. The claim was the defect rather than the omissions, since
+# a list that says it is complete is the one nobody re-derives.
+include = [
+  "src/**/*.rs",
+  "lint-rules/src/**/*.rs",
+  "bench-core/src/**/*.rs",
+  "bench-harness/src/**/*.rs",
+  "bench-harness/build.rs",
+  "bench-macro/src/**/*.rs",
+  "bench-matrix/src/**/*.rs",
+  "cargo-mock/src/**/*.rs",
+  "mockspace-manifest/src/**/*.rs",
+  "benches/**/*.rs",
+  "tests/**/*.rs",
+  "bench-matrix/tests/**/*.rs",
+  "lint-rules/tests/**/*.rs",
+  "mockspace-manifest/tests/**/*.rs",
+]
+
+# Build output, and the trees whose contents are not shipped source.
+#
+# `mock/` holds 148 Rust files and the first version of this said "Nothing in it
+# is source", which is false and is the sentence the next editor would have
+# acted on. What is true is narrower and is the actual reason: almost all of
+# them are throwaway probes and sketches under `mock/research/`, which exist to
+# check one thing and are audit trail rather than product, and the rest are
+# templates rendered into consumers, where a header would be copied into every
+# repository that renders them.
+#
+# `mock/crates/` is a real question this does not answer. Those are the tool's
+# own mockspace-side crates and they are shipped Rust by any ordinary reading.
+# Excluding them may still be right, and it wants deciding on its own rather
+# than riding in on a wrong sentence about the directory above them.
+#
+# `docs/` is generated on every run, so a header written there is destroyed by
+# the next generation.
+exclude = [
+  "**/target/**",
+  "mock/**",
+  "docs/**",
+  "**/node_modules/**",
+]

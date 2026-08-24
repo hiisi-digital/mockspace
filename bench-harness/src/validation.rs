@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Validation pass: run every variant across deterministic seeds and
 //! compare outputs. Runs before any timing. Each variant executes in
 //! its own worker subprocess (`--mode validate`), so a variant's
