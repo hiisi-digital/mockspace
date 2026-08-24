@@ -149,7 +149,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // SAFETY: this is the first statement of every entry into the engine
     // (`run` and `run_with_custom_lints` both land here before doing anything
     // else); no thread has been spawned yet.
-    unsafe { mockspace_manifest::gate::sanitize_git_env() };
+    unsafe { sanitize_git_env() };
 
     let args: Vec<String> = std::env::args().collect();
 

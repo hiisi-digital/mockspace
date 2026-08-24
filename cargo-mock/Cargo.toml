@@ -9,7 +9,6 @@ publish = true
 description = "Launcher for the mockspace design-round workflow engine: resolves the per-repo pinned mockspace, builds it once per version into a shared cache, and runs it from any working directory."
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
-readme = "README.md"
 categories = ["development-tools", "command-line-utilities"]
 keywords = ["mockspace", "cargo-subcommand", "design-rounds", "workflow"]
 

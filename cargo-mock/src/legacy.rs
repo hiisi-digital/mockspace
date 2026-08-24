@@ -10,8 +10,13 @@
 //! had resolved. Reading that keeps such a repo running until somebody adds the
 //! explicit key, and it is what seeds the key when they do.
 //!
-//! Nothing writes this form any more. It is read-only and it goes when the last
-//! repo carrying one has migrated.
+//! Nothing writes this form any more. It is read-only.
+//!
+//! FIXME: delete this module and the `legacy_pin` hook once no repo reads it.
+//! The signal is the launcher's own registry, which records per consumer
+//! whether its pin came from the config or from here, so the legacy count
+//! reaching zero is the condition. Nothing watches that count today, which is
+//! why this carries a marker and not a date.
 
 use std::path::Path;
 

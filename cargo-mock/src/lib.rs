@@ -261,8 +261,26 @@ mod tests {
         // a branch has already been resolved to a rev, and the dep must follow
         // that rev rather than the moving branch name, or a rebuild an hour
         // later links a different lint-rules than the engine it loads into.
-        let dep = lint_rules_from_pin(&resolved(Reference::Branch("dev".into())));
-        assert!(dep[1].contains("rev = \"dev\""), "{}", dep[1]);
+        //
+        // The rev is deliberately unlike the branch name here. With `key_rev`
+        // set to the branch name, which is what the closure above would give,
+        // the assertion passes whichever of the two `git_ref` reads, and the
+        // case this test exists for is the one it cannot see.
+        let branch = renki::Resolved {
+            pin:      Pin {
+                url:       CANONICAL_URL.into(),
+                reference: Reference::Branch("dev".into()),
+            },
+            key_rev:  "feedface99c0ffee".into(),
+            attempts: vec![],
+        };
+        let dep = lint_rules_from_pin(&branch);
+        assert!(dep[1].contains("rev = \"feedface99c0ffee\""), "{}", dep[1]);
+        assert!(
+            !dep[1].contains("dev"),
+            "the moving branch name reached the dependency: {}",
+            dep[1]
+        );
         assert!(
             dep[1].contains("package = \"mockspace-lint-rules\""),
             "{}",

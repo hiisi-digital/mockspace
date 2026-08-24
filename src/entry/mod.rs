@@ -46,6 +46,8 @@ mod resolve;
 pub(crate) use resolve::*;
 mod check;
 pub(crate) use check::*;
+mod env;
+pub(crate) use env::*;
 #[cfg(test)]
 mod clean_tests;
 

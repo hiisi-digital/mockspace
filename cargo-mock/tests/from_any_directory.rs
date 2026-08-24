@@ -147,21 +147,48 @@ fn the_root_override_wins_over_the_directory_the_command_was_run_in() {
 }
 
 #[test]
-fn a_directory_in_no_repo_at_all_is_refused_by_name() {
+fn a_directory_in_no_repo_at_all_is_refused_and_the_message_names_both_reasons() {
     let d = tempfile::tempdir().unwrap();
+    let dir = d.path().canonicalize().unwrap();
+    // the precondition, established rather than assumed: on a machine whose
+    // TMPDIR sits inside a checkout the walk would find a real repo and the
+    // refusal would never happen, and a test that shrugged at that would pass
+    // having asserted nothing.
+    let mut p = dir.as_path();
+    loop {
+        assert!(
+            !p.join(".git").exists(),
+            "TMPDIR is inside a repository ({}), so this cannot test a refusal",
+            p.display()
+        );
+        match p.parent() {
+            Some(up) => p = up,
+            None => break,
+        }
+    }
+
     let out = Command::new(env!(concat!("CARGO_BIN_EXE_", "mock")))
         .arg("locate")
-        // an isolated root the walk cannot escape into a real repo from
-        .current_dir(d.path())
+        .current_dir(&dir)
+        .env_remove("MOCK_ROOT")
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "a directory in no repo was accepted");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(".git"), "{err}");
+    assert!(err.contains("MOCK_ROOT is unset"), "{err}");
+
+    // and with the override set and wrong, the same refusal says so instead of
+    // telling the operator the variable they just exported is unset.
+    let out = Command::new(env!(concat!("CARGO_BIN_EXE_", "mock")))
+        .arg("locate")
+        .current_dir(&dir)
         .env("MOCK_ROOT", "/definitely/not/a/directory/xyzzy")
         .output()
         .unwrap();
-    // the tempdir sits under a path that is not itself a repo, so the walk
-    // either finds nothing or finds whatever contains it. Only the message
-    // matters here: a refusal names what it looked for.
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains(".git"), "{err}");
-        assert!(err.contains("MOCK_ROOT"), "{err}");
-    }
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("/definitely/not/a/directory/xyzzy"), "{err}");
+    assert!(err.contains("not a directory"), "{err}");
+    assert!(!err.contains("is unset"), "{err}");
 }

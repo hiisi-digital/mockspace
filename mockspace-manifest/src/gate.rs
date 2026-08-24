@@ -268,20 +268,6 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
     actions
 }
 
-/// The repo-location `GIT_*` variables, and dropping them.
-///
-/// Re-exported rather than restated: `renki` owns this because every launcher
-/// built on it runs as a grandchild of a git hook and needs the same scrub, and
-/// two copies of the list is how one of them quietly narrows.
-///
-/// Why it matters here: the engine spawns `git` with its working directory set
-/// to the mock workspace rather than the repo root. With `GIT_DIR` inherited
-/// and `GIT_WORK_TREE` unset, git reads that directory as the top of the work
-/// tree, so every index path misses its pathspec and the changelist gates read
-/// the whole tree as untracked. Found live, on a worktree commit that reported
-/// all 84 doc templates as changed and untracked.
-pub use renki::{GIT_REPO_ENV, sanitize_git_env};
-
 /// Point the repo's `core.hooksPath` at `dir`, unless it already points somewhere
 /// mockspace owns.
 ///
