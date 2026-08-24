@@ -43,7 +43,10 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             let cl = match changelist_helpers::find_active_doc_cl(&dr) {
                 Some(cl) => cl,
                 None => {
-                    eprintln!("error: no active doc changelist found");
+                    eprintln!(
+                        "error: phase is DOC but the doc changelist it was read from is gone"
+                    );
+                    eprintln!("  {} is read twice and changed in between; re-run", dr.display());
                     return ExitCode::FAILURE;
                 },
             };
@@ -66,7 +69,10 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             let cl = match changelist_helpers::find_active_src_cl(&dr) {
                 Some(cl) => cl,
                 None => {
-                    eprintln!("error: no active src changelist found");
+                    eprintln!(
+                        "error: phase is IMPL but the src changelist it was read from is gone"
+                    );
+                    eprintln!("  {} is read twice and changed in between; re-run", dr.display());
                     return ExitCode::FAILURE;
                 },
             };
@@ -116,7 +122,10 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             let cl = match changelist_helpers::find_active_doc_cl(&dr) {
                 Some(cl) => cl,
                 None => {
-                    eprintln!("error: no active doc changelist found");
+                    eprintln!(
+                        "error: phase is DOC but the doc changelist it was read from is gone"
+                    );
+                    eprintln!("  {} is read twice and changed in between; re-run", dr.display());
                     return ExitCode::FAILURE;
                 },
             };
@@ -142,7 +151,10 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
             let cl = match changelist_helpers::find_active_src_cl(&dr) {
                 Some(cl) => cl,
                 None => {
-                    eprintln!("error: no active src changelist found");
+                    eprintln!(
+                        "error: phase is IMPL but the src changelist it was read from is gone"
+                    );
+                    eprintln!("  {} is read twice and changed in between; re-run", dr.display());
                     return ExitCode::FAILURE;
                 },
             };
@@ -314,7 +326,8 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let dr = design_rounds_dir(cfg);
     if !dr.is_dir() {
-        eprintln!("error: design_rounds/ directory not found");
+        eprintln!("error: no design_rounds/ at {}", dr.display());
+        eprintln!("  create it, or point --dir at the mock workspace that has one");
         return ExitCode::FAILURE;
     }
 
@@ -341,7 +354,8 @@ pub fn cmd_migrate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let dr = design_rounds_dir(cfg);
 
     if !dr.is_dir() {
-        eprintln!("error: design_rounds/ directory not found");
+        eprintln!("error: no design_rounds/ at {}", dr.display());
+        eprintln!("  create it, or point --dir at the mock workspace that has one");
         return ExitCode::FAILURE;
     }
 

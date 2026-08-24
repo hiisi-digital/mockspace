@@ -451,7 +451,6 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
         //   <prefix>_signal::define_signal!(KeyPressed { key: String } buffering: Queue);
         //   define_behavior!(MyBehavior { ... });
 
-        // Find `define_*!(` pattern
         if let Some(macro_start) = trimmed.find("define_") {
             let after_define = &trimmed[macro_start ..];
             // Extract macro name (up to `!`)

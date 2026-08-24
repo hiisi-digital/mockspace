@@ -198,7 +198,6 @@ pub fn run_lints(
         // (bits.rs, prim.rs, impl.rs, ...) in addition to lib.rs.
         let all_sources = collect_crate_sources(&crate_dir);
 
-        // Read DESIGN.md.tmpl if it exists
         let design_doc = std::fs::read_to_string(crate_dir.join("DESIGN.md.tmpl")).ok();
 
         // Read ALL doc templates and concatenate

@@ -289,8 +289,8 @@ impl Cache {
 ///
 /// For each variant that has both old and new data, compute the ratio
 /// `new_median / old_median`. Average these ratios, weighting the
-/// baseline 2x. Using the median per variant is more robust to outlier
-/// batches than the mean.
+/// baseline 2x. The median per variant is less moved by an outlier batch
+/// than the mean is.
 ///
 /// Returns `(consensus_ratio, confidence)`: `confidence` is the number
 /// of overlapping variants used. Higher = more trustworthy.

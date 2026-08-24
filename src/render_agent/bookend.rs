@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-#![allow(unused_imports)]
-
 use super::*;
 
 /// Count words in a markdown fragment, ignoring markdown syntax, HTML

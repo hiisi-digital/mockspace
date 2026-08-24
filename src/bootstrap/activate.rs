@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-#![allow(unused_imports)]
-
 use super::*;
 
 /// Point `core.hooksPath` at the durable fallback hooks and record the
@@ -27,7 +25,7 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
     let mut actions = Vec::new();
     ensure_durable_hooks(&mut actions);
     for msg in &actions {
-        eprintln!("--- bootstrap: {msg} ---");
+        eprintln!("--- gate: {msg} ---");
     }
     // Point at whatever `ensure_durable_hooks` actually produced: the same
     // choice `hooks_path_target` reports to `check_activation`, so the two

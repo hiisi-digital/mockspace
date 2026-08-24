@@ -69,10 +69,10 @@ impl ModeSignal {
 /// disagreeing about what counts. Unknown names resolve to nothing and are
 /// reported by [`unknown_presets`], because silently ignoring a typo in a
 /// security-relevant predicate is the worst possible failure.
-#[must_use]
-pub // FIXME: same as KNOWN_PRESETS above: a Rust match where the frame wants
+// FIXME: same as `KNOWN_PRESETS` below: a Rust match where the frame wants
 // TOML-defined presets. tracked: #13
- fn preset_signals(name: &str) -> Vec<ModeSignal> {
+#[must_use]
+pub fn preset_signals(name: &str) -> Vec<ModeSignal> {
     let autonomous = |env: &str, equals: Option<&str>| {
         ModeSignal {
             env:    env.to_string(),

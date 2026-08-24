@@ -48,7 +48,6 @@ mod lint_crates_tests;
 /// Marker in generated hooks for identification and versioning.
 const MANAGED_MARKER: &str = "# mockspace-managed";
 
-/// Bump when hook templates change → triggers regeneration.
 use mockspace_manifest::gate::HOOK_VERSION;
 
 /// Hook names that mockspace generates.

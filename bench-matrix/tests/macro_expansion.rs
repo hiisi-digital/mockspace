@@ -18,6 +18,10 @@ mod warm_family {
         pub n:   usize,
     }
     // a per-cell setup returns a DIFFERENT state type; the cell must read it.
+    // only built under `--features jit`: the macro cfg-gates the cell that
+    // constructs it, so the default build reads it as dead. allow scoped to
+    // that case so a real death still warns when the feature is on.
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
     pub struct DirectState {
         pub base: u64,
     }

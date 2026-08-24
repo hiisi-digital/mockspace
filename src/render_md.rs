@@ -6,7 +6,6 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
-use std::path::Path;
 
 use crate::config::Config;
 use crate::graph;
@@ -81,7 +80,6 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
         writeln!(md).unwrap();
     }
 
-    // Table of contents
     writeln!(md, "## Table of Contents").unwrap();
     writeln!(md).unwrap();
 

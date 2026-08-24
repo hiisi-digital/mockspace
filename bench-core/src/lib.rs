@@ -18,7 +18,7 @@
 //! ## Origin
 //!
 //! Framework was originally written by orgrinrt under MIT in
-//! `polka-dots/mock/benches/bench-core/` (the substrate that drove
+//! `polka-dots/mock/benches/bench-core/` (the work that drove
 //! arvo's strategy-marker design). Relicensed by the original author
 //! under MPL-2.0 for the mockspace stack. Lifted here so every
 //! mockspace consumer gets the canonical surface instead of re-rolling
@@ -625,7 +625,7 @@ macro_rules! __bench_calibrated_body {
 
 #[cfg(test)]
 mod abi_tests {
-    use super::{abi_hash, FfiBenchCall};
+    use super::FfiBenchCall;
 
     // The FFI wire struct is four u64 fields; pin the size so an accidental
     // field change forces a deliberate abi_hash() update and a variant rebuild.

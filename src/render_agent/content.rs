@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-#![allow(unused_imports)]
-
 use super::*;
 
 /// Generate agent rules and hooks derived from lint configuration.
@@ -120,10 +118,10 @@ pub(crate) fn generate_lint_derived_content(
         .replace('\\', "/");
 
     for (scope, rules) in &by_scope {
-        // Convert scope to apply_to glob
         let apply_to_glob = format!("{mock_rel}/crates/{scope}/**");
 
-        // Generate a slug for the filename
+        // the scope is a glob and this becomes a filename, so the characters
+        // a filename cannot carry are spelled out rather than dropped.
         let slug = scope
             .replace('*', "star")
             .replace(',', "-")

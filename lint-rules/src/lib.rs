@@ -1120,7 +1120,6 @@ impl std::fmt::Display for LintError {
     }
 }
 
-/// Trait for pluggable lints. Each lint inspects a single crate's AST.
 /// What every lint has, whatever it is given.
 ///
 /// The trait family is keyed on the *input*: [`CrateLint`] is handed one crate,
@@ -1678,8 +1677,10 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
 /// blocked by pre-existing source issues.
 ///
 /// When `overrides` is provided, lint severities can be overridden:
-/// - If a lint name maps to a severity where all gates are `Pass`, the lint is skipped entirely.
-/// - If a lint name maps to another severity, all errors from that lint use the configured severity.
+/// - If a lint name maps to a severity where all gates are `Pass`, the lint
+///   is skipped entirely.
+/// - If a lint name maps to another severity, all errors from that lint use
+///   the configured severity.
 /// - If a lint is not in the map, its `default_severity()` decides whether it
 ///   runs at all. It does not yet decide what its findings mean: each finding
 ///   keeps the severity its constructor chose, so a declared default is

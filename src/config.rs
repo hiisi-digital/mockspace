@@ -206,7 +206,7 @@ pub struct Config {
     ///
     /// Example: `arvo = ["u8", "u16", "u32", "u64", "u128", "i8", ...,
     /// "f32", "f64", "usize", "isize", "bool"]`: arvo defines the
-    /// numeric substrate, so it legitimately wraps every std numeric
+    /// numeric foundations, so it legitimately wraps every std numeric
     /// primitive; meanwhile `Option` / `Result` / `String` still fire
     /// on arvo because arvo does not introduce them.
     ///

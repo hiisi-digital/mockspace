@@ -170,7 +170,6 @@ pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
     }
     writeln!(dot).unwrap();
 
-    // Dependency edges (transitively reduced)
     writeln!(dot, "    // Dependency edges (transitively reduced)").unwrap();
     for (dir_name, deps) in &reduced {
         if crates[dir_name.as_str()].short_name == *project_name {
