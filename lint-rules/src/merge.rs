@@ -685,4 +685,79 @@ mod tests {
         let mock_body = r.git(&["cat-file", "-p", &from_mock]);
         assert_eq!(mock_body, "the mock copy\n");
     }
+
+    /// A linked worktree answers `--git-path` absolutely, and `detect` joins
+    /// that answer onto the directory it asked from. `Path::join` returns an
+    /// absolute argument unchanged, which is what makes one line serve both
+    /// shapes, and nothing pinned it: the code carried the claim in a comment
+    /// and the suite never built a worktree.
+    ///
+    /// Silently, too. Were the join wrong, the read would miss, `detect` would
+    /// return the default, and every file a merge staged would be judged as
+    /// authored. No error, no diagnostic, and a gate that refuses an ordinary
+    /// merge for a reason nobody can see.
+    #[test]
+    fn a_merge_inside_a_linked_worktree_is_detected() {
+        let r = Repo::new("linked");
+        r.write("crates/foo/src/lib.rs", "base\n");
+        r.commit("base");
+
+        let wt = r.root.join("wt");
+        r.git(&["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "feature"]);
+        let wt_mock = wt.join("mock");
+
+        // the branch moves one file, trunk adds another, so the merge is clean
+        // and stages a file the branch never touched.
+        std::fs::write(wt_mock.join("crates/foo/src/lib.rs"), "on the branch\n").unwrap();
+        git(&wt_mock, &["add", "-A"]);
+        git(&wt_mock, &[
+            "commit",
+            "-q",
+            "-m",
+            "on the branch",
+            "--no-gpg-sign",
+        ]);
+        r.write("crates/foo/src/other.rs", "on trunk\n");
+        r.commit("on trunk");
+        assert!(
+            Command::new("git")
+                .args(["merge", "--no-commit", "--no-ff", "trunk"])
+                .current_dir(&wt_mock)
+                .output()
+                .expect("git merge")
+                .status
+                .success(),
+            "the fixture's merge conflicted, so it is not the case under test"
+        );
+
+        // the control on the fixture, and the whole reason this test is not the
+        // one above it wearing a different name: the two shapes must actually
+        // differ, or a worktree proves nothing a plain repository did not.
+        let in_the_worktree = git(&wt_mock, &["rev-parse", "--git-path", "MERGE_HEAD"]).unwrap();
+        assert!(
+            Path::new(in_the_worktree.trim()).is_absolute(),
+            "a linked worktree answered relatively, so this fixture is not \
+             exercising the join at all: {in_the_worktree:?}"
+        );
+        let in_the_main = git(&r.mock(), &["rev-parse", "--git-path", "MERGE_HEAD"]).unwrap();
+        assert!(
+            !Path::new(in_the_main.trim()).is_absolute(),
+            "the main worktree answered absolutely too, so the two shapes are \
+             not distinguishable here: {in_the_main:?}"
+        );
+
+        let m = Merge::detect(&wt_mock);
+        assert!(
+            m.in_progress(),
+            "the merge was not seen from the linked worktree"
+        );
+        assert!(
+            m.inherited(&wt_mock, "crates/foo/src/other.rs"),
+            "a file the merge brought in whole was judged as authored"
+        );
+
+        // `remove_dir_all` on the root leaves git's administrative copy behind
+        // otherwise, and the next run of this test reuses that root.
+        r.git(&["worktree", "remove", "--force", wt.to_str().unwrap()]);
+    }
 }
