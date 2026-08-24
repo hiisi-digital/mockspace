@@ -52,12 +52,10 @@ impl Merge {
         // from, so from a subdirectory it prints `../.git/MERGE_HEAD`. That is
         // `dir`, which is where the query ran. Every test here detects from a
         // subdirectory for exactly this reason.
-        let path = Path::new(path.trim());
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            dir.join(path)
-        };
+        // `join` returns an absolute argument unchanged, which is the linked
+        // worktree case: there `--git-path` answers absolutely and points at
+        // that worktree's own MERGE_HEAD rather than the main repository's.
+        let path = dir.join(Path::new(path.trim()));
         let Ok(heads) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
@@ -126,10 +124,27 @@ impl Merge {
     /// which is the whole point, and where it does not differ it *is* the auto
     /// merge and excusing it is right.
     ///
-    /// Two parents only. An octopus has no single base, and the byte-identical
-    /// test above still serves it.
+    /// **Two parents only, and an octopus is therefore left with the weaker
+    /// coverage rather than served by it.** An octopus has no single merge
+    /// base, so there is nothing to reproduce from. The byte comparison above
+    /// still answers for a file that matches one parent whole; a file an
+    /// octopus auto-merged out of combined hunks stays reported as an authored
+    /// change there, which is exactly the case this function exists for.
+    ///
+    /// The reproduction is bare `git merge-file`, which knows none of the
+    /// repository's merge configuration: a `.gitattributes` `merge=` driver,
+    /// `merge.renormalize`, a non-default `diff.algorithm`, or a criss-cross
+    /// history where `ort` builds a virtual base out of several. Any of those
+    /// produces a different blob and the file is reported. That is the safe
+    /// direction, and it is written down because the visible effect is the gate
+    /// firing on an ordinary merge with nothing saying why.
     fn is_the_auto_merge(&self, dir: &Path, file: &str, staged: Option<&str>) -> bool {
-        let (Some(staged), [ours, theirs]) = (staged, &self.parents[..]) else {
+        // `detect` collects MERGE_HEAD first and pushes HEAD last, and git
+        // calls HEAD `ours` and MERGE_HEAD `theirs`. Naming them the other way
+        // round costs nothing today, because a clean `merge-file` is
+        // order-independent, and misleads the next person to reach for a label
+        // flag or `--ours`.
+        let (Some(staged), [theirs, ours]) = (staged, &self.parents[..]) else {
             return false;
         };
         let Some(base) = git(dir, &["merge-base", ours, theirs]) else {
@@ -150,17 +165,23 @@ impl Merge {
             std::process::id(),
             NTH.fetch_add(1, Ordering::Relaxed)
         ));
-        if std::fs::create_dir_all(&scratch).is_err() {
+        // `create_dir`, not `create_dir_all`. The path is a pid and a small
+        // counter, so it is predictable, and `create_dir_all` succeeds through
+        // a symlink somebody planted there first: three files of repository
+        // content would then land in a directory of their choosing, and the
+        // cleanup below would remove only the link. `create_dir` refuses an
+        // existing entry of any kind.
+        if std::fs::create_dir(&scratch).is_err() {
             return false;
         }
         let write = |name: &str, rev: &str| -> Option<PathBuf> {
             let at = scratch.join(name);
-            // An absent side is an empty file, which is what `merge-file`
-            // means by one side having nothing there.
-            let body = match blob(dir, &format!("{rev}:"), file) {
-                Some(_) => git_bytes(dir, &["show", &format!("{rev}:./{file}")])?,
-                None => Vec::new(),
-            };
+            // An absent side is an empty file, which is what `merge-file` means
+            // by one side having nothing there. `git show` already fails on an
+            // absent path, so it answers presence and content in one spawn;
+            // asking `rev-parse` first doubled the process count on the hot
+            // path, which is every file the byte test missed at every commit.
+            let body = git_bytes(dir, &["show", &format!("{rev}:./{file}")]).unwrap_or_default();
             std::fs::write(&at, body).ok()?;
             Some(at)
         };
@@ -178,8 +199,14 @@ impl Merge {
                 .current_dir(dir)
                 .output()
                 .ok()?;
-            // A non-zero status is a conflict count, and a conflicted
-            // reproduction is not what got staged whatever it looks like.
+            // A non-zero status is a conflict count. Today no author can match
+            // a conflicted reproduction anyway, because `merge-file` labels its
+            // markers with the paths it was handed and those carry the pid and
+            // counter above, so nobody can stage the same bytes. That makes
+            // this guard redundant and it stays, because the property it would
+            // enforce rests entirely on the scratch name being unpredictable:
+            // give that directory a fixed name and this line is the only thing
+            // standing between a staged conflict and an excuse.
             if !out.status.success() {
                 return Some(false);
             }
@@ -328,6 +355,35 @@ mod tests {
         }
     }
 
+    /// The scratch directory is created with `create_dir` and not
+    /// `create_dir_all`, because its name is a pid and a small counter and is
+    /// therefore predictable. Measured rather than assumed: `create_dir_all`
+    /// succeeds through a symlink somebody planted at that path first, so
+    /// three files of repository content would land wherever it points, and
+    /// the cleanup afterwards removes the link rather than what it wrote.
+    #[test]
+    fn the_scratch_directory_refuses_a_path_something_already_holds() {
+        let root = std::env::temp_dir().join(format!("mockspace-scratchguard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("elsewhere")).unwrap();
+        let planted = root.join("planted");
+        std::os::unix::fs::symlink(root.join("elsewhere"), &planted).unwrap();
+
+        assert!(
+            std::fs::create_dir_all(&planted).is_ok(),
+            "the reason this test exists went away: create_dir_all now refuses a symlink"
+        );
+        assert!(
+            std::fs::create_dir(&planted).is_err(),
+            "create_dir accepted a path already held, which is the whole guard"
+        );
+        assert!(
+            std::fs::create_dir(root.join("fresh")).is_ok(),
+            "create_dir refused a clean path, so the guard would refuse every real call"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn off_a_merge_nothing_is_ever_inherited() {
         // the control that keeps every excuse below meaningful: an ordinary
@@ -400,6 +456,45 @@ mod tests {
         assert!(
             m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
             "git assembled this and nobody wrote it"
+        );
+    }
+
+    #[test]
+    fn an_octopus_does_not_reach_the_reproduction_and_keeps_the_weaker_answer() {
+        // Pins the two-parent restriction, and records what it costs. An
+        // octopus has no single merge base, so there is nothing to reproduce
+        // from and only the byte comparison answers. A file it combined out of
+        // hunks from two parents matches none of them and is therefore reported
+        // as an authored change, which is the very case the reproduction
+        // exists to stop reporting.
+        //
+        // The assertion is the current limitation rather than the wanted
+        // behaviour, deliberately: without it, dropping the restriction and
+        // feeding an octopus its first two parents leaves every test green,
+        // and that is a merge base nobody chose.
+        let r = Repo::new("octopus-hunks");
+        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
+        r.commit("base");
+        r.git(&["switch", "-q", "-c", "one"]);
+        r.write("crates/foo/src/lib.rs", "one\nONE\nthree\nfour\nfive\nsix\nseven\n");
+        r.commit("on one");
+        r.git(&["switch", "-q", "trunk"]);
+        r.git(&["switch", "-q", "-c", "two"]);
+        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nTWO\n");
+        r.commit("on two");
+        r.git(&["switch", "-q", "trunk"]);
+        r.git(&["merge", "--no-commit", "--no-ff", "one", "two"]);
+
+        let body = std::fs::read_to_string(r.mock().join("crates/foo/src/lib.rs")).unwrap();
+        assert!(
+            body.contains("ONE") && body.contains("TWO"),
+            "the fixture did not combine both hunks: {body:?}"
+        );
+        let m = Merge::detect(&r.mock());
+        assert_eq!(m.parents.len(), 3, "HEAD plus both merged heads");
+        assert!(
+            !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            "an octopus reached the two-parent reproduction, which has no base to stand on"
         );
     }
 
