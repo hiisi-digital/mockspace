@@ -3,6 +3,8 @@
 <div align="center" style="text-align: center;">
 
 [![GitHub Stars](https://img.shields.io/github/stars/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/stargazers)
+[![Crates.io](https://img.shields.io/crates/v/cargo-mock)](https://crates.io/crates/cargo-mock)
+[![docs.rs](https://img.shields.io/docsrs/cargo-mock)](https://docs.rs/cargo-mock)
 [![GitHub Issues](https://img.shields.io/github/issues/hiisi-digital/mockspace.svg)](https://github.com/hiisi-digital/mockspace/issues)
 ![License](https://img.shields.io/github/license/hiisi-digital/mockspace?color=%23009689)
 
@@ -22,7 +24,7 @@ None of that says anything about what you build. Crate naming, numeric disciplin
 
 ## Status
 
-Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Pin to a git revision when you consume it.
+Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Every release is tagged and the log between two tags is what actually moved.
 
 I'd caution against adopting this just yet for anything you cannot afford to have shift under you. Two reworks are in flight and either will move things: the plugin ABI v1 redesign, and a successor model for the design-round workflow (see `docs/research/`).
 
@@ -54,7 +56,7 @@ If what you actually want is a source linter, this is probably not it either. `m
 Install the launcher once per machine:
 
 ```bash
-cargo install --git https://github.com/hiisi-digital/mockspace.git cargo-mock
+cargo install cargo-mock
 ```
 
 That installs `cargo-mock` and `mock`, the same tool under cargo's subcommand
@@ -64,15 +66,13 @@ convention and a short direct form. There is no `build.rs` bootstrap, no
 Each repository pins the engine it runs in its root `mockspace.toml`:
 
 ```toml
-# a released version once one is tagged, or a branch, or an exact commit
-# mockspace_version = "0.0.0-d01"
-mockspace_branch = "dev"
+mockspace_version = "0.0.1"
 ```
 
-No release has been tagged yet, so `mockspace_version` has nothing to resolve
-to. Track the branch to follow development, or set `mockspace_rev` to an exact
-commit to hold the engine still. The commented pin shows the shape a tagged
-release takes.
+The engine is not on crates.io, so a version resolves against the matching git
+tag instead. `mockspace_branch = "dev"` follows development and moves under you
+by design, and `mockspace_rev` holds an exact commit, which is what you want if
+you would rather nothing moved at all.
 
 The launcher builds the pinned engine once into a shared per-version cache and
 execs it, so every repo on the same pin shares one build and the working
@@ -201,4 +201,4 @@ Whether you use this project, have learned something from it, or just like it, p
 
 `SPDX-License-Identifier: MPL-2.0`
 
-> You can check out the full license [here](https://github.com/hiisi-digital/mockspace/blob/dev/LICENSE)
+> You can check out the full license [here](https://github.com/hiisi-digital/mockspace/blob/main/LICENSE)
