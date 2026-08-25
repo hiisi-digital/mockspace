@@ -14,6 +14,13 @@ readme = "../README.md"
 # toolchain fails somewhere inside a dependency instead of at this manifest.
 rust-version = "1.88"
 license = "MPL-2.0"
+# `include` overrides cargo's defaults, and the licence is not on the short list
+# that survives that (`Cargo.toml`, the readme, and whatever `license-file`
+# names). Without this the crate ships MPL-2.0 source and no licence text,
+# which section 3.1 requires to travel with it. Same trick as `readme` above,
+# for the same reason: the file sits one level up and cargo copies in whatever
+# these two keys point at.
+license-file = "../LICENSE"
 repository = "https://github.com/hiisi-digital/mockspace"
 homepage = "https://github.com/hiisi-digital/mockspace"
 categories = ["development-tools", "command-line-utilities"]
