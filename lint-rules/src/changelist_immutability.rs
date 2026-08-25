@@ -22,7 +22,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist, Phase};
-use crate::{Lint, LintError, RepoContext, RepoLint};
+use crate::{Lint, LintError, RepoContext, RepoLint, Severity};
 
 const LINT_NAME: &str = "changelist-immutability";
 
@@ -31,6 +31,11 @@ pub struct ChangelistImmutability;
 impl Lint for ChangelistImmutability {
     fn name(&self) -> &'static str {
         LINT_NAME
+    }
+
+    /// The design-round gate. Blocking is the tool.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
     }
 
     fn source_only(&self) -> bool {

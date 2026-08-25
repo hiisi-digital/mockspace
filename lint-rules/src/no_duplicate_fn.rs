@@ -15,13 +15,19 @@ use std::collections::HashMap;
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError, WorkspaceLint};
+use crate::{Lint, LintContext, LintError, Severity, WorkspaceLint};
 
 pub struct NoDuplicateFn;
 
 impl Lint for NoDuplicateFn {
     fn name(&self) -> &'static str {
         "no-duplicate-fn"
+    }
+
+    /// Two functions of one name in one crate is a mistake in
+    /// any project.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
     }
 }
 

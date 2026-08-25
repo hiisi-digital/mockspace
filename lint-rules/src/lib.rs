@@ -1193,12 +1193,22 @@ pub trait Lint {
         true
     }
 
-    /// The default severity for this lint's violations.
+    /// The default severity for this lint's violations, when no config
+    /// override is present.
     ///
-    /// Used when no config override is present. Lints should override
-    /// this to match what they currently hardcode.
+    /// **Every lint declares its own.** The default here exists so the trait
+    /// can be implemented, and a lint that reaches it has forgotten to say
+    /// what it is; a test enumerates the registry and refuses that.
+    ///
+    /// It is off rather than blocking, because the two failures are not
+    /// symmetric. A lint that should gate and is silent is caught by the thing
+    /// it was meant to catch getting through. A lint that should be off and
+    /// blocks refuses a stranger's first commit and names a macro their project
+    /// does not have, which is not a state they can reason their way out of.
+    /// Three lints encoding one downstream project's architecture shipped that
+    /// way, inheriting a blocking default nobody had written down.
     fn default_severity(&self) -> Severity {
-        Severity::HARD_ERROR
+        Severity::OFF
     }
 
     /// Sub-categories of findings this lint can produce.
@@ -2067,6 +2077,13 @@ mod repo_lint_tests {
             "always-reports"
         }
 
+        /// Declared rather than inherited, which is what makes this fixture
+        /// the permit half of the pair: the trait's own default is off, so a
+        /// fixture that says nothing is the same fixture as the off one.
+        fn default_severity(&self) -> Severity {
+            Severity::HARD_ERROR
+        }
+
         fn source_only(&self) -> bool {
             false
         }
@@ -2119,6 +2136,61 @@ mod repo_lint_tests {
             "a repo lint must run with an empty crate set; it received none and reported nothing"
         );
         assert_eq!(errors[0].lint_name, "always-reports");
+    }
+
+    #[test]
+    fn every_registered_lint_says_what_its_severity_is() {
+        // The trait carries a default so it can be implemented, and a lint
+        // reaching it has not decided. That used to be invisible and the
+        // default used to block: three lints encoding one downstream project's
+        // architecture inherited a hard error and refused a stranger's first
+        // commit, naming macros and traits their project does not have.
+        //
+        // Reading the source rather than calling `default_severity`, because
+        // the value a lint returns is the same whether it declared it or
+        // inherited it. Declaring is what is under test.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let declared: std::collections::HashSet<String> = std::fs::read_dir(&dir)
+            .expect("no source directory")
+            .filter_map(|e| {
+                let path = e.ok()?.path();
+                let text = std::fs::read_to_string(&path).ok()?;
+                text.contains("fn default_severity(&self)")
+                    .then(|| path.file_stem()?.to_str().map(str::to_string))
+                    .flatten()
+            })
+            .collect();
+
+        // The control. A predicate that matched nothing would report every
+        // lint undeclared, and one that matched everything would report none.
+        assert!(
+            declared.contains("no_todo"),
+            "the reader found nothing: it did not see a file that plainly declares one"
+        );
+        assert!(
+            !declared.contains("lints_are_not_a_module"),
+            "the reader answered for a file that does not exist"
+        );
+
+        let registered: Vec<String> = all_lints()
+            .iter()
+            .map(|l| l.name().replace('-', "_"))
+            .chain(all_repo_lints().iter().map(|l| l.name().replace('-', "_")))
+            .collect();
+
+        // The lint's name and its module's name agree everywhere today, and
+        // that is what makes this readable at all. A rename that breaks the
+        // correspondence shows up here as an undeclared lint rather than
+        // silently stopping checking anything.
+        let missing: Vec<&String> = registered
+            .iter()
+            .filter(|name| !declared.contains(*name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "these registered lints inherit the trait's default instead of \
+             declaring one: {missing:?}"
+        );
     }
 
     /// A lint that is off unless a repo asks for it, and that stamps a hard
@@ -2386,6 +2458,86 @@ mod declared_default_severity_tests {
             lint_proc_macro_source:  false,
             primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
         }
+    }
+
+    /// Ordinary Rust, using names three registered lints happen to know.
+    ///
+    /// `Action` and `Scope` are traits any project might declare. `define_*!`
+    /// is a macro-naming convention any project might follow. None of it is a
+    /// reference to the framework whose house rules those lints encode, and a
+    /// stranger writing it has no way to know their commit is about to be
+    /// refused and told to use a macro they have never heard of.
+    fn a_stranger_s_ordinary_crate() -> Vec<CrateSourceFile> {
+        vec![CrateSourceFile {
+            rel_path: std::path::PathBuf::from("src/lib.rs"),
+            text:     "pub trait Action { fn run(&self); }\n\
+                       pub trait Scope { fn name(&self) -> &str; }\n\
+                       pub struct Jump;\n\
+                       impl Action for Jump { fn run(&self) {} }\n\
+                       pub struct Local;\n\
+                       impl Scope for Local { fn name(&self) -> &str { \"local\" } }\n\
+                       #[macro_export]\n\
+                       macro_rules! define_thing { () => {} }\n"
+                .to_string(),
+        }]
+    }
+
+    #[test]
+    fn a_stranger_s_first_commit_is_not_refused_by_somebody_else_s_house_rules() {
+        // Thirteen registered lints encode one downstream project's
+        // architecture with identifier tables nobody else can change. Ten were
+        // given `Severity::OFF` and three were not, so they inherited the
+        // trait's default, which was a hard error, and refused a fresh repo's
+        // first commit naming macros and traits that project does not have.
+        let files = a_stranger_s_ordinary_crate();
+        let mut parser = make_parser();
+        let tree = parser
+            .parse(&files[0].text, None)
+            .expect("the fixture does not parse");
+        let mut base = ctx();
+        base.source = &files[0].text;
+        base.tree = &tree;
+        base.all_sources = &files;
+
+        let found = check_crate(&base, false, None);
+        let blocking: Vec<&LintError> = found
+            .iter()
+            .filter(|e| e.severity.effective(LintMode::Commit) != Level::Pass)
+            .collect();
+        assert!(
+            blocking.is_empty(),
+            "a repo with no [lints] section is refused: {:?}",
+            blocking
+                .iter()
+                .map(|e| (e.lint_name, &e.message))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn the_check_above_can_fail() {
+        // The control on it, and the one that matters: a `check_crate` that
+        // found nothing at all, or a severity reader that called everything
+        // pass, would report the same empty list for a repo the gate should
+        // refuse. The fixture below carries a `todo!()`, which `no-todo`
+        // gates at push.
+        let files = crate_with_a_dirty_module();
+        let mut parser = make_parser();
+        let tree = parser
+            .parse(&files[0].text, None)
+            .expect("the fixture does not parse");
+        let mut base = ctx();
+        base.source = &files[0].text;
+        base.tree = &tree;
+        base.all_sources = &files;
+
+        let found = check_crate(&base, false, None);
+        assert!(
+            found
+                .iter()
+                .any(|e| e.severity.effective(LintMode::Push) != Level::Pass),
+            "the reader reports every finding as a pass: {found:?}"
+        );
     }
 
     /// A crate whose root is clean and whose module file is not.

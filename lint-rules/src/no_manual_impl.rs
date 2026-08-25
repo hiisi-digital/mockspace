@@ -12,7 +12,7 @@
 
 use tree_sitter::Node;
 
-use crate::{CrateLint, Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 /// (trait_name, crate suffix: impls in `<prefix>-<suffix>` are exempt)
 ///
@@ -45,6 +45,13 @@ pub struct NoManualImpl;
 impl Lint for NoManualImpl {
     fn name(&self) -> &'static str {
         "no-manual-impl"
+    }
+
+    /// Encodes one downstream project's trait names, `Action` and
+    /// `Scope` among them, which are ordinary names anywhere else. Off until a
+    /// project asks for it.
+    fn default_severity(&self) -> Severity {
+        Severity::OFF
     }
 }
 
