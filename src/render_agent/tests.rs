@@ -1087,3 +1087,185 @@ fn the_writer_reader_can_actually_fail() {
         "the wiring file was read as a script"
     );
 }
+
+/// Every builtin body, with a label naming where it came from.
+///
+/// Rules and skills together, because the two are read by the same agent in the
+/// same session and a defect in one is a defect in the other.
+fn every_builtin_body(cfg: &crate::config::Config) -> Vec<(String, String)> {
+    let builtins = generate_builtin_templates(cfg, &LintPack::default());
+    let mut out: Vec<(String, String)> = builtins
+        .rules
+        .iter()
+        .map(|r| (format!("rule {}", r.name), r.body.clone()))
+        .collect();
+    out.extend(
+        builtins
+            .skills
+            .iter()
+            .map(|s| (format!("skill {}", s.dir_name), s.body.clone())),
+    );
+    out.push(("preamble".into(), builtins.preamble.clone()));
+    out.push(("postamble".into(), builtins.postamble.clone()));
+    out
+}
+
+/// The documents a builtin's see-also section tells a reader to go and open.
+///
+/// Only that section, because it is the one place a backticked `.md` is an
+/// instruction rather than a path being described. Elsewhere a `.md` is a
+/// round's filename, a file this tool writes, or a note the reader is told to
+/// create, and none of those has to exist for the text to be right.
+fn documents_named(body: &str) -> Vec<&str> {
+    let Some(see_also) = body.split("## See also").nth(1) else {
+        return Vec::new();
+    };
+    see_also
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|c| c.ends_with(".md") && !c.contains('*'))
+        .map(|c| c.trim_start_matches("./"))
+        .collect()
+}
+
+#[test]
+fn a_builtin_points_only_at_rules_and_skills_that_ship() {
+    // A `.md` named in a see-also is an instruction to go and read it, and an
+    // agent that cannot find it has no way to tell a file that was never
+    // generated from one this repository chose not to opt into. The design-talk
+    // skill named four that no consumer has ever had: three rules that live in
+    // one workspace's own `.claude/` and a sibling skill nobody wrote.
+    let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
+    let builtins = generate_builtin_templates(&cfg, &LintPack::default());
+
+    let shipped: std::collections::BTreeSet<String> = builtins
+        .rules
+        .iter()
+        .map(|r| format!("{}.md", r.name))
+        .chain(
+            builtins
+                .skills
+                .iter()
+                .map(|s| format!("{}/SKILL.md", s.dir_name)),
+        )
+        .collect();
+
+    // The whole name, not a suffix of it. A suffix test says
+    // `panel-discipline.md` ships because `discipline.md` does, and says every
+    // skill ships because one of them is spelled `SKILL.md`, which is the shape
+    // of the write-guard carve-out defect pinned further up this file.
+    let mut complaints = Vec::new();
+    for (label, body) in every_builtin_body(&cfg) {
+        for named in documents_named(&body) {
+            if shipped.contains(named) {
+                continue;
+            }
+            complaints.push(format!("{label} points at `{named}`"));
+        }
+    }
+    assert!(
+        complaints.is_empty(),
+        "these name a document no consumer receives:\n{}\nshipped: {:?}",
+        complaints.join("\n"),
+        shipped
+    );
+}
+
+#[test]
+fn no_builtin_assumes_a_workspace_or_one_operator() {
+    // Most repositories using this tool are one repository, on their own, with
+    // whatever trunk they picked and nobody called op. A builtin written from
+    // inside a multi-repo workspace reads as instructions somewhere else and
+    // sends the agent looking for siblings that are not there.
+    //
+    // Each pattern here is positive evidence of an assumption, never the
+    // absence of evidence against one, because a false positive fails the build
+    // over prose that was fine.
+    let cfg = crate::config::Config::from_dir(&skill_fixture(Some(true)));
+    let complaints = assumptions_in(&every_builtin_body(&cfg));
+    assert!(complaints.is_empty(), "{}", complaints.join("\n"));
+}
+
+/// Positive evidence of an assumption, one line per body per pattern.
+///
+/// A function rather than a loop inside the check, so the control below runs
+/// the reader itself over text built to trip it. A control that matched a
+/// needle against a string it had just interpolated the needle into proved
+/// nothing about this reader at all.
+fn assumptions_in(bodies: &[(String, String)]) -> Vec<String> {
+    // Every pattern is positive evidence, never the absence of evidence
+    // against one, because a false positive fails the build over prose that
+    // was fine.
+    let forbidden: &[(&str, &str)] = &[
+        (" op ", "names one operator by handle"),
+        ("Op ", "names one operator by handle"),
+        ("op's ", "names one operator by handle"),
+        ("each touched repo", "assumes several repositories"),
+        ("cross-repo", "assumes several repositories"),
+        ("across several repos", "assumes several repositories"),
+        ("the repos the work", "assumes several repositories"),
+        ("branch off dev", "assumes a trunk this tool does not pick"),
+        ("off dev,", "assumes a trunk this tool does not pick"),
+        ("clause-dev", "names one workspace"),
+    ];
+    let mut complaints = Vec::new();
+    for (label, body) in bodies {
+        // Runs of whitespace flattened first. Every builtin is hard-wrapped
+        // near eighty columns, so a needle carrying spaces sits across a line
+        // break as often as not, and a raw `contains` walks past it. Six of
+        // these ten patterns have that shape.
+        let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        for (needle, why) in forbidden {
+            if flat.contains(needle) {
+                complaints.push(format!("{label} {why}: {needle:?}"));
+            }
+        }
+    }
+    complaints
+}
+
+#[test]
+fn the_two_builtin_checks_can_actually_fail() {
+    // Both checks above read a corpus and report nothing, which is what they
+    // would do just as well if their readers matched nothing at all. So each
+    // reader is run over text built to trip it.
+    // The real reader, over text built to trip it, so a reader that matched
+    // nothing would fail here rather than reporting a clean corpus above.
+    assert_eq!(
+        documents_named("## See also\n\n`nowhere-at-all.md` and `design-round/SKILL.md`"),
+        vec!["nowhere-at-all.md", "design-round/SKILL.md"],
+    );
+    assert!(
+        documents_named("writes `.claude/rules/*.md`\n\n## See also\n\n`a/SKILL.md`")
+            == vec!["a/SKILL.md"],
+        "either a glob was read as a document, or prose above the see-also was"
+    );
+    assert!(
+        documents_named("a round makes `{ts}_topic.md`").is_empty(),
+        "a body with no see-also section named something anyway"
+    );
+
+    // The reader itself, over a body carrying three assumptions, one of them
+    // split across a line break exactly as the wrapped builtins carry theirs.
+    let planted = vec![(
+        "planted".to_string(),
+        "a line ending in\nop and one saying cross-repo, and a third saying branch\noff dev."
+            .to_string(),
+    )];
+    let found = assumptions_in(&planted);
+    for needle in ["\" op \"", "\"cross-repo\"", "\"branch off dev\""] {
+        assert!(
+            found.iter().any(|c| c.contains(needle)),
+            "the reader walked past {needle}: {found:?}"
+        );
+    }
+    assert!(
+        assumptions_in(&[(
+            "clean".to_string(),
+            "a round opens a topic and the trunk is whatever this repository picked.".to_string(),
+        )])
+        .is_empty(),
+        "the reader complains about prose that assumes nothing"
+    );
+}
