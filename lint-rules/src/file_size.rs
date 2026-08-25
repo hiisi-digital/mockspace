@@ -55,12 +55,15 @@ impl Lint for FileSize {
     fn name(&self) -> &'static str {
         "file-size"
     }
+
     fn default_severity(&self) -> Severity {
         Severity::ADVISORY
     }
+
     fn config_keys(&self) -> &[&str] {
         &["max_lines", "exempt"]
     }
+
     fn configure(&mut self, params: &HashMap<String, String>) {
         if let Some(val) = params.get("max_lines") {
             if let Ok(n) = val.parse::<usize>() {
@@ -154,7 +157,7 @@ impl FileSize {
 
         if count > self.max_lines {
             Some(LintError {
-                path: None,
+                path:         None,
                 crate_name:   ctx.crate_name.to_string(),
                 line:         1,
                 lint_name:    "file-size",

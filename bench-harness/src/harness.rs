@@ -231,7 +231,9 @@ pub fn run_worker(
         let snap = crate::perf::read();
         eprintln!(
             "PERF_DIAG current perf.rs mapping reads: instructions={} cycles={} ipc={:.3}",
-            snap.instructions, snap.cycles, snap.ipc()
+            snap.instructions,
+            snap.cycles,
+            snap.ipc()
         );
     }
 
@@ -494,14 +496,35 @@ pub fn run_worker(
         if let Some(s) = batch_score {
             println!(
                 "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{:.2}",
-                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size,
-                instr_per_call, cycles_per_call, setup_ns, first_ns, batch_digest, s
+                name,
+                mode,
+                b,
+                e2e_ns,
+                algo_ns,
+                bridge_ns,
+                batch_size,
+                instr_per_call,
+                cycles_per_call,
+                setup_ns,
+                first_ns,
+                batch_digest,
+                s
             );
         } else {
             println!(
                 "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}",
-                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size,
-                instr_per_call, cycles_per_call, setup_ns, first_ns, batch_digest
+                name,
+                mode,
+                b,
+                e2e_ns,
+                algo_ns,
+                bridge_ns,
+                batch_size,
+                instr_per_call,
+                cycles_per_call,
+                setup_ns,
+                first_ns,
+                batch_digest
             );
         }
 
@@ -726,26 +749,41 @@ pub fn run_orchestrator(
                         let parts: Vec<&str> = line.split('\t').collect();
                         if parts.len() >= 9 {
                             all_samples.push(Sample {
-                                run:         hr + 1,
-                                pass:        pass_num,
-                                cooldown_ms: cd,
-                                mode:        parts[1].to_string(),
-                                variant:     parts[0].to_string(),
-                                batch_idx:   parts[2].parse().unwrap_or(0),
-                                e2e_ns:      parts[3].parse().unwrap_or(0.0),
-                                algo_ns:     parts[4].parse().unwrap_or(0.0),
-                                bridge_ns:   parts[5].parse().unwrap_or(0.0),
-                                batch_count: parts[6].parse().unwrap_or(0),
+                                run:          hr + 1,
+                                pass:         pass_num,
+                                cooldown_ms:  cd,
+                                mode:         parts[1].to_string(),
+                                variant:      parts[0].to_string(),
+                                batch_idx:    parts[2].parse().unwrap_or(0),
+                                e2e_ns:       parts[3].parse().unwrap_or(0.0),
+                                algo_ns:      parts[4].parse().unwrap_or(0.0),
+                                bridge_ns:    parts[5].parse().unwrap_or(0.0),
+                                batch_count:  parts[6].parse().unwrap_or(0),
                                 // instructions/cycles at fixed 7,8; matrix
                                 // setup_ns/first_ns/digest at 9,10,11; optional
                                 // score at 12.
-                                instructions: parts.get(7).and_then(|s| s.parse().ok()).unwrap_or(0),
-                                cycles:       parts.get(8).and_then(|s| s.parse().ok()).unwrap_or(0),
-                                setup_ns:    parts.get(9).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-                                first_ns:    parts.get(10).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-                                digest:      parts.get(11).and_then(|s| s.parse().ok()).unwrap_or(0),
-                                score:       parts.get(12).and_then(|s| s.parse().ok()),
-                                input_tag:   input_tagger.map(|f| f(seed).1),
+                                instructions: parts
+                                    .get(7)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0),
+                                cycles:       parts
+                                    .get(8)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0),
+                                setup_ns:     parts
+                                    .get(9)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0.0),
+                                first_ns:     parts
+                                    .get(10)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0.0),
+                                digest:       parts
+                                    .get(11)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0),
+                                score:        parts.get(12).and_then(|s| s.parse().ok()),
+                                input_tag:    input_tagger.map(|f| f(seed).1),
                             });
                         }
                     }

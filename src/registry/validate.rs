@@ -202,19 +202,11 @@ pub const FINDING_KINDS: &[&str] = &[
 /// and `namespace_keys_match_the_struct` in the tests below fail when this drifts
 /// from the struct it mirrors. A list nobody checks is a comment with a type, and
 /// this file already carries one that says so about itself.
-const NAMESPACE_KEYS: &[&str] = &[
-    "key",
-    "title",
-    "description",
-    "value_field",
-    "render",
-    "group_by",
-    "field",
-];
+const NAMESPACE_KEYS: &[&str] =
+    &["key", "title", "description", "value_field", "render", "group_by", "field"];
 
 /// Keys a `[[registry.namespace.field]]` table may carry. Mirrors `RegistryField`.
-const FIELD_KEYS: &[&str] =
-    &["name", "type", "required", "description", "visibility", "values"];
+const FIELD_KEYS: &[&str] = &["name", "type", "required", "description", "visibility", "values"];
 
 /// Keys a `[ref.roots.<name>]` table may carry. Mirrors `RawRefRoot`.
 ///
@@ -400,7 +392,10 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
         }
         if let Some(fields) = table.get("field").and_then(|i| i.as_array_of_tables()) {
             for f in fields.iter() {
-                let name = f.get("name").and_then(|v| v.as_str()).unwrap_or("<no name>");
+                let name = f
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<no name>");
                 for (k, _) in f.iter() {
                     if !FIELD_KEYS.contains(&k) {
                         out.push(RegistryFinding {

@@ -43,6 +43,7 @@ impl Lint for ExportCount {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::ADVISORY
     }
+
     fn name(&self) -> &'static str {
         "export-count"
     }
@@ -55,7 +56,7 @@ impl CrateLint for ExportCount {
 
         if count > MAX_EXPORTS {
             vec![LintError {
-                path: None,
+                path:         None,
                 crate_name:   ctx.crate_name.to_string(),
                 line:         1,
                 lint_name:    "export-count",

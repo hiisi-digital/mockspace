@@ -68,6 +68,7 @@ impl Lint for NoSelfDefine {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
@@ -301,6 +302,9 @@ mod allow_grammar {
             extract_allow_explanation("// lint:allow(no_self_define)", "no_self_define").unwrap(),
             ""
         );
-        assert_eq!(extract_allow_explanation("// nothing here", "no_self_define"), None);
+        assert_eq!(
+            extract_allow_explanation("// nothing here", "no_self_define"),
+            None
+        );
     }
 }

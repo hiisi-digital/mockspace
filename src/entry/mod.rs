@@ -30,10 +30,10 @@ use crate::{
 };
 
 mod cargo_gate;
-pub(crate) mod help;
-pub(crate) mod escape_hatch;
-mod message;
 mod dispatch;
+pub(crate) mod escape_hatch;
+pub(crate) mod help;
+mod message;
 pub(crate) use dispatch::*;
 mod nuke;
 pub(crate) use nuke::*;
@@ -41,8 +41,8 @@ mod panel;
 mod subcmd;
 mod test;
 pub(crate) use subcmd::*;
-mod tool;
 mod resolve;
+mod tool;
 pub(crate) use resolve::*;
 mod check;
 pub(crate) use check::*;

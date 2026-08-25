@@ -66,10 +66,11 @@ fn refused_by_the_registry(manifest_label: &str, text: &str) -> Vec<Refused> {
         None => false,
         Some(v) if v.as_bool() == Some(true) => true,
         Some(v) if v.as_bool() == Some(false) => false,
-        Some(v) => v
-            .as_array()
-            .map(|a| a.iter().any(|r| r.as_str() == Some("crates-io")))
-            .unwrap_or(false),
+        Some(v) => {
+            v.as_array()
+                .map(|a| a.iter().any(|r| r.as_str() == Some("crates-io")))
+                .unwrap_or(false)
+        },
     };
     if !publishes {
         return Vec::new();
@@ -81,11 +82,13 @@ fn refused_by_the_registry(manifest_label: &str, text: &str) -> Vec<Refused> {
             continue;
         };
         for (dep, spec) in deps.iter() {
-            let at = |why| Refused {
-                manifest: manifest_label.to_string(),
-                table: table.to_string(),
-                dep: dep.to_string(),
-                why,
+            let at = |why| {
+                Refused {
+                    manifest: manifest_label.to_string(),
+                    table: table.to_string(),
+                    dep: dep.to_string(),
+                    why,
+                }
             };
             let Some(spec) = spec.as_table_like() else {
                 // A bare string is a version requirement, which is the shape

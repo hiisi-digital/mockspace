@@ -44,10 +44,11 @@ fn licence_would_not_ship(dir: &Path, text: &str) -> Option<Why> {
         None => false,
         Some(v) if v.as_bool() == Some(true) => true,
         Some(v) if v.as_bool() == Some(false) => false,
-        Some(v) => v
-            .as_array()
-            .map(|a| a.iter().any(|r| r.as_str() == Some("crates-io")))
-            .unwrap_or(false),
+        Some(v) => {
+            v.as_array()
+                .map(|a| a.iter().any(|r| r.as_str() == Some("crates-io")))
+                .unwrap_or(false)
+        },
     };
     if !publishes {
         return None;

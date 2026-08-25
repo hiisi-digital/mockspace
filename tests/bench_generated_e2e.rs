@@ -128,7 +128,12 @@ master_seed = 7
 "#,
         );
         write(
-            &bench_dir.join(bench).join("arms").join("plusone").join("src").join("lib.rs"),
+            &bench_dir
+                .join(bench)
+                .join("arms")
+                .join("plusone")
+                .join("src")
+                .join("lib.rs"),
             ARM_LIB,
         );
     }
@@ -162,7 +167,10 @@ master_seed = 7
     // which this tree overrides; the old hardcoded literal would
     // have recorded opt-level=3 here
     let meta = std::fs::read_to_string(
-        bench_dir.join("results").join("hash").join("hash_n64.meta.json"),
+        bench_dir
+            .join("results")
+            .join("hash")
+            .join("hash_n64.meta.json"),
     )
     .unwrap();
     assert!(
@@ -173,9 +181,14 @@ master_seed = 7
 
     // the accepted cell reaches the ledger; the gated-out one does not
     let history: PathBuf = bench_dir.join("history").join("hash").join("hash_n64.tsv");
-    assert!(history.is_file(), "the accepted cell's ledger appends after promotion");
     assert!(
-        std::fs::read_to_string(&history).unwrap().contains("plusone"),
+        history.is_file(),
+        "the accepted cell's ledger appends after promotion"
+    );
+    assert!(
+        std::fs::read_to_string(&history)
+            .unwrap()
+            .contains("plusone"),
         "the history rows carry the arm's exported name"
     );
     assert!(
@@ -184,7 +197,12 @@ master_seed = 7
     );
     // nothing wrote into the consumer's source area
     assert!(
-        !bench_dir.join("hash").join("arms").join("plusone").join("Cargo.toml").exists(),
+        !bench_dir
+            .join("hash")
+            .join("arms")
+            .join("plusone")
+            .join("Cargo.toml")
+            .exists(),
         "the generated arm manifest stays out of the consumer's tree"
     );
 

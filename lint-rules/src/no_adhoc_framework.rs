@@ -28,6 +28,7 @@ impl Lint for NoAdhocFramework {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
+
     fn name(&self) -> &'static str {
         "no-adhoc-framework"
     }
@@ -187,7 +188,7 @@ fn emit_with_explanation(
         }
     } else {
         errors.push(LintError {
-            path: None,
+            path:         None,
             crate_name:   crate_name.to_string(),
             line:         line_num + 1,
             lint_name:    "no-adhoc-framework",
@@ -247,17 +248,15 @@ mod allow_grammar {
     /// Same grammar, same reason: the delimiter must not occur in the content.
     #[test]
     fn the_delimiter_is_the_em_dash_and_a_colon_is_content() {
-        let line = format!(
-            "// lint:allow(no_adhoc_framework) {DASH} the scheduler owns one global table"
-        );
+        let line =
+            format!("// lint:allow(no_adhoc_framework) {DASH} the scheduler owns one global table");
         assert_eq!(
             extract_allow_explanation(&line),
             Some("the scheduler owns one global table")
         );
 
-        let colon = format!(
-            "// lint:allow(no_adhoc_framework) {DASH} core::fmt is unreachable here"
-        );
+        let colon =
+            format!("// lint:allow(no_adhoc_framework) {DASH} core::fmt is unreachable here");
         assert_eq!(
             extract_allow_explanation(&colon),
             Some("core::fmt is unreachable here"),

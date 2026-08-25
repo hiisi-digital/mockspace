@@ -174,7 +174,8 @@ mod macos {
         // fixed block is at the START of the buffer (FIXED_OFFSET = 0, set below,
         // per the M1 validation); n_fixed is used only for the sanity check that at
         // least the two fixed counters exist.
-        let total = unsafe { kpc_get_counter_count(KPC_CLASS_FIXED_MASK | KPC_CLASS_CONFIGURABLE_MASK) };
+        let total =
+            unsafe { kpc_get_counter_count(KPC_CLASS_FIXED_MASK | KPC_CLASS_CONFIGURABLE_MASK) };
         let n_fixed = unsafe { kpc_get_counter_count(KPC_CLASS_FIXED_MASK) };
         if total == 0 || n_fixed < 2 || total < n_fixed {
             // no PMU access (not root / unsupported / framework returned nothing).
@@ -234,9 +235,9 @@ mod macos {
             return PerfSnapshot::default();
         }
         PerfSnapshot {
-            cycles: buf.get(off + FIXED_CYCLES_SUBINDEX).copied().unwrap_or(0),
-            instructions: buf.get(off + FIXED_INSTRS_SUBINDEX).copied().unwrap_or(0),
-            cache_misses: 0,
+            cycles:        buf.get(off + FIXED_CYCLES_SUBINDEX).copied().unwrap_or(0),
+            instructions:  buf.get(off + FIXED_INSTRS_SUBINDEX).copied().unwrap_or(0),
+            cache_misses:  0,
             branch_misses: 0,
         }
     }
@@ -261,8 +262,18 @@ mod tests {
 
     #[test]
     fn delta_saturates_and_ipc_guards_zero() {
-        let a = PerfSnapshot { instructions: 100, cycles: 50, cache_misses: 3, branch_misses: 1 };
-        let b = PerfSnapshot { instructions: 250, cycles: 100, cache_misses: 5, branch_misses: 2 };
+        let a = PerfSnapshot {
+            instructions:  100,
+            cycles:        50,
+            cache_misses:  3,
+            branch_misses: 1,
+        };
+        let b = PerfSnapshot {
+            instructions:  250,
+            cycles:        100,
+            cache_misses:  5,
+            branch_misses: 2,
+        };
         let d = b.delta(&a);
         assert_eq!(d.instructions, 150);
         assert_eq!(d.cycles, 50);

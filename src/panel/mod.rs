@@ -78,13 +78,13 @@ pub const DEFAULT_CONSOLIDATE_EVERY: u32 = 10;
 pub struct PanelInventory {
     /// The panel's own name, carried inside the file so it reads standalone
     /// even if it is ever moved or renamed on disk.
-    pub slug: String,
+    pub slug:              String,
     /// Every seat minted, oldest first.
     #[serde(rename = "seat")]
-    pub seats: Vec<Seat>,
+    pub seats:             Vec<Seat>,
     /// Every consolidation recorded, oldest first.
     #[serde(rename = "consolidation")]
-    pub consolidations: Vec<Consolidation>,
+    pub consolidations:    Vec<Consolidation>,
     /// This panel's own cadence override. `None` means fall back to
     /// whatever [`mint_seat`]'s caller was configured with (ultimately
     /// `mockspace.toml`'s `panel_consolidate_every`, or
@@ -98,12 +98,12 @@ pub struct Seat {
     /// 1-based, dense, and never reused: minting never fills a gap left by
     /// a seat that was never recorded, because there is no such gap. The
     /// number is always one past the highest number already in the file.
-    pub number:        u32,
+    pub number:         u32,
     /// Who holds the seat. A persona name, an agent identifier, whatever
     /// the caller names; this module has no opinion on the vocabulary.
-    pub persona:       String,
+    pub persona:        String,
     /// What the seat is working. Free text, same reasoning.
-    pub topic:         String,
+    pub topic:          String,
     /// Unix seconds at mint time. Not used to order anything (`seats` is
     /// already in mint order); kept because an audit trail with no
     /// timestamp at all invites the question of when, and the answer
@@ -135,7 +135,10 @@ pub enum MintRefusal {
     /// `minted` seats have been minted since the last consolidation (or
     /// since the panel opened, if it has never consolidated), which meets
     /// or exceeds `cadence`. Consolidate before minting again.
-    ConsolidationDue { minted: u32, cadence: u32 },
+    ConsolidationDue {
+        minted:  u32,
+        cadence: u32,
+    },
     /// The cadence resolved to zero, in the project config or in the panel's
     /// own inventory. Refused rather than read as "no enforcement", because a
     /// gate a panel can switch off in the file the tool rewrites for it is not
@@ -146,14 +149,19 @@ pub enum MintRefusal {
 impl std::fmt::Display for MintRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::CadenceDisabled => write!(
-                f,
-                "the consolidation cadence is 0, which would switch the gate off. Set it to \
+            Self::CadenceDisabled => {
+                write!(
+                    f,
+                    "the consolidation cadence is 0, which would switch the gate off. Set it to \
                  the number of seats a consolidation should cover, or remove it to take the \
                  project default"
-            ),
+                )
+            },
             Self::SeatCapReached => {
-                write!(f, "seat cap ({SEAT_CAP}) reached; this panel is done minting")
+                write!(
+                    f,
+                    "seat cap ({SEAT_CAP}) reached; this panel is done minting"
+                )
             },
             Self::ConsolidationDue {
                 minted,
@@ -179,18 +187,18 @@ impl std::fmt::Display for MintRefusal {
 #[must_use]
 pub fn next_seat_number(inv: &PanelInventory) -> Option<u32> {
     let last = inv.seats.iter().map(|s| s.number).max().unwrap_or(0);
-    if last >= SEAT_CAP {
-        None
-    } else {
-        Some(last + 1)
-    }
+    if last >= SEAT_CAP { None } else { Some(last + 1) }
 }
 
 /// The highest seat number any consolidation covers, or 0 if none has ever
 /// been recorded.
 #[must_use]
 pub fn last_consolidated_seat(inv: &PanelInventory) -> u32 {
-    inv.consolidations.iter().map(|c| c.after_seat).max().unwrap_or(0)
+    inv.consolidations
+        .iter()
+        .map(|c| c.after_seat)
+        .max()
+        .unwrap_or(0)
 }
 
 /// How many seats have minted since the last consolidation (or since the
@@ -288,8 +296,8 @@ pub fn consolidate(inv: &mut PanelInventory, note: &str, now_unix: u64) -> Optio
     }
     inv.consolidations.push(Consolidation {
         after_seat: last_seat,
-        note: note.to_string(),
-        at_unix: now_unix,
+        note:       note.to_string(),
+        at_unix:    now_unix,
     });
     Some(last_seat)
 }
@@ -312,8 +320,8 @@ pub fn load(path: &Path, slug: &str) -> Result<PanelInventory, String> {
     }
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-    let mut inv: PanelInventory = toml_edit::de::from_str(&text)
-        .map_err(|e| format!("parsing {}: {e}", path.display()))?;
+    let mut inv: PanelInventory =
+        toml_edit::de::from_str(&text).map_err(|e| format!("parsing {}: {e}", path.display()))?;
     if inv.slug.is_empty() {
         inv.slug = slug.to_string();
     }
@@ -425,7 +433,10 @@ pub fn load_all(mock_dir: &Path) -> Vec<PanelInventory> {
     paths
         .into_iter()
         .filter_map(|p| {
-            let slug = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let slug = p
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
             load(&p, &slug).ok()
         })
         .collect()

@@ -127,7 +127,10 @@ fn an_unstaged_canon_change_passes_the_commit_gate() {
     let tmp = tempfile::tempdir().unwrap();
     fixture(tmp.path(), true);
     git(tmp.path(), &["add", "mock/panel/kickoff.toml"]);
-    write(&tmp.path().join("mock/canon/law.md"), "# edited, not staged\n");
+    write(
+        &tmp.path().join("mock/canon/law.md"),
+        "# edited, not staged\n",
+    );
     let t = text(&commit_gate(tmp.path()));
     assert!(
         !t.contains("canon is staged"),

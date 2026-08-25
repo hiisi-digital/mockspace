@@ -114,7 +114,9 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
             .current_dir(&cfg.repo_root)
             .output();
         let changed = match porcelain {
-            Ok(o) if o.status.success() => Some(worktree_paths(&String::from_utf8_lossy(&o.stdout))),
+            Ok(o) if o.status.success() => {
+                Some(worktree_paths(&String::from_utf8_lossy(&o.stdout)))
+            },
             // A git call that failed established nothing. Reporting it as a
             // pass is a positive assertion this did not make.
             _ => None,
@@ -142,7 +144,11 @@ pub(crate) fn cmd_check(cfg: &Config) -> ExitCode {
                 );
             },
             None => {
-                print_row("panel", CheckResult::Pass, "no canon path touched by an open panel");
+                print_row(
+                    "panel",
+                    CheckResult::Pass,
+                    "no canon path touched by an open panel",
+                );
             },
         }
     }
@@ -508,7 +514,11 @@ mod panel_discipline_tests {
             &["mock/canon/**".to_string()],
             true,
         );
-        assert_eq!(hits, Some(vec!["mock/canon/law.md".to_string()]), "only the canon path, not every changed path");
+        assert_eq!(
+            hits,
+            Some(vec!["mock/canon/law.md".to_string()]),
+            "only the canon path, not every changed path"
+        );
     }
 
     #[test]
@@ -517,7 +527,11 @@ mod panel_discipline_tests {
         // changed" from "a panel is open and canon changed". Without this,
         // `any_panel_open` alone could be doing all the work.
         assert_eq!(
-            canon_violation(&["src/lib.rs".to_string()], &["mock/canon/**".to_string()], true),
+            canon_violation(
+                &["src/lib.rs".to_string()],
+                &["mock/canon/**".to_string()],
+                true
+            ),
             None
         );
     }
@@ -526,15 +540,13 @@ mod panel_discipline_tests {
     fn worktree_paths_reads_ordinary_and_renamed_records() {
         // `-z`: NUL-separated, no quoting, and a rename is two records with the
         // new path first.
-        let porcelain = " M src/lib.rs\0?? mock/canon/new.md\0R  mock/canon/law.md\0mock/canon/old.md\0";
-        assert_eq!(
-            worktree_paths(porcelain),
-            vec![
-                "src/lib.rs".to_string(),
-                "mock/canon/new.md".to_string(),
-                "mock/canon/law.md".to_string(),
-            ]
-        );
+        let porcelain =
+            " M src/lib.rs\0?? mock/canon/new.md\0R  mock/canon/law.md\0mock/canon/old.md\0";
+        assert_eq!(worktree_paths(porcelain), vec![
+            "src/lib.rs".to_string(),
+            "mock/canon/new.md".to_string(),
+            "mock/canon/law.md".to_string(),
+        ]);
     }
 
     #[test]

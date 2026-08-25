@@ -646,7 +646,7 @@ mod abi_tests {
 
 #[cfg(test)]
 mod calibration_tests {
-    use super::{calibrate_reps, CALIBRATION_FLOOR_TICKS};
+    use super::{CALIBRATION_FLOOR_TICKS, calibrate_reps};
 
     #[test]
     fn above_floor_needs_one_rep() {

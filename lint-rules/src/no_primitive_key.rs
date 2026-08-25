@@ -26,6 +26,7 @@ impl Lint for NoPrimitiveKey {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
+
     fn name(&self) -> &'static str {
         "no-primitive-key"
     }
@@ -65,7 +66,7 @@ impl CrateLint for NoPrimitiveKey {
                                 ));
                             } else {
                                 errors.push(LintError {
-                                    path: None,
+                                    path:         None,
                                     crate_name:   ctx.crate_name.to_string(),
                                     line:         line_num + 1,
                                     lint_name:    "no-primitive-key",

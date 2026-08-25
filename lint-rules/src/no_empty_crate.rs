@@ -52,6 +52,7 @@ impl Lint for NoEmptyCrate {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::ADVISORY
     }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }

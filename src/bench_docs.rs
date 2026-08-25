@@ -281,10 +281,8 @@ mod tests {
 
     #[test]
     fn history_logs_are_discovered_in_both_layouts_with_bench_qualified_keys() {
-        let dir = std::env::temp_dir().join(format!(
-            "mockspace-bench-docs-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mockspace-bench-docs-test-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(dir.join(".bench_history")).unwrap();
         std::fs::create_dir_all(dir.join("history/warm")).unwrap();

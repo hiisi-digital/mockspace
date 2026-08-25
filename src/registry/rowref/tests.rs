@@ -21,13 +21,15 @@ pub(super) fn ns(key: &str, fields: &[(&str, &str)]) -> RegistryNamespace {
         group_by:    None,
         fields:      fields
             .iter()
-            .map(|(name, ty)| RegistryField {
-                name:        (*name).into(),
-                r#type:      (*ty).into(),
-                required:    false,
-                description: None,
-                visibility:  FieldVisibility::Public,
-                values:      Vec::new(),
+            .map(|(name, ty)| {
+                RegistryField {
+                    name:        (*name).into(),
+                    r#type:      (*ty).into(),
+                    required:    false,
+                    description: None,
+                    visibility:  FieldVisibility::Public,
+                    values:      Vec::new(),
+                }
             })
             .collect(),
     }
@@ -64,10 +66,7 @@ pub(super) fn kinds(found: &[RegistryFinding]) -> Vec<&str> {
 #[test]
 fn a_slug_naming_a_row_that_exists_is_accepted() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     assert!(
         validate_row_references(&r, &nss).is_empty(),
         "a reference to a row that exists must be accepted"
@@ -82,10 +81,7 @@ fn a_slug_naming_a_row_that_exists_is_accepted() {
 #[test]
 fn a_slug_naming_no_row_is_reported() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "audio")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "audio")])]);
     let found = validate_row_references(&r, &nss);
     assert_eq!(kinds(&found), ["unknown-row-reference"], "{found:?}");
     assert!(
@@ -101,10 +97,7 @@ fn a_slug_naming_no_row_is_reported() {
 #[test]
 fn the_same_bad_value_in_an_untyped_field_is_not_reported() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "string[]")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "audio")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "audio")])]);
     assert!(
         validate_row_references(&r, &nss).is_empty(),
         "a field declared `string[]` must not be validated as references"
@@ -114,10 +107,7 @@ fn the_same_bad_value_in_an_untyped_field_is_not_reported() {
 #[test]
 fn a_qualified_value_is_refused_and_the_message_says_what_to_write() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "slot::display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "slot::display")])]);
     let found = validate_row_references(&r, &nss);
     assert_eq!(kinds(&found), ["malformed-row-reference"], "{found:?}");
     assert!(
@@ -130,10 +120,7 @@ fn a_qualified_value_is_refused_and_the_message_says_what_to_write() {
 #[test]
 fn a_near_miss_names_the_slug_it_is_near() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "compositor", &[]),
-        ("answer", "niri", &[("slot", "compositer")]),
-    ]);
+    let r = reg(&[("slot", "compositor", &[]), ("answer", "niri", &[("slot", "compositer")])]);
     let found = validate_row_references(&r, &nss);
     assert!(
         found[0].message.contains("Did you mean `compositor`?"),
@@ -166,10 +153,7 @@ fn a_type_naming_nothing_is_reported() {
 
 #[test]
 fn a_type_naming_a_declared_namespace_is_not_reported() {
-    let nss = [
-        ns("slot", &[]),
-        ns("answer", &[("slot", "slot"), ("slots", "slot[]")]),
-    ];
+    let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot"), ("slots", "slot[]")])];
     assert!(unknown_field_types(&nss).is_empty());
 }
 
@@ -211,7 +195,11 @@ fn an_array_field_validates_every_element() {
         ("answer", "niri", &[("slots", "display, audio, input")]),
     ]);
     let found = validate_row_references(&r, &nss);
-    assert_eq!(found.len(), 2, "both absent elements must report: {found:?}");
+    assert_eq!(
+        found.len(),
+        2,
+        "both absent elements must report: {found:?}"
+    );
 }
 
 #[test]
@@ -235,10 +223,7 @@ fn referrers_finds_the_rows_that_point_at_one() {
 #[test]
 fn an_untyped_field_holding_the_same_slug_is_not_a_referrer() {
     let nss = [ns("slot", &[]), ns("answer", &[("note", "string")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("note", "display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("note", "display")])]);
     assert!(referrers(&r, &nss, "slot::display").is_empty());
 }
 
@@ -259,10 +244,7 @@ fn a_row_nothing_points_at_has_no_referrers() {
 #[test]
 fn a_partial_slug_match_is_not_a_referrer() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display_scaling")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display_scaling")])]);
     assert!(
         referrers(&r, &nss, "slot::display").is_empty(),
         "a slug that merely starts with the target must not count"
@@ -283,11 +265,17 @@ fn the_view_carries_the_rows_and_the_reverse_edges() {
     let v = build_view(&r, &nss);
     assert_eq!(v.len(), 4);
     assert_eq!(v.rows_in("slot"), ["slot::audio", "slot::display"]);
-    assert_eq!(v.referrers("slot::display"), ["answer::niri", "answer::wlr"]);
+    assert_eq!(v.referrers("slot::display"), [
+        "answer::niri",
+        "answer::wlr"
+    ]);
     assert_eq!(v.referrers("slot::audio"), ["answer::wlr"]);
     assert_eq!(v.field("answer::niri", "slot"), Some("display"));
     // The same question `refsto` answers, from the same data.
-    assert_eq!(v.referrers("slot::display"), referrers(&r, &nss, "slot::display"));
+    assert_eq!(
+        v.referrers("slot::display"),
+        referrers(&r, &nss, "slot::display")
+    );
 }
 
 /// The control: a field that is not typed as a namespace contributes no edge,
@@ -295,10 +283,7 @@ fn the_view_carries_the_rows_and_the_reverse_edges() {
 #[test]
 fn an_untyped_field_contributes_no_edge_to_the_view() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "string")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     let v = build_view(&r, &nss);
     assert_eq!(v.len(), 2, "the rows are still there");
     assert!(
@@ -322,10 +307,7 @@ fn an_untyped_field_contributes_no_edge_to_the_view() {
 #[test]
 fn a_dangling_reference_is_not_an_edge_in_either_direction() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "ghost")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "ghost")])]);
     assert!(
         referrers(&r, &nss, "slot::ghost").is_empty(),
         "the function a document uses"
@@ -342,10 +324,9 @@ fn a_dangling_reference_is_not_an_edge_in_either_direction() {
 #[test]
 fn a_reference_to_a_row_that_exists_is_an_edge_in_both() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     assert_eq!(referrers(&r, &nss, "slot::display"), ["answer::niri"]);
-    assert_eq!(build_view(&r, &nss).referrers("slot::display"), ["answer::niri"]);
+    assert_eq!(build_view(&r, &nss).referrers("slot::display"), [
+        "answer::niri"
+    ]);
 }

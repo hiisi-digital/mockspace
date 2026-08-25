@@ -129,10 +129,12 @@ fn match_segments(pat: &[&str], path: &[&str]) -> bool {
         None => path.is_empty(),
         // `**` takes any number of whole segments including none, which is what lets the
         // lifted `**/foo.rs` reach a file at the root as well as a nested one.
-        Some((&"**", rest)) => (0..=path.len()).any(|i| match_segments(rest, &path[i..])),
-        Some((p, rest)) => match path.split_first() {
-            Some((s, srest)) if match_one(p, s) => match_segments(rest, srest),
-            _ => false,
+        Some((&"**", rest)) => (0 ..= path.len()).any(|i| match_segments(rest, &path[i ..])),
+        Some((p, rest)) => {
+            match path.split_first() {
+                Some((s, srest)) if match_one(p, s) => match_segments(rest, srest),
+                _ => false,
+            }
         },
     }
 }
@@ -143,9 +145,9 @@ fn match_one(pat: &str, seg: &str) -> bool {
     fn go(p: &[char], s: &[char]) -> bool {
         match p.split_first() {
             None => s.is_empty(),
-            Some(('*', rest)) => (0..=s.len()).any(|i| go(rest, &s[i..])),
-            Some(('?', rest)) => !s.is_empty() && go(rest, &s[1..]),
-            Some((c, rest)) => !s.is_empty() && s[0] == *c && go(rest, &s[1..]),
+            Some(('*', rest)) => (0 ..= s.len()).any(|i| go(rest, &s[i ..])),
+            Some(('?', rest)) => !s.is_empty() && go(rest, &s[1 ..]),
+            Some((c, rest)) => !s.is_empty() && s[0] == *c && go(rest, &s[1 ..]),
         }
     }
     let p: Vec<char> = pat.chars().collect();
@@ -203,14 +205,20 @@ mod tests {
 
     #[test]
     fn include_alone_admits_only_what_matches() {
-        let f = PathFilter { include: vec!["src/**".into()], exclude: vec![] };
+        let f = PathFilter {
+            include: vec!["src/**".into()],
+            exclude: vec![],
+        };
         assert!(f.allows_str("src/lib.rs"));
         assert!(!f.allows_str("tests/it.rs"));
     }
 
     #[test]
     fn exclude_alone_removes_only_what_matches() {
-        let f = PathFilter { include: vec![], exclude: vec!["**/generated/**".into()] };
+        let f = PathFilter {
+            include: vec![],
+            exclude: vec!["**/generated/**".into()],
+        };
         assert!(f.allows_str("src/lib.rs"));
         assert!(!f.allows_str("src/generated/pb.rs"));
     }
@@ -229,7 +237,10 @@ mod tests {
     fn a_windows_separator_is_matched_by_a_forward_slash_pattern() {
         // one config file describes one project on every platform, so the pattern language
         // has one separator and the path gets converted to it
-        let f = PathFilter { include: vec!["src/**".into()], exclude: vec![] };
+        let f = PathFilter {
+            include: vec!["src/**".into()],
+            exclude: vec![],
+        };
         assert!(f.allows(Path::new("src\\lib.rs")));
     }
 
@@ -237,8 +248,11 @@ mod tests {
     fn a_leading_dot_slash_is_not_a_segment() {
         assert!(glob_match("./src/lib.rs", "src/lib.rs"));
         assert!(
-            PathFilter { include: vec!["src/**".into()], exclude: vec![] }
-                .allows(Path::new("./src/lib.rs"))
+            PathFilter {
+                include: vec!["src/**".into()],
+                exclude: vec![],
+            }
+            .allows(Path::new("./src/lib.rs"))
         );
     }
 

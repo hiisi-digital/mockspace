@@ -57,7 +57,9 @@ fn publishing_manifests() -> Vec<(String, PathBuf)> {
                     .map(str::trim)
                     .filter(|l| !l.starts_with('#'))
                     .collect();
-                if keys.iter().any(|l| l.starts_with("publish") && l.contains("false"))
+                if keys
+                    .iter()
+                    .any(|l| l.starts_with("publish") && l.contains("false"))
                     || !keys.iter().any(|l| l.starts_with("name"))
                 {
                     continue;
@@ -100,14 +102,18 @@ fn shipped_tests(manifest: &Path, text: &str) -> Result<Vec<PathBuf>, String> {
             all.len()
         ));
     };
-    let body = &text[at..];
+    let body = &text[at ..];
     let end = body.find(']').unwrap_or(body.len());
-    let listed = &body[..end];
+    let listed = &body[.. end];
 
     Ok(all
         .into_iter()
         .filter(|p| {
-            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             listed.contains(&name) || listed.contains("tests/**")
         })
         .collect())
@@ -119,12 +125,12 @@ fn included_paths(text: &str) -> Vec<String> {
     for macro_name in ["include_str!", "include_bytes!", "include!"] {
         let mut rest = text;
         while let Some(at) = rest.find(macro_name) {
-            let after = &rest[at + macro_name.len()..];
+            let after = &rest[at + macro_name.len() ..];
             let Some(open) = after.find('"') else { break };
-            let body = &after[open + 1..];
+            let body = &after[open + 1 ..];
             let Some(close) = body.find('"') else { break };
-            out.push(body[..close].to_string());
-            rest = &body[close..];
+            out.push(body[.. close].to_string());
+            rest = &body[close ..];
         }
     }
     out
@@ -136,9 +142,9 @@ fn stripped_dev_deps(text: &str) -> BTreeSet<String> {
     let Some(at) = text.find("[dev-dependencies]") else {
         return BTreeSet::new();
     };
-    let body = &text[at..];
-    let end = body[1..].find("\n[").map(|i| i + 1).unwrap_or(body.len());
-    body[..end]
+    let body = &text[at ..];
+    let end = body[1 ..].find("\n[").map(|i| i + 1).unwrap_or(body.len());
+    body[.. end]
         .lines()
         .filter_map(|line| {
             let (name, rhs) = line.split_once('=')?;
@@ -172,7 +178,7 @@ fn no_shipped_test_reads_a_file_above_the_package_root() {
             Err(e) => {
                 problems.push(e);
                 continue;
-            }
+            },
         };
         for test in tests {
             checked += 1;
@@ -196,9 +202,7 @@ fn no_shipped_test_reads_a_file_above_the_package_root() {
                 }
             }
             for dep in stripped_dev_deps(&text) {
-                if body.contains(&format!("use {dep}"))
-                    || body.contains(&format!("{dep}::"))
-                {
+                if body.contains(&format!("use {dep}")) || body.contains(&format!("{dep}::")) {
                     problems.push(format!(
                         "{name}: {} names `{dep}`, a dev-dependency declared by \
                          path alone, which cargo strips on publish",
@@ -224,13 +228,21 @@ fn the_check_recognises_both_shapes_it_is_for() {
     // failures looked like before they were fixed, kept so the reader can see
     // the check would catch them.
     let escaping = r#"const README: &str = include_str!("../../README.md");"#;
-    assert_eq!(included_paths(escaping), vec!["../../README.md".to_string()]);
+    assert_eq!(included_paths(escaping), vec![
+        "../../README.md".to_string()
+    ]);
     assert_eq!(escaping.matches("../").count(), 2);
 
     let manifest = "[dev-dependencies]\nmockspace-manifest = { path = \"../x\" }\n\
                     tempfile = \"3\"\nother = { path = \"../y\", version = \"0.1\" }\n";
     let stripped = stripped_dev_deps(manifest);
     assert!(stripped.contains("mockspace_manifest"), "{stripped:?}");
-    assert!(!stripped.contains("tempfile"), "a registry dev-dep is not stripped");
-    assert!(!stripped.contains("other"), "a path dep with a version is not stripped");
+    assert!(
+        !stripped.contains("tempfile"),
+        "a registry dev-dep is not stripped"
+    );
+    assert!(
+        !stripped.contains("other"),
+        "a path dep with a version is not stripped"
+    );
 }

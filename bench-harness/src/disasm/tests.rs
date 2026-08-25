@@ -36,7 +36,10 @@ fn symbol_candidates_tries_bare_and_underscore_prefixed() {
     // local `objdump` accepts
     // `--disassemble-symbols=` at all (see the real-dylib test below,
     // which is not universally portable across objdump flavours).
-    assert_eq!(symbol_candidates("bench_entry"), ["bench_entry".to_string(), "_bench_entry".to_string()]);
+    assert_eq!(symbol_candidates("bench_entry"), [
+        "bench_entry".to_string(),
+        "_bench_entry".to_string()
+    ]);
 }
 
 // ── pure logic: normalize_disasm / strip_symbol_annotation ──
@@ -58,7 +61,10 @@ fn normalize_disasm_strips_address_and_raw_opcode_columns() {
     // causes two variants to compare unequal. `0x370` is a branch
     // target, folded to `ADDR`; `#0x1` is a `#`-prefixed immediate and
     // survives untouched.
-    assert_eq!(normalized, "file format mach-o arm64\ncbz\tx0, ADDR\nsub\tx8, x0, #0x1");
+    assert_eq!(
+        normalized,
+        "file format mach-o arm64\ncbz\tx0, ADDR\nsub\tx8, x0, #0x1"
+    );
 }
 
 #[test]
@@ -80,7 +86,8 @@ fn normalize_disasm_folds_mangled_name_and_shifted_target_together() {
     // deliberately different, not just the mangled names: without
     // folding both, these two lines would never compare equal for any
     // real pair of distinct crates.
-    let a = "     8c0: 97fffff0     \tbl\t0x880 <__RINvCsfGFIfYg1MGU_10variant_a27do_workKj40_EB2_>\n";
+    let a =
+        "     8c0: 97fffff0     \tbl\t0x880 <__RINvCsfGFIfYg1MGU_10variant_a27do_workKj40_EB2_>\n";
     let b = "     8c0: 97fffff0     \tbl\t0x890 <__RINvCsdNdfRXoBgyl_10variant_unrolled_x427do_workKj40_EB2_>\n";
     assert_eq!(normalize_disasm(a), normalize_disasm(b));
     assert_eq!(normalize_disasm(a), "bl\tADDR");
@@ -93,7 +100,10 @@ fn normalize_addresses_folds_a_branch_target_that_shifted_by_an_unrelated_layout
     // crate name pushing everything after it forward) shift every
     // subsequent `.text` address by a constant. `b.ne 0xb68` against
     // `b.ne 0xb78` is exactly that shape.
-    assert_eq!(normalize_addresses("b.ne\t0xb68"), normalize_addresses("b.ne\t0xb78"));
+    assert_eq!(
+        normalize_addresses("b.ne\t0xb68"),
+        normalize_addresses("b.ne\t0xb78")
+    );
     assert_eq!(normalize_addresses("b.ne\t0xb68"), "b.ne\tADDR");
 }
 
@@ -104,7 +114,10 @@ fn normalize_addresses_leaves_hash_prefixed_immediates_alone() {
     // Folding them would erase exactly the distinction the "different
     // work is not a duplicate" guarantee depends on.
     assert_eq!(normalize_addresses("mov\tx9, #0x1f"), "mov\tx9, #0x1f");
-    assert_ne!(normalize_addresses("mov\tx9, #0x1f"), normalize_addresses("mov\tx9, #0x25"));
+    assert_ne!(
+        normalize_addresses("mov\tx9, #0x1f"),
+        normalize_addresses("mov\tx9, #0x25")
+    );
 }
 
 #[test]
@@ -118,8 +131,14 @@ fn normalize_addresses_leaves_bracketed_memory_operands_alone() {
     // A memory-operand offset is semantic (which field of the struct is
     // being read), not a branch target, whether or not it happens to be
     // `#`-prefixed; the bracket-depth guard protects it either way.
-    assert_eq!(normalize_addresses("str\tx2, [sp, #0x8]"), "str\tx2, [sp, #0x8]");
-    assert_eq!(normalize_addresses("ldr\tx0, [x1, 0x10]"), "ldr\tx0, [x1, 0x10]");
+    assert_eq!(
+        normalize_addresses("str\tx2, [sp, #0x8]"),
+        "str\tx2, [sp, #0x8]"
+    );
+    assert_eq!(
+        normalize_addresses("ldr\tx0, [x1, 0x10]"),
+        "ldr\tx0, [x1, 0x10]"
+    );
 }
 
 #[test]
@@ -133,7 +152,10 @@ fn normalize_addresses_leaves_x86_att_displacement_alone() {
     // synthetic-input test of reasoned-correct logic, not a
     // real-dylib-verified one; see the doc comment on
     // `normalize_addresses`.
-    assert_eq!(normalize_addresses("movq\t0x10(%rax),%rbx"), "movq\t0x10(%rax),%rbx");
+    assert_eq!(
+        normalize_addresses("movq\t0x10(%rax),%rbx"),
+        "movq\t0x10(%rax),%rbx"
+    );
     // Different displacements must still compare different: this is a
     // struct-field or array-index selection, not layout noise.
     assert_ne!(
@@ -142,7 +164,10 @@ fn normalize_addresses_leaves_x86_att_displacement_alone() {
     );
     // A genuine call/branch target elsewhere on the same line still
     // folds; only the parenthesised displacement is protected.
-    assert_eq!(normalize_addresses("callq\t0x4010a0 <do_work>"), "callq\tADDR <do_work>");
+    assert_eq!(
+        normalize_addresses("callq\t0x4010a0 <do_work>"),
+        "callq\tADDR <do_work>"
+    );
 }
 
 #[test]
@@ -177,12 +202,22 @@ fn matching_entry_with_differing_text_is_not_a_duplicate() {
     // not inlined (so `bench_entry` itself carries no trace of what
     // they compute) must not be reported as a duplicate when the
     // functions actually differ.
-    assert!(!same_work(&some("same"), &some("same"), &some("alpha"), &some("beta")));
+    assert!(!same_work(
+        &some("same"),
+        &some("same"),
+        &some("alpha"),
+        &some("beta")
+    ));
 }
 
 #[test]
 fn missing_text_is_never_a_duplicate() {
-    assert!(!same_work(&some("same"), &some("same"), &some("alpha"), &None));
+    assert!(!same_work(
+        &some("same"),
+        &some("same"),
+        &some("alpha"),
+        &None
+    ));
     assert!(!same_work(&some("same"), &some("same"), &None, &None));
 }
 
@@ -254,8 +289,11 @@ fn partial_extraction_failure_still_reports_dupes_found_among_the_rest() {
 // the skip path is not expected to trigger in normal use.
 
 fn scratch_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir()
-        .join(format!("mockspace_bench_disasm_test_{}_{}", std::process::id(), name));
+    let dir = std::env::temp_dir().join(format!(
+        "mockspace_bench_disasm_test_{}_{}",
+        std::process::id(),
+        name
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create scratch dir");
     dir
@@ -399,9 +437,11 @@ fn objdump_finds_bench_entry_under_this_platforms_symbol_prefix() {
     // directly rather than through `extract_bench_entry`, so a silent
     // fall-through to the otool fallback cannot mask a regression here.
     let dir = scratch_dir("underscore_prefix");
-    let Some(dylib) =
-        build_cdylib(&dir, "probe_underscore_prefix", &dispatcher_source(ADD_MUL_WORK))
-    else {
+    let Some(dylib) = build_cdylib(
+        &dir,
+        "probe_underscore_prefix",
+        &dispatcher_source(ADD_MUL_WORK),
+    ) else {
         eprintln!("skipping: rustc unavailable");
         return;
     };
@@ -440,10 +480,8 @@ fn identical_work_in_separate_crates_is_flagged_duplicate() {
         return;
     };
     let paths = vec![a.to_str().unwrap().to_string(), b.to_str().unwrap().to_string()];
-    let entry_asm: Vec<Option<String>> =
-        paths.iter().map(|p| extract_bench_entry(p)).collect();
-    let text_section: Vec<Option<String>> =
-        paths.iter().map(|p| extract_text_section(p)).collect();
+    let entry_asm: Vec<Option<String>> = paths.iter().map(|p| extract_bench_entry(p)).collect();
+    let text_section: Vec<Option<String>> = paths.iter().map(|p| extract_text_section(p)).collect();
     assert!(
         text_section.iter().all(Option::is_some),
         "expected extract_text_section to succeed on both freshly built dylibs"
@@ -476,10 +514,8 @@ fn different_work_is_not_flagged_duplicate() {
         return;
     };
     let paths = vec![a.to_str().unwrap().to_string(), b.to_str().unwrap().to_string()];
-    let entry_asm: Vec<Option<String>> =
-        paths.iter().map(|p| extract_bench_entry(p)).collect();
-    let text_section: Vec<Option<String>> =
-        paths.iter().map(|p| extract_text_section(p)).collect();
+    let entry_asm: Vec<Option<String>> = paths.iter().map(|p| extract_bench_entry(p)).collect();
+    let text_section: Vec<Option<String>> = paths.iter().map(|p| extract_text_section(p)).collect();
     assert!(
         text_section.iter().all(Option::is_some),
         "expected extract_text_section to succeed on both freshly built dylibs"

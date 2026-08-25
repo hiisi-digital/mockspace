@@ -18,11 +18,11 @@ fn keys_named_in_the_readme() -> Vec<String> {
         let Some(at) = line.find("mockspace_") else {
             continue;
         };
-        let rest = &line[at..];
+        let rest = &line[at ..];
         let end = rest
             .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
             .unwrap_or(rest.len());
-        let key = rest[..end].to_string();
+        let key = rest[.. end].to_string();
         if !found.contains(&key) {
             found.push(key);
         }

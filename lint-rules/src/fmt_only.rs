@@ -64,11 +64,7 @@ pub fn is_fmt_only_change(dir: &Path, file: &str, current: &str) -> Result<(), N
     }
 
     let formatted = rustfmt(dir, &committed)?;
-    if formatted == current {
-        Ok(())
-    } else {
-        Err(NotFmtOnly::ContentDiffers)
-    }
+    if formatted == current { Ok(()) } else { Err(NotFmtOnly::ContentDiffers) }
 }
 
 /// Drop files whose only change is what `rustfmt` would have produced.
@@ -85,14 +81,13 @@ pub fn is_fmt_only_change(dir: &Path, file: &str, current: &str) -> Result<(), N
 /// Fails closed throughout: a missing `rustfmt`, an untracked file, content
 /// that cannot be resolved, or source `rustfmt` will not parse all leave the
 /// file in the list and the gate refuses exactly as before.
-pub fn drop_fmt_only(
-    workspace_root: &Path,
-    files: Vec<(String, String)>,
-) -> Vec<(String, String)> {
+pub fn drop_fmt_only(workspace_root: &Path, files: Vec<(String, String)>) -> Vec<(String, String)> {
     files
         .into_iter()
         .filter(|(file, source)| {
-            let Some(current) = crate::changelist_required::staged_or_worktree(workspace_root, file, source) else {
+            let Some(current) =
+                crate::changelist_required::staged_or_worktree(workspace_root, file, source)
+            else {
                 return true; // cannot resolve the content: refuse
             };
             match is_fmt_only_change(workspace_root, file, &current) {
@@ -151,7 +146,9 @@ fn rustfmt(dir: &Path, source: &str) -> Result<String, NotFmtOnly> {
         .ok_or(NotFmtOnly::Undeterminable)?
         .write_all(source.as_bytes())
         .map_err(|_| NotFmtOnly::Undeterminable)?;
-    let out = child.wait_with_output().map_err(|_| NotFmtOnly::Undeterminable)?;
+    let out = child
+        .wait_with_output()
+        .map_err(|_| NotFmtOnly::Undeterminable)?;
     if !out.status.success() {
         // Unparseable source, or a rustfmt that refused the input.
         return Err(NotFmtOnly::Undeterminable);
@@ -170,12 +167,12 @@ mod tests {
 
     impl Repo {
         fn new(name: &str, committed: &str) -> Repo {
-        // A process-wide counter, not a clock. SystemTime here has microsecond
-        // resolution at best (twenty back-to-back samples yield four distinct
-        // values on this host), and `create_dir_all` succeeds silently on an
-        // existing directory, so two tests starting in the same tick shared a
-        // scratch directory and overwrote each other's fixtures.
-        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            // A process-wide counter, not a clock. SystemTime here has microsecond
+            // resolution at best (twenty back-to-back samples yield four distinct
+            // values on this host), and `create_dir_all` succeeds silently on an
+            // existing directory, so two tests starting in the same tick shared a
+            // scratch directory and overwrote each other's fixtures.
+            static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let root = std::env::temp_dir().join(format!(
                 "fmtonly-{}-{}-{}",
                 name,
@@ -192,7 +189,11 @@ mod tests {
                 vec!["add", "-A"],
                 vec!["commit", "-q", "-m", "seed", "--no-gpg-sign"],
             ] {
-                Command::new("git").args(&args).current_dir(&root).output().unwrap();
+                Command::new("git")
+                    .args(&args)
+                    .current_dir(&root)
+                    .output()
+                    .unwrap();
             }
             Repo {
                 root,
@@ -229,7 +230,10 @@ mod tests {
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
-        assert!(ok, "rustfmt is not on PATH; the pinned toolchain provides it");
+        assert!(
+            ok,
+            "rustfmt is not on PATH; the pinned toolchain provides it"
+        );
     }
 
     #[test]

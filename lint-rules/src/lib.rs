@@ -41,19 +41,19 @@
 pub mod canon_not_while_panel_open;
 pub mod registry_view;
 pub use registry_view::{RegistryView, RowFields};
-pub mod fmt_only;
 mod actionable_errors;
 mod changelist_doc_gate;
 pub mod changelist_helpers;
 mod changelist_immutability;
 mod changelist_lock;
 pub(crate) mod changelist_required;
-pub mod merge;
 mod deprecation_comparison;
 mod design_doc_source_mismatch;
 mod export_count;
 mod file_size;
+pub mod fmt_only;
 mod forbidden_imports;
+pub mod merge;
 mod no_adhoc_error_enum;
 mod no_adhoc_framework;
 mod no_bare_macro_types;
@@ -82,10 +82,17 @@ use std::path::{Path, PathBuf};
 
 pub use path_filter::{PathFilter, PathFilters, glob_match};
 pub use tool::{
-    ArgSpec, NotALint, Outcome, Tool, ToolContext, ToolReport, contract_faults,
-    duplicate_tool_names, missing_required, usage_line,
+    ArgSpec,
+    NotALint,
+    Outcome,
+    Tool,
+    ToolContext,
+    ToolReport,
+    contract_faults,
+    duplicate_tool_names,
+    missing_required,
+    usage_line,
 };
-
 use tree_sitter::Tree;
 
 // ---------------------------------------------------------------------------
@@ -618,7 +625,9 @@ mod cfg_test_mod_tests {
 
     #[test]
     fn an_unrelated_attribute_does_not_make_a_module_a_test_module() {
-        assert!(!first_mod_is_test("#[allow(dead_code)]\nmod real { fn f() {} }"));
+        assert!(!first_mod_is_test(
+            "#[allow(dead_code)]\nmod real { fn f() {} }"
+        ));
     }
 
     #[test]
@@ -667,7 +676,9 @@ mod cfg_test_mod_tests {
         // `not(test)` is the exact opposite of the question. A substring search
         // for "cfg" and "test" answers yes here and deletes a module that
         // exists in every non-test build.
-        assert!(!first_mod_is_test("#[cfg(not(test))]\nmod real { fn f() {} }"));
+        assert!(!first_mod_is_test(
+            "#[cfg(not(test))]\nmod real { fn f() {} }"
+        ));
     }
 
     #[test]
@@ -690,8 +701,12 @@ mod cfg_test_mod_tests {
     fn an_all_predicate_requiring_test_is_a_test_module() {
         // `all(..)` cannot hold without every member, so a `test` anywhere in
         // it makes the module test-only.
-        assert!(first_mod_is_test("#[cfg(all(test, unix))]\nmod tests { fn f() {} }"));
-        assert!(first_mod_is_test("#[cfg(all(unix, test))]\nmod tests { fn f() {} }"));
+        assert!(first_mod_is_test(
+            "#[cfg(all(test, unix))]\nmod tests { fn f() {} }"
+        ));
+        assert!(first_mod_is_test(
+            "#[cfg(all(unix, test))]\nmod tests { fn f() {} }"
+        ));
     }
 
     #[test]
@@ -752,10 +767,17 @@ mod is_shame_template_tests {
 
         std::fs::remove_file(dir.join("shame.md.tmpl")).unwrap();
         std::fs::write(dir.join("SHAME.md.tmpl"), "## thing\nreason\n").unwrap();
-        assert_eq!(read_shame_template(&dir).as_deref(), Some("## thing\nreason\n"));
+        assert_eq!(
+            read_shame_template(&dir).as_deref(),
+            Some("## thing\nreason\n")
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(read_shame_template(&dir), None, "a missing dir reads as absent");
+        assert_eq!(
+            read_shame_template(&dir),
+            None,
+            "a missing dir reads as absent"
+        );
     }
 
     #[test]
@@ -1245,12 +1267,12 @@ pub trait RepoLint: Lint {
 /// Context for a [`RepoLint`]: the paths, and nothing crate-shaped.
 pub struct RepoContext<'a> {
     /// Root directory of the mock workspace, where `design_rounds/` lives.
-    pub mock_dir:      &'a Path,
+    pub mock_dir:    &'a Path,
     /// Root of the repository containing the mock workspace.
-    pub repo_root:     &'a Path,
+    pub repo_root:   &'a Path,
     /// Every crate directory name in the workspace. Empty is a legitimate
     /// state, and a repo lint must behave correctly when it is.
-    pub all_crates:    &'a BTreeSet<String>,
+    pub all_crates:  &'a BTreeSet<String>,
     /// Every directory holding source packages, absolute, in config order.
     ///
     /// The same list `mockspace.toml` names and `Config::src_dirs` carries, in
@@ -1260,21 +1282,21 @@ pub struct RepoContext<'a> {
     ///
     /// Empty is legitimate and means a project with no source at all, which is
     /// what a documentation repository is.
-    pub src_dirs:      &'a [PathBuf],
+    pub src_dirs:    &'a [PathBuf],
     /// The invocation that triggered this run, when there was one and the lint
     /// asked for it via [`Lint::invocation_wanted`].
-    pub invocation:    Option<Invocation<'a>>,
+    pub invocation:  Option<Invocation<'a>>,
     /// The globs a project declares as its canon, from `canon_paths`. Empty
     /// where a project has not said what its canon is, which is most of them.
-    pub canon_paths:   &'a [String],
+    pub canon_paths: &'a [String],
     /// The slugs of every panel presently open, computed by the engine because
     /// the panel ledger lives there. Empty where none is.
-    pub open_panels:   &'a [String],
+    pub open_panels: &'a [String],
     /// The project's registry, flattened, with the reverse edges computed.
     ///
     /// Empty where the project declares no registry, which is legitimate and
     /// which every accessor answers without a special case.
-    pub registry:      &'a crate::RegistryView,
+    pub registry:    &'a crate::RegistryView,
 }
 
 /// A lint handed an authored message rather than anything in the worktree.
@@ -1560,7 +1582,12 @@ fn check_every_file(
 ) -> Vec<LintError> {
     let kept: Vec<&(&CrateSourceFile, Tree)> = match filter {
         None => parsed.iter().collect(),
-        Some(f) => parsed.iter().filter(|(file, _)| f.allows(&file.rel_path)).collect(),
+        Some(f) => {
+            parsed
+                .iter()
+                .filter(|(file, _)| f.allows(&file.rel_path))
+                .collect()
+        },
     };
 
     // `parsed` and `ctx.all_sources` describe the same files for every real
@@ -1580,8 +1607,12 @@ fn check_every_file(
         let Some(f) = filter else {
             return lint.check(ctx);
         };
-        let owned: Vec<CrateSourceFile> =
-            ctx.all_sources.iter().filter(|s| f.allows(&s.rel_path)).cloned().collect();
+        let owned: Vec<CrateSourceFile> = ctx
+            .all_sources
+            .iter()
+            .filter(|s| f.allows(&s.rel_path))
+            .cloned()
+            .collect();
         if owned.is_empty() {
             return Vec::new();
         }
@@ -1717,7 +1748,11 @@ pub fn check_crate_with_extra(
     // One parse per file, shared by every per-file lint below.
     let parsed = parse_sources(ctx.all_sources);
 
-    for lint in lints.iter().map(Box::as_ref).chain(extra_lints.iter().map(Box::as_ref)) {
+    for lint in lints
+        .iter()
+        .map(Box::as_ref)
+        .chain(extra_lints.iter().map(Box::as_ref))
+    {
         let filter = overrides.and_then(|cfg| cfg.filter_for(lint.name()));
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
             check_every_file(lint, ctx, &parsed, filter)
@@ -1836,7 +1871,11 @@ pub fn check_workspace_with_extra(
 ) -> Vec<LintError> {
     let lints = all_workspace_lints();
     let mut errors = Vec::new();
-    for lint in lints.iter().map(Box::as_ref).chain(extra_lints.iter().map(Box::as_ref)) {
+    for lint in lints
+        .iter()
+        .map(Box::as_ref)
+        .chain(extra_lints.iter().map(Box::as_ref))
+    {
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
             lint.check_all(crates)
         });
@@ -1884,7 +1923,11 @@ pub fn check_repo_with_extra(
 ) -> Vec<LintError> {
     let lints = all_repo_lints();
     let mut errors = Vec::new();
-    for lint in lints.iter().map(Box::as_ref).chain(extra_lints.iter().map(Box::as_ref)) {
+    for lint in lints
+        .iter()
+        .map(Box::as_ref)
+        .chain(extra_lints.iter().map(Box::as_ref))
+    {
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
             lint.check_repo(ctx)
         });
@@ -2056,14 +2099,14 @@ mod repo_lint_tests {
         let no_crates = BTreeSet::new();
         let no_src: [PathBuf; 0] = [];
         let ctx = RepoContext {
-            mock_dir:   &tmp,
-            repo_root:  &tmp,
-            all_crates: &no_crates,
-            src_dirs:   &no_src,
-            invocation: None,
+            mock_dir:    &tmp,
+            repo_root:   &tmp,
+            all_crates:  &no_crates,
+            src_dirs:    &no_src,
+            invocation:  None,
             canon_paths: &[],
             open_panels: &[],
-            registry:   &Default::default(),
+            registry:    &Default::default(),
         };
 
         let extra: Vec<Box<dyn RepoLint>> = vec![Box::new(AlwaysReports)];
@@ -2119,14 +2162,14 @@ mod repo_lint_tests {
         let no_crates = BTreeSet::new();
         let no_src: [PathBuf; 0] = [];
         let ctx = RepoContext {
-            mock_dir:   &tmp,
-            repo_root:  &tmp,
-            all_crates: &no_crates,
-            src_dirs:   &no_src,
-            invocation: None,
+            mock_dir:    &tmp,
+            repo_root:   &tmp,
+            all_crates:  &no_crates,
+            src_dirs:    &no_src,
+            invocation:  None,
             canon_paths: &[],
             open_panels: &[],
-            registry:   &Default::default(),
+            registry:    &Default::default(),
         };
         let extra: Vec<Box<dyn RepoLint>> = vec![lint];
         let errors = check_repo_with_extra(&ctx, false, cfg, &extra);
@@ -2259,12 +2302,18 @@ mod repo_lint_tests {
             "changelist-required",
             "changelist-immutability",
         ] {
-            assert!(names.contains(&expected), "{expected} is not a repo lint: {names:?}");
+            assert!(
+                names.contains(&expected),
+                "{expected} is not a repo lint: {names:?}"
+            );
         }
         // and none of them lingers among the workspace lints
         let ws: Vec<&str> = all_workspace_lints().iter().map(|l| l.name()).collect();
         for unexpected in ["changelist-doc-gate", "changelist-lock"] {
-            assert!(!ws.contains(&unexpected), "{unexpected} still a workspace lint");
+            assert!(
+                !ws.contains(&unexpected),
+                "{unexpected} still a workspace lint"
+            );
         }
     }
 }
@@ -2364,7 +2413,11 @@ mod declared_default_severity_tests {
         base.all_sources = &files;
 
         let found = check_every_file(&no_todo::NoTodo, &base, &parse_sources(&files), None);
-        assert_eq!(found.len(), 1, "expected the module file's todo macro, got {found:?}");
+        assert_eq!(
+            found.len(),
+            1,
+            "expected the module file's todo macro, got {found:?}"
+        );
         assert_eq!(
             found[0].path.as_deref(),
             Some("src/env.rs"),
@@ -2385,7 +2438,10 @@ mod declared_default_severity_tests {
 
         let root_only = parse_sources(&files[.. 1]);
         let found = check_every_file(&no_todo::NoTodo, &base, &root_only, None);
-        assert!(found.is_empty(), "the crate root is clean, so this should find nothing");
+        assert!(
+            found.is_empty(),
+            "the crate root is clean, so this should find nothing"
+        );
     }
 
     #[test]
@@ -2396,11 +2452,21 @@ mod declared_default_severity_tests {
         let files = crate_with_a_dirty_module();
         let mut base = ctx();
         base.all_sources = &files;
-        let filter = PathFilter { include: vec![], exclude: vec!["src/env.rs".into()] };
+        let filter = PathFilter {
+            include: vec![],
+            exclude: vec!["src/env.rs".into()],
+        };
 
-        let found =
-            check_every_file(&no_todo::NoTodo, &base, &parse_sources(&files), Some(&filter));
-        assert!(found.is_empty(), "the only dirty file was excluded, got {found:?}");
+        let found = check_every_file(
+            &no_todo::NoTodo,
+            &base,
+            &parse_sources(&files),
+            Some(&filter),
+        );
+        assert!(
+            found.is_empty(),
+            "the only dirty file was excluded, got {found:?}"
+        );
     }
 
     #[test]
@@ -2420,7 +2486,8 @@ mod declared_default_severity_tests {
         }
         impl CrateLint for CountsSources {
             fn check(&self, ctx: &LintContext) -> Vec<LintError> {
-                self.0.store(ctx.all_sources.len(), std::sync::atomic::Ordering::SeqCst);
+                self.0
+                    .store(ctx.all_sources.len(), std::sync::atomic::Ordering::SeqCst);
                 Vec::new()
             }
         }
@@ -2432,9 +2499,16 @@ mod declared_default_severity_tests {
         let parsed = parse_sources(&files);
 
         check_every_file(&lint, &base, &parsed, None);
-        assert_eq!(lint.0.load(std::sync::atomic::Ordering::SeqCst), 2, "unfiltered control");
+        assert_eq!(
+            lint.0.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "unfiltered control"
+        );
 
-        let filter = PathFilter { include: vec!["src/lib.rs".into()], exclude: vec![] };
+        let filter = PathFilter {
+            include: vec!["src/lib.rs".into()],
+            exclude: vec![],
+        };
         check_every_file(&lint, &base, &parsed, Some(&filter));
         assert_eq!(
             lint.0.load(std::sync::atomic::Ordering::SeqCst),
@@ -2468,9 +2542,16 @@ mod declared_default_severity_tests {
         base.all_sources = &files;
         let parsed = parse_sources(&files);
 
-        assert_eq!(check_every_file(&AlwaysFires, &base, &parsed, None).len(), 1, "control");
+        assert_eq!(
+            check_every_file(&AlwaysFires, &base, &parsed, None).len(),
+            1,
+            "control"
+        );
 
-        let filter = PathFilter { include: vec!["nothing/matches/this".into()], exclude: vec![] };
+        let filter = PathFilter {
+            include: vec!["nothing/matches/this".into()],
+            exclude: vec![],
+        };
         assert!(check_every_file(&AlwaysFires, &base, &parsed, Some(&filter)).is_empty());
     }
 
@@ -2479,7 +2560,10 @@ mod declared_default_severity_tests {
         // The gate the host runs on every pack also pins the builtin set
         // itself: two builtins sharing a name would be the same double-report
         // bug with nobody external to blame.
-        assert_eq!(duplicate_lint_names(&LintPack::default()), Vec::<String>::new());
+        assert_eq!(
+            duplicate_lint_names(&LintPack::default()),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -2569,13 +2653,21 @@ mod declared_default_severity_tests {
         let files = crate_with_a_dirty_module();
         let mut base = ctx();
         base.all_sources = &files;
-        assert_eq!(check_every_file(&CrateScoped, &base, &parse_sources(&files), None).len(), 1);
+        assert_eq!(
+            check_every_file(&CrateScoped, &base, &parse_sources(&files), None).len(),
+            1
+        );
     }
 
     fn config_of(name: &str, severity: Severity) -> LintConfig {
         let mut base = HashMap::new();
         base.insert(name.to_string(), severity);
-        LintConfig { base, findings: HashMap::new(), params: HashMap::new(), paths: PathFilters::new() }
+        LintConfig {
+            base,
+            findings: HashMap::new(),
+            params: HashMap::new(),
+            paths: PathFilters::new(),
+        }
     }
 
     /// Count findings from one extra lint, ignoring whatever the builtin set
@@ -2610,7 +2702,10 @@ mod declared_default_severity_tests {
     fn a_lint_declaring_a_real_severity_still_runs_without_a_config() {
         // The control. A resolver that skipped everything would satisfy the
         // test above.
-        assert_eq!(fired(AlwaysFires("declares-error", Severity::HARD_ERROR), None), 1);
+        assert_eq!(
+            fired(AlwaysFires("declares-error", Severity::HARD_ERROR), None),
+            1
+        );
     }
 
     #[test]
@@ -2618,20 +2713,32 @@ mod declared_default_severity_tests {
         // Opting in is the whole point of declaring OFF rather than deleting
         // the lint, so the default must not be a floor.
         let cfg = config_of("declares-off", Severity::HARD_ERROR);
-        assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 1);
+        assert_eq!(
+            fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)),
+            1
+        );
     }
 
     #[test]
     fn a_config_can_turn_off_a_lint_that_declares_a_real_severity() {
         // Pre-existing behaviour, kept.
         let cfg = config_of("declares-error", Severity::OFF);
-        assert_eq!(fired(AlwaysFires("declares-error", Severity::HARD_ERROR), Some(&cfg)), 0);
+        assert_eq!(
+            fired(
+                AlwaysFires("declares-error", Severity::HARD_ERROR),
+                Some(&cfg)
+            ),
+            0
+        );
     }
 
     #[test]
     fn a_config_for_another_lint_does_not_reach_this_one() {
         let cfg = config_of("some-other-lint", Severity::HARD_ERROR);
-        assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 0);
+        assert_eq!(
+            fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)),
+            0
+        );
     }
 
     #[test]
@@ -2646,8 +2753,16 @@ mod declared_default_severity_tests {
             kinds.insert("some-kind".to_string(), Severity::HARD_ERROR);
             kinds
         });
-        let cfg = LintConfig { base: HashMap::new(), findings, params: HashMap::new(), paths: PathFilters::new() };
-        assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 1);
+        let cfg = LintConfig {
+            base: HashMap::new(),
+            findings,
+            params: HashMap::new(),
+            paths: PathFilters::new(),
+        };
+        assert_eq!(
+            fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)),
+            1
+        );
     }
 
     #[test]
@@ -2660,8 +2775,16 @@ mod declared_default_severity_tests {
             keys.insert("rules".to_string(), "something".to_string());
             keys
         });
-        let cfg = LintConfig { base: HashMap::new(), findings: HashMap::new(), params, paths: PathFilters::new() };
-        assert_eq!(fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)), 1);
+        let cfg = LintConfig {
+            base: HashMap::new(),
+            findings: HashMap::new(),
+            params,
+            paths: PathFilters::new(),
+        };
+        assert_eq!(
+            fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)),
+            1
+        );
     }
 
     #[test]
@@ -2681,9 +2804,15 @@ mod declared_default_severity_tests {
     fn cross_crate_lints_honour_the_declared_default_too() {
         // The same resolver is written twice, so it can be fixed once and
         // still be wrong in the other half.
-        assert_eq!(fired_across(AlwaysFiresAcross("declares-off", Severity::OFF), None), 0);
         assert_eq!(
-            fired_across(AlwaysFiresAcross("declares-error", Severity::HARD_ERROR), None),
+            fired_across(AlwaysFiresAcross("declares-off", Severity::OFF), None),
+            0
+        );
+        assert_eq!(
+            fired_across(
+                AlwaysFiresAcross("declares-error", Severity::HARD_ERROR),
+                None
+            ),
             1
         );
     }
@@ -2691,7 +2820,10 @@ mod declared_default_severity_tests {
     #[test]
     fn cross_crate_config_can_turn_on_a_lint_that_declares_off() {
         let cfg = config_of("declares-off", Severity::HARD_ERROR);
-        assert_eq!(fired_across(AlwaysFiresAcross("declares-off", Severity::OFF), Some(&cfg)), 1);
+        assert_eq!(
+            fired_across(AlwaysFiresAcross("declares-off", Severity::OFF), Some(&cfg)),
+            1
+        );
     }
 }
 
@@ -2741,8 +2873,16 @@ mod no_em_dashes_in_our_own_text {
             .expect("lint-rules sits under the repository root")
             .to_path_buf();
         let mut hits = Vec::new();
-        for rel in ["lint-rules/src", "src", "bench-core/src", "bench-harness/src",
-                    "bench-macro/src", "bench-matrix/src", "cargo-mock/src", "scripts"] {
+        for rel in [
+            "lint-rules/src",
+            "src",
+            "bench-core/src",
+            "bench-harness/src",
+            "bench-macro/src",
+            "bench-matrix/src",
+            "cargo-mock/src",
+            "scripts",
+        ] {
             let dir = repo.join(rel);
             if dir.is_dir() {
                 walk(&dir, &mut hits);

@@ -59,8 +59,12 @@ impl Merge {
         let Ok(heads) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
-        let mut parents: Vec<String> =
-            heads.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+        let mut parents: Vec<String> = heads
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect();
         if parents.is_empty() {
             return Self::default();
         }
@@ -94,8 +98,11 @@ impl Merge {
             return false;
         }
         let staged = blob(dir, ":", file);
-        let at_parents: Vec<Option<String>> =
-            self.parents.iter().map(|p| blob(dir, &format!("{p}:"), file)).collect();
+        let at_parents: Vec<Option<String>> = self
+            .parents
+            .iter()
+            .map(|p| blob(dir, &format!("{p}:"), file))
+            .collect();
         // A path nothing carries is not a match of two absences. It cannot
         // reach here through the index, since a walk over staged changes never
         // names one, but the answer should not depend on that.
@@ -237,10 +244,13 @@ fn git_hash_object(dir: &Path, content: &[u8]) -> Option<String> {
 }
 
 fn git_bytes(cwd: &Path, args: &[&str]) -> Option<Vec<u8>> {
-    let out = Command::new("git").args(args).current_dir(cwd).output().ok()?;
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
     out.status.success().then_some(out.stdout)
 }
-
 
 /// The object id of `file` at `rev`, or `None` where the path is absent there.
 ///
@@ -259,8 +269,14 @@ fn blob(dir: &Path, rev: &str, file: &str) -> Option<String> {
 }
 
 fn git(cwd: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").args(args).current_dir(cwd).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string())
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 #[cfg(test)]
@@ -283,7 +299,8 @@ mod tests {
         /// A repo with a `mock/` subdirectory, because the gates run from
         /// there and the relative-path handling is half of what is under test.
         fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!("mockspace-merge-{name}-{}", std::process::id()));
+            let root =
+                std::env::temp_dir().join(format!("mockspace-merge-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(root.join("mock/crates/foo/src")).unwrap();
             let r = Repo {
@@ -363,7 +380,8 @@ mod tests {
     /// the cleanup afterwards removes the link rather than what it wrote.
     #[test]
     fn the_scratch_directory_refuses_a_path_something_already_holds() {
-        let root = std::env::temp_dir().join(format!("mockspace-scratchguard-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("mockspace-scratchguard-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("elsewhere")).unwrap();
         let planted = root.join("planted");
@@ -413,13 +431,19 @@ mod tests {
         r.write("crates/foo/OTHER.md.tmpl", "branch moved something else\n");
         r.commit("on the branch");
         r.git(&["switch", "-q", "trunk"]);
-        r.write("crates/foo/src/lib.rs", "pub fn a() {}\npub fn trunk_added() {}\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "pub fn a() {}\npub fn trunk_added() {}\n",
+        );
         r.commit("on trunk");
         r.git(&["switch", "-q", "feature"]);
         r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
 
         let m = Merge::detect(&r.mock());
-        assert!(m.in_progress(), "the fixture did not leave a merge in flight");
+        assert!(
+            m.in_progress(),
+            "the fixture did not leave a merge in flight"
+        );
         assert!(
             m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
             "a file the branch never touched is not an authored change"
@@ -434,13 +458,22 @@ mod tests {
         // work. Without this, most of what a real merge stages reads as
         // authored and the gate fires on all of it.
         let r = Repo::new("automerge");
-        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\n",
+        );
         r.commit("base");
         r.git(&["switch", "-q", "-c", "feature"]);
-        r.write("crates/foo/src/lib.rs", "one\nBRANCH\nthree\nfour\nfive\nsix\nseven\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\nBRANCH\nthree\nfour\nfive\nsix\nseven\n",
+        );
         r.commit("on the branch");
         r.git(&["switch", "-q", "trunk"]);
-        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nTRUNK\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\ntwo\nthree\nfour\nfive\nsix\nTRUNK\n",
+        );
         r.commit("on trunk");
         r.git(&["switch", "-q", "feature"]);
         r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
@@ -473,14 +506,23 @@ mod tests {
         // feeding an octopus its first two parents leaves every test green,
         // and that is a merge base nobody chose.
         let r = Repo::new("octopus-hunks");
-        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\n",
+        );
         r.commit("base");
         r.git(&["switch", "-q", "-c", "one"]);
-        r.write("crates/foo/src/lib.rs", "one\nONE\nthree\nfour\nfive\nsix\nseven\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\nONE\nthree\nfour\nfive\nsix\nseven\n",
+        );
         r.commit("on one");
         r.git(&["switch", "-q", "trunk"]);
         r.git(&["switch", "-q", "-c", "two"]);
-        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nTWO\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\ntwo\nthree\nfour\nfive\nsix\nTWO\n",
+        );
         r.commit("on two");
         r.git(&["switch", "-q", "trunk"]);
         r.git(&["merge", "--no-commit", "--no-ff", "one", "two"]);
@@ -505,13 +547,22 @@ mod tests {
         // still matches neither parent, exactly as the auto merge did, and it is
         // an authored change.
         let r = Repo::new("automerge-then-edit");
-        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\n",
+        );
         r.commit("base");
         r.git(&["switch", "-q", "-c", "feature"]);
-        r.write("crates/foo/src/lib.rs", "one\nBRANCH\nthree\nfour\nfive\nsix\nseven\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\nBRANCH\nthree\nfour\nfive\nsix\nseven\n",
+        );
         r.commit("on the branch");
         r.git(&["switch", "-q", "trunk"]);
-        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\nfour\nfive\nsix\nTRUNK\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\ntwo\nthree\nfour\nfive\nsix\nTRUNK\n",
+        );
         r.commit("on trunk");
         r.git(&["switch", "-q", "feature"]);
         r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
@@ -609,7 +660,10 @@ mod tests {
         r.git(&["merge", "--no-commit", "--no-ff", "one", "two"]);
 
         let m = Merge::detect(&r.mock());
-        assert!(m.in_progress(), "the fixture did not leave a merge in flight");
+        assert!(
+            m.in_progress(),
+            "the fixture did not leave a merge in flight"
+        );
         assert_eq!(m.parents.len(), 3, "HEAD plus both merged heads");
         // the file from the SECOND merged head is the one a first-line-only
         // reader would report as an authored change

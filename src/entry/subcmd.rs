@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-
 /// Every subcommand `run_inner` dispatches on. Single source of truth for
 /// the dispatch match, the unknown-subcommand help, and the suggestion.
 /// Every known subcommand.

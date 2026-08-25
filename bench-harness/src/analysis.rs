@@ -84,28 +84,28 @@ impl Stats {
 
 /// Per-variant analysis across modes and cooldowns.
 pub struct VariantAnalysis {
-    pub name:             String,
-    pub algo_all:         Stats,
-    pub e2e_all:          Stats,
-    pub bridge_all:       Stats,
-    pub algo_per_cd:      BTreeMap<u64, Stats>,
-    pub e2e_per_cd:       BTreeMap<u64, Stats>,
-    pub nonstop_per_pass: Vec<f64>,
+    pub name:              String,
+    pub algo_all:          Stats,
+    pub e2e_all:           Stats,
+    pub bridge_all:        Stats,
+    pub algo_per_cd:       BTreeMap<u64, Stats>,
+    pub e2e_per_cd:        BTreeMap<u64, Stats>,
+    pub nonstop_per_pass:  Vec<f64>,
     /// Lag-1 autocorrelation of the nonstop per-pass time series.
     /// Values near +1 indicate persistent warm-up or drift; near -1
     /// indicate alternating high/low (thermal throttling bounce). Near
     /// 0 is ideal.
-    pub autocorrelation:  f64,
+    pub autocorrelation:   f64,
     /// All samples keyed by `(run, pass, cooldown_ms, algo_ns)` for
     /// paired statistical comparisons. The key tuple allows
     /// deterministic re-pairing of variant vs baseline even across
     /// independent collection runs.
-    pub keyed_algo:       Vec<(usize, usize, u64, f64)>,
+    pub keyed_algo:        Vec<(usize, usize, u64, f64)>,
     /// Quality scores from samples that have a non-`None` score.
-    pub scores:           Vec<f64>,
+    pub scores:            Vec<f64>,
     /// Per-input-tag algo Stats (e.g. per sparsity pattern). Empty if
     /// no samples have `input_tag`.
-    pub algo_per_tag:     BTreeMap<u8, Stats>,
+    pub algo_per_tag:      BTreeMap<u8, Stats>,
     /// Mean hardware instructions retired per call across this variant's
     /// samples, and mean cycles. Zero when perf counters were off. `ipc` is the
     /// derived instructions/cycles ratio (0 when cycles is 0).
@@ -719,13 +719,20 @@ mod cost_model_tests {
         // A line with small perturbations: slope/intercept close, R2 below 1.
         let pts = vec![(64.0, 292.5), (256.0, 868.0), (1024.0, 3172.0), (4096.0, 12388.5)];
         let m = fit_cost_model(&pts).unwrap();
-        assert!(m.per_item > 2.9 && m.per_item < 3.1, "per_item {}", m.per_item);
+        assert!(
+            m.per_item > 2.9 && m.per_item < 3.1,
+            "per_item {}",
+            m.per_item
+        );
         assert!(m.r2 > 0.999, "r2 {}", m.r2);
     }
 
     #[test]
     fn declines_without_spread() {
         assert!(fit_cost_model(&[(512.0, 10.0)]).is_none(), "single point");
-        assert!(fit_cost_model(&[(512.0, 10.0), (512.0, 20.0)]).is_none(), "no k spread");
+        assert!(
+            fit_cost_model(&[(512.0, 10.0), (512.0, 20.0)]).is_none(),
+            "no k spread"
+        );
     }
 }

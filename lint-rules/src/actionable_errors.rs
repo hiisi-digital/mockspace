@@ -108,7 +108,7 @@ impl CrateLint for ActionableErrors {
                             ));
                         } else {
                             errors.push(LintError {
-                                path: None,
+                                path:         None,
                                 crate_name:   ctx.crate_name.to_string(),
                                 line:         macro_start_line,
                                 lint_name:    "actionable-errors",

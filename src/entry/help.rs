@@ -345,7 +345,12 @@ fn suggest_among(given: &str, tools: &[String]) -> Option<String> {
     let lowered = given.to_ascii_lowercase();
     let nearest_tool = tools
         .iter()
-        .map(|t| (t, crate::entry::levenshtein(&lowered, &t.to_ascii_lowercase())))
+        .map(|t| {
+            (
+                t,
+                crate::entry::levenshtein(&lowered, &t.to_ascii_lowercase()),
+            )
+        })
         .min_by_key(|(_, d)| *d)
         .filter(|(t, d)| *d <= (lowered.len() / 2).max(2) || t.starts_with(&lowered));
     match (builtin, nearest_tool) {
@@ -378,8 +383,14 @@ mod tests {
         assert_eq!(crate::entry::suggest_subcommand("lck"), Some("lock"));
         assert_eq!(crate::entry::suggest_subcommand("helpp"), Some("help"));
         assert_eq!(crate::entry::suggest_subcommand("statsu"), Some("status"));
-        assert_eq!(crate::entry::suggest_subcommand("depreciate"), Some("deprecate"));
-        assert_eq!(crate::entry::suggest_subcommand("actiavte"), Some("activate"));
+        assert_eq!(
+            crate::entry::suggest_subcommand("depreciate"),
+            Some("deprecate")
+        );
+        assert_eq!(
+            crate::entry::suggest_subcommand("actiavte"),
+            Some("activate")
+        );
     }
 
     #[test]
@@ -395,7 +406,10 @@ mod tests {
         // A wrong guess is worse than none: it sends the reader to try something
         // they did not mean, and they may not notice.
         assert_eq!(crate::entry::suggest_subcommand("xyzzy"), None);
-        assert_eq!(crate::entry::suggest_subcommand("frobnicate-everything"), None);
+        assert_eq!(
+            crate::entry::suggest_subcommand("frobnicate-everything"),
+            None
+        );
     }
 
     #[test]
@@ -416,7 +430,11 @@ mod tests {
         // mean a real command whose exact spelling gets "did you mean" for
         // something else.
         for name in known_commands() {
-            assert_eq!(crate::entry::suggest_subcommand(name), Some(name), "{name} should suggest itself");
+            assert_eq!(
+                crate::entry::suggest_subcommand(name),
+                Some(name),
+                "{name} should suggest itself"
+            );
         }
     }
 
@@ -444,7 +462,10 @@ mod tests {
             super::suggest_among("phrase-serach", &tools),
             Some("phrase-search".to_string())
         );
-        assert_eq!(super::suggest_among("corpus", &tools), Some("corpus-talk".to_string()));
+        assert_eq!(
+            super::suggest_among("corpus", &tools),
+            Some("corpus-talk".to_string())
+        );
     }
 
     #[test]
@@ -452,8 +473,14 @@ mod tests {
         // The case that must fail if tools were simply preferred: `stat` is
         // one edit from a builtin and nowhere near either tool.
         let tools = vec!["phrase-search".to_string(), "corpus-talk".to_string()];
-        assert_eq!(super::suggest_among("stauts", &tools), Some("status".to_string()));
-        assert_eq!(super::suggest_among("lck", &tools), Some("lock".to_string()));
+        assert_eq!(
+            super::suggest_among("stauts", &tools),
+            Some("status".to_string())
+        );
+        assert_eq!(
+            super::suggest_among("lck", &tools),
+            Some("lock".to_string())
+        );
     }
 
     #[test]

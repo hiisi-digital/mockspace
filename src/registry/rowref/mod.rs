@@ -182,9 +182,11 @@ pub fn validate_row_references(
                         Some((ns, slug)) if ns == target => {
                             format!(" Write `{slug}`: the field's type already says `{target}`.")
                         },
-                        Some((ns, _)) => format!(
-                            " It names namespace `{ns}`, but this field is typed `{target}`; a field references one namespace and the type is where that is stated."
-                        ),
+                        Some((ns, _)) => {
+                            format!(
+                                " It names namespace `{ns}`, but this field is typed `{target}`; a field references one namespace and the type is where that is stated."
+                            )
+                        },
                         None => String::new(),
                     };
                     out.push(RegistryFinding {
@@ -245,7 +247,7 @@ fn nearest(reg: &Registry, namespace: &str, slug: &str) -> String {
 /// and being exact costs a dozen lines.
 fn edit_distance(a: &str, b: &str) -> usize {
     let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut prev: Vec<usize> = (0 ..= b.len()).collect();
     let mut cur = vec![0usize; b.len() + 1];
     for (i, ca) in a.iter().enumerate() {
         cur[0] = i + 1;

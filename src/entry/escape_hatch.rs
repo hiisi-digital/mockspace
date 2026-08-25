@@ -80,9 +80,14 @@ pub fn staged_crates(repo_root: &Path, mock_rel: &str) -> Vec<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
     /// `--doc-only` was passed while Rust sources are staged.
-    DocOnlyWithStagedSource { staged: Vec<String> },
+    DocOnlyWithStagedSource {
+        staged: Vec<String>,
+    },
     /// `--scope` omitted crates that have staged changes.
-    ScopeOmitsStagedCrates { omitted: Vec<String>, scoped: Vec<String> },
+    ScopeOmitsStagedCrates {
+        omitted: Vec<String>,
+        scoped:  Vec<String>,
+    },
 }
 
 impl Refusal {
@@ -94,7 +99,9 @@ impl Refusal {
     #[must_use]
     pub fn explain(&self) -> String {
         match self {
-            Self::DocOnlyWithStagedSource { staged } => {
+            Self::DocOnlyWithStagedSource {
+                staged,
+            } => {
                 format!(
                     "--doc-only claims no source is staged, but {} Rust file(s) are:\n  {}\n\
                      \n  Source lints would be skipped on staged source, which is the one thing\n  \
@@ -103,7 +110,10 @@ impl Refusal {
                     staged.join("\n  ")
                 )
             },
-            Self::ScopeOmitsStagedCrates { omitted, scoped } => {
+            Self::ScopeOmitsStagedCrates {
+                omitted,
+                scoped,
+            } => {
                 format!(
                     "--scope {} omits crate(s) with staged changes:\n  {}\n\
                      \n  Those crates would not be linted at all. Widen the scope to include\n  \
@@ -123,7 +133,9 @@ pub fn verify_doc_only(repo_root: &Path, mock_rel: &str) -> Option<Refusal> {
     if staged.is_empty() {
         return None;
     }
-    Some(Refusal::DocOnlyWithStagedSource { staged })
+    Some(Refusal::DocOnlyWithStagedSource {
+        staged,
+    })
 }
 
 /// Verify that `--scope` covers every crate with staged changes.
@@ -145,20 +157,21 @@ pub fn verify_scope(repo_root: &Path, mock_rel: &str, scope: &str) -> Option<Ref
             .filter(|s| !s.is_empty())
             .collect()
     };
-    let omitted: Vec<String> = staged
-        .into_iter()
-        .filter(|c| !scoped.contains(c))
-        .collect();
+    let omitted: Vec<String> = staged.into_iter().filter(|c| !scoped.contains(c)).collect();
     if omitted.is_empty() {
         return None;
     }
-    Some(Refusal::ScopeOmitsStagedCrates { omitted, scoped })
+    Some(Refusal::ScopeOmitsStagedCrates {
+        omitted,
+        scoped,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::process::Command as C;
+
+    use super::*;
 
     /// A git repo with the given paths staged.
     fn repo_with_staged(paths: &[(&str, &str)]) -> std::path::PathBuf {
@@ -209,7 +222,9 @@ mod tests {
         let r = verify_doc_only(&repo, "mock");
         let _ = std::fs::remove_dir_all(&repo);
         match r {
-            Some(Refusal::DocOnlyWithStagedSource { staged }) => {
+            Some(Refusal::DocOnlyWithStagedSource {
+                staged,
+            }) => {
                 assert_eq!(staged, vec!["mock/crates/foo/src/lib.rs".to_string()]);
             },
             other => panic!("expected a refusal, got {other:?}"),
@@ -250,7 +265,10 @@ mod tests {
         let r = verify_scope(&repo, "mock", "foo");
         let _ = std::fs::remove_dir_all(&repo);
         match r {
-            Some(Refusal::ScopeOmitsStagedCrates { omitted, .. }) => {
+            Some(Refusal::ScopeOmitsStagedCrates {
+                omitted,
+                ..
+            }) => {
                 assert_eq!(omitted, vec!["bar".to_string()]);
             },
             other => panic!("expected a refusal, got {other:?}"),

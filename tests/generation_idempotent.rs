@@ -307,8 +307,14 @@ fn the_binary_leaves_a_tree_it_just_generated_alone() {
         .expect("git init");
     let mock = root.join("mock");
     write(&mock.join("mockspace.toml"), "project_name = \"probe\"\n");
-    write(&mock.join("Cargo.toml"), "[workspace]\nmembers = []\nresolver = \"2\"\n");
-    write(&mock.join("PROJECT.md.tmpl"), "# Probe\n\nA body that does not change.\n");
+    write(
+        &mock.join("Cargo.toml"),
+        "[workspace]\nmembers = []\nresolver = \"2\"\n",
+    );
+    write(
+        &mock.join("PROJECT.md.tmpl"),
+        "# Probe\n\nA body that does not change.\n",
+    );
 
     let run = || {
         std::process::Command::new(env!("CARGO_BIN_EXE_mockspace"))

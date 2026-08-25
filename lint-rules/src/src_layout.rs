@@ -62,15 +62,19 @@ impl SrcLayout {
                         dirs.push(s);
                     }
                 },
-                Err(_) => eprintln!(
-                    "  [lint-config] source directory `{}` is not under the mock dir `{}`, \
+                Err(_) => {
+                    eprintln!(
+                        "  [lint-config] source directory `{}` is not under the mock dir `{}`, \
                      so the phase gates cannot address it and will not guard what is in it.",
-                    d.display(),
-                    mock_dir.display(),
-                ),
+                        d.display(),
+                        mock_dir.display(),
+                    )
+                },
             }
         }
-        Self { dirs }
+        Self {
+            dirs,
+        }
     }
 
     /// Whether the project declares any source at all.
@@ -141,9 +145,15 @@ pub fn changed_files(
 
     let mut files: Vec<(String, String)> = Vec::new();
     let walks: [(&[&str], &str); 3] = [
-        (&["diff", "--cached", "--name-only", "--relative", "--"], "staged"),
+        (
+            &["diff", "--cached", "--name-only", "--relative", "--"],
+            "staged",
+        ),
         (&["diff", "--name-only", "--relative", "--"], "unstaged"),
-        (&["ls-files", "--others", "--exclude-standard", "--"], "untracked"),
+        (
+            &["ls-files", "--others", "--exclude-standard", "--"],
+            "untracked",
+        ),
     ];
 
     for (args, source) in walks {
@@ -176,7 +186,11 @@ pub fn changed_files(
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git").args(args).current_dir(cwd).output().ok()?;
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
     Some(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
@@ -215,7 +229,11 @@ mod merge_walk_tests {
         }
 
         fn git(&self, args: &[&str]) {
-            Command::new("git").args(args).current_dir(&self.root).output().unwrap();
+            Command::new("git")
+                .args(args)
+                .current_dir(&self.root)
+                .output()
+                .unwrap();
         }
 
         fn mock(&self) -> PathBuf {
@@ -256,7 +274,10 @@ mod merge_walk_tests {
         r.write("crates/foo/README.md", "the branch moved something else\n");
         r.commit("on the branch");
         r.git(&["switch", "-q", "trunk"]);
-        r.write("crates/foo/src/lib.rs", "pub fn a() {}\npub fn trunk_added() {}\n");
+        r.write(
+            "crates/foo/src/lib.rs",
+            "pub fn a() {}\npub fn trunk_added() {}\n",
+        );
         r.write("crates/foo/DESIGN.md.tmpl", "trunk rewrote the design\n");
         r.commit("on trunk");
         r.git(&["switch", "-q", "feature"]);
@@ -308,10 +329,10 @@ mod merge_walk_tests {
         r.write("crates/foo/src/lib.rs", "pub fn b() {}\n");
         r.git(&["add", "-A"]);
 
-        assert_eq!(
-            r.walk(),
-            vec![("crates/foo/src/lib.rs".to_string(), "staged".to_string())]
-        );
+        assert_eq!(r.walk(), vec![(
+            "crates/foo/src/lib.rs".to_string(),
+            "staged".to_string()
+        )]);
     }
 }
 
@@ -330,7 +351,10 @@ mod tests {
         let l = layout(&["crates"]);
         assert!(l.holds("crates/foo/src/lib.rs"));
         assert!(!l.holds("docs/foo.md"));
-        assert_eq!(l.package_name("crates/foo/src/lib.rs").as_deref(), Some("foo"));
+        assert_eq!(
+            l.package_name("crates/foo/src/lib.rs").as_deref(),
+            Some("foo")
+        );
         assert_eq!(l.pathspecs(), vec!["crates/"]);
     }
 
@@ -341,7 +365,10 @@ mod tests {
         let l = layout(&["libs"]);
         assert!(l.holds("libs/foo/src/lib.rs"));
         assert!(!l.holds("crates/foo/src/lib.rs"));
-        assert_eq!(l.package_name("libs/foo/src/lib.rs").as_deref(), Some("foo"));
+        assert_eq!(
+            l.package_name("libs/foo/src/lib.rs").as_deref(),
+            Some("foo")
+        );
     }
 
     #[test]
@@ -358,7 +385,10 @@ mod tests {
         let l = layout(&["sub/crates"]);
         assert!(l.holds("sub/crates/foo/src/lib.rs"));
         assert!(!l.holds("crates/foo/src/lib.rs"));
-        assert_eq!(l.package_name("sub/crates/foo/src/lib.rs").as_deref(), Some("foo"));
+        assert_eq!(
+            l.package_name("sub/crates/foo/src/lib.rs").as_deref(),
+            Some("foo")
+        );
     }
 
     /// A prefix match without the separator would claim this one, and the

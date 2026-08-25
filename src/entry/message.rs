@@ -27,14 +27,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use mockspace_lint_rules::{
-    AgentMode,
-    Level,
-    LintMode,
-    LintPack,
-    MessageContext,
-    MessageDomain,
-};
+use mockspace_lint_rules::{AgentMode, Level, LintMode, LintPack, MessageContext, MessageDomain};
 
 use crate::agent_mode;
 use crate::config::Config;
@@ -197,9 +190,11 @@ pub(crate) fn read_message_file(path: &Path) -> Result<String, String> {
 pub(crate) fn split_batch(text: &str, default_origin: &str) -> Vec<(String, String)> {
     text.split('\0')
         .filter(|r| !r.is_empty())
-        .map(|r| match r.split_once('\x1f') {
-            Some((o, m)) => (o.to_string(), m.to_string()),
-            None => (default_origin.to_string(), r.to_string()),
+        .map(|r| {
+            match r.split_once('\x1f') {
+                Some((o, m)) => (o.to_string(), m.to_string()),
+                None => (default_origin.to_string(), r.to_string()),
+            }
         })
         .collect()
 }
@@ -210,10 +205,19 @@ mod tests {
 
     #[test]
     fn domain_tokens_parse_in_the_forms_a_hook_would_write() {
-        assert_eq!(parse_domain("commit-msg"), Some(MessageDomain::CommitMessage));
-        assert_eq!(parse_domain("commit_message"), Some(MessageDomain::CommitMessage));
+        assert_eq!(
+            parse_domain("commit-msg"),
+            Some(MessageDomain::CommitMessage)
+        );
+        assert_eq!(
+            parse_domain("commit_message"),
+            Some(MessageDomain::CommitMessage)
+        );
         assert_eq!(parse_domain("COMMIT"), Some(MessageDomain::CommitMessage));
-        assert_eq!(parse_domain("pr-body"), Some(MessageDomain::PullRequestBody));
+        assert_eq!(
+            parse_domain("pr-body"),
+            Some(MessageDomain::PullRequestBody)
+        );
         assert_eq!(parse_domain("mr"), Some(MessageDomain::PullRequestBody));
         assert_eq!(parse_domain("review"), Some(MessageDomain::ReviewComment));
         assert_eq!(parse_domain("nonsense"), None);
@@ -223,7 +227,10 @@ mod tests {
     fn every_advertised_domain_token_actually_parses() {
         // The error message lists these, so a token it names must work.
         for t in DOMAIN_TOKENS {
-            assert!(parse_domain(t).is_some(), "{t} is advertised but does not parse");
+            assert!(
+                parse_domain(t).is_some(),
+                "{t} is advertised but does not parse"
+            );
         }
     }
 
@@ -258,7 +265,10 @@ mod tests {
         let recs = split_batch("abc123 \x1f\0", "<stdin>");
         assert_eq!(recs.len(), 1, "an empty message is still a record");
         assert_eq!(recs[0].0, "abc123 ");
-        assert_eq!(recs[0].1, "", "the message is empty and must reach the lint");
+        assert_eq!(
+            recs[0].1, "",
+            "the message is empty and must reach the lint"
+        );
     }
 
     #[test]
@@ -273,13 +283,23 @@ mod tests {
     #[test]
     fn split_batch_falls_back_to_the_default_origin() {
         let recs = split_batch("no separator here\0", "<stdin>");
-        assert_eq!(recs, vec![("<stdin>".to_string(), "no separator here".to_string())]);
+        assert_eq!(recs, vec![(
+            "<stdin>".to_string(),
+            "no separator here".to_string()
+        )]);
     }
 
     #[test]
     fn split_batch_reads_many_records_in_order_and_ignores_the_trailing_tail() {
-        let recs = split_batch("a1 one\x1ffeat: one\n\0b2 two\x1ffix: two\n\nbody\n\0", "<stdin>");
-        assert_eq!(recs.len(), 2, "the trailing separator leaves no extra record");
+        let recs = split_batch(
+            "a1 one\x1ffeat: one\n\0b2 two\x1ffix: two\n\nbody\n\0",
+            "<stdin>",
+        );
+        assert_eq!(
+            recs.len(),
+            2,
+            "the trailing separator leaves no extra record"
+        );
         assert_eq!(recs[0].0, "a1 one");
         assert_eq!(recs[1].0, "b2 two");
         assert_eq!(recs[1].1, "fix: two\n\nbody\n");

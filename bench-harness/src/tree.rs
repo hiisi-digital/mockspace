@@ -49,7 +49,12 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::config::{
-    BenchManifest, BenchSection, BenchspaceSection, SizeSection, TimingOverride, de_seed_opt,
+    BenchManifest,
+    BenchSection,
+    BenchspaceSection,
+    SizeSection,
+    TimingOverride,
+    de_seed_opt,
     de_sizes,
 };
 use crate::error::BenchError;
@@ -212,8 +217,7 @@ fn resolve_members(
     benches_dir: &Path,
     space: &BenchspaceSection,
 ) -> Result<Vec<String>, BenchError> {
-    let excluded =
-        |rel: &str| -> bool { space.exclude.iter().any(|p| glob_match(p, rel)) };
+    let excluded = |rel: &str| -> bool { space.exclude.iter().any(|p| glob_match(p, rel)) };
 
     let mut members: Vec<String> = Vec::new();
     let mut push = |rel: String| {
@@ -331,9 +335,7 @@ pub fn glob_match(pattern: &str, path: &str) -> bool {
     fn rec(pat: &[&str], path: &[&str]) -> bool {
         match pat.split_first() {
             None => path.is_empty(),
-            Some((&"**", rest)) => {
-                (0 ..= path.len()).any(|skip| rec(rest, &path[skip ..]))
-            },
+            Some((&"**", rest)) => (0 ..= path.len()).any(|skip| rec(rest, &path[skip ..])),
             Some((comp, rest)) => {
                 !path.is_empty() && component(comp, path[0]) && rec(rest, &path[1 ..])
             },
@@ -354,7 +356,8 @@ fn compose_member(
 ) -> Result<(), BenchError> {
     let dir = benches_dir.join(member);
     let file = dir.join("bench.toml");
-    let text = std::fs::read_to_string(&file).map_err(|e| BenchError::io("reading bench.toml", e))?;
+    let text =
+        std::fs::read_to_string(&file).map_err(|e| BenchError::io("reading bench.toml", e))?;
     let raw: toml::Value = text.parse().map_err(|e| {
         BenchError::InvalidConfig {
             reason: format!("{}: {e}", file.display()),
@@ -548,10 +551,7 @@ fn compose_composed_member(
                 .workload
                 .clone()
                 .unwrap_or_else(|| parsed.workload.clone()),
-            master_seed: sweep
-                .master_seed
-                .or(parsed.master_seed)
-                .unwrap_or_default(),
+            master_seed: sweep.master_seed.or(parsed.master_seed).unwrap_or_default(),
             variants:    resolved,
             sizes:       points,
             may_differ:  sweep.may_differ.unwrap_or(parsed.may_differ),
@@ -669,11 +669,7 @@ pub fn arm_dylib_name(arm: &str) -> String {
 /// discovered arm of this bench and resolves into the tool-owned
 /// target tree; a path entry is made relative to the benches root by
 /// prefixing the member directory.
-fn resolve_arm_entry(
-    member: &str,
-    entry: &str,
-    arms: &[ArmSource],
-) -> Result<String, BenchError> {
+fn resolve_arm_entry(member: &str, entry: &str, arms: &[ArmSource]) -> Result<String, BenchError> {
     let is_short = !entry.contains('/') && !entry.contains(std::path::MAIN_SEPARATOR);
     if !is_short {
         return Ok(format!("{member}/{entry}"));
@@ -708,10 +704,10 @@ fn discover_arms(bench: &str, bench_dir: &Path) -> Vec<ArmSource> {
         .filter_map(|p| {
             let arm = p.file_name()?.to_str()?.to_string();
             Some(ArmSource {
-                bench:        bench.to_string(),
+                bench: bench.to_string(),
                 arm,
                 has_manifest: p.join("Cargo.toml").is_file(),
-                dir:          p,
+                dir: p,
             })
         })
         .collect();
@@ -759,7 +755,9 @@ mod tests {
             ));
             std::fs::remove_dir_all(&root).ok();
             std::fs::create_dir_all(&root).unwrap();
-            Tree { root }
+            Tree {
+                root,
+            }
         }
 
         pub(super) fn write(&self, rel: &str, contents: &str) -> &Self {
@@ -800,7 +798,10 @@ mod tests {
         let tree = load(&t.root).unwrap();
         assert_eq!(tree.manifest.bench_names(), vec!["hash"]);
         let c = tree.manifest.for_size("hash", 1, &t.root).unwrap();
-        assert_eq!((c.bench.as_str(), c.sweep.as_str(), c.n), ("hash", "hash", 256));
+        assert_eq!(
+            (c.bench.as_str(), c.sweep.as_str(), c.n),
+            ("hash", "hash", 256)
+        );
         assert!(c.nested);
         let p = c.variant_paths[0].display().to_string();
         assert!(p.contains("target/mock-arms/hash/fnv/release/"), "{p}");
@@ -827,7 +828,8 @@ mod tests {
         "#,
         );
         t.write("declared/bench.toml", HASH_BENCH);
-        t.mkdir("declared/arms/fnv/src").mkdir("declared/arms/xx/src");
+        t.mkdir("declared/arms/fnv/src")
+            .mkdir("declared/arms/xx/src");
         // the self-contained stranger, complete with its own driver crate
         t.write(
             "resource_storage/bench.toml",
@@ -880,27 +882,49 @@ mod tests {
         "#,
         );
         let tree = load(&t.root).unwrap();
-        assert_eq!(
-            tree.manifest.bench_names(),
-            vec!["storage/rsb_clean", "storage/rsb_heavy"]
-        );
+        assert_eq!(tree.manifest.bench_names(), vec![
+            "storage/rsb_clean",
+            "storage/rsb_heavy"
+        ]);
         assert_eq!(tree.flat_members, vec!["storage"]);
 
-        let clean = tree.manifest.for_size("storage/rsb_clean", 0, &t.root).unwrap();
-        assert_eq!((clean.bench.as_str(), clean.sweep.as_str()), ("storage", "rsb_clean"));
+        let clean = tree
+            .manifest
+            .for_size("storage/rsb_clean", 0, &t.root)
+            .unwrap();
+        assert_eq!(
+            (clean.bench.as_str(), clean.sweep.as_str()),
+            ("storage", "rsb_clean")
+        );
         assert!(clean.nested);
         // The member declared `passes` and nothing else, so that one knob
         // wins and every other falls through to the root. An undeclared knob
         // arriving as the framework default instead is the defect this pins:
         // runs_per_pass would read 50000 rather than the root's 2000.
         assert_eq!(clean.passes, 5, "the member's declared knob wins");
-        assert_eq!(clean.runs_per_pass, 2000, "undeclared: inherits the root, not the default");
-        assert_eq!(clean.batch_size, 100, "undeclared: inherits the root, not the default");
-        assert_eq!(clean.harness_runs, 1, "undeclared: inherits the root, not the default");
-        assert_eq!(clean.cooldowns_ms, vec![0], "undeclared: inherits the root, not the default");
+        assert_eq!(
+            clean.runs_per_pass, 2000,
+            "undeclared: inherits the root, not the default"
+        );
+        assert_eq!(
+            clean.batch_size, 100,
+            "undeclared: inherits the root, not the default"
+        );
+        assert_eq!(
+            clean.harness_runs, 1,
+            "undeclared: inherits the root, not the default"
+        );
+        assert_eq!(
+            clean.cooldowns_ms,
+            vec![0],
+            "undeclared: inherits the root, not the default"
+        );
         // a short name resolves against the member's own variants/
         let short = clean.variant_paths[0].display().to_string();
-        assert!(short.contains("storage/variants/rsb_v0/target/release/"), "{short}");
+        assert!(
+            short.contains("storage/variants/rsb_v0/target/release/"),
+            "{short}"
+        );
         // a path entry is joined through the member directory; the
         // bare stem gets the platform affixes exactly as it does in
         // the member's own flat tree today
@@ -916,9 +940,15 @@ mod tests {
         );
 
         // section override wins over member timing
-        let heavy = tree.manifest.for_size("storage/rsb_heavy", 0, &t.root).unwrap();
+        let heavy = tree
+            .manifest
+            .for_size("storage/rsb_heavy", 0, &t.root)
+            .unwrap();
         assert_eq!(heavy.passes, 2);
-        assert_eq!(heavy.runs_per_pass, 2000, "unset fields still inherit the member");
+        assert_eq!(
+            heavy.runs_per_pass, 2000,
+            "unset fields still inherit the member"
+        );
     }
 
     #[test]
@@ -965,7 +995,8 @@ mod tests {
         let t = Tree::new("narrowed-pattern");
         t.write("bench.toml", "[benchspace]\nmembers = [\"bench-*\"]\n");
         t.write("bench-hash/bench.toml", HASH_BENCH);
-        t.mkdir("bench-hash/arms/fnv/src").mkdir("bench-hash/arms/xx/src");
+        t.mkdir("bench-hash/arms/fnv/src")
+            .mkdir("bench-hash/arms/xx/src");
         t.write("stranger/bench.toml", HASH_BENCH);
         let tree = load(&t.root).unwrap();
         assert_eq!(tree.manifest.bench_names(), vec!["bench-hash"]);
@@ -974,7 +1005,10 @@ mod tests {
     #[test]
     fn exclude_removes_a_directory_the_glob_would_take() {
         let t = Tree::new("exclude");
-        t.write("bench.toml", "[benchspace]\nmembers = [\"**\"]\nexclude = [\"scratch\"]\n");
+        t.write(
+            "bench.toml",
+            "[benchspace]\nmembers = [\"**\"]\nexclude = [\"scratch\"]\n",
+        );
         t.write("hash/bench.toml", HASH_BENCH);
         t.mkdir("hash/arms/fnv/src").mkdir("hash/arms/xx/src");
         t.write("scratch/bench.toml", HASH_BENCH);
@@ -1039,17 +1073,21 @@ mod tests {
             required = true
         "#,
         );
-        t.mkdir("warm/arms/kernel/src").mkdir("warm/arms/native/src");
+        t.mkdir("warm/arms/kernel/src")
+            .mkdir("warm/arms/native/src");
         let tree = load(&t.root).unwrap();
-        assert_eq!(
-            tree.manifest.bench_names(),
-            vec!["warm/density-w13", "warm/width-l1"]
-        );
+        assert_eq!(tree.manifest.bench_names(), vec![
+            "warm/density-w13",
+            "warm/width-l1"
+        ]);
         let c = tree.manifest.for_size("warm/width-l1", 0, &t.root).unwrap();
         assert_eq!((c.bench.as_str(), c.sweep.as_str()), ("warm", "width-l1"));
         assert_eq!(c.master_seed, 7);
         assert_eq!(c.normalise_baseline.as_deref(), Some("native"));
-        let d = tree.manifest.for_size("warm/density-w13", 0, &t.root).unwrap();
+        let d = tree
+            .manifest
+            .for_size("warm/density-w13", 0, &t.root)
+            .unwrap();
         assert_eq!(d.variant_paths.len(), 1);
         assert!(d.required && !c.required);
         // A sweep that narrows its arms declares its own baseline, because an
@@ -1078,11 +1116,15 @@ mod tests {
             arms = ["kernel"]
         "#,
         );
-        t.mkdir("warm/arms/kernel/src").mkdir("warm/arms/native/src");
+        t.mkdir("warm/arms/kernel/src")
+            .mkdir("warm/arms/native/src");
         let err = load(&t.root).unwrap_err().to_string();
         assert!(err.contains("baseline = \"native\""), "{err}");
         assert!(err.contains("not an arm it runs"), "{err}");
-        assert!(err.contains("Arms: kernel"), "names what is available: {err}");
+        assert!(
+            err.contains("Arms: kernel"),
+            "names what is available: {err}"
+        );
     }
 
     #[test]
@@ -1153,7 +1195,10 @@ mod tests {
         // in-component wildcards, the shape cargo users write
         assert!(glob_match("bench-*", "bench-hash"));
         assert!(!glob_match("bench-*", "stranger"));
-        assert!(!glob_match("bench-*", "bench-a/b"), "a component * never crosses /");
+        assert!(
+            !glob_match("bench-*", "bench-a/b"),
+            "a component * never crosses /"
+        );
         assert!(glob_match("*-probe", "disasm-probe"));
         assert!(glob_match("a*c", "abc"));
         assert!(!glob_match("a*c", "abd"));
@@ -1177,7 +1222,8 @@ mod invariants {
         t.write("outer/bench.toml", HASH_BENCH);
         t.mkdir("outer/arms/fnv/src").mkdir("outer/arms/xx/src");
         t.write("outer/inner/bench.toml", HASH_BENCH);
-        t.mkdir("outer/inner/arms/fnv/src").mkdir("outer/inner/arms/xx/src");
+        t.mkdir("outer/inner/arms/fnv/src")
+            .mkdir("outer/inner/arms/xx/src");
         let tree = load(&t.root).unwrap();
         assert_eq!(
             tree.manifest.bench_names(),
@@ -1209,10 +1255,23 @@ mod invariants {
         let tree = load(&t.root).unwrap();
         let c = tree.manifest.for_size("m", 0, &t.root).unwrap();
         assert_eq!(c.passes, 5, "the declared knob wins");
-        assert_eq!(c.runs_per_pass, 2000, "undeclared: root, not the framework default");
-        assert_eq!(c.batch_size, 100, "undeclared: root, not the framework default");
-        assert_eq!(c.harness_runs, 1, "undeclared: root, not the framework default");
-        assert_eq!(c.cooldowns_ms, vec![0], "undeclared: root, not the framework default");
+        assert_eq!(
+            c.runs_per_pass, 2000,
+            "undeclared: root, not the framework default"
+        );
+        assert_eq!(
+            c.batch_size, 100,
+            "undeclared: root, not the framework default"
+        );
+        assert_eq!(
+            c.harness_runs, 1,
+            "undeclared: root, not the framework default"
+        );
+        assert_eq!(
+            c.cooldowns_ms,
+            vec![0],
+            "undeclared: root, not the framework default"
+        );
     }
 
     #[test]
@@ -1242,7 +1301,10 @@ mod invariants {
         t.write("m/bench.toml", HASH_BENCH);
         t.mkdir("m/arms/fnv/src").mkdir("m/arms/xx/src");
         let err = load(&t.root).unwrap_err().to_string();
-        assert!(err.contains("lists member `m` and also excludes it"), "{err}");
+        assert!(
+            err.contains("lists member `m` and also excludes it"),
+            "{err}"
+        );
     }
 
     #[test]

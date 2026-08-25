@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use tree_sitter::Node;
 
-use crate::{Lint, WorkspaceLint, LintContext, LintError};
+use crate::{Lint, LintContext, LintError, WorkspaceLint};
 
 pub struct NoDuplicateFn;
 
@@ -72,7 +72,7 @@ impl WorkspaceLint for NoDuplicateFn {
                         continue;
                     }
                     errors.push(LintError {
-                        path: None,
+                        path:         None,
                         crate_name:   dup.crate_name.clone(),
                         line:         dup.line,
                         lint_name:    "no-duplicate-fn",
@@ -115,7 +115,7 @@ impl WorkspaceLint for NoDuplicateFn {
                         continue;
                     }
                     errors.push(LintError {
-                        path: None,
+                        path:         None,
                         crate_name:   dup.crate_name.clone(),
                         line:         dup.line,
                         lint_name:    "no-duplicate-fn",

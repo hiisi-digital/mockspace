@@ -283,8 +283,12 @@ macro_rules! __bench_matrix_decl {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __bm_state {
-    ( $shared:ty ) => { $shared };
-    ( $shared:ty , $cell:ty ) => { $cell };
+    ( $shared:ty ) => {
+        $shared
+    };
+    ( $shared:ty , $cell:ty ) => {
+        $cell
+    };
 }
 
 /// Internal: emit a cell's optional per-cell setup fn, cfg-gated by the cell's

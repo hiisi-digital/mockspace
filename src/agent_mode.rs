@@ -43,12 +43,12 @@ use mockspace_lint_rules::AgentMode;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModeSignal {
     /// The environment variable to inspect.
-    pub env:   String,
+    pub env:    String,
     /// Match only when the variable holds exactly this value. `None` means match
     /// on mere presence.
     pub equals: Option<String>,
     /// The mode to settle on when this signal matches.
-    pub mode:  AgentMode,
+    pub mode:   AgentMode,
 }
 
 impl ModeSignal {
@@ -92,7 +92,9 @@ pub fn preset_signals(name: &str) -> Vec<ModeSignal> {
             ]
         },
         // A container with no interactive session attached.
-        "container" => vec![autonomous("CONTAINER", None), autonomous("KUBERNETES_SERVICE_HOST", None)],
+        "container" => {
+            vec![autonomous("CONTAINER", None), autonomous("KUBERNETES_SERVICE_HOST", None)]
+        },
         // Claude Code running unattended rather than in a conversation.
         "claude-headless" => {
             vec![
@@ -244,9 +246,9 @@ mod tests {
         // so a project can carve out "this runner does have a human watching".
         let raw = vec![
             RawModeSignal {
-                env:    Some("WATCHED".into()),
+                env: Some("WATCHED".into()),
                 exists: Some(true),
-                mode:   Some("assistant".into()),
+                mode: Some("assistant".into()),
                 ..Default::default()
             },
             RawModeSignal {
@@ -260,7 +262,10 @@ mod tests {
             AgentMode::Assistant
         );
         // without the carve-out variable, CI decides
-        assert_eq!(resolve(&signals, env(&[("CI", "true")])), AgentMode::Autonomous);
+        assert_eq!(
+            resolve(&signals, env(&[("CI", "true")])),
+            AgentMode::Autonomous
+        );
     }
 
     #[test]
@@ -273,13 +278,16 @@ mod tests {
         }];
         let signals = expand(&raw);
         assert_eq!(resolve(&signals, env(&[("CI", "")])), AgentMode::Assistant);
-        assert_eq!(resolve(&signals, env(&[("CI", "1")])), AgentMode::Autonomous);
+        assert_eq!(
+            resolve(&signals, env(&[("CI", "1")])),
+            AgentMode::Autonomous
+        );
     }
 
     #[test]
     fn value_matching_is_case_and_space_insensitive() {
         let raw = vec![RawModeSignal {
-            env:    Some("MODE".into()),
+            env: Some("MODE".into()),
             equals: Some("autonomous".into()),
             ..Default::default()
         }];
@@ -324,7 +332,7 @@ mod tests {
     #[test]
     fn a_signal_may_name_the_mode_it_selects() {
         let raw = vec![RawModeSignal {
-            env:  Some("X".into()),
+            env: Some("X".into()),
             mode: Some("assistant".into()),
             ..Default::default()
         }];

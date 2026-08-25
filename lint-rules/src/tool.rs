@@ -456,9 +456,7 @@ pub fn missing_required<'t>(tool: &'t dyn Tool, args: &[&str]) -> Vec<&'t ArgSpe
 pub fn contract_faults(tool: &dyn Tool, report: Option<&ToolReport>) -> Vec<String> {
     let mut out = Vec::new();
 
-    if tool.not_a_lint() == NotALint::TakesAQuestion
-        && !tool.args().iter().any(|a| a.required)
-    {
+    if tool.not_a_lint() == NotALint::TakesAQuestion && !tool.args().iter().any(|a| a.required) {
         out.push(format!(
             "tool `{}` declares `takes-a-question` and has no required argument. \
              Nothing is being asked, so nothing stopped this from being a lint, \
@@ -473,12 +471,7 @@ pub fn contract_faults(tool: &dyn Tool, report: Option<&ToolReport>) -> Vec<Stri
         // it here would report every tool whose controls failed as having lied,
         // which would push authors toward swallowing control failures: the
         // exact opposite of what `Outcome::Inconclusive` is for.
-        let inconclusive = matches!(
-            r.outcome,
-            Outcome::Inconclusive {
-                ..
-            }
-        );
+        let inconclusive = matches!(r.outcome, Outcome::Inconclusive { .. });
         let blocking = [LintMode::Commit, LintMode::Build, LintMode::Push]
             .into_iter()
             .any(|m| r.outcome.blocks(m));
@@ -508,7 +501,10 @@ pub fn duplicate_tool_names(tools: &[Box<dyn Tool>]) -> Vec<String> {
     for t in tools {
         *seen.entry(t.name()).or_insert(0) += 1;
     }
-    seen.into_iter().filter(|(_, n)| *n > 1).map(|(n, _)| n.to_string()).collect()
+    seen.into_iter()
+        .filter(|(_, n)| *n > 1)
+        .map(|(n, _)| n.to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -542,12 +538,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "phrase-search"
         }
+
         fn description(&self) -> &'static str {
             "find a phrase across hard-wrapped lines, which grep cannot"
         }
+
         fn not_a_lint(&self) -> NotALint {
             NotALint::TakesAQuestion
         }
+
         fn args(&self) -> &[ArgSpec] {
             &[
                 ArgSpec {
@@ -562,6 +561,7 @@ mod tests {
                 },
             ]
         }
+
         fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
             ToolReport::reported("3 hits", 241)
         }
@@ -573,12 +573,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "rooted-search"
         }
+
         fn description(&self) -> &'static str {
             "find a phrase under a declared root"
         }
+
         fn not_a_lint(&self) -> NotALint {
             NotALint::TakesAQuestion
         }
+
         fn args(&self) -> &[ArgSpec] {
             &[ArgSpec {
                 name:        "phrase",
@@ -586,9 +589,11 @@ mod tests {
                 description: "the phrase to look for",
             }]
         }
+
         fn value_flags(&self) -> &[&'static str] {
             &["--root"]
         }
+
         fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
             ToolReport::reported("", 1)
         }
@@ -600,12 +605,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "lies-about-asking"
         }
+
         fn description(&self) -> &'static str {
             "declares a question it never asks"
         }
+
         fn not_a_lint(&self) -> NotALint {
             NotALint::TakesAQuestion
         }
+
         fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
             ToolReport::reported("", 1)
         }
@@ -617,12 +625,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "lies-about-gating"
         }
+
         fn description(&self) -> &'static str {
             "declares no failing case and then fails one"
         }
+
         fn not_a_lint(&self) -> NotALint {
             NotALint::NoFailingCase
         }
+
         fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
             ToolReport {
                 outcome: Outcome::Findings(vec![LintError::error(
@@ -642,12 +653,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "broken-instrument"
         }
+
         fn description(&self) -> &'static str {
             "its positive control did not match"
         }
+
         fn not_a_lint(&self) -> NotALint {
             NotALint::NoFailingCase
         }
+
         fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
             ToolReport::inconclusive("positive control did not match")
         }
@@ -659,7 +673,10 @@ mod tests {
     fn an_honest_tool_passes_the_audit() {
         let (c, d) = empty();
         let r = PhraseSearch.run(&ctx(&["needle"], &c, &d, &Default::default()));
-        assert_eq!(contract_faults(&PhraseSearch, Some(&r)), Vec::<String>::new());
+        assert_eq!(
+            contract_faults(&PhraseSearch, Some(&r)),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -687,8 +704,14 @@ mod tests {
         // a liar, which would teach authors to swallow control failures.
         let (c, d) = empty();
         let r = BrokenInstrument.run(&ctx(&[], &c, &d, &Default::default()));
-        assert_eq!(contract_faults(&BrokenInstrument, Some(&r)), Vec::<String>::new());
-        assert!(r.outcome.blocks(LintMode::Commit), "inconclusive must block");
+        assert_eq!(
+            contract_faults(&BrokenInstrument, Some(&r)),
+            Vec::<String>::new()
+        );
+        assert!(
+            r.outcome.blocks(LintMode::Commit),
+            "inconclusive must block"
+        );
     }
 
     #[test]
@@ -696,7 +719,10 @@ mod tests {
         // `None` is the registration-time call, where no run has happened. It
         // must not guess. This pins that the gating check is genuinely
         // deferred rather than silently answered as clean at registration.
-        assert_eq!(contract_faults(&LiesAboutGating, None), Vec::<String>::new());
+        assert_eq!(
+            contract_faults(&LiesAboutGating, None),
+            Vec::<String>::new()
+        );
         // and the same tool IS caught once a run exists, so the emptiness above
         // is deferral rather than blindness
         let (c, d) = empty();
@@ -780,12 +806,22 @@ mod tests {
         // only non-flag word in `["--root", "src"]` and is miscounted as the
         // phrase, exactly as `mock search --root src` was.
         let missing = missing_required(&RootedSearch, &["--root", "src"]);
-        assert_eq!(missing.len(), 1, "the flag's value must not stand in for the phrase");
+        assert_eq!(
+            missing.len(),
+            1,
+            "the flag's value must not stand in for the phrase"
+        );
         assert_eq!(missing[0].name, "phrase");
         // supplying the phrase alongside the flag and its value is fine,
         // whichever order they arrive in
-        assert_eq!(missing_required(&RootedSearch, &["--root", "src", "needle"]).len(), 0);
-        assert_eq!(missing_required(&RootedSearch, &["needle", "--root", "src"]).len(), 0);
+        assert_eq!(
+            missing_required(&RootedSearch, &["--root", "src", "needle"]).len(),
+            0
+        );
+        assert_eq!(
+            missing_required(&RootedSearch, &["needle", "--root", "src"]).len(),
+            0
+        );
     }
 
     #[test]
@@ -807,7 +843,10 @@ mod tests {
 
     #[test]
     fn usage_distinguishes_required_from_optional() {
-        assert_eq!(usage_line(&PhraseSearch), "mock phrase-search <phrase> [dir]");
+        assert_eq!(
+            usage_line(&PhraseSearch),
+            "mock phrase-search <phrase> [dir]"
+        );
         assert_eq!(usage_line(&LiesAboutAsking), "mock lies-about-asking");
     }
 
@@ -818,8 +857,14 @@ mod tests {
         // today. A tool with no name and args tuple, and a callable that only
         // has `name()` and `args()` (never a `dyn Tool`), must render
         // identically to the `dyn Tool` path.
-        assert_eq!(usage_from("phrase-search", PhraseSearch.args()), usage_line(&PhraseSearch));
-        assert_eq!(usage_from("rooted-search", RootedSearch.args()), usage_line(&RootedSearch));
+        assert_eq!(
+            usage_from("phrase-search", PhraseSearch.args()),
+            usage_line(&PhraseSearch)
+        );
+        assert_eq!(
+            usage_from("rooted-search", RootedSearch.args()),
+            usage_line(&RootedSearch)
+        );
         assert_eq!(
             usage_from("lies-about-asking", LiesAboutAsking.args()),
             usage_line(&LiesAboutAsking)
@@ -844,7 +889,10 @@ mod tests {
                 description: "what was decided",
             },
         ];
-        assert_eq!(usage_from("panel-consolidate", &args), "mock panel-consolidate <slug> [note]");
+        assert_eq!(
+            usage_from("panel-consolidate", &args),
+            "mock panel-consolidate <slug> [note]"
+        );
         assert_eq!(usage_from("status", &[]), "mock status");
     }
 
@@ -857,12 +905,15 @@ mod tests {
             fn name(&self) -> &'static str {
                 "audit"
             }
+
             fn description(&self) -> &'static str {
                 "one"
             }
+
             fn not_a_lint(&self) -> NotALint {
                 NotALint::NoFailingCase
             }
+
             fn run(&self, _c: &ToolContext<'_>) -> ToolReport {
                 ToolReport::reported("", 1)
             }
@@ -872,12 +923,15 @@ mod tests {
             fn name(&self) -> &'static str {
                 "audit"
             }
+
             fn description(&self) -> &'static str {
                 "two"
             }
+
             fn not_a_lint(&self) -> NotALint {
                 NotALint::NoFailingCase
             }
+
             fn run(&self, _c: &ToolContext<'_>) -> ToolReport {
                 ToolReport::reported("", 1)
             }

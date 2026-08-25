@@ -93,10 +93,10 @@ pub struct MatrixSpec {
     pub floor_contains:    Option<String>,
     /// The variant-name template. `{axis}` for each axis binds to that axis
     /// value's tag; a common form is `carrier_{shape}_{layout}`.
-    pub name_template:      String,
+    pub name_template:     String,
     /// The `src/lib.rs` body template, rendered per composition.
-    pub lib_template:       String,
-    pub axes:               Vec<AxisSpec>,
+    pub lib_template:      String,
+    pub axes:              Vec<AxisSpec>,
 }
 
 /// Keys the generator injects itself; an axis name or a value `subst` key that
@@ -117,18 +117,30 @@ impl MatrixSpec {
         }
         for axis in &self.axes {
             if axis.values.is_empty() {
-                return Err(format!("axis `{}` has no values; the product collapses to zero variants", axis.name));
+                return Err(format!(
+                    "axis `{}` has no values; the product collapses to zero variants",
+                    axis.name
+                ));
             }
             if RESERVED_KEYS.contains(&axis.name.as_str()) {
-                return Err(format!("axis name `{}` collides with a generator-injected key", axis.name));
+                return Err(format!(
+                    "axis name `{}` collides with a generator-injected key",
+                    axis.name
+                ));
             }
             for val in &axis.values {
                 for key in val.subst.keys() {
                     if RESERVED_KEYS.contains(&key.as_str()) {
-                        return Err(format!("value `{}` subst key `{}` collides with a generator-injected key", val.tag, key));
+                        return Err(format!(
+                            "value `{}` subst key `{}` collides with a generator-injected key",
+                            val.tag, key
+                        ));
                     }
                     if self.axes.iter().any(|a| &a.name == key) {
-                        return Err(format!("value `{}` subst key `{}` collides with axis name `{}`", val.tag, key, key));
+                        return Err(format!(
+                            "value `{}` subst key `{}` collides with axis name `{}`",
+                            val.tag, key, key
+                        ));
                     }
                 }
             }
@@ -151,9 +163,9 @@ pub struct Composition {
 /// the selected features, and renders the variant name from `name_template`.
 pub fn expand(spec: &MatrixSpec) -> Vec<Composition> {
     let mut acc: Vec<Composition> = vec![Composition {
-        name: String::new(),
+        name:     String::new(),
         features: Vec::new(),
-        subst: BTreeMap::new(),
+        subst:    BTreeMap::new(),
     }];
     for axis in &spec.axes {
         let mut next = Vec::with_capacity(acc.len() * axis.values.len().max(1));
@@ -211,7 +223,7 @@ pub fn render(template: &str, subst: &BTreeMap<String, String>) -> String {
                         out.push('{');
                         out.push_str(key);
                         out.push('}');
-                    }
+                    },
                 }
                 i += 1 + close + 1;
             } else {
@@ -234,11 +246,11 @@ pub fn render(template: &str, subst: &BTreeMap<String, String>) -> String {
 /// The rendered artefacts for one composition: the crate files to write and the
 /// path the bench section should reference.
 pub struct GeneratedVariant {
-    pub name:        String,
-    pub cargo_toml:  String,
-    pub lib_rs:      String,
+    pub name:       String,
+    pub cargo_toml: String,
+    pub lib_rs:     String,
     /// Relative path the bench.toml section references (the built cdylib).
-    pub bench_path:  String,
+    pub bench_path: String,
 }
 
 /// Render (but do not write) the variant crate for one composition.
@@ -246,7 +258,12 @@ pub fn render_variant(spec: &MatrixSpec, c: &Composition) -> GeneratedVariant {
     let carrier_features = if c.features.is_empty() {
         String::new()
     } else {
-        let list = c.features.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(", ");
+        let list = c
+            .features
+            .iter()
+            .map(|f| format!("\"{f}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(", features = [{list}]")
     };
     let mut subst = c.subst.clone();
@@ -256,8 +273,14 @@ pub fn render_variant(spec: &MatrixSpec, c: &Composition) -> GeneratedVariant {
     let carrier_dep = render(&spec.carrier_dep, &subst);
     let mut cargo = String::new();
     cargo.push_str("[workspace]\n[package]\n");
-    cargo.push_str(&format!("name = \"{}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n", c.name));
-    cargo.push_str(&format!("[lib]\nname = \"{}\"\npath = \"src/lib.rs\"\ncrate-type = [\"cdylib\"]\n", c.name));
+    cargo.push_str(&format!(
+        "name = \"{}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n",
+        c.name
+    ));
+    cargo.push_str(&format!(
+        "[lib]\nname = \"{}\"\npath = \"src/lib.rs\"\ncrate-type = [\"cdylib\"]\n",
+        c.name
+    ));
     cargo.push_str("[dependencies]\n");
     for d in &spec.extra_deps {
         cargo.push_str(d);
@@ -288,12 +311,18 @@ pub fn render_bench_section(spec: &MatrixSpec, comps: &[Composition]) -> String 
     let title_subst = BTreeMap::new();
     let mut out = String::new();
     out.push_str(&format!("[bench.{}]\n", spec.bench));
-    out.push_str(&format!("title = \"{}\"\n", render(&spec.title, &title_subst)));
+    out.push_str(&format!(
+        "title = \"{}\"\n",
+        render(&spec.title, &title_subst)
+    ));
     out.push_str("workload = \"realistic\"\n");
     out.push_str(&format!("master_seed = {}\n", spec.master_seed));
     out.push_str(&format!("[bench.{}.normalise]\n", spec.bench));
     out.push_str(&format!("baseline = \"{baseline}\"\n"));
-    out.push_str(&format!("mode = \"{}\"\n", spec.normalise_mode.as_deref().unwrap_or("subtract")));
+    out.push_str(&format!(
+        "mode = \"{}\"\n",
+        spec.normalise_mode.as_deref().unwrap_or("subtract")
+    ));
     // null-floor differencing target: resolve the floor tag to its variant name
     // the same way the baseline is resolved, and emit it for the reporter.
     if let Some(needle) = spec.floor_contains.as_deref() {
@@ -317,7 +346,8 @@ pub fn render_bench_section(spec: &MatrixSpec, comps: &[Composition]) -> String 
 /// Generate every variant crate under `out_dir/variants/<name>/` and return the
 /// `bench.toml` section. Writes `Cargo.toml` and `src/lib.rs` per variant.
 pub fn generate(spec: &MatrixSpec, out_dir: &Path) -> std::io::Result<String> {
-    spec.validate().map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    spec.validate()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let comps = expand(spec);
     for c in &comps {
         let v = render_variant(spec, c);
@@ -334,35 +364,40 @@ mod tests {
     use super::*;
 
     fn dispatch_spec() -> MatrixSpec {
-        let av = |tag: &str, fnname: &str, feats: &[&str]| AxisValue {
-            tag: tag.to_string(),
-            subst: BTreeMap::from([("fn_name".to_string(), fnname.to_string())]),
-            features: feats.iter().map(|s| s.to_string()).collect(),
+        let av = |tag: &str, fnname: &str, feats: &[&str]| {
+            AxisValue {
+                tag:      tag.to_string(),
+                subst:    BTreeMap::from([("fn_name".to_string(), fnname.to_string())]),
+                features: feats.iter().map(|s| s.to_string()).collect(),
+            }
         };
-        let lv = |tag: &str, val: &str| AxisValue {
-            tag: tag.to_string(),
-            subst: BTreeMap::from([("vocab_num".to_string(), val.to_string())]),
-            features: vec![],
+        let lv = |tag: &str, val: &str| {
+            AxisValue {
+                tag:      tag.to_string(),
+                subst:    BTreeMap::from([("vocab_num".to_string(), val.to_string())]),
+                features: vec![],
+            }
         };
         MatrixSpec {
-            bench: "carrier_dispatch".into(),
-            title: "Dispatch shape sweep".into(),
-            carrier_dep: "vehje-bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}".into(),
-            extra_deps: vec!["mockspace-bench-core = { path = \"x\" }".into()],
-            master_seed: "0x5eed".into(),
-            sizes: vec![64, 256],
+            bench:             "carrier_dispatch".into(),
+            title:             "Dispatch shape sweep".into(),
+            carrier_dep:
+                "vehje-bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}".into(),
+            extra_deps:        vec!["mockspace-bench-core = { path = \"x\" }".into()],
+            master_seed:       "0x5eed".into(),
+            sizes:             vec![64, 256],
             baseline_contains: Some("switch".into()),
-            normalise_mode: None,
-            floor_contains: None,
-            name_template: "carrier_{shape}_{vocab}".into(),
-            lib_template: "// {shape} over {vocab_num}; calls {fn_name}; name {name}".into(),
-            axes: vec![
+            normalise_mode:    None,
+            floor_contains:    None,
+            name_template:     "carrier_{shape}_{vocab}".into(),
+            lib_template:      "// {shape} over {vocab_num}; calls {fn_name}; name {name}".into(),
+            axes:              vec![
                 AxisSpec {
-                    name: "vocab".into(),
+                    name:   "vocab".into(),
                     values: vec![lv("v4", "4"), lv("v17", "17")],
                 },
                 AxisSpec {
-                    name: "shape".into(),
+                    name:   "shape".into(),
                     values: vec![
                         av("switch", "interpret", &[]),
                         av("fntable", "interpret_fntable", &[]),
@@ -398,14 +433,32 @@ mod tests {
     fn lib_template_renders_substitutions() {
         let comps = expand(&dispatch_spec());
         let spec = dispatch_spec();
-        let threaded_v17 = comps.iter().find(|c| c.name == "carrier_threaded_v17").unwrap();
+        let threaded_v17 = comps
+            .iter()
+            .find(|c| c.name == "carrier_threaded_v17")
+            .unwrap();
         let v = render_variant(&spec, threaded_v17);
-        assert!(v.lib_rs.contains("interpret_threaded"), "fn_name substituted");
-        assert!(v.lib_rs.contains("threaded over 17"), "shape+vocab_num substituted");
-        assert!(v.cargo_toml.contains("features = [\"threaded\"]"), "carrier features wired");
-        let switch_v4 = comps.iter().find(|c| c.name == "carrier_switch_v4").unwrap();
+        assert!(
+            v.lib_rs.contains("interpret_threaded"),
+            "fn_name substituted"
+        );
+        assert!(
+            v.lib_rs.contains("threaded over 17"),
+            "shape+vocab_num substituted"
+        );
+        assert!(
+            v.cargo_toml.contains("features = [\"threaded\"]"),
+            "carrier features wired"
+        );
+        let switch_v4 = comps
+            .iter()
+            .find(|c| c.name == "carrier_switch_v4")
+            .unwrap();
         let vs = render_variant(&spec, switch_v4);
-        assert!(!vs.cargo_toml.contains("features ="), "no features for switch");
+        assert!(
+            !vs.cargo_toml.contains("features ="),
+            "no features for switch"
+        );
     }
 
     #[test]
@@ -414,11 +467,17 @@ mod tests {
         let comps = expand(&spec);
         let section = render_bench_section(&spec, &comps);
         assert!(section.contains("[bench.carrier_dispatch]"));
-        assert!(section.contains("baseline = \"carrier_switch_v4\""), "switch is baseline");
+        assert!(
+            section.contains("baseline = \"carrier_switch_v4\""),
+            "switch is baseline"
+        );
         assert!(section.contains("mode = \"subtract\""));
         assert!(section.contains("n = 64") && section.contains("n = 256"));
         // no floor declared -> no floor line.
-        assert!(!section.contains("floor ="), "no floor line without floor_contains");
+        assert!(
+            !section.contains("floor ="),
+            "no floor line without floor_contains"
+        );
     }
 
     #[test]
@@ -428,11 +487,17 @@ mod tests {
         spec.floor_contains = Some("switch".into());
         let comps = expand(&spec);
         let section = render_bench_section(&spec, &comps);
-        assert!(section.contains("floor = \"carrier_switch_v4\""), "floor resolves to variant, got:\n{section}");
+        assert!(
+            section.contains("floor = \"carrier_switch_v4\""),
+            "floor resolves to variant, got:\n{section}"
+        );
         // a floor tag matching no variant emits no floor line (rather than a dangling ref).
         spec.floor_contains = Some("does_not_exist".into());
         let section2 = render_bench_section(&spec, &comps);
-        assert!(!section2.contains("floor ="), "unmatched floor tag emits nothing");
+        assert!(
+            !section2.contains("floor ="),
+            "unmatched floor tag emits nothing"
+        );
     }
 
     #[test]
@@ -440,7 +505,11 @@ mod tests {
         let s = BTreeMap::from([("x".to_string(), "X".to_string())]);
         assert_eq!(render("a{x}b", &s), "aXb");
         assert_eq!(render("{{lit}}", &s), "{lit}");
-        assert_eq!(render("{unknown}", &s), "{unknown}", "unknown left verbatim");
+        assert_eq!(
+            render("{unknown}", &s),
+            "{unknown}",
+            "unknown left verbatim"
+        );
     }
 
     #[test]
@@ -451,7 +520,10 @@ mod tests {
         let s = BTreeMap::from([("v".to_string(), "V".to_string())]);
         assert_eq!(render("ratio x\u{00d7} base", &s), "ratio x\u{00d7} base");
         assert_eq!(render("\u{00d7}{v}\u{00d7}", &s), "\u{00d7}V\u{00d7}");
-        assert_eq!(render("caf\u{00e9} {v} r\u{00e9}sum\u{00e9}", &s), "caf\u{00e9} V r\u{00e9}sum\u{00e9}");
+        assert_eq!(
+            render("caf\u{00e9} {v} r\u{00e9}sum\u{00e9}", &s),
+            "caf\u{00e9} V r\u{00e9}sum\u{00e9}"
+        );
     }
 
     #[test]
@@ -484,7 +556,9 @@ mod tests {
     #[test]
     fn validate_rejects_reserved_subst_key() {
         let mut spec = dispatch_spec();
-        spec.axes[0].values[0].subst.insert("carrier_features".into(), "oops".into());
+        spec.axes[0].values[0]
+            .subst
+            .insert("carrier_features".into(), "oops".into());
         assert!(spec.validate().unwrap_err().contains("carrier_features"));
     }
 
@@ -492,7 +566,9 @@ mod tests {
     fn validate_rejects_subst_key_colliding_with_axis_name() {
         let mut spec = dispatch_spec();
         // a value on `shape` binds a subst key named `vocab`, an existing axis.
-        spec.axes[1].values[0].subst.insert("vocab".into(), "clash".into());
+        spec.axes[1].values[0]
+            .subst
+            .insert("vocab".into(), "clash".into());
         let e = spec.validate().unwrap_err();
         assert!(e.contains("axis name") && e.contains("vocab"), "{e}");
     }
@@ -504,7 +580,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mx_bad_{}", std::process::id()));
         let err = generate(&spec, &dir).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-        assert!(!dir.join("variants").exists(), "nothing written for an invalid spec");
+        assert!(
+            !dir.join("variants").exists(),
+            "nothing written for an invalid spec"
+        );
     }
 
     #[test]
@@ -518,7 +597,8 @@ mod tests {
         assert!(libp.exists(), "variant lib.rs written");
         let lib = std::fs::read_to_string(libp).unwrap();
         assert!(lib.contains("interpret_threaded"));
-        let cargo = std::fs::read_to_string(dir.join("variants/carrier_threaded_v17/Cargo.toml")).unwrap();
+        let cargo =
+            std::fs::read_to_string(dir.join("variants/carrier_threaded_v17/Cargo.toml")).unwrap();
         assert!(cargo.contains("crate-type = [\"cdylib\"]"));
         let _ = std::fs::remove_dir_all(&dir);
     }

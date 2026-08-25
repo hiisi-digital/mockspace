@@ -60,7 +60,6 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
         return Err("git config mockspace.mockdir failed".into());
     }
 
-
     Ok(())
 }
 
@@ -96,4 +95,3 @@ pub fn is_active(repo_root: &Path) -> bool {
         _ => false,
     }
 }
-

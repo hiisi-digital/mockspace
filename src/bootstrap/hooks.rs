@@ -413,24 +413,32 @@ echo "pre-push: validation passed."
 
 #[cfg(test)]
 mod byline_hook_tests {
-    use super::*;
     use std::io::Write;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    use super::*;
+
     static SEQ: AtomicU32 = AtomicU32::new(0);
 
     fn scratch(tag: &str) -> PathBuf {
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("mock_byline_{tag}_{}_{n}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("mock_byline_{tag}_{}_{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     /// Write `content` as an executable hook and run it (args, stdin, cwd, PATH
     /// all controllable). Returns the exit code.
-    fn run_script(content: &str, args: &[&Path], stdin: &str, cwd: Option<&Path>, path_env: Option<&str>) -> i32 {
+    fn run_script(
+        content: &str,
+        args: &[&Path],
+        stdin: &str,
+        cwd: Option<&Path>,
+        path_env: Option<&str>,
+    ) -> i32 {
         let dir = scratch("hook");
         let hook = dir.join("hook.sh");
         std::fs::write(&hook, content).unwrap();
@@ -442,7 +450,10 @@ mod byline_hook_tests {
             std::fs::set_permissions(&hook, p).unwrap();
         }
         let mut cmd = Command::new(&hook);
-        cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        cmd.args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         if let Some(c) = cwd {
             cmd.current_dir(c);
         }
@@ -450,7 +461,12 @@ mod byline_hook_tests {
             cmd.env("PATH", p);
         }
         let mut child = cmd.spawn().unwrap();
-        child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
         let code = child.wait().unwrap().code().unwrap_or(-1);
         let _ = std::fs::remove_dir_all(&dir);
         code
@@ -459,9 +475,16 @@ mod byline_hook_tests {
     /// A PATH with git + coreutils but WITHOUT the cargo bin, so the durable
     /// pre-push prelude takes the no-launcher branch deterministically.
     fn launcher_free_path() -> String {
-        let out = Command::new("sh").arg("-c").arg("command -v git").output().unwrap();
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg("command -v git")
+            .output()
+            .unwrap();
         let gitpath = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let gitdir = Path::new(&gitpath).parent().map(|p| p.display().to_string()).unwrap_or_default();
+        let gitdir = Path::new(&gitpath)
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
         format!("{gitdir}:/usr/local/bin:/usr/bin:/bin")
     }
 
@@ -472,8 +495,10 @@ mod byline_hook_tests {
             Command::new("git")
                 .current_dir(&dir)
                 .args(args)
-                .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t")
-                .env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t")
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
                 .output()
                 .unwrap()
         };
@@ -494,7 +519,13 @@ mod byline_hook_tests {
         let (repo, sha) = repo_with_commit(msg);
         let zero = "0".repeat(40);
         let stdin = format!("refs/heads/main {sha} refs/heads/main {zero}\n");
-        let code = run_script(&mockspace_manifest::gate::durable_hook("pre-push", HOOK_VERSION), &[], &stdin, Some(&repo), Some(&launcher_free_path()));
+        let code = run_script(
+            &mockspace_manifest::gate::durable_hook("pre-push", HOOK_VERSION),
+            &[],
+            &stdin,
+            Some(&repo),
+            Some(&launcher_free_path()),
+        );
         let _ = std::fs::remove_dir_all(&repo);
         code
     }
@@ -554,7 +585,10 @@ mod byline_hook_tests {
         let recorded = std::fs::read_to_string(&out).unwrap_or_default();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(recorded.contains("check-message"), "got: {recorded}");
-        assert!(recorded.contains("--domain commit-message"), "got: {recorded}");
+        assert!(
+            recorded.contains("--domain commit-message"),
+            "got: {recorded}"
+        );
         assert!(recorded.contains("--gate commit"), "got: {recorded}");
         assert!(recorded.contains("--file"), "got: {recorded}");
     }
@@ -669,7 +703,10 @@ mod byline_hook_tests {
         assert!(h.contains("--gate push"));
         // fails closed rather than guessing a policy
         assert!(h.contains("no mockspace launcher on PATH"));
-        assert!(!h.contains("co-authored-by"), "policy must not be baked into the hook");
+        assert!(
+            !h.contains("co-authored-by"),
+            "policy must not be baked into the hook"
+        );
     }
 
     #[test]
@@ -723,20 +760,19 @@ mod byline_hook_tests {
             "-m",
             "",
         ]);
-        let head =
-            String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout).trim().to_string();
+        let head = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout)
+            .trim()
+            .to_string();
 
         // A new branch: remote sha all zeros, so the body takes the widening
         // path and scans everything not already on a remote.
-        let prepush_stdin =
-            format!("refs/heads/main {head} refs/heads/main {}", "0".repeat(40));
+        let prepush_stdin = format!("refs/heads/main {head} refs/heads/main {}", "0".repeat(40));
         let script = format!(
             "#!/usr/bin/env bash\nset -u\nPREPUSH_STDIN=$(cat)\n{}",
             message_prepush_scan_body()
         );
         let path_env = format!("{}:{}", bin.display(), launcher_free_path());
-        let code =
-            run_script(&script, &[], &prepush_stdin, Some(&repo), Some(&path_env));
+        let code = run_script(&script, &[], &prepush_stdin, Some(&repo), Some(&path_env));
 
         let got = std::fs::read(&out).unwrap_or_default();
         let _ = std::fs::remove_dir_all(&dir);
@@ -770,13 +806,13 @@ mod byline_hook_tests {
             "the empty message must reach the launcher. got: {bodies:?}"
         );
     }
-
 }
 
 #[cfg(test)]
 mod generated_pre_commit_tests {
-    use super::*;
     use std::process::Command;
+
+    use super::*;
 
     /// A real git repository with the generated hook in it, run for real.
     ///

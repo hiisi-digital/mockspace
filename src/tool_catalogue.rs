@@ -100,13 +100,15 @@ pub struct Listing {
 pub fn enumerate(pack: &LintPack) -> Vec<Listing> {
     let mut out: Vec<Listing> = crate::entry::help::commands()
         .iter()
-        .map(|c| Listing {
-            name:    c.name.to_string(),
-            summary: c.summary.to_string(),
-            usage:   usage_from(c.name, c.args),
-            args:    c.args.to_vec(),
-            help:    c.help.to_string(),
-            source:  Source::Builtin,
+        .map(|c| {
+            Listing {
+                name:    c.name.to_string(),
+                summary: c.summary.to_string(),
+                usage:   usage_from(c.name, c.args),
+                args:    c.args.to_vec(),
+                help:    c.help.to_string(),
+                source:  Source::Builtin,
+            }
         })
         .collect();
 
@@ -202,12 +204,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "greet"
         }
+
         fn description(&self) -> &'static str {
             "say hello to a name"
         }
+
         fn not_a_lint(&self) -> NotALint {
             NotALint::TakesAQuestion
         }
+
         fn args(&self) -> &[ArgSpec] {
             &[ArgSpec {
                 name:        "who",
@@ -215,9 +220,11 @@ mod tests {
                 description: "who to greet",
             }]
         }
+
         fn help(&self) -> &'static str {
             "Prints a greeting for the given name."
         }
+
         fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
             ToolReport::reported("hi", 1)
         }
@@ -228,12 +235,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "silent"
         }
+
         fn description(&self) -> &'static str {
             "does nothing observable"
         }
+
         fn not_a_lint(&self) -> NotALint {
             NotALint::NoFailingCase
         }
+
         fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
             ToolReport::reported("", 0)
         }
@@ -249,12 +259,18 @@ mod tests {
     #[test]
     fn every_builtin_appears_and_nothing_else_does_with_an_empty_pack() {
         let listings = enumerate(&pack_with(vec![]));
-        let builtin_names: Vec<&str> =
-            listings.iter().filter(|l| l.source == Source::Builtin).map(|l| l.name.as_str()).collect();
+        let builtin_names: Vec<&str> = listings
+            .iter()
+            .filter(|l| l.source == Source::Builtin)
+            .map(|l| l.name.as_str())
+            .collect();
         // Not a sample: every name the dispatcher answers to, via the same
         // accessor `mock help` itself renders from.
         for name in crate::entry::help::known_commands() {
-            assert!(builtin_names.contains(&name), "`{name}` is missing from the catalogue");
+            assert!(
+                builtin_names.contains(&name),
+                "`{name}` is missing from the catalogue"
+            );
         }
         assert!(
             listings.iter().all(|l| l.source == Source::Builtin),
@@ -299,12 +315,15 @@ mod tests {
             fn name(&self) -> &'static str {
                 "audit"
             }
+
             fn description(&self) -> &'static str {
                 "one"
             }
+
             fn not_a_lint(&self) -> NotALint {
                 NotALint::NoFailingCase
             }
+
             fn run(&self, _c: &ToolContext<'_>) -> ToolReport {
                 ToolReport::reported("", 1)
             }
@@ -314,12 +333,15 @@ mod tests {
             fn name(&self) -> &'static str {
                 "audit"
             }
+
             fn description(&self) -> &'static str {
                 "two"
             }
+
             fn not_a_lint(&self) -> NotALint {
                 NotALint::NoFailingCase
             }
+
             fn run(&self, _c: &ToolContext<'_>) -> ToolReport {
                 ToolReport::reported("", 1)
             }
@@ -328,7 +350,10 @@ mod tests {
         assert_eq!(duplicates(&pack), vec!["audit".to_string()]);
 
         // the negative: a lone tool with no collision reports nothing
-        assert_eq!(duplicates(&pack_with(vec![Box::new(Greet)])), Vec::<String>::new());
+        assert_eq!(
+            duplicates(&pack_with(vec![Box::new(Greet)])),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -368,8 +393,14 @@ mod tests {
         let table = render_table(&listings);
         assert!(table.contains("BUILTIN SUBCOMMANDS"));
         assert!(table.contains("PROJECT TOOLS"));
-        assert!(table.contains("mock lock"), "a known builtin's usage must appear:\n{table}");
-        assert!(table.contains("mock greet <who>"), "the tool's usage must appear:\n{table}");
+        assert!(
+            table.contains("mock lock"),
+            "a known builtin's usage must appear:\n{table}"
+        );
+        assert!(
+            table.contains("mock greet <who>"),
+            "the tool's usage must appear:\n{table}"
+        );
         assert!(table.contains("say hello to a name"));
     }
 
@@ -387,12 +418,21 @@ mod tests {
     fn render_long_carries_args_and_help_that_the_table_omits() {
         let listings = enumerate(&pack_with(vec![Box::new(Greet)]));
         let long = render_long(&listings);
-        assert!(long.contains("who"), "the declared argument name must appear:\n{long}");
+        assert!(
+            long.contains("who"),
+            "the declared argument name must appear:\n{long}"
+        );
         assert!(long.contains("required"));
-        assert!(long.contains("who to greet"), "the argument's description must appear:\n{long}");
+        assert!(
+            long.contains("who to greet"),
+            "the argument's description must appear:\n{long}"
+        );
         assert!(long.contains("Prints a greeting for the given name."));
 
         let table = render_table(&listings);
-        assert!(!table.contains("who to greet"), "the short table must not carry the long body");
+        assert!(
+            !table.contains("who to greet"),
+            "the short table must not carry the long body"
+        );
     }
 }

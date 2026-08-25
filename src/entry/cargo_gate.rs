@@ -115,7 +115,9 @@ mod tests {
 
     #[test]
     fn unrelated_failures_are_not_recognised() {
-        assert!(!diagnostic_is_no_members("error[E0425]: cannot find value `x` in this scope"));
+        assert!(!diagnostic_is_no_members(
+            "error[E0425]: cannot find value `x` in this scope"
+        ));
         assert!(!diagnostic_is_no_members(
             "error: failed to parse manifest at `/repo/mock/Cargo.toml`"
         ));
@@ -202,7 +204,10 @@ mod tests {
         // dotted-header table would fail the gate on a legitimately memberless
         // repo.
         let tmp = tempfile::tempdir().unwrap();
-        manifest(tmp.path(), "workspace = { resolver = \"2\", members = [] }\n");
+        manifest(
+            tmp.path(),
+            "workspace = { resolver = \"2\", members = [] }\n",
+        );
         assert!(is_memberless_virtual_workspace(tmp.path()));
     }
 

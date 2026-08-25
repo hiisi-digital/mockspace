@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use mockspace_bench_harness::matrix::{generate, AxisSpec, AxisValue, MatrixSpec};
+use mockspace_bench_harness::matrix::{AxisSpec, AxisValue, MatrixSpec, generate};
 
 use crate::decl::MatrixDecl;
 
@@ -67,11 +67,17 @@ fn to_spec(decl: &MatrixDecl, sweep_value: &str) -> MatrixSpec {
         .cells
         .iter()
         .map(|c| {
-            let setup_path = c.setup_path.clone().unwrap_or_else(|| decl.setup_path.clone());
+            let setup_path = c
+                .setup_path
+                .clone()
+                .unwrap_or_else(|| decl.setup_path.clone());
             AxisValue {
-                tag:   c.tag.clone(),
-                subst: BTreeMap::from([
-                    ("scaffold_fn".to_string(), decl.regime.scaffold_fn().to_string()),
+                tag:      c.tag.clone(),
+                subst:    BTreeMap::from([
+                    (
+                        "scaffold_fn".to_string(),
+                        decl.regime.scaffold_fn().to_string(),
+                    ),
                     ("setup_path".to_string(), setup_path),
                     ("op_path".to_string(), c.op_path.clone()),
                     ("sweep_value".to_string(), sweep_value.to_string()),
@@ -97,7 +103,10 @@ fn to_spec(decl: &MatrixDecl, sweep_value: &str) -> MatrixSpec {
         floor_contains:    decl.floor.clone(),
         name_template:     format!("{bench}_{{cell}}"),
         lib_template:      LIB_TEMPLATE.to_string(),
-        axes:              vec![AxisSpec { name: "cell".to_string(), values }],
+        axes:              vec![AxisSpec {
+            name: "cell".to_string(),
+            values,
+        }],
     }
 }
 
@@ -112,7 +121,10 @@ pub fn generate_all(decls: &[MatrixDecl], out_dir: &Path) -> std::io::Result<()>
         if decl.sizes.is_empty() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("matrix '{}' declares no sizes; run::<N> has nothing to monomorphize", decl.name),
+                format!(
+                    "matrix '{}' declares no sizes; run::<N> has nothing to monomorphize",
+                    decl.name
+                ),
             ));
         }
         let values = if decl.sweep.values.is_empty() {
@@ -150,7 +162,10 @@ mod tests {
             crate_dep:   "vehje-bench-carrier = { path = \"../../carrier\" }".to_string(),
             extra_deps:  vec![],
             master_seed: "0x1".to_string(),
-            sweep:       SweepAxis { name: "profile".to_string(), values: vec!["real".to_string()] },
+            sweep:       SweepAxis {
+                name:   "profile".to_string(),
+                values: vec!["real".to_string()],
+            },
             // a batch-width sweep: none of these are in the old fixed global set.
             sizes:       vec![1, 2, 4, 8, 16, 32, 64, 128, 256],
             baseline:    "inproc_direct".to_string(),
@@ -176,7 +191,10 @@ mod tests {
     fn template_takes_a_sizes_placeholder_not_a_fixed_list() {
         // the fix: the monomorphization set is a per-decl placeholder, so a family that
         // sweeps a batch width carries its own sizes rather than a hardcoded global list.
-        assert!(LIB_TEMPLATE.contains("sizes = {sizes}"), "template must take a sizes placeholder");
+        assert!(
+            LIB_TEMPLATE.contains("sizes = {sizes}"),
+            "template must take a sizes placeholder"
+        );
         assert!(
             !LIB_TEMPLATE.contains("64, 256, 1024, 4096, 16384"),
             "template must not hardcode the interpreter-bench size set"

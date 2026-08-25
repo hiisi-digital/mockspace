@@ -25,7 +25,7 @@ use std::path::Path;
 
 use crate::changelist_helpers::{self, Phase};
 use crate::src_layout::{self, SrcLayout};
-use crate::{Lint, RepoLint, LintError, RepoContext};
+use crate::{Lint, LintError, RepoContext, RepoLint};
 
 const LINT_NAME: &str = "changelist-lock";
 
@@ -35,6 +35,7 @@ impl Lint for ChangelistLock {
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+
     fn source_only(&self) -> bool {
         false
     }
@@ -74,7 +75,9 @@ impl RepoLint for ChangelistLock {
             let cl_name = locked_doc_name.as_deref().unwrap_or("doc changelist");
 
             for (file, source) in doc_files {
-                let crate_name = layout.package_name(&file).unwrap_or_else(|| "unknown".to_string());
+                let crate_name = layout
+                    .package_name(&file)
+                    .unwrap_or_else(|| "unknown".to_string());
                 errors.push(LintError::error(
                     crate_name,
                     0,
@@ -100,7 +103,9 @@ impl RepoLint for ChangelistLock {
             let cl_name = locked_src_name.as_deref().unwrap_or("src changelist");
 
             for (file, source) in src_files {
-                let crate_name = layout.package_name(&file).unwrap_or_else(|| "unknown".to_string());
+                let crate_name = layout
+                    .package_name(&file)
+                    .unwrap_or_else(|| "unknown".to_string());
                 errors.push(LintError::error(
                     crate_name,
                     0,

@@ -89,20 +89,37 @@ pub struct RunSummary {
 
 impl RunSummary {
     fn fastest(&self) -> &VariantLine {
-        self.lines.iter().min_by(|a, b| a.median_ns.total_cmp(&b.median_ns)).unwrap()
+        self.lines
+            .iter()
+            .min_by(|a, b| a.median_ns.total_cmp(&b.median_ns))
+            .unwrap()
     }
+
     fn slowest(&self) -> &VariantLine {
-        self.lines.iter().max_by(|a, b| a.median_ns.total_cmp(&b.median_ns)).unwrap()
+        self.lines
+            .iter()
+            .max_by(|a, b| a.median_ns.total_cmp(&b.median_ns))
+            .unwrap()
     }
+
     fn most_stable(&self) -> &VariantLine {
-        self.lines.iter().min_by(|a, b| a.cv.total_cmp(&b.cv)).unwrap()
+        self.lines
+            .iter()
+            .min_by(|a, b| a.cv.total_cmp(&b.cv))
+            .unwrap()
     }
+
     fn least_stable(&self) -> &VariantLine {
-        self.lines.iter().max_by(|a, b| a.cv.total_cmp(&b.cv)).unwrap()
+        self.lines
+            .iter()
+            .max_by(|a, b| a.cv.total_cmp(&b.cv))
+            .unwrap()
     }
+
     fn baseline_line(&self) -> Option<&VariantLine> {
         self.lines.iter().find(|l| l.name == self.baseline)
     }
+
     fn field_spread(&self) -> f64 {
         let f = self.fastest().median_ns;
         if f > 0.0 { self.slowest().median_ns / f } else { 1.0 }
@@ -122,16 +139,22 @@ impl RunSummary {
         s.push_str(&format!("  {} (baseline: {})\n", self.title, self.baseline));
         for l in &self.lines {
             let d = match l.delta_vs_base_ns {
-                Some(dn) => format!(
-                    "  Δbase {}{}",
-                    fmt_ns(dn),
-                    if l.significant { " *" } else { "" }
-                ),
+                Some(dn) => {
+                    format!(
+                        "  Δbase {}{}",
+                        fmt_ns(dn),
+                        if l.significant { " *" } else { "" }
+                    )
+                },
                 None => "  (baseline)".to_string(),
             };
             s.push_str(&format!(
                 "    {:<24} {:>10}  {:>5.2}x  cv {:>4.1}%{}\n",
-                l.name, fmt_ns(l.median_ns), l.ratio_vs_best, l.cv * 100.0, d
+                l.name,
+                fmt_ns(l.median_ns),
+                l.ratio_vs_best,
+                l.cv * 100.0,
+                d
             ));
         }
         let hs = self.highlights();
@@ -142,7 +165,9 @@ impl RunSummary {
                 s.push_str(&format!("    * {}\n", h.headline));
             }
         }
-        s.push_str(&format!("    -> Read the full report for details: {report_path}\n"));
+        s.push_str(&format!(
+            "    -> Read the full report for details: {report_path}\n"
+        ));
         s
     }
 
@@ -179,8 +204,11 @@ impl RunSummary {
 pub fn summarise(ds: &DataSet, title: &str, seed: u64) -> RunSummary {
     let base = ds.baseline();
     use std::collections::HashMap;
-    let base_map: HashMap<(usize, usize, u64), f64> =
-        base.keyed_algo.iter().map(|(r, p, c, v)| ((*r, *p, *c), *v)).collect();
+    let base_map: HashMap<(usize, usize, u64), f64> = base
+        .keyed_algo
+        .iter()
+        .map(|(r, p, c, v)| ((*r, *p, *c), *v))
+        .collect();
     let best_median = ds
         .variants
         .iter()
@@ -223,7 +251,11 @@ pub fn summarise(ds: &DataSet, title: &str, seed: u64) -> RunSummary {
             autocorrelation:  v.autocorrelation,
         });
     }
-    RunSummary { title: title.to_string(), baseline: base.name.clone(), lines }
+    RunSummary {
+        title: title.to_string(),
+        baseline: base.name.clone(),
+        lines,
+    }
 }
 
 mod detectors;

@@ -20,29 +20,29 @@
 //! would not. The signatures below only ever take the generic form.
 
 use mockspace_bench_core::counter::read_counter;
-use mockspace_bench_core::{timed_calibrated, FfiBenchCall};
+use mockspace_bench_core::{FfiBenchCall, timed_calibrated};
 
 /// The fixed 16-entry seed table, shared across every size and every cell. Drawing
 /// seeds from this instead of from the harness `input` bytes (which the harness
 /// fills per-size) keeps a cross-size or cross-cell comparison varying only the
 /// thing under test. (Panel finding: `input[k % N]` drew different seeds per size.)
 pub const SEEDS: [u64; 16] = [
-    0x9e37_79b9_7f4a_7c15,
-    0xf1bb_cdcb_fa53_e0a9,
-    0x2545_f491_4f6c_dd1d,
-    0x8ebc_6af0_9c88_c2b2,
-    0xc2b2_ae3d_27d4_eb4f,
-    0x1656_67b1_9e37_79f9,
-    0x27d4_eb2f_1656_67c5,
-    0x1656_67b1_9e37_79b9,
-    0x3c6e_f372_fe94_f82b,
-    0xa54f_f53a_5f1d_36f1,
-    0x510e_527f_ade6_82d1,
-    0x9b05_688c_2b3e_6c1f,
-    0x1f83_d9ab_fb41_bd6b,
-    0x5be0_cd19_137e_2179,
-    0x6a09_e667_f3bc_c908,
-    0xbb67_ae85_84ca_a73b,
+    0x9E37_79B9_7F4A_7C15,
+    0xF1BB_CDCB_FA53_E0A9,
+    0x2545_F491_4F6C_DD1D,
+    0x8EBC_6AF0_9C88_C2B2,
+    0xC2B2_AE3D_27D4_EB4F,
+    0x1656_67B1_9E37_79F9,
+    0x27D4_EB2F_1656_67C5,
+    0x1656_67B1_9E37_79B9,
+    0x3C6E_F372_FE94_F82B,
+    0xA54F_F53A_5F1D_36F1,
+    0x510E_527F_ADE6_82D1,
+    0x9B05_688C_2B3E_6C1F,
+    0x1F83_D9AB_FB41_BD6B,
+    0x5BE0_CD19_137E_2179,
+    0x6A09_E667_F3BC_C908,
+    0xBB67_AE85_84CA_A73B,
 ];
 
 /// The number of inner iterations per timed pass (one per seed).
@@ -156,7 +156,12 @@ where
         output.copy_from_slice(&acc.to_le_bytes());
     }};
 
-    Measured { run_ticks: call.run_ticks, setup_ticks: s1 - s0, first_ticks: f1 - f0, digest }
+    Measured {
+        run_ticks: call.run_ticks,
+        setup_ticks: s1 - s0,
+        first_ticks: f1 - f0,
+        digest,
+    }
 }
 
 /// Cold / aliased-predictor regime: `setup` returns a state holding `m` distinct
@@ -213,7 +218,12 @@ where
         output.copy_from_slice(&acc.to_le_bytes());
     }};
 
-    Measured { run_ticks: call.run_ticks, setup_ticks: s1 - s0, first_ticks: f1 - f0, digest }
+    Measured {
+        run_ticks: call.run_ticks,
+        setup_ticks: s1 - s0,
+        first_ticks: f1 - f0,
+        digest,
+    }
 }
 
 /// Stream regime: the measured op sweeps the harness `input` byte stream itself,
@@ -263,7 +273,12 @@ where
         output.copy_from_slice(&acc.to_le_bytes());
     }};
 
-    Measured { run_ticks: call.run_ticks, setup_ticks: s1 - s0, first_ticks: f1 - f0, digest }
+    Measured {
+        run_ticks: call.run_ticks,
+        setup_ticks: s1 - s0,
+        first_ticks: f1 - f0,
+        digest,
+    }
 }
 
 #[cfg(test)]
@@ -301,8 +316,14 @@ mod tests {
                 scratch.iter().fold(0u64, |h, &v| h.rotate_left(5) ^ v)
             },
         );
-        assert_eq!(m1.digest, m2.digest, "digest must be reps-invariant across calls");
-        assert_ne!(m1.digest, DIGEST_INIT, "digest must actually fold the cell output");
+        assert_eq!(
+            m1.digest, m2.digest,
+            "digest must be reps-invariant across calls"
+        );
+        assert_ne!(
+            m1.digest, DIGEST_INIT,
+            "digest must actually fold the cell output"
+        );
     }
 
     #[test]
@@ -326,7 +347,12 @@ mod tests {
 
     #[test]
     fn into_ffi_carries_all_four_fields() {
-        let m = Measured { run_ticks: 123, setup_ticks: 5, first_ticks: 9, digest: 42 };
+        let m = Measured {
+            run_ticks:   123,
+            setup_ticks: 5,
+            first_ticks: 9,
+            digest:      42,
+        };
         let f = m.into_ffi();
         // all four measurements must cross the dylib boundary; dropping any one
         // is the regression that hid the S term in the hand-rolled matrix.

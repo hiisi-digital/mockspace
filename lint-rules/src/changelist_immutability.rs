@@ -22,7 +22,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist, Phase};
-use crate::{Lint, RepoLint, LintError, RepoContext};
+use crate::{Lint, LintError, RepoContext, RepoLint};
 
 const LINT_NAME: &str = "changelist-immutability";
 
@@ -32,6 +32,7 @@ impl Lint for ChangelistImmutability {
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+
     fn source_only(&self) -> bool {
         false
     }
@@ -341,11 +342,7 @@ mod tests {
                 let old = format!("design_rounds/foo.doc{old_suffix}.md");
                 let new = format!("design_rounds/foo.doc{new_suffix}.md");
                 let mut out = Vec::new();
-                collect_non_additions(
-                    &format!("R100\t{old}\t{new}\n"),
-                    "staged",
-                    &mut out,
-                );
+                collect_non_additions(&format!("R100\t{old}\t{new}\n"), "staged", &mut out);
                 if ALLOWED[oi][ni] {
                     assert!(
                         out.is_empty(),

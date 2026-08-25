@@ -44,7 +44,10 @@ use std::process::{Command, Stdio};
 use mockspace_lint_rules::LintPack;
 
 use crate::bootstrap::{
-    ToolCrate, discover_custom_lint_files, discover_tool_crates, parse_lint_crates,
+    ToolCrate,
+    discover_custom_lint_files,
+    discover_tool_crates,
+    parse_lint_crates,
     scan_lint_functions,
 };
 use crate::config::Config;
@@ -296,13 +299,17 @@ fn gen_collect_lib(
         out.push_str(&format!("    pack.crate_lints.push({m}::lint());\n"));
     }
     for m in &cross_mods {
-        out.push_str(&format!("    pack.workspace_lints.push({m}::cross_lint());\n"));
+        out.push_str(&format!(
+            "    pack.workspace_lints.push({m}::cross_lint());\n"
+        ));
     }
     for m in &repo_mods {
         out.push_str(&format!("    pack.repo_lints.push({m}::repo_lint());\n"));
     }
     for m in &message_mods {
-        out.push_str(&format!("    pack.message_lints.push({m}::message_lint());\n"));
+        out.push_str(&format!(
+            "    pack.message_lints.push({m}::message_lint());\n"
+        ));
     }
     for id in &pack_idents {
         out.push_str(&format!("    {id}::collect(pack);\n"));
@@ -594,12 +601,17 @@ mod tests {
             ("repo", "pub fn repo_lint()"),
             ("msg", "pub fn message_lint()"),
         ] {
-            std::fs::write(lints.join(format!("{stem}.rs")), format!("{decl} {{ todo!() }}\n"))
-                .unwrap();
+            std::fs::write(
+                lints.join(format!("{stem}.rs")),
+                format!("{decl} {{ todo!() }}\n"),
+            )
+            .unwrap();
         }
 
-        let modules: Vec<String> =
-            ["plain", "cross", "repo", "msg"].iter().map(|s| s.to_string()).collect();
+        let modules: Vec<String> = ["plain", "cross", "repo", "msg"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let src = gen_collect_lib(&lints, &modules, &[], &[]);
 
         assert!(src.contains("pack.crate_lints.push(plain::lint());"));
