@@ -28,7 +28,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use mockspace_manifest::gate::HOOK_VERSION;
-use renki::{Anchor, Cli, Hooks, Locate, Resolved, Tool, Workdir};
+use renki::{Anchor, Hooks, Locate, Resolved, Tool, Workdir, pin_keys};
 
 /// The canonical mockspace repository: the engine source when a manifest sets
 /// no `mockspace_git`.
@@ -40,21 +40,19 @@ pub const TOOL: Tool = Tool {
     anchor:          Anchor::Marker(".git"),
     short:           "mock",
     config_file:     "mockspace.toml",
-    pin_prefix:      "mockspace",
+    pin_keys:        pin_keys!("mockspace"),
     engine_crate:    "mockspace",
     cache_namespace: "mockspace",
     default_url:     CANONICAL_URL,
     launcher_crate:  "cargo-mock",
-    dir_flag:        Cli::DIR_FLAG,
-    engine_flag:     Cli::ENGINE_FLAG,
     // `mock_dir`, not renki's conventional `workdir`. The key is a contract
     // with `lib/mock.sh` and with every hook and shell helper that sources it,
     // all of which parse `mock_dir=` and have done since before the launcher
     // was extracted. renki makes the keys fields for exactly this.
-    locate:          Locate {
+    locate:          Some(Locate {
         workdir_key: "mock_dir",
         ..Locate::DEFAULT
-    },
+    }),
     workdir:         Some(Workdir {
         key:          "mock_dir",
         // at the repo root, `mock` is what almost every consumer uses; in a
@@ -68,8 +66,22 @@ pub const TOOL: Tool = Tool {
         verify_engine_dir: Some(has_lint_rules),
         legacy_pin:        Some(legacy::pin_from_lock_at),
         verify_repo_state: Some(no_retired_alias),
+        ..Hooks::NONE
     },
+    // Everything renki already answers: the flags, the retention, the skip
+    // list, the self-update policy. Spread rather than restated, so a field
+    // added to the descriptor arrives as a version bump instead of a build
+    // break.
+    ..Tool::CONVENTIONS
 };
+
+/// The descriptor is answerable at build time, so it is answered here.
+///
+/// `..Tool::CONVENTIONS` is a base of empty names, which is safe only because
+/// `Tool::defect` refuses every one of them and is const. Writing the literal
+/// out gave this for free: a missing field was a missing field. The spread
+/// trades that away, and this one line buys it back.
+const _: () = assert!(TOOL.defect().is_none());
 
 /// The launcher entry, shared by both installed binaries. Each bin is a
 /// two-line shim over this.
@@ -86,13 +98,29 @@ pub fn run_cli() -> ExitCode {
 /// its `Box<dyn Lint>` vtables do not match the engine's and crossing the
 /// dlopen boundary is undefined. Renamed to the package `mockspace` so the
 /// generated crate's dependency spelling does not change.
+///
+/// The one line here that nothing covers is the one below: that it reads
+/// `git_ref()` rather than `key_rev`, which for a version pin is a cache key
+/// and not a git ref at all. A test would need a `Resolved`, and building one
+/// wants a network and a cache directory. Tracked as
+/// `renki-lets-a-hook-be-tested` on the agenda.
 fn lint_rules_from_pin(resolved: &Resolved) -> Vec<String> {
     let (kind, value) = resolved.git_ref();
+    lint_rules_at(&resolved.pin.url, kind, value)
+}
+
+/// The dependency text itself, split out from the hook so it can be tested
+/// without a resolved pin.
+///
+/// `Resolved` is renki's and is only built by resolving, which wants a network
+/// and a cache directory. Which git ref a given pin resolves to is renki's
+/// question and renki answers it; what is left here is the spelling of the
+/// dependency, and this is the whole of it.
+fn lint_rules_at(url: &str, kind: &str, value: &str) -> Vec<String> {
     vec![
         "--mockspace-lint-rules-dep".to_string(),
         format!(
-            "{{ package = \"mockspace-lint-rules\", git = \"{}\", {kind} = \"{value}\" }}",
-            resolved.pin.url
+            "{{ package = \"mockspace-lint-rules\", git = \"{url}\", {kind} = \"{value}\" }}"
         ),
     ]
 }
@@ -241,63 +269,31 @@ mod tests {
     }
 
     #[test]
-    fn the_lint_dep_follows_the_revision_the_engine_was_built_from() {
-        use renki::{Pin, Reference};
-
-        let resolved = |r: Reference| {
-            renki::Resolved {
-                pin:      Pin {
-                    url:       CANONICAL_URL.into(),
-                    reference: r.clone(),
-                },
-                key_rev:  match &r {
-                    Reference::Version(v) => format!("v:{v}"),
-                    Reference::Tag(t) => format!("tag:{t}"),
-                    Reference::Rev(s) | Reference::Branch(s) => s.clone(),
-                },
-                attempts: vec![],
-            }
-        };
-
-        // a version pin builds from the matching tag, so the dep names the tag
-        // rather than the `v:` cache key, which is not a git ref at all.
-        let dep = lint_rules_from_pin(&resolved(Reference::Version("0.0.0-d05".into())));
+    fn the_lint_dep_carries_the_ref_it_was_given_and_nothing_else() {
+        // Which ref a pin resolves to is renki's, and renki tests it. What is
+        // this crate's is that the ref it hands over is the one that lands in
+        // the dependency, verbatim, with the package rename intact.
+        let dep = lint_rules_at(CANONICAL_URL, "tag", "0.0.0-d05");
         assert_eq!(dep[0], "--mockspace-lint-rules-dep");
         assert!(dep[1].contains("tag = \"0.0.0-d05\""), "{}", dep[1]);
-        assert!(
-            !dep[1].contains("v:"),
-            "the cache key leaked into a git ref: {}",
-            dep[1]
-        );
-
-        // a branch has already been resolved to a rev, and the dep must follow
-        // that rev rather than the moving branch name, or a rebuild an hour
-        // later links a different lint-rules than the engine it loads into.
-        //
-        // The rev is deliberately unlike the branch name here. With `key_rev`
-        // set to the branch name, which is what the closure above would give,
-        // the assertion passes whichever of the two `git_ref` reads, and the
-        // case this test exists for is the one it cannot see.
-        let branch = renki::Resolved {
-            pin:      Pin {
-                url:       CANONICAL_URL.into(),
-                reference: Reference::Branch("dev".into()),
-            },
-            key_rev:  "feedface99c0ffee".into(),
-            attempts: vec![],
-        };
-        let dep = lint_rules_from_pin(&branch);
-        assert!(dep[1].contains("rev = \"feedface99c0ffee\""), "{}", dep[1]);
-        assert!(
-            !dep[1].contains("dev"),
-            "the moving branch name reached the dependency: {}",
-            dep[1]
-        );
         assert!(
             dep[1].contains("package = \"mockspace-lint-rules\""),
             "{}",
             dep[1]
         );
+        assert!(dep[1].contains(CANONICAL_URL), "{}", dep[1]);
+
+        // A rev reads the same way, and the kind is not hardcoded anywhere: a
+        // builder that always wrote `tag` would pass the case above.
+        let dep = lint_rules_at(CANONICAL_URL, "rev", "feedface99c0ffee");
+        assert!(dep[1].contains("rev = \"feedface99c0ffee\""), "{}", dep[1]);
+        assert!(!dep[1].contains("tag ="), "{}", dep[1]);
+
+        // The url is not hardcoded either, which the two cases above cannot
+        // see because both pass the canonical one.
+        let dep = lint_rules_at("ssh://git@example.invalid/other.git", "rev", "abc");
+        assert!(dep[1].contains("example.invalid"), "{}", dep[1]);
+        assert!(!dep[1].contains("hiisi-digital"), "{}", dep[1]);
     }
 
     #[test]
