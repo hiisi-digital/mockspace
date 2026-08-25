@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use tree_sitter::Node;
 
-use crate::{Lint, WorkspaceLint, LintContext, LintError};
+use crate::{Lint, LintContext, LintError, WorkspaceLint};
 
 /// Pairs of crate suffixes where duplicate type names are expected.
 /// Macro-util crates and their parent crates often define matching types
@@ -90,7 +90,7 @@ impl WorkspaceLint for SingleSource {
                         continue;
                     }
                     errors.push(LintError {
-                        path: None,
+                        path:         None,
                         crate_name:   dup.crate_name.clone(),
                         line:         dup.line,
                         lint_name:    "single-source",

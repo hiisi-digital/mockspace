@@ -21,7 +21,7 @@
 
 use crate::changelist_helpers::{self, Phase};
 use crate::src_layout::{self, SrcLayout};
-use crate::{Lint, RepoLint, LintError, RepoContext};
+use crate::{Lint, LintError, RepoContext, RepoLint};
 
 const LINT_NAME: &str = "changelist-doc-gate";
 
@@ -31,6 +31,7 @@ impl Lint for ChangelistDocGate {
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+
     fn source_only(&self) -> bool {
         false
     }
@@ -53,14 +54,15 @@ impl RepoLint for ChangelistDocGate {
             return Vec::new();
         }
 
-        let violating_files = src_layout::changed_files(workspace_root, &layout, |f| {
-            is_doc_template(&layout, f)
-        });
+        let violating_files =
+            src_layout::changed_files(workspace_root, &layout, |f| is_doc_template(&layout, f));
 
         violating_files
             .into_iter()
             .map(|(file, source)| {
-                let crate_name = layout.package_name(&file).unwrap_or_else(|| "unknown".to_string());
+                let crate_name = layout
+                    .package_name(&file)
+                    .unwrap_or_else(|| "unknown".to_string());
 
                 let phase_hint = match phase {
                     Phase::Topic => {

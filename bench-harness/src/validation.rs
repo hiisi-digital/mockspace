@@ -829,10 +829,7 @@ mod tests {
     fn duplicate_exported_names_are_found() {
         // Adjacent, apart, and three-way, because a check that only sees the
         // adjacent case passes on the shape a real manifest hits least often.
-        assert_eq!(
-            first_duplicate_name(&names(&["a", "a"])),
-            Some((0, 1, "a"))
-        );
+        assert_eq!(first_duplicate_name(&names(&["a", "a"])), Some((0, 1, "a")));
         assert_eq!(
             first_duplicate_name(&names(&["a", "b", "c", "b"])),
             Some((1, 3, "b"))

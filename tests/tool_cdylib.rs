@@ -90,7 +90,13 @@ const REPORTS: &str = r#"fn not_a_lint(&self) -> NotALint { NotALint::NoFailingC
 fn a_tool_crate_loads_and_dispatches_across_the_cdylib() {
     let tmp = tempfile::tempdir().unwrap();
     let mock = project(tmp.path());
-    write_tool(&mock.join("tools"), "greet", "probe-greet", "greet", REPORTS);
+    write_tool(
+        &mock.join("tools"),
+        "greet",
+        "probe-greet",
+        "greet",
+        REPORTS,
+    );
 
     let loaded = load(&mock);
 
@@ -123,7 +129,10 @@ fn a_tool_crate_loads_and_dispatches_across_the_cdylib() {
         registry:   &Default::default(),
     };
     let report = tool.run(&ctx);
-    assert_eq!(report.output, "args=2", "the argument vector must reach the tool");
+    assert_eq!(
+        report.output, "args=2",
+        "the argument vector must reach the tool"
+    );
     match report.outcome {
         mockspace::tool::Outcome::Clean {
             examined,
@@ -162,7 +171,13 @@ fn a_tool_declaring_a_name_that_is_not_its_directory_is_detectable() {
     // real load, which is what the dispatcher's refusal keys on.
     let tmp = tempfile::tempdir().unwrap();
     let mock = project(tmp.path());
-    write_tool(&mock.join("tools"), "outside", "probe-outside", "inside", REPORTS);
+    write_tool(
+        &mock.join("tools"),
+        "outside",
+        "probe-outside",
+        "inside",
+        REPORTS,
+    );
 
     let loaded = load(&mock);
     assert_eq!(loaded.pack.tools.len(), 1);
@@ -205,7 +220,13 @@ fn the_stdin_opt_in_survives_the_cdylib_boundary() {
     // while every unit test still passed.
     let tmp = tempfile::tempdir().unwrap();
     let mock = project(tmp.path());
-    write_tool(&mock.join("tools"), "quiet", "probe-quiet", "quiet", REPORTS);
+    write_tool(
+        &mock.join("tools"),
+        "quiet",
+        "probe-quiet",
+        "quiet",
+        REPORTS,
+    );
     let loaded = load(&mock);
     assert!(
         !loaded.pack.tools[0].wants_stdin(),

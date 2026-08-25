@@ -166,4 +166,3 @@ fn content_fingerprint(content: &str) -> u64 {
     }
     hash
 }
-

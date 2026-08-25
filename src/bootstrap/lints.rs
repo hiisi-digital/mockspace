@@ -130,7 +130,6 @@ pub(crate) fn scan_lint_functions(lints_dir: &Path, stem: &str) -> LintEntryPoin
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────
 // Generated hooks (core.hooksPath target)
 // ──────────────────────────────────────────────────────────────────────
@@ -234,7 +233,10 @@ pub(crate) fn discover_tool_crates(tools_dir: &Path) -> Vec<ToolCrate> {
 /// subdirectory name is the subcommand rather than something only the compiled
 /// code knows.
 pub(crate) fn tool_names(mock_dir: &Path) -> Vec<String> {
-    discover_tool_crates(&mock_dir.join("tools")).into_iter().map(|t| t.dir).collect()
+    discover_tool_crates(&mock_dir.join("tools"))
+        .into_iter()
+        .map(|t| t.dir)
+        .collect()
 }
 
 #[cfg(test)]
@@ -322,7 +324,10 @@ mod tool_discovery_tests {
         for n in ["zeta", "alpha", "middle"] {
             write_crate(&dir, n, n);
         }
-        let names: Vec<String> = discover_tool_crates(&dir).into_iter().map(|t| t.dir).collect();
+        let names: Vec<String> = discover_tool_crates(&dir)
+            .into_iter()
+            .map(|t| t.dir)
+            .collect();
         assert_eq!(names, vec!["alpha", "middle", "zeta"]);
     }
 

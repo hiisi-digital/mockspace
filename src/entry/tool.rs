@@ -21,12 +21,18 @@
 //! under a name its own source does not contain, which is a thing nobody can
 //! grep for. Rather than pick a winner, the mismatch is refused and named.
 
-use super::*;
 use std::io::IsTerminal;
 
 use mockspace_lint_rules::tool::{
-    Outcome, ToolContext, contract_faults, duplicate_tool_names, missing_required, usage_line,
+    Outcome,
+    ToolContext,
+    contract_faults,
+    duplicate_tool_names,
+    missing_required,
+    usage_line,
 };
+
+use super::*;
 
 /// Every subcommand name a tool may not take, because the engine already
 /// answers to it.
@@ -198,13 +204,13 @@ pub(crate) fn run(
     let registry = crate::registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
     let view = crate::registry::build_view(&registry, &cfg.registry_namespaces);
     let ctx = ToolContext {
-        mock_dir:   &cfg.mock_dir,
-        repo_root:  &cfg.repo_root,
+        mock_dir: &cfg.mock_dir,
+        repo_root: &cfg.repo_root,
         all_crates: &all_crate_names,
-        src_dirs:   &cfg.src_dirs,
+        src_dirs: &cfg.src_dirs,
         args,
-        registry:   &view,
-        stdin:      stdin.as_deref(),
+        registry: &view,
+        stdin: stdin.as_deref(),
     };
 
     let report = tool.run(&ctx);
@@ -373,7 +379,10 @@ mod tests {
              is printed beside: {msg:?}"
         );
         assert!(msg.contains("examined nothing"), "{msg:?}");
-        assert!(msg.contains("audit"), "the tool's own name must appear: {msg:?}");
+        assert!(
+            msg.contains("audit"),
+            "the tool's own name must appear: {msg:?}"
+        );
     }
 
     #[test]
@@ -418,7 +427,10 @@ mod not_found_tests {
     /// that does not match.
     #[test]
     fn an_empty_tool_set_means_nothing_was_built() {
-        assert_eq!(why_not_found(&LintPack::default(), false), NotFound::NothingBuilt);
+        assert_eq!(
+            why_not_found(&LintPack::default(), false),
+            NotFound::NothingBuilt
+        );
     }
 
     /// The control, and the arm that makes the one above an assertion rather

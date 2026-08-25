@@ -56,12 +56,15 @@ impl Lint for ForbiddenImports {
     fn name(&self) -> &'static str {
         "forbidden-imports"
     }
+
     fn default_severity(&self) -> Severity {
         Severity::OFF
     }
+
     fn config_keys(&self) -> &[&str] {
         &["rules"]
     }
+
     fn configure(&mut self, params: &HashMap<String, String>) {
         // Rules are passed as flattened keys from config parsing:
         //   "rule.no-std-in-sdk.scope" = "{prefix}-sdk"

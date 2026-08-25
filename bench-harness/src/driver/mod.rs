@@ -181,7 +181,10 @@ fn output_paths(config: &BenchConfig, root: &Path) -> (PathBuf, String, String) 
     let stem = format!("{}_n{}", config.sweep, config.n);
     let report_suffix = if config.nested { "_report.md" } else { "_findings.md" };
     let csv = dir.join(format!("{stem}.csv")).display().to_string();
-    let report = dir.join(format!("{stem}{report_suffix}")).display().to_string();
+    let report = dir
+        .join(format!("{stem}{report_suffix}"))
+        .display()
+        .to_string();
     (dir, csv, report)
 }
 
@@ -562,8 +565,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         // can take. The manifest cannot catch this: the name lives in the
         // dylib, not in the path.
         {
-            let mut labels: Vec<&str> =
-                result.samples.iter().map(|s| s.variant.as_str()).collect();
+            let mut labels: Vec<&str> = result.samples.iter().map(|s| s.variant.as_str()).collect();
             labels.sort_unstable();
             labels.dedup();
             if labels.len() < config.variant_paths.len() {
@@ -768,7 +770,8 @@ mod tests {
 
     #[test]
     fn flat_output_naming_is_unchanged() {
-        let (dir, csv, report) = output_paths(&cfg("hash", "hash", 64, false), Path::new("results"));
+        let (dir, csv, report) =
+            output_paths(&cfg("hash", "hash", 64, false), Path::new("results"));
         assert_eq!(dir, Path::new("results/hash"));
         assert!(csv.ends_with("results/hash/hash_n64.csv"), "{csv}");
         assert!(
@@ -782,7 +785,10 @@ mod tests {
         let c = cfg("warm-container", "width-l1", 80003, true);
         let (dir, csv, report) = output_paths(&c, Path::new("results"));
         assert_eq!(dir, Path::new("results/warm-container"));
-        assert!(csv.ends_with("results/warm-container/width-l1_n80003.csv"), "{csv}");
+        assert!(
+            csv.ends_with("results/warm-container/width-l1_n80003.csv"),
+            "{csv}"
+        );
         assert!(
             report.ends_with("results/warm-container/width-l1_n80003_report.md"),
             "{report}"
@@ -818,10 +824,10 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert_eq!(select_names(&all, &[]).unwrap(), all);
-        assert_eq!(
-            select_names(&all, &["warm".to_string()]).unwrap(),
-            vec!["warm/density-w13".to_string(), "warm/width-l1".to_string()]
-        );
+        assert_eq!(select_names(&all, &["warm".to_string()]).unwrap(), vec![
+            "warm/density-w13".to_string(),
+            "warm/width-l1".to_string()
+        ]);
         assert_eq!(
             select_names(&all, &["warm/width-l1".to_string()]).unwrap(),
             vec!["warm/width-l1".to_string()]
@@ -900,7 +906,11 @@ mod tests {
             raw:           Vec::new(),
         };
         let code = drive_parsed(&spec, &root, &cli);
-        assert_eq!(format!("{code:?}"), failure(), "the missing dylib fails preflight");
+        assert_eq!(
+            format!("{code:?}"),
+            failure(),
+            "the missing dylib fails preflight"
+        );
         assert_eq!(
             *ORDER_A.lock().unwrap(),
             vec!["on_init"],
@@ -939,7 +949,11 @@ mod tests {
             raw:           Vec::new(),
         };
         let code = drive_parsed(&spec, &root, &cli);
-        assert_eq!(format!("{code:?}"), failure(), "the missing csv fails the cell");
+        assert_eq!(
+            format!("{code:?}"),
+            failure(),
+            "the missing csv fails the cell"
+        );
         assert_eq!(*ORDER_B.lock().unwrap(), vec!["on_init", "after_init"]);
         std::fs::remove_dir_all(&root).ok();
     }

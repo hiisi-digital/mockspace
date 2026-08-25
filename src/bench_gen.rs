@@ -136,9 +136,11 @@ fn parse_stage(decl: &str) -> Result<Stage, String> {
         },
     };
     match (arity, arg) {
-        (0, None) => Ok(Stage {
-            call: format!("harness::{name}()"),
-        }),
+        (0, None) => {
+            Ok(Stage {
+                call: format!("harness::{name}()"),
+            })
+        },
         (1, Some(v)) => {
             let v: u64 = v
                 .parse()
@@ -147,8 +149,16 @@ fn parse_stage(decl: &str) -> Result<Stage, String> {
                 call: format!("harness::{name}({v})"),
             })
         },
-        (0, Some(v)) => Err(format!("stage `{decl}`: `{name}` takes no argument, got `{v}`")),
-        (1, None) => Err(format!("stage `{decl}`: `{name}` needs an integer argument")),
+        (0, Some(v)) => {
+            Err(format!(
+                "stage `{decl}`: `{name}` takes no argument, got `{v}`"
+            ))
+        },
+        (1, None) => {
+            Err(format!(
+                "stage `{decl}`: `{name}` needs an integer argument"
+            ))
+        },
         _ => unreachable!(),
     }
 }
@@ -231,7 +241,10 @@ pub fn workload_fn_source(manifest: &BenchManifest) -> Result<String, String> {
 }
 
 /// Generate the driver crate's `main.rs`.
-pub fn driver_main_source(manifest: &BenchManifest, hooks_lib: Option<&Path>) -> Result<String, String> {
+pub fn driver_main_source(
+    manifest: &BenchManifest,
+    hooks_lib: Option<&Path>,
+) -> Result<String, String> {
     let out = manifest.dispatch.as_ref().map(|d| d.out).unwrap_or(8);
     let points = dispatch_points(manifest);
     if points.is_empty() {
@@ -560,9 +573,15 @@ mod tests {
             toml.contains("[workspace]"),
             "the header that keeps an outer workspace from capturing the crate"
         );
-        assert!(toml.contains("name = \"fnv_fast\""), "dashes become underscores");
+        assert!(
+            toml.contains("name = \"fnv_fast\""),
+            "dashes become underscores"
+        );
         assert!(toml.contains("crate-type = [\"cdylib\"]"));
-        assert!(toml.contains("features = [\"std\"]"), "bench-core needs std");
+        assert!(
+            toml.contains("features = [\"std\"]"),
+            "bench-core needs std"
+        );
         let driver = driver_cargo_toml(DEFAULT_MOCKSPACE_DEP, &[]).unwrap();
         assert!(driver.contains("[workspace]"));
         assert!(driver.contains("mockspace-bench-harness"));

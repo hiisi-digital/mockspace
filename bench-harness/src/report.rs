@@ -214,14 +214,25 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             if ratio_mode {
                 // difference both sides against the floor cell when one is declared.
                 let (v_adj, base_adj) = match floor {
-                    Some(f) => ((v.algo_all.mean - f).max(0.0), (base.algo_all.mean - f).max(0.0)),
+                    Some(f) => {
+                        (
+                            (v.algo_all.mean - f).max(0.0),
+                            (base.algo_all.mean - f).max(0.0),
+                        )
+                    },
                     None => (v.algo_all.mean, base.algo_all.mean),
                 };
                 let ratio = if base_adj > 0.0 { v_adj / base_adj } else { 0.0 };
-                let rlabel = if v.name == base.name { "1.00×".into() } else { format!("{:.2}×", ratio) };
+                let rlabel =
+                    if v.name == base.name { "1.00×".into() } else { format!("{:.2}×", ratio) };
                 md.push_str(&format!(
                     "| {} | {:.0}ns | {:.0}ns | {:.0}ns | {} | {} |\n",
-                    v.name, v.algo_all.mean, v.algo_all.best_20pct, v.algo_all.worst_20pct, label, rlabel
+                    v.name,
+                    v.algo_all.mean,
+                    v.algo_all.best_20pct,
+                    v.algo_all.worst_20pct,
+                    label,
+                    rlabel
                 ));
             } else {
                 md.push_str(&format!(
@@ -249,7 +260,11 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         for v in &ds.variants {
             let ipc = if v.mean_cycles > 0.0 { v.mean_instructions / v.mean_cycles } else { 0.0 };
             let ratio = if base_instr > 0.0 { v.mean_instructions / base_instr } else { 0.0 };
-            let rlabel = if v.name == base.name { "1.00×".to_string() } else { format!("{:.2}×", ratio) };
+            let rlabel = if v.name == base.name {
+                "1.00×".to_string()
+            } else {
+                format!("{:.2}×", ratio)
+            };
             md.push_str(&format!(
                 "| {} | {:.0} | {:.0} | {:.3} | {} |\n",
                 v.name, v.mean_instructions, v.mean_cycles, ipc, rlabel
@@ -802,23 +817,23 @@ mod tests {
 
     fn sample(variant: &str, algo: f64) -> Sample {
         Sample {
-            run:         0,
-            pass:        0,
-            cooldown_ms: 0,
-            mode:        "warm".into(),
-            variant:     variant.into(),
-            e2e_ns:      algo + 10.0,
-            algo_ns:     algo,
-            bridge_ns:   10.0,
-            batch_idx:   0,
-            batch_count: 1,
-            score:       None,
-            input_tag:   None,
+            run:          0,
+            pass:         0,
+            cooldown_ms:  0,
+            mode:         "warm".into(),
+            variant:      variant.into(),
+            e2e_ns:       algo + 10.0,
+            algo_ns:      algo,
+            bridge_ns:    10.0,
+            batch_idx:    0,
+            batch_count:  1,
+            score:        None,
+            input_tag:    None,
             instructions: 0,
             cycles:       0,
-            setup_ns:    0.0,
-            first_ns:    0.0,
-            digest:      0,
+            setup_ns:     0.0,
+            first_ns:     0.0,
+            digest:       0,
         }
     }
 
@@ -838,7 +853,10 @@ mod tests {
     #[test]
     fn ratio_mode_adds_base_column() {
         let md = generate(&ds_with("ratio", [90.0, 100.0, 110.0]), "t");
-        assert!(md.contains("| \u{0394} mean | \u{00d7} base |"), "ratio header present");
+        assert!(
+            md.contains("| \u{0394} mean | \u{00d7} base |"),
+            "ratio header present"
+        );
         assert!(md.contains("1.00\u{00d7}"), "baseline row reads 1.00x");
         assert!(md.contains("0.50\u{00d7}"), "threaded is half the baseline");
     }
@@ -846,7 +864,10 @@ mod tests {
     #[test]
     fn subtract_mode_omits_base_column() {
         let md = generate(&ds_with("subtract", [90.0, 100.0, 110.0]), "t");
-        assert!(!md.contains("\u{00d7} base"), "no ratio column outside ratio mode");
+        assert!(
+            !md.contains("\u{00d7} base"),
+            "no ratio column outside ratio mode"
+        );
     }
 
     #[test]
@@ -864,14 +885,26 @@ mod tests {
         ds.meta.normalise_mode = "ratio".into();
         ds = ds.with_floor("nullfloor");
         let md = generate(&ds, "t");
-        assert!(md.contains("0.38\u{00d7}"), "threaded floor-differenced ratio ~0.375x, got:\n{md}");
-        assert!(md.contains("0.00\u{00d7}"), "floor cell differences to 0.00x");
-        assert!(md.contains("floor-differenced against the `nullfloor` cell"), "note present");
+        assert!(
+            md.contains("0.38\u{00d7}"),
+            "threaded floor-differenced ratio ~0.375x, got:\n{md}"
+        );
+        assert!(
+            md.contains("0.00\u{00d7}"),
+            "floor cell differences to 0.00x"
+        );
+        assert!(
+            md.contains("floor-differenced against the `nullfloor` cell"),
+            "note present"
+        );
         // without the floor the same data gives the raw 0.50x.
         let mut ds_raw = DataSet::from_samples(&samples, "warm").with_baseline("switch");
         ds_raw.meta.normalise_mode = "ratio".into();
         let md_raw = generate(&ds_raw, "t");
-        assert!(md_raw.contains("0.50\u{00d7}"), "raw ratio is 0.50x without a floor");
+        assert!(
+            md_raw.contains("0.50\u{00d7}"),
+            "raw ratio is 0.50x without a floor"
+        );
     }
 
     #[test]
@@ -901,15 +934,27 @@ mod tests {
             mk("threaded", 150, 50),
         ];
         let md = generate(&DataSet::from_samples(&samples, "warm"), "t");
-        assert!(md.contains("## Hardware counters"), "section renders when counters present");
-        assert!(md.contains("| instructions | cycles | IPC"), "counter columns present");
+        assert!(
+            md.contains("## Hardware counters"),
+            "section renders when counters present"
+        );
+        assert!(
+            md.contains("| instructions | cycles | IPC"),
+            "counter columns present"
+        );
         assert!(md.contains("2.000"), "switch IPC 2.0");
         assert!(md.contains("3.000"), "threaded IPC 3.0");
-        assert!(md.contains("0.75\u{00d7}"), "instruction ratio threaded/switch = 0.75x");
+        assert!(
+            md.contains("0.75\u{00d7}"),
+            "instruction ratio threaded/switch = 0.75x"
+        );
 
         // no counters -> no section.
         let md0 = generate(&ds_with("subtract", [100.0, 100.0, 100.0]), "t");
-        assert!(!md0.contains("## Hardware counters"), "section omitted when counters are zero");
+        assert!(
+            !md0.contains("## Hardware counters"),
+            "section omitted when counters are zero"
+        );
     }
 
     #[test]
@@ -930,14 +975,29 @@ mod tests {
             mk("threaded", 300.0, 50.0),
         ];
         let md = generate(&DataSet::from_samples(&samples, "warm"), "t");
-        assert!(md.contains("## Setup vs iteration cost"), "section renders when setup present");
-        assert!(md.contains("| setup S (ns) | first-touch (ns) | run I (ns) | k* vs base |"), "columns present");
+        assert!(
+            md.contains("## Setup vs iteration cost"),
+            "section renders when setup present"
+        );
+        assert!(
+            md.contains("| setup S (ns) | first-touch (ns) | run I (ns) | k* vs base |"),
+            "columns present"
+        );
         // threaded's k* row: setup 300.0, run 50.0, k* = 4.
-        assert!(md.contains("| threaded | 300.0 | 75.0 | 50.0 | 4 |"), "threaded k* is 4");
-        assert!(md.contains("| switch | 100.0 | 150.0 | 100.0 | n/a |"), "baseline row has no k*");
+        assert!(
+            md.contains("| threaded | 300.0 | 75.0 | 50.0 | 4 |"),
+            "threaded k* is 4"
+        );
+        assert!(
+            md.contains("| switch | 100.0 | 150.0 | 100.0 | n/a |"),
+            "baseline row has no k*"
+        );
 
         // no setup measured -> no section (plain timed! benches).
         let md0 = generate(&ds_with("subtract", [100.0, 100.0, 100.0]), "t");
-        assert!(!md0.contains("## Setup vs iteration cost"), "section omitted when setup is zero");
+        assert!(
+            !md0.contains("## Setup vs iteration cost"),
+            "section omitted when setup is zero"
+        );
     }
 }

@@ -48,7 +48,10 @@ impl RegistryView {
         let mut by_namespace: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for q in rows.keys() {
             if let Some((ns, _)) = q.split_once("::") {
-                by_namespace.entry(ns.to_string()).or_default().push(q.clone());
+                by_namespace
+                    .entry(ns.to_string())
+                    .or_default()
+                    .push(q.clone());
             }
         }
         Self {
@@ -114,16 +117,22 @@ mod tests {
         let mut rows = BTreeMap::new();
         rows.insert(
             "slot::display".to_string(),
-            [("use".to_string(), "pixels".to_string())].into_iter().collect(),
+            [("use".to_string(), "pixels".to_string())]
+                .into_iter()
+                .collect(),
         );
         rows.insert("slot::audio".to_string(), RowFields::new());
         rows.insert(
             "answer::niri".to_string(),
-            [("slot".to_string(), "display".to_string())].into_iter().collect(),
+            [("slot".to_string(), "display".to_string())]
+                .into_iter()
+                .collect(),
         );
-        let referrers = [("slot::display".to_string(), vec!["answer::niri".to_string()])]
-            .into_iter()
-            .collect();
+        let referrers = [("slot::display".to_string(), vec![
+            "answer::niri".to_string(),
+        ])]
+        .into_iter()
+        .collect();
         RegistryView::new(rows, referrers)
     }
 

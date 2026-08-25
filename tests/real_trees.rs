@@ -56,11 +56,7 @@ fn find_roots(workspace: &Path) -> Vec<PathBuf> {
         .collect();
     let mut roots: Vec<PathBuf> = dirs
         .iter()
-        .filter(|d| {
-            !dirs
-                .iter()
-                .any(|other| *d != other && d.starts_with(other))
-        })
+        .filter(|d| !dirs.iter().any(|other| *d != other && d.starts_with(other)))
         .cloned()
         .collect();
     roots.sort();
@@ -88,8 +84,8 @@ fn every_real_bench_tree_loads_and_resolves_through_the_benchspace_path() {
     let mut composed_member_cells = 0usize;
     let mut total_cells = 0usize;
     for root in &roots {
-        let tree = tree::load(root)
-            .unwrap_or_else(|e| panic!("{} failed to load: {e}", root.display()));
+        let tree =
+            tree::load(root).unwrap_or_else(|e| panic!("{} failed to load: {e}", root.display()));
         let manifest = &tree.manifest;
         assert!(
             !manifest.bench.is_empty(),

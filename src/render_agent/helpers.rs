@@ -175,4 +175,3 @@ pub(crate) fn agent_mode_var(project_name: &str) -> String {
     let upper = project_name.to_uppercase().replace('-', "_");
     format!("{upper}_AGENT_MODE")
 }
-

@@ -125,4 +125,3 @@ pub(crate) fn delete_all_rs(dir: &Path) -> u32 {
     }
     count
 }
-

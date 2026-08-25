@@ -15,7 +15,7 @@
 //! Severity: PUSH_GATE (warn on commit, warn on build, error on push).
 
 use crate::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist};
-use crate::{Lint, WorkspaceLint, LintContext, LintError, type_scanner};
+use crate::{Lint, LintContext, LintError, WorkspaceLint, type_scanner};
 
 const LINT_NAME: &str = "deprecation-comparison";
 
@@ -25,9 +25,11 @@ impl Lint for DeprecationComparison {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::PUSH_GATE
     }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+
     fn source_only(&self) -> bool {
         false
     }

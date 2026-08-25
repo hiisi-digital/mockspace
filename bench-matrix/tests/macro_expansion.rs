@@ -8,7 +8,7 @@
 //! `MatrixDecl` data it emits is correct, and that the generated cell functions
 //! satisfy the scaffold's `FnMut` signature (the isolation-preserving form).
 
-use mockspace_bench_matrix::{scaffold, Regime};
+use mockspace_bench_matrix::{Regime, scaffold};
 
 // A warm family standing in for a real consumer's `pub mod bench`: a shared state,
 // a feature-gated cell, and a per-cell setup override returning its own state type.
@@ -149,13 +149,23 @@ fn warm_matrix_decls_are_correct() {
     assert_eq!(d.baseline, "switch");
     assert_eq!(d.floor.as_deref(), Some("nullfloor"));
     assert_eq!(d.regime, Regime::Warm);
-    assert!(d.setup_path.ends_with("::warm_family::setup"), "setup_path was {}", d.setup_path);
-    assert_eq!(d.extra_deps, vec!["mockspace-bench-core = { path = \"x\" }"]);
+    assert!(
+        d.setup_path.ends_with("::warm_family::setup"),
+        "setup_path was {}",
+        d.setup_path
+    );
+    assert_eq!(d.extra_deps, vec![
+        "mockspace-bench-core = { path = \"x\" }"
+    ]);
 
     assert_eq!(d.cells.len(), 4);
     let switch = &d.cells[0];
     assert_eq!(switch.tag, "switch");
-    assert!(switch.op_path.ends_with("::warm_family::cell_switch"), "op_path was {}", switch.op_path);
+    assert!(
+        switch.op_path.ends_with("::warm_family::cell_switch"),
+        "op_path was {}",
+        switch.op_path
+    );
     assert!(switch.setup_path.is_none(), "plain cell uses shared setup");
     assert!(switch.features.is_empty());
 
@@ -169,7 +179,11 @@ fn warm_matrix_decls_are_correct() {
     assert_eq!(direct.features, vec!["jit"]);
     // the per-cell setup override sets a per-cell setup_path.
     assert!(
-        direct.setup_path.as_deref().unwrap().ends_with("::warm_family::setup_direct"),
+        direct
+            .setup_path
+            .as_deref()
+            .unwrap()
+            .ends_with("::warm_family::setup_direct"),
         "per-cell setup_path was {:?}",
         direct.setup_path
     );

@@ -11,9 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use mockspace_lint_rules::{
-    Level, LintConfig, PathFilter, PathFilters, Severity, parse_severity,
-};
+use mockspace_lint_rules::{Level, LintConfig, PathFilter, PathFilters, Severity, parse_severity};
 use serde::Deserialize;
 use serde::de::IntoDeserializer;
 
@@ -1093,7 +1091,9 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
                 // a shared lint pack can name a project's own crates in a glob.
                 if table.include.is_some() || table.exclude.is_some() {
                     let expand = |v: Vec<String>| -> Vec<String> {
-                        v.into_iter().map(|s| s.replace("{prefix}", crate_prefix)).collect()
+                        v.into_iter()
+                            .map(|s| s.replace("{prefix}", crate_prefix))
+                            .collect()
                     };
                     paths.insert(lint_name.clone(), PathFilter {
                         include: expand(table.include.unwrap_or_default()),

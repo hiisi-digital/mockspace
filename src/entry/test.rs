@@ -34,11 +34,11 @@ use crate::config::Config;
 
 /// One tree, its label, and where its manifest lives.
 struct Tree {
-    what:     &'static str,
-    dir:      PathBuf,
+    what:    &'static str,
+    dir:     PathBuf,
     /// Why this tree is not reached by a plain `cargo test` in `mock/`, so a
     /// reader of the output knows what each row is for.
-    because:  &'static str,
+    because: &'static str,
 }
 
 pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
@@ -96,7 +96,7 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             continue;
         }
         trees.push(Tree {
-            what:    "tool",
+            what: "tool",
             dir,
             because: "compiled as a path dependency of the lint cdylib, never a member",
         });
@@ -110,7 +110,9 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     // records having already fixed once.
     let bench_dir = cfg.mock_dir.join("benches");
     let has_benches = bench_dir.exists()
-        && std::fs::read_dir(&bench_dir).map(|mut d| d.next().is_some()).unwrap_or(false);
+        && std::fs::read_dir(&bench_dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
 
     // The generated lint crate, which exists only after something generates it.
     // Not generated here: generating is the lint path's job and doing it from
@@ -144,7 +146,10 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     }
 
     if trees.is_empty() && !has_benches {
-        eprintln!("mock test: no tree to test under {}", cfg.mock_dir.display());
+        eprintln!(
+            "mock test: no tree to test under {}",
+            cfg.mock_dir.display()
+        );
         return ExitCode::FAILURE;
     }
 
@@ -179,7 +184,11 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         for f in &failed {
             eprintln!("mock test: FAILED {f}");
         }
-        eprintln!("mock test: {} of {} tree(s) failed", failed.len(), trees.len());
+        eprintln!(
+            "mock test: {} of {} tree(s) failed",
+            failed.len(),
+            trees.len()
+        );
         ExitCode::FAILURE
     }
 }
@@ -201,7 +210,6 @@ fn crate_dirs(root: &Path) -> Vec<PathBuf> {
     out.sort();
     out
 }
-
 
 /// Whether a crate sits inside a workspace directory without being a member and
 /// without declaring itself a root.

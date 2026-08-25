@@ -19,8 +19,8 @@
 pub mod agent_mode;
 pub mod autofix;
 pub mod bench;
-pub mod bench_gen;
 pub mod bench_docs;
+pub mod bench_gen;
 pub mod bootstrap;
 pub mod build_dir;
 pub mod config;
@@ -59,25 +59,6 @@ pub use entry::run;
 /// Used when the repo defines custom lints under `{mock_dir}/lints/` or
 /// declares external packs under `[lint-crates]`.
 pub use entry::run_with_custom_lints;
-pub use mockspace_lint_rules::{
-    AgentMode,
-    CrateLint,
-    Invocation,
-    Level,
-    Lint,
-    LintPack,
-    MessageContext,
-    MessageDomain,
-    MessageLint,
-    RepoContext,
-    RepoLint,
-    WorkspaceLint,
-    LintConfig,
-    LintContext,
-    LintError,
-    LintMode,
-    Severity,
-};
 /// The tool contract, re-exported whole rather than item by item.
 ///
 /// A tool crate spells this `mockspace::tool::Tool`, because the generated
@@ -86,3 +67,22 @@ pub use mockspace_lint_rules::{
 /// it. Re-exporting the module here keeps that one spelling true from both
 /// sides.
 pub use mockspace_lint_rules::tool;
+pub use mockspace_lint_rules::{
+    AgentMode,
+    CrateLint,
+    Invocation,
+    Level,
+    Lint,
+    LintConfig,
+    LintContext,
+    LintError,
+    LintMode,
+    LintPack,
+    MessageContext,
+    MessageDomain,
+    MessageLint,
+    RepoContext,
+    RepoLint,
+    Severity,
+    WorkspaceLint,
+};

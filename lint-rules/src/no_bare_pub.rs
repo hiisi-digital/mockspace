@@ -24,6 +24,7 @@ impl Lint for NoBarePublic {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
+
     fn name(&self) -> &'static str {
         "no-bare-pub"
     }

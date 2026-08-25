@@ -580,9 +580,18 @@ ikiuni-renderer-contract = { workspace = true }
         assert_eq!(discover_crates_in(&one, "proj").len(), 1);
 
         let found = discover_crates_in(&all, "proj");
-        assert_eq!(found.len(), 3, "every group contributes: {:?}", found.keys());
+        assert_eq!(
+            found.len(),
+            3,
+            "every group contributes: {:?}",
+            found.keys()
+        );
         for name in ["proj-abi-bus", "proj-pwmon", "proj-pid1"] {
-            assert!(found.contains_key(name), "{name} missing from {:?}", found.keys());
+            assert!(
+                found.contains_key(name),
+                "{name} missing from {:?}",
+                found.keys()
+            );
         }
     }
 

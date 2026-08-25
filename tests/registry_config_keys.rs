@@ -14,7 +14,7 @@
 //! declarations carrying `prefix`, a field mockspace has never had, discarded
 //! twelve times with nothing said.
 
-use mockspace::registry::{config_unknown_keys, FINDING_KINDS};
+use mockspace::registry::{FINDING_KINDS, config_unknown_keys};
 
 const KNOWN_GOOD: &str = r#"
 [[registry.namespace]]
@@ -74,7 +74,11 @@ value_feild = "statement"
 "#,
     );
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].message.contains("value_feild"), "{}", found[0].message);
+    assert!(
+        found[0].message.contains("value_feild"),
+        "{}",
+        found[0].message
+    );
 }
 
 #[test]
@@ -90,7 +94,11 @@ unique = true
 "#,
     );
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].message.contains("law.statement"), "{}", found[0].message);
+    assert!(
+        found[0].message.contains("law.statement"),
+        "{}",
+        found[0].message
+    );
 }
 
 #[test]
@@ -124,8 +132,7 @@ fn the_known_key_list_has_not_drifted_from_the_struct() {
     struct Reg {
         namespace: Vec<mockspace::registry::RegistryNamespace>,
     }
-    let parsed: Raw =
-        toml_edit::de::from_str(KNOWN_GOOD).expect("the fixture deserializes");
+    let parsed: Raw = toml_edit::de::from_str(KNOWN_GOOD).expect("the fixture deserializes");
     let ns = &parsed.registry.namespace[0];
 
     assert_eq!(ns.key, "law");

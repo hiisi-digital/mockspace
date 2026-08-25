@@ -521,9 +521,10 @@ allow
 
 #[cfg(test)]
 mod check_message_tests {
-    use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    use super::*;
 
     fn cfg_for(name: &str) -> Config {
         let mut c = Config::from_dir(std::path::Path::new("/nonexistent-mock-dir"));
@@ -729,17 +730,18 @@ mod check_message_tests {
         );
         let (_, out) = run(&root, &payload, Some(FAIL));
         let _ = std::fs::remove_dir_all(&root);
-        assert!(denied(&out), "an MCP git-commit tool must be checked: {out}");
+        assert!(
+            denied(&out),
+            "an MCP git-commit tool must be checked: {out}"
+        );
     }
 
     #[test]
     fn an_mcp_pull_request_tool_is_submitted_by_name_shape() {
         let root = scratch();
-        for tool in [
-            "mcp__forge__create_pr",
-            "mcp__forge__pr-create",
-            "mcp__gh__create_pull_request",
-        ] {
+        for tool in
+            ["mcp__forge__create_pr", "mcp__forge__pr-create", "mcp__gh__create_pull_request"]
+        {
             let payload = format!(
                 r#"{{"tool_name":"{tool}","tool_input":{{"body":"x","cwd":"{}"}}}}"#,
                 root.display()
@@ -763,8 +765,14 @@ mod check_message_tests {
         );
         let (_, out) = run_env(&root, &payload, Some(FAIL), false);
         let _ = std::fs::remove_dir_all(&root);
-        assert!(denied(&out), "a jq-less environment must deny, not pass everything: {out}");
-        assert!(out.contains("jq"), "the refusal names the missing tool: {out}");
+        assert!(
+            denied(&out),
+            "a jq-less environment must deny, not pass everything: {out}"
+        );
+        assert!(
+            out.contains("jq"),
+            "the refusal names the missing tool: {out}"
+        );
     }
 
     #[test]
@@ -850,6 +858,9 @@ mod check_message_tests {
         let (_, out) = run(&root, &payload, None);
         let _ = std::fs::remove_dir_all(&root);
         assert!(denied(&out), "no launcher must fail closed: {out}");
-        assert!(out.contains("cargo install cargo-mock"), "and say how: {out}");
+        assert!(
+            out.contains("cargo install cargo-mock"),
+            "and say how: {out}"
+        );
     }
 }

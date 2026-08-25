@@ -55,11 +55,11 @@ use crate::error::BenchError;
 pub struct BenchManifest {
     /// Named bench entries. Key is the bench short name.
     #[serde(default)]
-    pub bench:  HashMap<String, BenchSection>,
+    pub bench:       HashMap<String, BenchSection>,
     /// Shared timing parameters applied to every bench unless a
     /// bench declares a `[bench.<name>.timing]` override.
     #[serde(default)]
-    pub timing: TimingSection,
+    pub timing:      TimingSection,
     /// Opt-in generated documentation pass. Read by the docs
     /// regeneration path, which emits a `BENCHES.md` from the
     /// committed history when this is enabled.
@@ -70,18 +70,18 @@ pub struct BenchManifest {
     /// unknown key would have turned off a working feature and told
     /// the consumer to delete the line.
     #[serde(default)]
-    pub docgen: Option<DocgenSection>,
+    pub docgen:      Option<DocgenSection>,
     /// Byte-dispatch declaration for the generated driver. `out` is
     /// the output width in bytes; `points` narrows the generated
     /// monomorphisation list, which otherwise defaults to the union
     /// of every bench's points.
     #[serde(default)]
-    pub dispatch: Option<DispatchSection>,
+    pub dispatch:    Option<DispatchSection>,
     /// Declarative workload programs for the generated driver, by
     /// name. Two builtins exist without being declared: `default`
     /// and `realistic`.
     #[serde(default)]
-    pub workload: HashMap<String, WorkloadSection>,
+    pub workload:    HashMap<String, WorkloadSection>,
     /// Declared benchspace membership. Absent means the default
     /// applies: `members = ["**"]`, so any subdirectory (at any
     /// depth) carrying its own `bench.toml` is a member. Membership
@@ -90,18 +90,18 @@ pub struct BenchManifest {
     /// broke a consumer whose tree held a self-contained bench
     /// directory that predates this design.
     #[serde(default)]
-    pub benchspace: Option<BenchspaceSection>,
+    pub benchspace:  Option<BenchspaceSection>,
     /// Build settings for the tool-generated crates: the mockspace
     /// dependency spec they pin, and the release-profile values the
     /// tool passes on every build. Defaults are the framework's; a
     /// consumer overrides here, never in a manifest cargo may ignore.
     #[serde(default)]
-    pub build: Option<BuildSection>,
+    pub build:       Option<BuildSection>,
     /// Nested-tree bookkeeping: manifest key to `(bench, sweep)`.
     /// Populated by [`crate::tree::load`]; empty for a flat
     /// tree, where every section is its own single sweep.
     #[serde(skip)]
-    pub nested: HashMap<String, (String, String)>,
+    pub nested:      HashMap<String, (String, String)>,
     /// Whether this manifest was composed from a nested tree.
     #[serde(skip)]
     pub nested_mode: bool,
@@ -382,15 +382,15 @@ fn de_seed<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
 /// Deserialize an optional `master_seed` with the same integer-or-
 /// string grammar as [`de_seed`]. Used by the nested per-bench schema
 /// where absence means "inherit".
-pub(crate) fn de_seed_opt<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Option<u64>, D::Error> {
+pub(crate) fn de_seed_opt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
     de_seed(d).map(Some)
 }
 
 /// Deserialize `sizes` from either a plain integer array or the
 /// array-of-tables form.
-pub(crate) fn de_sizes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<SizeSection>, D::Error> {
+pub(crate) fn de_sizes<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<SizeSection>, D::Error> {
     // Not `#[serde(untagged)]`. An untagged enum swallows the
     // struct-level `deny_unknown_fields` inside a failed variant and
     // reports "data did not match any variant", naming neither the
@@ -624,8 +624,14 @@ impl BenchManifest {
             let roles: Vec<(&str, &str)> = [
                 ("baseline", section.baseline.as_deref()),
                 ("floor", section.floor.as_deref()),
-                ("normalise.baseline", section.normalise.as_ref().map(|n| n.baseline.as_str())),
-                ("normalise.floor", section.normalise.as_ref().and_then(|n| n.floor.as_deref())),
+                (
+                    "normalise.baseline",
+                    section.normalise.as_ref().map(|n| n.baseline.as_str()),
+                ),
+                (
+                    "normalise.floor",
+                    section.normalise.as_ref().and_then(|n| n.floor.as_deref()),
+                ),
             ]
             .into_iter()
             .filter_map(|(k, v)| v.filter(|r| !r.is_empty()).map(|r| (k, r)))
@@ -640,7 +646,9 @@ impl BenchManifest {
                     section
                         .sizes
                         .iter()
-                        .map(|z| if z.variants.is_empty() { &section.variants } else { &z.variants })
+                        .map(
+                            |z| if z.variants.is_empty() { &section.variants } else { &z.variants },
+                        )
                         .collect()
                 };
 
@@ -751,7 +759,12 @@ impl BenchManifest {
         } else if let Some(b) = &section.baseline {
             (
                 Some(b.clone()),
-                Some(section.delta.clone().unwrap_or_else(|| "subtract".to_string())),
+                Some(
+                    section
+                        .delta
+                        .clone()
+                        .unwrap_or_else(|| "subtract".to_string()),
+                ),
                 section.floor.clone(),
             )
         } else {
@@ -817,57 +830,57 @@ pub struct BenchConfig {
     /// Manifest key for this bench (e.g. `"content_hash"`). In a
     /// nested tree this is the unique `<bench>/<sweep>` composite;
     /// in a flat tree it is the section name.
-    pub bench_name:    String,
+    pub bench_name:         String,
     /// The bench this cell belongs to: the directory name in a
     /// nested tree, the section name in a flat one. This is what
     /// [`crate::routine_table!`] and the `routine_for` hook key on.
-    pub bench:         String,
+    pub bench:              String,
     /// The sweep within the bench. Equal to the bench name in a flat
     /// tree, where every section is its own single sweep.
-    pub sweep:         String,
+    pub sweep:              String,
     /// Whether this cell came from a nested tree. Decides the output
     /// naming (`<bench>/<sweep>_n<point>_report.md` against the flat
     /// `<bench>/<bench>_n<n>_findings.md`) and the history root.
-    pub nested:        bool,
+    pub nested:             bool,
     /// Display title (for findings.md).
-    pub title:         String,
+    pub title:              String,
     /// Workload program identifier.
-    pub workload:      String,
+    pub workload:           String,
     /// Master seed (`0` = fresh random).
-    pub master_seed:   u64,
+    pub master_seed:        u64,
     /// Logical size N (passed into `bench_entry(... n)` and
     /// `Routine::max_call_us(n)`).
-    pub n:             usize,
+    pub n:                  usize,
     /// Resolved cdylib paths (one per variant).
-    pub variant_paths: Vec<PathBuf>,
+    pub variant_paths:      Vec<PathBuf>,
     /// Outer pass count.
-    pub passes:        usize,
+    pub passes:             usize,
     /// Inner runs per pass.
-    pub runs_per_pass: usize,
+    pub runs_per_pass:      usize,
     /// Calls per emitted sample.
-    pub batch_size:    usize,
+    pub batch_size:         usize,
     /// Outer harness runs.
-    pub harness_runs:  usize,
+    pub harness_runs:       usize,
     /// Cooldown cohorts (milliseconds).
-    pub cooldowns_ms:  Vec<u64>,
+    pub cooldowns_ms:       Vec<u64>,
     /// Cross-variant outputs may differ (from the manifest).
-    pub may_differ:    bool,
+    pub may_differ:         bool,
     /// Validation failure fails the whole run (from the manifest).
-    pub required:      bool,
+    pub required:           bool,
     /// Variants spawn threads; the worker skips its P-core self-pin.
-    pub threaded:      bool,
+    pub threaded:           bool,
     /// Batch-amortised mode. `1` = normal (one timed call per batch
     /// entry). `>1` = K calls between one outer counter pair, then
     /// per-call time = total / K. Useful when bridge overhead
     /// dominates measured time at small N.
-    pub batch_k:       usize,
+    pub batch_k:            usize,
     /// Per-call timeout in microseconds. If a worker's batch mean
     /// exceeds this, the worker aborts and reports
     /// [`BenchError::WorkerFailed`]. `None` = no timeout.
-    pub max_call_us:   Option<u64>,
+    pub max_call_us:        Option<u64>,
     /// Tunable iteration counts and on-disk roots; see
     /// [`HarnessTuning`] for individual knobs and defaults.
-    pub tuning:        HarnessTuning,
+    pub tuning:             HarnessTuning,
     /// Optional analysis-baseline variant name (from the manifest's
     /// `[bench.<name>.normalise]`). When set, report generation
     /// normalises against this variant. `None` = default baseline
@@ -927,26 +940,26 @@ impl Default for HarnessTuning {
 impl Default for BenchConfig {
     fn default() -> Self {
         BenchConfig {
-            bench_name:    String::new(),
-            bench:         String::new(),
-            sweep:         String::new(),
-            nested:        false,
-            title:         "Benchmark".into(),
-            workload:      String::new(),
-            master_seed:   0,
-            n:             64,
-            variant_paths: Vec::new(),
-            passes:        default_passes(),
-            runs_per_pass: default_runs(),
-            batch_size:    default_batch(),
-            harness_runs:  default_harness_runs(),
-            cooldowns_ms:  default_cooldowns(),
-            may_differ:    false,
-            required:      false,
-            threaded:      false,
-            batch_k:       1,
-            max_call_us:   None,
-            tuning:        HarnessTuning::default(),
+            bench_name:         String::new(),
+            bench:              String::new(),
+            sweep:              String::new(),
+            nested:             false,
+            title:              "Benchmark".into(),
+            workload:           String::new(),
+            master_seed:        0,
+            n:                  64,
+            variant_paths:      Vec::new(),
+            passes:             default_passes(),
+            runs_per_pass:      default_runs(),
+            batch_size:         default_batch(),
+            harness_runs:       default_harness_runs(),
+            cooldowns_ms:       default_cooldowns(),
+            may_differ:         false,
+            required:           false,
+            threaded:           false,
+            batch_k:            1,
+            max_call_us:        None,
+            tuning:             HarnessTuning::default(),
             normalise_baseline: None,
             normalise_mode:     None,
             normalise_floor:    None,
@@ -1038,7 +1051,9 @@ mod tests {
         let cfg = m.for_size("b", 0, Path::new(".")).expect("for_size");
         assert_eq!(cfg.normalise_mode.as_deref(), Some("subtract"));
         // a bench with no normalise block => None (default baseline behaviour)
-        let plain = manifest(BASE).for_size("b", 0, Path::new(".")).expect("for_size");
+        let plain = manifest(BASE)
+            .for_size("b", 0, Path::new("."))
+            .expect("for_size");
         assert!(plain.normalise_baseline.is_none());
     }
 
@@ -1335,7 +1350,10 @@ mod tests {
         )
         .expect_err("an unread section must not parse");
         let msg = format!("{err}");
-        assert!(msg.contains("telemetry"), "does not name the offending key: {msg}");
+        assert!(
+            msg.contains("telemetry"),
+            "does not name the offending key: {msg}"
+        );
     }
 
     /// `[docgen]` is a shipped feature, not an unknown key. An
@@ -1466,7 +1484,10 @@ mod role_resolution {
         let bad_floor =
             format!("{ARMS_PER_SIZE}\n[bench.h.normalise]\nbaseline = \"fnv\"\nfloor = \"nul\"\n");
         assert!(
-            load(&bad_floor).unwrap_err().to_string().contains("normalise.floor"),
+            load(&bad_floor)
+                .unwrap_err()
+                .to_string()
+                .contains("normalise.floor"),
             "the floor is checked too"
         );
     }

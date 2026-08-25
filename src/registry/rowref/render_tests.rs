@@ -25,10 +25,7 @@ use super::*;
 #[test]
 fn a_row_reference_cell_becomes_a_link() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
     cfg.registry_namespaces = nss.clone();
     let table = render_table(&nss[1], &r, &cfg);
@@ -57,10 +54,7 @@ fn a_row_reference_cell_becomes_a_link() {
 #[test]
 fn an_untyped_cell_holding_the_same_value_stays_text() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "string[]")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
     cfg.registry_namespaces = nss.clone();
     let table = render_table(&nss[1], &r, &cfg);
@@ -144,10 +138,7 @@ fn a_reference_to_a_row_reference_field_renders_links() {
 #[test]
 fn a_reference_to_an_ordinary_field_renders_its_value() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "string")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "display");
 }
 
@@ -164,10 +155,7 @@ fn embed(key: &str, fields: &[(&str, &str)]) -> RegistryNamespace {
 #[test]
 fn a_reference_into_an_embed_namespace_is_plain_text() {
     let nss = vec![embed("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "display");
     assert_eq!(resolved("{{ slot::display }}", &nss, &r), "display");
 }
@@ -177,10 +165,7 @@ fn a_reference_into_an_embed_namespace_is_plain_text() {
 #[test]
 fn a_reference_into_a_page_namespace_is_a_link() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     assert_eq!(
         resolved("{{ answer::niri::slot }}", &nss, &r),
         "[display](SLOT.md#display)"
@@ -193,10 +178,7 @@ fn a_reference_into_a_page_namespace_is_a_link() {
 #[test]
 fn a_field_reference_to_a_missing_row_keeps_its_reference() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot[]")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display, nosuch")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display, nosuch")])]);
     assert_eq!(
         resolved("{{ answer::niri::slot }}", &nss, &r),
         "[display](SLOT.md#display), {{ slot::nosuch }}"
@@ -209,10 +191,7 @@ fn a_field_reference_to_a_missing_row_keeps_its_reference() {
 #[test]
 fn the_cell_and_the_field_reference_agree_about_a_missing_row() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot[]")])];
-    let r = reg(&[
-        ("slot", "display", &[]),
-        ("answer", "niri", &[("slot", "display, nosuch")]),
-    ]);
+    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display, nosuch")])]);
     let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
     cfg.registry_namespaces = nss.clone();
     let table = render_table(&nss[1], &r, &cfg);
@@ -241,10 +220,7 @@ fn a_reference_into_an_ordinary_namespace_is_not_refused() {
 fn a_stray_separator_is_reported_wherever_it_sits() {
     let nss = [ns("slot", &[]), ns("answer", &[("slots", "slot[]")])];
     for raw in [", display", "display, , display", "display, "] {
-        let r = reg(&[
-            ("slot", "display", &[]),
-            ("answer", "niri", &[("slots", raw)]),
-        ]);
+        let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slots", raw)])]);
         let found = validate_row_references(&r, &nss);
         assert_eq!(
             kinds(&found),

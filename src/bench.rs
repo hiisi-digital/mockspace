@@ -283,11 +283,10 @@ fn cmd_report(cfg: &Config, _args: &[&str]) -> ExitCode {
 /// Recognises `-r` as the short form of `--release`, which cargo itself
 /// accepts and this function previously did not.
 fn describe_cargo_profile(extra: &[&str]) -> String {
-    let cargo_args: &[&str] =
-        match extra.iter().position(|e| *e == "--") {
-            Some(i) => &extra[..i],
-            None => extra,
-        };
+    let cargo_args: &[&str] = match extra.iter().position(|e| *e == "--") {
+        Some(i) => &extra[.. i],
+        None => extra,
+    };
     if cargo_args.iter().any(|e| *e == "--release" || *e == "-r") {
         return "cargo test --release, profile: release".to_string();
     }
@@ -412,7 +411,11 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
         let selected: Vec<PathBuf> = manifests
             .iter()
             .filter(|m| {
-                let rel = m.strip_prefix(&bench_dir).unwrap_or(m).to_string_lossy().to_string();
+                let rel = m
+                    .strip_prefix(&bench_dir)
+                    .unwrap_or(m)
+                    .to_string_lossy()
+                    .to_string();
                 filters.iter().any(|f| rel.contains(f))
             })
             .cloned()
@@ -673,18 +676,19 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
             None => *ignored += 1,
         }
     };
-    let collect_array = |item: Option<&toml_edit::Item>,
-                         dirs: &mut Vec<String>,
-                         ignored: &mut usize,
-                         push: &mut dyn FnMut(&str, &mut Vec<String>, &mut usize)| {
-        if let Some(arr) = item.and_then(|v| v.as_array()) {
-            for v in arr.iter() {
-                if let Some(sv) = v.as_str() {
-                    push(sv, dirs, ignored);
+    let collect_array =
+        |item: Option<&toml_edit::Item>,
+         dirs: &mut Vec<String>,
+         ignored: &mut usize,
+         push: &mut dyn FnMut(&str, &mut Vec<String>, &mut usize)| {
+            if let Some(arr) = item.and_then(|v| v.as_array()) {
+                for v in arr.iter() {
+                    if let Some(sv) = v.as_str() {
+                        push(sv, dirs, ignored);
+                    }
                 }
             }
-        }
-    };
+        };
     for name in names {
         let section = bench.get(name).ok_or_else(|| {
             let available: Vec<&str> = bench.iter().map(|(k, _)| k).collect();
@@ -693,7 +697,12 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
                 available.join(", ")
             )
         })?;
-        collect_array(section.get("variants"), &mut dirs, &mut ignored, &mut push_entry);
+        collect_array(
+            section.get("variants"),
+            &mut dirs,
+            &mut ignored,
+            &mut push_entry,
+        );
         if let Some(sizes) = section.get("sizes") {
             if let Some(arr) = sizes.as_array_of_tables() {
                 for t in arr.iter() {
@@ -726,7 +735,6 @@ fn variant_dirs_for(bench_dir: &Path, names: &[&str]) -> Result<Vec<String>, Str
     }
     Ok(dirs)
 }
-
 
 /// The effective release profile for a **consumer-owned-driver** tree.
 ///
@@ -778,7 +786,9 @@ fn consumer_tree_profile(bench_dir: &Path) -> Vec<String> {
 /// `compiler-artifact` record per built target carrying the absolute
 /// path of what it just wrote.
 fn built_executables(manifest: &Path, stdout: &[u8]) -> Vec<PathBuf> {
-    let manifest = manifest.canonicalize().unwrap_or_else(|_| manifest.to_path_buf());
+    let manifest = manifest
+        .canonicalize()
+        .unwrap_or_else(|_| manifest.to_path_buf());
     String::from_utf8_lossy(stdout)
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
@@ -786,7 +796,11 @@ fn built_executables(manifest: &Path, stdout: &[u8]) -> Vec<PathBuf> {
         .filter(|v| {
             v.get("manifest_path")
                 .and_then(|m| m.as_str())
-                .map(|m| Path::new(m).canonicalize().unwrap_or_else(|_| PathBuf::from(m)))
+                .map(|m| {
+                    Path::new(m)
+                        .canonicalize()
+                        .unwrap_or_else(|_| PathBuf::from(m))
+                })
                 .is_some_and(|m| m == manifest)
         })
         .filter_map(|v| {
@@ -805,10 +819,11 @@ fn built_executables(manifest: &Path, stdout: &[u8]) -> Vec<PathBuf> {
 /// at both call sites, where dropping them from both left every test
 /// green.
 fn build_argv(manifest: &Path, profile: &[String]) -> Vec<std::ffi::OsString> {
-    let mut argv: Vec<std::ffi::OsString> = ["build", "--release", "--message-format=json-render-diagnostics"]
-        .iter()
-        .map(Into::into)
-        .collect();
+    let mut argv: Vec<std::ffi::OsString> =
+        ["build", "--release", "--message-format=json-render-diagnostics"]
+            .iter()
+            .map(Into::into)
+            .collect();
     argv.extend(profile.iter().map(Into::into));
     argv.push("--manifest-path".into());
     argv.push(manifest.as_os_str().to_owned());
@@ -882,11 +897,13 @@ fn build_bin_only(bench_dir: &Path, profile: &[String]) -> Result<PathBuf, Strin
     let mut bins = built_executables(&manifest, &stdout);
     match bins.len() {
         1 => Ok(bins.remove(0)),
-        0 => Err(format!(
-            "{} declares no binary target, so there is nothing to run. Add a [[bin]] \
+        0 => {
+            Err(format!(
+                "{} declares no binary target, so there is nothing to run. Add a [[bin]] \
              section or a src/main.rs.",
-            manifest.display()
-        )),
+                manifest.display()
+            ))
+        },
         _ => {
             let names: Vec<String> = bins
                 .iter()
@@ -1004,8 +1021,17 @@ fn single_executable(manifest: &Path, stdout: &[u8], what: &str) -> Result<PathB
     let mut bins = built_executables(manifest, stdout);
     match bins.len() {
         1 => Ok(bins.remove(0)),
-        0 => Err(format!("{what} built no executable ({} declares no binary target)", manifest.display())),
-        n => Err(format!("{what} built {n} executables; one [[bin]] is expected")),
+        0 => {
+            Err(format!(
+                "{what} built no executable ({} declares no binary target)",
+                manifest.display()
+            ))
+        },
+        n => {
+            Err(format!(
+                "{what} built {n} executables; one [[bin]] is expected"
+            ))
+        },
     }
 }
 
@@ -1138,15 +1164,18 @@ fn run_generated(
         return ExitCode::FAILURE;
     }
     eprintln!("  building generated bench driver...");
-    let stdout =
-        match cargo_build_at(&gen_dir.join("Cargo.toml"), "generated bench driver", &profile, None)
-        {
-            Ok(o) => o,
-            Err(e) => {
-                eprintln!("error: {e}");
-                return ExitCode::FAILURE;
-            },
-        };
+    let stdout = match cargo_build_at(
+        &gen_dir.join("Cargo.toml"),
+        "generated bench driver",
+        &profile,
+        None,
+    ) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
     let bin_path = match single_executable(
         &gen_dir.join("Cargo.toml"),
         &stdout,
@@ -1224,25 +1253,25 @@ fn check_arm_lib_name(arm: &bench_tree::ArmSource) -> Result<(), String> {
     }
     match lib_name {
         Some(name) if name == expected => Ok(()),
-        Some(name) => Err(format!(
-            "arm {}/arms/{} declares lib name `{name}` but the directory name resolves to `{expected}`. In a nested tree the arm's directory name is its lib name; rename one to match the other.",
-            arm.bench, arm.arm
-        )),
-        None => Err(format!(
-            "{} has no [lib] or [package] name",
-            arm.dir.join("Cargo.toml").display()
-        )),
+        Some(name) => {
+            Err(format!(
+                "arm {}/arms/{} declares lib name `{name}` but the directory name resolves to `{expected}`. In a nested tree the arm's directory name is its lib name; rename one to match the other.",
+                arm.bench, arm.arm
+            ))
+        },
+        None => {
+            Err(format!(
+                "{} has no [lib] or [package] name",
+                arm.dir.join("Cargo.toml").display()
+            ))
+        },
     }
 }
 
 /// Build the `variants/` directories of a flat tree (the legacy
 /// resolution keeps pointing into their own target dirs).
 fn build_flat_variants(bench_dir: &Path, names: &[&str], profile: &[String]) -> Result<(), String> {
-    let only_dirs = if names.is_empty() {
-        None
-    } else {
-        Some(variant_dirs_for(bench_dir, names)?)
-    };
+    let only_dirs = if names.is_empty() { None } else { Some(variant_dirs_for(bench_dir, names)?) };
     let variants_dir = bench_dir.join("variants");
     if !variants_dir.exists() {
         return Ok(());
@@ -1394,8 +1423,11 @@ fn cmd_add(cfg: &Config, args: &[&str]) -> ExitCode {
             return ExitCode::FAILURE;
         },
     };
-    let name_ok =
-        |n: &str| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let name_ok = |n: &str| {
+        !n.is_empty()
+            && n.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    };
     if !name_ok(bench) || arm.is_some_and(|a| !name_ok(a)) {
         eprintln!("error: bench and arm names are [a-zA-Z0-9_-] (the arm becomes a crate name)");
         return ExitCode::FAILURE;
@@ -1443,8 +1475,14 @@ fn warn_if_not_a_member(bench_dir: &Path, bench: &str) {
     let Some(space) = manifest.benchspace else {
         return; // default ["**"] matches everything
     };
-    let matched = space.members.iter().any(|p| bench_tree::glob_match(p, bench))
-        && !space.exclude.iter().any(|p| bench_tree::glob_match(p, bench));
+    let matched = space
+        .members
+        .iter()
+        .any(|p| bench_tree::glob_match(p, bench))
+        && !space
+            .exclude
+            .iter()
+            .any(|p| bench_tree::glob_match(p, bench));
     if !matched {
         eprintln!(
             "warning: [benchspace] members = {:?} does not match `{bench}`; add it to \
@@ -1670,8 +1708,7 @@ mod tests {
 
     /// A real `cargo test` line, captured verbatim from `warm-container-shared`
     /// (arvo's bench tree) rather than typed from memory of the format.
-    const REAL_OK_LINE: &str =
-        "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; \
+    const REAL_OK_LINE: &str = "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; \
          finished in 0.18s";
 
     /// The case that must fail: the first field is "ok. 15 passed", not a bare
@@ -1727,8 +1764,11 @@ mod tests {
         std::fs::create_dir_all(root.join("arms/a/src")).unwrap();
         std::fs::write(root.join("arms/a/Cargo.toml"), "[package]\nname=\"a\"").unwrap();
         std::fs::create_dir_all(root.join("support/shared/src")).unwrap();
-        std::fs::write(root.join("support/shared/Cargo.toml"), "[package]\nname=\"shared\"")
-            .unwrap();
+        std::fs::write(
+            root.join("support/shared/Cargo.toml"),
+            "[package]\nname=\"shared\"",
+        )
+        .unwrap();
         // A target/ directory containing a vendored crate's manifest must
         // never be walked into: this is the exact class the tool's own
         // `tree::discover` refuses to walk for the identical reason.
@@ -1741,9 +1781,18 @@ mod tests {
         let found = find_crate_manifests(&root);
         let rels: Vec<String> = found
             .iter()
-            .map(|p| p.strip_prefix(&root).unwrap().to_string_lossy().into_owned())
+            .map(|p| {
+                p.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
-        assert_eq!(rels, vec!["Cargo.toml", "arms/a/Cargo.toml", "support/shared/Cargo.toml"]);
+        assert_eq!(rels, vec![
+            "Cargo.toml",
+            "arms/a/Cargo.toml",
+            "support/shared/Cargo.toml"
+        ]);
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -1760,11 +1809,18 @@ mod tests {
         let root = temp_mock("find-manifests-root-and-nested");
         std::fs::write(root.join("Cargo.toml"), "[package]\nname=\"driver\"").unwrap();
         std::fs::create_dir_all(root.join("variants/only-one/src")).unwrap();
-        std::fs::write(root.join("variants/only-one/Cargo.toml"), "[package]\nname=\"only-one\"")
-            .unwrap();
+        std::fs::write(
+            root.join("variants/only-one/Cargo.toml"),
+            "[package]\nname=\"only-one\"",
+        )
+        .unwrap();
         let found = find_crate_manifests(&root);
-        assert_eq!(found.len(), 2, "expected the root manifest and the one nested crate, \
-            found {found:?}; a walk that stops at the root would report only the root");
+        assert_eq!(
+            found.len(),
+            2,
+            "expected the root manifest and the one nested crate, \
+            found {found:?}; a walk that stops at the root would report only the root"
+        );
     }
 
     /// Negative control on the walker: an empty tree (a bench dir that
@@ -1803,9 +1859,16 @@ mod tests {
         let _ = code;
 
         let plan = bench_gen::plan(&bench_dir).expect("the scaffold loads");
-        assert_eq!(plan.arms.len(), 1, "expected exactly the one scaffolded sample arm");
+        assert_eq!(
+            plan.arms.len(),
+            1,
+            "expected exactly the one scaffolded sample arm"
+        );
         let arm = &plan.arms[0];
-        assert!(!arm.has_manifest, "the scaffolded arm should still have no manifest of its own");
+        assert!(
+            !arm.has_manifest,
+            "the scaffolded arm should still have no manifest of its own"
+        );
         let generated = bench_gen::arm_gen_dir(&cfg.mock_dir, arm).join("Cargo.toml");
         assert!(
             generated.is_file(),
@@ -1915,7 +1978,10 @@ mod tests {
     #[test]
     fn split_positional_and_flags_keeps_a_value_flags_value_attached() {
         let (pos, flags) = split_positional_and_flags(&["--seed", "0xdead"], &["--seed"]);
-        assert!(pos.is_empty(), "the seed value must not be read as a positional name: {pos:?}");
+        assert!(
+            pos.is_empty(),
+            "the seed value must not be read as a positional name: {pos:?}"
+        );
         assert_eq!(flags, vec!["--seed", "0xdead"]);
 
         // A real bench name alongside it is unaffected.
@@ -1971,8 +2037,8 @@ mod tests {
     fn cmd_test_finds_and_runs_a_real_arvo_support_crate() {
         let workspace = std::env::var("MOCKSPACE_REAL_TREES")
             .expect("set MOCKSPACE_REAL_TREES=<path to the clause-dev workspace root>");
-        let source = PathBuf::from(&workspace)
-            .join("arvo/mock/benches/variants/warm-container-shared");
+        let source =
+            PathBuf::from(&workspace).join("arvo/mock/benches/variants/warm-container-shared");
         assert!(
             source.join("src/lib.rs").is_file(),
             "expected {} to exist; is MOCKSPACE_REAL_TREES pointed at the right root?",
@@ -1993,7 +2059,10 @@ mod tests {
         // too, since cargo walks up looking for a workspace root.
         write_minimal_driver_crate(&bench_dir);
         for entry in ["Cargo.toml", "src"] {
-            copy_recursive(&source.join(entry), &bench_dir.join("support/warm-container-shared").join(entry));
+            copy_recursive(
+                &source.join(entry),
+                &bench_dir.join("support/warm-container-shared").join(entry),
+            );
         }
 
         let cfg = Config::from_dir(&root);
@@ -2072,7 +2141,10 @@ mod tests {
 
         let bench_dir = mock.join("benches");
         let plan = bench_gen::plan(&bench_dir).expect("the scaffold loads");
-        assert!(plan.manifest.nested_mode, "init scaffolds the nested layout");
+        assert!(
+            plan.manifest.nested_mode,
+            "init scaffolds the nested layout"
+        );
         assert_eq!(plan.manifest.bench_names(), vec!["sample"]);
         assert_eq!(plan.arms.len(), 1);
         assert!(!plan.arms[0].has_manifest, "the arm manifest is generated");
@@ -2123,9 +2195,15 @@ mod tests {
         let code = cmd_add(&cfg, &["warm-container", "kernel"]);
         assert_eq!(format!("{code:?}"), success());
         assert!(bench_dir.join("warm-container/bench.toml").is_file());
-        assert!(bench_dir.join("warm-container/arms/kernel/src/lib.rs").is_file());
         assert!(
-            !bench_dir.join("warm-container/arms/kernel/Cargo.toml").exists(),
+            bench_dir
+                .join("warm-container/arms/kernel/src/lib.rs")
+                .is_file()
+        );
+        assert!(
+            !bench_dir
+                .join("warm-container/arms/kernel/Cargo.toml")
+                .exists(),
             "no manifest is scaffolded; the tool generates it"
         );
         // the scaffolded bench names the arm it was created with
@@ -2135,7 +2213,11 @@ mod tests {
         // the slash form adds an arm to the existing bench
         let code = cmd_add(&cfg, &["warm-container/native"]);
         assert_eq!(format!("{code:?}"), success());
-        assert!(bench_dir.join("warm-container/arms/native/src/lib.rs").is_file());
+        assert!(
+            bench_dir
+                .join("warm-container/arms/native/src/lib.rs")
+                .is_file()
+        );
 
         // a duplicate arm is refused
         let code = cmd_add(&cfg, &["warm-container", "kernel"]);
@@ -2143,7 +2225,11 @@ mod tests {
 
         // the whole result still loads
         let plan = bench_gen::plan(&bench_dir).expect("still loads");
-        assert!(plan.manifest.bench_names().contains(&"warm-container".to_string()));
+        assert!(
+            plan.manifest
+                .bench_names()
+                .contains(&"warm-container".to_string())
+        );
         std::fs::remove_dir_all(&mock).ok();
     }
 
@@ -2278,8 +2364,14 @@ mod tests {
     #[test]
     fn a_flag_after_the_separator_does_not_change_the_reported_profile() {
         let desc = describe_cargo_profile(&["--", "--release"]);
-        assert!(!desc.contains("release"), "the separator must gate --release: {desc}");
-        assert!(desc.contains("debug"), "no real cargo profile flag was given: {desc}");
+        assert!(
+            !desc.contains("release"),
+            "the separator must gate --release: {desc}"
+        );
+        assert!(
+            desc.contains("debug"),
+            "no real cargo profile flag was given: {desc}"
+        );
 
         // A real cargo flag before the separator still takes effect, and a
         // libtest flag after it that happens to share `--release`'s name
@@ -2378,7 +2470,10 @@ mod tests {
         let m = Path::new("/w/Cargo.toml");
         let lines = [
             artifact(m, None),
-            artifact(Path::new("/other/Cargo.toml"), Some("/other/target/release/dep")),
+            artifact(
+                Path::new("/other/Cargo.toml"),
+                Some("/other/target/release/dep"),
+            ),
             "{\"reason\":\"build-finished\",\"success\":true}".to_string(),
             "not json at all".to_string(),
         ]

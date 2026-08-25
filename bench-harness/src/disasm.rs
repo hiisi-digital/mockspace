@@ -57,10 +57,9 @@ fn symbol_candidates(symbol: &str) -> [String; 2] {
 /// appears in stdout, not merely when the process exits successfully.
 fn objdump_symbol(dylib_path: &str, symbol: &str) -> Option<String> {
     for candidate in symbol_candidates(symbol) {
-        let Ok(result) =
-            Command::new("objdump")
-                .args(["-d", &format!("--disassemble-symbols={candidate}"), dylib_path])
-                .output()
+        let Ok(result) = Command::new("objdump")
+            .args(["-d", &format!("--disassemble-symbols={candidate}"), dylib_path])
+            .output()
         else {
             return None;
         };
@@ -77,7 +76,10 @@ fn objdump_symbol(dylib_path: &str, symbol: &str) -> Option<String> {
 
 /// Disassemble the whole file via `objdump -d`, no symbol filter.
 fn objdump_all(dylib_path: &str) -> Option<String> {
-    let result = Command::new("objdump").args(["-d", dylib_path]).output().ok()?;
+    let result = Command::new("objdump")
+        .args(["-d", dylib_path])
+        .output()
+        .ok()?;
     if !result.status.success() {
         return None;
     }
@@ -87,7 +89,10 @@ fn objdump_all(dylib_path: &str) -> Option<String> {
 /// Disassemble the whole file via `otool -tv` (macOS fallback).
 #[cfg(target_os = "macos")]
 fn otool_all(dylib_path: &str) -> Option<String> {
-    let result = Command::new("otool").args(["-tv", dylib_path]).output().ok()?;
+    let result = Command::new("otool")
+        .args(["-tv", dylib_path])
+        .output()
+        .ok()?;
     if !result.status.success() {
         return None;
     }
@@ -102,7 +107,10 @@ fn extract_bench_entry(dylib_path: &str) -> Option<String> {
 
     #[cfg(target_os = "macos")]
     {
-        let result = Command::new("otool").args(["-tv", dylib_path]).output().ok()?;
+        let result = Command::new("otool")
+            .args(["-tv", dylib_path])
+            .output()
+            .ok()?;
 
         if result.status.success() {
             let text = String::from_utf8_lossy(&result.stdout).to_string();
@@ -208,7 +216,12 @@ fn duplicate_pairs(
     let mut dupes = Vec::new();
     for i in 0 .. variant_paths.len() {
         for j in (i + 1) .. variant_paths.len() {
-            if same_work(&entry_asm[i], &entry_asm[j], &text_section[i], &text_section[j]) {
+            if same_work(
+                &entry_asm[i],
+                &entry_asm[j],
+                &text_section[i],
+                &text_section[j],
+            ) {
                 dupes.push((variant_paths[i].clone(), variant_paths[j].clone()));
             }
         }
@@ -313,10 +326,14 @@ pub fn check_duplicates(variant_paths: &[String]) {
         return;
     }
 
-    let entry_asm: Vec<Option<String>> =
-        variant_paths.iter().map(|p| extract_bench_entry(p)).collect();
-    let text_section: Vec<Option<String>> =
-        variant_paths.iter().map(|p| extract_text_section(p)).collect();
+    let entry_asm: Vec<Option<String>> = variant_paths
+        .iter()
+        .map(|p| extract_bench_entry(p))
+        .collect();
+    let text_section: Vec<Option<String>> = variant_paths
+        .iter()
+        .map(|p| extract_text_section(p))
+        .collect();
 
     let report = build_report(variant_paths, &entry_asm, &text_section);
     print_report(variant_paths, &report);

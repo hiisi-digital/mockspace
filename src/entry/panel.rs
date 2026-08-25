@@ -13,7 +13,6 @@
 //! and report what happened in words.
 
 use super::*;
-
 use crate::panel::{self, PanelInventory};
 
 /// Unix seconds, for stamping a seat or a consolidation. The one place in
@@ -51,12 +50,17 @@ fn print_usage() {
     eprintln!("    mock panel status [slug]");
 }
 
-fn load_or_report(cfg: &Config, slug: &str) -> Result<(std::path::PathBuf, PanelInventory), ExitCode> {
+fn load_or_report(
+    cfg: &Config,
+    slug: &str,
+) -> Result<(std::path::PathBuf, PanelInventory), ExitCode> {
     let path = panel::inventory_path(&cfg.mock_dir, slug);
-    panel::load(&path, slug).map(|inv| (path, inv)).map_err(|e| {
-        eprintln!("mock panel: {e}");
-        ExitCode::FAILURE
-    })
+    panel::load(&path, slug)
+        .map(|inv| (path, inv))
+        .map_err(|e| {
+            eprintln!("mock panel: {e}");
+            ExitCode::FAILURE
+        })
 }
 
 fn cmd_seat(cfg: &Config, args: &[&str]) -> ExitCode {
@@ -139,19 +143,22 @@ fn cmd_status(cfg: &Config, args: &[&str]) -> ExitCode {
     };
 
     if inventories.is_empty() {
-        println!("mock panel: no panels declared under {}/panel/", cfg.mock_dir.display());
+        println!(
+            "mock panel: no panels declared under {}/panel/",
+            cfg.mock_dir.display()
+        );
         return ExitCode::SUCCESS;
     }
 
     for inv in &inventories {
         let cadence = panel::effective_cadence(inv, cfg.panel_consolidate_every);
         let since = panel::seats_since_last_consolidation(inv);
-        let state = if panel::is_open(inv) {
-            "open"
-        } else {
-            "consolidated"
-        };
-        println!("mock panel: `{}`, {} seat(s), {state}", inv.slug, inv.seats.len());
+        let state = if panel::is_open(inv) { "open" } else { "consolidated" };
+        println!(
+            "mock panel: `{}`, {} seat(s), {state}",
+            inv.slug,
+            inv.seats.len()
+        );
         match panel::next_seat_number(inv) {
             Some(n) => println!("  next seat: {n} (cap {})", panel::SEAT_CAP),
             None => println!("  seat cap reached ({})", panel::SEAT_CAP),
@@ -179,7 +186,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = cfg_in(tmp.path());
 
-        assert_eq!(cmd_seat(&cfg, &["kickoff", "leroy", "does", "it", "hold"]), ExitCode::SUCCESS);
+        assert_eq!(
+            cmd_seat(&cfg, &["kickoff", "leroy", "does", "it", "hold"]),
+            ExitCode::SUCCESS
+        );
         let path = crate::panel::inventory_path(&cfg.mock_dir, "kickoff");
         assert!(path.exists(), "seating must write the inventory file");
         let inv = crate::panel::load(&path, "kickoff").unwrap();
@@ -187,9 +197,16 @@ mod tests {
         assert_eq!(inv.seats[0].persona, "leroy");
         assert_eq!(inv.seats[0].topic, "does it hold");
 
-        assert_eq!(cmd_seat(&cfg, &["kickoff", "fallin", "lowering", "path"]), ExitCode::SUCCESS);
+        assert_eq!(
+            cmd_seat(&cfg, &["kickoff", "fallin", "lowering", "path"]),
+            ExitCode::SUCCESS
+        );
         let inv = crate::panel::load(&path, "kickoff").unwrap();
-        assert_eq!(inv.seats.len(), 2, "the second seat must be appended, not overwrite");
+        assert_eq!(
+            inv.seats.len(),
+            2,
+            "the second seat must be appended, not overwrite"
+        );
         assert_eq!(inv.seats[1].number, 2);
     }
 
@@ -205,7 +222,10 @@ mod tests {
     fn consolidating_with_no_seats_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = cfg_in(tmp.path());
-        assert_eq!(cmd_consolidate(&cfg, &["slug", "nothing", "to", "say"]), ExitCode::from(2));
+        assert_eq!(
+            cmd_consolidate(&cfg, &["slug", "nothing", "to", "say"]),
+            ExitCode::from(2)
+        );
     }
 
     #[test]
@@ -220,7 +240,10 @@ mod tests {
             ExitCode::from(2),
             "the cadence must refuse the second seat before a consolidation"
         );
-        assert_eq!(cmd_consolidate(&cfg, &["s", "converged"]), ExitCode::SUCCESS);
+        assert_eq!(
+            cmd_consolidate(&cfg, &["s", "converged"]),
+            ExitCode::SUCCESS
+        );
         assert_eq!(
             cmd_seat(&cfg, &["s", "p", "two"]),
             ExitCode::SUCCESS,

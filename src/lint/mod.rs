@@ -18,13 +18,13 @@ use std::path::{Path, PathBuf};
 use mockspace_lint_rules::{
     self,
     CrateSourceFile,
-    LintPack,
-    RepoContext,
     Level,
     LintConfig,
     LintContext,
     LintError,
     LintMode,
+    LintPack,
+    RepoContext,
 };
 
 use crate::model::CrateMap;
@@ -179,7 +179,10 @@ pub fn run_lints(
         // The crate lives under exactly one source directory; find which.
         // Skipping when no root holds it matches the previous behaviour, where
         // a missing `src/lib.rs` was skipped a line later.
-        let Some(crate_dir) = src_dirs.iter().map(|d| d.join(crate_name)).find(|d| d.is_dir())
+        let Some(crate_dir) = src_dirs
+            .iter()
+            .map(|d| d.join(crate_name))
+            .find(|d| d.is_dir())
         else {
             continue;
         };
@@ -286,8 +289,8 @@ pub fn run_lints(
     // none. They used to be cross-crate lints that stole a path from the first
     // crate, which made them silently inert in exactly that case.
     let repo_ctx = RepoContext {
-        mock_dir:   workspace_root,
-        repo_root:  workspace_root.parent().unwrap_or(workspace_root),
+        mock_dir: workspace_root,
+        repo_root: workspace_root.parent().unwrap_or(workspace_root),
         all_crates: &all_crate_names,
         src_dirs,
         invocation: None,

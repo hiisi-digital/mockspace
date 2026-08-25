@@ -46,7 +46,10 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     eprintln!(
                         "error: phase is DOC but the doc changelist it was read from is gone"
                     );
-                    eprintln!("  {} is read twice and changed in between; re-run", dr.display());
+                    eprintln!(
+                        "  {} is read twice and changed in between; re-run",
+                        dr.display()
+                    );
                     return ExitCode::FAILURE;
                 },
             };
@@ -72,7 +75,10 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     eprintln!(
                         "error: phase is IMPL but the src changelist it was read from is gone"
                     );
-                    eprintln!("  {} is read twice and changed in between; re-run", dr.display());
+                    eprintln!(
+                        "  {} is read twice and changed in between; re-run",
+                        dr.display()
+                    );
                     return ExitCode::FAILURE;
                 },
             };
@@ -125,7 +131,10 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     eprintln!(
                         "error: phase is DOC but the doc changelist it was read from is gone"
                     );
-                    eprintln!("  {} is read twice and changed in between; re-run", dr.display());
+                    eprintln!(
+                        "  {} is read twice and changed in between; re-run",
+                        dr.display()
+                    );
                     return ExitCode::FAILURE;
                 },
             };
@@ -154,7 +163,10 @@ pub fn cmd_deprecate(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     eprintln!(
                         "error: phase is IMPL but the src changelist it was read from is gone"
                     );
-                    eprintln!("  {} is read twice and changed in between; re-run", dr.display());
+                    eprintln!(
+                        "  {} is read twice and changed in between; re-run",
+                        dr.display()
+                    );
                     return ExitCode::FAILURE;
                 },
             };

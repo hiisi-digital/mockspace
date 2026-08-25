@@ -164,7 +164,11 @@ fn a_pack_that_built_and_registered_nothing_says_so() {
     let mock = fixture(tmp.path(), "greet");
     write_crate(&mock.join("tools"), "greet", "", "");
     let dep = dep_spec();
-    let err = stderr(&engine(&mock, &["--mockspace-lint-rules-dep", &dep, "greet"]));
+    let err = stderr(&engine(&mock, &[
+        "--mockspace-lint-rules-dep",
+        &dep,
+        "greet",
+    ]));
 
     assert!(
         err.contains("registered no tool at all"),
@@ -189,7 +193,11 @@ fn a_pack_registering_another_name_says_mismatch() {
     let mock = fixture(tmp.path(), "greet");
     write_crate(&mock.join("tools"), "greet", "T", A_TOOL);
     let dep = dep_spec();
-    let err = stderr(&engine(&mock, &["--mockspace-lint-rules-dep", &dep, "greet"]));
+    let err = stderr(&engine(&mock, &[
+        "--mockspace-lint-rules-dep",
+        &dep,
+        "greet",
+    ]));
 
     assert!(
         err.contains("no tool in it declares"),

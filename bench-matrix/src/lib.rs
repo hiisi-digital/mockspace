@@ -57,23 +57,22 @@ pub mod decl;
 pub mod generate;
 #[macro_use]
 pub mod macros;
-pub mod scaffold;
 /// The `boundary::Runtime` helper for boundary benches: a dlopen'd sibling runtime
 /// cdylib a cell crosses into as a real cross-object call. Behind the `boundary`
 /// feature (opt-in): only boundary benches need it, and it adds a `libloading` dep
 /// to the per-variant-rebuilt cell crate.
 #[cfg(feature = "boundary")]
 pub mod boundary;
+pub mod scaffold;
 
-pub use decl::{CellDecl, MatrixDecl, Regime, SweepAxis};
-#[cfg(feature = "generate")]
-pub use generate::{generate_all, LIB_TEMPLATE};
-pub use scaffold::{cold_cycle, stream, warm, Measured, SEEDS};
 #[cfg(feature = "boundary")]
 pub use boundary::Runtime;
-
+pub use decl::{CellDecl, MatrixDecl, Regime, SweepAxis};
+#[cfg(feature = "generate")]
+pub use generate::{LIB_TEMPLATE, generate_all};
 // Re-exported for the `bench_matrix!` macro's `cell_<tag>` name concatenation, so
 // a consumer using the macro needs no direct `paste` dependency. Not part of the
 // public API surface.
 #[doc(hidden)]
 pub use paste;
+pub use scaffold::{Measured, SEEDS, cold_cycle, stream, warm};

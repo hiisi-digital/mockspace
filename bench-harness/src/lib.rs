@@ -47,8 +47,8 @@ pub mod quality;
 pub mod report;
 pub mod sample;
 pub mod spec;
-pub mod tree;
 pub mod summary;
+pub mod tree;
 pub mod validation;
 pub mod workload;
 
@@ -89,8 +89,16 @@ pub use config::{
 };
 pub use disasm::check_duplicates as check_disasm_duplicates;
 pub use driver::{
-    AfterCell, CellVerdict, DriverRegistry, DriverSpec, Hooks, InitContext, InitVerdict,
-    RunPlan, drive, drive_spec,
+    AfterCell,
+    CellVerdict,
+    DriverRegistry,
+    DriverSpec,
+    Hooks,
+    InitContext,
+    InitVerdict,
+    RunPlan,
+    drive,
+    drive_spec,
 };
 pub use env::{EnvMeta, collect_env_meta};
 pub use error::BenchError;
@@ -110,8 +118,12 @@ pub use history::{
 pub use inline_bench::{InlineResult, InlineVariant, run_inline};
 pub use meta_report::{VariantResult, classify_family, generate as generate_meta_report};
 pub use perf::{
-    PerfSnapshot, available as perf_available, read as perf_read, read_all_raw as perf_read_all_raw,
-    setup as perf_setup, teardown as perf_teardown,
+    PerfSnapshot,
+    available as perf_available,
+    read as perf_read,
+    read_all_raw as perf_read_all_raw,
+    setup as perf_setup,
+    teardown as perf_teardown,
 };
 pub use quality::{VariantQuality, measure as measure_quality};
 pub use report::generate as generate_report;

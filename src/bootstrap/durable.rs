@@ -45,4 +45,3 @@ pub(crate) fn ensure_durable_hooks(actions: &mut Vec<String>) -> Option<PathBuf>
     ));
     Some(dir)
 }
-

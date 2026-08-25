@@ -69,26 +69,26 @@ pub struct SweepAxis {
 #[derive(Clone, Debug)]
 pub struct MatrixDecl {
     /// Bench-family prefix; each swept bench is `<name>_<sweep_value>`.
-    pub name:       String,
+    pub name:        String,
     /// How a sibling crate names the consumer crate in `use`/paths, e.g.
     /// `vehje_bench_carrier`.
-    pub crate_path: String,
+    pub crate_path:  String,
     /// The consumer-crate dependency line body for the variant `Cargo.toml`, with
     /// TOML inline-table braces escaped `{{`/`}}` and a `{carrier_features}` slot,
     /// e.g. `vehje-bench-carrier = {{ path = "../../carrier"{carrier_features} }}`.
-    pub crate_dep:  String,
+    pub crate_dep:   String,
     /// Extra dependency lines emitted verbatim into every variant `Cargo.toml`
     /// (the bench-core / bench-macro / bench-matrix git-or-path deps).
-    pub extra_deps: Vec<String>,
+    pub extra_deps:  Vec<String>,
     pub master_seed: String,
-    pub sweep:      SweepAxis,
-    pub sizes:      Vec<usize>,
+    pub sweep:       SweepAxis,
+    pub sizes:       Vec<usize>,
     /// Cell tag that is the ratio denominator.
-    pub baseline:   String,
+    pub baseline:    String,
     /// Cell tag to difference against for null-floor isolation (`None` = raw).
-    pub floor:      Option<String>,
-    pub regime:     Regime,
+    pub floor:       Option<String>,
+    pub regime:      Regime,
     /// Path of the family's shared setup `pub fn` (`fn(&str, usize) -> St`).
-    pub setup_path: String,
-    pub cells:      Vec<CellDecl>,
+    pub setup_path:  String,
+    pub cells:       Vec<CellDecl>,
 }

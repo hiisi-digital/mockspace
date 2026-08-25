@@ -56,7 +56,9 @@ impl Runtime {
     /// a trusted runtime `cdylib` built for this target.
     pub unsafe fn open(path: &str) -> Result<Self, libloading::Error> {
         let lib = unsafe { Library::new(path)? };
-        Ok(Self { lib })
+        Ok(Self {
+            lib,
+        })
     }
 
     /// Resolve `name` (a nul-terminated symbol) to a value of type `T`, typically an
@@ -92,7 +94,10 @@ mod tests {
         // bench whose runtime artifact was not built must fail its setup cleanly
         // (the caller can skip), never abort the worker.
         let r = unsafe { Runtime::open("/nonexistent/does-not-exist.dylib") };
-        assert!(r.is_err(), "opening a missing runtime dylib must be an error");
+        assert!(
+            r.is_err(),
+            "opening a missing runtime dylib must be an error"
+        );
     }
 
     #[test]
@@ -107,7 +112,9 @@ mod tests {
             // test already covers the error path, so skip rather than fail here.
             return;
         };
-        let rt = Runtime { lib };
+        let rt = Runtime {
+            lib,
+        };
         // where the exe opened, resolving a stable libc symbol MUST succeed and the
         // pointer MUST be callable: a silent skip on the resolve/call path would make
         // this test vacuous (it could pass without ever exercising its contract). The

@@ -24,7 +24,7 @@ use std::process::Command;
 
 use crate::changelist_helpers::{self, Phase};
 use crate::src_layout::{self, SrcLayout};
-use crate::{Lint, RepoLint, LintError, RepoContext};
+use crate::{Lint, LintError, RepoContext, RepoLint};
 
 const LINT_NAME: &str = "changelist-required";
 
@@ -34,6 +34,7 @@ impl Lint for ChangelistRequired {
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+
     fn source_only(&self) -> bool {
         false
     }
@@ -101,8 +102,9 @@ impl RepoLint for ChangelistRequired {
                 !content.map(|s| declares_nothing(&s)).unwrap_or(false)
             })
             .map(|(file, source)| {
-                let crate_name =
-                    layout.package_name(&file).unwrap_or_else(|| "unknown".to_string());
+                let crate_name = layout
+                    .package_name(&file)
+                    .unwrap_or_else(|| "unknown".to_string());
 
                 let phase_hint = match phase {
                     Phase::Topic => {
@@ -235,8 +237,7 @@ mod tests {
         std::fs::create_dir_all(root.join("libs/widget/src")).unwrap();
         std::fs::create_dir_all(root.join("design_rounds")).unwrap();
         // both changelists locked, so the phase is CLOSED and no source may move
-        for name in ["202601010000_changelist.doc.lock.md", "202601010001_changelist.src.lock.md"]
-        {
+        for name in ["202601010000_changelist.doc.lock.md", "202601010001_changelist.src.lock.md"] {
             std::fs::write(root.join("design_rounds").join(name), "locked\n").unwrap();
         }
         std::fs::write(root.join("libs/widget/src/lib.rs"), "pub fn a() {}\n").unwrap();
@@ -247,27 +248,38 @@ mod tests {
             vec!["add", "-A"],
             vec!["commit", "-q", "-m", "seed", "--no-gpg-sign"],
         ] {
-            Command::new("git").args(&args).current_dir(&root).output().unwrap();
+            Command::new("git")
+                .args(&args)
+                .current_dir(&root)
+                .output()
+                .unwrap();
         }
-        std::fs::write(root.join("libs/widget/src/lib.rs"), "pub fn a() {}\npub fn b() {}\n")
-            .unwrap();
+        std::fs::write(
+            root.join("libs/widget/src/lib.rs"),
+            "pub fn a() {}\npub fn b() {}\n",
+        )
+        .unwrap();
 
         let run = |dirs: &[std::path::PathBuf]| {
             let crates = std::collections::BTreeSet::new();
             ChangelistRequired.check_repo(&RepoContext {
-                mock_dir:   &root,
-                repo_root:  &root,
-                all_crates: &crates,
-                src_dirs:   dirs,
-                invocation: None,
+                mock_dir:    &root,
+                repo_root:   &root,
+                all_crates:  &crates,
+                src_dirs:    dirs,
+                invocation:  None,
                 canon_paths: &[],
                 open_panels: &[],
-                registry:   &Default::default(),
+                registry:    &Default::default(),
             })
         };
 
         let found = run(&[root.join("libs")]);
-        assert_eq!(found.len(), 1, "expected the edit under libs/ to be gated: {found:?}");
+        assert_eq!(
+            found.len(),
+            1,
+            "expected the edit under libs/ to be gated: {found:?}"
+        );
         assert_eq!(found[0].crate_name, "widget");
 
         // The control, and the reason this test is worth its runtime.
@@ -363,7 +375,11 @@ mod fmt_only_exemption {
             vec!["add", "-A"],
             vec!["commit", "-q", "-m", "seed", "--no-gpg-sign"],
         ] {
-            Command::new("git").args(&args).current_dir(&root).output().unwrap();
+            Command::new("git")
+                .args(&args)
+                .current_dir(&root)
+                .output()
+                .unwrap();
         }
         root
     }
@@ -372,14 +388,14 @@ mod fmt_only_exemption {
         let crates = std::collections::BTreeSet::new();
         let src_dirs = [root.join("crates")];
         let ctx = RepoContext {
-            mock_dir:   root,
-            repo_root:  root,
-            all_crates: &crates,
-            src_dirs:   &src_dirs,
-            invocation: None,
+            mock_dir:    root,
+            repo_root:   root,
+            all_crates:  &crates,
+            src_dirs:    &src_dirs,
+            invocation:  None,
             canon_paths: &[],
             open_panels: &[],
-            registry:   &Default::default(),
+            registry:    &Default::default(),
         };
         ChangelistRequired.check_repo(&ctx)
     }
@@ -398,7 +414,9 @@ mod fmt_only_exemption {
             .ok()?;
         c.stdin.as_mut()?.write_all(src.as_bytes()).ok()?;
         let o = c.wait_with_output().ok()?;
-        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).to_string())
+        o.status
+            .success()
+            .then(|| String::from_utf8_lossy(&o.stdout).to_string())
     }
 
     #[test]
@@ -418,7 +436,11 @@ mod fmt_only_exemption {
         );
 
         // The same formatting with one semantic character changed: refused.
-        std::fs::write(root.join("crates/x/src/lib.rs"), fmt.replace("x + 1", "x + 2")).unwrap();
+        std::fs::write(
+            root.join("crates/x/src/lib.rs"),
+            fmt.replace("x + 1", "x + 2"),
+        )
+        .unwrap();
         let errs = blocked(&root);
         let _ = std::fs::remove_dir_all(&root);
         assert!(
@@ -475,7 +497,11 @@ mod fmt_only_judges_the_committed_content {
             vec!["add", "-A"],
             vec!["commit", "-q", "-m", "seed", "--no-gpg-sign"],
         ] {
-            Command::new("git").args(&args).current_dir(&root).output().unwrap();
+            Command::new("git")
+                .args(&args)
+                .current_dir(&root)
+                .output()
+                .unwrap();
         }
         root
     }
@@ -484,14 +510,14 @@ mod fmt_only_judges_the_committed_content {
         let crates = std::collections::BTreeSet::new();
         let src_dirs = [root.join("crates")];
         ChangelistRequired.check_repo(&RepoContext {
-            mock_dir:   root,
-            repo_root:  root,
-            all_crates: &crates,
-            src_dirs:   &src_dirs,
-            invocation: None,
+            mock_dir:    root,
+            repo_root:   root,
+            all_crates:  &crates,
+            src_dirs:    &src_dirs,
+            invocation:  None,
             canon_paths: &[],
             open_panels: &[],
-            registry:   &Default::default(),
+            registry:    &Default::default(),
         })
     }
 

@@ -24,6 +24,7 @@ impl Lint for NoPoolAccess {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
+
     fn name(&self) -> &'static str {
         "no-pool-access"
     }
@@ -62,7 +63,7 @@ impl CrateLint for NoPoolAccess {
                 }
                 if trimmed.contains(".resource(") || trimmed.contains(".resource::<") {
                     errors.push(LintError {
-                        path: None,
+                        path:         None,
                         crate_name:   ctx.crate_name.to_string(),
                         line:         line_num + 1,
                         lint_name:    "no-pool-access",

@@ -21,6 +21,7 @@ impl Lint for NoAdhocErrorEnum {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::OFF
     }
+
     fn name(&self) -> &'static str {
         "no-adhoc-error-enum"
     }
@@ -69,7 +70,9 @@ fn check_enum(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
                 ctx.crate_name.to_string(),
                 line_idx + 1,
                 "no-adhoc-error-enum",
-                format!("suppressed by lint:allow(no_adhoc_error_enum) on `{name}`: review periodically"),
+                format!(
+                    "suppressed by lint:allow(no_adhoc_error_enum) on `{name}`: review periodically"
+                ),
             ));
         } else {
             errors.push(LintError {

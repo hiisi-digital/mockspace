@@ -52,7 +52,10 @@ fn fixture(root: &Path, member: Option<&str>, tools: &[&str], benches: &[&str]) 
         &root.join("mock/Cargo.toml"),
         &format!("[workspace]\nresolver = \"2\"\nmembers = [{members}]\n"),
     );
-    write(&root.join("mockspace.toml"), "[project]\nname = \"fixture\"\n");
+    write(
+        &root.join("mockspace.toml"),
+        "[project]\nname = \"fixture\"\n",
+    );
     fs::create_dir_all(root.join(".git")).unwrap();
     if let Some(m) = member {
         write(
@@ -208,7 +211,9 @@ fn a_crate_that_is_neither_member_nor_root_is_named_with_its_fix() {
     let tmp = tempfile::tempdir().unwrap();
     fixture(tmp.path(), None, &["alpha"], &[]);
     let manifest = tmp.path().join("mock/tools/alpha/Cargo.toml");
-    let stripped = fs::read_to_string(&manifest).unwrap().replace("[workspace]\n\n", "");
+    let stripped = fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("[workspace]\n\n", "");
     fs::write(&manifest, stripped).unwrap();
 
     let t = text(&run(tmp.path()));
@@ -240,7 +245,8 @@ fn it_reaches_a_bench_tree_that_has_no_manifest_anywhere() {
     let tmp = tempfile::tempdir().unwrap();
     fixture(tmp.path(), None, &[], &[]);
     write(
-        &tmp.path().join("mock/benches/sample/arms/sample/src/lib.rs"),
+        &tmp.path()
+            .join("mock/benches/sample/arms/sample/src/lib.rs"),
         "pub fn nothing() {}\n",
     );
     let t = text(&run(tmp.path()));

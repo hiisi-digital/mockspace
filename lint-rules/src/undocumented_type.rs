@@ -27,7 +27,7 @@ use std::collections::HashSet;
 
 use tree_sitter::Node;
 
-use crate::{Lint, WorkspaceLint, LintContext, LintError};
+use crate::{Lint, LintContext, LintError, WorkspaceLint};
 
 const LINT_NAME: &str = "undocumented-type";
 
@@ -37,9 +37,11 @@ impl Lint for UndocumentedType {
     fn default_severity(&self) -> crate::Severity {
         crate::Severity::BUILD_GATE
     }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+
     fn source_only(&self) -> bool {
         false
     }
@@ -233,20 +235,20 @@ mod cfg_test_module_tests {
         let mut parser = crate::make_parser();
         let tree = parser.parse(source, None).unwrap();
         LintContext {
-            crate_name:              "test-crate",
-            short_name:              "test-crate",
+            crate_name: "test-crate",
+            short_name: "test-crate",
             source,
-            tree:                    Box::leak(Box::new(tree)),
-            all_sources:             &[],
-            deps:                    &[],
-            all_crates:              Box::leak(Box::new(BTreeSet::new())),
-            design_doc:              Some(design),
-            all_doc_content:         design,
-            shame_doc:               None,
-            workspace_root:          std::path::Path::new("/tmp"),
-            proc_macro_crates:       &[],
-            crate_prefix:            "test",
-            lint_proc_macro_source:  false,
+            tree: Box::leak(Box::new(tree)),
+            all_sources: &[],
+            deps: &[],
+            all_crates: Box::leak(Box::new(BTreeSet::new())),
+            design_doc: Some(design),
+            all_doc_content: design,
+            shame_doc: None,
+            workspace_root: std::path::Path::new("/tmp"),
+            proc_macro_crates: &[],
+            crate_prefix: "test",
+            lint_proc_macro_source: false,
             primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
         }
     }
@@ -280,7 +282,10 @@ mod cfg_test_module_tests {
     fn an_undocumented_type_outside_a_test_module_is_still_reported() {
         // The control. Without it, a lint that reported nothing at all would
         // satisfy the test above.
-        let reports = reported("pub struct Real;\n", "# test-crate\n\nNothing documented here.\n");
+        let reports = reported(
+            "pub struct Real;\n",
+            "# test-crate\n\nNothing documented here.\n",
+        );
         assert!(
             reports.iter().any(|m| m.contains("Real")),
             "the lint stopped reporting real undocumented types: {reports:?}"
@@ -304,6 +309,9 @@ mod cfg_test_module_tests {
     #[test]
     fn a_documented_type_is_not_reported() {
         let reports = reported("pub struct Real;\n", "# test-crate\n\nThe `Real` type.\n");
-        assert!(reports.is_empty(), "a documented type was reported: {reports:?}");
+        assert!(
+            reports.is_empty(),
+            "a documented type was reported: {reports:?}"
+        );
     }
 }
