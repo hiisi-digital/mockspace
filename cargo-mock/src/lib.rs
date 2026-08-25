@@ -75,6 +75,14 @@ pub const TOOL: Tool = Tool {
     ..Tool::CONVENTIONS
 };
 
+/// The descriptor is answerable at build time, so it is answered here.
+///
+/// `..Tool::CONVENTIONS` is a base of empty names, which is safe only because
+/// `Tool::defect` refuses every one of them and is const. Writing the literal
+/// out gave this for free: a missing field was a missing field. The spread
+/// trades that away, and this one line buys it back.
+const _: () = assert!(TOOL.defect().is_none());
+
 /// The launcher entry, shared by both installed binaries. Each bin is a
 /// two-line shim over this.
 pub fn run_cli() -> ExitCode {
@@ -90,6 +98,12 @@ pub fn run_cli() -> ExitCode {
 /// its `Box<dyn Lint>` vtables do not match the engine's and crossing the
 /// dlopen boundary is undefined. Renamed to the package `mockspace` so the
 /// generated crate's dependency spelling does not change.
+///
+/// The one line here that nothing covers is the one below: that it reads
+/// `git_ref()` rather than `key_rev`, which for a version pin is a cache key
+/// and not a git ref at all. A test would need a `Resolved`, and building one
+/// wants a network and a cache directory. Tracked as
+/// `renki-lets-a-hook-be-tested` on the agenda.
 fn lint_rules_from_pin(resolved: &Resolved) -> Vec<String> {
     let (kind, value) = resolved.git_ref();
     lint_rules_at(&resolved.pin.url, kind, value)

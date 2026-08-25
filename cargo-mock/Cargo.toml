@@ -1,12 +1,19 @@
 [package]
 name = "cargo-mock"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2024"
 # The one crate in this repo that publishes. The engine (`mockspace`) stays
 # `publish = false`; this thin launcher git-installs the per-repo pinned
 # engine itself, so it needs no version relationship to it.
 publish = true
 description = "Launcher for the mockspace design-round workflow engine: resolves the per-repo pinned mockspace, builds it once per version into a shared cache, and runs it from any working directory."
+# The repository's own, since this crate is the whole of what an operator
+# installs and there is nothing narrower to say. Cargo ships whatever `readme`
+# names whether or not `include` mentions it.
+readme = "../README.md"
+# `renki` is the floor and it declares 1.88. Stated here too, or an older
+# toolchain fails somewhere inside a dependency instead of at this manifest.
+rust-version = "1.88"
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
 categories = ["development-tools", "command-line-utilities"]
@@ -27,7 +34,10 @@ keywords = ["mockspace", "cargo-subcommand", "design-rounds", "workflow"]
 # what this wants: the launcher is what every consumer repo installs, and it
 # moves when the number here moves rather than when a branch does.
 renki = "0.0.1"
-mockspace-manifest = { path = "../mockspace-manifest" }
+# The path is what a checkout builds against and the version is what the
+# registry resolves, since cargo strips the path on publish and a dependency
+# left with neither is refused.
+mockspace-manifest = { path = "../mockspace-manifest", version = "0.0.1" }
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
 
