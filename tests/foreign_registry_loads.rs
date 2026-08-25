@@ -11,7 +11,7 @@
 //! that reads them, so both sides share whatever the author assumed. The only
 //! large registry in the workspace was written by a different project, against
 //! a different reading of the same design, before most of this code existed:
-//! fifteen namespaces and a few thousand rows in `ikiuni_renderer`.
+//! fifteen namespaces and a few thousand rows in `widget`.
 //!
 //! A parser that agrees with its own fixtures and nothing else is a parser
 //! nobody has tested. This is the arm that can disagree.
@@ -35,7 +35,7 @@
 //! Set it to the project's `mock/` directory:
 //!
 //! ```text
-//! MOCKSPACE_FOREIGN_REGISTRY=~/Dev/clause-dev/ikiuni_renderer/mock \
+//! MOCKSPACE_FOREIGN_REGISTRY=<path to a project's mock dir> \
 //!     cargo test --test foreign_registry_loads -- --ignored
 //! ```
 //!

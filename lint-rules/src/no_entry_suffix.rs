@@ -129,11 +129,11 @@ mod tests {
 
     #[test]
     fn handles_crate_prefixed_call() {
-        let prefix = "loimu_registry::define_registry!(";
-        let dollar_prefix = "$crate::loimu_registry::define_registry!(";
+        let prefix = "acme_registry::define_registry!(";
+        let dollar_prefix = "$crate::acme_registry::define_registry!(";
         assert!(
             strip_registry_call(
-                "loimu_registry::define_registry!(Foo for Bar with Baz);",
+                "acme_registry::define_registry!(Foo for Bar with Baz);",
                 prefix,
                 dollar_prefix
             )

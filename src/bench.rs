@@ -447,7 +447,7 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
 
     // One shared target directory for every crate this command builds,
     // rather than each crate's own default `target/` next to its manifest.
-    // Without this, running the tree's real shape (arvo's is ninety-five
+    // Without this, running a large real tree's shape (one here is ninety-five
     // crates) builds ninety-five separate target directories, none of them
     // sharing a compiled copy of a common dependency (mockspace-bench-core,
     // mockspace-bench-harness, ...), which is real disk and real duplicated
@@ -567,7 +567,7 @@ fn manifest_display(manifest: &Path, bench_dir: &Path, mock_dir: &Path) -> Strin
 /// the consumer-owned escape-hatch crate), and every arm and support
 /// crate lives in a subdirectory of that same root, so stopping at
 /// the first manifest found finds only the driver and nothing it was
-/// meant to reach: arvo's tree has one root manifest and ninety-four
+/// meant to reach: a large real tree has one root manifest and ninety-four
 /// more beneath it, and the earlier form of this function returned
 /// exactly the one. The corrected form treats "this directory is a
 /// crate" and "keep looking for more crates underneath it" as
@@ -1706,8 +1706,8 @@ the same manifest semantics either way.
 mod tests {
     use super::*;
 
-    /// A real `cargo test` line, captured verbatim from `warm-container-shared`
-    /// (arvo's bench tree) rather than typed from memory of the format.
+    /// A real `cargo test` line, captured verbatim from a support crate
+    /// (a real bench tree) rather than typed from memory of the format.
     const REAL_OK_LINE: &str = "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; \
          finished in 0.18s";
 
@@ -1800,7 +1800,7 @@ mod tests {
     /// root manifest, alone with nothing else, must not be the only thing
     /// found once a nested crate exists. The prior version of this
     /// function returned exactly the root and nothing beneath it whenever
-    /// the root itself had a `Cargo.toml`, which is arvo's tree's actual
+    /// the root itself had a `Cargo.toml`, which is a real tree's actual
     /// shape (a driver bin crate at the root, ninety-four crates beneath
     /// it) and is why `mock bench test` found one manifest of ninety-five
     /// on the tree it was built for.
@@ -2012,42 +2012,40 @@ mod tests {
         assert_eq!(flags, vec!["--", "--seed", "extra"]);
     }
 
-    /// Runs `cmd_test` against a real consumer's bench tree rather than a
-    /// synthetic fixture, per the same discipline `tests/real_trees.rs`
-    /// states: a fixture built by the same hands as the code under test
-    /// tends to avoid exactly the shape that breaks it. `MOCKSPACE_REAL_TREES`
-    /// names a workspace root (e.g. `~/Dev/clause-dev`); without it this
+    /// Runs `cmd_test` against a real support crate rather than a synthetic
+    /// fixture, per the same discipline `tests/real_trees.rs` states: a fixture
+    /// built by the same hands as the code under test tends to avoid exactly
+    /// the shape that breaks it.
+    ///
+    /// `MOCKSPACE_REAL_SUPPORT_CRATE` names one, by path. Without it this
     /// PANICS rather than silently passing, for the reason `real_trees.rs`
     /// gives: a skip that reads as a pass is how a gate stops being one.
     ///
-    /// Scoped to one support crate rather than a whole tree, because a real
-    /// tree the size of arvo's (94 arm crates plus 13 support crates, one of
-    /// which is a multi-minute concurrency stress suite) is not what this
-    /// test exists to time; `cmd_test`'s own walk-and-aggregate logic is
-    /// exercised identically at any scale, and this is the smallest real
-    /// input that exercises it against a support crate `mock bench test`
-    /// was specifically built to reach and a bare `cargo test` at the bench
-    /// root cannot.
+    /// One crate rather than a whole tree, because timing a large tree is not
+    /// what this exists for. The walk-and-aggregate logic is exercised
+    /// identically at any scale, and one support crate is the smallest real
+    /// input that reaches what `mock bench test` was built for and a bare
+    /// `cargo test` at the bench root cannot.
     ///
     /// Run with:
-    ///   MOCKSPACE_REAL_TREES=~/Dev/clause-dev cargo test --lib \
-    ///     bench::tests::cmd_test_finds_and_runs_a_real_arvo_support_crate -- --ignored
+    ///   MOCKSPACE_REAL_SUPPORT_CRATE=<path> cargo test --lib \
+    ///     bench::tests::cmd_test_finds_and_runs_a_real_support_crate -- --ignored
     #[test]
-    #[ignore]
-    fn cmd_test_finds_and_runs_a_real_arvo_support_crate() {
-        let workspace = std::env::var("MOCKSPACE_REAL_TREES")
-            .expect("set MOCKSPACE_REAL_TREES=<path to the clause-dev workspace root>");
-        let source =
-            PathBuf::from(&workspace).join("arvo/mock/benches/variants/warm-container-shared");
+    #[ignore = "needs a real support crate: set MOCKSPACE_REAL_SUPPORT_CRATE to one"]
+    fn cmd_test_finds_and_runs_a_real_support_crate() {
+        let source = PathBuf::from(
+            std::env::var("MOCKSPACE_REAL_SUPPORT_CRATE")
+                .expect("set MOCKSPACE_REAL_SUPPORT_CRATE to a bench support crate's directory"),
+        );
         assert!(
             source.join("src/lib.rs").is_file(),
-            "expected {} to exist; is MOCKSPACE_REAL_TREES pointed at the right root?",
+            "expected {} to hold a crate; is MOCKSPACE_REAL_SUPPORT_CRATE pointed at one?",
             source.display()
         );
 
         let root = temp_mock("cmd-test-real-support-crate");
         let bench_dir = root.join("benches");
-        std::fs::create_dir_all(bench_dir.join("support/warm-container-shared")).unwrap();
+        std::fs::create_dir_all(bench_dir.join("support/the-crate")).unwrap();
         std::fs::write(bench_dir.join("bench.toml"), "").unwrap();
         // The root driver manifest, present in every real tree (the
         // generated driver or the consumer-owned escape hatch). Its
@@ -2061,7 +2059,7 @@ mod tests {
         for entry in ["Cargo.toml", "src"] {
             copy_recursive(
                 &source.join(entry),
-                &bench_dir.join("support/warm-container-shared").join(entry),
+                &bench_dir.join("support/the-crate").join(entry),
             );
         }
 
@@ -2109,8 +2107,8 @@ mod tests {
     /// because cargo walks up looking for a workspace root when it builds
     /// a *sibling* crate too, that refusal is not contained to the root:
     /// every crate under `bench_dir` fails to build until the root has a
-    /// real target. No `[workspace]` header, matching arvo's actual root
-    /// manifest exactly (`arvo/mock/benches/Cargo.toml` has none); adding
+    /// real target. No `[workspace]` header, matching a real root
+    /// manifest exactly, which has none; adding
     /// one here would make this directory try to claim its own
     /// subdirectories as workspace members and refuse them for not being
     /// declared, which is the "[workspace] header trap" the ergonomics
@@ -2512,8 +2510,11 @@ mod tests {
     #[test]
     fn an_artifact_outside_the_bench_directory_still_resolves() {
         let m = Path::new("/repo/mock/benches/Cargo.toml");
-        let out = artifact(m, Some("/repo/target/release/arvo-benches"));
+        let out = artifact(m, Some("/repo/target/release/project-benches"));
         let bins = built_executables(m, out.as_bytes());
-        assert_eq!(bins[0], PathBuf::from("/repo/target/release/arvo-benches"));
+        assert_eq!(
+            bins[0],
+            PathBuf::from("/repo/target/release/project-benches")
+        );
     }
 }

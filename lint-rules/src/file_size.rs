@@ -295,7 +295,7 @@ mod module_file_tests {
     /// A crate whose root is small but whose module file is far over the limit.
     ///
     /// This is the shape every real crate has: `lib.rs` declares modules and the
-    /// code lives in siblings. arvo's `arvo-strategy` is exactly it, with a
+    /// code lives in siblings. A crate that is only a re-export root is exactly it, with a
     /// 108-line `lib.rs` beside an 843-line `arith.rs`, and the lint reported
     /// the crate clean at `max_lines = 500` set to error on every gate.
     ///

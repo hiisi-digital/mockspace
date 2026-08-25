@@ -194,19 +194,19 @@ pub struct Config {
     pub crate_grouping: BTreeMap<String, String>,
 
     /// Per-crate primitive-introductions map. Key: crate directory
-    /// name (e.g. "arvo", "arvo-bits"). Value: the list of primitive
+    /// name (e.g. "numerics", "numerics-bits"). Value: the list of primitive
     /// token names that crate legitimately introduces in its own
     /// source because it is the producer of the wrapped equivalent.
     ///
-    /// Bare-primitive lints (`no-bare-numeric`, `arvo-types-only`,
+    /// Bare-primitive lints (`no-bare-numeric`, `typed-primitives-only`,
     /// `no-bare-option`, etc.) skip these tokens on these specific
     /// crates. Everything not listed remains subject to the lint.
     ///
-    /// Example: `arvo = ["u8", "u16", "u32", "u64", "u128", "i8", ...,
-    /// "f32", "f64", "usize", "isize", "bool"]`: arvo defines the
+    /// Example: `numerics = ["u8", "u16", "u32", "u64", "u128", "i8", ...,
+    /// "f32", "f64", "usize", "isize", "bool"]`: that crate defines the
     /// numeric foundations, so it legitimately wraps every std numeric
     /// primitive; meanwhile `Option` / `Result` / `String` still fire
-    /// on arvo because arvo does not introduce them.
+    /// on it because it does not introduce them.
     ///
     /// # Future direction
     ///

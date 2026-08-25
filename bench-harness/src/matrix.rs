@@ -66,7 +66,7 @@ pub struct MatrixSpec {
     pub title:             String,
     /// The dependency line body for the carrier crate. This IS rendered, so its
     /// literal TOML inline-table braces must be escaped as `{{` / `}}`, e.g.
-    /// `vehje-bench-carrier = {{ path = "../../carrier"{carrier_features} }}`.
+    /// `bench-carrier = {{ path = "../../carrier"{carrier_features} }}`.
     /// `{carrier_features}` is replaced by `, features = [..]` (or empty).
     pub carrier_dep:       String,
     /// Extra dependency lines emitted verbatim (NOT rendered, so their braces
@@ -381,8 +381,8 @@ mod tests {
         MatrixSpec {
             bench:             "carrier_dispatch".into(),
             title:             "Dispatch shape sweep".into(),
-            carrier_dep:
-                "vehje-bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}".into(),
+            carrier_dep:       "bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}"
+                .into(),
             extra_deps:        vec!["mockspace-bench-core = { path = \"x\" }".into()],
             master_seed:       "0x5eed".into(),
             sizes:             vec![64, 256],

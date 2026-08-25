@@ -1210,7 +1210,7 @@ mod canon_location_is_derived {
     //!
     //! It used to name `<mock>/canon/` nine times whatever the project said,
     //! and ship the reserved-directory convention to a project with no such
-    //! directory. kamu declares `canon_paths = ["mock/registry/*.toml"]` two
+    //! directory. One consumer declares `canon_paths = ["mock/registry/*.toml"]` two
     //! lines from where the rule was read, and every session there loaded a
     //! rule describing a tree that does not exist.
     use super::*;

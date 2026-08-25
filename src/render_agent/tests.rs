@@ -59,13 +59,13 @@ fn agent_frontmatter_gets_variable_substitution() {
     // Substitution runs over the whole template before the split, matching
     // the rules phase, so frontmatter expands too. Pass-through is about not
     // renaming or dropping fields, not about refusing to expand them.
-    let vars = vec![("project_name".to_string(), "ikiuni-renderer".to_string())];
+    let vars = vec![("project_name".to_string(), "widget".to_string())];
     let raw = "---\nname: p\ndescription: Reviews {{project_name}} code\n---\n\nBody.\n";
     let raw = substitute_vars(raw, &vars);
     let (fm, body) = split_frontmatter(&raw);
     let out = render_agent_content(&fm, &body);
     assert!(
-        out.contains("description: Reviews ikiuni-renderer code"),
+        out.contains("description: Reviews widget code"),
         "frontmatter did not get substitution:\n{out}"
     );
     assert!(!out.contains("{{"), "a placeholder survived:\n{out}");

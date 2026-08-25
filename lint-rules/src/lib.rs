@@ -164,7 +164,7 @@ pub struct LintContext<'a> {
     /// macro emits must always satisfy consumer-crate rules because the
     /// emitted code compiles into consumer binaries.
     pub lint_proc_macro_source:  bool,
-    /// Crate name prefix (e.g. "loimu"). Used to build expected crate
+    /// Crate name prefix (e.g. "acme"). Used to build expected crate
     /// names dynamically instead of hardcoding project-specific names.
     pub crate_prefix:            &'a str,
     /// Per-crate primitive-introductions map from mockspace.toml's
@@ -216,7 +216,7 @@ impl<'a> LintContext<'a> {
     /// token on a specific crate when this returns `true`.
     ///
     /// Example: `ctx.introduces("u8")` returns `true` when the crate
-    /// is `arvo` and `arvo = ["u8", ...]` is configured in mockspace.toml.
+    /// is `numerics` and `numerics = ["u8", ...]` is configured in mockspace.toml.
     #[must_use]
     pub fn introduces(&self, primitive: &str) -> bool {
         self.primitive_introductions
@@ -1559,7 +1559,7 @@ pub fn all_lints() -> Vec<Box<dyn CrateLint>> {
 /// it declared itself crate-scoped.
 ///
 /// This exists because `LintContext::source` is the crate root and nothing else,
-/// so a lint reading it saw `src/lib.rs` and skipped every module file. In kolli
+/// so a lint reading it saw `src/lib.rs` and skipped every module file. In one crate
 /// that was 76 of 101 public items; the gate reported clean while most of the
 /// surface was never looked at. `file_size` had already been fixed by growing
 /// its own loop over `all_sources`, which is the same fix twenty-six more times
@@ -1805,7 +1805,7 @@ pub fn check_repo(
 ///
 /// Enablement resolves config first, then the lint's own declared default. That
 /// second half was missing and made [`Lint::default_severity`] decorative for
-/// the `off` case: fourteen loimu-specific lints declared `OFF`, stamped
+/// the `off` case: fourteen project-specific lints declared `OFF`, stamped
 /// `HARD_ERROR` onto their findings anyway, and fired as hard errors in every
 /// repo that had not explicitly overridden them. A fresh repo with no `[lints]`
 /// section therefore inherited a framework's house rules (`define_error!`,
@@ -2642,7 +2642,7 @@ mod declared_default_severity_tests {
     fn a_per_file_lint_sees_a_module_file() {
         // The bug this dispatcher exists for. `ctx.source` is the crate root and
         // nothing else, so every surface lint read `src/lib.rs` and skipped the
-        // rest of the crate while the gate reported clean. In kolli that hid
+        // rest of the crate while the gate reported clean. In one consumer that hid
         // real findings in module files through a full review.
         let files = crate_with_a_dirty_module();
         let mut base = ctx();

@@ -98,12 +98,12 @@ _files() {
 
 #[test]
 it_takes_the_name_out_of_a_quoted_digraph_line() {
-    # The failure that started this. `digraph "kamu" {` yielded `"kamu"`, which
-    # became `title: ""kamu": Design Documentation"` in the metadata, and pandoc
+    # The failure that started this. `digraph "proj" {` yielded `"proj"`, which
+    # became `title: ""proj": Design Documentation"` in the metadata, and pandoc
     # stopped at the second quote with a YAML error naming a column.
     local d; d="$(mktemp -d)"
-    _fixture "$d/proj" 'digraph "kamu" {'
-    assert_eq "$(_name "$d/proj")" "kamu"
+    _fixture "$d/proj" 'digraph "proj" {'
+    assert_eq "$(_name "$d/proj")" "proj"
     rm -rf "$d"
 }
 
