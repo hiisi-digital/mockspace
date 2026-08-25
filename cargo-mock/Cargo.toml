@@ -23,12 +23,10 @@ keywords = ["mockspace", "cargo-subcommand", "design-rounds", "workflow"]
 # four hooks, and the legacy Cargo.lock pin, which needs a TOML reader of its
 # own. `mockspace-manifest` comes along for the durable hook gate.
 [dependencies]
-# Pinned by revision rather than by branch. renki is unpublished and still at
-# `0.0.0`, so a branch pin is not a version constraint at all: the lockfile
-# latches whatever `dev` pointed at the day it resolved, and the next
-# `cargo update` moves it onto whatever `dev` points at then. That is the
-# launcher every consumer repo installs.
-renki = { git = "ssh://git@github.com/orgrinrt/renki.git", rev = "4e7b6c8c7b07" }
+# A `0.0.x` requirement is already the exact version and nothing else, which is
+# what this wants: the launcher is what every consumer repo installs, and it
+# moves when the number here moves rather than when a branch does.
+renki = "0.0.1"
 mockspace-manifest = { path = "../mockspace-manifest" }
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }

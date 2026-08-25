@@ -341,8 +341,9 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "renki"
-version = "0.0.0"
-source = "git+ssh://git@github.com/orgrinrt/renki.git?rev=4e7b6c8c7b07#4e7b6c8c7b079c0ffa5c43c087499fd1663178b3"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73d5bf35752f3e3da67d0dfb6a969f876c39d400754813c4d53ae179d083464e"
 dependencies = [
  "serde",
  "toml",

@@ -103,17 +103,13 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Red until `renki` is on crates.io.
+/// crates.io refuses a git dependency at `cargo publish`, and nothing before
+/// that point says so. A manifest that both publishes and pins by git is
+/// therefore fine on every local check and fails at the one step that cannot
+/// be retried against a version already taken.
 ///
-/// `cargo-mock` publishes and pins `renki` by revision, which is correct while
-/// `renki` is unpublished: a branch pin is not a version constraint, and there
-/// is no version to ask for yet. The moment `renki` has one this becomes a
-/// version dependency and the ignore comes off in the same change.
-///
-/// Left with its real assertion rather than softened, so removing one line is
-/// the whole of the flip. The four cases below it are the controls and run
-/// normally, so the check itself is exercised on every run.
-#[ignore = "catalogue: cargo-mock pins renki by rev until renki publishes 0.0.1"]
+/// The four cases below it are the controls, so the check itself is exercised
+/// rather than assumed.
 #[test]
 fn no_publishing_crate_pins_a_dependency_to_git() {
     let root = repo_root();
