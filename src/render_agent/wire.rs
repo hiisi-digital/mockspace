@@ -16,9 +16,11 @@ pub(crate) fn write_builtin_hook(
     copilot_hooks_dir: &Path,
     count: &mut usize,
 ) -> HookMeta {
-    let claude_content = content
-        .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
-        .replace("{{REPO_ROOT}}", repo_root);
+    let claude_content = with_generated_marker(
+        &content
+            .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
+            .replace("{{REPO_ROOT}}", repo_root),
+    );
     let claude_path = claude_hooks_dir.join(name);
     fs::write(&claude_path, &claude_content).expect("failed to write builtin claude hook");
     #[cfg(unix)]
@@ -26,9 +28,11 @@ pub(crate) fn write_builtin_hook(
     eprintln!("  {} (builtin)", claude_path.display());
     *count += 1;
 
-    let copilot_content = content
-        .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
-        .replace("{{REPO_ROOT}}", repo_root);
+    let copilot_content = with_generated_marker(
+        &content
+            .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
+            .replace("{{REPO_ROOT}}", repo_root),
+    );
     let copilot_path = copilot_hooks_dir.join(name);
     fs::write(&copilot_path, &copilot_content).expect("failed to write builtin copilot hook");
     #[cfg(unix)]
@@ -112,11 +116,33 @@ pub(crate) fn generate_builtin_hooks(
 // Phase 7: Auto-generated settings
 // ---------------------------------------------------------------------------
 
-/// Where a hook this crate generates is written, on each side. The merge below
-/// recognises its own entries by this prefix and by nothing else, so a hook
-/// somebody wired by hand to a script of their own is not one of ours.
+/// Where a hook this crate generates is written, on each side.
+///
+/// The prefix says where to look and does not say who wrote it. Only some of
+/// what lands in these directories is generated: the orphan sweep is scoped to
+/// one family of hooks, so a builtin that retires and anything somebody adds
+/// themselves both stay. So the directory is shared, and the merge asks the
+/// script itself, through [`generated_hook_marker`].
 const CLAUDE_HOOK_PREFIX: &str = ".claude/hooks/";
 const COPILOT_HOOK_PREFIX: &str = ".github/hooks/";
+
+/// Put the generation marker into a hook script, after the shebang.
+///
+/// A shell script has nowhere structural to record who wrote it, so it says so
+/// in a comment on its second line, inside the window
+/// [`crate::render_design::is_generated`] reads. That is what lets the settings
+/// merge drop its own wiring and leave a hand-written hook alone even though
+/// both live in the same directory, and it tells anybody opening the file that
+/// editing it is pointless.
+pub(crate) fn with_generated_marker(content: &str) -> String {
+    let marker = format!("# {}", crate::render_design::GENERATED_MARKER);
+    match content.split_once('\n') {
+        Some((shebang, rest)) if shebang.starts_with("#!") => {
+            format!("{shebang}\n{marker}\n{rest}")
+        },
+        _ => format!("{marker}\n{content}"),
+    }
+}
 
 /// Read a JSON file as an object, and say whether it was readable.
 ///
@@ -139,12 +165,34 @@ fn read_json_object(path: &Path) -> Option<serde_json::Map<String, serde_json::V
     }
 }
 
+/// Whether one command in a settings entry names a script this crate wrote.
+///
+/// Two conditions. It points into the hooks directory, **and** the script
+/// there carries the generation marker. A script without one is somebody's,
+/// wherever it sits.
+///
+/// A command naming a file that is not there counts as ours. It is inside the
+/// directory this tool writes and there is no script left to ask, so the entry
+/// is wiring for a hook that retired and its script went with it. Leaving it
+/// would mean an event permanently wired to nothing.
+fn names_a_generated_script(command: &str, repo_root: &Path, prefix: &str) -> bool {
+    let Some(rest) = command.strip_prefix(prefix) else {
+        return false;
+    };
+    // The first word, because a command may carry arguments after the script.
+    let script = rest.split_whitespace().next().unwrap_or(rest);
+    match fs::read_to_string(repo_root.join(prefix).join(script)) {
+        Ok(text) => crate::render_design::is_generated(&text),
+        Err(_) => true,
+    }
+}
+
 /// Whether a Claude hook entry is one this crate wrote.
 ///
-/// True when every command in it points into the generated hooks directory. An
-/// entry mixing one of ours with one of theirs is theirs, because dropping it
-/// would take the hand-written half with it.
-fn is_generated_claude_entry(entry: &serde_json::Value) -> bool {
+/// True when every command in it names a generated script. An entry mixing one
+/// of ours with one of theirs is theirs, because dropping it would take the
+/// hand-written half with it.
+fn is_generated_claude_entry(entry: &serde_json::Value, repo_root: &Path) -> bool {
     let hooks = match entry.get("hooks").and_then(|h| h.as_array()) {
         Some(h) if !h.is_empty() => h,
         _ => return false,
@@ -152,7 +200,7 @@ fn is_generated_claude_entry(entry: &serde_json::Value) -> bool {
     hooks.iter().all(|h| {
         h.get("command")
             .and_then(|c| c.as_str())
-            .is_some_and(|c| c.starts_with(CLAUDE_HOOK_PREFIX))
+            .is_some_and(|c| names_a_generated_script(c, repo_root, CLAUDE_HOOK_PREFIX))
     })
 }
 
@@ -207,13 +255,24 @@ pub(crate) fn generate_settings(repo_root: &Path, all_hooks: &[HookMeta]) -> usi
             );
         },
         Some(mut settings) => {
+            // The same reading the unparseable arm takes, one and two levels
+            // in. A `hooks` that is not an object, or a `PreToolUse` that is
+            // not an array, is a shape this does not understand, and replacing
+            // it would be discarding somebody's file on the strength of not
+            // recognising it.
+            if let Some(why) = unexpected_shape(&settings) {
+                eprintln!(
+                    "  warning: {} has {why}, so its hook wiring was left alone. Fix it and run \
+                     again.",
+                    claude_settings_path.display()
+                );
+                return generate_copilot_hooks(repo_root, &matcher_to_hooks, count);
+            }
             let hooks = settings
                 .entry("hooks")
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-            if !hooks.is_object() {
-                *hooks = serde_json::Value::Object(serde_json::Map::new());
-            }
-            let hooks = hooks.as_object_mut().expect("just made it an object");
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+                .as_object_mut()
+                .expect("the shape check above admitted only an object");
 
             // Everything on this event that is not ours, in the order it was
             // written, then ours after it. Other events are not read and not
@@ -223,7 +282,7 @@ pub(crate) fn generate_settings(repo_root: &Path, all_hooks: &[HookMeta]) -> usi
                 .and_then(|v| v.as_array())
                 .map(|a| {
                     a.iter()
-                        .filter(|e| !is_generated_claude_entry(e))
+                        .filter(|e| !is_generated_claude_entry(e, repo_root))
                         .cloned()
                         .collect()
                 })
@@ -240,7 +299,33 @@ pub(crate) fn generate_settings(repo_root: &Path, all_hooks: &[HookMeta]) -> usi
         },
     }
 
-    // --- Copilot hooks.json ---
+    generate_copilot_hooks(repo_root, &matcher_to_hooks, count)
+}
+
+/// Whether `settings.json` holds a hook shape this cannot merge into.
+///
+/// `None` means it can. `Some(why)` names what was found, for the warning, and
+/// means the file is left byte for byte as it was.
+fn unexpected_shape(settings: &serde_json::Map<String, serde_json::Value>) -> Option<&'static str> {
+    let hooks = settings.get("hooks")?;
+    if hooks.is_null() {
+        return Some("a null `hooks`");
+    }
+    let Some(hooks) = hooks.as_object() else {
+        return Some("a `hooks` that is not an object");
+    };
+    match hooks.get("PreToolUse") {
+        Some(v) if !v.is_array() => Some("a `PreToolUse` that is not an array"),
+        _ => None,
+    }
+}
+
+/// The Copilot half, which keys its hooks in a flat list rather than by event.
+fn generate_copilot_hooks(
+    repo_root: &Path,
+    matcher_to_hooks: &BTreeMap<String, Vec<String>>,
+    mut count: usize,
+) -> usize {
     let copilot_hooks_dir = repo_root.join(".github").join("hooks");
     let _ = fs::create_dir_all(&copilot_hooks_dir);
     let copilot_hooks_path = copilot_hooks_dir.join("hooks.json");
@@ -268,17 +353,17 @@ pub(crate) fn generate_settings(repo_root: &Path, all_hooks: &[HookMeta]) -> usi
             );
         },
         Some(mut doc) => {
-            // Flat list here rather than keyed by event, so ours are the ones
-            // whose command points into the generated directory.
+            // Flat list here rather than keyed by event, so each entry answers
+            // on its own script rather than on an entry's worth of them.
             let mut kept: Vec<serde_json::Value> = doc
                 .get("hooks")
                 .and_then(|v| v.as_array())
                 .map(|a| {
                     a.iter()
                         .filter(|e| {
-                            !e.get("command")
-                                .and_then(|c| c.as_str())
-                                .is_some_and(|c| c.starts_with(COPILOT_HOOK_PREFIX))
+                            !e.get("command").and_then(|c| c.as_str()).is_some_and(|c| {
+                                names_a_generated_script(c, repo_root, COPILOT_HOOK_PREFIX)
+                            })
                         })
                         .cloned()
                         .collect()
@@ -401,6 +486,148 @@ mod settings_tests {
         );
     }
 
+    /// A hook script as it lands on disk, generated or not.
+    fn hook_script(root: &Path, name: &str, generated: bool) -> String {
+        let dir = root.join(".claude/hooks");
+        fs::create_dir_all(&dir).unwrap();
+        let marker = if generated {
+            format!("# {}\n", crate::render_design::GENERATED_MARKER)
+        } else {
+            String::new()
+        };
+        fs::write(
+            dir.join(name),
+            format!("#!/usr/bin/env bash\n{marker}exit 0\n"),
+        )
+        .unwrap();
+        format!(".claude/hooks/{name}")
+    }
+
+    #[test]
+    fn a_hook_somebody_wired_by_hand_survives_even_inside_the_generated_directory() {
+        // `.claude/hooks/` is where a hook script goes, so somebody writing
+        // their own puts it there, and the entry pointing at it read as ours
+        // on nothing but the directory. It was deleted on every run, silently,
+        // which is the same class of thing this merge exists to stop.
+        let d = tempfile::tempdir().unwrap();
+        let theirs = hook_script(d.path(), "my-own-check.sh", false);
+        let stale = hook_script(d.path(), "retired-gate.sh", true);
+        fs::write(
+            d.path().join(".claude/settings.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "hooks": { "PreToolUse": [
+                    { "matcher": "Write", "hooks": [{ "type": "command", "command": theirs }] },
+                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": stale }] },
+                ]}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
+
+        let v = claude(d.path());
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        let commands: Vec<&str> = pre
+            .iter()
+            .map(|e| e["hooks"][0]["command"].as_str().unwrap())
+            .collect();
+        assert!(
+            commands.contains(&theirs.as_str()),
+            "a hand-written hook was deleted for living in the generated \
+             directory: {commands:?}"
+        );
+        assert!(
+            !commands.contains(&stale.as_str()),
+            "a retired hook of ours stayed wired, so retirement stopped \
+             working: {commands:?}"
+        );
+        assert!(commands.contains(&".claude/hooks/gate.sh"), "{commands:?}");
+    }
+
+    #[test]
+    fn an_entry_pointing_at_a_script_that_is_gone_is_dropped() {
+        // The other half of the same question. A hook of ours retires and its
+        // script is swept, and the entry left behind names a file that is not
+        // there. Nothing can read a marker off it, so the rule has to say what
+        // an absent script means, and inside the directory this tool writes
+        // the honest answer is that it was ours.
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir_all(d.path().join(".claude")).unwrap();
+        fs::write(
+            d.path().join(".claude/settings.json"),
+            r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":".claude/hooks/swept.sh"}]}]}}"#,
+        )
+        .unwrap();
+
+        generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
+
+        let v = claude(d.path());
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 1, "the dangling entry stayed: {pre:?}");
+        assert_eq!(pre[0]["hooks"][0]["command"], ".claude/hooks/gate.sh");
+    }
+
+    #[test]
+    fn the_file_keeps_its_own_order_and_its_own_shape() {
+        // Preserving the contents and reordering them is most of the way to
+        // preserving the file and is not the same thing. A settings file is
+        // hand-edited and read in diffs, and alphabetising every key at every
+        // depth makes the next diff unreadable in a change whose whole claim
+        // is that it leaves alone what it does not own.
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir_all(d.path().join(".claude")).unwrap();
+        let theirs = concat!(
+            "{\n",
+            "  \"$schema\": \"https://json.schemastore.org/claude-code-settings.json\",\n",
+            "  \"permissions\": { \"allow\": [\"Bash(git status)\"] },\n",
+            "  \"model\": \"opus\",\n",
+            "  \"env\": { \"FOO\": \"1\" }\n",
+            "}\n"
+        );
+        fs::write(d.path().join(".claude/settings.json"), theirs).unwrap();
+
+        generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
+
+        let text = fs::read_to_string(d.path().join(".claude/settings.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            v.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["$schema", "permissions", "model", "env", "hooks"],
+            "their keys were reordered; ours belongs at the end"
+        );
+        assert_eq!(
+            v["permissions"]["allow"][0], "Bash(git status)",
+            "a nested value moved or went missing"
+        );
+    }
+
+    #[test]
+    fn a_shape_this_does_not_understand_is_left_where_it_is() {
+        // The same principle the top level already follows, one and two levels
+        // in. A `hooks` that is not an object, or a `PreToolUse` that is not an
+        // array, is somebody's mistake or somebody's extension; either way it
+        // is not this tool's to throw away without a word.
+        for body in [
+            r#"{"hooks": null}"#,
+            r#"{"hooks": []}"#,
+            r#"{"hooks": {"PreToolUse": "everything"}}"#,
+        ] {
+            let d = tempfile::tempdir().unwrap();
+            fs::create_dir_all(d.path().join(".claude")).unwrap();
+            let path = d.path().join(".claude/settings.json");
+            fs::write(&path, body).unwrap();
+
+            generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
+
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                body,
+                "{body} was rewritten rather than left alone"
+            );
+        }
+    }
+
     #[test]
     fn everything_the_file_already_held_survives_a_run() {
         // The defect this replaces. `settings.json` is where a repository
@@ -497,6 +724,22 @@ mod settings_tests {
             broken
         );
         assert_eq!(count, 1, "the copilot side still wrote; this one did not");
+    }
+
+    #[test]
+    fn the_copilot_side_leaves_an_unreadable_file_alone_as_well() {
+        // The law governs two files and was asserted on one. The other test
+        // proves the copilot side wrote, which is the case where nothing was
+        // in its way.
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir_all(d.path().join(".github/hooks")).unwrap();
+        let broken = "{ not json at all";
+        let path = d.path().join(".github/hooks/hooks.json");
+        fs::write(&path, broken).unwrap();
+
+        let count = generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+        assert_eq!(count, 1, "the claude side still wrote; this one did not");
     }
 
     #[test]
