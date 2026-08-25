@@ -156,7 +156,7 @@ mock_is_mockspace() {
 #
 # A value from the governing mockspace.toml. Dotted keys reach into sections.
 #
-# Usage: name="$(mock_get project_name arvo)"
+# Usage: name="$(mock_get project_name fallback)"
 # Prints: the value, or the default when absent
 #[pub]
 mock_get() {

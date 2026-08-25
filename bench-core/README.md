@@ -14,8 +14,7 @@ on x86_64) is provided by the `counter` module; the `timed!` macro
 gives a simple setup/run/teardown timing block.
 
 The framework was extracted from polka-dots' `mock/benches/bench-core/`
-(the substrate that drove arvo's strategy-marker design) and lifted
-into mockspace so every consumer gets the canonical surface.
+and lifted into mockspace so every consumer gets the canonical surface.
 
 ## Status
 

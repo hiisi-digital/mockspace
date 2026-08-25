@@ -36,8 +36,8 @@
 ///
 /// bench_matrix! {
 ///     name: "carrier_dispatch",
-///     crate_path: vehje_bench_carrier,
-///     crate_dep: "vehje-bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}",
+///     crate_path: bench_carrier,
+///     crate_dep: "bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}",
 ///     extra_deps: [ "mockspace-bench-core = { path = \"...\" }" ],
 ///     seed: 0x5eed_d15b_a7c4_0002,
 ///     sweep profile in ["real", "madd", "tight"],

@@ -113,7 +113,7 @@ echo "output  : $OUT_FILE"
 
 # ─── extract crate order from DOT depth groups ────────────────────────────────
 # The DOT file contains lines like:
-#   { rank=same; loimu_id; loimu_signal; } // depth N
+#   { rank=same; acme_id; acme_signal; } // depth N
 # These are emitted in topological depth order by mockspace, so file order == depth order.
 
 ordered_crates=()
@@ -135,7 +135,7 @@ files=()
 [[ -f "$DOCS_DIR/DESIGN.md" ]] && files+=("$DOCS_DIR/DESIGN.md")
 
 # Per-crate docs in dependency depth order.
-# Node name loimu_behavior_macros → prefix LOIMU_BEHAVIOR_MACROS.
+# Node name acme_behavior_macros → prefix ACME_BEHAVIOR_MACROS.
 # Overview file first, then remaining deep-dive files alphabetically.
 for crate_node in "${ordered_crates[@]}"; do
     prefix="${crate_node^^}"  # bash uppercase expansion

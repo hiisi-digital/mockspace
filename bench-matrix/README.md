@@ -108,8 +108,8 @@ pub struct DispatchState { pub d: Decoded, pub r: Vec<u64>, pub sinks: Vec<u32> 
 
 bench_matrix! {
     name: "carrier_dispatch",
-    crate_path: vehje_bench_carrier,
-    crate_dep: "vehje-bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}",
+    crate_path: bench_carrier,
+    crate_dep: "bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}",
     extra_deps: [ "mockspace-bench-core = { path = \"...\" }" ],
     seed: 0x5eed_d15b_a7c4_0002,
     sweep profile in ["real", "madd", "tight"],
@@ -149,7 +149,7 @@ a compile error rather than a silent wrong baseline.
 ```rust
 // the whole generator binary
 fn main() -> std::io::Result<()> {
-    let decls = vehje_bench_carrier::bench::matrix_decls();
+    let decls = bench_carrier::bench::matrix_decls();
     mockspace_bench_matrix::generate_all(&decls, std::path::Path::new("."))
 }
 ```
@@ -201,8 +201,8 @@ pub fn matrix_decls() -> Vec<mockspace_bench_matrix::MatrixDecl> {
     };
     vec![MatrixDecl {
         name: "carrier_dispatch".into(),
-        crate_path: "vehje_bench_carrier".into(),
-        crate_dep: "vehje-bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}".into(),
+        crate_path: "bench_carrier".into(),
+        crate_dep: "bench-carrier = {{ path = \"../../carrier\"{carrier_features} }}".into(),
         extra_deps: vec![/* bench-core, bench-macro, bench-matrix dep lines */],
         master_seed: "0x5eed_d15b_a7c4_0002".into(),
         sweep: SweepAxis { name: "profile".into(), values: ["real","madd","tight"].iter().map(|s| s.to_string()).collect() },
@@ -219,7 +219,7 @@ pub fn matrix_decls() -> Vec<mockspace_bench_matrix::MatrixDecl> {
 ```rust
 // the whole generator binary
 fn main() -> std::io::Result<()> {
-    let decls = vehje_bench_carrier::bench::matrix_decls();
+    let decls = bench_carrier::bench::matrix_decls();
     mockspace_bench_matrix::generate_all(&decls, std::path::Path::new("."))
 }
 ```
@@ -234,7 +234,7 @@ The engine (`scaffold`, `decl`, `generate_all`, the canonical template), the
 `setup_ns` / `first_ns` / `digest` columns (and the setup-vs-iteration report table
 with the tier breakeven `k*`) are all complete and tested. Remaining items are
 reporter refinements (floor-aware normalise, digest cross-validation) tracked in
-`TODO.md`. The carrier interpreter-composition matrix in the vehje repo is this
+`TODO.md`. The carrier interpreter-composition matrix that produced this crate is
 crate's first intended consumer and its regression test.
 
 ## A note on coding agents

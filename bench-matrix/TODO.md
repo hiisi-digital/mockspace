@@ -3,7 +3,7 @@
 The engine (scaffold, decl, generate_all, canonical template) is complete and
 tested. What follows turns it into the full ergonomic, honest-by-construction
 surface the design calls for. Ordered by leverage. The design reference is the
-vehje repo's `mock/research/202607230922_carrier-matrix-result-review-panel/`
+the review that produced this crate
 (`muratori_extraction_design.md` for this crate, the four panel files for why each
 discipline matters).
 
@@ -94,9 +94,9 @@ reps-variant `output` bytes (which the panel showed makes the current
   `Regime::KLadder(vec![1,2,4,..,128])` that emits a per-rung column. Not needed
   until tier-selection thresholds become a runtime feature.
 
-## 6. Dogfood: migrate the vehje carrier matrix onto this crate
+## 6. Dogfood: migrate the carrier matrix that produced this onto it
 
-The carrier interpreter-composition matrix (`vehje/mock/benches/src/bin/gen_matrix.rs`
+The carrier interpreter-composition matrix (a hand-written `gen_matrix.rs`
 plus the carrier crate's cells) is this crate's first consumer and its regression
 test. Migrating it: move the string `prep` fragments to typed `setup` bodies and the
 string `body` fragments to typed `cell` bodies inside a `pub mod bench` of the
