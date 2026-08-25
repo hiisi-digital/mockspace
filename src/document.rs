@@ -200,11 +200,8 @@ pub enum Source {
 /// A document that will exist, before it is rendered.
 #[derive(Debug, Clone)]
 pub struct Planned {
-    pub id:          DocId,
-    pub source:      Source,
-    /// Whether the generation header is prepended. False for content that
-    /// carries its own, such as a graph in another language's comment syntax.
-    pub with_header: bool,
+    pub id:     DocId,
+    pub source: Source,
 }
 
 impl Planned {
@@ -212,7 +209,6 @@ impl Planned {
         Self {
             id,
             source: Source::Template(path),
-            with_header: true,
         }
     }
 
@@ -220,17 +216,6 @@ impl Planned {
         Self {
             id,
             source: Source::Computed(content),
-            with_header: true,
-        }
-    }
-
-    /// Content that already carries its own header, or that must not gain a
-    /// markdown one.
-    pub fn raw(id: DocId, content: String) -> Self {
-        Self {
-            id,
-            source: Source::Computed(content),
-            with_header: false,
         }
     }
 }
@@ -333,13 +318,106 @@ pub fn render_all(
             Source::Computed(text) => text.clone(),
         };
         let body = render(&raw, ph, registry, cfg);
-        let full = if p.with_header { format!("{header}\n{body}") } else { body };
+        // Unconditional, and the sweep below depends on it: a text document
+        // reaching docs/ without the marker is one the sweep can never remove
+        // once it stops being generated. That covers what is written here and
+        // the `.dot` and `.svg` written elsewhere, all of which carry a header
+        // of their own. It does not cover a rendered image, which has nowhere
+        // to put one; those are swept by the stem of the diagram beside them,
+        // per `OURS_IN_BYTES`.
+        let full = format!("{header}\n{body}");
         let out = cfg.docs_dir.join(p.id.file_name(cfg));
         crate::render_design::write_generated(&out, &full);
         written.push(out);
     }
     written
 }
+
+/// Remove documents that were generated once and are not generated any more.
+///
+/// Nothing else writes those files, so nothing else removes them, and a
+/// retired document left behind reads as current for as long as it sits there.
+///
+/// Two conditions, and the second is what keeps this off other people's work.
+/// The file was not written by the run that `kept` describes, **and** it
+/// carries the generation header, so some earlier run wrote it. A file failing
+/// the second belongs to whoever put it there: a contributing guide, an
+/// architecture note, anything a repository keeps in its documents directory
+/// beside what is rendered into it. Sweeping on the first condition alone
+/// removed every one of those, on every run, without saying so.
+///
+/// A rendered image cannot carry the marker, so it goes with the diagram it was
+/// rendered from: an image whose stem matches a **diagram** this call is
+/// sweeping, and whose extension is one this tool renders, is swept alongside
+/// it.
+///
+/// The stem comes off a swept `.dot` and off nothing else, and that is the
+/// whole of what keeps this off other people's images. Reading it off any
+/// swept file instead reaches much further than the sentence above describes:
+/// a generated `DESIGN.md` retiring, which happens the moment a repository
+/// turns document ordering on, would take a hand-drawn `DESIGN.png` with it.
+/// Every image this tool writes is rendered from a `.dot` of the same stem, so
+/// the narrower rule loses nothing.
+///
+/// Only the top level is read. A subdirectory is somebody's to organise.
+pub fn sweep_retired(docs_dir: &Path, kept: &[PathBuf]) -> usize {
+    let kept: std::collections::HashSet<&Path> = kept.iter().map(|p| p.as_path()).collect();
+    let Ok(entries) = std::fs::read_dir(docs_dir) else {
+        return 0;
+    };
+    let candidates: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && !kept.contains(p.as_path()))
+        .collect();
+
+    // The text half first, because what it sweeps is what the byte half reads
+    // its stems from.
+    let mut swept = 0usize;
+    let mut swept_stems: std::collections::HashSet<std::ffi::OsString> =
+        std::collections::HashSet::new();
+    for path in &candidates {
+        // Unreadable is not ours. A file whose bytes cannot be read is one
+        // that cannot be shown to carry the marker, and the safe reading of
+        // that is to leave it where it is.
+        let ours = std::fs::read_to_string(path)
+            .map(|t| crate::render_design::is_generated(&t))
+            .unwrap_or(false);
+        if ours && std::fs::remove_file(path).is_ok() {
+            swept += 1;
+            let is_a_diagram = path.extension().and_then(|e| e.to_str()) == Some("dot");
+            if is_a_diagram {
+                if let Some(stem) = path.file_stem() {
+                    swept_stems.insert(stem.to_os_string());
+                }
+            }
+        }
+    }
+
+    for path in &candidates {
+        let is_ours_in_bytes = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| OURS_IN_BYTES.contains(&e));
+        let follows_a_swept_file = path
+            .file_stem()
+            .is_some_and(|stem| swept_stems.contains(stem));
+        if is_ours_in_bytes && follows_a_swept_file && std::fs::remove_file(path).is_ok() {
+            swept += 1;
+        }
+    }
+    swept
+}
+
+/// Extensions this tool writes into the documents directory as bytes rather
+/// than as text, so nothing in the file itself can say who wrote it.
+///
+/// Every other artifact answers for itself: `.md`, `.dot` and `.svg` all carry
+/// the generation header. This list exists for the two images rendered from a
+/// `.dot` beside them, and it stays this short on purpose. An extension here
+/// is one [`sweep_retired`] may delete on a name match rather than on
+/// something the file says, so adding one widens what this tool claims to own.
+const OURS_IN_BYTES: &[&str] = &["png"];
 
 /// One spelling for a crate key, so the two sides of the lookup agree.
 ///
@@ -379,6 +457,204 @@ mod tests {
         cfg.ordered_docs = true;
         cfg.primary_docs = vec!["DESIGN".into()];
         cfg
+    }
+
+    fn generated(body: &str) -> String {
+        // The shape every generation header opens with. Built from the
+        // constant rather than typed out, so a header that changes spelling
+        // fails here rather than quietly stopping the sweep.
+        format!(
+            "<!--\n  {}\n-->\n\n{body}\n",
+            crate::render_design::GENERATED_MARKER
+        )
+    }
+
+    #[test]
+    fn the_sweep_removes_a_retired_document_and_leaves_a_hand_written_one() {
+        let d = tempfile::tempdir().unwrap();
+        let docs = d.path();
+
+        // Written by an earlier run, not written by this one: retired.
+        let retired = docs.join("DESIGN-old.md");
+        std::fs::write(&retired, generated("what this used to say")).unwrap();
+
+        // Written by this run: kept, and not because of its contents.
+        let current = docs.join("DESIGN.md");
+        std::fs::write(&current, generated("what it says now")).unwrap();
+
+        // Somebody's, and the whole point. No header, so nothing in it says
+        // mockspace wrote it, because mockspace did not.
+        let theirs = docs.join("CONTRIBUTING.md");
+        std::fs::write(&theirs, "# Contributing\n\nOpen a pull request.\n").unwrap();
+
+        // A directory, which is somebody's to organise either way.
+        std::fs::create_dir(docs.join("research")).unwrap();
+        std::fs::write(docs.join("research/note.md"), generated("nested")).unwrap();
+
+        let swept = sweep_retired(docs, &[current.clone()]);
+
+        assert_eq!(swept, 1, "only the retired document");
+        assert!(!retired.exists(), "the retired document is gone");
+        assert!(current.exists(), "this run's output stays");
+        assert!(
+            theirs.exists(),
+            "a hand-written document is not mockspace's to delete"
+        );
+        assert!(
+            docs.join("research/note.md").exists(),
+            "a subdirectory is untouched"
+        );
+    }
+
+    /// The first eight bytes of any PNG, which is enough to make the file
+    /// invalid UTF-8 and so unreadable as text.
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+    #[test]
+    #[test]
+    fn a_retired_document_does_not_take_an_image_that_shares_its_name() {
+        let d = tempfile::tempdir().unwrap();
+        let docs = d.path();
+
+        // The case that made the rule too wide. A generated document retires,
+        // which happens to any repository the moment it turns document
+        // ordering on and every name gains its `000_` prefix. A hand-drawn
+        // image happens to share its stem.
+        let retired_doc = docs.join("DESIGN.md");
+        let theirs = docs.join("DESIGN.png");
+        std::fs::write(&retired_doc, generated("# design")).unwrap();
+        std::fs::write(&theirs, PNG).unwrap();
+
+        let swept = sweep_retired(docs, &[]);
+
+        assert!(
+            !retired_doc.exists(),
+            "the document was ours and stays swept"
+        );
+        assert!(
+            theirs.exists(),
+            "a hand-made image was deleted because a generated document shared its stem \
+             (sweep removed {swept})"
+        );
+        assert_eq!(swept, 1, "only the document was ours");
+    }
+
+    fn a_retired_diagram_takes_its_rendered_image_with_it() {
+        let d = tempfile::tempdir().unwrap();
+        let docs = d.path();
+
+        // A diagram this run no longer generates. The `.dot` carries the
+        // marker and answers for itself; the `.png` is bytes and can never
+        // carry one, so without the companion rule it sits in docs/ reading as
+        // current for the life of the repository.
+        let retired_dot = docs.join("STRUCTURE.GRAPH.dot");
+        let retired_png = docs.join("STRUCTURE.GRAPH.png");
+        std::fs::write(&retired_dot, generated("digraph {}")).unwrap();
+        std::fs::write(&retired_png, PNG).unwrap();
+
+        // The same pair, still generated. Named in `kept`, so neither half
+        // goes, and the `.png` must not be taken by its own sibling's stem.
+        let live_dot = docs.join("BENCHES.parse.dot");
+        let live_png = docs.join("BENCHES.parse.png");
+        std::fs::write(&live_dot, generated("digraph {}")).unwrap();
+        std::fs::write(&live_png, PNG).unwrap();
+
+        // Somebody's image, with nothing of ours sharing its stem.
+        let theirs = docs.join("architecture.png");
+        std::fs::write(&theirs, PNG).unwrap();
+
+        // Somebody's image that happens to share a stem with a document this
+        // run still generates. The stem is only ever read off a file being
+        // swept, so a live sibling reaches nothing.
+        let theirs_beside_live = docs.join("BENCHES.parse.jpg");
+        std::fs::write(&theirs_beside_live, PNG).unwrap();
+
+        let swept = sweep_retired(docs, &[live_dot.clone(), live_png.clone()]);
+
+        assert_eq!(swept, 2, "the retired diagram and its image");
+        assert!(!retired_dot.exists());
+        assert!(!retired_png.exists(), "the image outlived the diagram");
+        assert!(live_dot.exists());
+        assert!(live_png.exists());
+        assert!(theirs.exists(), "an image of somebody's own is not ours");
+        assert!(
+            theirs_beside_live.exists(),
+            "a live sibling's stem swept nothing, and an extension we do not \
+             write is not ours whatever it sits beside"
+        );
+    }
+
+    #[test]
+    fn an_image_whose_diagram_is_hand_written_stays() {
+        // The control for the rule above. The companion goes because the file
+        // it belongs to was swept, so a stem whose text half is somebody's
+        // must reach nothing: otherwise the rule is "delete images", written
+        // in a way that looks narrower than it is.
+        let d = tempfile::tempdir().unwrap();
+        let docs = d.path();
+        let theirs_dot = docs.join("sketch.dot");
+        let theirs_png = docs.join("sketch.png");
+        std::fs::write(&theirs_dot, "digraph { a -> b }\n").unwrap();
+        std::fs::write(&theirs_png, PNG).unwrap();
+
+        assert_eq!(sweep_retired(docs, &[]), 0);
+        assert!(theirs_dot.exists());
+        assert!(theirs_png.exists());
+    }
+
+    #[test]
+    fn the_sweep_reads_the_header_and_not_a_mention_of_it() {
+        let d = tempfile::tempdir().unwrap();
+        let docs = d.path();
+
+        // The control for the check above, and the reason the marker is looked
+        // for in the first few lines rather than anywhere: a document that
+        // explains the header is a document about the header, not one of ours.
+        // This crate's own documentation is exactly that.
+        let prose = docs.join("USAGE_GUIDE.md");
+        std::fs::write(
+            &prose,
+            format!(
+                "# Usage\n\nEvery generated file opens with `{}`, so you can tell them apart.\n",
+                crate::render_design::GENERATED_MARKER
+            ),
+        )
+        .unwrap();
+
+        // An empty file, which has no header and is nobody's to guess about.
+        let empty = docs.join("EMPTY.md");
+        std::fs::write(&empty, "").unwrap();
+
+        assert_eq!(sweep_retired(docs, &[]), 0);
+        assert!(prose.exists());
+        assert!(empty.exists());
+    }
+
+    #[test]
+    fn a_document_reaches_the_output_carrying_the_marker() {
+        // The sweep can only ever remove what it recognises, so a rendering
+        // path that stopped emitting the header would leave every document it
+        // writes permanently unsweepable, and nothing else would notice. This
+        // is the other end of that contract.
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::from_dir(d.path());
+        cfg.docs_dir = d.path().join("docs");
+
+        let planned = vec![Planned::computed(DocId::root("DESIGN.md", &cfg), "the body".into())];
+        let written = render_all(
+            &planned,
+            &crate::render_design::Placeholders::compute(&Default::default(), &cfg),
+            &crate::registry::Registry::default(),
+            &cfg,
+        );
+
+        assert_eq!(written.len(), 1);
+        let text = std::fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            crate::render_design::is_generated(&text),
+            "rendered document does not carry the marker:\n{text}"
+        );
+        assert!(text.contains("the body"));
     }
 
     #[test]

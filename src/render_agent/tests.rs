@@ -234,11 +234,16 @@ fn agent_gate_hook_self_heals_then_blocks() {
     // ran `cargo check` in the mock workspace, on the reasoning that
     // build.rs re-ran the bootstrap; that bootstrap is gone and its
     // remaining symbol fails the build, so the step healed nothing.
-    assert!(hook.contains("cd \"$root\" && cargo mock activate"), "{hook}");
+    assert!(
+        hook.contains("cd \"$root\" && cargo mock activate"),
+        "{hook}"
+    );
     // The narrow repair is tried before the full run, because a full run
     // regenerates docs and agent rules and this executes while a commit is in
     // flight.
-    let narrow = hook.find("cargo mock activate").expect("narrow repair present");
+    let narrow = hook
+        .find("cargo mock activate")
+        .expect("narrow repair present");
     let full = hook.rfind("&& cargo mock )").expect("full repair present");
     assert!(narrow < full, "the narrow repair must be attempted first");
     assert!(
@@ -428,6 +433,23 @@ fn agent_gate_is_a_generated_builtin() {
         .find(|m| m.name == "mockspace-gate.sh")
         .unwrap();
     assert!(gate.matchers.iter().any(|s| s == "Bash"));
+    // Carrying the marker is the load-bearing half. The settings merge asks
+    // each script whether it is ours, so a builtin written without one reads
+    // as somebody's, its wiring is kept, and the fresh wiring is appended
+    // beside it on every run. Deleting the marker call left the whole suite
+    // green before this assertion existed.
+    for dir in [&claude, &copilot] {
+        let body = std::fs::read_to_string(dir.join("mockspace-gate.sh")).unwrap();
+        assert!(
+            crate::render_design::is_generated(&body),
+            "a builtin hook reached {} unmarked:\n{body}",
+            dir.display()
+        );
+        assert!(
+            body.starts_with("#!"),
+            "the marker was put in front of the shebang:\n{body}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -637,7 +659,10 @@ fn write_guard_shame_carve_out_matches_a_whole_path_component() {
             .spawn()
             .and_then(|mut c| {
                 use std::io::Write;
-                c.stdin.as_mut().expect("stdin").write_all(path.as_bytes())?;
+                c.stdin
+                    .as_mut()
+                    .expect("stdin")
+                    .write_all(path.as_bytes())?;
                 c.wait()
             })
             .expect("run grep");
@@ -668,7 +693,11 @@ fn write_guard_allows(target_rel: &str) -> bool {
     std::fs::create_dir_all(repo.join("mock/crates/foo")).unwrap();
     // A locked doc changelist and no src changelist is DRAFT: crate doc
     // templates are frozen, which is the state the carve-out exists for.
-    std::fs::write(rounds.join("202601010000_changelist.doc.lock.md"), "locked\n").unwrap();
+    std::fs::write(
+        rounds.join("202601010000_changelist.doc.lock.md"),
+        "locked\n",
+    )
+    .unwrap();
 
     for args in [
         vec!["init", "-q"],
@@ -676,7 +705,11 @@ fn write_guard_allows(target_rel: &str) -> bool {
         vec!["config", "user.name", "t"],
         vec!["add", "-A"],
     ] {
-        Command::new("git").args(&args).current_dir(&repo).output().unwrap();
+        Command::new("git")
+            .args(&args)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
     }
 
     let cfg = Config::from_dir(&repo.join("mock"));
@@ -704,7 +737,12 @@ fn write_guard_allows(target_rel: &str) -> bool {
         .unwrap();
     {
         use std::io::Write;
-        child.stdin.as_mut().unwrap().write_all(payload.as_bytes()).unwrap();
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(payload.as_bytes())
+            .unwrap();
     }
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
@@ -759,12 +797,15 @@ impl mockspace_lint_rules::tool::Tool for StubTool {
     fn name(&self) -> &'static str {
         "phrase-search"
     }
+
     fn description(&self) -> &'static str {
         "find a phrase across hard-wrapped lines"
     }
+
     fn not_a_lint(&self) -> mockspace_lint_rules::tool::NotALint {
         mockspace_lint_rules::tool::NotALint::TakesAQuestion
     }
+
     fn args(&self) -> &[mockspace_lint_rules::tool::ArgSpec] {
         &[mockspace_lint_rules::tool::ArgSpec {
             name:        "phrase",
@@ -772,6 +813,7 @@ impl mockspace_lint_rules::tool::Tool for StubTool {
             description: "the phrase to look for",
         }]
     }
+
     fn run(
         &self,
         _ctx: &mockspace_lint_rules::tool::ToolContext<'_>,
@@ -824,12 +866,20 @@ fn tool_catalogue_rule_embeds_a_live_snapshot_not_a_fixed_string() {
         "the declared project tool must appear in the generated snapshot:\n{}",
         rule.body
     );
-    assert!(rule.body.contains("mock lock"), "a builtin must appear too:\n{}", rule.body);
+    assert!(
+        rule.body.contains("mock lock"),
+        "a builtin must appear too:\n{}",
+        rule.body
+    );
 
     // and the negative: an empty pack's rule says nothing about a tool that
     // was never declared
     let builtins_empty = generate_builtin_templates(&cfg, &LintPack::default());
-    let rule_empty = builtins_empty.rules.iter().find(|r| r.name == "tool-catalogue").unwrap();
+    let rule_empty = builtins_empty
+        .rules
+        .iter()
+        .find(|r| r.name == "tool-catalogue")
+        .unwrap();
     assert!(!rule_empty.body.contains("phrase-search"));
 }
 
@@ -861,7 +911,11 @@ fn panel_discipline_rule_states_the_seat_cap_and_the_canon_prohibition() {
         .iter()
         .find(|r| r.name == "panel-discipline")
         .expect("opted in");
-    assert!(rule.body.contains("Ninety-nine"), "the seat cap must be stated:\n{}", rule.body);
+    assert!(
+        rule.body.contains("Ninety-nine"),
+        "the seat cap must be stated:\n{}",
+        rule.body
+    );
     assert!(
         rule.body.contains("do not write canon") || rule.body.contains("never writes canon"),
         "the canon prohibition must be stated in words a reader cannot miss:\n{}",
@@ -869,4 +923,167 @@ fn panel_discipline_rule_states_the_seat_cap_and_the_canon_prohibition() {
     );
     assert!(rule.body.contains("mock panel seat"));
     assert!(rule.body.contains("mock panel consolidate"));
+}
+
+// ---------------------------------------------------------------------------
+// Every writer into a hooks directory goes through the marker
+// ---------------------------------------------------------------------------
+//
+// The settings merge asks each script on disk whether it carries the
+// generation marker, and keeps the entry when it does not. So a writer that
+// puts a script into a hooks directory without one produces wiring that is
+// kept as somebody's and appended to on every run, without bound.
+//
+// Three of the four writers called `with_generated_marker`. The fourth, the
+// one that renders a repository's own `mock/agent/hooks/`, did not, and
+// nothing said so: the suite was green, because every settings test builds its
+// scripts with a local helper that writes the marker itself and therefore
+// exercises the reader and never the writer.
+//
+// `agent_gate_is_a_generated_builtin` closes the builtin writer by reading
+// what it wrote. This closes the other three by reading the source, which is
+// the only instrument that reaches a writer no test drives.
+
+/// A module's source with any inline `#[cfg(test)]` block removed, and a
+/// `#[cfg(test)] mod tests;` declaration left where it is.
+fn only_the_shipping_half(src: &str) -> String {
+    let mut out = src;
+    let mut cut = 0usize;
+    while let Some(at) = out[cut ..].find("\n#[cfg(test)]") {
+        let at = cut + at + 1;
+        let after = &out[at ..];
+        let declares_a_sibling = after
+            .lines()
+            .nth(1)
+            .is_some_and(|l| l.trim_end().ends_with(';'));
+        if declares_a_sibling {
+            cut = at + 1;
+            continue;
+        }
+        return out[.. at].to_string();
+    }
+    out = &out[..];
+    out.to_string()
+}
+
+/// Every `fs::write` of a hook script in this module, as the file it sits in,
+/// its line, and the expression whose content it writes.
+///
+/// A hook script is identified by where it lands rather than by what anything
+/// is called: the path being written was bound from a `*hooks_dir.join(...)`,
+/// which is the one thing all four writers have in common and the one that
+/// cannot be renamed out from under this. `hooks.json` is joined the same way
+/// and is excluded by name, because it is wiring rather than a script and JSON
+/// has nowhere to put a shell comment.
+fn hook_script_writes() -> Vec<(String, usize, String, String)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/render_agent");
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(&dir)
+        .expect("the module directory is there")
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let src = std::fs::read_to_string(&path).expect("a module reads");
+        // Fixtures inside an inline test module write whatever the case under
+        // test needs, so they are cut. A `#[cfg(test)] mod tests;` declaration
+        // is not one: it sits near the top of a `mod.rs`, above everything,
+        // and cutting there hides every writer in the file. This reported
+        // clean over a deliberately unmarked write twice before the two were
+        // told apart.
+        let body = only_the_shipping_half(&src);
+
+        // The bindings that name a hook script on disk.
+        let mut script_paths: Vec<String> = Vec::new();
+        for line in body.lines() {
+            let Some((lhs, rhs)) = line.split_once(" = ") else {
+                continue;
+            };
+            let Some(binding) = lhs.trim().strip_prefix("let ") else {
+                continue;
+            };
+            if rhs.contains("hooks_dir.join(") && !rhs.contains("\"hooks.json\"") {
+                script_paths.push(binding.trim().to_string());
+            }
+        }
+
+        for (i, line) in body.lines().enumerate() {
+            let Some(rest) = line.split_once("fs::write(").map(|(_, r)| r) else {
+                continue;
+            };
+            let mut parts = rest.splitn(2, ", ");
+            let (Some(target), Some(content)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            let target = target.trim().trim_start_matches('&').to_string();
+            if script_paths.contains(&target) {
+                found.push((name.clone(), i + 1, target, content.to_string()));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn every_hook_script_this_module_writes_carries_the_marker() {
+    let writes = hook_script_writes();
+    assert!(
+        writes.len() >= 4,
+        "the reader found {} hook writers, so it has stopped matching them",
+        writes.len()
+    );
+    let mut unmarked = Vec::new();
+    for (file, line, target, content) in &writes {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/render_agent")
+                .join(file),
+        )
+        .unwrap();
+        // Either the call is right there, or it built the binding being written.
+        // The write's second argument carries the rest of the statement after
+        // it, so the binding is its leading identifier and nothing else.
+        let binding: String = content
+            .trim()
+            .trim_start_matches('&')
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let binding = binding.as_str();
+        let marked_at_the_write = content.contains("with_generated_marker");
+        let marked_at_the_binding = src.contains(&format!("let {binding} = "))
+            && src
+                .split(&format!("let {binding} = "))
+                .skip(1)
+                .any(|after| {
+                    after
+                        .split_once(';')
+                        .is_some_and(|(rhs, _)| rhs.contains("with_generated_marker"))
+                });
+        if !(marked_at_the_write || marked_at_the_binding) {
+            unmarked.push(format!("{file}:{line} writes {target} unmarked"));
+        }
+    }
+    assert!(unmarked.is_empty(), "{}", unmarked.join("\n"));
+}
+
+#[test]
+fn the_writer_reader_can_actually_fail() {
+    // The check above reports nothing, which a reader matching nothing would
+    // do just as well. So the reader is run over a writer built to trip it.
+    let writes = hook_script_writes();
+    for module in ["wire.rs", "mod.rs", "content.rs"] {
+        assert!(
+            writes.iter().any(|(f, ..)| f == module),
+            "the reader reached no writer in {module}, which has one. A cut in \
+             the wrong place hides a whole file and reports clean."
+        );
+    }
+    assert!(
+        writes.iter().all(|(_, _, t, _)| !t.contains("hooks.json")),
+        "the wiring file was read as a script"
+    );
 }

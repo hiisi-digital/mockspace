@@ -217,12 +217,16 @@ pub(crate) fn generate_lint_derived_content(
         let hook_name = format!("lint-forbidden-{slug}.sh");
 
         let repo_root_str = cfg.repo_root.to_string_lossy();
-        let claude_hook = hook_body
-            .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
-            .replace("{{REPO_ROOT}}", &repo_root_str);
-        let copilot_hook = hook_body
-            .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
-            .replace("{{REPO_ROOT}}", &repo_root_str);
+        let claude_hook = super::wire::with_generated_marker(
+            &hook_body
+                .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
+                .replace("{{REPO_ROOT}}", &repo_root_str),
+        );
+        let copilot_hook = super::wire::with_generated_marker(
+            &hook_body
+                .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
+                .replace("{{REPO_ROOT}}", &repo_root_str),
+        );
 
         let claude_hook_path = claude_hooks_dir.join(&hook_name);
         fs::write(&claude_hook_path, &claude_hook).ok();
@@ -352,7 +356,6 @@ pub(crate) fn generate_crate_readme_rules(
     registry: &crate::registry::Registry,
 ) -> usize {
     use std::collections::BTreeSet as Set;
-
 
     let mock_rel = cfg
         .mock_dir

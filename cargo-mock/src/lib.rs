@@ -32,39 +32,39 @@ use renki::{Anchor, Hooks, Locate, Resolved, Tool, Workdir, pin_keys};
 
 /// The canonical mockspace repository: the engine source when a manifest sets
 /// no `mockspace_git`.
-pub const CANONICAL_URL: &str = "ssh://git@github.com/hiisi-digital/mockspace.git";
+pub const CANONICAL_URL: &str = "https://github.com/hiisi-digital/mockspace.git";
 
 /// mockspace, as a launcher.
 pub const TOOL: Tool = Tool {
     // the config lives in the repository, so the root is the repository.
-    anchor:          Anchor::Marker(".git"),
-    short:           "mock",
-    config_file:     "mockspace.toml",
-    pin_keys:        pin_keys!("mockspace"),
-    engine_crate:    "mockspace",
+    anchor: Anchor::Marker(".git"),
+    short: "mock",
+    config_file: "mockspace.toml",
+    pin_keys: pin_keys!("mockspace"),
+    engine_crate: "mockspace",
     cache_namespace: "mockspace",
-    default_url:     CANONICAL_URL,
-    launcher_crate:  "cargo-mock",
+    default_url: CANONICAL_URL,
+    launcher_crate: "cargo-mock",
     // `mock_dir`, not renki's conventional `workdir`. The key is a contract
     // with `lib/mock.sh` and with every hook and shell helper that sources it,
     // all of which parse `mock_dir=` and have done since before the launcher
     // was extracted. renki makes the keys fields for exactly this.
-    locate:          Some(Locate {
+    locate: Some(Locate {
         workdir_key: "mock_dir",
         ..Locate::DEFAULT
     }),
-    workdir:         Some(Workdir {
+    workdir: Some(Workdir {
         key:          "mock_dir",
         // at the repo root, `mock` is what almost every consumer uses; in a
         // subdirectory the config's own directory is the workspace.
         root_default: "mock",
     }),
-    hooks:           Hooks {
-        prepare_repo:      Some(plant_gate),
-        engine_args:       Some(lint_rules_from_pin),
+    hooks: Hooks {
+        prepare_repo: Some(plant_gate),
+        engine_args: Some(lint_rules_from_pin),
         engine_args_local: Some(lint_rules_from_checkout),
         verify_engine_dir: Some(has_lint_rules),
-        legacy_pin:        Some(legacy::pin_from_lock_at),
+        legacy_pin: Some(legacy::pin_from_lock_at),
         verify_repo_state: Some(no_retired_alias),
         ..Hooks::NONE
     },
@@ -119,9 +119,7 @@ fn lint_rules_from_pin(resolved: &Resolved) -> Vec<String> {
 fn lint_rules_at(url: &str, kind: &str, value: &str) -> Vec<String> {
     vec![
         "--mockspace-lint-rules-dep".to_string(),
-        format!(
-            "{{ package = \"mockspace-lint-rules\", git = \"{url}\", {kind} = \"{value}\" }}"
-        ),
+        format!("{{ package = \"mockspace-lint-rules\", git = \"{url}\", {kind} = \"{value}\" }}"),
     ]
 }
 
@@ -294,6 +292,25 @@ mod tests {
         let dep = lint_rules_at("ssh://git@example.invalid/other.git", "rev", "abc");
         assert!(dep[1].contains("example.invalid"), "{}", dep[1]);
         assert!(!dep[1].contains("hiisi-digital"), "{}", dep[1]);
+    }
+
+    #[test]
+    fn the_default_source_is_fetchable_without_a_credential() {
+        // `default_url` is what a repository fetches from when its manifest
+        // sets no `mockspace_git`, so it is fetched by everybody who installs
+        // the launcher and configures nothing. An `ssh://` form asks each of
+        // them for a key on an account with access to the repository, which
+        // nobody arriving from the registry has. The repository is public and
+        // https needs nothing.
+        assert!(
+            CANONICAL_URL.starts_with("https://"),
+            "the default source must be anonymously fetchable, got {CANONICAL_URL}"
+        );
+        assert!(!CANONICAL_URL.contains("git@"), "{CANONICAL_URL}");
+
+        // and it is the source the tool actually reaches for, not a constant
+        // that agrees with itself while the descriptor points elsewhere.
+        assert_eq!(TOOL.default_url, CANONICAL_URL);
     }
 
     #[test]

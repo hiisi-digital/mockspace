@@ -558,7 +558,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 // time. Its name is its directory under `<mock>/tools/`, so the
                 // check is a directory listing rather than a build: a typo must
                 // not compile a cdylib to discover it was a typo.
-                if bootstrap::tool_names(&cfg.mock_dir).iter().any(|n| n == other) {
+                if bootstrap::tool_names(&cfg.mock_dir)
+                    .iter()
+                    .any(|n| n == other)
+                {
                     // Whether a cdylib was even asked for is the fact the
                     // not-found message turns on, and it is on this command
                     // line rather than inferable from an empty pack.
@@ -574,7 +577,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 // An unrecognised first positional is a mistyped subcommand,
                 // not a reason to silently run the default full regeneration
                 // (slow, and not what was asked). Report and exit non-zero.
-                return super::help::unknown_subcommand(other, &bootstrap::tool_names(&cfg.mock_dir));
+                return super::help::unknown_subcommand(
+                    other,
+                    &bootstrap::tool_names(&cfg.mock_dir),
+                );
             },
         }
     }
@@ -1081,22 +1087,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     let written = document::render_all(&plan, &placeholders, &registry, &cfg);
     generated.extend(written.iter().cloned());
 
-    // The sweep the clean at the top of this function used to be. A top-level
-    // file nothing generated this run is a document that stopped being
-    // generated, which is the only thing that block was ever for.
     eprintln!("--- sweeping docs/ ---");
-    let keep: std::collections::HashSet<&Path> = generated.iter().map(|p| p.as_path()).collect();
-    let mut swept = 0usize;
-    if let Ok(entries) = fs::read_dir(&cfg.docs_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && !keep.contains(path.as_path()) {
-                if fs::remove_file(&path).is_ok() {
-                    swept += 1;
-                }
-            }
-        }
-    }
+    let swept = document::sweep_retired(&cfg.docs_dir, &generated);
     eprintln!("  swept {swept} document(s) nothing generates any more");
     eprintln!("  generated {} documents", written.len());
 
@@ -1569,8 +1561,7 @@ fn registry_gate(
         errors += 1;
         eprintln!("  ERROR [{}]: {}", f.kind, f.message);
     }
-    for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots)
-    {
+    for f in registry::namespace_root_collisions(&cfg.registry_namespaces, &cfg.registry_roots) {
         errors += 1;
         eprintln!("  ERROR [{}]: {}", f.kind, f.message);
     }
@@ -1586,14 +1577,14 @@ fn registry_gate(
     // of failures after fixing a typo somewhere they were not looking.
     let declarations = registry::unknown_field_types(&cfg.registry_namespaces)
         .into_iter()
-        .chain(registry::namespace_type_collisions(&cfg.registry_namespaces))
-        .chain(registry::value_field_targets(&cfg.registry_namespaces));
-    for f in declarations
-        .chain(registry::validate_row_references(
-            registry,
+        .chain(registry::namespace_type_collisions(
             &cfg.registry_namespaces,
         ))
-    {
+        .chain(registry::value_field_targets(&cfg.registry_namespaces));
+    for f in declarations.chain(registry::validate_row_references(
+        registry,
+        &cfg.registry_namespaces,
+    )) {
         errors += 1;
         eprintln!("  ERROR [{}]: {}", f.kind, f.message);
     }

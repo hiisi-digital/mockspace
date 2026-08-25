@@ -309,7 +309,11 @@ pub fn generate_agent_rules(
     // disagree forever, since nothing else ever deletes it. Only names from
     // the builtin catalogue are candidates, so a directory the consumer put
     // there by hand is never touched.
-    let enabled: Vec<&str> = builtins.skills.iter().map(|s| s.dir_name.as_str()).collect();
+    let enabled: Vec<&str> = builtins
+        .skills
+        .iter()
+        .map(|s| s.dir_name.as_str())
+        .collect();
     for dir_name in BUILTIN_SKILL_DIRS {
         if enabled.contains(dir_name) {
             continue;
@@ -504,7 +508,8 @@ pub fn generate_agent_rules(
                 .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
                 .replace("{{REPO_ROOT}}", &repo_root_str);
             let claude_path = claude_hooks_dir.join(out_name);
-            fs::write(&claude_path, &claude_content).expect("failed to write claude hook");
+            fs::write(&claude_path, wire::with_generated_marker(&claude_content))
+                .expect("failed to write claude hook");
             #[cfg(unix)]
             set_executable(&claude_path);
             eprintln!("  {}", claude_path.display());
@@ -515,7 +520,8 @@ pub fn generate_agent_rules(
                 .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
                 .replace("{{REPO_ROOT}}", &repo_root_str);
             let copilot_path = copilot_hooks_dir.join(out_name);
-            fs::write(&copilot_path, &copilot_content).expect("failed to write copilot hook");
+            fs::write(&copilot_path, wire::with_generated_marker(&copilot_content))
+                .expect("failed to write copilot hook");
             #[cfg(unix)]
             set_executable(&copilot_path);
             eprintln!("  {}", copilot_path.display());
