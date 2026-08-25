@@ -1815,6 +1815,25 @@ pub fn check_repo(
 /// per-finding levels are deliberate gradation, a build gate and an advisory
 /// coming out of one lint, and flattening them onto the lint's default would
 /// erase it.
+/// The lints a project may not turn off or lower.
+///
+/// The design-round gate is what this tool is. A project that wants source
+/// edits ungated does not want this tool, and the readme says so in those
+/// words, so the sentence has to be true rather than a description of what
+/// nobody had tried. Configuring one of these parses and then does nothing,
+/// which is quieter than it should be; saying so to the person who wrote the
+/// line wants a diagnostic channel the config reader does not have yet.
+///
+/// Held here by name rather than declared by each lint, because a lint that
+/// declares itself non-negotiable is a lint pack deciding what a project it
+/// was imported into must accept. That is the opposite of the arrangement.
+pub const NON_NEGOTIABLE: [&str; 4] = [
+    "changelist-required",
+    "changelist-doc-gate",
+    "changelist-lock",
+    "changelist-immutability",
+];
+
 fn run_with_overrides(
     lint: &dyn Lint,
     doc_only: bool,
@@ -1826,7 +1845,12 @@ fn run_with_overrides(
         return;
     }
 
-    let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
+    // Read past the config entirely for the four the readme calls
+    // non-negotiable, whether it arrived from a file or was built in code.
+    let negotiable = !NON_NEGOTIABLE.contains(&lint.name());
+    let base_override = overrides
+        .filter(|_| negotiable)
+        .and_then(|cfg| cfg.base.get(lint.name()).copied());
 
     // A configured override wins; absent one, the lint's own declared default
     // decides whether it runs at all. Naming a lint in any section counts as
@@ -1840,7 +1864,7 @@ fn run_with_overrides(
             || cfg.params.contains_key(lint.name())
             || cfg.paths.contains_key(lint.name())
     });
-    if !named_in_config && lint.default_severity().is_off() {
+    if negotiable && !named_in_config && lint.default_severity().is_off() {
         return;
     }
     if base_override.is_some_and(|sev| sev.is_off()) {
@@ -1849,7 +1873,7 @@ fn run_with_overrides(
 
     let mut lint_errors = run();
 
-    if let Some(cfg) = overrides {
+    if let Some(cfg) = overrides.filter(|_| negotiable) {
         for err in &mut lint_errors {
             let effective = if let (Some(kind), Some(finding_map)) =
                 (err.finding_kind, cfg.findings.get(lint.name()))
@@ -2294,6 +2318,66 @@ mod repo_lint_tests {
             exclude: vec!["**".to_string()],
         });
         assert!(run_one(Box::new(OffByDefault), Some(&cfg)).is_empty());
+    }
+
+    #[test]
+    fn the_design_round_gate_cannot_be_turned_off() {
+        // The readme calls these four always on and non-negotiable, and the
+        // whole pitch rests on the sentence. Nothing enforced it: one line in
+        // a `[lints]` table disarmed the gate the tool exists to be, and the
+        // repository it disarmed was the one whose invariants it was holding.
+        for name in NON_NEGOTIABLE {
+            let mut cfg = LintConfig::empty();
+            cfg.base.insert(name.to_string(), Severity::OFF);
+
+            let errors = run_one(Box::new(Ungovernable(name)), Some(&cfg));
+            assert_eq!(errors.len(), 1, "`{name}` was turned off by a config line");
+            assert_eq!(
+                errors[0].severity,
+                Severity::HARD_ERROR,
+                "`{name}` was lowered by a config line"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_lint_is_still_the_project_s_to_configure() {
+        // The control, and the reason the list is a list rather than a policy.
+        // A guard written as "no override ever wins" passes the test above and
+        // takes every other lint's configuration with it.
+        let mut cfg = LintConfig::empty();
+        cfg.base.insert("negotiable".to_string(), Severity::OFF);
+        assert!(
+            run_one(Box::new(Ungovernable("negotiable")), Some(&cfg)).is_empty(),
+            "an ordinary lint ignored the project's own configuration"
+        );
+    }
+
+    /// A repo lint that always reports, under whatever name it is given.
+    ///
+    /// Named rather than fixed, so the same fixture stands in for each of the
+    /// four and for one that is not on the list. What is under test is the
+    /// name, and a fixture per name would test four copies of one branch.
+    struct Ungovernable(&'static str);
+
+    impl Lint for Ungovernable {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+
+        fn default_severity(&self) -> Severity {
+            Severity::HARD_ERROR
+        }
+
+        fn source_only(&self) -> bool {
+            false
+        }
+    }
+
+    impl RepoLint for Ungovernable {
+        fn check_repo(&self, _ctx: &RepoContext) -> Vec<LintError> {
+            vec![LintError::error("unknown".to_string(), 0, self.0, "fired".to_string())]
+        }
     }
 
     #[test]

@@ -298,13 +298,18 @@ pub(crate) fn print_help() -> ExitCode {
     println!("    --auto-commit      commit the state transition a subcommand makes");
     println!("                       (writes the commit with git plumbing, so no hook");
     println!("                       runs and the commit is not signed)");
-    println!("    --nuke             wipe crate source, leaving stub lib.rs files");
     println!("    -h, --help         show this message");
     println!();
     println!("    --scope and --doc-only are verified against what is staged: a");
     println!("    narrower claim than the staged set is refused rather than obeyed.");
     println!();
     println!("Configuration lives in mockspace.toml at the repo root.");
+    println!();
+    println!("    `--nuke --i-mean-it` deletes every source file under the configured");
+    println!("    source directories, leaving stub lib.rs files, so the crates can be");
+    println!("    rewritten from their documents. It refuses a tree with anything");
+    println!("    uncommitted. It is not in the option list above because reaching for");
+    println!("    it by accident costs more than looking it up costs.");
     ExitCode::SUCCESS
 }
 
