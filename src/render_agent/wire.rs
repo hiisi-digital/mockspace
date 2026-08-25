@@ -135,12 +135,27 @@ const COPILOT_HOOK_PREFIX: &str = ".github/hooks/";
 /// both live in the same directory, and it tells anybody opening the file that
 /// editing it is pointless.
 pub(crate) fn with_generated_marker(content: &str) -> String {
+    // Already marked stays as it is. Two markers would be one more than the
+    // reader needs and would push the rest of the file a line further from the
+    // window it reads.
+    if crate::render_design::is_generated(content) {
+        return content.to_string();
+    }
     let marker = format!("# {}", crate::render_design::GENERATED_MARKER);
-    match content.split_once('\n') {
-        Some((shebang, rest)) if shebang.starts_with("#!") => {
-            format!("{shebang}\n{marker}\n{rest}")
-        },
-        _ => format!("{marker}\n{content}"),
+    // The first line, whether or not a newline follows it. Splitting on the
+    // newline alone misses a one-line script, and prepending the marker to one
+    // of those puts it in front of the shebang, which stops the kernel reading
+    // the file as a script at all.
+    let (first, rest) = match content.split_once('\n') {
+        Some((first, rest)) => (first, Some(rest)),
+        None => (content, None),
+    };
+    if !first.starts_with("#!") {
+        return format!("{marker}\n{content}");
+    }
+    match rest {
+        Some(rest) => format!("{first}\n{marker}\n{rest}"),
+        None => format!("{first}\n{marker}\n"),
     }
 }
 
@@ -179,11 +194,16 @@ fn names_a_generated_script(command: &str, repo_root: &Path, prefix: &str) -> bo
     let Some(rest) = command.strip_prefix(prefix) else {
         return false;
     };
-    // The first word, because a command may carry arguments after the script.
-    let script = rest.split_whitespace().next().unwrap_or(rest);
-    match fs::read_to_string(repo_root.join(prefix).join(script)) {
-        Ok(text) => crate::render_design::is_generated(&text),
-        Err(_) => true,
+    // The whole rest first, then the first word. A command may carry arguments
+    // after the script, so the first word is the usual answer; but a script
+    // whose own name has a space in it truncates to nonsense that way, the
+    // read then fails, and the arm below reads a present hand-written script as
+    // an absent generated one and drops its wiring.
+    let read = |script: &str| fs::read_to_string(repo_root.join(prefix).join(script)).ok();
+    let first_word = rest.split_whitespace().next().unwrap_or(rest);
+    match read(rest).or_else(|| read(first_word)) {
+        Some(text) => crate::render_design::is_generated(&text),
+        None => true,
     }
 }
 
@@ -306,6 +326,20 @@ pub(crate) fn generate_settings(repo_root: &Path, all_hooks: &[HookMeta]) -> usi
 ///
 /// `None` means it can. `Some(why)` names what was found, for the warning, and
 /// means the file is left byte for byte as it was.
+/// The same question for `hooks.json`, whose `hooks` is a flat array rather
+/// than an object keyed by event. Without this a `hooks` of any other shape
+/// falls to `unwrap_or_default()` and is silently replaced.
+fn unexpected_copilot_shape(
+    doc: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&'static str> {
+    match doc.get("hooks") {
+        None => None,
+        Some(v) if v.is_null() => Some("a null `hooks`"),
+        Some(v) if !v.is_array() => Some("a `hooks` that is not an array"),
+        Some(_) => None,
+    }
+}
+
 fn unexpected_shape(settings: &serde_json::Map<String, serde_json::Value>) -> Option<&'static str> {
     let hooks = settings.get("hooks")?;
     if hooks.is_null() {
@@ -350,6 +384,14 @@ fn generate_copilot_hooks(
                 "  warning: {} is not readable as JSON, so its hook wiring was left alone. Fix \
                  or remove it and run again.",
                 copilot_hooks_path.display()
+            );
+        },
+        Some(doc) if unexpected_copilot_shape(&doc).is_some() => {
+            eprintln!(
+                "  warning: {} carries {}, which this does not understand, so its hook wiring \
+                 was left alone.",
+                copilot_hooks_path.display(),
+                unexpected_copilot_shape(&doc).unwrap_or("an unexpected shape"),
             );
         },
         Some(mut doc) => {
@@ -740,6 +782,75 @@ mod settings_tests {
         let count = generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
         assert_eq!(fs::read_to_string(&path).unwrap(), broken);
         assert_eq!(count, 1, "the claude side still wrote; this one did not");
+    }
+
+    #[test]
+    fn the_copilot_side_leaves_a_shape_it_does_not_understand_alone_as_well() {
+        // The shape check governs two files and was written for one. The
+        // copilot side read `hooks` through `.and_then(|v| v.as_array())` and
+        // fell to an empty default for anything else, so an object or a null
+        // there was silently replaced rather than left.
+        for odd in ["{\n  \"hooks\": {}\n}", "{\n  \"hooks\": null\n}"] {
+            let d = tempfile::tempdir().unwrap();
+            fs::create_dir_all(d.path().join(".github/hooks")).unwrap();
+            let path = d.path().join(".github/hooks/hooks.json");
+            fs::write(&path, odd).unwrap();
+
+            let count = generate_settings(d.path(), &[hook("gate.sh", &["Bash"])]);
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                odd,
+                "a `hooks` this does not understand was replaced"
+            );
+            assert_eq!(count, 1, "the claude side still wrote; this one did not");
+        }
+    }
+
+    #[test]
+    fn the_marker_goes_after_the_shebang_and_only_once() {
+        // A one-line script has no newline to split on, and the arm that
+        // handled that put the marker in front of the shebang, which stops the
+        // kernel reading the file as a script at all.
+        let one_line = with_generated_marker("#!/usr/bin/env bash");
+        assert!(one_line.starts_with("#!/usr/bin/env bash\n"), "{one_line}");
+        assert!(crate::render_design::is_generated(&one_line), "{one_line}");
+
+        // And a body that already carries one keeps exactly one.
+        let once = with_generated_marker("#!/bin/sh\nexit 0\n");
+        let twice = with_generated_marker(&once);
+        assert_eq!(once, twice, "the marker was written a second time");
+
+        // A script with no shebang still gets marked, at the top.
+        let bare = with_generated_marker("exit 0\n");
+        assert!(crate::render_design::is_generated(&bare), "{bare}");
+    }
+
+    #[test]
+    fn a_hand_written_script_whose_name_carries_a_space_is_still_theirs() {
+        // The command is split on whitespace to drop any arguments after the
+        // script, which truncates a name with a space in it. The read then
+        // fails, and the arm that reads an absent script as a retired one of
+        // ours drops the wiring for a hand-written hook sitting right there.
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join(".claude/hooks");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("my check.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+        assert!(
+            !names_a_generated_script(".claude/hooks/my check.sh", d.path(), CLAUDE_HOOK_PREFIX),
+            "a script that is present and unmarked was read as ours"
+        );
+
+        // The argument case the split exists for still works.
+        fs::write(
+            dir.join("gate.sh"),
+            format!("#!/bin/sh\n# {}\n", crate::render_design::GENERATED_MARKER),
+        )
+        .unwrap();
+        assert!(names_a_generated_script(
+            ".claude/hooks/gate.sh --strict",
+            d.path(),
+            CLAUDE_HOOK_PREFIX
+        ));
     }
 
     #[test]

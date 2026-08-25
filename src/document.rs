@@ -347,11 +347,17 @@ pub fn render_all(
 /// removed every one of those, on every run, without saying so.
 ///
 /// A rendered image cannot carry the marker, so it goes with the diagram it was
-/// rendered from: an image whose stem matches a file this call is sweeping, and
-/// whose extension is one this tool writes, is swept alongside it. That is the
-/// whole of the exception, and it is why [`OURS_IN_BYTES`] is one entry rather
-/// than a list of image formats. Somebody else's image reaches nothing, because
-/// the stem is only ever read off a file already shown to be ours.
+/// rendered from: an image whose stem matches a **diagram** this call is
+/// sweeping, and whose extension is one this tool renders, is swept alongside
+/// it.
+///
+/// The stem comes off a swept `.dot` and off nothing else, and that is the
+/// whole of what keeps this off other people's images. Reading it off any
+/// swept file instead reaches much further than the sentence above describes:
+/// a generated `DESIGN.md` retiring, which happens the moment a repository
+/// turns document ordering on, would take a hand-drawn `DESIGN.png` with it.
+/// Every image this tool writes is rendered from a `.dot` of the same stem, so
+/// the narrower rule loses nothing.
 ///
 /// Only the top level is read. A subdirectory is somebody's to organise.
 pub fn sweep_retired(docs_dir: &Path, kept: &[PathBuf]) -> usize {
@@ -379,8 +385,11 @@ pub fn sweep_retired(docs_dir: &Path, kept: &[PathBuf]) -> usize {
             .unwrap_or(false);
         if ours && std::fs::remove_file(path).is_ok() {
             swept += 1;
-            if let Some(stem) = path.file_stem() {
-                swept_stems.insert(stem.to_os_string());
+            let is_a_diagram = path.extension().and_then(|e| e.to_str()) == Some("dot");
+            if is_a_diagram {
+                if let Some(stem) = path.file_stem() {
+                    swept_stems.insert(stem.to_os_string());
+                }
             }
         }
     }
@@ -502,6 +511,34 @@ mod tests {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 
     #[test]
+    #[test]
+    fn a_retired_document_does_not_take_an_image_that_shares_its_name() {
+        let d = tempfile::tempdir().unwrap();
+        let docs = d.path();
+
+        // The case that made the rule too wide. A generated document retires,
+        // which happens to any repository the moment it turns document
+        // ordering on and every name gains its `000_` prefix. A hand-drawn
+        // image happens to share its stem.
+        let retired_doc = docs.join("DESIGN.md");
+        let theirs = docs.join("DESIGN.png");
+        std::fs::write(&retired_doc, generated("# design")).unwrap();
+        std::fs::write(&theirs, PNG).unwrap();
+
+        let swept = sweep_retired(docs, &[]);
+
+        assert!(
+            !retired_doc.exists(),
+            "the document was ours and stays swept"
+        );
+        assert!(
+            theirs.exists(),
+            "a hand-made image was deleted because a generated document shared its stem \
+             (sweep removed {swept})"
+        );
+        assert_eq!(swept, 1, "only the document was ours");
+    }
+
     fn a_retired_diagram_takes_its_rendered_image_with_it() {
         let d = tempfile::tempdir().unwrap();
         let docs = d.path();
