@@ -16,6 +16,7 @@ readme = "../README.md"
 rust-version = "1.88"
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
+homepage = "https://github.com/hiisi-digital/mockspace"
 categories = ["development-tools", "command-line-utilities"]
 keywords = ["mockspace", "cargo-subcommand", "design-rounds", "workflow"]
 

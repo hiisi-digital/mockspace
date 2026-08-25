@@ -12,6 +12,9 @@ readme = "../README.md"
 rust-version = "1.88"
 license = "MPL-2.0"
 repository = "https://github.com/hiisi-digital/mockspace"
+homepage = "https://github.com/hiisi-digital/mockspace"
+categories = ["development-tools", "config"]
+keywords = ["mockspace", "manifest", "git-hooks", "toml"]
 
 [dependencies]
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
