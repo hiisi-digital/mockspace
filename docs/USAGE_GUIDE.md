@@ -128,7 +128,9 @@ Common flags:
 | `--scope infra`     | Infrastructure-only mode (no crate check, no crate lints)    |
 | `--commit`          | Lint mode: `Commit` (typically most permissive gate)         |
 | `--strict`          | Lint mode: `Push` (strictest gate)                           |
-| `--nuke`            | Wipe all crate source; leave stub `lib.rs` files. Design preserved. Reproducibility test. |
+| `--nuke`            | Take the source down, leaving the designs. Names every file, then asks. |
+| `--nuke=docs`       | Take the designs and the source under them, which is the order the chain wants. |
+| `--y`               | Answer a `--nuke` in advance, for a second run and for a script. |
 | `--dir <path>`      | Override auto-discovered mock dir                            |
 
 The generated `pre-commit` hook runs `cargo mock` scoped to changed crates with `--commit`. The generated `pre-push` hook runs `cargo mock --lint-only --strict`.

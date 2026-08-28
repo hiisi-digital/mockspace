@@ -305,11 +305,12 @@ pub(crate) fn print_help() -> ExitCode {
     println!();
     println!("Configuration lives in mockspace.toml at the repo root.");
     println!();
-    println!("    `--nuke --i-mean-it` deletes every source file under the configured");
-    println!("    source directories, leaving stub lib.rs files, so the crates can be");
-    println!("    rewritten from their documents. It refuses a tree with anything");
-    println!("    uncommitted. It is not in the option list above because reaching for");
-    println!("    it by accident costs more than looking it up costs.");
+    println!("    `--nuke` takes a tier down so it can be written again from the");
+    println!("    one above it. `--nuke` alone takes the source, leaving the designs;");
+    println!("    `--nuke=docs` takes the designs and the source under them, which is");
+    println!("    the order the design chain requires. It names every file first and");
+    println!("    then asks; `--y` answers for you. It refuses a tree with anything");
+    println!("    uncommitted, because git is the only thing that gives any of it back.");
     ExitCode::SUCCESS
 }
 

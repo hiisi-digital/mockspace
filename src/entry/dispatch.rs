@@ -585,26 +585,25 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         }
     }
 
-    // --nuke: wipe all mock crate source, leaving minimal lib.rs stubs.
+    // --nuke: take a tier down so it can be rewritten from the tier above it.
     //
-    // Two conditions, because what this deletes is whatever `src_dirs` points
-    // at, which in a consumer is their real source. A second flag so it cannot
-    // be reached by a typo or by a shell history entry from another repository,
-    // and a clean tree so the deletion is recoverable by the only mechanism
-    // that reliably recovers anything.
-    if args.iter().any(|a| a == "--nuke") {
-        if !args.iter().any(|a| a == "--i-mean-it") {
-            eprintln!(
-                "--nuke deletes every source file under {}, leaving stub lib.rs files.",
-                cfg.src_dirs
-                    .iter()
-                    .map(|d| d.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            eprintln!("Add --i-mean-it if that is what you want.");
-            return ExitCode::FAILURE;
-        }
+    // What it deletes is whatever `src_dirs` points at, which in a consumer is
+    // their real source, so it names every file before it touches one and then
+    // asks. The listing is the safeguard: a second flag only proves somebody
+    // typed a second flag, while a list of paths is checkable against what they
+    // meant to be standing in.
+    //
+    // A clean tree is still required, and that is a different guard from the
+    // question below. `--y` says do not ask; nothing says recover this for me.
+    if let Some(request) = crate::entry::nuke::read_request(&args) {
+        let request = match request {
+            Ok(r) => r,
+            Err(why) => {
+                eprintln!("--nuke: {why}");
+                return ExitCode::FAILURE;
+            },
+        };
+
         if let Err(why) = crate::entry::nuke::tree_is_recoverable(&cfg.repo_root) {
             eprintln!("--nuke refused: {why}");
             eprintln!(
@@ -613,7 +612,29 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             );
             return ExitCode::FAILURE;
         }
-        return nuke_mock_sources(&cfg);
+
+        let plan = crate::entry::nuke::plan_nuke(&cfg, request.tier);
+        if plan.all_escaped() {
+            // A tree that would have been damaged, so it refuses rather than
+            // reporting nothing to do. `src_dirs` pointing outside the repository
+            // reaches here, and so does a crate whose `lib.rs` is a symlink.
+            plan.describe(&cfg.repo_root);
+            eprintln!();
+            eprintln!("--nuke refused: every path found was refused, for the reasons above.");
+            return ExitCode::FAILURE;
+        }
+        if plan.is_empty() {
+            eprintln!("--nuke: nothing to take.");
+            return ExitCode::SUCCESS;
+        }
+        plan.describe(&cfg.repo_root);
+
+        if request.ask && !crate::entry::nuke::confirm() {
+            eprintln!("--nuke: left alone.");
+            return ExitCode::FAILURE;
+        }
+        eprintln!();
+        return crate::entry::nuke::apply(&plan, &cfg);
     }
 
     let lint_only = args.iter().any(|a| a == "--lint-only");

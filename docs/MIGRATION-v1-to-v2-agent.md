@@ -93,5 +93,3 @@ fragments at bootstrap time.
 - v2 fragment source: `mock/crates/mockspace-rs/src/agent_builtin/`
 - Bootstrap installer: `mock/crates/mockspace-rs/src/bootstrap.rs`
   (function `install_agent_builtin`)
-- v1 reference: `~/Dev/loimu/mock/agent/` (used as the v1 reference
-  during the 2026-05-22 parity audit; see `mock/research/202605222330_v1-parity-audit.md`)
