@@ -297,6 +297,7 @@ pub(crate) fn plan_nuke(cfg: &Config, tier: NukeTier) -> NukePlan {
         NukeTier::Docs => {
             crate::document::design_templates(cfg)
                 .into_iter()
+                .filter(is_design)
                 .map(|t| t.path)
                 .collect()
         },
@@ -356,6 +357,20 @@ pub(crate) fn plan_nuke(cfg: &Config, tier: NukeTier) -> NukePlan {
         docs,
         escaped,
     }
+}
+
+/// Whether a template is design, and so something the docs tier takes.
+///
+/// The render walks every `*.md.tmpl` at the mock root, which is right for it and
+/// wrong here: `WORKFLOW.md.tmpl` and `PRINCIPLES.md.tmpl` sit in that directory
+/// without being design. Nobody rewrites them from a canon, so a nuke that takes
+/// them deletes text the tier below has no way to reproduce.
+///
+/// What is design is a crate's own `DESIGN.md.tmpl` and deep dives, which carry an
+/// owner, plus the workspace's `DESIGN.md.tmpl` at the root, which does not.
+fn is_design(t: &crate::document::DesignTemplate) -> bool {
+    t.owner.is_some()
+        || t.path.file_name().is_some_and(|n| n == "DESIGN.md.tmpl")
 }
 
 /// Whether the path is a symlink, without following it.
@@ -613,14 +628,16 @@ mod what_makes_a_deletion_recoverable {
 mod what_a_nuke_takes {
     use super::*;
 
-    /// A mock tree with two crates and two design templates, the smallest shape
-    /// that tells the two tiers apart.
+    /// A mock tree with two crates and every template shape the root and a crate
+    /// can carry, which is the smallest tree that tells the two tiers apart and
+    /// also tells design apart from the rest of the root.
     fn tree() -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         let mock = d.path().join("mock");
         fs::create_dir_all(&mock).unwrap();
         fs::write(mock.join("DESIGN.md.tmpl"), "# design\n").unwrap();
         fs::write(mock.join("PRINCIPLES.md.tmpl"), "# principles\n").unwrap();
+        fs::write(mock.join("WORKFLOW.md.tmpl"), "# workflow\n").unwrap();
 
         for name in ["alpha", "beta"] {
             let c = mock.join("crates").join(name);
@@ -631,6 +648,7 @@ mod what_a_nuke_takes {
             )
             .unwrap();
             fs::write(c.join("DESIGN.md.tmpl"), "# crate design\n").unwrap();
+            fs::write(c.join("DEEPDIVE_layout.md.tmpl"), "# dive\n").unwrap();
             fs::write(c.join("src").join("lib.rs"), "pub mod inner;\n").unwrap();
             fs::write(c.join("src").join("other.rs"), "pub fn other() {}\n").unwrap();
             fs::write(
@@ -707,16 +725,75 @@ mod what_a_nuke_takes {
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
         assert!(names.contains(&"DESIGN.md.tmpl".to_string()), "{names:?}");
-        assert!(
-            names.contains(&"PRINCIPLES.md.tmpl".to_string()),
-            "{names:?}"
-        );
-        // Both crate designs, not only the root ones.
+        // Both crate designs, not only the root one, and the deep dives with them.
         assert_eq!(
             names.iter().filter(|n| *n == "DESIGN.md.tmpl").count(),
             3,
             "one at the root and one per crate: {names:?}"
         );
+        assert_eq!(
+            names
+                .iter()
+                .filter(|n| *n == "DEEPDIVE_layout.md.tmpl")
+                .count(),
+            2,
+            "a deep dive is design and goes with its crate: {names:?}"
+        );
+    }
+
+    #[test]
+    fn the_design_tier_leaves_the_root_templates_that_are_not_design() {
+        // `WORKFLOW` and `PRINCIPLES` sit beside `DESIGN` at the mock root and are
+        // not design: nobody rewrites them from a canon, so the tier below cannot
+        // reproduce them and a nuke that took them would be a deletion with no
+        // recovery. The docs tier used to take every `*.md.tmpl` at that root,
+        // which is what the renderer wants and not what this tier means.
+        let d = tree();
+        let cfg = cfg_for(&d);
+        let plan = plan_nuke(&cfg, NukeTier::Docs);
+
+        let names: Vec<String> = plan
+            .docs
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !names.contains(&"PRINCIPLES.md.tmpl".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            !names.contains(&"WORKFLOW.md.tmpl".to_string()),
+            "{names:?}"
+        );
+
+        apply(&plan, &cfg);
+        assert!(d.path().join("mock/PRINCIPLES.md.tmpl").exists());
+        assert!(d.path().join("mock/WORKFLOW.md.tmpl").exists());
+        // The control: the root design did go, so the tier still reaches the root.
+        assert!(!d.path().join("mock/DESIGN.md.tmpl").exists());
+    }
+
+    #[test]
+    fn what_the_docs_tier_takes_is_exactly_the_designs() {
+        // Set equality rather than two membership checks. Both of the tests above
+        // pass on a plan carrying an extra template nobody thought to name, and a
+        // template added to the root later is exactly the thing that would slip in.
+        let d = tree();
+        let cfg = cfg_for(&d);
+
+        let mut got: Vec<PathBuf> = plan_nuke(&cfg, NukeTier::Docs).docs;
+        got.sort();
+
+        let mock = d.path().join("mock");
+        let mut want = vec![mock.join("DESIGN.md.tmpl")];
+        for name in ["alpha", "beta"] {
+            let c = mock.join("crates").join(name);
+            want.push(c.join("DESIGN.md.tmpl"));
+            want.push(c.join("DEEPDIVE_layout.md.tmpl"));
+        }
+        want.sort();
+
+        assert_eq!(got, want);
     }
 
     #[test]
@@ -769,12 +846,18 @@ mod what_a_nuke_takes {
     }
 
     #[test]
-    fn the_nuke_and_the_renderer_agree_on_what_a_design_is() {
+    fn the_nuke_takes_a_subset_of_what_the_renderer_writes() {
         // Both sides read `document::design_templates`, so what this constrains is
-        // that `document::plan` neither drops a template nor reorders them. A
+        // that `document::plan` neither drops a template nor invents one. A
         // template `design_templates` itself misses passes here and is not what
         // this measures; the one enumeration is the thing that makes that the only
-        // remaining way for the two to disagree.
+        // remaining way for the two to part company.
+        //
+        // The relation is containment rather than equality, because the renderer
+        // writes every root template and the nuke takes only the designs. What the
+        // renderer holds and the nuke does not is named below, so a template
+        // quietly falling out of the nuke fails here rather than passing as one
+        // more member of a difference nobody enumerated.
         let d = tree();
         let cfg = cfg_for(&d);
 
@@ -789,8 +872,28 @@ mod what_a_nuke_takes {
             })
             .collect();
 
-        assert_eq!(from_nuke, from_renderer);
-        assert!(!from_nuke.is_empty(), "an empty agreement is not one");
+        assert!(!from_nuke.is_empty(), "an empty containment is not one");
+        for p in &from_nuke {
+            assert!(
+                from_renderer.contains(p),
+                "the nuke takes a template the renderer never writes: {}",
+                p.display()
+            );
+        }
+
+        let mut only_rendered: Vec<String> = from_renderer
+            .iter()
+            .filter(|p| !from_nuke.contains(p))
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        only_rendered.sort();
+        assert_eq!(
+            only_rendered,
+            vec![
+                "PRINCIPLES.md.tmpl".to_string(),
+                "WORKFLOW.md.tmpl".to_string()
+            ]
+        );
     }
 }
 
