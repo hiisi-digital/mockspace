@@ -18,10 +18,10 @@ mockspace-template = { path = "../mockspace-template" }
 # OIDs without a direct gix dep on top of mockspace-rs. Version
 # pinned to match mockspace-core so the same `ObjectId` type
 # flows through the re-export chain.
-# FIXME: bump gix past 0.66 to clear RUSTSEC-2025-0140 (gix-date non-utf8 UB);
-# it needs a major bump that may touch the git-ops code. RUSTSEC-2025-0021
-# (SHA-1 without collision detection) is inherent to gix, not fixed by a bump.
-gix = { version = "0.66", default-features = false, features = ["revision"] }
+# The feature list matches mockspace-core's and has to, or the two resolve to
+# different gix builds and the re-exported `ObjectId` stops being one type.
+# `sha1` is not optional there either; gix-hash refuses to compile without it.
+gix = { version = "0.87", default-features = false, features = ["revision", "sha1"] }
 
 # AST parsing.
 syn = { version = "2", features = ["full", "extra-traits", "visit", "parsing"] }

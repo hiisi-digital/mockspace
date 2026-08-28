@@ -148,7 +148,7 @@ impl RepoHandle {
                 });
             },
         };
-        let id = reference.peel_to_id_in_place().map_err(|e| {
+        let id = reference.peel_to_id().map_err(|e| {
             RefTreeReadError::GixOdb {
                 source: Box::new(e),
             }
@@ -181,7 +181,7 @@ impl RepoHandle {
                 });
             },
         };
-        let id = reference.peel_to_id_in_place().map_err(|e| {
+        let id = reference.peel_to_id().map_err(|e| {
             RefTreeReadError::GixOdb {
                 source: Box::new(e),
             }
