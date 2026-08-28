@@ -26,7 +26,7 @@ None of that says anything about what you build. Crate naming, numeric disciplin
 
 Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Every release is tagged and the log between two tags is what actually moved.
 
-I'd caution against adopting this just yet for anything you cannot afford to have shift under you. Two reworks are in flight and either will move things: the plugin ABI v1 redesign, and a successor model for the design-round workflow (see `docs/research/`).
+I'd caution against adopting this just yet for anything you cannot afford to have shift under you. Two reworks are in flight and either will move things: the plugin ABI v1 redesign, and a successor model for the design-round workflow (see [the research notes](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/)).
 
 ## When mockspace is a good fit
 
@@ -97,7 +97,7 @@ cargo mock tools                 # every subcommand and project tool, with usage
 mock locate                      # where this repo keeps its mockspace, shell-assignable
 ```
 
-For the full subcommand surface, configuration reference, lint authoring, and template structure, see `docs/USAGE_GUIDE.md`.
+For the full subcommand surface, configuration reference, lint authoring, and template structure, see the [usage guide](https://github.com/hiisi-digital/mockspace/blob/dev/docs/USAGE_GUIDE.md).
 
 ## Design rounds
 
@@ -113,7 +113,7 @@ The unit of design work in mockspace is a *round*. A round walks five phases:
 
 Phases are detected from filename suffixes inside `mock/design_rounds/`. Transitions happen through `cargo mock lock` / `unlock` / `deprecate` / `close` / `archive`, never through manual renames. Each one validates its invariants, commits the rename itself when asked with `--auto-commit`, and leaves a stable history anchor.
 
-A successor model for this workflow is in development. It makes tasks, phases, manifests and epochs concepts in their own right, and demotes the branch to ambient context. See `docs/research/TASKS_BRANCHES_PHASES_EPOCHS_DESIGN.md`.
+A successor model for this workflow is in development. It makes tasks, phases, manifests and epochs concepts in their own right, and demotes the branch to ambient context. See [the successor design](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/TASKS_BRANCHES_PHASES_EPOCHS_DESIGN.md).
 
 ## Lint pipeline
 
