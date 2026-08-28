@@ -425,7 +425,6 @@ if [[ "$IS_MOCKSPACE" != "true" ]]; then
     allow
 fi
 context "MOCKSPACE REMINDER: You are operating on mockspace files. Follow the design round workflow: TOPIC -> DOC -> DRAFT -> IMPL -> CLOSED. Check phase before editing. Use 'cargo mock' commands for phase transitions."
-allow
 "##
     )
 }
