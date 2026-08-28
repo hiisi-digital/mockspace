@@ -3,6 +3,17 @@
 # registries. Run with `cargo deny check`; mockspace's pre-push gate runs it
 # best-effort when cargo-deny is installed (opt out with `deny_check = false`
 # in mockspace.toml).
+#
+# The repo holds two workspaces and this config governs both. The gate walks
+# every root it finds and points each at this file, so it sees the engine's
+# dependencies under `mock/` as well as the launcher's here. A `cargo deny`
+# run by hand does not: it reads the lockfile of whatever directory it is in,
+# and the root one carries no gix at all while `mock/Cargo.lock` carries
+# thirty-four entries of it. So `cargo deny check advisories` from here says
+# ok on a tree with live advisories in it, which is how two of them sat
+# unnoticed. By hand, run it in `mock/` as `cargo deny --config ../deny.toml
+# check advisories`, minding that `--config` is a flag on `deny` and not on
+# `check`. Otherwise trust the gate and not the hand run.
 
 # `targets` filters which platform's dependency tree cargo-deny analyses; it
 # takes rustc target triples, not cargo build-target names. An empty list
