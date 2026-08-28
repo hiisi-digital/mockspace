@@ -339,6 +339,23 @@ mod tests {
     /// parallel by default.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    /// Take `ENV_LOCK`, and take it even when a previous test panicked
+    /// while holding it.
+    ///
+    /// The lock guards nothing but the process env, and a poisoned
+    /// mutex says a test failed rather than that the env is in an
+    /// unknown state: every mutation here goes through an RAII guard
+    /// whose `Drop` runs during the unwind, so the restore has already
+    /// happened by the time the next test asks for the lock.
+    ///
+    /// `.unwrap()` here instead turns one failing test into all of
+    /// them. It did: one real failure poisoned this and eleven more
+    /// died on `PoisonError`, which buries the one message that says
+    /// what actually went wrong under eleven that say nothing.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// RAII guard that sets `MOCKSPACE_BIN_PATH` for the duration of
     /// a test and restores the prior value on drop.
     ///
@@ -389,8 +406,12 @@ mod tests {
 
     #[test]
     fn no_env_var_falls_through_to_terminal_error() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvVarGuard::unset();
+        // `PATH` too, or the chain does not fall through at all: step
+        // three finds whatever `mock` the developer has installed and
+        // the test fails on exactly the machines anybody runs it on.
+        let _p = PathEnvGuard::unset();
         match resolve_invocation() {
             Err(ResolutionError::NoUsablePath) => {},
             other => panic!("expected NoUsablePath, got {other:?}"),
@@ -399,7 +420,7 @@ mod tests {
 
     #[test]
     fn env_var_set_to_existing_executable_resolves_absolute() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         // /bin/sh stands in for the mock binary; it exists on every
         // Unix system the workspace targets and is unconditionally
         // executable. The resolver does not actually spawn the path;
@@ -420,7 +441,7 @@ mod tests {
 
     #[test]
     fn env_var_pointing_at_nonexistent_path_surfaces_error() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvVarGuard::set("/nonexistent/mock/binary/path/that/should/not/exist");
         match resolve_invocation() {
             Err(ResolutionError::EnvVarPathNotExecutable(p)) => {
@@ -435,10 +456,14 @@ mod tests {
 
     #[test]
     fn empty_env_var_treated_as_unset() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = EnvVarGuard::set("");
         // Empty value should not fire the "path not executable" error;
         // it should fall through to the next step (currently terminal).
+        // `PATH` is cleared for the same reason as the test above: the
+        // fall-through only reaches the terminal error when no later
+        // step can answer, and an installed `mock` answers step three.
+        let _p = PathEnvGuard::unset();
         match resolve_invocation() {
             Err(ResolutionError::NoUsablePath) => {},
             other => panic!("expected NoUsablePath for empty env var, got {other:?}"),
@@ -466,7 +491,7 @@ mod tests {
 
     #[test]
     fn env_var_pointing_at_directory_surfaces_error() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         // A directory is not an executable file; the resolver should
         // surface the type-mismatch through the same error variant.
         let _g = EnvVarGuard::set("/tmp");
@@ -743,14 +768,14 @@ mod tests {
 
     #[test]
     fn path_lookup_returns_none_when_path_unset() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let _g = PathEnvGuard::unset();
         assert!(resolve_path_lookup().is_none());
     }
 
     #[test]
     fn path_lookup_finds_executable_in_path_entry() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let root = fixture_dir("path-find");
         let bin = write_fake_mock_binary(&root);
         let _g = PathEnvGuard::set(&root);
@@ -764,7 +789,7 @@ mod tests {
 
     #[test]
     fn path_lookup_returns_first_match_across_multiple_entries() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let root = fixture_dir("path-first-match");
         let first = root.join("a");
         let second = root.join("b");
@@ -791,7 +816,7 @@ mod tests {
 
     #[test]
     fn path_lookup_skips_non_executable_candidate() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let root = fixture_dir("path-skip-non-exec");
         // Create a regular non-exec file at the candidate path.
         std::fs::create_dir_all(&root).expect("mkdir root");
@@ -821,7 +846,7 @@ mod tests {
 
     #[test]
     fn path_lookup_skips_empty_path_entries() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let root = fixture_dir("path-skip-empty");
         let bin = write_fake_mock_binary(&root);
         let mut joined = std::ffi::OsString::new();
@@ -889,7 +914,7 @@ mod tests {
 
     #[test]
     fn mockspace_call_propagates_resolution_error_when_chain_falls_through() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         // Unset every cascade input so the chain falls through cleanly.
         let _env = EnvVarGuard::unset();
         let root = fixture_dir("mockspace-call-empty");
@@ -933,7 +958,7 @@ mod tests {
         #[cfg(not(unix))]
         return; // Fake-shim approach is Unix-specific.
 
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let root = fixture_dir("cargo-probe-ok");
         write_fake_cargo(&root, 0);
         let _g = PathEnvGuard::set(&root);
@@ -947,7 +972,7 @@ mod tests {
         #[cfg(not(unix))]
         return;
 
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         let root = fixture_dir("cargo-probe-fail");
         write_fake_cargo(&root, 1);
         let _g = PathEnvGuard::set(&root);
@@ -958,7 +983,7 @@ mod tests {
 
     #[test]
     fn cargo_probe_returns_false_when_cargo_not_on_path() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         // Point PATH at an empty tempdir so `cargo` is not findable
         // by the OS spawn. The probe's `Err(_)` arm of `Command::output`
         // takes the false branch.
@@ -996,7 +1021,7 @@ mod tests {
 
     #[test]
     fn env_var_pointing_at_non_executable_file_surfaces_error() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = env_lock();
         // Create a regular file with no exec bits set. The resolver
         // should surface the type-mismatch through the same error
         // variant the directory test exercises.
