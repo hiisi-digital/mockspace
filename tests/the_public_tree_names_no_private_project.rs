@@ -221,3 +221,78 @@ fn nothing_in_the_tarball_names_a_project_a_reader_cannot_see() {
         found.join("\n"),
     );
 }
+
+/// The readme is the landing page on the registry, where a relative link resolves
+/// against nothing. Every path it points at has to be in the tarball beside it,
+/// or be an absolute URL.
+///
+/// Found by excluding `docs/` from the package: three links in the readme kept
+/// pointing into it and would have rendered as dead text on crates.io while
+/// working perfectly on GitHub, which is the way round nobody notices.
+#[test]
+fn every_relative_link_in_the_readme_points_at_something_that_ships() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let readme = std::fs::read_to_string(root.join("README.md")).expect("the readme");
+    let shipped: Vec<String> = files_that_would_ship()
+        .iter()
+        .filter_map(|p| p.strip_prefix(root).ok())
+        .map(|p| p.display().to_string())
+        .collect();
+
+    let mut dead = Vec::new();
+    for (at, line) in readme.lines().enumerate() {
+        // `[text](target)` and a bare backticked path, which is how this readme
+        // pointed at the usage guide before the links were made absolute.
+        for target in link_targets(line) {
+            if target.starts_with("http") || target.starts_with('#') {
+                continue;
+            }
+            let target = target.split('#').next().unwrap_or(&target).to_string();
+
+            // A path that does not exist here is describing the reader's own
+            // repository, not pointing into this one: `mock/lints/<name>.rs` and
+            // `.git/hooks/` are things a consumer has, and both read as links to
+            // a naive matcher. The failure this catches is narrower and is the
+            // one that actually happened: a path that is real in this tree and
+            // absent from the tarball, so the link works on GitHub and dies on
+            // the registry, which is the way round nobody notices.
+            if !root.join(&target).exists() {
+                continue;
+            }
+            if !shipped.iter().any(|s| *s == target) {
+                dead.push(format!("{}:{}: {target}", "README.md", at + 1));
+            }
+        }
+    }
+
+    assert!(
+        dead.is_empty(),
+        "these readme links resolve to nothing for a reader on the registry:\n{}",
+        dead.join("\n"),
+    );
+}
+
+/// Markdown link targets, `[text](target)`, and nothing else.
+///
+/// A backticked path is prose rather than a link and is deliberately not checked.
+/// An earlier version did check them and produced three false positives in one
+/// run, all of the same kind: `mock/lints/<name>.rs`, `.git/hooks/` and
+/// `mock/agent/config.toml` are paths in the reader's own repository, and two of
+/// them happen to exist in this one too, so no test of existence can tell them
+/// apart from a reference. A link is the shape that actually breaks on the
+/// registry, and it is the shape this reads.
+fn link_targets(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '(' && i > 0 && chars[i - 1] == ']' {
+            if let Some(end) = chars[i ..].iter().position(|c| *c == ')') {
+                out.push(chars[i + 1 .. i + end].iter().collect());
+                i += end;
+            }
+        }
+        i += 1;
+    }
+    out
+}

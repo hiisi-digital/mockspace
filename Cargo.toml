@@ -24,16 +24,17 @@ repository = "https://github.com/hiisi-digital/mockspace"
 readme = "README.md"
 categories = ["development-tools", "development-tools::build-utils"]
 keywords = ["design-rounds", "lints", "workflow", "mockspace"]
-# What ships out of `docs/` is the reference a consumer reads. The rest of it is
-# addressed to whoever works on this engine, and `cargo package --list` had all of
-# it going to the registry.
+# `docs/` does not ship. The readme and the rustdoc carry what a consumer needs,
+# and everything in that directory is currently addressed to whoever works on the
+# engine: bug notes and refactor scratch under `research/`, three files of which
+# carried project names and home paths from the machine they were written on, plus
+# migration guides that walk one specific estate repo by repo by name.
 #
-# `docs/research/` is bug notes and refactor scratch, three files of which carried
-# project names and home paths from the machine they were written on. The
-# migration guides walk a specific estate by name, repo by repo, and the pattern
-# note is about that estate's own layers. A stranger installing this gets four
-# documents about somebody else's crates and no way to tell that is what they are.
-exclude = ["docs/research/", "docs/MIGRATION-*", "docs/PATTERN-*"]
+# Op's call, and it is the resting state rather than the answer. The reference
+# material wants moving into `mock/` where the design trail already lives, and
+# that waits on v1 and v2 artifacts being able to coexist there, or on v2 reaching
+# implementation and the two merging.
+exclude = ["docs/"]
 # The `benches/` directory at the workspace root belongs to the
 # `self-bench` workspace member, not to this crate. Without this flag
 # cargo's edition-2021 auto-discovery picks up `benches/src/main.rs`
