@@ -47,8 +47,14 @@ deny() {
     exit 0
 }
 
+# Context is a decision too: the object carries no `permissionDecision`, so the
+# host reads it as an allow that also injects the text. It finishes the hook for
+# the same reason `allow` does. A second object after it would leave stdout
+# holding two, which opens like an object and parses as nothing, and the host
+# then discards the decision along with the context.
 context() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$(_json_escape "$1")"
+    exit 0
 }
 
 # Absolute path of the repo this hook belongs to; baked at generation time.

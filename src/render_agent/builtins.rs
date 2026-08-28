@@ -201,8 +201,10 @@ if [ "$_RC" -eq 0 ]; then
 fi
 
 printf 'fail' > "$_CACHE_FILE" 2>/dev/null || true
-# Collapse to one line: the deny reason is JSON-embedded.
-_REASON=$(printf '%s' "$_OUT" | tr '\n' ' ' | sed 's/"/\\"/g')
+# Handed over raw. `deny` escapes it, and escaping twice is worse than not
+# escaping at all: the quote arrives as a backslash and a quote, so the reason
+# reads as though the linter had written the backslashes itself.
+_REASON=$_OUT
 deny "message policy rejected this ${{DOMAIN}}. $_REASON"
 "##
     )
@@ -425,7 +427,6 @@ if [[ "$IS_MOCKSPACE" != "true" ]]; then
     allow
 fi
 context "MOCKSPACE REMINDER: You are operating on mockspace files. Follow the design round workflow: TOPIC -> DOC -> DRAFT -> IMPL -> CLOSED. Check phase before editing. Use 'cargo mock' commands for phase transitions."
-allow
 "##
     )
 }
