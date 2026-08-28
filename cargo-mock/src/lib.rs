@@ -24,7 +24,7 @@
 
 mod legacy;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use mockspace_manifest::gate::HOOK_VERSION;
@@ -157,24 +157,81 @@ fn has_lint_rules(abs: &Path) -> Result<(), String> {
 /// the anomalous-state rule that is an error with guidance, never a silent
 /// difference between `mock` and `cargo mock`.
 fn no_retired_alias(root: &Path) -> Result<(), String> {
-    // Both spellings cargo honours. The refusal covers what the retired
-    // bootstrap wrote, which was always repo-local; an alias a user keeps
-    // elsewhere is their choice rather than an anomaly of ours.
-    for cargo_cfg in [root.join(".cargo").join("config.toml"), root.join(".cargo").join("config")] {
-        let Ok(cfg) = std::fs::read_to_string(&cargo_cfg) else {
-            continue;
-        };
-        if legacy_alias_present(&cfg) {
-            return Err(format!(
-                "a retired `cargo mock` alias sits in {}. Cargo resolves aliases before \
-                 external subcommands, so `cargo mock` runs whatever the alias points at \
-                 instead of this launcher. Delete the `mock = ...` line, and the [alias] \
-                 table if that empties it, then re-run.",
-                cargo_cfg.display()
-            ));
+    alias_check(root, std::env::current_dir().ok().as_deref())
+}
+
+/// The check itself, given where the command was typed.
+///
+/// Split from the hook so the whole of it is reachable from a test. The hook's
+/// only remaining job is reading the working directory, and a check that can
+/// only be exercised through a process-wide global ends up tested one helper
+/// down, where a change to how the helper is used passes everything.
+fn alias_check(root: &Path, from: Option<&Path>) -> Result<(), String> {
+    // Every directory from where the command was typed up to the repo root,
+    // because that is the set cargo itself reads. Checking the root alone
+    // misses an alias one directory down, which is exactly where the retired
+    // bootstrap wrote one: beside the mock workspace rather than beside the
+    // repository. This tool's own repository carried that file for months, and
+    // `cargo mock` was broken in it the whole time, under a check written to
+    // refuse precisely that.
+    for dir in cargo_config_dirs(root, from) {
+        for cargo_cfg in [dir.join(".cargo").join("config.toml"), dir.join(".cargo").join("config")]
+        {
+            let Ok(cfg) = std::fs::read_to_string(&cargo_cfg) else {
+                continue;
+            };
+            if legacy_alias_present(&cfg) {
+                return Err(format!(
+                    "a retired `cargo mock` alias sits in {}. Cargo resolves aliases before \
+                     external subcommands, so `cargo mock` runs whatever the alias points at \
+                     instead of this launcher. Delete the `mock = ...` line, and the [alias] \
+                     table if that empties it, then re-run.",
+                    cargo_cfg.display()
+                ));
+            }
         }
     }
     Ok(())
+}
+
+/// The directories whose `.cargo` cargo would read, for a run at `from`.
+///
+/// The root always, even when the run is somewhere else entirely: an alias
+/// beside the repository shadows the launcher for anyone who runs it from
+/// inside, whoever happens to be running it now. Then everything from `from` up
+/// to the root, which is the rest of cargo's own search.
+///
+/// A `from` that is not under the root contributes only itself. The walk would
+/// otherwise never meet its terminator and would climb to the filesystem root,
+/// reading configuration that has nothing to do with this repository.
+///
+/// Taken as an argument rather than read here, so the tests do not have to set
+/// a process-wide working directory that every other test on the same runner
+/// would see.
+fn cargo_config_dirs(root: &Path, from: Option<&Path>) -> Vec<PathBuf> {
+    let mut out = vec![root.to_path_buf()];
+    let Some(from) = from else {
+        return out;
+    };
+    // Bail before walking, rather than relying on the loop to meet the root.
+    // A `from` outside the root never meets it, so the walk ran to `/` and
+    // read every `.cargo/config.toml` above it: a `mock` alias somebody keeps
+    // in their home directory for their own reasons was then reported as this
+    // tool's retired one. The test written as the control for this asserted
+    // only that the list was shorter than twelve entries, and nine of them
+    // passed it.
+    if !from.starts_with(root) {
+        return out;
+    }
+    let mut here = from;
+    while here != root {
+        out.push(here.to_path_buf());
+        match here.parent() {
+            Some(up) => here = up,
+            None => break,
+        }
+    }
+    out
 }
 
 fn legacy_alias_present(config: &str) -> bool {
@@ -246,9 +303,85 @@ mod tests {
     }
 
     #[test]
+    fn an_alias_one_directory_under_the_root_is_read() {
+        // Where the retired bootstrap actually wrote it: beside the mock
+        // workspace, not beside the repository. A check that reads the root
+        // alone reports the repo clean while `cargo mock` is broken in it,
+        // which is what this repository shipped for months under a check
+        // written to refuse precisely that.
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        let mock = root.join("mock");
+
+        let from_root = cargo_config_dirs(root, Some(root));
+        assert_eq!(
+            from_root,
+            vec![root.to_path_buf()],
+            "the root reads only itself"
+        );
+
+        let from_mock = cargo_config_dirs(root, Some(&mock));
+        assert!(
+            from_mock.contains(&mock),
+            "a run in the mock dir does not read it"
+        );
+        assert!(
+            from_mock.contains(&root.to_path_buf()),
+            "the root is always read"
+        );
+
+        // And through the check rather than the helper, because what the helper
+        // returns only matters for what the check does with it.
+        std::fs::create_dir_all(mock.join(".cargo")).unwrap();
+        std::fs::write(mock.join(".cargo/config.toml"), "[alias]\nmock = \"x\"\n").unwrap();
+        assert!(
+            alias_check(root, Some(root)).is_ok(),
+            "control: a run at the root is not on that file's path"
+        );
+        let err = alias_check(root, Some(&mock)).unwrap_err();
+        assert!(
+            err.contains("mock"),
+            "the message does not say where it is: {err}"
+        );
+    }
+
+    #[test]
+    fn a_run_outside_the_root_does_not_walk_to_the_filesystem_root() {
+        // The control on the loop's terminator. It climbs until it reaches the
+        // root, and a directory that is not under the root never will, so a
+        // walk with no floor reads every `.cargo` between there and `/`,
+        // including the user's own.
+        // Asserted as the whole set rather than as its size. A length bound is
+        // not a control: this said `len() < 12` and a nine-entry walk running
+        // all the way to `/` passed it.
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let dirs = cargo_config_dirs(a.path(), Some(b.path()));
+        assert_eq!(
+            dirs,
+            vec![a.path().to_path_buf()],
+            "a working directory outside the root contributes more than the root"
+        );
+    }
+
+    #[test]
+    fn a_run_with_no_working_directory_still_reads_the_root() {
+        // `current_dir` fails when the directory the process started in has
+        // been deleted underneath it, which is ordinary in a long session. The
+        // check still has the root and still refuses an alias beside it.
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(cargo_config_dirs(d.path(), None), vec![
+            d.path().to_path_buf()
+        ]);
+    }
+
+    #[test]
     fn the_alias_check_reports_the_file_it_found_it_in() {
         let d = tempfile::tempdir().unwrap();
-        assert!(no_retired_alias(d.path()).is_ok(), "control: a clean repo");
+        assert!(
+            alias_check(d.path(), Some(d.path())).is_ok(),
+            "control: a clean repo"
+        );
 
         std::fs::create_dir(d.path().join(".cargo")).unwrap();
         std::fs::write(
@@ -256,7 +389,7 @@ mod tests {
             "[alias]\nmock = \"x\"\n",
         )
         .unwrap();
-        let err = no_retired_alias(d.path()).unwrap_err();
+        let err = alias_check(d.path(), Some(d.path())).unwrap_err();
         assert!(err.contains("config.toml"), "{err}");
 
         // the extensionless legacy spelling cargo also honours

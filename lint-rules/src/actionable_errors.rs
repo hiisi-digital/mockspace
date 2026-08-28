@@ -11,7 +11,7 @@
 //!
 //! Also checks `define_warning!` and `define_hint!` invocations the same way.
 
-use crate::{CrateLint, Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 const TRACKED_MACROS: &[&str] = &["define_error!", "define_warning!", "define_hint!"];
 
@@ -20,6 +20,12 @@ pub struct ActionableErrors;
 impl Lint for ActionableErrors {
     fn name(&self) -> &'static str {
         "actionable-errors"
+    }
+
+    /// Encodes one downstream project's error vocabulary, so it
+    /// is off until a project asks for it.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
     }
 }
 

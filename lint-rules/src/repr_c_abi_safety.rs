@@ -18,7 +18,7 @@
 
 use tree_sitter::Node;
 
-use crate::{CrateLint, Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 const LINT_NAME: &str = "repr-c-abi-safety";
 
@@ -52,6 +52,12 @@ pub struct ReprCAbiSafety;
 impl Lint for ReprCAbiSafety {
     fn name(&self) -> &'static str {
         LINT_NAME
+    }
+
+    /// A type that is not ABI-safe inside `#[repr(C)]` is
+    /// undefined behaviour at the boundary, in any project, whatever its shape.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
     }
 }
 

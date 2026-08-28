@@ -16,7 +16,7 @@
 # counts as an advert, and where each may be matched are answered here. Whether
 # a given byline is permitted is answered by the caller, which passes an allow
 # pattern in. mockspace reads that from `[attribution]` in its own agent config;
-# the clause-dev pr-review sweep passes its own. Neither shape belongs here.
+# a caller's own review sweep passes its own. Neither shape belongs here.
 #
 # It exists because there were three implementations of this and they disagreed.
 # One knew seven vendors, one knew a single vendor, one was a stale fork of the

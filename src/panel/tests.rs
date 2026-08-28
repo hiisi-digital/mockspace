@@ -173,9 +173,9 @@ fn a_panel_is_open_the_moment_it_has_an_unconsolidated_seat() {
 #[test]
 fn a_saved_inventory_loads_back_identical() {
     let tmp = tempfile::tempdir().unwrap();
-    let path = inventory_path(tmp.path(), "vehje-ir");
+    let path = inventory_path(tmp.path(), "example-ir");
     let mut inv = PanelInventory {
-        slug: "vehje-ir".to_string(),
+        slug: "example-ir".to_string(),
         ..PanelInventory::default()
     };
     mint_seat(&mut inv, "chris-fallin", "lowering", 10, 111).unwrap();
@@ -183,7 +183,7 @@ fn a_saved_inventory_loads_back_identical() {
     consolidate(&mut inv, "converged on X, open question Y", 333).unwrap();
 
     save(&path, &inv).unwrap();
-    let loaded = load(&path, "vehje-ir").unwrap();
+    let loaded = load(&path, "example-ir").unwrap();
     assert_eq!(loaded, inv);
 }
 

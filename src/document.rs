@@ -511,7 +511,6 @@ mod tests {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 
     #[test]
-    #[test]
     fn a_retired_document_does_not_take_an_image_that_shares_its_name() {
         let d = tempfile::tempdir().unwrap();
         let docs = d.path();
@@ -539,6 +538,7 @@ mod tests {
         assert_eq!(swept, 1, "only the document was ours");
     }
 
+    #[test]
     fn a_retired_diagram_takes_its_rendered_image_with_it() {
         let d = tempfile::tempdir().unwrap();
         let docs = d.path();

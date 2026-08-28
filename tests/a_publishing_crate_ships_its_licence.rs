@@ -26,11 +26,13 @@ use std::path::{Path, PathBuf};
 /// Why a publishing crate's licence would not reach the tarball.
 #[derive(Debug, PartialEq)]
 enum Why {
-    /// An `include` list is present, so cargo's defaults are gone, and no
-    /// `license-file` names the text to copy in.
-    IncludeWithoutLicenseFile,
+    /// An `include` list is present, so cargo's defaults are gone, and
+    /// neither `license-file` nor the list itself names the text to copy in.
+    IncludeNamesNoLicence,
     /// `license-file` names a path that is not there.
     LicenseFileMissing(String),
+    /// The `include` list names a licence file that is not there.
+    IncludedLicenceMissing(String),
 }
 
 /// A publishing manifest whose licence would not ship, or nothing.
@@ -64,10 +66,37 @@ fn licence_would_not_ship(dir: &Path, text: &str) -> Option<Why> {
                 Some(Why::LicenseFileMissing(rel.to_string()))
             }
         },
-        // No `license-file`. That is fine only while cargo's defaults are
-        // intact, which an `include` list removes.
-        None if package.get("include").is_some() => Some(Why::IncludeWithoutLicenseFile),
-        None => None,
+        // No `license-file`. Fine while cargo's defaults are intact, which an
+        // `include` list removes, and fine again when the list names the
+        // licence itself.
+        //
+        // Naming it in `include` is the better of the two where the crate's
+        // licence is the repository's: `license-file` reaching one directory
+        // up works, and setting it alongside `license` makes cargo warn on
+        // every build and the warning survives into the tarball. A symlink
+        // named in `include` carries the text with no second copy to keep in
+        // sync, and cargo resolves it when it copies. Verified by unpacking,
+        // not by reading the manifest: the packaged tarball holds the real
+        // licence text rather than a link.
+        None => {
+            match package.get("include").and_then(|v| v.as_array()) {
+                None if package.get("include").is_some() => Some(Why::IncludeNamesNoLicence),
+                None => None,
+                Some(list) => {
+                    let named = list.iter().filter_map(|v| v.as_str()).find(|p| {
+                        Path::new(p)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.starts_with("LICENSE") || n.starts_with("LICENCE"))
+                    });
+                    match named {
+                        None => Some(Why::IncludeNamesNoLicence),
+                        Some(rel) if dir.join(rel).exists() => None,
+                        Some(rel) => Some(Why::IncludedLicenceMissing(rel.to_string())),
+                    }
+                },
+            }
+        },
     }
 }
 
@@ -150,7 +179,7 @@ fn the_check_catches_both_ways_a_licence_goes_missing() {
                     include = [\"src/**/*.rs\"]\n";
     assert_eq!(
         licence_would_not_ship(&dir, stripped),
-        Some(Why::IncludeWithoutLicenseFile)
+        Some(Why::IncludeNamesNoLicence)
     );
 
     let dangling = "[package]\nname = \"x\"\npublish = true\nlicense = \"MPL-2.0\"\n\
@@ -178,6 +207,24 @@ fn the_check_catches_both_ways_a_licence_goes_missing() {
                   include = [\"src/**/*.rs\"]\n";
     assert_eq!(
         licence_would_not_ship(&dir, listed),
-        Some(Why::IncludeWithoutLicenseFile)
+        Some(Why::IncludeNamesNoLicence)
+    );
+
+    // The other route, and it is the one this repository takes: the list names
+    // the licence itself, so `license-file` is not needed and the warning that
+    // setting both provokes never happens. `LICENSE` at the repository root is
+    // what `repo_root()` returns, so this resolves.
+    let named = "[package]\nname = \"x\"\npublish = true\nlicense = \"MPL-2.0\"\n\
+                 include = [\"src/**/*.rs\", \"LICENSE\"]\n";
+    assert_eq!(licence_would_not_ship(&dir, named), None);
+
+    // And it has to be there. A list naming one that is not is the same
+    // failure as a dangling `license-file`, which is the shape a crate ends up
+    // in when somebody moves the file and the list keeps pointing at it.
+    let gone = "[package]\nname = \"x\"\npublish = true\nlicense = \"MPL-2.0\"\n\
+                include = [\"src/**/*.rs\", \"LICENCE-NOPE\"]\n";
+    assert_eq!(
+        licence_would_not_ship(&dir, gone),
+        Some(Why::IncludedLicenceMissing("LICENCE-NOPE".to_string()))
     );
 }

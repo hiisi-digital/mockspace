@@ -21,7 +21,7 @@
 
 use crate::changelist_helpers::{self, Phase};
 use crate::src_layout::{self, SrcLayout};
-use crate::{Lint, LintError, RepoContext, RepoLint};
+use crate::{Lint, LintError, RepoContext, RepoLint, Severity};
 
 const LINT_NAME: &str = "changelist-doc-gate";
 
@@ -30,6 +30,11 @@ pub struct ChangelistDocGate;
 impl Lint for ChangelistDocGate {
     fn name(&self) -> &'static str {
         LINT_NAME
+    }
+
+    /// The design-round gate. Blocking is the tool.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
     }
 
     fn source_only(&self) -> bool {

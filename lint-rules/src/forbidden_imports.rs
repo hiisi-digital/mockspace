@@ -210,7 +210,7 @@ fn check_forbidden_pattern(
     }
 }
 
-/// Check for forbidden module path imports (e.g., `std::`, `loimu_core::`).
+/// Check for forbidden module path imports (e.g., `std::`, `acme_core::`).
 fn check_module_path(
     ctx: &LintContext,
     rule: &ForbiddenRule,
@@ -448,23 +448,23 @@ mod tests {
 
     #[test]
     fn test_scope_matches() {
-        assert!(scope_matches("*", "loimu-sdk", "loimu"));
-        assert!(scope_matches("*-sdk", "loimu-sdk", "loimu"));
-        assert!(!scope_matches("*-sdk", "loimu-core", "loimu"));
+        assert!(scope_matches("*", "acme-sdk", "acme"));
+        assert!(scope_matches("*-sdk", "acme-sdk", "acme"));
+        assert!(!scope_matches("*-sdk", "acme-core", "acme"));
         assert!(scope_matches(
             "{prefix}-primitives",
-            "loimu-primitives",
-            "loimu"
+            "acme-primitives",
+            "acme"
         ));
-        assert!(!scope_matches("{prefix}-primitives", "loimu-sdk", "loimu"));
+        assert!(!scope_matches("{prefix}-primitives", "acme-sdk", "acme"));
         assert!(scope_matches(
             "{prefix}-connector-*",
-            "loimu-connector-igdb",
-            "loimu"
+            "acme-connector-igdb",
+            "acme"
         ));
-        assert!(!scope_matches("{prefix}-connector-*", "loimu-sdk", "loimu"));
-        assert!(scope_matches("loimu-sdk", "loimu-sdk", "loimu"));
-        assert!(!scope_matches("loimu-sdk", "loimu-core", "loimu"));
+        assert!(!scope_matches("{prefix}-connector-*", "acme-sdk", "acme"));
+        assert!(scope_matches("acme-sdk", "acme-sdk", "acme"));
+        assert!(!scope_matches("acme-sdk", "acme-core", "acme"));
     }
 
     #[test]

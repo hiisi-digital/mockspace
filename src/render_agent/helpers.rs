@@ -170,7 +170,7 @@ pub(crate) fn parse_hook_matchers(template: &str) -> Option<Vec<String>> {
 
 /// Derive the agent mode env var name from a project name.
 ///
-/// e.g. "saalis" -> "SAALIS_AGENT_MODE", "polka-dots" -> "POLKA_DOTS_AGENT_MODE"
+/// e.g. "widget" -> "WIDGET_AGENT_MODE", "two-words" -> "TWO_WORDS_AGENT_MODE"
 pub(crate) fn agent_mode_var(project_name: &str) -> String {
     let upper = project_name.to_uppercase().replace('-', "_");
     format!("{upper}_AGENT_MODE")

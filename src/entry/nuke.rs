@@ -24,6 +24,37 @@ pub(crate) fn detect_nuked_workspace(cfg: &Config) -> bool {
     })
 }
 
+/// Whether everything in `repo` is already in git, so a deletion can be undone.
+///
+/// `git status --porcelain` is empty exactly when nothing is modified, staged
+/// or untracked. An untracked file counts: it is the one thing git cannot give
+/// back, and a source file somebody wrote and has not committed is precisely
+/// what this is protecting.
+///
+/// A directory that is not a repository at all cannot be recovered from, so it
+/// is refused rather than treated as clean.
+pub(crate) fn tree_is_recoverable(repo: &Path) -> Result<(), String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["status", "--porcelain"])
+        .output()
+        .map_err(|e| format!("git could not be run: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("{} is not a git repository", repo.display()));
+    }
+    let dirty = String::from_utf8_lossy(&out.stdout);
+    if dirty.trim().is_empty() {
+        return Ok(());
+    }
+    let lines: Vec<&str> = dirty.lines().take(5).collect();
+    Err(format!(
+        "the tree has {} path(s) git does not hold, starting with:\n  {}",
+        dirty.lines().count(),
+        lines.join("\n  ")
+    ))
+}
+
 /// Wipe all mock crate source code, leaving minimal lib.rs stubs.
 pub(crate) fn nuke_mock_sources(cfg: &Config) -> ExitCode {
     eprintln!("--- NUKE: wiping all mock crate source ---");
@@ -124,4 +155,68 @@ pub(crate) fn delete_all_rs(dir: &Path) -> u32 {
         }
     }
     count
+}
+
+#[cfg(test)]
+mod what_makes_a_deletion_recoverable {
+    use super::*;
+
+    fn repo(files: &[(&str, &str)], commit: bool) -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(d.path())
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "t@example.invalid"]);
+        run(&["config", "user.name", "t"]);
+        for (name, text) in files {
+            fs::write(d.path().join(name), text).unwrap();
+        }
+        if commit {
+            run(&["add", "-A"]);
+            run(&["commit", "-q", "-m", "one"]);
+        }
+        d
+    }
+
+    #[test]
+    fn a_clean_tree_is_recoverable() {
+        let d = repo(&[("a.rs", "fn a() {}\n")], true);
+        assert!(tree_is_recoverable(d.path()).is_ok());
+    }
+
+    #[test]
+    fn an_untracked_file_is_the_case_this_exists_for() {
+        // The one thing git cannot give back. A source file somebody wrote and
+        // has not committed is exactly what a wipe of the source directories
+        // would take, and it leaves no object and no reflog entry behind.
+        let d = repo(&[("a.rs", "fn a() {}\n")], true);
+        fs::write(d.path().join("b.rs"), "fn b() {}\n").unwrap();
+        let err = tree_is_recoverable(d.path()).unwrap_err();
+        assert!(
+            err.contains("b.rs"),
+            "the refusal does not name the file: {err}"
+        );
+    }
+
+    #[test]
+    fn a_modification_is_refused_too() {
+        let d = repo(&[("a.rs", "fn a() {}\n")], true);
+        fs::write(d.path().join("a.rs"), "fn a() { todo!() }\n").unwrap();
+        assert!(tree_is_recoverable(d.path()).is_err());
+    }
+
+    #[test]
+    fn a_directory_that_is_not_a_repository_is_refused() {
+        // Not treated as clean. There is nowhere to recover from, which is a
+        // stronger reason to refuse than a dirty tree is.
+        let d = tempfile::tempdir().unwrap();
+        let err = tree_is_recoverable(d.path()).unwrap_err();
+        assert!(err.contains("not a git repository"), "{err}");
+    }
 }

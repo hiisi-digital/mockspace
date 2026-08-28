@@ -513,18 +513,15 @@ mod deps_tests {
     #[test]
     fn a_path_dep_on_a_sibling_is_a_dependency_edge() {
         let toml = r#"[package]
-name = "ikiuni-renderer-store"
+name = "widget-store"
 version.workspace = true
 
 [dependencies]
-ikiuni-renderer-contract = { path = "../ikiuni-renderer-contract" }
-ikiuni-renderer-world = { path = "../ikiuni-renderer-world" }
+widget-contract = { path = "../widget-contract" }
+widget-world = { path = "../widget-world" }
 "#;
-        let deps = extract_deps(toml, "ikiuni-renderer-store", "ikiuni-renderer");
-        assert_eq!(deps, vec![
-            "ikiuni-renderer-contract",
-            "ikiuni-renderer-world"
-        ]);
+        let deps = extract_deps(toml, "widget-store", "widget");
+        assert_eq!(deps, vec!["widget-contract", "widget-world"]);
     }
 
     #[test]
@@ -532,22 +529,22 @@ ikiuni-renderer-world = { path = "../ikiuni-renderer-world" }
         // `[package]` carries a `name` that starts with the prefix. Reading it
         // as a dependency would make every crate depend on itself.
         let toml = r#"[package]
-name = "ikiuni-renderer-store"
+name = "widget-store"
 
 [dependencies]
-ikiuni-renderer-contract = { path = "../ikiuni-renderer-contract" }
+widget-contract = { path = "../widget-contract" }
 "#;
-        let deps = extract_deps(toml, "ikiuni-renderer-store", "ikiuni-renderer");
-        assert_eq!(deps, vec!["ikiuni-renderer-contract"]);
+        let deps = extract_deps(toml, "widget-store", "widget");
+        assert_eq!(deps, vec!["widget-contract"]);
     }
 
     #[test]
     fn the_workspace_form_still_reads() {
         let toml = r#"[dependencies]
-ikiuni-renderer-contract = { workspace = true }
+widget-contract = { workspace = true }
 "#;
-        let deps = extract_deps(toml, "ikiuni-renderer-store", "ikiuni-renderer");
-        assert_eq!(deps, vec!["ikiuni-renderer-contract"]);
+        let deps = extract_deps(toml, "widget-store", "widget");
+        assert_eq!(deps, vec!["widget-contract"]);
     }
 
     /// A grouped project discovers every group, not the first one.

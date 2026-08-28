@@ -107,7 +107,7 @@ mod routine_table_tests {
     use crate::config::BenchConfig;
 
     /// A stand-in for the consumer shapes the table dispatches:
-    /// generic over one const parameter, like arvo's `Case<KEY>`.
+    /// generic over one const parameter, such as a `Case<KEY>`.
     struct Keyed<const K: usize>;
 
     impl<const K: usize> crate::core::Routine for Keyed<K> {

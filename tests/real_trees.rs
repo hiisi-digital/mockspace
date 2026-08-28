@@ -21,7 +21,8 @@
 //! gate had never once run.
 //!
 //! Run it with:
-//!   MOCKSPACE_REAL_TREES=~/Dev/clause-dev cargo test --test real_trees -- --ignored
+//!   MOCKSPACE_REAL_TREES=<path to a directory of real projects> \
+//!     cargo test --test real_trees -- --ignored
 
 use std::path::{Path, PathBuf};
 
@@ -128,14 +129,14 @@ fn every_real_bench_tree_loads_and_resolves_through_the_benchspace_path() {
         );
     }
 
-    // The workspace's one real sections-form member: hilavitkutin's
+    // The workspace's one real sections-form member: one project's
     // resource_storage, whose deliberately trimmed [timing] must
     // survive composition. Pinned by content rather than by path so
     // a clone layout change does not silently drop the check.
-    let hila = roots
+    let sections_form = roots
         .iter()
         .find(|r| tree::load(r).is_ok_and(|t| !t.flat_members.is_empty()));
-    if let Some(root) = hila {
+    if let Some(root) = sections_form {
         let tree = tree::load(root).unwrap();
         let member = tree.flat_members[0].clone();
         let key = tree

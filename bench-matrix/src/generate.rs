@@ -158,8 +158,8 @@ mod tests {
     fn boundary_decl() -> MatrixDecl {
         MatrixDecl {
             name:        "abi_cross_scalar".to_string(),
-            crate_path:  "vehje_bench_carrier".to_string(),
-            crate_dep:   "vehje-bench-carrier = { path = \"../../carrier\" }".to_string(),
+            crate_path:  "bench_carrier".to_string(),
+            crate_dep:   "bench-carrier = { path = \"../../carrier\" }".to_string(),
             extra_deps:  vec![],
             master_seed: "0x1".to_string(),
             sweep:       SweepAxis {

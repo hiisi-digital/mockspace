@@ -263,12 +263,12 @@ mod tool_discovery_tests {
     #[test]
     fn a_subdirectory_with_a_manifest_is_a_tool() {
         let (_t, dir) = tools_dir();
-        write_crate(&dir, "phrase-search", "kamu-phrase-search");
+        write_crate(&dir, "phrase-search", "demo-phrase-search");
         let found = discover_tool_crates(&dir);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].dir, "phrase-search");
-        assert_eq!(found[0].package, "kamu-phrase-search");
-        assert_eq!(found[0].ident(), "kamu_phrase_search");
+        assert_eq!(found[0].package, "demo-phrase-search");
+        assert_eq!(found[0].ident(), "demo_phrase_search");
     }
 
     #[test]
@@ -299,7 +299,7 @@ mod tool_discovery_tests {
         // the directory it would emit `phrase-search = { path = ... }` and
         // cargo would not resolve it.
         let (_t, dir) = tools_dir();
-        write_crate(&dir, "phrase-search", "kamu-phrase-search");
+        write_crate(&dir, "phrase-search", "demo-phrase-search");
         let found = discover_tool_crates(&dir);
         assert_ne!(found[0].package, found[0].dir);
     }

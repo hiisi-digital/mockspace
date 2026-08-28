@@ -953,7 +953,7 @@ mod tests {
 
     #[test]
     fn root_sections_and_members_coexist_and_root_cells_stay_flat() {
-        // hilavitkutin's shape: 29 root sections plus one member.
+        // A real tree's shape: 29 root sections plus one member.
         let t = Tree::new("mixed");
         t.write(
             "bench.toml",

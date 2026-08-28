@@ -243,7 +243,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     // gate with the repo's own lints absent and then reports a
                     // pass, which is the one outcome that cannot be allowed:
                     // silence and success are indistinguishable to the caller. It
-                    // shipped that way, and arvo took 194 commits over eight days
+                    // shipped that way, and one consumer took 194 commits over eight days
                     // with its pack missing before anyone read the line.
                     //
                     // The recovery and inspection commands are exempt, because
@@ -272,8 +272,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
 
     // Subcommands: positional args that aren't flags or value-flag values.
     // `--dir` and `--scope` both take a value; their values must not be read
-    // as a subcommand (a `--scope arvo` from a hook would otherwise look like
-    // an unknown subcommand `arvo`).
+    // as a subcommand (a `--scope core` from a hook would otherwise look like
+    // an unknown subcommand `core`).
     let positional_args: Vec<&str> = {
         let mut result = Vec::new();
         let mut skip_next = false;
@@ -586,7 +586,33 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     // --nuke: wipe all mock crate source, leaving minimal lib.rs stubs.
+    //
+    // Two conditions, because what this deletes is whatever `src_dirs` points
+    // at, which in a consumer is their real source. A second flag so it cannot
+    // be reached by a typo or by a shell history entry from another repository,
+    // and a clean tree so the deletion is recoverable by the only mechanism
+    // that reliably recovers anything.
     if args.iter().any(|a| a == "--nuke") {
+        if !args.iter().any(|a| a == "--i-mean-it") {
+            eprintln!(
+                "--nuke deletes every source file under {}, leaving stub lib.rs files.",
+                cfg.src_dirs
+                    .iter()
+                    .map(|d| d.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            eprintln!("Add --i-mean-it if that is what you want.");
+            return ExitCode::FAILURE;
+        }
+        if let Err(why) = crate::entry::nuke::tree_is_recoverable(&cfg.repo_root) {
+            eprintln!("--nuke refused: {why}");
+            eprintln!(
+                "What it deletes is only recoverable from git, so it wants a tree \
+                 with nothing in it that git does not already have."
+            );
+            return ExitCode::FAILURE;
+        }
         return nuke_mock_sources(&cfg);
     }
 
@@ -1523,7 +1549,7 @@ mod auto_commit_tests {
 ///     `unknown-provenance-root` against a registry that generates cleanly.
 ///
 /// What makes the second one invisible in this repository's consumer is a
-/// property of that consumer's data rather than of this code: kamu has zero
+/// property of that consumer's data rather than of this code: one has zero
 /// `{{` in any of its rows today. Its `registry-queries` skill teaches writing
 /// them in reference fields, so the case is reachable rather than theoretical.
 fn registry_gate(

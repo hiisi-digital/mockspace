@@ -264,7 +264,7 @@ mod cfg_test_module_tests {
 
     #[test]
     fn a_fixture_inside_a_test_module_is_not_public_surface() {
-        // The case kolli hit: two structs implementing a trait so the type-level
+        // The case that produced this: two structs implementing a trait so the type-level
         // list could be exercised. Neither has a consumer, and the only ways to
         // satisfy the lint were to put test scaffolding in a design document or
         // to write a SHAME entry for it.

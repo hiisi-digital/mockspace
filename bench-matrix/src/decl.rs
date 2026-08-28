@@ -49,7 +49,7 @@ impl Regime {
 pub struct CellDecl {
     pub tag:        String,
     /// Full path of the measured-op `pub fn`, e.g.
-    /// `vehje_bench_carrier::bench::carrier_dispatch::cell_switch`.
+    /// `bench_carrier::bench::carrier_dispatch::cell_switch`.
     pub op_path:    String,
     /// Per-cell setup override path; `None` uses the family's shared setup.
     pub setup_path: Option<String>,
@@ -71,11 +71,11 @@ pub struct MatrixDecl {
     /// Bench-family prefix; each swept bench is `<name>_<sweep_value>`.
     pub name:        String,
     /// How a sibling crate names the consumer crate in `use`/paths, e.g.
-    /// `vehje_bench_carrier`.
+    /// `bench_carrier`.
     pub crate_path:  String,
     /// The consumer-crate dependency line body for the variant `Cargo.toml`, with
     /// TOML inline-table braces escaped `{{`/`}}` and a `{carrier_features}` slot,
-    /// e.g. `vehje-bench-carrier = {{ path = "../../carrier"{carrier_features} }}`.
+    /// e.g. `bench-carrier = {{ path = "../../carrier"{carrier_features} }}`.
     pub crate_dep:   String,
     /// Extra dependency lines emitted verbatim into every variant `Cargo.toml`
     /// (the bench-core / bench-macro / bench-matrix git-or-path deps).

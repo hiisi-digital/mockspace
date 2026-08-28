@@ -663,15 +663,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let lints = dir.path().join("lints");
         std::fs::create_dir_all(&lints).unwrap();
-        let t = tool("phrase-search", "kamu-phrase-search", dir.path());
+        let t = tool("phrase-search", "demo-phrase-search", dir.path());
 
         let src = gen_collect_lib(&lints, &[], &[], std::slice::from_ref(&t));
         // dash-to-underscore on the package name, and one collect() call, so a
         // tool crate shipping a lint beside its tool registers both.
-        assert!(src.contains("kamu_phrase_search::collect(pack);"), "{src}");
+        assert!(src.contains("demo_phrase_search::collect(pack);"), "{src}");
         // and it must NOT invent a tool-specific symbol: the negative that
         // pins "same pattern as lints" rather than a parallel path.
-        assert!(!src.contains("kamu_phrase_search::tool()"), "{src}");
+        assert!(!src.contains("demo_phrase_search::tool()"), "{src}");
         assert!(!src.contains("pack.tools.push"), "{src}");
     }
 
@@ -680,7 +680,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = crate::config::Config::from_dir(dir.path());
         let gen_dir = dir.path().join("gen_dir");
-        let t = tool("phrase-search", "kamu-phrase-search", dir.path());
+        let t = tool("phrase-search", "demo-phrase-search", dir.path());
         write_cdylib_crate(
             &gen_dir,
             &dir.path().join("lints"),
@@ -694,7 +694,7 @@ mod tests {
         let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();
         assert!(
             manifest.contains(&format!(
-                "kamu-phrase-search = {{ path = \"{}\" }}",
+                "demo-phrase-search = {{ path = \"{}\" }}",
                 t.path.display()
             )),
             "{manifest}"

@@ -16,7 +16,7 @@ pub const REGISTRY_ROOT: &str = "reg";
 ///
 /// The project's crate prefix is stable, so both the short name and the full
 /// directory name resolve: `crates::mechanism` and
-/// `crates::ikiuni-renderer-mechanism` are the same crate. Writing the short
+/// `crates::widget-mechanism` are the same crate. Writing the short
 /// form everywhere keeps a rename of the prefix from touching every reference.
 pub const CRATE_ROOT: &str = "crates";
 

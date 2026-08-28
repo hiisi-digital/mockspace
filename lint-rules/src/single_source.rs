@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError, WorkspaceLint};
+use crate::{Lint, LintContext, LintError, Severity, WorkspaceLint};
 
 /// Pairs of crate suffixes where duplicate type names are expected.
 /// Macro-util crates and their parent crates often define matching types
@@ -29,6 +29,12 @@ pub struct SingleSource;
 impl Lint for SingleSource {
     fn name(&self) -> &'static str {
         "single-source"
+    }
+
+    /// One type defined twice under two crates is a mistake in
+    /// any project.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
     }
 }
 

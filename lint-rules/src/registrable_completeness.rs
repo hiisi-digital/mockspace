@@ -18,7 +18,7 @@
 
 use tree_sitter::Node;
 
-use crate::{CrateLint, Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 const LINT_NAME: &str = "registrable-completeness";
 
@@ -45,6 +45,13 @@ impl Lint for RegistrableCompleteness {
 
     fn name(&self) -> &'static str {
         LINT_NAME
+    }
+
+    /// Encodes one downstream project's macro convention and
+    /// tells a stranger to use a macro their project does not have. Off until a
+    /// project asks for it.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
     }
 }
 

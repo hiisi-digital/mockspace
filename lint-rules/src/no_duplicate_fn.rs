@@ -15,13 +15,19 @@ use std::collections::HashMap;
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError, WorkspaceLint};
+use crate::{Lint, LintContext, LintError, Severity, WorkspaceLint};
 
 pub struct NoDuplicateFn;
 
 impl Lint for NoDuplicateFn {
     fn name(&self) -> &'static str {
         "no-duplicate-fn"
+    }
+
+    /// Two functions of one name in one crate is a mistake in
+    /// any project.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
     }
 }
 
@@ -170,7 +176,7 @@ mod is_line_suppressed_tests {
     const SAMPLE: &str = "\
 pub extern \"C\" fn rust_eh_personality() {}  // lint:allow(no-duplicate-fn) -- linker contract
 pub fn plain() {}
-pub fn other_marker() {}  // lint:allow(no-bare-numeric)
+pub fn other_marker() {}  // lint:allow(some-lint)
 pub fn comma_list_match() {}  // lint:allow(no-bare-result, no-duplicate-fn)
 ";
 
