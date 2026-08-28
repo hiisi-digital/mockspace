@@ -186,11 +186,17 @@ fn crates_that_publish() -> Vec<String> {
             panic!("the workspace names `{member}` as a member and it has no Cargo.toml");
         }
         let text = std::fs::read_to_string(&manifest).expect("unreadable manifest");
-        // `publish = true` written out, which is what these carry. A manifest
-        // that simply omits the key also publishes, and none here does; a
-        // member that starts omitting it fails the floor below rather than
-        // slipping past this.
-        if text.lines().any(|l| l.trim() == "publish = true")
+        // Cargo's own rule: a crate publishes unless it says otherwise, so this
+        // asks for the refusal rather than for the permission.
+        //
+        // Asking for `publish = true` was the same defect as the `read_dir` one
+        // above, a rung further down. A member that simply drops the key starts
+        // publishing and stops being scanned, and the floor below cannot see
+        // that: it is a lower bound on the file count, and an unscanned crate
+        // contributes nothing rather than subtracting. Measured before this
+        // changed, with this package's own `publish = false` deleted: twelve
+        // documents under `docs/` into a real tarball, suite green.
+        if !text.lines().any(|l| l.trim() == "publish = false")
             && let Some(name) = package_name(&text)
         {
             out.push(name);
