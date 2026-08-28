@@ -20,12 +20,20 @@ _extract() {
 # Interpolated raw they produce a payload that opens like an object and does not
 # parse, and a deny that does not parse does not deny.
 _json_escape() {
-    local s=$1
+    local s=$1 i c u
     s=${s//\\/\\\\}
     s=${s//\"/\\\"}
     s=${s//$'\n'/\\n}
     s=${s//$'\r'/\\r}
     s=${s//$'\t'/\\t}
+    # The rest of 0x01-0x1f has no short form and is illegal raw in a JSON
+    # string. ESC is the one that turns up: a reason quotes a command back, and
+    # a command captured from coloured output carries colour sequences with it.
+    for i in 1 2 3 4 5 6 7 8 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+        printf -v c '%b' "\\$(printf '%03o' "$i")"
+        printf -v u '\\u%04x' "$i"
+        s=${s//"$c"/$u}
+    done
     printf '%s' "$s"
 }
 
@@ -86,12 +94,20 @@ _extract() {
 # Same reason as the Claude side: a reason carries quotes and newlines, and a
 # deny that does not parse does not deny.
 _json_escape() {
-    local s=$1
+    local s=$1 i c u
     s=${s//\\/\\\\}
     s=${s//\"/\\\"}
     s=${s//$'\n'/\\n}
     s=${s//$'\r'/\\r}
     s=${s//$'\t'/\\t}
+    # The rest of 0x01-0x1f has no short form and is illegal raw in a JSON
+    # string. ESC is the one that turns up: a reason quotes a command back, and
+    # a command captured from coloured output carries colour sequences with it.
+    for i in 1 2 3 4 5 6 7 8 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+        printf -v c '%b' "\\$(printf '%03o' "$i")"
+        printf -v u '\\u%04x' "$i"
+        s=${s//"$c"/$u}
+    done
     printf '%s' "$s"
 }
 

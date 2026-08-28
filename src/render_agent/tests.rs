@@ -1300,7 +1300,11 @@ fn deny_output(helpers: &str, reason: &str) -> String {
 
 /// Every character that has to be escaped to survive a JSON string, in one
 /// reason, plus the shape a real reason has: it quotes the command back.
-const NASTY_REASON: &str = "refusing `grep -m1 \"^[0-9]* rows\" docs/RULING.md`\nbecause the phase is DOC\tand the path is C:\\mock\\registry";
+///
+/// The escape at the end is the realistic one rather than the exotic one. A
+/// reason repeats the offending command, and a command captured from coloured
+/// output brings colour sequences with it.
+const NASTY_REASON: &str = "refusing `grep -m1 \"^[0-9]* rows\" docs/RULING.md`\nbecause the phase is DOC\tand the path is C:\\mock\\registry\rand the output said \u{1b}[31mno\u{1b}[0m\u{0b}";
 
 #[test]
 fn a_deny_reason_carrying_quotes_and_newlines_still_parses() {
