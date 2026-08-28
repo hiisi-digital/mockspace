@@ -15,18 +15,32 @@ _extract() {
     echo "$__INPUT" | jq -r ".tool_input.$1 // \"\"" 2>/dev/null || echo ""
 }
 
+# A reason goes inside a JSON string, and reasons quote the offending command
+# back at the caller, so they carry quotes and newlines as a matter of course.
+# Interpolated raw they produce a payload that opens like an object and does not
+# parse, and a deny that does not parse does not deny.
+_json_escape() {
+    local s=$1
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\n'/\\n}
+    s=${s//$'\r'/\\r}
+    s=${s//$'\t'/\\t}
+    printf '%s' "$s"
+}
+
 allow() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse"}}\n'
     exit 0
 }
 
 deny() {
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$(_json_escape "$1")"
     exit 0
 }
 
 context() {
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$1"
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$(_json_escape "$1")"
 }
 
 # Absolute path of the repo this hook belongs to; baked at generation time.
@@ -69,12 +83,24 @@ _extract() {
     echo "$__INPUT" | jq -r "if .toolArgs then (.toolArgs | fromjson? | .$1 // \"\") else \"\" end" 2>/dev/null || echo ""
 }
 
+# Same reason as the Claude side: a reason carries quotes and newlines, and a
+# deny that does not parse does not deny.
+_json_escape() {
+    local s=$1
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\n'/\\n}
+    s=${s//$'\r'/\\r}
+    s=${s//$'\t'/\\t}
+    printf '%s' "$s"
+}
+
 allow() {
     exit 0
 }
 
 deny() {
-    printf '{"permissionDecision":"deny","permissionDecisionReason":"%s"}\n' "$1"
+    printf '{"permissionDecision":"deny","permissionDecisionReason":"%s"}\n' "$(_json_escape "$1")"
     exit 0
 }
 

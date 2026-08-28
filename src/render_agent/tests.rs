@@ -1269,3 +1269,71 @@ fn the_two_builtin_checks_can_actually_fail() {
         "the reader complains about prose that assumes nothing"
     );
 }
+
+/// Runs one of the emitted helper preambles under bash, calls `deny` with the
+/// given reason, and hands back what the hook wrote to stdout.
+///
+/// The preamble is taken from the constant the generator ships rather than a
+/// copy, so a change to the emitter reaches these without anybody remembering.
+fn deny_output(helpers: &str, reason: &str) -> String {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    // `exit 0` inside `deny` ends the shell, so the call goes last.
+    let script = format!("{helpers}\ndeny \"$1\"\n");
+    let mut child = Command::new("bash")
+        .args(["-s", "--", reason])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("bash is on PATH");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(script.as_bytes())
+        .expect("wrote the script");
+    let out = child.wait_with_output().expect("bash ran");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Every character that has to be escaped to survive a JSON string, in one
+/// reason, plus the shape a real reason has: it quotes the command back.
+const NASTY_REASON: &str = "refusing `grep -m1 \"^[0-9]* rows\" docs/RULING.md`\nbecause the phase is DOC\tand the path is C:\\mock\\registry";
+
+#[test]
+fn a_deny_reason_carrying_quotes_and_newlines_still_parses() {
+    for (platform, helpers) in [
+        ("claude", CLAUDE_HOOK_HELPERS),
+        ("copilot", COPILOT_HOOK_HELPERS),
+    ] {
+        let out = deny_output(helpers, NASTY_REASON);
+        let parsed: serde_json::Value = serde_json::from_str(out.trim())
+            .unwrap_or_else(|e| panic!("{platform} emitted unparseable json: {e}\n{out}"));
+        // And the reason survives the round trip rather than merely parsing.
+        let reason = parsed
+            .pointer("/hookSpecificOutput/permissionDecisionReason")
+            .or_else(|| parsed.pointer("/permissionDecisionReason"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| panic!("{platform} lost the reason field:\n{out}"));
+        assert_eq!(reason, NASTY_REASON, "{platform} mangled the reason");
+    }
+}
+
+#[test]
+fn the_unescaped_form_is_what_breaks_it() {
+    // The control. Without it the test above passes on any emitter whose deny
+    // happens to produce something parseable, including one that drops the
+    // reason entirely, and it would have passed on the defect it was written
+    // for if that defect had merely truncated instead of corrupting.
+    let unescaped = r#"deny() {
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
+    exit 0
+}"#;
+    let out = deny_output(unescaped, NASTY_REASON);
+    assert!(
+        serde_json::from_str::<serde_json::Value>(out.trim()).is_err(),
+        "the unescaped emitter produced valid json, so this test proves nothing:\n{out}"
+    );
+}
