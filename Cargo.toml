@@ -24,6 +24,16 @@ repository = "https://github.com/hiisi-digital/mockspace"
 readme = "README.md"
 categories = ["development-tools", "development-tools::build-utils"]
 keywords = ["design-rounds", "lints", "workflow", "mockspace"]
+# What ships out of `docs/` is the reference a consumer reads. The rest of it is
+# addressed to whoever works on this engine, and `cargo package --list` had all of
+# it going to the registry.
+#
+# `docs/research/` is bug notes and refactor scratch, three files of which carried
+# project names and home paths from the machine they were written on. The
+# migration guides walk a specific estate by name, repo by repo, and the pattern
+# note is about that estate's own layers. A stranger installing this gets four
+# documents about somebody else's crates and no way to tell that is what they are.
+exclude = ["docs/research/", "docs/MIGRATION-*", "docs/PATTERN-*"]
 # The `benches/` directory at the workspace root belongs to the
 # `self-bench` workspace member, not to this crate. Without this flag
 # cargo's edition-2021 auto-discovery picks up `benches/src/main.rs`

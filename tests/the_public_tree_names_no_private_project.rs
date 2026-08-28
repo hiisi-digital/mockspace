@@ -160,3 +160,64 @@ fn the_checks_above_can_fail() {
         );
     }
 }
+
+/// Every file `cargo package` would put in the tarball.
+///
+/// A different question from `git ls-files`, and the one that decides what a
+/// stranger sees. `docs/` is tracked and excluded from the guard above, but the
+/// part of it that reached the registry is a narrower set, and that set has to
+/// be clean whatever the wider one still carries.
+fn files_that_would_ship() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out = Command::new(env!("CARGO"))
+        .arg("package")
+        .args(["--list", "--allow-dirty", "-p", "mockspace"])
+        .current_dir(root)
+        .output()
+        .expect("cargo could not be run");
+    assert!(
+        out.status.success(),
+        "cargo package --list failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| root.join(l.trim()))
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+#[test]
+fn nothing_in_the_tarball_names_a_project_a_reader_cannot_see() {
+    // Measured before this existed: the crate would have shipped four documents
+    // carrying private project names and home paths, three of them under
+    // `docs/research/`, which is bug notes for whoever works on this engine and
+    // not for anybody consuming it.
+    let shipped = files_that_would_ship();
+    assert!(
+        shipped.len() > 50,
+        "only {} files listed, so this is measuring the wrong thing",
+        shipped.len()
+    );
+
+    let mut found = Vec::new();
+    for path in shipped {
+        if is_a_guard(&path) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for needle in PRIVATE.iter().chain(SOMEBODY_S_MACHINE) {
+            if text.contains(needle) {
+                found.push(format!("{}: {needle}", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        found.is_empty(),
+        "these would ship to the registry naming something a reader cannot see:\n{}",
+        found.join("\n"),
+    );
+}
