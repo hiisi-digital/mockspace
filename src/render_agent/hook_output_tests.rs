@@ -291,6 +291,51 @@ fn the_copilot_helpers_that_print_an_object_finish_the_hook() {
     }
 }
 
+/// The lines of one helper's body, comments dropped.
+fn body_of(helpers: &str, name: &str) -> String {
+    helpers
+        .split(name)
+        .nth(1)
+        .unwrap_or_else(|| panic!("{name} is not in these helpers"))
+        .split("\n}")
+        .next()
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn the_copilot_exception_rests_on_its_context_emitting_no_object() {
+    // The arm above leaves `context()` out, and the reason lives in a comment,
+    // which is a declaration nothing constrains: the day Copilot's context grows
+    // a JSON form, the exception stops being true and every test still passes.
+    // So pin the premise rather than the conclusion.
+    let context = body_of(crate::render_agent::COPILOT_HOOK_HELPERS, "context()");
+    assert!(
+        !context.contains("{\""),
+        "copilot's context now emits a JSON object, so leaving it out of the \
+         arm above is no longer an exception but a hole:\n{context}"
+    );
+
+    // And the other half of the same reasoning: `allow` writing nothing is what
+    // makes a returning `context` harmless even beside it.
+    let allow = body_of(crate::render_agent::COPILOT_HOOK_HELPERS, "allow()");
+    assert!(
+        !allow.contains("printf") && !allow.contains("echo"),
+        "copilot's allow now writes to stdout:\n{allow}"
+    );
+
+    // The control. Claude's context does emit an object, so the predicate is
+    // capable of answering the other way.
+    let claude = body_of(crate::render_agent::CLAUDE_HOOK_HELPERS, "context()");
+    assert!(
+        claude.contains("{\""),
+        "the check cannot tell an object from plain text:\n{claude}"
+    );
+}
+
 #[test]
 fn a_returning_helper_is_caught() {
     // The control for the two arms above. Without it they pass on a predicate
