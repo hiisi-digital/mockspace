@@ -1196,19 +1196,17 @@ pub trait Lint {
     /// The default severity for this lint's violations, when no config
     /// override is present.
     ///
-    /// **Every lint declares its own.** The default here exists so the trait
-    /// can be implemented, and a lint that reaches it has forgotten to say
-    /// what it is; a test enumerates the registry and refuses that.
+    /// **Every lint declares its own**, and a test enumerates the registry and
+    /// refuses one that does not. The default is here so the trait can be
+    /// implemented at all.
     ///
-    /// It is off rather than blocking, because the two failures are not
-    /// symmetric. A lint that should gate and is silent is caught by the thing
-    /// it was meant to catch getting through. A lint that should be off and
-    /// blocks refuses a stranger's first commit and names a macro their project
-    /// does not have, which is not a state they can reason their way out of.
-    /// Three lints encoding one downstream project's architecture shipped that
-    /// way, inheriting a blocking default nobody had written down.
+    /// Blocking rather than off, which is the tool's stance rather than an
+    /// accident: the defaults are opinionated on purpose and a project that
+    /// disagrees turns them off in its own config. Defaulting to silence would
+    /// make the tool arrive with nothing on and every gate an opt-in, which is
+    /// not what anybody installing it is asking for.
     fn default_severity(&self) -> Severity {
-        Severity::OFF
+        Severity::HARD_ERROR
     }
 
     /// Sub-categories of findings this lint can produce.
@@ -1816,24 +1814,6 @@ pub fn check_repo(
 /// coming out of one lint, and flattening them onto the lint's default would
 /// erase it.
 /// The lints a project may not turn off or lower.
-///
-/// The design-round gate is what this tool is. A project that wants source
-/// edits ungated does not want this tool, and the readme says so in those
-/// words, so the sentence has to be true rather than a description of what
-/// nobody had tried. Configuring one of these parses and then does nothing,
-/// which is quieter than it should be; saying so to the person who wrote the
-/// line wants a diagnostic channel the config reader does not have yet.
-///
-/// Held here by name rather than declared by each lint, because a lint that
-/// declares itself non-negotiable is a lint pack deciding what a project it
-/// was imported into must accept. That is the opposite of the arrangement.
-pub const NON_NEGOTIABLE: [&str; 4] = [
-    "changelist-required",
-    "changelist-doc-gate",
-    "changelist-lock",
-    "changelist-immutability",
-];
-
 fn run_with_overrides(
     lint: &dyn Lint,
     doc_only: bool,
@@ -1845,12 +1825,7 @@ fn run_with_overrides(
         return;
     }
 
-    // Read past the config entirely for the four the readme calls
-    // non-negotiable, whether it arrived from a file or was built in code.
-    let negotiable = !NON_NEGOTIABLE.contains(&lint.name());
-    let base_override = overrides
-        .filter(|_| negotiable)
-        .and_then(|cfg| cfg.base.get(lint.name()).copied());
+    let base_override = overrides.and_then(|cfg| cfg.base.get(lint.name()).copied());
 
     // A configured override wins; absent one, the lint's own declared default
     // decides whether it runs at all. Naming a lint in any section counts as
@@ -1864,7 +1839,7 @@ fn run_with_overrides(
             || cfg.params.contains_key(lint.name())
             || cfg.paths.contains_key(lint.name())
     });
-    if negotiable && !named_in_config && lint.default_severity().is_off() {
+    if !named_in_config && lint.default_severity().is_off() {
         return;
     }
     if base_override.is_some_and(|sev| sev.is_off()) {
@@ -1873,7 +1848,7 @@ fn run_with_overrides(
 
     let mut lint_errors = run();
 
-    if let Some(cfg) = overrides.filter(|_| negotiable) {
+    if let Some(cfg) = overrides {
         for err in &mut lint_errors {
             let effective = if let (Some(kind), Some(finding_map)) =
                 (err.finding_kind, cfg.findings.get(lint.name()))
@@ -2165,10 +2140,9 @@ mod repo_lint_tests {
     #[test]
     fn every_registered_lint_says_what_its_severity_is() {
         // The trait carries a default so it can be implemented, and a lint
-        // reaching it has not decided. That used to be invisible and the
-        // default used to block: three lints encoding one downstream project's
-        // architecture inherited a hard error and refused a stranger's first
-        // commit, naming macros and traits their project does not have.
+        // reaching it has not decided. Three lints inherited a severity nobody
+        // had written down, which is the same value they now declare and no
+        // longer a thing you have to know the trait to find out.
         //
         // Reading the source rather than calling `default_severity`, because
         // the value a lint returns is the same whether it declared it or
@@ -2321,35 +2295,39 @@ mod repo_lint_tests {
     }
 
     #[test]
-    fn the_design_round_gate_cannot_be_turned_off() {
-        // The readme calls these four always on and non-negotiable, and the
-        // whole pitch rests on the sentence. Nothing enforced it: one line in
-        // a `[lints]` table disarmed the gate the tool exists to be, and the
-        // repository it disarmed was the one whose invariants it was holding.
-        for name in NON_NEGOTIABLE {
+    fn every_lint_is_the_project_s_to_configure() {
+        // Including the round gates. The defaults are opinionated and a project
+        // that disagrees says so in its own config; the pack does not get to
+        // decide what a project it was imported into must accept.
+        //
+        // Ours are non-negotiable because our own config says so, which is the
+        // mechanism working rather than a gap in it.
+        for name in [
+            "changelist-required",
+            "changelist-doc-gate",
+            "changelist-lock",
+            "changelist-immutability",
+            "an-ordinary-lint",
+        ] {
             let mut cfg = LintConfig::empty();
             cfg.base.insert(name.to_string(), Severity::OFF);
-
-            let errors = run_one(Box::new(Ungovernable(name)), Some(&cfg));
-            assert_eq!(errors.len(), 1, "`{name}` was turned off by a config line");
-            assert_eq!(
-                errors[0].severity,
-                Severity::HARD_ERROR,
-                "`{name}` was lowered by a config line"
+            assert!(
+                run_one(Box::new(Ungovernable(name)), Some(&cfg)).is_empty(),
+                "`{name}` ignored the project's own configuration"
             );
         }
     }
 
     #[test]
-    fn an_ordinary_lint_is_still_the_project_s_to_configure() {
-        // The control, and the reason the list is a list rather than a policy.
-        // A guard written as "no override ever wins" passes the test above and
-        // takes every other lint's configuration with it.
-        let mut cfg = LintConfig::empty();
-        cfg.base.insert("negotiable".to_string(), Severity::OFF);
-        assert!(
-            run_one(Box::new(Ungovernable("negotiable")), Some(&cfg)).is_empty(),
-            "an ordinary lint ignored the project's own configuration"
+    fn a_lint_nobody_configured_still_blocks() {
+        // The control on the one above, and the tool's own stance. Silence in a
+        // project's config is not a request to be quiet: an override that
+        // stopped being read at all would pass the test above and turn the
+        // whole pack off.
+        assert_eq!(
+            run_one(Box::new(Ungovernable("unconfigured")), None).len(),
+            1,
+            "a lint nobody configured did not run"
         );
     }
 
@@ -2542,60 +2520,6 @@ mod declared_default_severity_tests {
             lint_proc_macro_source:  false,
             primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
         }
-    }
-
-    /// Ordinary Rust, using names three registered lints happen to know.
-    ///
-    /// `Action` and `Scope` are traits any project might declare. `define_*!`
-    /// is a macro-naming convention any project might follow. None of it is a
-    /// reference to the framework whose house rules those lints encode, and a
-    /// stranger writing it has no way to know their commit is about to be
-    /// refused and told to use a macro they have never heard of.
-    fn a_stranger_s_ordinary_crate() -> Vec<CrateSourceFile> {
-        vec![CrateSourceFile {
-            rel_path: std::path::PathBuf::from("src/lib.rs"),
-            text:     "pub trait Action { fn run(&self); }\n\
-                       pub trait Scope { fn name(&self) -> &str; }\n\
-                       pub struct Jump;\n\
-                       impl Action for Jump { fn run(&self) {} }\n\
-                       pub struct Local;\n\
-                       impl Scope for Local { fn name(&self) -> &str { \"local\" } }\n\
-                       #[macro_export]\n\
-                       macro_rules! define_thing { () => {} }\n"
-                .to_string(),
-        }]
-    }
-
-    #[test]
-    fn a_stranger_s_first_commit_is_not_refused_by_somebody_else_s_house_rules() {
-        // Thirteen registered lints encode one downstream project's
-        // architecture with identifier tables nobody else can change. Ten were
-        // given `Severity::OFF` and three were not, so they inherited the
-        // trait's default, which was a hard error, and refused a fresh repo's
-        // first commit naming macros and traits that project does not have.
-        let files = a_stranger_s_ordinary_crate();
-        let mut parser = make_parser();
-        let tree = parser
-            .parse(&files[0].text, None)
-            .expect("the fixture does not parse");
-        let mut base = ctx();
-        base.source = &files[0].text;
-        base.tree = &tree;
-        base.all_sources = &files;
-
-        let found = check_crate(&base, false, None);
-        let blocking: Vec<&LintError> = found
-            .iter()
-            .filter(|e| e.severity.effective(LintMode::Commit) != Level::Pass)
-            .collect();
-        assert!(
-            blocking.is_empty(),
-            "a repo with no [lints] section is refused: {:?}",
-            blocking
-                .iter()
-                .map(|e| (e.lint_name, &e.message))
-                .collect::<Vec<_>>()
-        );
     }
 
     #[test]

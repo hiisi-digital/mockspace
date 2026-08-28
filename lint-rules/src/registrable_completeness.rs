@@ -51,7 +51,7 @@ impl Lint for RegistrableCompleteness {
     /// tells a stranger to use a macro their project does not have. Off until a
     /// project asks for it.
     fn default_severity(&self) -> Severity {
-        Severity::OFF
+        Severity::HARD_ERROR
     }
 }
 

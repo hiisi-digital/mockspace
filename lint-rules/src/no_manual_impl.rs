@@ -51,7 +51,7 @@ impl Lint for NoManualImpl {
     /// `Scope` among them, which are ordinary names anywhere else. Off until a
     /// project asks for it.
     fn default_severity(&self) -> Severity {
-        Severity::OFF
+        Severity::HARD_ERROR
     }
 }
 
