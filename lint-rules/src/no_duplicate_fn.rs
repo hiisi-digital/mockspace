@@ -176,7 +176,7 @@ mod is_line_suppressed_tests {
     const SAMPLE: &str = "\
 pub extern \"C\" fn rust_eh_personality() {}  // lint:allow(no-duplicate-fn) -- linker contract
 pub fn plain() {}
-pub fn other_marker() {}  // lint:allow(no-bare-numeric)
+pub fn other_marker() {}  // lint:allow(some-lint)
 pub fn comma_list_match() {}  // lint:allow(no-bare-result, no-duplicate-fn)
 ";
 

@@ -198,9 +198,10 @@ pub struct Config {
     /// token names that crate legitimately introduces in its own
     /// source because it is the producer of the wrapped equivalent.
     ///
-    /// Bare-primitive lints (`no-bare-numeric`, `arvo-types-only`,
-    /// `no-bare-option`, etc.) skip these tokens on these specific
-    /// crates. Everything not listed remains subject to the lint.
+    /// A lint that refuses bare primitives skips these tokens on these
+    /// specific crates. Everything not listed remains subject to it. No such
+    /// lint ships here: they come from a pack a project imports if it wants
+    /// them, and this key is the engine's half of the arrangement.
     ///
     /// Example: `numerics = ["u8", "u16", "u32", "u64", "u128", "i8", ...,
     /// "f32", "f64", "usize", "isize", "bool"]`: that crate defines the
