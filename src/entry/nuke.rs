@@ -369,8 +369,7 @@ pub(crate) fn plan_nuke(cfg: &Config, tier: NukeTier) -> NukePlan {
 /// What is design is a crate's own `DESIGN.md.tmpl` and deep dives, which carry an
 /// owner, plus the workspace's `DESIGN.md.tmpl` at the root, which does not.
 fn is_design(t: &crate::document::DesignTemplate) -> bool {
-    t.owner.is_some()
-        || t.path.file_name().is_some_and(|n| n == "DESIGN.md.tmpl")
+    t.owner.is_some() || t.path.file_name().is_some_and(|n| n == "DESIGN.md.tmpl")
 }
 
 /// Whether the path is a symlink, without following it.
@@ -887,13 +886,10 @@ mod what_a_nuke_takes {
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
         only_rendered.sort();
-        assert_eq!(
-            only_rendered,
-            vec![
-                "PRINCIPLES.md.tmpl".to_string(),
-                "WORKFLOW.md.tmpl".to_string()
-            ]
-        );
+        assert_eq!(only_rendered, vec![
+            "PRINCIPLES.md.tmpl".to_string(),
+            "WORKFLOW.md.tmpl".to_string()
+        ]);
     }
 }
 
