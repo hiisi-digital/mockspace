@@ -45,6 +45,16 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
 
     for root in workspace_roots(repo_root) {
         let where_ = rel(repo_root, &root);
+        // A workspace with no packages has no dependency graph, so cargo-deny
+        // exits non-zero on `cargo metadata` before it looks at a single
+        // licence. Reading that as a violation blocks a push over a repository
+        // layout somebody chose on purpose, and says the wrong thing about why.
+        if !has_a_package_graph(&root) {
+            actions.push(format!(
+                "deny_check: skipped, no package graph to check ({where_})"
+            ));
+            continue;
+        }
         if run_deny(&root, &config) {
             actions.push(format!("deny_check: cargo deny check passed ({where_})"));
         } else {
@@ -54,6 +64,30 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
         }
     }
     Ok(actions)
+}
+
+/// Whether `cargo metadata` can resolve a package graph at `root`.
+///
+/// False for a virtual manifest with no members, which is a legitimate shape:
+/// a repository whose crates each carry their own `[workspace]` so that none of
+/// them reaches a consumer's dependency graph has exactly this at the top.
+fn has_a_package_graph(root: &Path) -> bool {
+    // The exit code is not the signal: `cargo metadata` succeeds here and
+    // reports an empty `packages` array. cargo-deny is the one that then exits
+    // non-zero, saying the manifest contains no package.
+    let out = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(root)
+        .stderr(std::process::Stdio::null())
+        .output();
+    let Ok(out) = out else { return false };
+    if !out.status.success() {
+        return false;
+    }
+    serde_json::from_slice::<serde_json::Value>(&out.stdout)
+        .ok()
+        .and_then(|v| v.get("packages").and_then(|p| p.as_array()).map(|a| !a.is_empty()))
+        .unwrap_or(false)
 }
 
 /// Whether the `cargo-deny` subcommand is available.
@@ -239,5 +273,37 @@ mod tests {
         // only the real root; the symlinked workspace is not traversed.
         assert_eq!(found, [root.to_path_buf()].into_iter().collect());
         fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn a_workspace_with_no_members_has_no_package_graph() {
+        // The shape a repository has when every crate carries its own
+        // `[workspace]` so none of them reaches a consumer's graph. cargo-deny
+        // exits non-zero here before reading a licence, and reading that as a
+        // violation blocks a push over a layout somebody chose.
+        let tmp = tempfile::tempdir().unwrap();
+        write(
+            &tmp.path().join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = []\n",
+        );
+        assert!(!has_a_package_graph(tmp.path()));
+    }
+
+    #[test]
+    fn a_workspace_with_a_member_has_one() {
+        // The control. Without it the test above passes on an implementation
+        // that answers false for everything, which would skip the gate on every
+        // repository rather than on the one that cannot run it.
+        let tmp = tempfile::tempdir().unwrap();
+        write(
+            &tmp.path().join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"one\"]\n",
+        );
+        write(
+            &tmp.path().join("one/Cargo.toml"),
+            "[package]\nname = \"one\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        );
+        write(&tmp.path().join("one/src/lib.rs"), "");
+        assert!(has_a_package_graph(tmp.path()));
     }
 }
