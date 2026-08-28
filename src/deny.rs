@@ -49,11 +49,19 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
         // exits non-zero on `cargo metadata` before it looks at a single
         // licence. Reading that as a violation blocks a push over a repository
         // layout somebody chose on purpose, and says the wrong thing about why.
-        if !has_a_package_graph(&root) {
-            actions.push(format!(
-                "deny_check: skipped, no package graph to check ({where_})"
-            ));
-            continue;
+        match package_graph(&root) {
+            PackageGraph::Empty => {
+                actions.push(format!(
+                    "deny_check: skipped, no package graph to check ({where_})"
+                ));
+                continue;
+            }
+            PackageGraph::Unreadable => {
+                return Err(format!(
+                    "deny_check: could not read the package graph in {where_}, so nothing was checked"
+                ));
+            }
+            PackageGraph::Present => {}
         }
         if run_deny(&root, &config) {
             actions.push(format!("deny_check: cargo deny check passed ({where_})"));
@@ -66,28 +74,47 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
     Ok(actions)
 }
 
-/// Whether `cargo metadata` can resolve a package graph at `root`.
+/// What `cargo metadata` says about the packages at one workspace root.
 ///
-/// False for a virtual manifest with no members, which is a legitimate shape:
-/// a repository whose crates each carry their own `[workspace]` so that none of
-/// them reaches a consumer's dependency graph has exactly this at the top.
-fn has_a_package_graph(root: &Path) -> bool {
-    // The exit code is not the signal: `cargo metadata` succeeds here and
-    // reports an empty `packages` array. cargo-deny is the one that then exits
-    // non-zero, saying the manifest contains no package.
-    let out = Command::new("cargo")
+/// Three states, and the third is why this is not a bool. A graph that cannot
+/// be read is not an absent graph: skipping on it would let a repository whose
+/// manifest is broken push with nothing checked, and log that there was nothing
+/// to check.
+enum PackageGraph {
+    /// Packages resolved. cargo-deny has something to analyse.
+    Present,
+    /// Resolved to nothing. A virtual manifest with no members is the shape:
+    /// a repository whose crates each carry their own `[workspace]`, so none of
+    /// them reaches a consumer's dependency graph, has exactly this at the top.
+    Empty,
+    /// cargo could not be run, exited non-zero, or answered with something this
+    /// cannot read. Nothing is known either way.
+    Unreadable,
+}
+
+fn package_graph(root: &Path) -> PackageGraph {
+    // The exit code alone is not the signal: `cargo metadata` succeeds on an
+    // empty workspace and reports an empty `packages` array. cargo-deny is the
+    // one that then exits non-zero, saying the manifest contains no package.
+    let Ok(out) = Command::new("cargo")
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .current_dir(root)
         .stderr(std::process::Stdio::null())
-        .output();
-    let Ok(out) = out else { return false };
+        .output()
+    else {
+        return PackageGraph::Unreadable;
+    };
     if !out.status.success() {
-        return false;
+        return PackageGraph::Unreadable;
     }
-    serde_json::from_slice::<serde_json::Value>(&out.stdout)
+    match serde_json::from_slice::<serde_json::Value>(&out.stdout)
         .ok()
-        .and_then(|v| v.get("packages").and_then(|p| p.as_array()).map(|a| !a.is_empty()))
-        .unwrap_or(false)
+        .and_then(|v| v.get("packages").and_then(|p| p.as_array()).map(Vec::len))
+    {
+        Some(0) => PackageGraph::Empty,
+        Some(_) => PackageGraph::Present,
+        None => PackageGraph::Unreadable,
+    }
 }
 
 /// Whether the `cargo-deny` subcommand is available.
@@ -286,7 +313,46 @@ mod tests {
             &tmp.path().join("Cargo.toml"),
             "[workspace]\nresolver = \"2\"\nmembers = []\n",
         );
-        assert!(!has_a_package_graph(tmp.path()));
+        assert!(matches!(package_graph(tmp.path()), PackageGraph::Empty));
+    }
+
+    #[test]
+    fn a_manifest_that_cannot_be_read_is_not_an_empty_one() {
+        // The state that makes this an enum. A workspace naming a member that
+        // does not exist used to block with the wrong reason, and skipping on it
+        // instead would push with nothing checked and log that there was
+        // nothing to check. Neither is honest; the graph is simply unknown.
+        let tmp = tempfile::tempdir().unwrap();
+        write(
+            &tmp.path().join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"nonexistent\"]\n",
+        );
+        assert!(matches!(
+            package_graph(tmp.path()),
+            PackageGraph::Unreadable
+        ));
+    }
+
+    #[test]
+    fn an_unreadable_graph_blocks_rather_than_skipping() {
+        // And the caller has to act on the distinction, not merely receive it.
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("deny.toml"), "[licenses]\n");
+        write(
+            &tmp.path().join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"nonexistent\"]\n",
+        );
+        if !cargo_deny_installed() {
+            // The skip path returns before the loop, so this arm would pass on
+            // any implementation. Say so rather than asserting nothing.
+            eprintln!("cargo-deny absent: the loop is unreachable, arm not exercised");
+            return;
+        }
+        let err = check(tmp.path(), true).expect_err("an unreadable graph has to block");
+        assert!(
+            err.contains("could not read"),
+            "blocked, but named the wrong reason: {err}"
+        );
     }
 
     #[test]
@@ -304,6 +370,6 @@ mod tests {
             "[package]\nname = \"one\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
         );
         write(&tmp.path().join("one/src/lib.rs"), "");
-        assert!(has_a_package_graph(tmp.path()));
+        assert!(matches!(package_graph(tmp.path()), PackageGraph::Present));
     }
 }
