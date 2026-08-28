@@ -198,7 +198,7 @@ pub struct Config {
     /// token names that crate legitimately introduces in its own
     /// source because it is the producer of the wrapped equivalent.
     ///
-    /// Bare-primitive lints (`no-bare-numeric`, `typed-primitives-only`,
+    /// Bare-primitive lints (`no-bare-numeric`, `arvo-types-only`,
     /// `no-bare-option`, etc.) skip these tokens on these specific
     /// crates. Everything not listed remains subject to the lint.
     ///

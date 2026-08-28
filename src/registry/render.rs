@@ -257,7 +257,10 @@ fn write_taplo_if_ours(path: &Path, content: &str) -> bool {
             ours && write_if_changed(path, content)
         },
         // Absent, or unreadable, in which case the write will say so.
-        Err(_) => write_if_changed(path, content),
+        // A file that exists and cannot be read is not ours to overwrite. The
+        // only case that writes is the one where there is nothing there.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => write_if_changed(path, content),
+        Err(_) => false,
     }
 }
 

@@ -69,9 +69,13 @@ fn tracked_files() -> Vec<PathBuf> {
     assert!(out.status.success(), "git ls-files failed");
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        // `mock/` is this repository's own design-round trail and its
-        // superseded engine, which is history rather than a surface. `docs/`
-        // is generated from templates under it.
+        // `mock/` is this repository's own design trail and the v2 redesign,
+        // which is history and work in progress rather than a surface.
+        //
+        // `docs/` is excluded and should not be: it is a tier one surface a
+        // reader reaches, it is generated from templates under `mock/`, and it
+        // still carries eight of these names and two home paths. Fixing it
+        // means fixing the templates, which is a round of its own.
         .filter(|l| !l.starts_with("mock/") && !l.starts_with("docs/"))
         .map(|l| root.join(l))
         .collect()

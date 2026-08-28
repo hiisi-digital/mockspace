@@ -213,6 +213,16 @@ fn cargo_config_dirs(root: &Path, from: Option<&Path>) -> Vec<PathBuf> {
     let Some(from) = from else {
         return out;
     };
+    // Bail before walking, rather than relying on the loop to meet the root.
+    // A `from` outside the root never meets it, so the walk ran to `/` and
+    // read every `.cargo/config.toml` above it: a `mock` alias somebody keeps
+    // in their home directory for their own reasons was then reported as this
+    // tool's retired one. The test written as the control for this asserted
+    // only that the list was shorter than twelve entries, and nine of them
+    // passed it.
+    if !from.starts_with(root) {
+        return out;
+    }
     let mut here = from;
     while here != root {
         out.push(here.to_path_buf());
@@ -341,13 +351,16 @@ mod tests {
         // root, and a directory that is not under the root never will, so a
         // walk with no floor reads every `.cargo` between there and `/`,
         // including the user's own.
+        // Asserted as the whole set rather than as its size. A length bound is
+        // not a control: this said `len() < 12` and a nine-entry walk running
+        // all the way to `/` passed it.
         let a = tempfile::tempdir().unwrap();
         let b = tempfile::tempdir().unwrap();
         let dirs = cargo_config_dirs(a.path(), Some(b.path()));
-        assert!(dirs.len() < 12, "the walk did not stop: {dirs:?}");
-        assert!(
-            dirs.contains(&a.path().to_path_buf()),
-            "the root is always read"
+        assert_eq!(
+            dirs,
+            vec![a.path().to_path_buf()],
+            "a working directory outside the root contributes more than the root"
         );
     }
 
