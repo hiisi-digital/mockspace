@@ -1308,10 +1308,8 @@ const NASTY_REASON: &str = "refusing `grep -m1 \"^[0-9]* rows\" docs/RULING.md`\
 
 #[test]
 fn a_deny_reason_carrying_quotes_and_newlines_still_parses() {
-    for (platform, helpers) in [
-        ("claude", CLAUDE_HOOK_HELPERS),
-        ("copilot", COPILOT_HOOK_HELPERS),
-    ] {
+    for (platform, helpers) in [("claude", CLAUDE_HOOK_HELPERS), ("copilot", COPILOT_HOOK_HELPERS)]
+    {
         let out = deny_output(helpers, NASTY_REASON);
         let parsed: serde_json::Value = serde_json::from_str(out.trim())
             .unwrap_or_else(|e| panic!("{platform} emitted unparseable json: {e}\n{out}"));

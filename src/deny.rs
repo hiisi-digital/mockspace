@@ -49,11 +49,31 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
         // exits non-zero on `cargo metadata` before it looks at a single
         // licence. Reading that as a violation blocks a push over a repository
         // layout somebody chose on purpose, and says the wrong thing about why.
-        if !has_a_package_graph(&root) {
-            actions.push(format!(
-                "deny_check: skipped, no package graph to check ({where_})"
-            ));
-            continue;
+        match package_graph(&root) {
+            PackageGraph::Empty => {
+                actions.push(format!(
+                    "deny_check: skipped, no package graph to check ({where_})"
+                ));
+                continue;
+            },
+            PackageGraph::Unreadable if is_a_spike_tree(&under(repo_root, &root)) => {
+                // A probe or a sketch is a spike: it exists to check one thing,
+                // it takes shortcuts everywhere, and nothing it depends on
+                // reaches a consumer. Several here carry a `[workspace]` with
+                // no target at all, so cargo has nothing to answer with. Say so
+                // and carry on; blocking a push over one would gate the
+                // repository on the state of its own audit trail.
+                actions.push(format!(
+                    "deny_check: skipped, no readable package graph in {where_} (a spike tree)"
+                ));
+                continue;
+            },
+            PackageGraph::Unreadable => {
+                return Err(format!(
+                    "deny_check: could not read the package graph in {where_}, so nothing was checked"
+                ));
+            },
+            PackageGraph::Present => {},
         }
         if run_deny(&root, &config) {
             actions.push(format!("deny_check: cargo deny check passed ({where_})"));
@@ -66,28 +86,79 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
     Ok(actions)
 }
 
-/// Whether `cargo metadata` can resolve a package graph at `root`.
+/// Whether a root sits inside the audit trail rather than the shipped tree.
 ///
-/// False for a virtual manifest with no members, which is a legitimate shape:
-/// a repository whose crates each carry their own `[workspace]` so that none of
-/// them reaches a consumer's dependency graph has exactly this at the top.
-fn has_a_package_graph(root: &Path) -> bool {
-    // The exit code is not the signal: `cargo metadata` succeeds here and
-    // reports an empty `packages` array. cargo-deny is the one that then exits
-    // non-zero, saying the manifest contains no package.
-    let out = Command::new("cargo")
+/// Keyed on a whole path component, so a crate named `research-tools` is not
+/// caught by a crate named `research`. The two names are the ones the workspace
+/// reserves for spikes: `mock/research/**` for a panel's probes and `sketches/`
+/// for a feasibility check.
+///
+/// A first-party crate that genuinely lives at one of those names and whose
+/// metadata is unreadable would be skipped rather than blocked. That is the
+/// wrong answer in principle and a tolerable one in practice, because the
+/// action line names the root it skipped and why, so the skip is readable
+/// rather than silent.
+///
+/// Takes a path rather than the rendered message string, so what counts as a
+/// component is the platform's answer and not whichever separator `display`
+/// happened to use.
+fn is_a_spike_tree(rel_path: &Path) -> bool {
+    rel_path
+        .components()
+        .any(|c| c.as_os_str() == "research" || c.as_os_str() == "sketches")
+}
+
+/// The part of `path` below `repo_root`, for deciding things about where a root
+/// sits. Falls back to `.`, which is not a spike tree, so a path that somehow
+/// does not sit under the repo blocks rather than being skipped on the strength
+/// of a component from somewhere above the repository.
+fn under(repo_root: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(repo_root)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// What `cargo metadata` says about the packages at one workspace root.
+///
+/// Three states, and the third is why this is not a bool. A graph that cannot
+/// be read is not an absent graph: skipping on it would let a repository whose
+/// manifest is broken push with nothing checked, and log that there was nothing
+/// to check.
+enum PackageGraph {
+    /// Packages resolved. cargo-deny has something to analyse.
+    Present,
+    /// Resolved to nothing. A virtual manifest with no members is the shape:
+    /// a repository whose crates each carry their own `[workspace]`, so none of
+    /// them reaches a consumer's dependency graph, has exactly this at the top.
+    Empty,
+    /// cargo could not be run, exited non-zero, or answered with something this
+    /// cannot read. Nothing is known either way.
+    Unreadable,
+}
+
+fn package_graph(root: &Path) -> PackageGraph {
+    // The exit code alone is not the signal: `cargo metadata` succeeds on an
+    // empty workspace and reports an empty `packages` array. cargo-deny is the
+    // one that then exits non-zero, saying the manifest contains no package.
+    let Ok(out) = Command::new("cargo")
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .current_dir(root)
         .stderr(std::process::Stdio::null())
-        .output();
-    let Ok(out) = out else { return false };
+        .output()
+    else {
+        return PackageGraph::Unreadable;
+    };
     if !out.status.success() {
-        return false;
+        return PackageGraph::Unreadable;
     }
-    serde_json::from_slice::<serde_json::Value>(&out.stdout)
+    match serde_json::from_slice::<serde_json::Value>(&out.stdout)
         .ok()
-        .and_then(|v| v.get("packages").and_then(|p| p.as_array()).map(|a| !a.is_empty()))
-        .unwrap_or(false)
+        .and_then(|v| v.get("packages").and_then(|p| p.as_array()).map(Vec::len))
+    {
+        Some(0) => PackageGraph::Empty,
+        Some(_) => PackageGraph::Present,
+        None => PackageGraph::Unreadable,
+    }
 }
 
 /// Whether the `cargo-deny` subcommand is available.
@@ -286,7 +357,142 @@ mod tests {
             &tmp.path().join("Cargo.toml"),
             "[workspace]\nresolver = \"2\"\nmembers = []\n",
         );
-        assert!(!has_a_package_graph(tmp.path()));
+        assert!(matches!(package_graph(tmp.path()), PackageGraph::Empty));
+    }
+
+    #[test]
+    fn a_manifest_that_cannot_be_read_is_not_an_empty_one() {
+        // The state that makes this an enum. A workspace naming a member that
+        // does not exist used to block with the wrong reason, and skipping on it
+        // instead would push with nothing checked and log that there was
+        // nothing to check. Neither is honest; the graph is simply unknown.
+        let tmp = tempfile::tempdir().unwrap();
+        write(
+            &tmp.path().join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"nonexistent\"]\n",
+        );
+        assert!(matches!(
+            package_graph(tmp.path()),
+            PackageGraph::Unreadable
+        ));
+    }
+
+    #[test]
+    fn an_unreadable_graph_blocks_rather_than_skipping() {
+        // And the caller has to act on the distinction, not merely receive it.
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("deny.toml"), "[licenses]\n");
+        write(
+            &tmp.path().join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"nonexistent\"]\n",
+        );
+        if !cargo_deny_installed() {
+            // The skip path returns before the loop, so this arm would pass on
+            // any implementation. Say so rather than asserting nothing.
+            eprintln!("cargo-deny absent: the loop is unreachable, arm not exercised");
+            return;
+        }
+        let err = check(tmp.path(), true).expect_err("an unreadable graph has to block");
+        assert!(
+            err.contains("could not read"),
+            "blocked, but named the wrong reason: {err}"
+        );
+    }
+
+    #[test]
+    fn a_spike_tree_is_named_by_a_whole_path_component() {
+        let spike = |p: &str| is_a_spike_tree(Path::new(p));
+
+        // Positive, and both reserved names.
+        assert!(spike("mock/research/202608151700_probes/03_csv"));
+        assert!(spike("mock/research/sketches/a_topic"));
+        assert!(spike("research"));
+
+        // Negative, and the substring case that a naive `contains` would get
+        // wrong: a shipped crate whose name merely starts with one of them is
+        // not a spike tree, and blocking is the right answer there.
+        assert!(!spike("mock/crates/researcher"));
+        assert!(!spike("mock/crates/sketches-of-spain/src"));
+        assert!(!spike("mock/crates/bench-core"));
+        assert!(!spike(""));
+
+        // The root itself, which is what `under` answers when a path does not
+        // sit below the repo. Not a spike tree, so such a root blocks.
+        assert!(!spike("."));
+    }
+
+    #[test]
+    fn a_root_outside_the_repo_is_not_read_as_a_spike_tree() {
+        // `under` is what keeps a component from above the repository out of
+        // the decision. Without it an absolute path whose parent directory
+        // happens to be called `research` would skip the gate.
+        let outside = Path::new("/home/research/thing");
+        assert!(is_a_spike_tree(outside), "the component really is there");
+        assert!(!is_a_spike_tree(&under(Path::new("/srv/repo"), outside)));
+    }
+
+    #[test]
+    fn an_unreadable_spike_tree_is_skipped_while_an_unreadable_crate_blocks() {
+        // The case a single-root fixture cannot express, and the reason this
+        // one is built with four. Measured on mockspace itself: 23 roots, 7
+        // unreadable, every one of them a committed probe under
+        // `mock/research/`. Blocking on those gates the repository on the state
+        // of its own audit trail, so the reaction has to depend on where the
+        // root sits rather than only on what cargo said about it.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(&root.join("deny.toml"), "[licenses]\n");
+        // a readable root, so the loop reaches the others
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = []\n",
+        );
+        // unreadable, and part of the audit trail
+        write(
+            &root.join("mock/research/p1/Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"nonexistent\"]\n",
+        );
+        // unreadable, and shipped
+        write(
+            &root.join("mock/crates/shipped/Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"nonexistent\"]\n",
+        );
+
+        if !cargo_deny_installed() {
+            eprintln!("cargo-deny absent: the loop is unreachable, arm not exercised");
+            return;
+        }
+
+        // The shipped one still blocks: the point is not that unreadable became
+        // harmless.
+        let err = check(root, true).expect_err("an unreadable shipped root has to block");
+        assert!(
+            err.contains("mock/crates/shipped"),
+            "blocked on the wrong root: {err}"
+        );
+
+        // With the shipped one removed, the spike tree alone does not block,
+        // and says which root it skipped.
+        fs::remove_dir_all(root.join("mock/crates")).unwrap();
+        let actions = check(root, true).expect("a spike tree alone must not block");
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.contains("mock/research/p1") && a.contains("spike tree")),
+            "skipped silently rather than saying which root and why: {actions:?}"
+        );
+
+        // Every root accounted for, one line each. The assertion above passes on
+        // an implementation that reaches the spike tree and drops a root
+        // somewhere else in the loop, and dropping one is the failure that looks
+        // exactly like success: the gate reports Ok and says nothing about the
+        // root it never checked.
+        assert_eq!(
+            actions.len(),
+            workspace_roots(root).len(),
+            "a root produced no action line, so it was dropped rather than \
+             checked or skipped: {actions:?}"
+        );
     }
 
     #[test]
@@ -304,6 +510,6 @@ mod tests {
             "[package]\nname = \"one\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
         );
         write(&tmp.path().join("one/src/lib.rs"), "");
-        assert!(has_a_package_graph(tmp.path()));
+        assert!(matches!(package_graph(tmp.path()), PackageGraph::Present));
     }
 }

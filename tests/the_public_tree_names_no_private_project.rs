@@ -217,7 +217,9 @@ fn workspace_members(root: &Path) -> Vec<String> {
     let (_, rest) = text
         .split_once("\nmembers = [")
         .expect("the root manifest names no workspace members");
-    let (list, _) = rest.split_once(']').expect("the members array does not close");
+    let (list, _) = rest
+        .split_once(']')
+        .expect("the members array does not close");
     list.split('"')
         // The quoted halves of `"a", "b"` are the odd indices.
         .skip(1)
