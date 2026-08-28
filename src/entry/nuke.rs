@@ -692,10 +692,11 @@ mod what_a_nuke_takes {
 
     #[test]
     fn the_nuke_and_the_renderer_agree_on_what_a_design_is() {
-        // The one way this can go quietly wrong: a template the renderer knows
-        // about and the nuke does not survives a design nuke, and the tier is
-        // reported as taken while part of it is still standing. Both read the
-        // same enumeration, and this is what says so.
+        // Both sides read `document::design_templates`, so what this constrains is
+        // that `document::plan` neither drops a template nor reorders them. A
+        // template `design_templates` itself misses passes here and is not what
+        // this measures; the one enumeration is the thing that makes that the only
+        // remaining way for the two to disagree.
         let d = tree();
         let cfg = cfg_for(&d);
 

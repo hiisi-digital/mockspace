@@ -210,3 +210,63 @@ fn a_dirty_tree_is_refused_whatever_the_answer_would_have_been() {
     assert!(said.contains("unsaved.rs"), "and names it: {said}");
     assert!(d.path().join("mock/crates/alpha/src/other.rs").exists());
 }
+
+/// The engine, with `answer` on standard input.
+///
+/// The whole safeguard is a question, and until this existed nothing in the suite
+/// ever answered it: the tests above cover a closed input and `--y`, which are the
+/// two paths that skip the reading entirely.
+fn run_answering(root: &Path, args: &[&str], answer: &str) -> String {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mockspace"))
+        .arg("--dir")
+        .arg(root.join("mock"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the engine could not be run");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(answer.as_bytes())
+        .expect("could not write the answer");
+    let out = child.wait_with_output().expect("the engine did not finish");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+#[test]
+fn a_yes_on_the_prompt_carries_the_plan_out() {
+    let d = a_repo();
+    let said = run_answering(d.path(), &["--nuke"], "y\n");
+
+    assert!(said.contains("go ahead?"), "it did not ask: {said}");
+    assert!(said.contains("NUKE complete"), "{said}");
+    assert_eq!(sources(d.path()), vec![PathBuf::from(
+        "mock/crates/alpha/src/lib.rs"
+    )]);
+}
+
+#[test]
+fn anything_but_a_yes_leaves_it_alone() {
+    // The control for the test above, and the direction that matters: a prompt
+    // reading any answer as consent is worse than no prompt, because it looks
+    // like one.
+    for answer in ["n\n", "\n", "yes please\n", "Y E S\n"] {
+        let d = a_repo();
+        let before = sources(d.path());
+        let said = run_answering(d.path(), &["--nuke"], answer);
+
+        assert!(
+            said.contains("left alone"),
+            "{answer:?} was taken as yes: {said}"
+        );
+        assert_eq!(before, sources(d.path()), "{answer:?} deleted something");
+    }
+}
