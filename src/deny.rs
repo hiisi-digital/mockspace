@@ -55,8 +55,8 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
                     "deny_check: skipped, no package graph to check ({where_})"
                 ));
                 continue;
-            }
-            PackageGraph::Unreadable if is_a_spike_tree(&where_) => {
+            },
+            PackageGraph::Unreadable if is_a_spike_tree(&under(repo_root, &root)) => {
                 // A probe or a sketch is a spike: it exists to check one thing,
                 // it takes shortcuts everywhere, and nothing it depends on
                 // reaches a consumer. Several here carry a `[workspace]` with
@@ -67,13 +67,13 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
                     "deny_check: skipped, no readable package graph in {where_} (a spike tree)"
                 ));
                 continue;
-            }
+            },
             PackageGraph::Unreadable => {
                 return Err(format!(
                     "deny_check: could not read the package graph in {where_}, so nothing was checked"
                 ));
-            }
-            PackageGraph::Present => {}
+            },
+            PackageGraph::Present => {},
         }
         if run_deny(&root, &config) {
             actions.push(format!("deny_check: cargo deny check passed ({where_})"));
@@ -98,10 +98,24 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
 /// wrong answer in principle and a tolerable one in practice, because the
 /// action line names the root it skipped and why, so the skip is readable
 /// rather than silent.
-fn is_a_spike_tree(rel_path: &str) -> bool {
+///
+/// Takes a path rather than the rendered message string, so what counts as a
+/// component is the platform's answer and not whichever separator `display`
+/// happened to use.
+fn is_a_spike_tree(rel_path: &Path) -> bool {
     rel_path
-        .split('/')
-        .any(|c| c == "research" || c == "sketches")
+        .components()
+        .any(|c| c.as_os_str() == "research" || c.as_os_str() == "sketches")
+}
+
+/// The part of `path` below `repo_root`, for deciding things about where a root
+/// sits. Falls back to `.`, which is not a spike tree, so a path that somehow
+/// does not sit under the repo blocks rather than being skipped on the strength
+/// of a component from somewhere above the repository.
+fn under(repo_root: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(repo_root)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// What `cargo metadata` says about the packages at one workspace root.
@@ -387,18 +401,34 @@ mod tests {
 
     #[test]
     fn a_spike_tree_is_named_by_a_whole_path_component() {
+        let spike = |p: &str| is_a_spike_tree(Path::new(p));
+
         // Positive, and both reserved names.
-        assert!(is_a_spike_tree("mock/research/202608151700_probes/03_csv"));
-        assert!(is_a_spike_tree("mock/research/sketches/a_topic"));
-        assert!(is_a_spike_tree("research"));
+        assert!(spike("mock/research/202608151700_probes/03_csv"));
+        assert!(spike("mock/research/sketches/a_topic"));
+        assert!(spike("research"));
 
         // Negative, and the substring case that a naive `contains` would get
         // wrong: a shipped crate whose name merely starts with one of them is
         // not a spike tree, and blocking is the right answer there.
-        assert!(!is_a_spike_tree("mock/crates/researcher"));
-        assert!(!is_a_spike_tree("mock/crates/sketches-of-spain/src"));
-        assert!(!is_a_spike_tree("mock/crates/bench-core"));
-        assert!(!is_a_spike_tree(""));
+        assert!(!spike("mock/crates/researcher"));
+        assert!(!spike("mock/crates/sketches-of-spain/src"));
+        assert!(!spike("mock/crates/bench-core"));
+        assert!(!spike(""));
+
+        // The root itself, which is what `under` answers when a path does not
+        // sit below the repo. Not a spike tree, so such a root blocks.
+        assert!(!spike("."));
+    }
+
+    #[test]
+    fn a_root_outside_the_repo_is_not_read_as_a_spike_tree() {
+        // `under` is what keeps a component from above the repository out of
+        // the decision. Without it an absolute path whose parent directory
+        // happens to be called `research` would skip the gate.
+        let outside = Path::new("/home/research/thing");
+        assert!(is_a_spike_tree(outside), "the component really is there");
+        assert!(!is_a_spike_tree(&under(Path::new("/srv/repo"), outside)));
     }
 
     #[test]
@@ -446,8 +476,22 @@ mod tests {
         fs::remove_dir_all(root.join("mock/crates")).unwrap();
         let actions = check(root, true).expect("a spike tree alone must not block");
         assert!(
-            actions.iter().any(|a| a.contains("mock/research/p1") && a.contains("spike tree")),
+            actions
+                .iter()
+                .any(|a| a.contains("mock/research/p1") && a.contains("spike tree")),
             "skipped silently rather than saying which root and why: {actions:?}"
+        );
+
+        // Every root accounted for, one line each. The assertion above passes on
+        // an implementation that reaches the spike tree and drops a root
+        // somewhere else in the loop, and dropping one is the failure that looks
+        // exactly like success: the gate reports Ok and says nothing about the
+        // root it never checked.
+        assert_eq!(
+            actions.len(),
+            workspace_roots(root).len(),
+            "a root produced no action line, so it was dropped rather than \
+             checked or skipped: {actions:?}"
         );
     }
 
