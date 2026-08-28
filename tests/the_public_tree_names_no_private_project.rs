@@ -170,14 +170,20 @@ fn the_checks_above_can_fail() {
 ///
 /// Derived rather than written down, so a crate that starts publishing joins
 /// the guard by doing that and not by somebody remembering to add a row here.
+///
+/// Derived from the workspace's own `members`, which is what makes that true.
+/// A `read_dir` of the root reads neither the root's own manifest nor a member
+/// nested below one directory, and this workspace has both: `.` is a member and
+/// so is `benches/variants/multiply-xor`. So the crate the `exclude` comment
+/// above names as the hazard, this one, flipping to `publish = true` in a line,
+/// was the exact crate the scan could not see.
 fn crates_that_publish() -> Vec<String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(root).expect("the repo root is unreadable") {
-        let dir = entry.expect("unreadable entry").path();
-        let manifest = dir.join("Cargo.toml");
+    for member in workspace_members(root) {
+        let manifest = root.join(&member).join("Cargo.toml");
         if !manifest.is_file() {
-            continue;
+            panic!("the workspace names `{member}` as a member and it has no Cargo.toml");
         }
         let text = std::fs::read_to_string(&manifest).expect("unreadable manifest");
         // `publish = true` written out, which is what these carry. A manifest
@@ -192,6 +198,32 @@ fn crates_that_publish() -> Vec<String> {
     }
     out.sort();
     out
+}
+
+/// Every path in the root manifest's `members` array, `.` included.
+///
+/// Read out of the text rather than through a toml parser, matching the rest of
+/// this file, which has no dependency to read one with. A glob member is
+/// refused rather than skipped: expanding one is real work, and a member the
+/// scan quietly drops is how this function was wrong before.
+fn workspace_members(root: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(root.join("Cargo.toml")).expect("no root manifest");
+    let (_, rest) = text
+        .split_once("\nmembers = [")
+        .expect("the root manifest names no workspace members");
+    let (list, _) = rest.split_once(']').expect("the members array does not close");
+    list.split('"')
+        // The quoted halves of `"a", "b"` are the odd indices.
+        .skip(1)
+        .step_by(2)
+        .map(|m| {
+            assert!(
+                !m.contains('*'),
+                "the workspace names the glob member `{m}`, which this scan cannot expand",
+            );
+            m.to_string()
+        })
+        .collect()
 }
 
 /// The `name = "..."` of the `[package]` table, which is the first one.
@@ -227,13 +259,25 @@ fn files_that_would_ship() -> Vec<PathBuf> {
             String::from_utf8_lossy(&out.stderr)
         );
         // Paths are relative to the member's own directory, not to the repo
-        // root, and `readme = "../README.md"` arrives as `README.md`. Both
-        // roots are tried, so a file is found wherever it really sits.
+        // root, and `readme = "../README.md"` arrives as `README.md`. So the
+        // member's own directory is tried first and the root only when that
+        // finds nothing: taking both would read the root's `Cargo.toml`,
+        // `LICENSE` and `src/lib.rs` as shipping, and those belong to a crate
+        // that does not publish. It scanned five root files where one ships.
+        let before = files.len();
         files.extend(
             String::from_utf8_lossy(&out.stdout)
                 .lines()
-                .flat_map(|l| [root.join(name).join(l.trim()), root.join(l.trim())])
-                .filter(|p| p.is_file()),
+                .filter_map(|l| {
+                    let member = root.join(name).join(l.trim());
+                    let at_root = root.join(l.trim());
+                    [member, at_root].into_iter().find(|p| p.is_file())
+                }),
+        );
+        assert!(
+            files.len() > before,
+            "cargo listed a package for {name} and not one of its paths resolved \
+             to a file, so this is scanning nothing for it"
         );
     }
     files.sort();
@@ -248,13 +292,14 @@ fn nothing_in_the_tarball_names_a_project_a_reader_cannot_see() {
     // `docs/research/`, which is bug notes for whoever works on this engine and
     // not for anybody consuming it.
     let shipped = files_that_would_ship();
-    // The floor is what stops an empty listing from passing every assertion
-    // below. It sits at ten because the two publishing crates ship a dozen-odd
-    // files between them, not the whole tree: the number was fifty when this
-    // asked `mockspace`, which is `publish = false`, so it was a floor over a
-    // set nobody receives.
+    // A coarse backstop only. The real one is per crate, inside
+    // `files_that_would_ship`, which refuses a crate whose every listed path
+    // resolved to nothing; that catches a broken scan for one member, which a
+    // total cannot. This number is low on purpose: it used to sit above a count
+    // padded by root files that do not ship, so raising it again would be
+    // pinning the noise.
     assert!(
-        shipped.len() > 10,
+        shipped.len() > 5,
         "only {} files listed, so this is measuring the wrong thing",
         shipped.len()
     );
@@ -423,4 +468,47 @@ fn the_reference_scan_finds_both_shapes_a_readme_points_with() {
          edit `mock/agent/config.toml` or `.git/hooks/pre-commit`",
     );
     assert!(quiet.is_empty(), "read something as a reference: {quiet:?}");
+}
+
+#[test]
+fn the_publish_scan_reaches_every_member_including_this_one() {
+    // The control for `crates_that_publish`, and the defect it names is one it
+    // could never report itself: a scan that cannot see a crate reports that
+    // crate as not publishing, which is indistinguishable from the truth.
+    //
+    // Measured when this was a `read_dir` of the root: flipping this package to
+    // `publish = true` and dropping the `exclude` line put twelve documents
+    // under `docs/` into a real tarball, private names and home paths included,
+    // and the suite stayed green. The root manifest was never opened.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let members = workspace_members(root);
+
+    assert!(
+        members.iter().any(|m| m == "."),
+        "the root package is not in the scanned set, so it can never join the \
+         guard by publishing: {members:?}"
+    );
+    assert!(
+        members.iter().any(|m| m.matches('/').count() >= 2),
+        "no member nested below one directory is in the scanned set, and this \
+         workspace has several: {members:?}"
+    );
+    // Every member resolves, which is what lets `crates_that_publish` panic
+    // rather than skip on one that does not.
+    for m in &members {
+        assert!(
+            root.join(m).join("Cargo.toml").is_file(),
+            "the workspace names `{m}` and it has no manifest"
+        );
+    }
+
+    // And the parse itself, on text rather than on this repository, so the two
+    // assertions above cannot both hold by accident of one hand-written array.
+    let d = tempfile::tempdir().expect("no tempdir");
+    std::fs::write(
+        d.path().join("Cargo.toml"),
+        "[workspace]\nmembers = [\n    \".\",\n    \"a/b/c\",\n]\n\n[package]\nname = \"x\"\n",
+    )
+    .expect("unwritable");
+    assert_eq!(workspace_members(d.path()), vec![".", "a/b/c"]);
 }
