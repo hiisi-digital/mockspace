@@ -14,11 +14,16 @@ allow() {
     exit 0
 }
 
+# FIXME: the reason goes into a JSON string unescaped, so a quote, backslash,
+# newline or control character makes the payload unparseable and the deny stops
+# denying. v1 fixed it with `_json_escape` in src/render_agent/helpers.rs; port
+# that here before this tree generates a hook anybody runs.
 deny() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
     exit 0
 }
 
+# FIXME: same unescaped interpolation as `deny` above; same fix.
 context() {
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$1"
 }
