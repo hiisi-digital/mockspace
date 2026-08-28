@@ -24,11 +24,18 @@ repository = "https://github.com/hiisi-digital/mockspace"
 readme = "README.md"
 categories = ["development-tools", "development-tools::build-utils"]
 keywords = ["design-rounds", "lints", "workflow", "mockspace"]
-# `docs/` does not ship. The readme and the rustdoc carry what a consumer needs,
-# and everything in that directory is currently addressed to whoever works on the
-# engine: bug notes and refactor scratch under `research/`, three files of which
-# carried project names and home paths from the machine they were written on, plus
-# migration guides that walk one specific estate repo by repo by name.
+# `docs/` does not ship, and this package does not either: it is `publish =
+# false` below, so the line is a statement of intent rather than a guard, and it
+# guards nothing today. What reaches crates.io is `cargo-mock`, which governs its
+# own contents with `include` and has never carried `docs/`, and the test that
+# checks a tarball asks `cargo-mock` rather than this.
+#
+# Kept because this package publishing is a one-line change somebody could make
+# without thinking about what it would take with it. Everything in that directory
+# is addressed to whoever works on the engine: bug notes and refactor scratch
+# under `research/`, three files of which carried project names and home paths
+# from the machine they were written on, plus migration guides that walk one
+# specific estate repo by repo by name.
 #
 # Op's call, and it is the resting state rather than the answer. The reference
 # material wants moving into `mock/` where the design trail already lives, and

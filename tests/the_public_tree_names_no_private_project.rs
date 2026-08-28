@@ -161,30 +161,84 @@ fn the_checks_above_can_fail() {
     }
 }
 
-/// Every file `cargo package` would put in the tarball.
+/// The crates that reach crates.io, which is not this one.
+///
+/// `mockspace` is `publish = false` and has been since March, so a question
+/// asked of its package list is a question about a tarball nobody receives.
+/// What a stranger installs is `cargo-mock`, which is what the README's own
+/// badges point at, and `mockspace-manifest` beside it.
+///
+/// Derived rather than written down, so a crate that starts publishing joins
+/// the guard by doing that and not by somebody remembering to add a row here.
+fn crates_that_publish() -> Vec<String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(root).expect("the repo root is unreadable") {
+        let dir = entry.expect("unreadable entry").path();
+        let manifest = dir.join("Cargo.toml");
+        if !manifest.is_file() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&manifest).expect("unreadable manifest");
+        // `publish = true` written out, which is what these carry. A manifest
+        // that simply omits the key also publishes, and none here does; a
+        // member that starts omitting it fails the floor below rather than
+        // slipping past this.
+        if text.lines().any(|l| l.trim() == "publish = true")
+            && let Some(name) = package_name(&text)
+        {
+            out.push(name);
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The `name = "..."` of the `[package]` table, which is the first one.
+fn package_name(manifest: &str) -> Option<String> {
+    let (_, rest) = manifest.split_once("\nname = \"")?;
+    Some(rest.split_once('"')?.0.to_string())
+}
+
+/// Every file `cargo package` would put in the tarballs that actually ship.
 ///
 /// A different question from `git ls-files`, and the one that decides what a
-/// stranger sees. `docs/` is tracked and excluded from the guard above, but the
-/// part of it that reached the registry is a narrower set, and that set has to
-/// be clean whatever the wider one still carries.
+/// stranger sees.
 fn files_that_would_ship() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = Command::new(env!("CARGO"))
-        .arg("package")
-        .args(["--list", "--allow-dirty", "-p", "mockspace"])
-        .current_dir(root)
-        .output()
-        .expect("cargo could not be run");
+    let publishing = crates_that_publish();
     assert!(
-        out.status.success(),
-        "cargo package --list failed: {}",
-        String::from_utf8_lossy(&out.stderr)
+        !publishing.is_empty(),
+        "no crate here publishes, so every assertion below holds over an empty \
+         set. Two did when this was written; losing both is the thing to notice."
     );
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(|l| root.join(l.trim()))
-        .filter(|p| p.is_file())
-        .collect()
+
+    let mut files = Vec::new();
+    for name in &publishing {
+        let out = Command::new(env!("CARGO"))
+            .arg("package")
+            .args(["--list", "--allow-dirty", "-p", name])
+            .current_dir(root)
+            .output()
+            .expect("cargo could not be run");
+        assert!(
+            out.status.success(),
+            "cargo package --list -p {name} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // Paths are relative to the member's own directory, not to the repo
+        // root, and `readme = "../README.md"` arrives as `README.md`. Both
+        // roots are tried, so a file is found wherever it really sits.
+        files.extend(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .flat_map(|l| [root.join(name).join(l.trim()), root.join(l.trim())])
+                .filter(|p| p.is_file()),
+        );
+    }
+    files.sort();
+    files.dedup();
+    files
 }
 
 #[test]
@@ -194,10 +248,20 @@ fn nothing_in_the_tarball_names_a_project_a_reader_cannot_see() {
     // `docs/research/`, which is bug notes for whoever works on this engine and
     // not for anybody consuming it.
     let shipped = files_that_would_ship();
+    // The floor is what stops an empty listing from passing every assertion
+    // below. It sits at ten because the two publishing crates ship a dozen-odd
+    // files between them, not the whole tree: the number was fifty when this
+    // asked `mockspace`, which is `publish = false`, so it was a floor over a
+    // set nobody receives.
     assert!(
-        shipped.len() > 50,
+        shipped.len() > 10,
         "only {} files listed, so this is measuring the wrong thing",
         shipped.len()
+    );
+    assert!(
+        shipped.iter().any(|p| p.ends_with("README.md")),
+        "the readme does not ship, and it is the one file a stranger certainly \
+         reads: {shipped:?}"
     );
 
     let mut found = Vec::new();
@@ -267,7 +331,7 @@ fn every_relative_link_in_the_readme_points_at_something_that_ships() {
 
     assert!(
         dead.is_empty(),
-        "these readme links resolve to nothing for a reader on the registry:\n{}",
+        "these readme references resolve to nothing for a reader on the registry:\n{}",
         dead.join("\n"),
     );
 }
@@ -294,5 +358,69 @@ fn link_targets(line: &str) -> Vec<String> {
         }
         i += 1;
     }
+    out.extend(backticked_paths(line));
     out
+}
+
+/// Backticked spans that name a file in this tree.
+///
+/// The shape that actually broke, and the one a markdown-link scan cannot see:
+/// the readme pointed at the usage guide as `` `docs/USAGE_GUIDE.md` `` rather
+/// than as a link, so excluding `docs/` left three dangling references that
+/// every `](...)` matcher walked straight past.
+///
+/// A span has to carry a separator and an extension to count, so `` `cargo mock
+/// lock` `` and `` `Header` `` are not read as paths.
+///
+/// `mock/` and `.git/` are dropped, and that is the part worth stating: both
+/// exist in this repository and both name the **reader's** tree when the readme
+/// mentions them, because a consumer has a `mock/` of their own and a
+/// `.git/hooks/` of their own. The existence check the caller runs cannot tell
+/// those apart from a real reference, since they are real here too.
+fn backticked_paths(line: &str) -> Vec<String> {
+    line.split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|s| {
+            s.contains('/')
+                && s.contains('.')
+                && !s.contains(' ')
+                && !s.starts_with("http")
+                && !s.starts_with('/')
+                && !s.starts_with("mock/")
+                && !s.starts_with(".git")
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn the_reference_scan_finds_both_shapes_a_readme_points_with() {
+    // The control for the test above, and it belongs here rather than there.
+    //
+    // Every reference in this readme is an absolute url today, so that test
+    // legitimately reaches nothing, and a `reached > 0` assertion inside it
+    // would fail on a readme that is correct. What has to be guarded is the
+    // scanner: one that found nothing would report the readme clean forever,
+    // and it did, because it only knew `](...)` while the three references that
+    // actually broke were backticked prose.
+    let found = link_targets(
+        "see [the guide](docs/USAGE_GUIDE.md) and `docs/REFERENCE-SYNTAX.md` for more",
+    );
+    assert!(
+        found.iter().any(|t| t == "docs/USAGE_GUIDE.md"),
+        "the markdown-link shape is not found: {found:?}"
+    );
+    assert!(
+        found.iter().any(|t| t == "docs/REFERENCE-SYNTAX.md"),
+        "the backticked shape is not found, which is the one that broke: {found:?}"
+    );
+
+    // And what it must not read as a reference: a command, a type, a url, and
+    // the two trees that belong to the reader rather than to this repository.
+    let quiet = link_targets(
+        "run `cargo mock lock`, see `Header`, at `https://e.invalid/x.md`, \
+         edit `mock/agent/config.toml` or `.git/hooks/pre-commit`",
+    );
+    assert!(quiet.is_empty(), "read something as a reference: {quiet:?}");
 }
