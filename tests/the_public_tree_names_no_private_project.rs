@@ -36,6 +36,15 @@ const PRIVATE: &[&str] = &[
     "saalis",
 ];
 
+/// The one place a name on the list above is legitimate.
+///
+/// `arvo-types-only` is a lint the extra pack registers under exactly that
+/// string, so it is an identifier a consumer types into their own config
+/// rather than a mention of a project. The sweep renamed it to something that
+/// exists nowhere, in a public field's doc, which is how a reader following it
+/// reached a lint that is not there.
+const A_NAME_SOMEBODY_HAS_TO_TYPE: &[&str] = &["arvo-types-only"];
+
 /// Where a path on somebody's own machine gives itself away.
 ///
 /// A home directory rather than `/Users` alone, because the bare prefix also
@@ -93,9 +102,16 @@ fn no_tracked_file_names_a_project_a_reader_cannot_see() {
         };
         for (n, line) in text.lines().enumerate() {
             for name in PRIVATE {
-                if line.contains(name) {
-                    found.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                if !line.contains(name) {
+                    continue;
                 }
+                if A_NAME_SOMEBODY_HAS_TO_TYPE
+                    .iter()
+                    .any(|ok| line.contains(ok))
+                {
+                    continue;
+                }
+                found.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
             }
         }
     }
