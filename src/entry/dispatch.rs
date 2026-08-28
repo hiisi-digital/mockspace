@@ -614,6 +614,15 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         }
 
         let plan = crate::entry::nuke::plan_nuke(&cfg, request.tier);
+        if plan.all_escaped() {
+            // A tree that would have been damaged, so it refuses rather than
+            // reporting nothing to do. `src_dirs` pointing outside the repository
+            // reaches here, and so does a crate whose `lib.rs` is a symlink.
+            plan.describe(&cfg.repo_root);
+            eprintln!();
+            eprintln!("--nuke refused: every path found was refused, for the reasons above.");
+            return ExitCode::FAILURE;
+        }
         if plan.is_empty() {
             eprintln!("--nuke: nothing to take.");
             return ExitCode::SUCCESS;

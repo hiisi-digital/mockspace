@@ -141,15 +141,50 @@ pub(crate) struct NukePlan {
     pub(crate) crates:  Vec<NukedCrate>,
     /// Design templates, empty at [`NukeTier::Src`].
     pub(crate) docs:    Vec<PathBuf>,
-    /// Paths the walk found and the containment check refused, kept so the
-    /// listing can report them rather than dropping them in silence. A plan that
-    /// quietly shrank is the same defect as a listing that understates.
-    pub(crate) escaped: Vec<PathBuf>,
+    /// Paths the walk found and the guards refused, with why, kept so the listing
+    /// can report them rather than dropping them in silence. A plan that quietly
+    /// shrank is the same defect as a listing that understates.
+    ///
+    /// The reason travels with the path because the two cases read completely
+    /// differently to somebody deciding: a path outside the repository says the
+    /// configuration is wrong, and a symlink says this one file is not what it
+    /// appears to be.
+    pub(crate) escaped: Vec<(PathBuf, Refused)>,
+}
+
+/// Why a path did not make it into the plan.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Refused {
+    /// It resolves outside the repository the clean-tree check looked at.
+    Outside,
+    /// It is a symlink, so writing or deleting it acts on something else.
+    Link,
+    /// Its crate was dropped because the crate's stub was refused.
+    ItsCrateWent,
+}
+
+impl Refused {
+    fn why(self) -> &'static str {
+        match self {
+            Self::Outside => "outside the repository",
+            Self::Link => "a symlink, so it names something else",
+            Self::ItsCrateWent => "its crate's stub was refused",
+        }
+    }
 }
 
 impl NukePlan {
     pub(crate) fn is_empty(&self) -> bool {
         self.crates.is_empty() && self.docs.is_empty()
+    }
+
+    /// Nothing survived the containment check, and something was refused by it.
+    ///
+    /// Told apart from an ordinary empty plan because the two want opposite
+    /// answers: nothing to take is a success, and everything being outside the
+    /// repository is a configuration that would have done damage.
+    pub(crate) fn all_escaped(&self) -> bool {
+        self.is_empty() && !self.escaped.is_empty()
     }
 
     /// What `apply` will report having taken, counted the same way it counts.
@@ -203,9 +238,9 @@ impl NukePlan {
 
         if !self.escaped.is_empty() {
             eprintln!();
-            eprintln!("  outside the repository, so left alone:");
-            for e in &self.escaped {
-                eprintln!("    kept    {}", e.display());
+            eprintln!("  refused, and left exactly as they are:");
+            for (path, why) in &self.escaped {
+                eprintln!("    kept    {}  ({})", path.display(), why.why());
             }
         }
 
@@ -267,22 +302,53 @@ pub(crate) fn plan_nuke(cfg: &Config, tier: NukeTier) -> NukePlan {
         },
     };
 
-    // Nothing outside the repository, whatever the walk or the config produced. Both
-    // known routes out are closed above; this is the check at the one place a plan
-    // becomes a deletion, so a third route nobody has found yet lands here too.
+    // Nothing outside the repository, whatever the walk or the config produced.
+    //
+    // The stub goes through this as well as the deletions, and that is the half a
+    // first version missed. `fs::write` truncates through a symlink, so a `lib.rs`
+    // linked to somewhere else had its target overwritten while the run printed the
+    // in-repo path, and on a `src_dirs` pointing outside it printed a paragraph
+    // saying it had left that directory alone and then destroyed a file in it.
+    // Reproduced both ways before this was written.
     let root = cfg.repo_root.clone();
-    let mut escaped = Vec::new();
-    let mut keep = |p: &PathBuf| {
+    let mut escaped: Vec<(PathBuf, Refused)> = Vec::new();
+
+    // A crate whose stub cannot be written safely is dropped whole. Its files are
+    // its own, so keeping them would delete a crate's source and leave nothing
+    // saying what the crate was.
+    crates.retain(|c| {
+        let why = if is_symlink(&c.stub) {
+            Some(Refused::Link)
+        } else if !inside(&root, &c.stub) {
+            Some(Refused::Outside)
+        } else {
+            None
+        };
+        match why {
+            None => true,
+            Some(why) => {
+                escaped.push((c.stub.clone(), why));
+                escaped.extend(c.files.iter().map(|f| (f.clone(), Refused::ItsCrateWent)));
+                false
+            },
+        }
+    });
+    for c in &mut crates {
+        c.files.retain(|p| {
+            let ok = inside(&root, p);
+            if !ok {
+                escaped.push((p.clone(), Refused::Outside));
+            }
+            ok
+        });
+    }
+    docs.retain(|p| {
         let ok = inside(&root, p);
         if !ok {
-            escaped.push(p.clone());
+            escaped.push((p.clone(), Refused::Outside));
         }
         ok
-    };
-    for c in &mut crates {
-        c.files.retain(&mut keep);
-    }
-    docs.retain(&mut keep);
+    });
 
     NukePlan {
         tier,
@@ -290,6 +356,18 @@ pub(crate) fn plan_nuke(cfg: &Config, tier: NukeTier) -> NukePlan {
         docs,
         escaped,
     }
+}
+
+/// Whether the path is a symlink, without following it.
+///
+/// A stub is written with `fs::write`, which truncates whatever the name resolves
+/// to. Writing through a link is never what "replace this crate's `lib.rs`" means,
+/// even where the target is inside the repository, so the link is refused rather
+/// than followed.
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 /// Every `.rs` file under `dir`, except the one that becomes the stub.
@@ -934,5 +1012,128 @@ mod what_the_nuke_will_not_reach {
             src.join("was_empty_before").exists(),
             "a directory the nuke never touched was taken"
         );
+    }
+}
+
+#[cfg(test)]
+mod what_the_nuke_will_not_write {
+    use super::*;
+
+    /// The half a first fix missed. `fs::write` truncates through a symlink, and
+    /// the stub is the one write in the whole path, so closing the deletions left
+    /// the destruction intact and gave it a listing that reassured.
+    #[test]
+    fn a_stub_never_writes_through_a_symlink_to_somewhere_else() {
+        let d = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let src = d.path().join("mock/crates/alpha/src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            d.path().join("mock/crates/alpha/Cargo.toml"),
+            "[package]\nname = \"alpha\"\n",
+        )
+        .unwrap();
+        fs::write(src.join("own.rs"), "pub fn own() {}\n").unwrap();
+
+        let precious = outside.path().join("precious_lib.rs");
+        fs::write(&precious, "THE ONLY COPY, tracked by nothing\n").unwrap();
+        std::os::unix::fs::symlink(&precious, src.join("lib.rs")).unwrap();
+
+        let cfg = Config::from_dir(&d.path().join("mock"));
+        let plan = plan_nuke(&cfg, NukeTier::Src);
+        apply(&plan, &cfg);
+
+        assert_eq!(
+            fs::read_to_string(&precious).unwrap(),
+            "THE ONLY COPY, tracked by nothing\n",
+            "the stub was written through the link and truncated the target"
+        );
+        assert!(
+            plan.crates.is_empty(),
+            "the crate should be dropped whole, not stubbed"
+        );
+        assert!(
+            plan.escaped
+                .iter()
+                .any(|(p, w)| p.ends_with("lib.rs") && *w == Refused::Link),
+            "and the refusal should name the stub: {:?}",
+            plan.escaped
+        );
+        // The control: the crate's own file was not deleted either, because a
+        // crate whose stub cannot be written is dropped whole rather than having
+        // its source taken with nothing left saying what it was.
+        assert!(src.join("own.rs").exists());
+    }
+
+    #[test]
+    fn a_stub_outside_the_repository_is_refused_along_with_its_crate() {
+        // `src_dirs = ["../../outside"]`. The first fix escaped the deletions and
+        // then overwrote `lib.rs` in that same directory, printing a paragraph
+        // saying it had left the directory alone.
+        let d = tempfile::tempdir().unwrap();
+        let mock = d.path().join("repo/mock");
+        fs::create_dir_all(&mock).unwrap();
+        fs::create_dir_all(d.path().join("repo/.git")).unwrap();
+        fs::write(
+            mock.join("mockspace.toml"),
+            "src_dirs = [\"../../outside\"]\n",
+        )
+        .unwrap();
+
+        let outside = d.path().join("outside/beta/src");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(
+            d.path().join("outside/beta/Cargo.toml"),
+            "[package]\nname = \"beta\"\n",
+        )
+        .unwrap();
+        fs::write(outside.join("lib.rs"), "pub mod y;\n").unwrap();
+        fs::write(outside.join("other.rs"), "pub fn other() {}\n").unwrap();
+
+        let cfg = Config::from_dir(&mock);
+        let plan = plan_nuke(&cfg, NukeTier::Src);
+        assert!(plan.all_escaped(), "the plan should say everything escaped");
+        apply(&plan, &cfg);
+
+        assert_eq!(
+            fs::read_to_string(outside.join("lib.rs")).unwrap(),
+            "pub mod y;\n",
+            "a file outside the repository was overwritten with the stub"
+        );
+        assert!(outside.join("other.rs").exists());
+    }
+
+    #[test]
+    fn a_symlink_inside_the_repository_is_still_not_followed() {
+        // This is what isolates the walk from the containment check. With a
+        // target inside the tree, `inside` returns true and the `is_symlink` skip
+        // in `collect_rs` is the only thing standing; restoring the old
+        // `path.is_dir()` walk deletes through the link and every other test in
+        // this file stays green.
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("mock/crates/alpha/src");
+        let elsewhere = d.path().join("mock/research/probes");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(
+            d.path().join("mock/crates/alpha/Cargo.toml"),
+            "[package]\nname = \"alpha\"\n",
+        )
+        .unwrap();
+        fs::write(src.join("lib.rs"), "pub mod x;\n").unwrap();
+        fs::write(src.join("own.rs"), "pub fn own() {}\n").unwrap();
+        fs::write(elsewhere.join("probe.rs"), "fn probe() {}\n").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, src.join("linked")).unwrap();
+
+        let cfg = Config::from_dir(&d.path().join("mock"));
+        let plan = plan_nuke(&cfg, NukeTier::Src);
+        apply(&plan, &cfg);
+
+        assert!(
+            elsewhere.join("probe.rs").exists(),
+            "the walk followed a link and deleted a file outside the source tree"
+        );
+        // The control: the crate's own module still went, so the walk works.
+        assert!(!src.join("own.rs").exists());
     }
 }

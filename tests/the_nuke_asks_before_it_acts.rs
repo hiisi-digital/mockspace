@@ -270,3 +270,47 @@ fn anything_but_a_yes_leaves_it_alone() {
         assert_eq!(before, sources(d.path()), "{answer:?} deleted something");
     }
 }
+
+#[test]
+fn a_plan_where_everything_was_refused_fails_rather_than_reporting_nothing_to_do() {
+    // The exit code, which nothing asserted while a refusal was still returning
+    // success, and the listing, which a reader has to actually see.
+    let d = a_repo();
+    let outside = tempfile::tempdir().unwrap();
+    let precious = outside.path().join("precious_lib.rs");
+    std::fs::write(&precious, "THE ONLY COPY\n").unwrap();
+
+    let stub = d.path().join("mock/crates/alpha/src/lib.rs");
+    std::fs::remove_file(&stub).unwrap();
+    std::os::unix::fs::symlink(&precious, &stub).unwrap();
+    git(d.path(), &["add", "-A"]);
+    git(d.path(), &["commit", "-qm", "two"]);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_mockspace"))
+        .arg("--dir")
+        .arg(d.path().join("mock"))
+        .args(["--nuke", "--y"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the engine could not be run");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(!out.status.success(), "a refusal exited zero: {said}");
+    assert!(said.contains("refused"), "{said}");
+    assert!(
+        said.contains("a symlink, so it names something else"),
+        "the listing does not say why, so a reader cannot act on it: {said}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&precious).unwrap(),
+        "THE ONLY COPY\n",
+        "the stub was written through the link"
+    );
+    // The control: the crate's own module survives too, because a crate whose
+    // stub is refused is dropped whole rather than gutted.
+    assert!(d.path().join("mock/crates/alpha/src/other.rs").exists());
+}
