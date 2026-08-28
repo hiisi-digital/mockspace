@@ -137,10 +137,14 @@ pub(crate) struct NukedCrate {
 /// once to show somebody and once to act, is how a listing comes to disagree
 /// with what happens, and the direction it disagrees in is the one that matters.
 pub(crate) struct NukePlan {
-    pub(crate) tier:   NukeTier,
-    pub(crate) crates: Vec<NukedCrate>,
+    pub(crate) tier:    NukeTier,
+    pub(crate) crates:  Vec<NukedCrate>,
     /// Design templates, empty at [`NukeTier::Src`].
-    pub(crate) docs:   Vec<PathBuf>,
+    pub(crate) docs:    Vec<PathBuf>,
+    /// Paths the walk found and the containment check refused, kept so the
+    /// listing can report them rather than dropping them in silence. A plan that
+    /// quietly shrank is the same defect as a listing that understates.
+    pub(crate) escaped: Vec<PathBuf>,
 }
 
 impl NukePlan {
@@ -148,8 +152,18 @@ impl NukePlan {
         self.crates.is_empty() && self.docs.is_empty()
     }
 
+    /// What `apply` will report having taken, counted the same way it counts.
+    ///
+    /// The stub counts only where one is already there, because that is what
+    /// `apply` does: on a crate with a `main.rs` and no `lib.rs` the two used to
+    /// disagree by one, and a listing that disagrees with the deletion is the
+    /// one thing this whole shape exists to prevent.
     pub(crate) fn file_count(&self) -> usize {
-        self.crates.iter().map(|c| c.files.len() + 1).sum::<usize>() + self.docs.len()
+        self.crates
+            .iter()
+            .map(|c| c.files.len() + usize::from(c.stub.exists()))
+            .sum::<usize>()
+            + self.docs.len()
     }
 
     /// Everything, by name, on the way to asking whether to do it.
@@ -184,6 +198,14 @@ impl NukePlan {
             eprintln!("  designs");
             for d in &self.docs {
                 eprintln!("    delete  {}", rel(d));
+            }
+        }
+
+        if !self.escaped.is_empty() {
+            eprintln!();
+            eprintln!("  outside the repository, so left alone:");
+            for e in &self.escaped {
+                eprintln!("    kept    {}", e.display());
             }
         }
 
@@ -235,7 +257,7 @@ pub(crate) fn plan_nuke(cfg: &Config, tier: NukeTier) -> NukePlan {
     }
     crates.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let docs = match tier {
+    let mut docs = match tier {
         NukeTier::Src => Vec::new(),
         NukeTier::Docs => {
             crate::document::design_templates(cfg)
@@ -245,21 +267,55 @@ pub(crate) fn plan_nuke(cfg: &Config, tier: NukeTier) -> NukePlan {
         },
     };
 
+    // Nothing outside the repository, whatever the walk or the config produced. Both
+    // known routes out are closed above; this is the check at the one place a plan
+    // becomes a deletion, so a third route nobody has found yet lands here too.
+    let root = cfg.repo_root.clone();
+    let mut escaped = Vec::new();
+    let mut keep = |p: &PathBuf| {
+        let ok = inside(&root, p);
+        if !ok {
+            escaped.push(p.clone());
+        }
+        ok
+    };
+    for c in &mut crates {
+        c.files.retain(&mut keep);
+    }
+    docs.retain(&mut keep);
+
     NukePlan {
         tier,
         crates,
         docs,
+        escaped,
     }
 }
 
 /// Every `.rs` file under `dir`, except the one that becomes the stub.
+///
+/// `file_type()` rather than `Path::is_dir`, and the difference is a deletion outside
+/// the repository. `is_dir` follows a symlink, so a link under `src/` pointing anywhere
+/// on the machine was descended and its contents removed through it, while the listing
+/// printed the in-repo path the link sits at. Reproduced before this was written: a file
+/// deleted from a directory git had never seen, on a clean tree, with the plan naming
+/// `mock/crates/alpha/src/linked/precious.rs`.
+///
+/// A symlink is skipped rather than reported. Nothing about the round flow puts one under
+/// a source directory, and the tier is source files this repository owns.
 fn collect_rs(dir: &Path, keep: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if kind.is_dir() {
             collect_rs(&path, keep, out);
         } else if path.extension().map(|e| e == "rs").unwrap_or(false) && path != keep {
             out.push(path);
@@ -267,14 +323,39 @@ fn collect_rs(dir: &Path, keep: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Whether `path` really sits under `root`, with both sides resolved.
+///
+/// The walk above closes the symlink route into the plan. This closes the rest: a
+/// `src_dirs` entry is `mock_dir.join(d)` with no containment check of its own, so
+/// `src_dirs = ["../../outside"]` puts the whole deletion set outside the tree that
+/// `tree_is_recoverable` looked at, and the guard passes while nothing it examined is
+/// what goes.
+///
+/// `canonicalize` on the parent rather than on the path, because the path is about to be
+/// deleted and a file that is already gone cannot be resolved.
+fn inside(root: &Path, path: &Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    match (parent.canonicalize(), root.canonicalize()) {
+        (Ok(p), Ok(r)) => p.starts_with(r),
+        _ => false,
+    }
+}
+
 /// Carry out a plan, deleting exactly the files it names.
 pub(crate) fn apply(plan: &NukePlan, cfg: &Config) -> ExitCode {
     let mut nuked_files = 0u32;
+    // A named file that would not go. Reported and the run fails, because the
+    // alternative is a shorter count under a `NUKE complete` line and a success
+    // exit, which is the understating direction this shape is built against.
+    let mut refused: Vec<(PathBuf, std::io::Error)> = Vec::new();
 
     for c in &plan.crates {
         for f in &c.files {
-            if fs::remove_file(f).is_ok() {
-                nuked_files += 1;
+            match fs::remove_file(f) {
+                Ok(()) => nuked_files += 1,
+                Err(e) => refused.push((f.clone(), e)),
             }
         }
 
@@ -304,14 +385,25 @@ pub(crate) fn apply(plan: &NukePlan, cfg: &Config) -> ExitCode {
         // The directories the deleted files sat in, now that they are empty.
         // Left behind, an empty module directory reads as a module somebody
         // forgot to write rather than one that was taken.
-        prune_empty_dirs(c.stub.parent().unwrap_or(&c.stub));
+        //
+        // Only the ones this run emptied. Walking the whole tree also took
+        // directories that were already empty and had nothing to do with the
+        // nuke, unlisted, in a listing whose point is that it names everything.
+        for f in &c.files {
+            if let Some(parent) = f.parent() {
+                prune_if_empty(parent, c.stub.parent().unwrap_or(&c.stub));
+            }
+        }
     }
 
     let mut nuked_docs = 0u32;
     for d in &plan.docs {
-        if fs::remove_file(d).is_ok() {
-            nuked_docs += 1;
-            eprintln!("  nuked: {}", d.display());
+        match fs::remove_file(d) {
+            Ok(()) => {
+                nuked_docs += 1;
+                eprintln!("  nuked: {}", d.display());
+            },
+            Err(e) => refused.push((d.clone(), e)),
         }
     }
 
@@ -320,20 +412,41 @@ pub(crate) fn apply(plan: &NukePlan, cfg: &Config) -> ExitCode {
         "--- NUKE complete: {nuked_files} file(s) across {} crate(s), {nuked_docs} design(s) ---",
         plan.crates.len()
     );
+
+    if !refused.is_empty() {
+        eprintln!();
+        eprintln!("{} named file(s) could not be removed:", refused.len());
+        for (path, why) in &refused {
+            eprintln!("    {}: {why}", path.display());
+        }
+        eprintln!("    the counts above are what went, not what the plan named.");
+        return ExitCode::FAILURE;
+    }
+
     eprintln!("    cargo check will fail until source is rewritten");
     ExitCode::SUCCESS
 }
 
-fn prune_empty_dirs(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            prune_empty_dirs(&path);
-            let _ = fs::remove_dir(&path);
+/// Remove `dir` if the nuke emptied it, then its parent, and so on up to `stop`.
+///
+/// Bounded by the crate's own `src/`, so a nuke never removes a directory above
+/// the tree it was given.
+fn prune_if_empty(dir: &Path, stop: &Path) {
+    let mut here = dir.to_path_buf();
+    while here.starts_with(stop) && here != stop {
+        let Ok(mut entries) = fs::read_dir(&here) else {
+            return;
+        };
+        if entries.next().is_some() {
+            return;
         }
+        if fs::remove_dir(&here).is_err() {
+            return;
+        }
+        let Some(parent) = here.parent() else {
+            return;
+        };
+        here = parent.to_path_buf();
     }
 }
 
@@ -663,5 +776,162 @@ mod what_the_command_line_asks_for {
             .unwrap()
             .unwrap_err();
         assert!(err.contains("everything"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod what_the_nuke_will_not_reach {
+    use super::*;
+
+    /// A mock tree plus a directory outside it, linked to from inside.
+    fn tree_with_a_link_out() -> (tempfile::TempDir, tempfile::TempDir) {
+        let d = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let src = d.path().join("mock/crates/alpha/src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            d.path().join("mock/crates/alpha/Cargo.toml"),
+            "[package]\nname = \"alpha\"\n",
+        )
+        .unwrap();
+        fs::write(src.join("lib.rs"), "pub mod x;\n").unwrap();
+        fs::write(src.join("own.rs"), "pub fn own() {}\n").unwrap();
+
+        fs::write(outside.path().join("precious.rs"), "fn precious() {}\n").unwrap();
+        std::os::unix::fs::symlink(outside.path(), src.join("linked")).unwrap();
+        (d, outside)
+    }
+
+    #[test]
+    fn a_symlink_out_of_the_tree_is_not_followed_and_not_deleted_through() {
+        // Reproduced against the previous walk before this was written: the file
+        // below was deleted from a directory git had never seen, on a clean tree,
+        // while the plan printed `mock/crates/alpha/src/linked/precious.rs` as
+        // though it were in the repository.
+        let (d, outside) = tree_with_a_link_out();
+        let cfg = Config::from_dir(&d.path().join("mock"));
+        let plan = plan_nuke(&cfg, NukeTier::Src);
+
+        let named: Vec<String> = plan.crates[0]
+            .files
+            .iter()
+            .map(|f| f.display().to_string())
+            .collect();
+        assert!(
+            !named.iter().any(|f| f.contains("precious")),
+            "the plan reached through the link: {named:?}"
+        );
+
+        apply(&plan, &cfg);
+        assert!(
+            outside.path().join("precious.rs").exists(),
+            "a file outside the repository was deleted"
+        );
+        // The control: the crate's own module did go, so the walk still works.
+        assert!(!d.path().join("mock/crates/alpha/src/own.rs").exists());
+    }
+
+    #[test]
+    fn a_source_directory_pointed_outside_the_repository_is_refused_and_reported() {
+        // `src_dirs` is joined onto the mock dir with no containment check of its
+        // own, so this shape puts the whole deletion set outside the tree that
+        // `tree_is_recoverable` inspected, and that guard passes.
+        let d = tempfile::tempdir().unwrap();
+        let mock = d.path().join("repo/mock");
+        fs::create_dir_all(&mock).unwrap();
+        fs::write(
+            mock.join("mockspace.toml"),
+            "src_dirs = [\"../../outside\"]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(d.path().join("repo/.git")).unwrap();
+
+        let outside = d.path().join("outside/beta/src");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(
+            d.path().join("outside/beta/Cargo.toml"),
+            "[package]\nname = \"beta\"\n",
+        )
+        .unwrap();
+        fs::write(outside.join("lib.rs"), "pub mod y;\n").unwrap();
+        fs::write(outside.join("other.rs"), "pub fn other() {}\n").unwrap();
+
+        let cfg = Config::from_dir(&mock);
+        let plan = plan_nuke(&cfg, NukeTier::Src);
+
+        let named: Vec<&PathBuf> = plan.crates.iter().flat_map(|c| c.files.iter()).collect();
+        assert!(
+            named.is_empty(),
+            "the plan kept paths outside the repo: {named:?}"
+        );
+        assert!(
+            !plan.escaped.is_empty(),
+            "and it dropped them silently rather than reporting them"
+        );
+
+        apply(&plan, &cfg);
+        assert!(outside.join("other.rs").exists(), "it deleted them anyway");
+    }
+
+    #[test]
+    fn the_count_the_plan_prints_is_the_count_apply_reports() {
+        // On a crate with no `lib.rs` the plan used to add one for a stub that
+        // `apply` would write but not count, so the two disagreed by one and the
+        // listing overstated. A listing that disagrees with the deletion is the
+        // one thing this shape exists to prevent.
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("mock/crates/alpha/src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            d.path().join("mock/crates/alpha/Cargo.toml"),
+            "[package]\nname = \"alpha\"\n",
+        )
+        .unwrap();
+        fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+
+        let cfg = Config::from_dir(&d.path().join("mock"));
+        let plan = plan_nuke(&cfg, NukeTier::Src);
+        assert!(!plan.crates[0].stub.exists(), "the fixture has no lib.rs");
+        assert_eq!(
+            plan.file_count(),
+            plan.crates[0].files.len(),
+            "the stub is counted although apply will not count it"
+        );
+
+        // The control: where a lib.rs is there, it does count.
+        fs::write(&plan.crates[0].stub, "pub mod z;\n").unwrap();
+        let plan = plan_nuke(&cfg, NukeTier::Src);
+        assert_eq!(plan.file_count(), plan.crates[0].files.len() + 1);
+    }
+
+    #[test]
+    fn a_directory_that_was_already_empty_is_left_where_it_was() {
+        // The prune used to walk the whole source tree and take any empty
+        // directory, including ones the nuke had nothing to do with, and it took
+        // them unlisted in a listing whose point is that it names everything.
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("mock/crates/alpha/src");
+        fs::create_dir_all(src.join("emptied/deeper")).unwrap();
+        fs::create_dir_all(src.join("was_empty_before")).unwrap();
+        fs::write(
+            d.path().join("mock/crates/alpha/Cargo.toml"),
+            "[package]\nname = \"alpha\"\n",
+        )
+        .unwrap();
+        fs::write(src.join("lib.rs"), "pub mod emptied;\n").unwrap();
+        fs::write(src.join("emptied/deeper/mod.rs"), "pub fn d() {}\n").unwrap();
+
+        let cfg = Config::from_dir(&d.path().join("mock"));
+        let plan = plan_nuke(&cfg, NukeTier::Src);
+        apply(&plan, &cfg);
+
+        assert!(
+            !src.join("emptied").exists(),
+            "the directory the nuke emptied is still there"
+        );
+        assert!(
+            src.join("was_empty_before").exists(),
+            "a directory the nuke never touched was taken"
+        );
     }
 }

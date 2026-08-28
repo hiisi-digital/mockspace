@@ -1,6 +1,3 @@
-| `--nuke`            | Take the source down, leaving the designs. Names every file, then asks. |
-| `--nuke=docs`       | Take the designs and the source under them, which is the order the chain wants. |
-| `--y`               | Answer a `--nuke` in advance, for the second run and for a script. |
 # mockspace usage guide
 
 This is the deep reference. Start with the [README](../README.md) for the conceptual overview; come here for subcommand surface, configuration, lint authoring, and template structure.
