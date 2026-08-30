@@ -220,13 +220,73 @@ mod tests {
     }
 
     #[test]
-    fn heading_slugs_match_the_forge_form() {
-        // So a reader can click the same anchor the link generates.
+    fn the_two_slug_forms_agree_on_spaces_and_disagree_on_punctuation() {
+        // On an ordinary heading they are the same string, which is why the
+        // divergence went unnoticed: nearly every heading is this shape.
         assert_eq!(
             heading_slug("The four lanes and the joint LOD cut"),
             "the-four-lanes-and-the-joint-lod-cut"
         );
+        assert_eq!(
+            forge_heading_slug("The four lanes and the joint LOD cut"),
+            "the-four-lanes-and-the-joint-lod-cut"
+        );
+
+        // Punctuation glued to a word is where they part. This one used to be
+        // asserted here under the name `heading_slugs_match_the_forge_form`,
+        // which is what the claim was: a forge produces `rv-the-drift-class`.
         assert_eq!(heading_slug("R(V), the drift class"), "r-v-the-drift-class");
+        assert_eq!(
+            forge_heading_slug("R(V), the drift class"),
+            "rv-the-drift-class"
+        );
+
+        // The case that surfaced it: an apostrophe inside a word.
+        assert_eq!(heading_slug("Warm's objective"), "warm-s-objective");
+        assert_eq!(forge_heading_slug("Warm's objective"), "warms-objective");
+    }
+
+    /// Both forms resolve, which is the whole point of keeping two.
+    #[test]
+    fn a_heading_resolves_under_either_slug() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("INTENTS.md");
+        std::fs::write(&file, "# Preamble\n\ntext\n\n## Warm's objective\n\nmore\n").unwrap();
+
+        assert_eq!(
+            resolve_anchor(&file, &Anchor::Heading("warm-s-objective".into())),
+            Some(5),
+            "this project's own form has to keep resolving; every committed \
+             citation is written in it"
+        );
+        assert_eq!(
+            resolve_anchor(&file, &Anchor::Heading("warms-objective".into())),
+            Some(5),
+            "the form a browser shows, which is what a reader copies"
+        );
+    }
+
+    /// The control. Accepting two forms must not turn into accepting anything.
+    #[test]
+    fn a_heading_that_is_not_there_still_fails_under_both() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("INTENTS.md");
+        std::fs::write(&file, "## Warm's objective\n").unwrap();
+
+        assert_eq!(
+            resolve_anchor(&file, &Anchor::Heading("cold-s-objective".into())),
+            None
+        );
+        assert_eq!(
+            resolve_anchor(&file, &Anchor::Heading("colds-objective".into())),
+            None
+        );
+        // A near miss on the punctuation of a heading that does exist: neither
+        // form produces this, so neither may accept it.
+        assert_eq!(
+            resolve_anchor(&file, &Anchor::Heading("warm's-objective".into())),
+            None
+        );
     }
 
     #[test]

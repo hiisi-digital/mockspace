@@ -339,9 +339,21 @@ fn citation_tokens(line: &str) -> Vec<String> {
 
 /// Resolve an anchor to a line in `path`.
 ///
-/// A heading matches on its slug: lowercased, non-alphanumerics collapsed to
-/// hyphens, which is what forges generate and therefore what a reader can also
-/// click to.
+/// A heading matches on either of two slugs, and it has to be both because the
+/// two disagree and each is what somebody will write.
+///
+/// [`heading_slug`] collapses every non-alphanumeric run to a hyphen, which is
+/// what this project's own citations are written in and what every committed
+/// registry already holds. A forge drops punctuation **inside** a word instead
+/// of hyphenating it, so `Warm's objective` is `warms-objective` in a browser's
+/// address bar and `warm-s-objective` here. A reader copying the anchor they
+/// clicked gets the first; a reader following the convention in the files
+/// around them writes the second.
+///
+/// Accepting both is additive: no existing citation stops resolving, and the
+/// copied one starts. The alternative, picking one, either breaks every
+/// citation already committed or leaves the copied anchor failing for a reason
+/// nothing in the error explains.
 pub fn resolve_anchor(path: &Path, anchor: &Anchor) -> Option<usize> {
     match anchor {
         Anchor::Line(n) => {
@@ -356,13 +368,26 @@ pub fn resolve_anchor(path: &Path, anchor: &Anchor) -> Option<usize> {
                     return None;
                 }
                 let title = trimmed.trim_start_matches('#').trim();
-                (heading_slug(title) == *want).then_some(i + 1)
+                (heading_slug(title) == *want || forge_heading_slug(title) == *want)
+                    .then_some(i + 1)
             })
         },
     }
 }
 
-/// The forge-compatible slug for a heading.
+/// This project's slug for a heading: every non-alphanumeric run becomes one
+/// hyphen.
+///
+/// **Not the forge form**, despite what this said for a while. A forge removes
+/// punctuation inside a word rather than hyphenating it, so the two agree on
+/// spaces and disagree on an apostrophe, a bracket or a comma glued to a word.
+/// The difference was invisible until a citation into a heading carrying an
+/// apostrophe failed to resolve against the anchor a browser had shown.
+///
+/// This is the form every committed registry is written in, so it stays as it
+/// is and [`forge_heading_slug`] is accepted beside it rather than replacing
+/// it. It is also what [`crate::registry`] generates links with, which is why
+/// changing it is not a small edit.
 pub fn heading_slug(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     let mut last_dash = false;
@@ -373,6 +398,29 @@ pub fn heading_slug(title: &str) -> String {
             }
             last_dash = false;
         } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    out.trim_end_matches('-').to_string()
+}
+
+/// The slug a forge puts in the address bar, so a copied anchor resolves.
+///
+/// Whitespace becomes a hyphen and every other non-alphanumeric is dropped,
+/// which is where it parts company with [`heading_slug`]. Accepted when
+/// resolving and never generated, because generating it would repoint every
+/// link in every already-published document.
+pub fn forge_heading_slug(title: &str) -> String {
+    let mut out = String::with_capacity(title.len());
+    let mut last_dash = false;
+    for c in title.chars() {
+        if c.is_alphanumeric() {
+            for l in c.to_lowercase() {
+                out.push(l);
+            }
+            last_dash = false;
+        } else if c.is_whitespace() && !last_dash && !out.is_empty() {
             out.push('-');
             last_dash = true;
         }
