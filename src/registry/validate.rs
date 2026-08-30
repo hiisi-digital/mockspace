@@ -268,6 +268,13 @@ pub(crate) const ROOT_KEYS: &[&str] = &[
     "ordered_docs",
     "primary_docs",
     "lints",
+    // `lint-crates` is the same exception as `lints` and was missed for the same
+    // reason: `src/bootstrap/lints.rs::parse_lint_crates` reads it out of the
+    // document directly, so it is in no struct and a list derived from the
+    // structs cannot see it. Every repo declaring an external lint pack was
+    // told its declaration is discarded silently, on every run, while the pack
+    // compiled a few lines earlier in the same output.
+    "lint-crates",
     // the launcher's, from `mockspace_manifest::ManifestHeader`
     "mock_dir",
     "mockspace_git",
