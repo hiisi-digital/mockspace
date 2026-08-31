@@ -20,18 +20,28 @@ use std::process::Command;
 
 /// Names that must not appear anywhere a reader of this repository reaches.
 ///
-/// The private consumers this tool grew up against. Not an exhaustive list of
+/// The consumers a reader cannot go and look at. Not an exhaustive list of
 /// everything that should not be here, and it does not need to be: it is the
 /// set that was actually found, so the class cannot come back the way it
 /// arrived.
+///
+/// **Membership is decided by repository visibility, and it was measured rather
+/// than assumed.** The list carried `arvo`, `hilavitkutin`, `vehje` and `notko`
+/// for a long time and all four are public, so naming them is an ordinary
+/// reference to a crate a reader can open. That mattered beyond tidiness: with
+/// five public names in here the check produced mostly false positives over the
+/// generated `docs/` tree, and the response was to exclude `docs/` from the
+/// walk entirely. **So an over-broad list did not make the check stricter, it
+/// got the check switched off over a whole tier one surface**, and the two real
+/// leaks in there went unreported for as long as the exclusion stood.
+///
+/// A name joins this list when `gh repo view <owner>/<name> --json visibility`
+/// says `PRIVATE`, and leaves it when that changes.
 const PRIVATE: &[&str] = &[
     "clause-dev",
-    "hilavitkutin",
-    "vehje",
     "kolli",
     "ikiuni",
     "loisto",
-    "arvo",
     "loimu",
     "saalis",
 ];
@@ -72,11 +82,17 @@ fn tracked_files() -> Vec<PathBuf> {
         // `mock/` is this repository's own design trail and the v2 redesign,
         // which is history and work in progress rather than a surface.
         //
-        // `docs/` is excluded and should not be: it is a tier one surface a
-        // reader reaches, it is generated from templates under `mock/`, and it
-        // still carries eight of these names and two home paths. Fixing it
-        // means fixing the templates, which is a round of its own.
-        .filter(|l| !l.starts_with("mock/") && !l.starts_with("docs/"))
+        // `docs/` used to be excluded here, and the exclusion carried a comment
+        // saying it should not be: it is a tier one surface a reader reaches
+        // straight from the readme, and it was carrying private project names
+        // and a home path the whole time the guard reported clean. Excluded now
+        // only from the tarball, by `exclude` in the manifest, which is a
+        // different question from what the landing page shows.
+        //
+        // A check that names the surface it is not checking is reporting on a
+        // smaller population than its name claims, and nothing but the comment
+        // said so.
+        .filter(|l| !l.starts_with("mock/"))
         .map(|l| root.join(l))
         .collect()
 }
