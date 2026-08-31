@@ -10,21 +10,26 @@
 //! across variants, runs Pareto + multi-dim analysis, and emits
 //! findings.md plus a CSV cache for historical comparison.
 //!
-//! ## Status
+//! ## Two entry points, and only one of them validates
 //!
-//! v2 of the bench framework. v1 (`mockspace-bench-core`) shipped the
-//! `Routine` trait, FFI types, hardware counter timing, and the
-//! `timed!` macro. v2 adds the orchestrator (this crate). v2 is being
-//! ported one round at a time on `feat/bench-harness-v2`. Round 1
-//! defines the public API surface; subsequent rounds fill in workload,
-//! cache, orchestrator, validation, analysis, report, sensors, history.
+//! [`driver::drive_spec`] (and its compat wrapper [`driver::drive`]) is the
+//! whole manifest-driven loop: it loads `mock/benches/bench.toml`, resolves
+//! every `(bench, size)` cell, runs the duplicate-disassembly check and
+//! [`validation::validate`] before any timing, drives the orchestrator, and
+//! writes the CSV, the findings file, the history ledger and the index. A
+//! consumer `main` shrinks to its registrations.
 //!
-//! ## Entry point
+//! [`run`] is the lower entry point: it takes one [`BenchConfig`] and calls
+//! [`harness::run_orchestrator`] directly. **It does not validate.** No
+//! cross-variant comparison, no per-variant `validate_output`, no determinism
+//! check, no duplicate-disassembly check: it times whatever dylibs the config
+//! names. A consumer that calls [`run`] and wants those checks calls
+//! [`validation::validate`] itself and feeds it the surviving paths.
 //!
-//! Consumers invoke the harness via `mock bench run`. The CLI loads
-//! `mock/benches/bench.toml` into a [`BenchManifest`], converts each
-//! `(bench, size)` entry into a [`BenchConfig`], and calls [`run`]
-//! once per config with the consumer-provided [`RoutineSpec`].
+//! A binary that will be spawned as a validation worker needs a
+//! `--mode validate` arm dispatching to [`harness::run_worker_validate`].
+//! Without one the worker prints no `VOUT` lines, every variant is skipped for
+//! returning zero of N outputs, and the pass reports success over an empty set.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -155,12 +160,19 @@ pub use workload::{
 };
 
 /// Run the harness against one [`BenchConfig`] using the given
-/// [`RoutineSpec`] and [`Workload`].
+/// [`RoutineSpec`], spawning one worker subprocess per
+/// `(variant × cooldown × pass × mode)`.
 ///
-/// Delegates to [`harness::run_orchestrator`]. The orchestrator
-/// re-execs `std::env::current_exe()` with `--worker` flags to
-/// dispatch each `(variant × cooldown × pass × mode)` combination
-/// into an isolated subprocess.
+/// **No validation runs on this path.** See the crate docs: the checks live in
+/// [`driver::drive_spec`], and a consumer calling this one directly calls
+/// [`validation::validate`] itself if it wants them.
+///
+/// `workload` is accepted and not used. The orchestrator does not run the
+/// workload; each worker subprocess builds its own from its own `main`, so the
+/// value passed here reaches nothing. It stays in the signature because a
+/// consumer holds one anyway and removing it would churn every call site for
+/// no gain, but a workload passed here and a different one built in the
+/// worker arm is not a configuration, it is a silent disagreement.
 pub fn run(
     config: &BenchConfig,
     routine: &RoutineSpec,

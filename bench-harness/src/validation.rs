@@ -4,7 +4,10 @@
 //--------------------------------------------------------------------------------------------------
 
 //! Validation pass: run every variant across deterministic seeds and
-//! compare outputs. Runs before any timing. Each variant executes in
+//! compare outputs. Runs before any timing **on the [`crate::driver`] path**,
+//! which is its only caller; [`crate::run`] and
+//! [`crate::harness::run_orchestrator`] do not call it, so a consumer using
+//! those times unvalidated dylibs. Each variant executes in
 //! its own worker subprocess (`--mode validate`), so a variant's
 //! cached per-process state (the setup-once pattern) lives and dies
 //! with its worker; the orchestrator's memory stays bounded no matter

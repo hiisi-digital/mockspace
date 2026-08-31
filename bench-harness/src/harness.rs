@@ -25,9 +25,12 @@
 //! `--worker` and per-config args; the worker mode loads the variant
 //! cdylib, runs one mode, prints per-batch lines to stdout, exits.
 //!
-//! Round 3 ships orchestrator + worker. The result type does NOT yet
-//! carry [`crate::analysis::DataSet`] aggregation; that lands in
-//! Round 5 as `BenchResult::dataset(mode)`.
+//! ## What the orchestrator does not do
+//!
+//! [`run_orchestrator`] spawns workers and collects samples. It does not run
+//! [`crate::validation::validate`], and it does not use the `workload` it is
+//! handed: the worker builds its own from its own `main`. The validation pass
+//! and the duplicate-disassembly check live in [`crate::driver`].
 
 use std::process::Command;
 use std::thread::sleep;
