@@ -22,6 +22,22 @@
 //!
 //! The source is parsed, so a lint that reads `ctx.tree` sees the AST
 //! of the text it was given rather than an empty one.
+//!
+//! # Why this is not behind a feature
+//!
+//! It compiles into every consumer's generated cdylib, including when that
+//! cdylib is built to run the gate rather than to run tests, and nothing in the
+//! dispatch path ever touches it. A `testkit` feature defaulting off would keep
+//! it out of the gate build, and it cannot: the engine generates **one** crate
+//! with one manifest and uses it for both, so `cargo mock test` and a pre-commit
+//! run are the same artifact built twice. Defaulting the feature off would hide
+//! the fixture from exactly the tests it exists for, and defaulting it on would
+//! ship it anyway.
+//!
+//! Separating them means the generator writing a different feature list per
+//! entry point, which is an engine change out of proportion to what is being
+//! avoided: the cdylib is a local build artifact, rebuilt per repository, and
+//! never distributed anywhere.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
