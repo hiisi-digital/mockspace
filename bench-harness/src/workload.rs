@@ -425,6 +425,13 @@ impl Workload {
         seed: u64,
         on_algo_call: &mut impl FnMut(u64) -> FfiBenchCall,
     ) -> u64 {
+        // A workload with no programs runs nothing. `seed % 0` is a panic, and
+        // it happens inside a worker subprocess, where the orchestrator reports
+        // it as a bare `FAILED` carrying the worker's stderr and no statement of
+        // what the worker was asked to do.
+        if self.programs.is_empty() {
+            return 0;
+        }
         let prog_idx = (seed % self.programs.len() as u64) as usize;
         let program = &self.programs[prog_idx];
         let mut accum = 0u64;
@@ -458,4 +465,99 @@ macro_rules! workload_items {
     ( $( $item:expr ),+ $(,)? ) => {
         vec![ $( $item ),+ ]
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(_seed: u64) -> FfiBenchCall {
+        FfiBenchCall {
+            run_ticks:   1,
+            setup_ticks: 0,
+            first_ticks: 0,
+            digest:      0,
+        }
+    }
+
+    /// `Workload::new()` is an empty workload and `run_program` indexes with
+    /// `seed % programs.len()`. Zero programs is division by zero, which panics
+    /// inside a worker subprocess, and the orchestrator reports that as a bare
+    /// `FAILED` with the worker's stderr and no statement of what went wrong.
+    /// A workload with nothing to run runs nothing.
+    #[test]
+    fn an_empty_workload_runs_nothing_rather_than_dividing_by_zero() {
+        let w = Workload::new();
+        let mut f = call;
+        assert_eq!(w.run_program(0, &mut f), 0);
+        assert_eq!(w.run_program(u64::MAX, &mut f), 0);
+    }
+
+    /// The algo call has to be reached, whatever the seed picks and whatever
+    /// order the stage strategy produces, or the bench measures the filler
+    /// around it.
+    #[test]
+    fn every_seed_reaches_the_algo_call_exactly_once_per_occurrence() {
+        use std::cell::Cell;
+        thread_local! {
+            static CALLS: Cell<usize> = const { Cell::new(0) };
+        }
+        fn counting(_seed: u64) -> FfiBenchCall {
+            CALLS.with(|c| c.set(c.get() + 1));
+            FfiBenchCall {
+                run_ticks:   1,
+                setup_ticks: 0,
+                first_ticks: 0,
+                digest:      0,
+            }
+        }
+        let mut w = Workload::new();
+        w.program("default", |b| {
+            b.stage(vec![algo_call(), light_scalar(), algo_call()]);
+        });
+        let mut f = counting;
+        for seed in 0 .. 64u64 {
+            CALLS.with(|c| c.set(0));
+            w.run_program(seed, &mut f);
+            assert_eq!(
+                CALLS.with(Cell::get),
+                2,
+                "seed {seed}: two algo_call items in the stage, so two calls"
+            );
+        }
+    }
+
+    /// `structure_hash` exists to invalidate a cache on a structural change and
+    /// to hold still on a parameter change, and both halves have to be true or
+    /// it is not an invalidation key.
+    #[test]
+    fn the_structure_hash_moves_on_structure_and_holds_on_parameters() {
+        let mut a = Workload::new();
+        a.program("p", |b| {
+            b.stage(vec![algo_call(), scalar_work(10)]);
+        });
+        let mut b_param = Workload::new();
+        b_param.program("p", |b| {
+            b.stage(vec![algo_call(), scalar_work(9999)]);
+        });
+        let mut c_struct = Workload::new();
+        c_struct.program("p", |b| {
+            b.stage(vec![algo_call(), scalar_work(10), light_scalar()]);
+        });
+        assert_eq!(
+            a.structure_hash(),
+            b_param.structure_hash(),
+            "a parameter change must not invalidate"
+        );
+        assert_ne!(
+            a.structure_hash(),
+            c_struct.structure_hash(),
+            "an added item must invalidate"
+        );
+        assert_ne!(
+            a.structure_hash(),
+            Workload::new().structure_hash(),
+            "an empty workload is not the same structure as a populated one"
+        );
+    }
 }

@@ -533,3 +533,52 @@ fn different_work_is_not_flagged_duplicate() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── the names the warnings print ──
+
+/// The duplicate warning exists so an operator can see which two variants
+/// collided. `rsplit('/').nth(1)` is the second component from the right, which
+/// on the path shape `config::resolve_variant_path` builds
+/// (`<benches>/variants/<name>/target/release/lib<name>.dylib`) is `release` for
+/// every variant, so the line read `release == release` and named nobody.
+#[test]
+fn a_variant_is_named_by_its_own_name_not_by_its_build_directory() {
+    let a = "/b/variants/alpha/target/release/libalpha.dylib";
+    let b = "/b/variants/beta/target/release/libbeta.dylib";
+    assert_eq!(super::short_name(a), "alpha");
+    assert_eq!(super::short_name(b), "beta");
+    assert_ne!(
+        super::short_name(a),
+        super::short_name(b),
+        "two variants must not share one label"
+    );
+}
+
+/// The other path shape the manifest accepts is a spelled-out relative path,
+/// and a bare file name is what a hand-written manifest reaches for. Built from
+/// the host's own library prefix and suffix, because that is what every path
+/// the harness is handed carries; a `.so` on macOS is not a case that arises.
+#[test]
+fn short_name_handles_every_path_shape_the_manifest_accepts() {
+    let p = std::env::consts::DLL_PREFIX;
+    let s = std::env::consts::DLL_SUFFIX;
+    assert_eq!(
+        super::short_name(&format!("variants/x/target/release/{p}x{s}")),
+        "x",
+        "the host's prefix and suffix come off"
+    );
+    assert_eq!(
+        super::short_name(&format!("{p}x{s}")),
+        "x",
+        "bare file name"
+    );
+    assert_eq!(super::short_name("/a/b/plain"), "plain", "no extension");
+    assert_eq!(super::short_name(""), "", "empty is empty, not a panic");
+    // A name that merely starts with the prefix letters is not prefixed: only a
+    // real `lib` prefix comes off, and what is left must not be empty.
+    assert_eq!(
+        super::short_name(&format!("{p}{s}")),
+        "",
+        "prefix and suffix only"
+    );
+}
