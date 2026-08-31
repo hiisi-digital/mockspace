@@ -125,12 +125,12 @@ impl WorkspaceLint for UndocumentedType {
     }
 }
 
-/// Collect CamelCase identifiers from doc content that look like type names.
+/// Collect identifiers from doc content that could name a type.
 ///
-/// We match any word that starts with an uppercase letter and contains at
-/// least one lowercase letter (to distinguish from ALL_CAPS constants).
-/// This is intentionally broad: false positives in docs are fine because
-/// the set is used for inclusion checks (type must appear in SOME doc).
+/// The set is used for inclusion checks, so it has to be a superset of what
+/// `collect_source_type_defs` can produce. Anything the source side collects
+/// and this side cannot is a type with no way to be documented, and the lint
+/// blocks a build that has no fix available.
 fn collect_type_names_from_docs(content: &str, out: &mut HashSet<String>) {
     for word in content.split(|c: char| !c.is_alphanumeric() && c != '_') {
         if is_type_name(word) {
@@ -139,18 +139,17 @@ fn collect_type_names_from_docs(content: &str, out: &mut HashSet<String>) {
     }
 }
 
-/// A type name: starts with uppercase, contains at least one lowercase letter,
-/// at least 2 chars, not ALL_CAPS.
+/// A type name: starts with an uppercase letter. That is the whole test.
+///
+/// It used to demand two characters and at least one lowercase letter, to keep
+/// `ALL_CAPS` constants out. The source side has no such filter, so a marker
+/// named `S` and a carrier named `C8` were collected from the tree and could
+/// never be collected from a document: writing them into the design changed
+/// nothing and the build stayed blocked with no remedy. A constant named in
+/// prose now vouches for a type of the same spelling, which costs one missed
+/// report on a name that reads as a constant anyway.
 fn is_type_name(word: &str) -> bool {
-    if word.len() < 2 {
-        return false;
-    }
-    let first = word.chars().next().unwrap_or('a');
-    if !first.is_uppercase() {
-        return false;
-    }
-    // Must contain at least one lowercase letter (not ALL_CAPS).
-    word.chars().any(|c| c.is_lowercase())
+    word.chars().next().is_some_and(char::is_uppercase)
 }
 
 /// Collect all struct/enum/trait definitions from a crate's source.
@@ -312,6 +311,60 @@ mod cfg_test_module_tests {
         assert!(
             reports.is_empty(),
             "a documented type was reported: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_type_name_with_no_lowercase_letter_can_be_documented() {
+        // `C8` is collected from source and could never be collected from a
+        // doc, so the lint had no satisfiable fix: documenting it changed
+        // nothing and the build stayed blocked.
+        let reports = reported("pub struct C8;\n", "# test-crate\n\nThe `C8` carrier.\n");
+        assert!(
+            reports.is_empty(),
+            "a documented type with no lowercase letter was still reported: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_single_letter_type_name_can_be_documented() {
+        // The length floor is the same defect on a different axis. A strategy
+        // marker named `S` is a real shape and had no way to be documented.
+        let reports = reported("pub struct S;\n", "# test-crate\n\nThe `S` marker.\n");
+        assert!(
+            reports.is_empty(),
+            "a documented single-letter type was still reported: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn an_undocumented_type_with_no_lowercase_letter_is_still_reported() {
+        // The control for the two above. Widening the doc side until nothing
+        // is ever reported would pass both of them.
+        let reports = reported("pub struct C8;\n", "# test-crate\n\nNothing here.\n");
+        assert!(
+            reports.iter().any(|m| m.contains("C8")),
+            "an undocumented `C8` went unreported: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn an_undocumented_single_letter_type_is_still_reported() {
+        let reports = reported("pub struct S;\n", "# test-crate\n\nNothing here.\n");
+        assert!(
+            reports.iter().any(|m| m.contains('S')),
+            "an undocumented `S` went unreported: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_lowercase_word_does_not_document_a_type_of_the_same_letters() {
+        // The doc side stays keyed on the leading uppercase. Dropping that too
+        // would let any prose word vouch for a type.
+        let reports = reported("pub struct Real;\n", "# test-crate\n\nthe real thing.\n");
+        assert!(
+            reports.iter().any(|m| m.contains("Real")),
+            "a lowercase word documented an uppercase type: {reports:?}"
         );
     }
 }
