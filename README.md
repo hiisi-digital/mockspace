@@ -24,7 +24,7 @@ None of that says anything about what you build. Crate naming, numeric disciplin
 
 ## Status
 
-Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Every release is tagged and the log between two tags is what actually moved.
+Pre-1.0, and it moves. The tool is in daily use across a stack of consumer crates and grows whatever those crates turn out to need, so the api hasn't settled and breaking changes should be expected. Releases are tagged from here on, and once there are two of them the log between a pair is what actually moved.
 
 I'd caution against adopting this just yet for anything you cannot afford to have shift under you. Two reworks are in flight and either will move things: the plugin ABI v1 redesign, and a successor model for the design-round workflow (see [the research notes](https://github.com/hiisi-digital/mockspace/blob/dev/docs/research/)).
 
@@ -50,6 +50,8 @@ If what you actually want is a source linter, this is probably not it either. `m
 | `mockspace-bench-core` | The bench framework: `Routine` trait, hardware-counter timing, and an FFI bridge so variants compiled separately can be compared in one run. The harness adds workload and cache control, validation, Pareto analysis, history, perf and disassembly sensors, and findings reporting. |
 | `mock bench` | The command surface over that framework. `init` scaffolds a `mock/benches/` tree that is configuration and nothing else, `run` generates the driver binary from `bench.toml` and runs the configured benches, `test` runs `cargo test` across every crate the tree owns, and `report` regenerates the findings. A hand-written driver crate stays available as the escape hatch. |
 | `cargo-mock` / `mock` launcher | The sole entrypoint, installed as two binaries from one source. Resolves the engine version a repo pins in its `mockspace.toml`, builds that engine once into a shared per-version cache, and execs it; `mock locate` answers where a repo keeps its mockspace. |
+| `mockspace-manifest` | The `mockspace.toml` keys the launcher reads, and the durable git-hook gate. Shared between the launcher and the engine so the two cannot disagree about what a key means, which is the only reason it is a crate of its own rather than a module in either. |
+| `mockspace-bench-matrix` | A semantic-matrix layer over the bench harness: declare cells, sweep them across axes, and get isolated per-cell timing with the measurement discipline already applied. Opinionated on purpose, and the harness underneath stays usable directly if the opinions do not fit. |
 
 ## Installation
 
@@ -66,7 +68,7 @@ convention and a short direct form. There is no `build.rs` bootstrap, no
 Each repository pins the engine it runs in its root `mockspace.toml`:
 
 ```toml
-mockspace_version = "0.0.1"
+mockspace_version = "0.0.2"
 ```
 
 The engine is not on crates.io, so a version resolves against the matching git

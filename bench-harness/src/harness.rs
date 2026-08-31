@@ -141,9 +141,7 @@ unsafe fn load_variant(dylib_path: &str) -> Result<(String, BenchEntryFn), Strin
 
     let name_fn: libloading::Symbol<BenchNameFn> =
         unsafe { lib.get(b"bench_name") }.map_err(|e| format!("missing bench_name symbol: {e}"))?;
-    let name = unsafe { std::ffi::CStr::from_ptr(name_fn() as *const i8) }
-        .to_string_lossy()
-        .into_owned();
+    let name = unsafe { variant_name(*name_fn) };
 
     // Leak the library so the function pointers stay valid for the
     // remainder of the worker's lifetime.
@@ -895,6 +893,25 @@ pub fn run_worker_validate(
             to_hex(&out_second)
         );
     }
+}
+
+/// Read the name a loaded variant exports through `bench_name`.
+///
+/// The one place the pointer changes type, and it goes to `c_char` rather than
+/// to `i8`. **`c_char` is unsigned on aarch64, arm, riscv, powerpc and s390x
+/// Linux**, so `as *const i8` does not compile there at all, and three call
+/// sites each spelled it that way. Whether it happens to be signed is a fact
+/// about the host somebody built on, not about the code.
+///
+/// # Safety
+///
+/// `name_fn` must come from a loaded variant and return a pointer to a
+/// nul-terminated string that outlives the call, which is what the
+/// `bench_name` contract in `mockspace-bench-core` requires of a variant.
+pub(crate) unsafe fn variant_name(name_fn: BenchNameFn) -> String {
+    unsafe { std::ffi::CStr::from_ptr(name_fn().cast::<std::ffi::c_char>()) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn to_hex(bytes: &[u8]) -> String {

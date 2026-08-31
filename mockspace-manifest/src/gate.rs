@@ -271,9 +271,20 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
 /// Point the repo's `core.hooksPath` at `dir`, unless it already points somewhere
 /// mockspace owns.
 ///
-/// Never overrides a path outside mockspace: that would silently disable whatever
-/// the user installed, and taking over another tool's hooks without asking is not
-/// this gate's business.
+/// Taking over another tool's hooks without asking is not this gate's business,
+/// so a path it does not recognise is left alone and reported.
+///
+/// **What "owns" means, exactly, because it is narrower than the name suggests**:
+/// the path names mockspace, or it ends in `target/hooks`, which is the shape
+/// this gate writes. That second half is a heuristic and not a proof of
+/// ownership. It was `contains("target/hooks")` and is now a suffix test, which
+/// is the difference between matching any path with those characters anywhere in
+/// it and matching a path that ends the way ours do.
+///
+/// So a tool that also ends its hooks path in `target/hooks` would still be
+/// overwritten. Nothing here can rule that out, since git records a path and not
+/// who wrote it; what the suffix test buys is that an unrelated path merely
+/// containing the substring is no longer taken.
 pub fn activate(repo_root: &Path, dir: &Path) -> Vec<String> {
     let mut actions = Vec::new();
     let current = std::process::Command::new("git")
@@ -289,7 +300,7 @@ pub fn activate(repo_root: &Path, dir: &Path) -> Vec<String> {
     if current == want {
         return actions;
     }
-    if !current.is_empty() && !current.contains("mockspace") && !current.contains("target/hooks") {
+    if !current.is_empty() && !is_ours(&current) {
         actions.push(format!(
             "core.hooksPath points at {current}, which mockspace does not own; leaving it alone"
         ));
@@ -440,4 +451,72 @@ mod tests {
     // without touching the process environment, which the test harness's
     // sibling threads read concurrently (env mutation under the default
     // multi-threaded harness is undefined behaviour).
+}
+
+/// Whether a recorded `core.hooksPath` is one mockspace wrote.
+///
+/// The one copy. This predicate existed twice, spelled the same way, in this
+/// file and in the engine's own activate path, which is two places for it to
+/// drift and one of them would have gone on being wrong after the other was
+/// fixed.
+///
+/// **A heuristic, and the doc on [`activate`] says how far it reaches.** Git
+/// records a path and not who set it, so ownership cannot be proven from the
+/// value; what this does is refuse to claim a path merely because the substring
+/// `target/hooks` appears somewhere inside it.
+pub fn is_ours(path: &str) -> bool {
+    let p = path.trim().trim_end_matches('/');
+    p.contains("mockspace") || p.ends_with("target/hooks")
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::is_ours;
+
+    #[test]
+    fn the_paths_this_gate_writes_are_recognised() {
+        // The positive control. Without it the predicate could be `false`
+        // always, every assertion below would pass, and activate would refuse to
+        // take over its own hooks path on the second run.
+        assert!(is_ours("mock/target/hooks"));
+        assert!(is_ours("/home/x/.config/mockspace/hooks"));
+        assert!(is_ours("some/deep/mock/target/hooks"));
+        assert!(is_ours("mock/target/hooks/"), "a trailing slash is the same path");
+    }
+
+    #[test]
+    fn another_tools_hooks_path_is_left_alone() {
+        for other in [".husky", ".githooks", "hooks", "/opt/lefthook/hooks", ".git/hooks"] {
+            assert!(!is_ours(other), "{other} is not ours and must not be taken");
+        }
+    }
+
+    #[test]
+    fn the_substring_alone_no_longer_claims_a_path() {
+        // The defect this narrowing exists for. `contains("target/hooks")` took
+        // every one of these, because the characters appear somewhere in each.
+        for near in [
+            "target/hooks-of-another-tool",
+            "build/target/hooks/../elsewhere",
+            "vendor/target/hooksmith",
+            "/etc/target/hooks.d",
+        ] {
+            assert!(
+                !is_ours(near),
+                "{near} merely contains the substring and is not a path we write"
+            );
+        }
+    }
+
+    #[test]
+    fn the_heuristics_own_limit_is_pinned() {
+        // Stated rather than left implicit: a foreign tool ending its path the
+        // way we end ours is still claimed, and nothing in a git config value
+        // can distinguish it. Written down so a later reader knows the gap was
+        // measured rather than missed, and so removing it is a decision.
+        assert!(
+            is_ours("/opt/some-other-tool/target/hooks"),
+            "documented limit: a foreign path ending like ours is indistinguishable"
+        );
+    }
 }

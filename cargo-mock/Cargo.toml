@@ -1,6 +1,6 @@
 [package]
 name = "cargo-mock"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 # The engine (`mockspace`) does not publish. This thin launcher git-installs
 # whichever engine a repository pins, so it needs no version relationship to it.
@@ -60,7 +60,7 @@ renki = "0.0.1"
 # The path is what a checkout builds against and the version is what the
 # registry resolves, since cargo strips the path on publish and a dependency
 # left with neither is refused.
-mockspace-manifest = { path = "../mockspace-manifest", version = "0.0.1" }
+mockspace-manifest = { path = "../mockspace-manifest", version = "0.0.2" }
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
 

@@ -79,3 +79,39 @@ fn a_version_pin_resolves_to_the_bare_version_as_a_tag() {
          and the readme should stop saying it resolves against a tag"
     );
 }
+
+/// The version in the readme's worked example is the one this workspace is.
+///
+/// The example tells a reader to write `mockspace_version = "<x>"`, and a version
+/// pin resolves against the matching git tag. So a stale number there sends every
+/// stranger following the readme at a tag that does not exist, and they get a
+/// resolution failure and no engine, with nothing in the message about the readme
+/// being wrong.
+///
+/// The sibling test above reads the pin *keys* and never the value, which is
+/// exactly how the readme sat at `0.0.1` while the workspace moved: every
+/// assertion about the example passed, because none of them looked at the number.
+#[test]
+fn the_readme_example_pins_the_version_this_workspace_is() {
+    let readme = include_str!("../../README.md");
+    let manifest = include_str!("../../Cargo.toml");
+
+    let workspace_version = manifest
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("version = "))
+        .map(|v| v.trim().trim_matches('"').to_string())
+        .expect("the workspace manifest declares a version");
+
+    let example = readme
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("mockspace_version = "))
+        .map(|v| v.trim().trim_matches('"').to_string())
+        .expect("the readme shows a mockspace_version example");
+
+    assert_eq!(
+        example, workspace_version,
+        "the readme pins {example} and this workspace is {workspace_version}. A version \
+         resolves against a git tag, so the readme is telling readers to pin a tag that \
+         will not exist. Move both together, and tag the release."
+    );
+}

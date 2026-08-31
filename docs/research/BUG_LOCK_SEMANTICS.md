@@ -77,10 +77,10 @@ Option B is more correct but more work. Defer unless the relabelling in A feels 
 
 ## Severity
 
-Not a blocker. Workflow is usable with the current semantics once you know them. But it ambushed both the user and a subagent during the first real design round (arvo L0, 2026-04-19). Worth fixing before more users hit it.
+Not a blocker. Workflow is usable with the current semantics once you know them. But it ambushed both the user and a subagent during the first real design round (a first-layer design round, 2026-04-19). Worth fixing before more users hit it.
 
 ## Links
 
-- Session that tripped this: `~/Dev/clause-dev/arvo/` branch `feat/arvo-l0-design-round`, deprecated `202604192100_changelist.src.deprecated.md`, reopened as `202604192200_changelist.src.md`
+- The round that tripped this: a design round whose src changelist was deprecated at one timestamp and reopened at another, an hour apart.
 - Hook source: `.claude/hooks/mockspace-write-guard.sh` (generated; source in `mock/agent/hooks/` but this one is a builtin from `src/render_agent.rs`)
 - Phase logic: `lint-rules/src/changelist_helpers.rs` `current_phase()`
