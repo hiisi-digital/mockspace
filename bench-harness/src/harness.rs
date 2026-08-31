@@ -816,34 +816,11 @@ pub fn run_orchestrator(
 
 /// Write the result samples to a CSV at `path` plus a sidecar
 /// `<path>.meta.json` carrying [`EnvMeta`].
+///
+/// The rows come from [`crate::sample::to_csv`], the one writer, so this and
+/// the cache cannot disagree about the column order.
 pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
-    let mut csv = String::from(
-        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n",
-    );
-    for s in &result.samples {
-        let score_str = s.score.map(|v| format!("{:.2}", v)).unwrap_or_default();
-        let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
-        csv.push_str(&format!(
-            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{}\n",
-            s.run,
-            s.pass,
-            s.cooldown_ms,
-            s.mode,
-            s.variant,
-            s.batch_idx,
-            s.e2e_ns,
-            s.algo_ns,
-            s.bridge_ns,
-            s.batch_count,
-            score_str,
-            tag_str,
-            s.instructions,
-            s.cycles,
-            s.setup_ns,
-            s.first_ns,
-            s.digest
-        ));
-    }
+    let csv = crate::sample::to_csv(&result.samples);
     std::fs::write(path, &csv).map_err(|e| BenchError::io("writing csv", e))?;
     eprintln!("  CSV: {} ({} rows)", path, result.samples.len());
 

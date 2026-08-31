@@ -134,7 +134,7 @@ pub use perf::{
 };
 pub use quality::{VariantQuality, measure as measure_quality};
 pub use report::generate as generate_report;
-pub use sample::{BenchResult, Sample, load_samples_csv};
+pub use sample::{BenchResult, CSV_HEADER, Sample, load_samples_csv, to_csv as samples_to_csv};
 pub use spec::{RoutineSpec, VariantSpec};
 pub use validation::validate;
 pub use workload::{
