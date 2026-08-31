@@ -81,11 +81,18 @@ fn tracked_files() -> Vec<PathBuf> {
         // `mock/` is this repository's own design trail and the v2 redesign,
         // which is history and work in progress rather than a surface.
         //
-        // **It is excluded on purpose and it is not clean.** Twenty tracked
-        // files under it carry `~/Dev/clause-dev` paths, in research notes and
-        // in committed probe scripts where the path is what the probe reads.
+        // **It is excluded on purpose and it is not clean.** Twenty-one tracked
+        // files under it carry a path on somebody's machine, eleven of them naming
+        // `~/Dev/clause-dev` specifically, in research notes and in committed probe
+        // scripts where the path is what the probe reads.
         // Scrubbing them would rewrite the audit trail and break instruments
         // whose whole value is that they can be re-run.
+        //
+        // Both numbers, because one of them alone was wrong: this said "twenty",
+        // which is neither, so a later reader measuring either would have found
+        // a figure matching nothing and been unable to tell whether the set had
+        // moved or the sentence had always been wrong. A count whose predicate
+        // is not stated beside it cannot do the job a count is here to do.
         //
         // So this is a decision rather than an oversight, and the number is here
         // so a later reader can tell whether it grew. The exposure is a reader

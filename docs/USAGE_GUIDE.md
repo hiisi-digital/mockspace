@@ -32,12 +32,12 @@ Everything outside `mock/` is yours. Mockspace owns:
 
 ```
 <repo_root>/
+├── mockspace.toml                            [authored: config]
 ├── docs/                                     [generated; regenerated every build]
 │   ├── DESIGN.md, DESIGN-DEEP-DIVES.md
 │   ├── STRUCTURE.md, STRUCTURE.GRAPH.{dot,png,svg}
 │   └── <per-crate overviews>
 └── mock/
-    ├── mockspace.toml                        [authored: config]
     ├── Cargo.toml + Cargo.lock               [authored: mock workspace]
     ├── DESIGN.md.tmpl                        [authored: top-level design template]
     ├── PRINCIPLES.md.tmpl                    [optional authored invariants]
