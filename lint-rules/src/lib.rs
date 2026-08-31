@@ -948,6 +948,23 @@ impl LintConfig {
         self.paths.get(lint_name).filter(|f| !f.is_empty())
     }
 
+    /// Hand one lint the parameters configured under its name, if any.
+    ///
+    /// The single place that knows a lint's parameters are keyed by its name.
+    /// Every caller that configures anything goes through here: the four
+    /// `check_*_with_extra` functions for the builtins they construct, and
+    /// [`LintPack::configure_from`] for a pack's own.
+    ///
+    /// It was written out inline in exactly one of those five, over the builtin
+    /// crate lints. The builtin workspace and repo sets took no configuration
+    /// because none of them declares a parameter today, so that half was latent;
+    /// the pack half was not, and cost what `configure_from` describes.
+    pub fn apply_params_to(&self, lint: &mut dyn Lint) {
+        if let Some(params) = self.params.get(lint.name()) {
+            lint.configure(params);
+        }
+    }
+
     /// Build a LintConfig from a simple base-only HashMap (backwards compat).
     pub fn from_base(base: HashMap<String, Severity>) -> Self {
         Self {
@@ -1478,6 +1495,40 @@ pub struct LintPack {
     pub tools:           Vec<Box<dyn tool::Tool>>,
 }
 
+impl LintPack {
+    /// Hand every lint in the pack its configured parameters.
+    ///
+    /// A pack's lints are constructed by the `lint_pack!` macro, which can only
+    /// call a constructor, so a lint carrying configuration arrives holding its
+    /// defaults, and nothing downstream could give it the project's: every
+    /// `check_*_with_extra` takes its extras as a shared slice and [`Lint::configure`]
+    /// wants `&mut`. So it happens once, here, while the pack is still owned.
+    ///
+    /// It is a method on the pack rather than a fix inside one of the check
+    /// functions because it covers every kind at once: a new lint kind is a new
+    /// loop here instead of a fifth place to forget.
+    ///
+    /// What it cost to be missing: `commit-style` defaults to permissive on
+    /// every knob it has, so `mock check-message` returned success on a subject
+    /// with several violations in it, in every repository, whatever the config
+    /// said. The gate reported clean because it had no policy rather than
+    /// because the message had no faults.
+    pub fn configure_from(&mut self, cfg: &LintConfig) {
+        for l in &mut self.crate_lints {
+            cfg.apply_params_to(l.as_mut());
+        }
+        for l in &mut self.workspace_lints {
+            cfg.apply_params_to(l.as_mut());
+        }
+        for l in &mut self.repo_lints {
+            cfg.apply_params_to(l.as_mut());
+        }
+        for l in &mut self.message_lints {
+            cfg.apply_params_to(l.as_mut());
+        }
+    }
+}
+
 /// Every lint name registered more than once across the builtin sets and a
 /// pack, sorted.
 ///
@@ -1733,6 +1784,27 @@ pub fn check_crate(
     check_crate_with_extra(ctx, doc_only, overrides, &[])
 }
 
+/// Hand each of a freshly-constructed builtin set its configured parameters.
+///
+/// The builtins are built anew inside every check function, so they are
+/// configured there rather than once at load, which is the pack's route
+/// ([`LintPack::configure_from`]). Both go through
+/// [`LintConfig::apply_params_to`], so there is one place that knows how a
+/// lint's parameters are found and two that know when.
+///
+/// It takes already-upcast references because the four builtin sets are boxed
+/// as four different trait objects, and a generic over `Box<L>` cannot coerce
+/// `&mut L` to `&mut dyn Lint` without a bound naming the coercion.
+fn configure_all<'a>(
+    lints: impl IntoIterator<Item = &'a mut dyn Lint>,
+    overrides: Option<&LintConfig>,
+) {
+    let Some(cfg) = overrides else { return };
+    for lint in lints {
+        cfg.apply_params_to(lint);
+    }
+}
+
 /// Run all per-crate lints plus any custom lints on a single crate, returning violations.
 pub fn check_crate_with_extra(
     ctx: &LintContext,
@@ -1741,15 +1813,7 @@ pub fn check_crate_with_extra(
     extra_lints: &[Box<dyn CrateLint>],
 ) -> Vec<LintError> {
     let mut lints = all_lints();
-
-    // Configure lints with parameters from config
-    if let Some(cfg) = overrides {
-        for lint in &mut lints {
-            if let Some(params) = cfg.params.get(lint.name()) {
-                lint.configure(params);
-            }
-        }
-    }
+    configure_all(lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint), overrides);
 
     let mut errors = Vec::new();
 
@@ -1878,7 +1942,8 @@ pub fn check_workspace_with_extra(
     overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn WorkspaceLint>],
 ) -> Vec<LintError> {
-    let lints = all_workspace_lints();
+    let mut lints = all_workspace_lints();
+    configure_all(lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint), overrides);
     let mut errors = Vec::new();
     for lint in lints
         .iter()
@@ -1930,7 +1995,8 @@ pub fn check_repo_with_extra(
     overrides: Option<&LintConfig>,
     extra_lints: &[Box<dyn RepoLint>],
 ) -> Vec<LintError> {
-    let lints = all_repo_lints();
+    let mut lints = all_repo_lints();
+    configure_all(lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint), overrides);
     let mut errors = Vec::new();
     for lint in lints
         .iter()
@@ -2060,6 +2126,287 @@ mod pack_tests {
         lints_only::collect(&mut pack);
         assert_eq!(pack.crate_lints.len(), 2);
         assert_eq!(pack.workspace_lints.len(), 1);
+    }
+}
+
+/// That a pack's own lints are handed the project's configuration.
+///
+/// Every lint here reports a finding only once configured, and reports the
+/// configured value back in the message. A law over the stored field would pass
+/// on a `configure` that stored the value and changed no verdict, which is the
+/// half that matters: a configured lint that still behaves as its default is
+/// exactly the state that shipped.
+#[cfg(test)]
+mod pack_configuration_tests {
+    use super::*;
+
+    /// One lint body, four kinds. Each reports `configured: <value>` when it has
+    /// been given `verdict`, and nothing at all when it has not.
+    macro_rules! configurable {
+        ($name:ident, $lint_name:literal) => {
+            #[derive(Default)]
+            struct $name {
+                verdict: Option<String>,
+            }
+
+            impl $name {
+                fn findings(&self) -> Vec<LintError> {
+                    match &self.verdict {
+                        None => Vec::new(),
+                        Some(v) => {
+                            vec![LintError::error(
+                                "test-crate".to_string(),
+                                1,
+                                $lint_name,
+                                format!("configured: {v}"),
+                            )]
+                        },
+                    }
+                }
+            }
+
+            impl Lint for $name {
+                fn name(&self) -> &'static str {
+                    $lint_name
+                }
+
+                fn config_keys(&self) -> &[&str] {
+                    &["verdict"]
+                }
+
+                fn configure(&mut self, params: &HashMap<String, String>) {
+                    if let Some(v) = params.get("verdict") {
+                        self.verdict = Some(v.clone());
+                    }
+                }
+            }
+        };
+    }
+
+    configurable!(ConfigurableCrate, "configurable-crate");
+    configurable!(ConfigurableWorkspace, "configurable-workspace");
+    configurable!(ConfigurableRepo, "configurable-repo");
+    configurable!(ConfigurableMessage, "configurable-message");
+
+    impl CrateLint for ConfigurableCrate {
+        fn check(&self, _ctx: &LintContext) -> Vec<LintError> {
+            self.findings()
+        }
+    }
+    impl WorkspaceLint for ConfigurableWorkspace {
+        fn check_all(&self, _crates: &[(&str, &LintContext)]) -> Vec<LintError> {
+            self.findings()
+        }
+    }
+    impl RepoLint for ConfigurableRepo {
+        fn check_repo(&self, _ctx: &RepoContext) -> Vec<LintError> {
+            self.findings()
+        }
+    }
+    impl MessageLint for ConfigurableMessage {
+        fn check_message(&self, _ctx: &MessageContext) -> Vec<LintError> {
+            self.findings()
+        }
+    }
+
+    fn a_pack() -> LintPack {
+        LintPack {
+            crate_lints:     vec![Box::new(ConfigurableCrate::default())],
+            workspace_lints: vec![Box::new(ConfigurableWorkspace::default())],
+            repo_lints:      vec![Box::new(ConfigurableRepo::default())],
+            message_lints:   vec![Box::new(ConfigurableMessage::default())],
+            tools:           Vec::new(),
+        }
+    }
+
+    fn empty_lint_context() -> LintContext<'static> {
+        let mut parser = make_parser();
+        let tree = parser.parse("", None).expect("the empty source parses");
+        LintContext {
+            crate_name:              "test-crate",
+            short_name:              "test-crate",
+            source:                  "",
+            tree:                    Box::leak(Box::new(tree)),
+            all_sources:             &[],
+            deps:                    &[],
+            all_crates:              Box::leak(Box::new(BTreeSet::new())),
+            design_doc:              None,
+            all_doc_content:         "",
+            shame_doc:               None,
+            workspace_root:          Path::new("/tmp"),
+            proc_macro_crates:       &[],
+            crate_prefix:            "test",
+            lint_proc_macro_source:  false,
+            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
+        }
+    }
+
+    fn empty_repo_context() -> RepoContext<'static> {
+        RepoContext {
+            mock_dir:    Path::new("/tmp"),
+            repo_root:   Path::new("/tmp"),
+            all_crates:  Box::leak(Box::new(BTreeSet::new())),
+            src_dirs:    &[],
+            invocation:  None,
+            canon_paths: &[],
+            open_panels: &[],
+            registry:    Box::leak(Box::new(Default::default())),
+        }
+    }
+
+    fn a_message_context() -> MessageContext<'static> {
+        MessageContext {
+            domain:     MessageDomain::CommitMessage,
+            mode:       AgentMode::default(),
+            message:    "feat: a subject",
+            origin:     "<test>",
+            repo_root:  Path::new("/tmp"),
+            invocation: None,
+        }
+    }
+
+    fn config_for(names: &[&str], value: &str) -> LintConfig {
+        let mut cfg = LintConfig::empty();
+        for n in names {
+            let mut params = HashMap::new();
+            params.insert("verdict".to_string(), value.to_string());
+            cfg.params.insert((*n).to_string(), params);
+        }
+        cfg
+    }
+
+    const EVERY_KIND: &[&str] = &[
+        "configurable-crate",
+        "configurable-workspace",
+        "configurable-repo",
+        "configurable-message",
+    ];
+
+    /// The control. Without it every arm below would pass on a `configure` that
+    /// was never called, because an unconfigured lint reporting nothing is what
+    /// the assertions would then be measuring against nothing.
+    #[test]
+    fn an_unconfigured_pack_reports_nothing_at_all() {
+        let pack = a_pack();
+        assert!(pack.crate_lints[0].check(&empty_lint_context()).is_empty());
+        assert!(pack.workspace_lints[0].check_all(&[]).is_empty());
+        assert!(pack.repo_lints[0].check_repo(&empty_repo_context()).is_empty());
+        assert!(
+            pack.message_lints[0]
+                .check_message(&a_message_context())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn every_kind_of_lint_in_a_pack_is_handed_its_parameters() {
+        let mut pack = a_pack();
+        pack.configure_from(&config_for(EVERY_KIND, "yes"));
+
+        // The message kind is the one that had no configuration path whatsoever,
+        // so it is named first and separately rather than folded into a loop.
+        let msg = pack.message_lints[0].check_message(&a_message_context());
+        assert_eq!(msg.len(), 1, "a message lint reported nothing after being configured");
+        assert_eq!(msg[0].message, "configured: yes");
+
+        assert_eq!(
+            pack.crate_lints[0].check(&empty_lint_context())[0].message,
+            "configured: yes"
+        );
+        assert_eq!(
+            pack.workspace_lints[0].check_all(&[])[0].message,
+            "configured: yes"
+        );
+        assert_eq!(
+            pack.repo_lints[0].check_repo(&empty_repo_context())[0].message,
+            "configured: yes"
+        );
+    }
+
+    /// Configuration is by lint name, so a pack whose config names one lint must
+    /// leave the other three alone. A `configure_from` handing every lint the
+    /// first params it found would pass the arm above and fail this one.
+    #[test]
+    fn a_lint_gets_its_own_parameters_and_not_a_neighbours() {
+        let mut pack = a_pack();
+        pack.configure_from(&config_for(&["configurable-message"], "only-me"));
+
+        assert_eq!(
+            pack.message_lints[0].check_message(&a_message_context())[0].message,
+            "configured: only-me"
+        );
+        assert!(pack.crate_lints[0].check(&empty_lint_context()).is_empty());
+        assert!(pack.workspace_lints[0].check_all(&[]).is_empty());
+        assert!(
+            pack.repo_lints[0]
+                .check_repo(&empty_repo_context())
+                .is_empty()
+        );
+    }
+
+    /// A config naming a lint the pack does not hold is not an error and does
+    /// not reach anything. It is the ordinary state of a shared pack config in a
+    /// repo that imports only part of it.
+    #[test]
+    fn a_config_for_an_absent_lint_reaches_nothing() {
+        let mut pack = a_pack();
+        pack.configure_from(&config_for(&["not-in-this-pack"], "stray"));
+
+        assert!(pack.crate_lints[0].check(&empty_lint_context()).is_empty());
+        assert!(
+            pack.message_lints[0]
+                .check_message(&a_message_context())
+                .is_empty()
+        );
+    }
+
+    /// An empty config configures nothing, which is the same observable state as
+    /// never calling it, and is what a repo with no `[lints.*]` params has.
+    #[test]
+    fn an_empty_config_leaves_every_lint_on_its_defaults() {
+        let mut pack = a_pack();
+        pack.configure_from(&LintConfig::empty());
+
+        assert!(pack.crate_lints[0].check(&empty_lint_context()).is_empty());
+        assert!(
+            pack.message_lints[0]
+                .check_message(&a_message_context())
+                .is_empty()
+        );
+    }
+
+    /// The last write wins, so a pack configured twice holds the second value
+    /// rather than the first or a merge of them.
+    #[test]
+    fn configuring_twice_takes_the_second_value() {
+        let mut pack = a_pack();
+        pack.configure_from(&config_for(EVERY_KIND, "first"));
+        pack.configure_from(&config_for(EVERY_KIND, "second"));
+
+        assert_eq!(
+            pack.message_lints[0].check_message(&a_message_context())[0].message,
+            "configured: second"
+        );
+        assert_eq!(
+            pack.crate_lints[0].check(&empty_lint_context())[0].message,
+            "configured: second"
+        );
+    }
+
+    /// Every lint of a kind is reached, not only the first. A loop that took the
+    /// head and stopped would pass every arm above.
+    #[test]
+    fn the_walk_reaches_past_the_first_lint_of_a_kind() {
+        let mut pack = a_pack();
+        pack.message_lints.push(Box::new(ConfigurableMessage::default()));
+        pack.configure_from(&config_for(&["configurable-message"], "both"));
+
+        assert_eq!(pack.message_lints.len(), 2);
+        for (i, l) in pack.message_lints.iter().enumerate() {
+            let found = l.check_message(&a_message_context());
+            assert_eq!(found.len(), 1, "message lint {i} was not configured");
+            assert_eq!(found[0].message, "configured: both");
+        }
     }
 }
 
