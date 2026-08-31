@@ -146,17 +146,17 @@ If a consumer's schema genuinely lacks the information to produce a valid Config
 
 ## Crate dependencies
 
-- `serde` + `serde_derive` — struct deserialization
-- `toml` — TOML parsing
-- `mockspace-lint-rules` — `LintConfig` re-export (already a workspace crate)
-- `std` — `PathBuf`, `BTreeMap`, `io::Result`
+- `serde` + `serde_derive`, struct deserialization
+- `toml`, TOML parsing
+- `mockspace-lint-rules`, for the `LintConfig` re-export (already a workspace crate)
+- `std`, for `PathBuf`, `BTreeMap` and `io::Result`
 
 No `notko` / `arvo` / `hilavitkutin`. (Same rationale as mockspace-template; substrate adoption deferred to live-port.)
 
 ## Audit trail
 
-- `mockspace/src/config.rs` — current canonical Config implementation (~674 lines); this crate ports a stripped, decoupled version preserving the field shape.
-- `mockspace/src/parse.rs` — TOML parsing helpers; relevant bits port into this crate's `parse_mockspace_toml`.
+- `mockspace/src/config.rs`, current canonical Config implementation (~674 lines); this crate ports a stripped, decoupled version preserving the field shape.
+- `mockspace/src/parse.rs`, TOML parsing helpers; relevant bits port into this crate's `parse_mockspace_toml`.
 
 Design round artifacts:
 

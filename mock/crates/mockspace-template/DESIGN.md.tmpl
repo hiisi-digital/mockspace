@@ -21,7 +21,7 @@ The public surface lives in three layers:
 | Renderer | `walk_template_tree(env, src, dst, ctx)` | Generic recursive renderer for non-agent template trees (workspace docs etc.). Preserves source structure with `.tmpl` stripped. |
 | Renderer | `RenderReport` | Per-call summary listing every file written, with sizes and timing for diagnostic output. |
 
-## Template engine — minijinja wrapper
+## Template engine, minijinja wrapper
 
 The template engine wraps `minijinja` so consumers get full Jinja2 syntax: `{{ var }}` substitutions, `{% for %}` loops, `{% if %}` conditionals, `{% include %}` partials, and filters (`{{ name | upper }}`).
 
@@ -164,7 +164,7 @@ applyTo: "**/*.rs,**/*.md"
 
 Hook helpers body: ports the `COPILOT_HOOK_HELPERS` const from `src/render_agent.rs`. Flat JSON decisions (`{"permissionDecision":"deny","permissionDecisionReason":"..."}`); plain-text context output; different `_extract` shape for Copilot's stringified `toolArgs` field.
 
-## AgentRenderer — orchestration
+## AgentRenderer, orchestration
 
 The `AgentRenderer` walks a source directory of `.md.tmpl` files and emits the rendered output per the platform's path conventions.
 
@@ -206,7 +206,7 @@ The render loop:
 
 The renderer makes no assumption about how many platform passes a consumer wants. To render both Claude and Copilot outputs from one source tree, a consumer constructs two `AgentRenderer` instances with different platforms and runs both.
 
-## Non-agent template rendering — walk_template_tree
+## Non-agent template rendering, walk_template_tree
 
 For template trees that are not agent-specific (workspace-level docs, project README templates, etc.):
 
@@ -255,9 +255,9 @@ pub struct RenderedFile {
 
 ## Crate dependencies
 
-- `minijinja` — full Jinja2 template language
-- `serde` + `serde_derive` — context model
-- `std` — `PathBuf`, `fs`, `io::Result`, `time::Duration`
+- `minijinja`, full Jinja2 template language
+- `serde` + `serde_derive`, context model
+- `std`, for `PathBuf`, `fs`, `io::Result` and `time::Duration`
 
 No `notko`, `arvo`, `hilavitkutin`, or other substrate-stack deps. mockspace-template is meta-tool code; substrate adoption is deferred to the live-port round (see BACKLOG).
 
@@ -265,10 +265,10 @@ No `notko`, `arvo`, `hilavitkutin`, or other substrate-stack deps. mockspace-tem
 
 Source modules in mockspace's live root that informed this design:
 
-- `src/render_md.rs` — top-level Mustache-like substitution; this crate generalises to full Jinja2 via minijinja.
-- `src/render_agent.rs` — agent-file rendering for Claude+Copilot; this crate extracts the platform-specific bits behind the `Platform` trait.
-- `src/render.rs` — DOT/graph generation; NOT extracted (mockspace-specific).
-- `src/render_design.rs` — DESIGN.md generation; NOT extracted (mockspace-specific).
+- `src/render_md.rs`, top-level Mustache-like substitution; this crate generalises to full Jinja2 via minijinja.
+- `src/render_agent.rs`, agent-file rendering for Claude+Copilot; this crate extracts the platform-specific bits behind the `Platform` trait.
+- `src/render.rs`, DOT/graph generation; NOT extracted (mockspace-specific).
+- `src/render_design.rs`, DESIGN.md generation; NOT extracted (mockspace-specific).
 
 Design round artifacts:
 
