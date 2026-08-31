@@ -102,7 +102,7 @@ pub use driver::{
 };
 pub use env::{EnvMeta, collect_env_meta};
 pub use error::BenchError;
-pub use harness::{run_orchestrator, run_worker, write_csv};
+pub use harness::{run_orchestrator, run_worker, run_worker_validate, write_csv};
 pub use history::{
     DEFAULT_HISTORY_DIR,
     HistoryEntry,

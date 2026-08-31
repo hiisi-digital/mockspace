@@ -31,6 +31,7 @@
 //! byte-for-byte *and* each satisfy an invariant.
 
 use std::collections::HashSet;
+use std::num::NonZeroUsize;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -128,6 +129,83 @@ fn check_each_variant(
             validator(&input, output).err().map(|reason| (i, reason))
         })
         .collect()
+}
+
+/// A variant count that has been established non-zero, and the only key to
+/// [`validation_ok_line`].
+///
+/// The private field is the whole mechanism. [`surviving_variants`] is the only
+/// thing that constructs one, so the summary cannot be printed by a caller that
+/// did not go through the refusal. A plain `usize` will not substitute, which is
+/// what a `NonZeroUsize` alone failed to achieve: both `Display`, so dropping
+/// the guard and passing the raw subtraction still compiled and still printed
+/// "all 0 variants passed".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Survivors(NonZeroUsize);
+
+impl Survivors {
+    pub(crate) fn get(self) -> usize {
+        self.0.get()
+    }
+}
+
+/// The line printed when validation passes, which may not be reached with a
+/// count of zero because [`Survivors`] cannot hold one.
+///
+/// Deliberately does not say "valid". A routine that never overrode
+/// `validate_output` gets the default `Ok(())`, and the bridge cannot report
+/// which happened, so claiming structural validity here would assert exactly
+/// what the harness is unable to know.
+fn validation_ok_line(active: Survivors, plan: ValidationPlan) -> String {
+    format!(
+        "  Validation OK: all {} variants passed {}",
+        active.get(),
+        match plan.cross_variant {
+            None => "the routine's own per-variant check",
+            Some(CrossVariant::Approx(_)) =>
+                "the routine's own per-variant check and agree within tolerance",
+            Some(CrossVariant::ByteExact) =>
+                "the routine's own per-variant check and produce identical output",
+        }
+    )
+}
+
+/// How many variants survived to be compared, or why none did.
+///
+/// The only constructor of [`Survivors`], which [`validation_ok_line`] requires,
+/// so the pass summary cannot be printed without having come through here.
+/// Dropping this call does not quietly restore the defect: it leaves nothing to
+/// pass to that function.
+///
+/// The defect it forecloses: every variant having been skipped means no arm was
+/// checked against any other, and the summary would report "Validation OK: all 0
+/// variants passed" and return success. Zero mismatches out of zero comparisons
+/// is not a pass.
+///
+/// `silent` counts variants whose worker exited cleanly and printed nothing.
+/// When that is all of them the binary has no `--mode validate` arm at all,
+/// which is a different problem with a different fix, so it gets its own text.
+fn surviving_variants(total: usize, active: usize, silent: usize) -> Result<Survivors, String> {
+    if let Some(n) = NonZeroUsize::new(active) {
+        return Ok(Survivors(n));
+    }
+    if total == 0 {
+        return Err("no variants were supplied to validate".to_string());
+    }
+    Err(if silent == total {
+        format!(
+            "all {total} variants' validation workers exited cleanly and printed no VOUT lines, \
+             which means this binary has no `--mode validate` arm. Wire it to \
+             `mockspace_bench_harness::run_worker_validate` in the same place the `--worker` mode \
+             calls `run_worker`, or the harness cannot check that the timed arms compute the same \
+             answer"
+        )
+    } else {
+        format!(
+            "all {total} variants were skipped before comparison ({silent} produced no output at \
+             all), so no arm was validated against any other"
+        )
+    })
 }
 
 /// First pair of variants sharing an exported name, as
@@ -376,6 +454,11 @@ pub fn validate(
         .collect::<Vec<_>>()
         .join(",");
     let mut collected: Vec<Vec<(Vec<u8>, Vec<u8>)>> = Vec::new();
+    // Variants whose worker exited cleanly and printed nothing. That is the
+    // signature of a binary with no `--mode validate` arm: it takes the flags,
+    // does not recognise them, exits zero, and every variant looks skippable.
+    // Counted separately from a crash so the error below can name the cause.
+    let mut silent_workers = 0usize;
     for (vi, name) in names.iter().enumerate() {
         if slow_variants.contains(&vi) {
             collected.push(Vec::new());
@@ -423,6 +506,9 @@ pub fn validate(
             }
         }
         if rows.len() != seeds.len() {
+            if rows.is_empty() {
+                silent_workers += 1;
+            }
             eprintln!(
                 "  SKIPPING {}: validation worker returned {} of {} outputs",
                 name,
@@ -436,10 +522,26 @@ pub fn validate(
         collected.push(rows);
     }
 
-    // Recount after collection: worker crashes and truncated output
-    // above grow `slow_variants`, and the OK summaries below must not
-    // claim a skipped variant validated.
-    let active_count = names.len() - slow_variants.len();
+    // Recount after collection: worker crashes and truncated output above grow
+    // `slow_variants`, and the OK summaries below must not claim a skipped
+    // variant validated. Every variant skipped means nothing was compared, and
+    // the summary would print "Validation OK: all 0 variants passed" and return
+    // success. Zero mismatches out of zero comparisons is not a pass, so refuse
+    // here. The count is non-zero by type from here down, which is what stops
+    // this being a check somebody can quietly drop.
+    let active_count = match surviving_variants(
+        names.len(),
+        names.len() - slow_variants.len(),
+        silent_workers,
+    ) {
+        Ok(n) => n,
+        Err(reason) => {
+            return Err(BenchError::ValidationFailed {
+                variant: bench_name.to_string(),
+                reason,
+            });
+        },
+    };
 
     let mut mismatches = 0usize;
     let mut first_mismatch_reason: Option<(String, String)> = None;
@@ -542,27 +644,14 @@ pub fn validate(
         });
     }
 
-    // Deliberately does not say "valid". A routine that never overrode
-    // `validate_output` gets the default `Ok(())`, and the bridge cannot report
-    // which happened, so claiming structural validity here would assert exactly
-    // what the harness is unable to know.
-    eprintln!(
-        "  Validation OK: all {} variants passed {}",
-        active_count,
-        match plan.cross_variant {
-            None => "the routine's own per-variant check",
-            Some(CrossVariant::Approx(_)) =>
-                "the routine's own per-variant check and agree within tolerance",
-            Some(CrossVariant::ByteExact) =>
-                "the routine's own per-variant check and produce identical output",
-        }
-    );
+    eprintln!("{}", validation_ok_line(active_count, plan));
 
     // Determinism check: call each variant twice with the same seed
     // and verify both outputs are identical.
     eprintln!(
         "  Determinism check: {} variants × {} seeds...",
-        active_count, determinism_check_seeds
+        active_count.get(),
+        determinism_check_seeds
     );
     let mut det_mismatches = 0u32;
     let mut first_det_failure: Option<(String, String)> = None;
@@ -605,7 +694,7 @@ pub fn validate(
     }
     eprintln!(
         "  Determinism OK: all {} variants are deterministic",
-        active_count
+        active_count.get()
     );
 
     // Subprocess sanity check: run one variant through the worker
@@ -705,8 +794,122 @@ mod tests {
         check_each_variant,
         first_duplicate_name,
         from_hex,
+        surviving_variants,
+        validation_ok_line,
         validation_plan,
     };
+
+    // The defect these pin, in the words of the run that had it: a consumer
+    // binary with no `--mode validate` arm takes the worker flags, does not
+    // recognise them, exits zero and prints nothing. Every variant then returns
+    // zero of N outputs, every variant is skipped, and the summary reports
+    // "Validation OK: all 0 variants passed" before returning success. A whole
+    // committed bench corpus was produced under exactly that, and nothing in
+    // the output said the arms had never been compared.
+
+    // Every reachable `(total, active, silent)` up to a bound, rather than the
+    // handful of points a sampled test would pick. `active + silent <= total`
+    // holds by construction at the call site: both count disjoint subsets of
+    // the variants. Choosing which triples to assert over would be choosing
+    // which region not to find out about.
+    fn every_reachable_triple(bound: usize) -> impl Iterator<Item = (usize, usize, usize)> {
+        (0 ..= bound).flat_map(move |total| {
+            (0 ..= total).flat_map(move |active| {
+                (0 ..= total - active).map(move |silent| (total, active, silent))
+            })
+        })
+    }
+
+    #[test]
+    fn the_verdict_is_exactly_whether_anything_survived() {
+        // The law over the whole matrix, both directions in one pass: every
+        // triple with a survivor is accepted and every triple without one is
+        // refused. A guard that always refused, or always accepted, fails half
+        // of this, which is what makes it a law rather than two lists.
+        let mut accepted = 0usize;
+        let mut refused = 0usize;
+        for (total, active, silent) in every_reachable_triple(6) {
+            match surviving_variants(total, active, silent) {
+                Ok(n) => {
+                    accepted += 1;
+                    assert_eq!(n.get(), active, "({total},{active},{silent}) miscounted");
+                    assert!(
+                        active > 0,
+                        "({total},{active},{silent}) accepted with no survivor"
+                    );
+                },
+                Err(reason) => {
+                    refused += 1;
+                    assert_eq!(active, 0, "({total},{active},{silent}) refused a survivor");
+                    assert!(
+                        !reason.is_empty(),
+                        "({total},{active},{silent}) refused mutely"
+                    );
+                },
+            }
+        }
+        // Both arms were actually reached. Without this the loop could have
+        // asserted nothing at all and still passed, which is the shape of a
+        // test that measures its own iteration count.
+        assert!(
+            accepted > 0 && refused > 0,
+            "{accepted} accepted, {refused} refused"
+        );
+    }
+
+    #[test]
+    fn an_unimplemented_worker_mode_is_named_apart_from_a_crash() {
+        // The two causes want different fixes, so they may not share a message.
+        // Wiring the worker fixes the first and says nothing about the second.
+        let silent = surviving_variants(3, 0, 3).expect_err("must refuse");
+        assert!(silent.contains("run_worker_validate"), "{silent}");
+        assert!(silent.contains("--mode validate"), "{silent}");
+
+        let crashed = surviving_variants(3, 0, 0).expect_err("must refuse");
+        assert!(
+            !crashed.contains("run_worker_validate"),
+            "a crash is not a missing worker arm: {crashed}"
+        );
+        assert!(crashed.contains("skipped before comparison"), "{crashed}");
+
+        // Partial silence is the crash wording, not the worker-mode wording: a
+        // binary that answered for some variants plainly has the arm.
+        let mixed = surviving_variants(3, 0, 2).expect_err("must refuse");
+        assert!(!mixed.contains("run_worker_validate"), "{mixed}");
+    }
+
+    #[test]
+    fn the_pass_summary_can_only_be_built_from_a_survivor_count() {
+        // What this pins is that `validation_ok_line` takes `Survivors` and
+        // nothing else. `Survivors` has a private field and one constructor, so
+        // a caller holding a raw count cannot reach the summary at all.
+        //
+        // The first attempt at this guard returned a bare `NonZeroUsize` and the
+        // doc comment claimed dropping the guard would stop the crate compiling.
+        // It did not: both types implement `Display`, so replacing the call with
+        // the raw subtraction compiled cleanly and printed "all 0 variants
+        // passed" exactly as before. Measured, not assumed, which is why the
+        // newtype exists.
+        let one = surviving_variants(3, 1, 2).expect("one survivor");
+        let line = validation_ok_line(one, validation_plan(false, None));
+        assert!(line.contains("all 1 variants passed"), "{line}");
+        assert!(line.contains("identical output"), "{line}");
+
+        // The count that reaches the line is the survivor count, not the total.
+        let two = surviving_variants(9, 2, 7).expect("two survivors");
+        assert!(
+            validation_ok_line(two, validation_plan(true, None)).contains("all 2 variants"),
+            "the summary must report what was compared, not what was supplied"
+        );
+    }
+
+    #[test]
+    fn no_variants_at_all_is_its_own_refusal() {
+        // Reachable through `validate`'s `>= 2` guard only if that guard moves,
+        // so this pins the arm rather than describing today's call site.
+        let none = surviving_variants(0, 0, 0).expect_err("must refuse");
+        assert!(none.contains("no variants were supplied"), "{none}");
+    }
 
     // The contract these pin is `Routine`'s own documentation in bench-core:
     // `validate_output`'s default is "no structural check; the harness STILL
