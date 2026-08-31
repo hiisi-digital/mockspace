@@ -99,9 +99,7 @@ pub fn measure(
                     reason: format!("missing bench_name symbol: {e}"),
                 }
             })?;
-            let name = std::ffi::CStr::from_ptr(name_fn() as *const i8)
-                .to_string_lossy()
-                .into_owned();
+            let name = crate::harness::variant_name(*name_fn);
 
             _libs.push(lib);
             (name, entry_fn)

@@ -134,12 +134,19 @@ fn check_each_variant(
 /// A variant count that has been established non-zero, and the only key to
 /// [`validation_ok_line`].
 ///
-/// The private field is the whole mechanism. [`surviving_variants`] is the only
-/// thing that constructs one, so the summary cannot be printed by a caller that
-/// did not go through the refusal. A plain `usize` will not substitute, which is
-/// what a `NonZeroUsize` alone failed to achieve: both `Display`, so dropping
-/// the guard and passing the raw subtraction still compiled and still printed
-/// "all 0 variants passed".
+/// What it enforces, exactly: **a plain `usize` will not substitute at the call
+/// site**, which is what a bare `NonZeroUsize` failed to do, since both `Display`
+/// and dropping the guard therefore still compiled and still printed "all 0
+/// variants passed". Removing the guard now leaves nothing to hand
+/// [`validation_ok_line`], and the crate stops building.
+///
+/// What it does not enforce: **anything against this module.** Rust privacy is
+/// module-scoped and [`validate`] lives here, so code in this file can build a
+/// `Survivors` directly and print whatever it likes. The guarantee is against
+/// the rest of the crate, and against the accident of a refactor dropping the
+/// call, and it stops there. An earlier version of this comment claimed the
+/// summary could not be printed by any caller that had not gone through the
+/// refusal, which is false and was demonstrated false in one appended line.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Survivors(NonZeroUsize);
 
@@ -302,9 +309,7 @@ pub fn validate(
                     reason: format!("missing bench_name symbol: {e}"),
                 }
             })?;
-            let name = std::ffi::CStr::from_ptr(name_fn() as *const i8)
-                .to_string_lossy()
-                .into_owned();
+            let name = crate::harness::variant_name(*name_fn);
 
             drop(lib);
             name

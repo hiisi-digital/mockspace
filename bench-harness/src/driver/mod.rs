@@ -501,34 +501,26 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             // cheap (one objdump per variant, once, before the run). Warn-only: a
             // legitimately-identical pair is the bench's call, not a hard error.
             crate::disasm::check_duplicates(&path_strings);
-            match validation::validate(
+            let outcome = validation::validate(
                 &routine,
                 &path_strings,
                 config.n,
                 &config.bench_name,
                 config.max_call_us,
                 Some(&config.tuning),
-            ) {
+            );
+            match &outcome {
                 Ok(survivors) => {
-                    for p in &path_strings {
-                        if !survivors.contains(p) {
-                            dropped.push(p.clone());
-                        }
-                    }
-                    if !dropped.is_empty() {
-                        eprintln!(
-                            "  VALIDATION: {} variant(s) dropped: {}",
-                            dropped.len(),
-                            dropped.join(", ")
-                        );
-                        config.variant_paths = survivors.iter().map(PathBuf::from).collect();
+                    let lost = path_strings.len() - survivors.len();
+                    if lost > 0 {
+                        eprintln!("  VALIDATION: {lost} variant(s) dropped");
                     }
                 },
-                Err(e) => {
-                    eprintln!("  VALIDATION ERROR: {e}");
-                    dropped.push(format!("(validation error: {e})"));
-                },
+                Err(e) => eprintln!("  VALIDATION ERROR: {e}"),
             }
+            let (timeable, lost) = timeable_after_validation(outcome.as_deref(), &path_strings);
+            dropped.extend(lost);
+            config.variant_paths = timeable.iter().map(PathBuf::from).collect();
             if config.required && !dropped.is_empty() {
                 required_failure = true;
             }
@@ -746,6 +738,39 @@ fn final_exit(required_failure: bool, hook_failure: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Which variants may be timed once validation has spoken, and which are lost.
+///
+/// **An `Err` yields nothing timeable.** An error means the comparison did not
+/// happen at all, so no variant is known to agree with any other, and timing
+/// them anyway is what puts unvalidated numbers in the corpus.
+///
+/// That was the defect this function exists to foreclose. The error arm used to
+/// print `VALIDATION ERROR`, push a line into `dropped` and leave
+/// `variant_paths` untouched; `required` defaults false, so the run did not fail
+/// there either, and the `nothing to measure` branch could not fire because the
+/// paths were still populated. **Every unvalidated variant was timed and
+/// promoted, and the only trace was one line of stderr.**
+///
+/// Separated from the driver because that is the one seam a test can reach:
+/// `validate` itself needs two compiled cdylibs and a routine bridge, so the
+/// decision it feeds is otherwise only exercised by a full bench run.
+fn timeable_after_validation(
+    outcome: Result<&[String], &BenchError>,
+    offered: &[String],
+) -> (Vec<String>, Vec<String>) {
+    match outcome {
+        Ok(survivors) => {
+            let lost = offered
+                .iter()
+                .filter(|p| !survivors.contains(p))
+                .cloned()
+                .collect();
+            (survivors.to_vec(), lost)
+        },
+        Err(e) => (Vec::new(), vec![format!("(validation error: {e})")]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -765,6 +790,75 @@ mod tests {
             nested,
             n,
             ..BenchConfig::default()
+        }
+    }
+
+    fn paths(n: usize) -> Vec<String> {
+        (0 .. n).map(|i| format!("/v{i}.dylib")).collect()
+    }
+
+    #[test]
+    fn a_validation_error_leaves_nothing_to_time() {
+        // The failing case, and the whole point. Before this, the error arm left
+        // `variant_paths` populated, `required` defaulted false so the run did
+        // not fail, and the `nothing to measure` branch could not fire because
+        // the paths were still there. Every unvalidated variant got timed.
+        let offered = paths(4);
+        let err = BenchError::ValidationFailed {
+            variant: "b".into(),
+            reason:  "no arm was compared".into(),
+        };
+        let (timeable, lost) = timeable_after_validation(Err(&err), &offered);
+        assert!(
+            timeable.is_empty(),
+            "an error must leave nothing timeable: {timeable:?}"
+        );
+        assert_eq!(lost.len(), 1, "and must say so once, not per variant");
+        assert!(lost[0].contains("no arm was compared"), "{}", lost[0]);
+    }
+
+    #[test]
+    fn survivors_are_timed_and_the_rest_are_recorded_lost() {
+        // The positive control. Without it the function could return nothing
+        // for every outcome and the test above would still pass, which is a
+        // gate that blocks everything wearing the clothes of one that works.
+        let offered = paths(4);
+        let survivors = vec![offered[0].clone(), offered[2].clone()];
+        let (timeable, lost) = timeable_after_validation(Ok(&survivors), &offered);
+        assert_eq!(
+            timeable, survivors,
+            "survivors are exactly what may be timed"
+        );
+        assert_eq!(lost, vec![offered[1].clone(), offered[3].clone()]);
+
+        // And an all-clear loses nobody.
+        let (all, none) = timeable_after_validation(Ok(&offered), &offered);
+        assert_eq!(all, offered);
+        assert!(none.is_empty(), "{none:?}");
+    }
+
+    #[test]
+    fn every_offered_variant_is_either_timed_or_recorded_lost() {
+        // The law, over the whole subset lattice rather than a chosen case:
+        // nothing may be silently neither. A variant that is dropped from the
+        // timed set without appearing in `dropped` vanishes with no trace,
+        // which is the same class of defect one level down.
+        let offered = paths(5);
+        for mask in 0 .. 1u32 << 5 {
+            let survivors: Vec<String> = offered
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask >> i & 1 == 1)
+                .map(|(_, p)| p.clone())
+                .collect();
+            let (timeable, lost) = timeable_after_validation(Ok(&survivors), &offered);
+            assert_eq!(
+                timeable.len() + lost.len(),
+                offered.len(),
+                "mask {mask:#07b} accounted for {} of {}",
+                timeable.len() + lost.len(),
+                offered.len()
+            );
         }
     }
 
