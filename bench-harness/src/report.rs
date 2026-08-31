@@ -414,31 +414,10 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         }
 
         // Re-pair variant samples against base by matching (run, pass, cooldown_ms).
-        let mut variant_paired: Vec<f64> = Vec::new();
-        let mut base_paired: Vec<f64> = Vec::new();
-        {
-            let mut vi = 0;
-            let mut bi = 0;
-            let v_keyed = &v.keyed_algo;
-            while vi < v_keyed.len() && bi < base_keyed.len() {
-                let (vrun, vpass, vcd, vval) = v_keyed[vi];
-                let (brun, bpass, bcd, bval) = base_keyed[bi];
-                match (vrun, vpass, vcd).cmp(&(brun, bpass, bcd)) {
-                    std::cmp::Ordering::Equal => {
-                        variant_paired.push(vval);
-                        base_paired.push(bval);
-                        vi += 1;
-                        bi += 1;
-                    },
-                    std::cmp::Ordering::Less => {
-                        vi += 1;
-                    },
-                    std::cmp::Ordering::Greater => {
-                        bi += 1;
-                    },
-                }
-            }
-        }
+        // One helper, shared with the highlights engine, so the table and the
+        // highlights above it can never pair the same samples two ways.
+        let (variant_paired, base_paired) =
+            crate::summary::pair_keyed(&v.keyed_algo, base_keyed);
 
         // Fall back to positional pairing if no key matches
         // (e.g. single-run data).
@@ -998,6 +977,149 @@ mod tests {
         assert!(
             !md0.contains("## Setup vs iteration cost"),
             "section omitted when setup is zero"
+        );
+    }
+}
+
+#[cfg(test)]
+mod methodology_tests {
+    use crate::analysis::DataSet;
+    use crate::config::BenchConfig;
+    use crate::sample::Sample;
+
+    fn s(variant: &str, algo: f64, batch: usize) -> Sample {
+        Sample {
+            run: 1,
+            pass: 1,
+            cooldown_ms: 0,
+            mode: "warm".into(),
+            variant: variant.into(),
+            e2e_ns: algo,
+            algo_ns: algo,
+            bridge_ns: 0.0,
+            batch_idx: batch,
+            batch_count: 5000,
+            score: None,
+            input_tag: None,
+            instructions: 0,
+            cycles: 0,
+            setup_ns: 0.0,
+            first_ns: 0.0,
+            digest: 0,
+        }
+    }
+
+    fn ds() -> DataSet {
+        let samples: Vec<Sample> = (0 .. 6)
+            .flat_map(|b| [s("aaa", 100.0 + b as f64, b), s("bbb", 50.0 + b as f64, b)])
+            .collect();
+        DataSet::from_samples(&samples, "warm")
+    }
+
+    /// The methodology table is what lets a reader judge how a number was
+    /// produced, and it is gated on `meta.passes > 0 || meta.harness_runs > 0`.
+    /// Nothing populated either field before, so the whole section was
+    /// unreachable on every path and no report ever stated its passes, runs,
+    /// batch size, cooldown schedule, seed or counter frequency.
+    #[test]
+    fn a_report_states_the_methodology_it_was_produced_under() {
+        let cfg = BenchConfig {
+            passes: 7,
+            runs_per_pass: 1234,
+            batch_size: 100,
+            harness_runs: 2,
+            cooldowns_ms: vec![0, 250],
+            master_seed: 0xDEAD_BEEF_0000_0001,
+            ..BenchConfig::default()
+        };
+        let md = super::generate(&ds().with_methodology(&cfg), "t");
+        assert!(
+            md.contains("## Methodology"),
+            "the report carries no methodology section"
+        );
+        assert!(md.contains("| Passes | 7 |"), "no pass count");
+        assert!(md.contains("| Runs per pass | 1234 |"), "no run count");
+        assert!(md.contains("| Batch size | 100 |"), "no batch size");
+        assert!(md.contains("| Harness runs | 2 |"), "no harness run count");
+        assert!(md.contains("| Master seed |"), "no master seed");
+        assert!(md.contains("| Cooldown schedule | 0ms, 250ms |"), "no schedule");
+    }
+
+    /// Catalogued gap, not a regression. `write_csv` persists the samples and an
+    /// `EnvMeta` sidecar; neither carries `passes`, `runs_per_pass`,
+    /// `batch_size`, `harness_runs`, `cooldowns_ms` or `master_seed`. So a
+    /// findings file regenerated with `--report-only` is missing the whole
+    /// methodology section that the original run's file carries, and nothing in
+    /// either file says the two were produced differently.
+    ///
+    /// Green when the run parameters reach the sidecar and `report_from_csv`
+    /// reads them back.
+    #[test]
+    #[ignore = "catalogue: run parameters are not persisted, so --report-only \
+                cannot restate the methodology of the run it re-renders"]
+    fn a_report_regenerated_from_a_csv_states_the_same_methodology() {
+        let dir = std::env::temp_dir().join(format!(
+            "mockspace-bh-methodology-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let csv = dir.join("hash_n64.csv");
+        let out = dir.join("hash_n64_findings.md");
+        let cfg = BenchConfig {
+            passes: 7,
+            runs_per_pass: 1234,
+            batch_size: 100,
+            harness_runs: 2,
+            cooldowns_ms: vec![0, 250],
+            master_seed: 0xDEAD_BEEF_0000_0001,
+            ..BenchConfig::default()
+        };
+        let result = crate::sample::BenchResult {
+            title: "t".into(),
+            env: crate::env::EnvMeta::default(),
+            samples: (0 .. 6)
+                .flat_map(|b| [s("aaa", 100.0 + b as f64, b), s("bbb", 50.0 + b as f64, b)])
+                .collect(),
+            cache_path: csv.display().to_string(),
+            report_path: out.display().to_string(),
+        };
+        crate::harness::write_csv(&result, &csv.display().to_string()).expect("csv");
+        crate::report_from_csv(&csv, &out.display().to_string(), "warm", "t").expect("report");
+        let md = std::fs::read_to_string(&out).expect("read");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            md.contains("| Passes | 7 |"),
+            "the regenerated report states no pass count; the original states {}",
+            cfg.passes
+        );
+    }
+
+    /// The seed the report's Highlights section bootstraps with is
+    /// `ds.meta.master_seed`, so a dataset built for reporting has to carry the
+    /// seed the run actually used. A dataset that reports seed 0 is reporting a
+    /// seed no run ever had.
+    #[test]
+    fn a_dataset_built_for_a_config_carries_that_configs_methodology() {
+        let cfg = BenchConfig {
+            passes: 7,
+            runs_per_pass: 1234,
+            batch_size: 100,
+            harness_runs: 2,
+            cooldowns_ms: vec![0, 250],
+            master_seed: 0xDEAD_BEEF_0000_0001,
+            ..BenchConfig::default()
+        };
+        let d = ds().with_methodology(&cfg);
+        assert_eq!(d.meta.passes, 7);
+        assert_eq!(d.meta.runs_per_pass, 1234);
+        assert_eq!(d.meta.batch_size, 100);
+        assert_eq!(d.meta.harness_runs, 2);
+        assert_eq!(d.meta.cooldowns_ms, vec![0, 250]);
+        assert_eq!(d.meta.master_seed, 0xDEAD_BEEF_0000_0001);
+        assert_ne!(
+            d.meta.master_seed, 0,
+            "seed 0 is the bootstrap RNG's fixed point; a report must never \
+             bootstrap with it"
         );
     }
 }

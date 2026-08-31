@@ -256,12 +256,11 @@ fn warm_medians(result: &BenchResult) -> BTreeMap<String, Vec<f64>> {
     per_variant
 }
 
+/// The crate's one median, over a vector the caller owns. Delegates to
+/// [`crate::analysis::median`] so the summary table, the history ledger and the
+/// findings report cannot disagree about what "median" means on an even count.
 fn median(vals: &mut [f64]) -> f64 {
-    if vals.is_empty() {
-        return 0.0;
-    }
-    vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    vals[vals.len() / 2]
+    crate::analysis::median(vals)
 }
 
 /// The hook-less compat entry point: adapts a [`DriverRegistry`]
@@ -594,7 +593,9 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             // every rendered delta (the % column and the paired absolute
             // Δ-median-ns + CI in the statistical comparison table) relative
             // to it, which cancels the shared common cost.
-            let mut ds = result.dataset_for_routine(&routine, "warm");
+            let mut ds = result
+                .dataset_for_routine(&routine, "warm")
+                .with_methodology(&config);
             if let Some(bl) = config.normalise_baseline.as_deref() {
                 ds = ds.with_baseline(bl);
             }
@@ -744,6 +745,11 @@ fn final_exit(required_failure: bool, hook_failure: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+pub(crate) fn median_for_tests(vals: &mut [f64]) -> f64 {
+    median(vals)
 }
 
 #[cfg(test)]

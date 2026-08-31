@@ -198,17 +198,47 @@ impl RunSummary {
     }
 }
 
+/// Pair a variant's keyed samples against the baseline's, group by group.
+///
+/// `(run, pass, cooldown_ms)` is not a key over a variant's samples: the
+/// orchestrator emits `runs_per_pass / batch_size` batch lines per worker
+/// invocation and every one of them carries that same triple, ten of them on
+/// the shipped defaults. Both sides are sorted by the triple, so a merge join
+/// pairs the i-th batch of a group with the i-th batch of the same group and
+/// resynchronises at the next group boundary when one side is short. A map
+/// keyed on the triple instead keeps one baseline batch per group and pairs
+/// every variant batch against that single value, which strips the baseline's
+/// own variance out of the differences and leaves the paired bootstrap
+/// measuring one arm.
+pub(crate) fn pair_keyed(
+    variant: &[(usize, usize, u64, f64)],
+    base: &[(usize, usize, u64, f64)],
+) -> (Vec<f64>, Vec<f64>) {
+    let mut vv = Vec::new();
+    let mut bv = Vec::new();
+    let (mut vi, mut bi) = (0usize, 0usize);
+    while vi < variant.len() && bi < base.len() {
+        let (vrun, vpass, vcd, vval) = variant[vi];
+        let (brun, bpass, bcd, bval) = base[bi];
+        match (vrun, vpass, vcd).cmp(&(brun, bpass, bcd)) {
+            std::cmp::Ordering::Equal => {
+                vv.push(vval);
+                bv.push(bval);
+                vi += 1;
+                bi += 1;
+            },
+            std::cmp::Ordering::Less => vi += 1,
+            std::cmp::Ordering::Greater => bi += 1,
+        }
+    }
+    (vv, bv)
+}
+
 /// Build a [`RunSummary`] from a [`DataSet`]. Paired deltas are computed against
 /// the dataset's baseline variant (declare it via `[bench.<name>.normalise]`),
 /// using the keyed samples so pairing is by `(run, pass, cooldown)`.
 pub fn summarise(ds: &DataSet, title: &str, seed: u64) -> RunSummary {
     let base = ds.baseline();
-    use std::collections::HashMap;
-    let base_map: HashMap<(usize, usize, u64), f64> = base
-        .keyed_algo
-        .iter()
-        .map(|(r, p, c, v)| ((*r, *p, *c), *v))
-        .collect();
     let best_median = ds
         .variants
         .iter()
@@ -219,19 +249,12 @@ pub fn summarise(ds: &DataSet, title: &str, seed: u64) -> RunSummary {
         let (delta, sig, tie_frac) = if v.name == base.name {
             (None, false, 0.0)
         } else {
-            let mut vv = Vec::new();
-            let mut bv = Vec::new();
-            for (r, p, c, val) in &v.keyed_algo {
-                if let Some(b) = base_map.get(&(*r, *p, *c)) {
-                    vv.push(*val);
-                    bv.push(*b);
-                }
-            }
+            let (vv, bv) = pair_keyed(&v.keyed_algo, &base.keyed_algo);
             if vv.is_empty() {
                 (None, false, 0.0)
             } else {
                 let cmp = compare(&vv, &bv, seed);
-                let tf = if !vv.is_empty() { cmp.ties as f64 / vv.len() as f64 } else { 0.0 };
+                let tf = cmp.ties as f64 / vv.len() as f64;
                 (Some(cmp.median_diff_ns), cmp.significant, tf)
             }
         };
@@ -260,3 +283,98 @@ pub fn summarise(ds: &DataSet, title: &str, seed: u64) -> RunSummary {
 
 mod detectors;
 use detectors::DETECTORS;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::DataSet;
+    use crate::sample::Sample;
+
+    fn s(variant: &str, run: usize, pass: usize, cd: u64, batch: usize, algo: f64) -> Sample {
+        Sample {
+            run,
+            pass,
+            cooldown_ms: cd,
+            mode: "warm".into(),
+            variant: variant.into(),
+            e2e_ns: algo,
+            algo_ns: algo,
+            bridge_ns: 0.0,
+            batch_idx: batch,
+            batch_count: 1,
+            score: None,
+            input_tag: None,
+            instructions: 0,
+            cycles: 0,
+            setup_ns: 0.0,
+            first_ns: 0.0,
+            digest: 0,
+        }
+    }
+
+    /// The orchestrator emits `runs_per_pass / batch_size` samples per
+    /// `(run, pass, cooldown_ms)` (ten, on the shipped defaults), so that triple
+    /// is not a unique key over a variant's samples. Pairing has to keep every
+    /// baseline batch; a keyed lookup keeps one and reuses it, which strips the
+    /// baseline's variance out of the paired differences and turns the paired
+    /// bootstrap into a one-sided interval.
+    ///
+    /// The discriminator: two variants with the identical series inside one
+    /// group. Every honest pairing gives a zero difference and a full tie count.
+    #[test]
+    fn pairing_keeps_every_baseline_batch_not_one_per_key() {
+        let mut samples = Vec::new();
+        for (b, v) in [10.0f64, 20.0, 30.0, 40.0].iter().enumerate() {
+            samples.push(s("aaa_base", 1, 1, 0, b, *v));
+            samples.push(s("bbb_rival", 1, 1, 0, b, *v));
+        }
+        let ds = DataSet::from_samples(&samples, "warm");
+        let rs = summarise(&ds, "t", 0xFEED_BEEF);
+        let rival = rs
+            .lines
+            .iter()
+            .find(|l| l.name == "bbb_rival")
+            .expect("rival line");
+
+        assert_eq!(
+            rival.delta_vs_base_ns,
+            Some(0.0),
+            "the rival ran the identical series as the baseline in the same \
+             (run, pass, cooldown) group, so the paired median difference is 0"
+        );
+        assert!(
+            !rival.significant,
+            "identical series cannot differ significantly"
+        );
+        assert_eq!(
+            rival.tie_frac, 1.0,
+            "every pair is an exact tie; a tie fraction below 1 means the \
+             pairing lost baseline samples"
+        );
+    }
+
+    /// The same run, summarised twice, has to say the same thing. The report
+    /// calls `summarise(ds, title, ds.meta.master_seed)` and the driver calls it
+    /// with the config's seed, so a seed-dependent verdict is two verdicts.
+    #[test]
+    fn the_verdict_does_not_depend_on_the_bootstrap_seed() {
+        let mut samples = Vec::new();
+        for (b, (base, rival)) in
+            [(100.0f64, 97.0f64), (101.0, 103.0), (99.0, 98.0), (102.0, 104.0)]
+                .iter()
+                .enumerate()
+        {
+            samples.push(s("aaa_base", 1, 1, 0, b, *base));
+            samples.push(s("bbb_rival", 1, 1, 0, b, *rival));
+        }
+        let ds = DataSet::from_samples(&samples, "warm");
+        let a = summarise(&ds, "t", 0);
+        let b = summarise(&ds, "t", 0x9E37_79B9_7F4A_7C15);
+        let sig_a: Vec<bool> = a.lines.iter().map(|l| l.significant).collect();
+        let sig_b: Vec<bool> = b.lines.iter().map(|l| l.significant).collect();
+        assert_eq!(
+            sig_a, sig_b,
+            "the significance verdict changed with the bootstrap seed alone"
+        );
+    }
+}

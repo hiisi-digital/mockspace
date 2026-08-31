@@ -132,10 +132,13 @@ fn d_dominant_winner(s: &RunSummary) -> Option<Highlight> {
     } else {
         0.0
     };
-    // dominant = >=10% faster than the runner-up, and that gap is significant
-    // (either the winner or runner-up is significant vs baseline with the right sign,
-    // or the gap is large enough to be unambiguous).
-    if gap < 0.10 {
+    // Dominant = at least 10% faster than the runner-up, AND the run separated
+    // somebody: at least one paired difference has a confidence interval that
+    // excludes zero. The headline claims "a clear separation rather than a
+    // photo finish", which is a claim about the gap being outside the noise,
+    // and a median gap alone does not establish that however large it is. This
+    // condition was in the comment and not in the code.
+    if gap < 0.10 || !s.lines.iter().any(|l| l.significant) {
         return None;
     }
     Some(Highlight {
@@ -583,18 +586,34 @@ fn d_two_tiers(s: &RunSummary) -> Option<Highlight> {
         .map(|l| (l.name.as_str(), l.median_ns))
         .collect();
     meds.sort_by(|a, b| a.1.total_cmp(&b.1));
-    // biggest relative gap between consecutive medians
+    // biggest relative gap between consecutive medians, and the biggest of the
+    // rest, which is the largest gap that stays inside a tier once the split is
+    // taken at the biggest one.
     let mut best_gap = 0.0;
+    let mut second_gap = 0.0;
     let mut split = 0usize;
     for i in 0 .. meds.len() - 1 {
         let g = if meds[i].1 > 0.0 { (meds[i + 1].1 - meds[i].1) / meds[i].1 } else { 0.0 };
         if g > best_gap {
+            second_gap = best_gap;
             best_gap = g;
             split = i + 1;
+        } else if g > second_gap {
+            second_gap = g;
         }
     }
-    // a clear two-tier split: the gap is > 2x the largest within-tier gap and >= 25%
-    if best_gap < 0.25 || split == 0 || split == meds.len() {
+    // A clear two-tier split: the gap is at least 25% AND more than twice the
+    // largest within-tier gap. Without the second condition an even gradient
+    // reports as "a qualitative difference, not a gradient", which is the one
+    // thing the headline promises it is not. The condition was in the comment
+    // and not in the code.
+    //
+    // `split` needs no test of its own: it is only ever assigned `i + 1` for
+    // `i < len - 1`, so it lies in `1 ..= len - 1` whenever any gap beat zero,
+    // and when none did `best_gap` is 0 and the first test above has already
+    // returned. The `split == 0 || split == meds.len()` pair that used to sit
+    // here could not fire.
+    if best_gap < 0.25 || best_gap <= 2.0 * second_gap {
         return None;
     }
     let fast: Vec<&str> = meds[.. split].iter().map(|(n, _)| *n).collect();
@@ -619,4 +638,136 @@ fn d_two_tiers(s: &RunSummary) -> Option<Highlight> {
               branch, cached vs not); the tier, not the exact rank, is the finding."
             .into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::summary::{RunSummary, VariantLine};
+
+    fn line(name: &str, median: f64) -> VariantLine {
+        VariantLine {
+            name:             name.into(),
+            median_ns:        median,
+            mean_ns:          median,
+            std_dev_ns:       0.0,
+            cv:               0.0,
+            best_20pct_ns:    median,
+            worst_20pct_ns:   median,
+            ratio_vs_best:    1.0,
+            delta_vs_base_ns: None,
+            significant:      false,
+            tie_frac:         0.0,
+            autocorrelation:  0.0,
+        }
+    }
+
+    fn summary(lines: Vec<VariantLine>) -> RunSummary {
+        let baseline = lines[0].name.clone();
+        RunSummary {
+            title: "t".into(),
+            baseline,
+            lines,
+        }
+    }
+
+    fn fired(s: &RunSummary, kind: &str) -> bool {
+        s.highlights().iter().any(|h| h.kind == kind)
+    }
+
+    /// `d_dominant_winner`'s own comment: "dominant = >=10% faster than the
+    /// runner-up, AND that gap is significant". The headline it prints reads
+    /// "dominates ... a clear separation rather than a photo finish", which is a
+    /// claim about separation from noise. A 12% median gap where every paired
+    /// difference is inside its own confidence interval has not established it.
+    #[test]
+    fn a_dominant_winner_needs_the_gap_to_be_significant() {
+        let mut lines = vec![line("winner", 100.0), line("runner_up", 112.0)];
+        // Nothing significant anywhere: the run separated nobody.
+        for l in lines.iter_mut() {
+            l.significant = false;
+            l.delta_vs_base_ns = Some(0.0);
+        }
+        lines[0].delta_vs_base_ns = None;
+        let s = summary(lines);
+        assert!(
+            !fired(&s, "dominant_winner"),
+            "declared a dominant winner with no significant difference anywhere"
+        );
+    }
+
+    /// The same detector must still fire when the gap IS significant, or the
+    /// fix above has simply turned the detector off.
+    #[test]
+    fn a_dominant_winner_fires_when_the_gap_is_significant() {
+        let mut lines = vec![line("aaa_base", 112.0), line("winner", 100.0)];
+        lines[1].significant = true;
+        lines[1].delta_vs_base_ns = Some(-12.0);
+        let s = summary(lines);
+        assert!(
+            fired(&s, "dominant_winner"),
+            "a 12% lead with a CI excluding zero is exactly what this detector \
+             is for"
+        );
+    }
+
+    /// `d_two_tiers`'s own comment: "the gap is > 2x the largest within-tier gap
+    /// and >= 25%". Only the 25% half is implemented, so an even gradient with
+    /// one slightly larger step is reported as "a qualitative difference, not a
+    /// gradient".
+    #[test]
+    fn two_tiers_needs_the_split_to_beat_the_within_tier_spread() {
+        // 100, 130, 169, 220: every step is 30%. A uniform geometric ladder is
+        // a gradient by construction and has no tier boundary in it.
+        let s = summary(vec![
+            line("a", 100.0),
+            line("b", 130.0),
+            line("c", 169.0),
+            line("d", 219.7),
+        ]);
+        assert!(
+            !fired(&s, "two_tiers"),
+            "reported two tiers on a uniform 30%-per-step gradient"
+        );
+    }
+
+    /// And it must still fire on a real split, or the guard above is a mute
+    /// button.
+    #[test]
+    fn two_tiers_fires_on_a_real_split() {
+        let s = summary(vec![
+            line("a", 100.0),
+            line("b", 103.0),
+            line("c", 400.0),
+            line("d", 412.0),
+        ]);
+        assert!(
+            fired(&s, "two_tiers"),
+            "a 4x jump between two tight pairs is the tier split this detector \
+             exists to name"
+        );
+    }
+
+    /// Both branches of `d_two_tiers`'s `split == 0 || split == meds.len()`
+    /// guard are unreachable: `split` is only ever assigned `i + 1` for
+    /// `i < len - 1`, and it stays 0 only when no gap beat 0.0, which the
+    /// `best_gap < 0.25` test above it has already refused. A guard that cannot
+    /// fire is not a guard.
+    #[test]
+    fn the_field_is_never_empty_or_whole_when_two_tiers_fires() {
+        let s = summary(vec![
+            line("a", 100.0),
+            line("b", 103.0),
+            line("c", 400.0),
+            line("d", 412.0),
+        ]);
+        let h = s
+            .highlights()
+            .into_iter()
+            .find(|h| h.kind == "two_tiers")
+            .expect("fires");
+        // The headline names both tiers; neither side may be empty.
+        assert!(!h.headline.contains("{} vs"), "empty fast tier: {}", h.headline);
+        assert!(!h.headline.contains("vs {}"), "empty slow tier: {}", h.headline);
+    }
 }

@@ -57,7 +57,7 @@ impl Stats {
         let n = vals.len();
         let q = n / 5;
         let mean = vals.iter().sum::<f64>() / n as f64;
-        let median = if n % 2 == 0 { (vals[n / 2 - 1] + vals[n / 2]) / 2.0 } else { vals[n / 2] };
+        let median = median(vals);
         let best = if q > 0 { vals[.. q].iter().sum::<f64>() / q as f64 } else { vals[0] };
         let worst_start = 4 * q;
         let worst_count = n - worst_start;
@@ -277,6 +277,24 @@ impl DataSet {
         self
     }
 
+    /// Carry the run parameters the report's methodology table states.
+    ///
+    /// Without this the table is gated shut (it renders only when `passes` or
+    /// `harness_runs` is non-zero) and, worse, `meta.master_seed` stays 0, which
+    /// is the fixed point of the bootstrap RNG: every resample then draws the
+    /// same index and the interval collapses onto one order statistic.
+    #[must_use]
+    pub fn with_methodology(mut self, config: &crate::config::BenchConfig) -> Self {
+        self.meta.passes = config.passes;
+        self.meta.runs_per_pass = config.runs_per_pass;
+        self.meta.batch_size = config.batch_size;
+        self.meta.harness_runs = config.harness_runs;
+        self.meta.cooldowns_ms = config.cooldowns_ms.clone();
+        self.meta.master_seed = config.master_seed;
+        self.meta.counter_freq = crate::core::counter::counter_frequency();
+        self
+    }
+
     #[must_use]
     pub fn with_baseline(mut self, name: &str) -> Self {
         if let Some(idx) = self.variants.iter().position(|v| v.name == name) {
@@ -414,6 +432,11 @@ const CI_LOWER: f64 = 0.025;
 const CI_UPPER: f64 = 0.975;
 
 /// Splitmix64 for the bootstrap RNG (deterministic, no external deps).
+///
+/// This is the finaliser only. It is a bijection but it is not the generator:
+/// `finalise(0) == 0`, so iterating it from a zero seed never leaves zero.
+/// [`bootstrap_ci_median`] advances a counter by the golden-ratio increment and
+/// finalises that, which is splitmix64 as specified and has no fixed point.
 fn bootstrap_mix(mut x: u64) -> u64 {
     x ^= x >> 30;
     x = x.wrapping_mul(0xBF58476D1CE4E5B9);
@@ -423,12 +446,38 @@ fn bootstrap_mix(mut x: u64) -> u64 {
     x
 }
 
+/// The median of `vals`, interpolating between the two middle order statistics
+/// on an even count. One definition, used by [`Stats`], by the bootstrap point
+/// estimate, by the driver's summary and history rows, and by the cross-bench
+/// report, so the same samples never yield two numbers both labelled "median".
+#[must_use]
+pub fn median(vals: &[f64]) -> f64 {
+    if vals.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = vals.to_vec();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let n = sorted.len();
+    if n % 2 == 0 { (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0 } else { sorted[n / 2] }
+}
+
 /// 95% bootstrap confidence interval on the median. Returns
 /// `(lower, median, upper)`.
+///
+/// Fewer than three values cannot be resampled into an interval, so the range
+/// of the data is returned instead of a bootstrap one. That is wide rather than
+/// precise, which is the honest direction: the previous form returned
+/// `(vals[0], vals[0], vals[0])` off the unsorted slice, so the "median" of two
+/// samples was whichever the collection happened to record first and the
+/// interval claimed zero width around it.
 pub fn bootstrap_ci_median(vals: &[f64], seed: u64) -> (f64, f64, f64) {
     if vals.len() < 3 {
-        let m = if vals.is_empty() { 0.0 } else { vals[0] };
-        return (m, m, m);
+        if vals.is_empty() {
+            return (0.0, 0.0, 0.0);
+        }
+        let lo = vals.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        return (lo, median(vals), hi);
     }
 
     let n = vals.len();
@@ -446,8 +495,8 @@ pub fn bootstrap_ci_median(vals: &[f64], seed: u64) -> (f64, f64, f64) {
     for _ in 0 .. BOOTSTRAP_ITERATIONS {
         let mut resample = Vec::with_capacity(n);
         for _ in 0 .. n {
-            rng = bootstrap_mix(rng);
-            let idx = (rng as usize) % n;
+            rng = rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let idx = (bootstrap_mix(rng) as usize) % n;
             resample.push(sorted[idx]);
         }
         resample.sort_by(|a, b| a.total_cmp(b));
@@ -694,6 +743,100 @@ impl BenchResult {
         let probe_input = (routine.bridge.input_builder)(0);
         ds.meta.ops_per_call = (routine.bridge.ops_per_call)(&probe_input);
         ds
+    }
+}
+
+#[cfg(test)]
+mod bootstrap_rng_tests {
+    use super::*;
+
+    /// `bootstrap_mix` is splitmix64's finaliser, and the finaliser alone maps 0
+    /// to 0. The generator has to advance a counter and finalise that; iterating
+    /// the finaliser on itself never leaves zero, so every resample index was
+    /// `0 % n` and every replicate was the same constant vector.
+    ///
+    /// Asserted over the drawn indices rather than over `bootstrap_mix`, because
+    /// 0 mapping to 0 is correct for the finaliser and wrong for the generator.
+    #[test]
+    fn the_resample_indices_are_not_constant_at_any_seed() {
+        // Nine distinct values, so a constant resample is impossible to mistake
+        // for a lucky draw: the interval would sit on one order statistic.
+        let vals: Vec<f64> = (0 .. 9).map(|i| i as f64).collect();
+        for seed in [0u64, 1, 0xC0C0_CAFE, u64::MAX] {
+            let (lo, med, hi) = bootstrap_ci_median(&vals, seed);
+            assert!(
+                lo < hi,
+                "seed {seed:#x}: the bootstrap interval collapsed to a point \
+                 ({lo}), which is what a constant resample produces"
+            );
+            assert!(
+                lo <= med && med <= hi,
+                "seed {seed:#x}: CI [{lo}, {hi}] excludes the median {med}"
+            );
+        }
+    }
+
+    /// The consequence, stated over the quantity the report reads. Paired
+    /// differences symmetric about zero must not come back significant, at any
+    /// seed. Under the fixed point the CI collapses onto the minimum
+    /// difference, and `compare` reads a CI that excludes zero.
+    #[test]
+    fn a_symmetric_paired_difference_is_never_significant_at_any_seed() {
+        let variant = [7.0f64, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0];
+        let baseline = [10.0f64; 7];
+        // diffs are -3..=3, median 0.
+        for seed in [0u64, 1, 0xC0C0_CAFE, u64::MAX] {
+            let cmp = compare(&variant, &baseline, seed);
+            assert!(
+                !cmp.significant,
+                "seed {seed:#x}: symmetric differences reported significant, \
+                 ci=[{}, {}]",
+                cmp.ci_lo_ns, cmp.ci_hi_ns
+            );
+            assert!(
+                cmp.ci_lo_ns <= cmp.median_diff_ns && cmp.median_diff_ns <= cmp.ci_hi_ns,
+                "seed {seed:#x}: the CI [{}, {}] does not contain the point \
+                 estimate {} it is reported beside",
+                cmp.ci_lo_ns,
+                cmp.ci_hi_ns,
+                cmp.median_diff_ns
+            );
+        }
+    }
+
+    /// A CI is reported beside a point estimate, so it has to contain it, and
+    /// the point estimate has to be the median rather than whichever value the
+    /// collection happened to put first. Two samples is the smallest case that
+    /// separates the three candidate answers.
+    #[test]
+    fn the_two_sample_median_does_not_depend_on_collection_order() {
+        let (lo_a, med_a, hi_a) = bootstrap_ci_median(&[9.0, 1.0], 42);
+        let (lo_b, med_b, hi_b) = bootstrap_ci_median(&[1.0, 9.0], 42);
+        assert_eq!(
+            med_a, med_b,
+            "the reported median of the same two values changed with their \
+             order: {med_a} vs {med_b}"
+        );
+        assert!(lo_a <= med_a && med_a <= hi_a, "CI [{lo_a}, {hi_a}] excludes {med_a}");
+        assert!(lo_b <= med_b && med_b <= hi_b, "CI [{lo_b}, {hi_b}] excludes {med_b}");
+    }
+
+    /// Every median in this crate has to be the same median. `Stats` and the
+    /// bootstrap interpolate on even counts; the driver summary and the history
+    /// ledger take the upper of the two middles, so the ledger records a
+    /// different number from the one the report prints for the same samples.
+    #[test]
+    fn one_definition_of_median_across_the_crate() {
+        let vals = [1.0f64, 2.0, 3.0, 4.0];
+        let stats = Stats::from_values(&mut vals.to_vec());
+        let (_, boot_med, _) = bootstrap_ci_median(&vals, 0xABCD);
+        assert_eq!(stats.median, 2.5, "Stats interpolates");
+        assert_eq!(boot_med, 2.5, "the bootstrap point estimate interpolates");
+        assert_eq!(
+            crate::driver::median_for_tests(&mut vals.to_vec()),
+            stats.median,
+            "the driver's summary/history median disagrees with the report's"
+        );
     }
 }
 
