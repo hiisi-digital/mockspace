@@ -1,97 +1,63 @@
 # Sides: doc and src
 
-A round has two sides. The doc side is where design lives; the src
-side is where source code matching that design lives. The two-sided
-shape exists so design and implementation can each go through
-manifest-sealed authoring without contaminating each other's audit
-trail.
+A round has two sides. **Doc is where the design lives, src is the code matching
+it.** Each goes through its own sealed authoring loop so neither contaminates the
+other's audit trail.
 
-## What each side covers
+**Doc completes before src begins**, and that ordering is load-bearing: the src
+manifest can claim adherence to an already-sealed doc manifest, and verifiers
+check that it holds.
 
-**Doc side.** Templates, topic files, sketches, research notes,
-design rounds, anything that describes what the round is about.
-The doc-side manifest at `manifest.doc.toml` (mutable in PlanDoc,
-sealed as `manifest.doc.locked.toml` in ApplyDoc) claims which
-doc-side files the round will edit and what verifier checks them.
+| Side | Covers | Authored in | Sealed in |
+|---|---|---|---|
+| doc | templates, topic files, sketches, research, design rounds | `PlanDoc` | `ApplyDoc` |
+| src | source, tests, configuration | `PlanSrc` | `ApplySrc` |
 
-**Src side.** Source code files, tests, configuration. Edited
-during the second authoring loop, after the doc side has sealed.
-The src-side manifest at `manifest.src.toml` (mutable in PlanSrc,
-sealed in ApplySrc) does the same job for source files.
+## What a manifest carries
 
-## What's in a manifest
+Structured TOML, `mockspace-core::manifest::Manifest`:
 
-A manifest is structured TOML. The shape comes from
-`mockspace-core::manifest::Manifest`:
+- `scope`, the paths the round may touch, with include and exempt patterns and
+  per-axis bounds
+- `acceptance`, what passing means, as verifier catalog entries
+- `change`, the per-file claims: what is added, modified, removed
+- `deprecated_accounting`, present when this manifest supersedes a deprecated one
+  in the same round, recording which claims carried over and which were dropped
 
-- `scope`: paths the round will touch, with explicit include/exempt
-  patterns and per-axis bounds.
-- `acceptance`: what passing looks like, expressed as verifier
-  catalog entries.
-- `change`: the actual edits the round commits to. Per-file claims
-  about what gets added / modified / removed.
-- `deprecated_accounting`: when this manifest supersedes a prior
-  deprecated manifest in the same round, this block records which
-  claims carry over and which were dropped.
+**TOML so a person can author it and a machine can verify it.** The structured
+form is the contract; rendered prose lives in templates the consumer keeps
+separately.
 
-Manifests are TOML so the consumer can author them by hand and
-machines can verify them mechanically. The structured form is the
-contract; rendered prose versions live in templates the consumer
-keeps separately.
+## Layout in the round-ref tree
 
-## Lifecycle per side
-
-Each side moves through its own PLAN -> APPLY pair:
+Read through mock IO, not the working tree. The side is in the filename, and
+both sides share one tree.
 
 ```
-(side = doc)               (side = src)
-  PlanDoc                    PlanSrc
-    |                          |
-   apply                      apply
-    |                          |
-  ApplyDoc -- finish -> PlanSrc -- finish -> Done
+manifest.doc.toml                          mutable in PlanDoc
+manifest.doc.locked.toml                   sealed at ApplyDoc entry
+manifest.doc.deprecated.<n>.toml           one per replan, zero-indexed
+.anchor.doc.toml                           captured at apply
+.anchor.doc.blobs/<sha-prefix>/<sha-rest>  content-addressed bodies
 ```
 
-The doc side completes before the src side begins. This ordering
-exists because the src manifest can claim adherence to the
-already-sealed doc manifest (verifiers check that the src side
-matches what the doc side committed to).
+`manifest.src.*` and `.anchor.src.*` are the parallel surface.
 
-## File layout per side
+**Two renames are the whole state machine**: `<side>.toml` to
+`<side>.locked.toml` is the seal, `<side>.locked.toml` to
+`<side>.deprecated.<n>.toml` is the replan.
 
-In the round-ref tree (read via `mock` IO, not the working tree):
+## Which verifiers run when
 
-```
-manifest.doc.toml                # mutable in PlanDoc
-manifest.doc.locked.toml         # sealed at ApplyDoc entry
-manifest.doc.deprecated.0.toml   # first replan, zero-indexed
-manifest.doc.deprecated.1.toml   # second replan
-.anchor.doc.toml                 # anchor metadata captured at apply
-.anchor.doc.blobs/<sha-prefix>/<sha-rest>  # content-addressed blobs
+Every check declares its side. Doc-side checks run through `ApplyDoc`, src-side
+through `ApplySrc`, on every commit in that phase.
 
-manifest.src.toml                # parallel surface for src
-manifest.src.locked.toml
-manifest.src.deprecated.0.toml
-.anchor.src.toml
-.anchor.src.blobs/<sha-prefix>/<sha-rest>
-```
+**A check spanning both sides runs in `ApplySrc` only**, because that is the
+first point where both manifests are sealed. The source-against-design check is
+the example.
 
-Both sides' surfaces live in the same round-ref tree. The side is
-encoded in the filename. The `<side>.toml` -> `<side>.locked.toml`
-rename is the seal; the `<side>.locked.toml` -> `<side>.deprecated.<n>.toml`
-rename is the replan.
+## Not split by side
 
-## When the verifier knows which side
-
-Every verifier check declares which side it applies to. Doc-side
-verifiers run during ApplyDoc (and on every commit during that
-phase). Src-side verifiers run during ApplySrc. Verifiers that span
-both sides (e.g., `design-doc-source-mismatch`, which checks that
-src-side claims match the locked doc-side manifest) run during
-ApplySrc only, since both sides are sealed by then.
-
-## What's not split by side
-
-Tasks. Anchors. The round-ref itself. Topic files. Sketches. These
-belong to the round as a whole. The side split is specifically
-about which manifest is in scope at each authoring loop.
+Tasks, anchors, the round ref itself, topic files, sketches. Those belong to the
+round. **The split is only about which manifest is in scope in which authoring
+loop.**

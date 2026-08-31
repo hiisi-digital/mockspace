@@ -1,108 +1,38 @@
 # Phases
 
-A mockspace round carries exactly one current phase at a time. The phase
-drives what every command does: `mock phase apply` seals different
-manifests in PLAN(doc) vs PLAN(src), and `mock close` is only valid from
-DONE.
+A round carries one phase. The phase decides what every command does.
 
-There are six phases. Three pairs across two sides (doc and src), plus
-the entry and exit phases that have no side.
+Six phases: an entry, an exit, and two sides (doc and src) with a plan and an
+apply each. `mockspace-core::phase::Phase`.
 
 ```
-Topic
-  |  (mock phase plan)
-  v
-PlanDoc
-  |  (mock phase apply)
-  v
-ApplyDoc
-  |  (mock phase finish)
-  v
-PlanSrc
-  |  (mock phase apply)
-  v
-ApplySrc
-  |  (mock phase finish)
-  v
-Done
+Topic -> PlanDoc -> ApplyDoc -> PlanSrc -> ApplySrc -> Done
 ```
 
-## Topic
-
-Free-form exploration. The round directory carries topic files,
-sketches, benches, research notes. No manifest exists. The verifier
-does not run; lints scoped to authoring rounds are inactive.
-
-Exit: `mock phase plan <slug>` opens PlanDoc.
-
-## PlanDoc
-
-Doc-side manifest authoring. The manifest at
-`manifest.doc.toml` is mutable; the consumer edits it freely. No
-template or doc-side file is sealed yet.
-
-Exit: `mock phase apply <slug> --source-tip <hex>` seals the manifest
-and transitions to ApplyDoc. The anchor captures the doc-side surface
-state at apply entry.
-
-## ApplyDoc
-
-Doc execution. The doc manifest is sealed: read-only, content-hashed,
-its claims drive the verifier. Doc templates listed in the manifest's
-`change` block get edited per the manifest. Every commit re-runs the
-verifier.
-
-Exit: `mock phase finish <slug>` advances bookkeeping and opens
-PlanSrc.
-
-Backward exit: `mock phase replan <slug>` deprecates the sealed
-manifest and returns to PlanDoc. The locked manifest is renamed to
-`manifest.doc.deprecated.<n>.toml` and stays as audit trail.
-
-## PlanSrc
-
-Src-side manifest authoring. Same shape as PlanDoc; src side. The
-locked doc manifest from ApplyDoc remains read-only.
-
-Exit: `mock phase apply <slug> --source-tip <hex>` seals the src
-manifest and transitions to ApplySrc.
-
-## ApplySrc
-
-Src execution. The src manifest is sealed; source files listed in its
-`change` block get edited per the manifest. The verifier runs every
-commit, plus `design-doc-source-mismatch` runs across the project.
-
-Exit: `mock phase finish <slug>` advances to Done.
-
-Backward exit: `mock phase replan <slug>` deprecates the sealed src
-manifest and returns to PlanSrc. Restoration of source-side files
-follows the replan mode (see `verbs.md`).
-
-## Done
-
-Round closed. Both sides sealed. PR comments may still ingest into
-the round-meta document for audit. The round is not deleted; it lives
-on `refs/mock/round/<slug>` until archived.
-
-Exit: `mock close <slug>` archives the round into the unified
-`refs/mock/round-archive` and deletes the source round ref.
-
-## The four verbs
-
-Each verb moves a round between exactly one phase pair. The full
-matrix:
-
-| Verb | Valid from | Lands in |
+| Phase | What it is | Manifest |
 |---|---|---|
-| `plan` | Topic | PlanDoc |
-| `apply` | PlanDoc | ApplyDoc |
-| `apply` | PlanSrc | ApplySrc |
-| `finish` | ApplyDoc | PlanSrc |
-| `finish` | ApplySrc | Done |
-| `replan` | ApplyDoc | PlanDoc |
-| `replan` | ApplySrc | PlanSrc |
+| `Topic` | free exploration: topic files, sketches, benches, research | none |
+| `PlanDoc` | doc-manifest authoring | mutable |
+| `ApplyDoc` | doc execution, templates edited per the claims | sealed, read-only, hashed |
+| `PlanSrc` | src-manifest authoring, same shape | doc stays sealed |
+| `ApplySrc` | src execution, source files edited per the claims | both sealed |
+| `Done` | closed, not archived; lives on its round ref | both sealed |
 
-Any other (verb, current-phase) combination is invalid and the CLI
-refuses with an `InvalidFromPhase { current, verb, allowed_from }`
-error.
+- **The verifier runs on every commit in the two APPLY phases**, and in
+  `ApplySrc` the source-against-design check runs across the project too.
+- **In `Topic` no manifest exists** and lints scoped to authoring rounds are
+  inactive.
+- **`Done` is closed but still present.** `mock close <slug>` is what archives
+  it and deletes the round ref.
+
+## What reaches these phases
+
+**`cargo mock tools` is the list of subcommands, and there is no `phase` verb in
+it.** The six phases above are the model `mockspace-core` carries; the CLI that
+ships moves a round through them with `lock`, `unlock`, `deprecate`, `close` and
+`archive`, over changelist files whose names carry the state.
+
+**A `cargo mock phase <verb>` form appears in doc comments and in older
+descriptions of this design. It is not a shipped subcommand.** `verbs.md` says
+what each intended verb does and marks the same gap; run `cargo mock tools`
+before telling anybody to invoke one.
