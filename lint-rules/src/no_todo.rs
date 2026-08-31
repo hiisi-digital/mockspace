@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: no `todo!()` in mock source files.
 //!
 //! The mockspace is production code. Every function must have a real
@@ -7,18 +12,23 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "no-todo";
 
 pub struct NoTodo;
 
 impl Lint for NoTodo {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::PUSH_GATE
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+}
 
+impl CrateLint for NoTodo {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
         let root = ctx.tree.root_node();
@@ -36,7 +46,7 @@ fn find_todo_macros(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) 
                     ctx.crate_name.to_string(),
                     node.start_position().row + 1,
                     LINT_NAME,
-                    "todo!() is not allowed — implement fully".to_string(),
+                    "todo!() is not allowed: implement fully".to_string(),
                 ));
                 return;
             }

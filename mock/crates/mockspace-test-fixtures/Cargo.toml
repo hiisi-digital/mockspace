@@ -1,0 +1,12 @@
+[package]
+name = "mockspace-test-fixtures"
+version = "0.1.0"
+edition = "2021"
+description = "Test-fixture builder for mockspace v2 consumer crates. Wraps the canonical state-setup patterns (tempdir + bootstrap install + lints.toml write) into a composable builder so integration and e2e tests don't repeat the boilerplate. Host-side dev tool; not subject to the no-alloc / no-std stack discipline."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+publish = false
+
+[dependencies]
+mockspace-rs = { path = "../mockspace-rs" }
+tempfile = "3"

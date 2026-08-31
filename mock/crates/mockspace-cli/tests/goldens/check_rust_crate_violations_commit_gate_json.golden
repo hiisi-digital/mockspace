@@ -1,0 +1,28 @@
+[
+  {
+    "lint_name": "no-bare-vec",
+    "rule_id": "type-position",
+    "severity": "error",
+    "message": "forbidden collection `Vec` (type-position)",
+    "span": {
+      "file": "crates/probe/src/lib.rs",
+      "start_line": 1,
+      "start_column": 22,
+      "end_line": 1,
+      "end_column": 25
+    }
+  },
+  {
+    "lint_name": "no-bare-vec",
+    "rule_id": "type-position",
+    "severity": "error",
+    "message": "forbidden collection `Vec` (type-position)",
+    "span": {
+      "file": "crates/probe/src/lib.rs",
+      "start_line": 3,
+      "start_column": 16,
+      "end_line": 3,
+      "end_column": 19
+    }
+  }
+]

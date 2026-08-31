@@ -1,0 +1,24 @@
+=== refs/mock/round/round-alpha ===
+.phase:
+plan_doc
+
+=== refs/mock/task/ship-it ===
+.state.closed:
+
+
+meta.toml:
+mockspace_version = "0.1.0"
+slug = "ship-it"
+namespace = ""
+title = "Ship it"
+created = "<TIMESTAMP>"
+
+[steps]
+
+[closure]
+resolution = "completed"
+closed_at = "<TIMESTAMP>"
+closed_branch = "feat/ship"
+closing_phase = ""
+closing_round_slug = ""
+

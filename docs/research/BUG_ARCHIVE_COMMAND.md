@@ -32,7 +32,7 @@ git add mock/design_rounds && git commit -m "chore: archive abandoned round"
 
 ## Context
 
-Discovered while working on the saalis project. A design round was
+Discovered on a consumer project. A design round was
 started, the doc changelist was written and locked, the src changelist
 was written, then fundamental design errors were found in the
 implementation. The round was deprecated (`cargo mock deprecate`

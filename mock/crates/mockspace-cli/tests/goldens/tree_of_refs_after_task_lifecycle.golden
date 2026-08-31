@@ -1,0 +1,33 @@
+=== refs/mock/task/compiler/backend/lower-pass ===
+.state.open:
+
+
+meta.toml:
+mockspace_version = "0.1.0"
+slug = "lower-pass"
+namespace = "compiler/backend"
+title = "Lower pass for IR"
+created = "<TIMESTAMP>"
+
+[steps]
+
+=== refs/mock/task/migrate-to-codeberg ===
+.state.closed:
+
+
+meta.toml:
+mockspace_version = "0.1.0"
+slug = "migrate-to-codeberg"
+namespace = ""
+title = "Migrate to Codeberg"
+created = "<TIMESTAMP>"
+
+[steps]
+
+[closure]
+resolution = "completed"
+closed_at = "<TIMESTAMP>"
+closed_branch = "feat/codeberg"
+closing_phase = ""
+closing_round_slug = ""
+

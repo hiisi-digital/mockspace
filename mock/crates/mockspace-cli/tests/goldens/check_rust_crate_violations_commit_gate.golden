@@ -1,0 +1,2 @@
+crates/probe/src/lib.rs:1:22: [error] no-bare-vec: forbidden collection `Vec` (type-position)
+crates/probe/src/lib.rs:3:16: [error] no-bare-vec: forbidden collection `Vec` (type-position)

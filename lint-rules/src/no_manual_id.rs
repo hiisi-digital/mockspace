@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: no manual ID struct definitions.
 //!
 //! All ID types must be created via `define_id!`. Manual `struct *Id` definitions
@@ -5,16 +10,21 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoManualId;
 
 impl Lint for NoManualId {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
-        "no-manual-id"
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
     }
 
+    fn name(&self) -> &'static str {
+        "no-manual-id"
+    }
+}
+
+impl CrateLint for NoManualId {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();
@@ -53,21 +63,22 @@ fn check_struct(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         // Check for lint:allow(no_manual_id) on the line
         let line_idx = node.start_position().row;
         let line = ctx.source.lines().nth(line_idx).unwrap_or("");
-        if line.contains("lint:allow(no_manual_id)") {
+        if crate::line_lint_allowed(line, "no_manual_id") {
             errors.push(LintError::warning(
                 ctx.crate_name.to_string(),
                 line_idx + 1,
                 "no-manual-id",
-                format!("suppressed by lint:allow(no_manual_id) on `{name}` — review periodically"),
+                format!("suppressed by lint:allow(no_manual_id) on `{name}`: review periodically"),
             ));
         } else {
             errors.push(LintError {
+                path: None,
                 crate_name: ctx.crate_name.to_string(),
                 line: line_idx + 1,
                 lint_name: "no-manual-id",
                 severity: crate::Severity::HARD_ERROR,
                 message: format!(
-                    "manual ID struct `{name}` — use define_id!({name}) or define_handle!({name}) from the ID crate",
+                    "manual ID struct `{name}`: use define_id!({name}) or define_handle!({name}) from the ID crate",
                 ),
                 finding_kind: None,
             });

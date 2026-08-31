@@ -1,0 +1,13 @@
+[package]
+name = "mockspace-rs-attrs"
+version = "0.1.0"
+edition = "2021"
+description = "Marker attributes consumed by the mockspace Rust lint engine."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+publish = false
+
+[lib]
+proc-macro = true
+
+[dependencies]

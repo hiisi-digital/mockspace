@@ -1,0 +1,16 @@
+control: two points differing in D report exactly ['d'] varying
+
+sweep                          axis   values                             held
+width-l1                       w      [8, 13, 16, 32, 60, 64]            d=3, nc=8192 (L1-resident), op=wrap-reduce
+width-l2                       w      [8, 13, 16, 32, 60, 64]            d=3, nc=1048576 (L2/DRAM), op=wrap-reduce
+density-w13                    d      [1, 2, 4, 8, 16]                   nc=8192 (L1-resident), op=wrap-reduce, w=13
+density-w64                    d      [1, 2, 4, 8, 16]                   nc=8192 (L1-resident), op=wrap-reduce, w=64
+P-container-width-l1           w      [8, 13, 16, 32, 60, 64]            d=3, nc=8192 (L1-resident), op=sat-reduce
+warm-elementwise-width-l1      w      [8, 13, 16, 32, 60, 64]            d=4, nc=8192 (L1-resident), op=wrap-elementwise
+P-elementwise-width-l1         w      [8, 13, 16, 32, 60, 64]            d=4, nc=8192 (L1-resident), op=sat-elementwise
+warm-affine-collapse-l1        w      [8, 13, 16, 32, 60, 64]            d=3, nc=8192 (L1-resident), op=wrap-affine
+P-widening-theorem-l1          w      [8, 13, 16, 32, 60, 64]            d=1, nc=8192 (L1-resident), op=sat-widen
+warm-affine-density-w13        d      [1, 2, 4, 8, 16]                   nc=8192 (L1-resident), op=wrap-affine, w=13
+
+arm list on the first sweep (6): ['bench_warm_container_headroom', 'bench_warm_container_minimum', 'bench_warm_container_plusone', 'bench_warm_container_native', 'bench_warm_container_kernel', 'bench_warm_container_lanes_deferred']
+first two sweeps share their arm list: False

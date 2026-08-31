@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: no empty crates.
 //!
 //! Flags crates whose `src/**/*.rs` files contain only doc comments, use
@@ -15,11 +20,11 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError, make_parser};
+use crate::{CrateLint, Lint, LintContext, LintError, make_parser};
 
 const LINT_NAME: &str = "no-empty-crate";
 
-/// Node kinds that count as "substantive content" — having at least one means
+/// Node kinds that count as "substantive content": having at least one means
 /// the crate is not empty.
 const SUBSTANTIVE_KINDS: &[&str] = &[
     "struct_item",
@@ -38,13 +43,24 @@ const SUBSTANTIVE_KINDS: &[&str] = &[
 pub struct NoEmptyCrate;
 
 impl Lint for NoEmptyCrate {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::ADVISORY }
+    /// Crate-scoped. Whether a crate is empty is a fact about the crate; per
+    /// file it would call every module file an empty crate.
+    fn per_file(&self) -> bool {
+        false
+    }
+
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::ADVISORY
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
+}
 
+impl CrateLint for NoEmptyCrate {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
-        // lib.rs tree is already parsed — check it first so the common case
+        // lib.rs tree is already parsed: check it first so the common case
         // of a populated lib.rs avoids re-parsing every module.
         if has_substantive_content(ctx.tree.root_node()) {
             return Vec::new();
@@ -56,7 +72,7 @@ impl Lint for NoEmptyCrate {
         // but the crate clearly has an API surface.
         let mut parser = make_parser();
         for file in ctx.all_sources {
-            // Skip lib.rs — already checked via ctx.tree above.
+            // Skip lib.rs: already checked via ctx.tree above.
             if file.rel_path.file_name().and_then(|n| n.to_str()) == Some("lib.rs") {
                 continue;
             }
@@ -73,7 +89,7 @@ impl Lint for NoEmptyCrate {
             1,
             LINT_NAME,
             format!(
-                "crate `{}` has no type, trait, function, or macro definitions — \
+                "crate `{}` has no type, trait, function, or macro definitions: \
                  populate it or remove it from the workspace",
                 ctx.crate_name,
             ),
@@ -98,10 +114,11 @@ fn has_substantive_content(node: Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::CrateSourceFile;
     use std::collections::BTreeSet;
     use std::path::PathBuf;
+
+    use super::*;
+    use crate::CrateSourceFile;
 
     fn make_ctx(
         lib_src: &str,
@@ -112,12 +129,12 @@ mod tests {
         let tree = Box::leak(Box::new(tree));
         let mut sources: Vec<CrateSourceFile> = vec![CrateSourceFile {
             rel_path: PathBuf::from("src/lib.rs"),
-            text: lib_src.to_string(),
+            text:     lib_src.to_string(),
         }];
         for (name, body) in extra {
             sources.push(CrateSourceFile {
                 rel_path: PathBuf::from(format!("src/{}", name)),
-                text: body.to_string(),
+                text:     body.to_string(),
             });
         }
         let ctx = LintContext {
@@ -148,7 +165,7 @@ mod tests {
 
     #[test]
     fn reexport_from_submodule_passes() {
-        // lib.rs only contains mod declarations and re-exports — no direct
+        // lib.rs only contains mod declarations and re-exports: no direct
         // substantive content, but the submodule provides it. This is the
         // common `pub mod foo; pub use foo::*;` pattern the old lint
         // flagged as a false positive.

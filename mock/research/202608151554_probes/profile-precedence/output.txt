@@ -1,0 +1,7 @@
+cargo: cargo 1.98.0-nightly (fbb61be30 2026-05-26)
+
+C1  thin-declaring arm, no --config   : codegen-units=16 lto=thin opt-level=1 
+C2  nothing-declaring arm, --config   : codegen-units=1 lto=fat opt-level=3 
+Q   thin-declaring arm, --config      : codegen-units=1 lto=fat opt-level=3 
+
+C1 must read thin/16, C2 must read fat/1, or Q means nothing.

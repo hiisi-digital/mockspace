@@ -1,0 +1,17 @@
+schema_version = "1.0"
+name = "trait-first-signatures"
+primitive = "ast-type-position"
+description = "public APIs take trait bounds, not concrete collections"
+
+[config]
+forbidden_types = ["Vec", "HashMap", "BTreeMap", "HashSet", "BTreeSet"]
+positions = ["fn-param", "fn-return"]
+visibility = "public"
+
+[severity]
+commit = "warn"
+build = "warn"
+push = "warn"
+
+[scope]
+paths = ["**/*.rs"]

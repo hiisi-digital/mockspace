@@ -1,0 +1,17 @@
+schema_version = "1.0"
+name = "no-public-raw-field"
+primitive = "ast-type-position"
+description = "pub struct fields must use typed newtypes"
+
+[config]
+forbidden_types = ["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "usize", "isize", "f32", "f64", "bool"]
+positions = ["struct-field"]
+visibility = "public"
+
+[severity]
+commit = "warn"
+build = "warn"
+push = "warn"
+
+[scope]
+paths = ["**/*.rs"]

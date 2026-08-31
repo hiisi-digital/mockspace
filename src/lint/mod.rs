@@ -1,29 +1,44 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Pluggable AST lint system.
 //!
 //! Lint rules live in the `mockspace-lint-rules` crate. This module
 //! re-exports and runs them against the mock workspace's CrateMap.
 //!
 //! Two passes:
-//! 1. Per-crate lints — each lint sees one crate at a time.
-//! 2. Cross-crate lints — each lint sees all crates simultaneously.
+//! 1. Per-crate lints: each lint sees one crate at a time.
+//! 2. Cross-crate lints: each lint sees all crates simultaneously.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use mockspace_lint_rules::{self, CrateSourceFile, LintContext, LintError, LintMode, Level, Lint, CrossCrateLint, LintConfig};
+use mockspace_lint_rules::{
+    self,
+    CrateSourceFile,
+    Level,
+    LintConfig,
+    LintContext,
+    LintError,
+    LintMode,
+    LintPack,
+    RepoContext,
+};
 
 use crate::model::CrateMap;
 
 /// Collected data for a single crate, kept alive for cross-crate pass.
 struct ParsedCrate {
-    crate_name: String,
-    short_name: String,
-    source: String,
-    tree: tree_sitter::Tree,
-    all_sources: Vec<CrateSourceFile>,
-    design_doc: Option<String>,
+    crate_name:      String,
+    short_name:      String,
+    source:          String,
+    tree:            tree_sitter::Tree,
+    all_sources:     Vec<CrateSourceFile>,
+    design_doc:      Option<String>,
     all_doc_content: String,
-    shame_doc: Option<String>,
+    shame_doc:       Option<String>,
 }
 
 /// Walk `crate_dir/src/**/*.rs` and return every file's (rel_path, text),
@@ -68,7 +83,10 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
             Err(_) => continue,
         };
         let rel_path = path.strip_prefix(crate_dir).unwrap_or(&path).to_path_buf();
-        out.push(CrateSourceFile { rel_path, text });
+        out.push(CrateSourceFile {
+            rel_path,
+            text,
+        });
     }
 }
 
@@ -76,9 +94,9 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
 ///
 /// The `mode` determines which gate is active. Each lint violation declares
 /// its own per-gate severity; the mode selects the effective level:
-///   - `Commit` — most permissive (pre-commit hook)
-///   - `Build`  — middle strictness (default xtask run)
-///   - `Push`   — most strict (pre-push hook)
+///   - `Commit`: most permissive (pre-commit hook)
+///   - `Build`: middle strictness (default xtask run)
+///   - `Push`: most strict (pre-push hook)
 ///
 /// When `scope` is `Some`, only crates in the list are linted. This is used
 /// by the pre-commit hook to lint only crates with staged files. When `None`,
@@ -98,7 +116,13 @@ fn walk_rs(dir: &Path, crate_dir: &Path, out: &mut Vec<CrateSourceFile>) {
 #[must_use]
 pub fn run_lints(
     crates: &CrateMap,
-    crates_dir: &Path,
+    // Every source directory, because a crate lives in exactly one of them and
+    // linting against a single root would pass the gate having read a subset.
+    src_dirs: &[std::path::PathBuf],
+    // The mock directory. Passed rather than inferred: it used to be
+    // `crates_dir.parent()`, which only held while there was one root directly
+    // under the mock dir, and silently produced a different root otherwise.
+    mock_dir: &Path,
     mode: LintMode,
     scope: Option<&[String]>,
     doc_only: bool,
@@ -106,25 +130,43 @@ pub fn run_lints(
     lint_proc_macro_source: bool,
     crate_prefix: &str,
     lint_overrides: &LintConfig,
+    // The registry, flattened, so a repo lint can check it. Built by the caller,
+    // which is the only place the declared field types are in scope.
+    registry: &mockspace_lint_rules::RegistryView,
+    // What the project calls its canon, and which panels are open. Both are
+    // computed by the caller: the globs are configuration and the panel ledger
+    // lives in the engine, so a lint has no route to either.
+    canon_paths: &[String],
+    open_panels: &[String],
     primitive_introductions: &std::collections::BTreeMap<String, Vec<String>>,
-    custom_lints: &[Box<dyn Lint>],
-    custom_cross_lints: &[Box<dyn CrossCrateLint>],
+    pack: &LintPack,
 ) -> usize {
+    // A duplicated lint name is a configuration error, not a linting result:
+    // every finding would double and `[lints.<name>]` would be ambiguous
+    // between the registrations. Error and guide before running anything,
+    // rather than partially enforcing.
+    let duplicates = mockspace_lint_rules::duplicate_lint_names(pack);
+    if !duplicates.is_empty() {
+        for name in &duplicates {
+            eprintln!(
+                "  [lint-config] `{name}` is registered more than once (the builtin set \
+                 plus an imported pack, or twice across packs). Rename or remove one \
+                 registration; until then its findings would double and \
+                 `[lints.{name}]` could not say which one it configures."
+            );
+        }
+        return duplicates.len();
+    }
+
     let all_crate_names: BTreeSet<String> = crates.keys().cloned().collect();
-    let workspace_root = crates_dir
-        .parent()
-        .unwrap_or(crates_dir);
+    let workspace_root = mock_dir;
 
     let mut parser = mockspace_lint_rules::make_parser();
     let mut all_errors: Vec<LintError> = Vec::new();
 
     let mut parsed: Vec<ParsedCrate> = Vec::new();
 
-    let overrides = if lint_overrides.is_empty() {
-        None
-    } else {
-        Some(lint_overrides)
-    };
+    let overrides = if lint_overrides.is_empty() { None } else { Some(lint_overrides) };
 
     for (crate_name, info) in crates {
         // Skip crates not in scope (when scoped)
@@ -134,7 +176,16 @@ pub fn run_lints(
             }
         }
 
-        let crate_dir = crates_dir.join(crate_name);
+        // The crate lives under exactly one source directory; find which.
+        // Skipping when no root holds it matches the previous behaviour, where
+        // a missing `src/lib.rs` was skipped a line later.
+        let Some(crate_dir) = src_dirs
+            .iter()
+            .map(|d| d.join(crate_name))
+            .find(|d| d.is_dir())
+        else {
+            continue;
+        };
         let librs = crate_dir.join("src/lib.rs");
         let source = match std::fs::read_to_string(&librs) {
             Ok(s) => s,
@@ -150,14 +201,14 @@ pub fn run_lints(
         // (bits.rs, prim.rs, impl.rs, ...) in addition to lib.rs.
         let all_sources = collect_crate_sources(&crate_dir);
 
-        // Read DESIGN.md.tmpl if it exists
         let design_doc = std::fs::read_to_string(crate_dir.join("DESIGN.md.tmpl")).ok();
 
         // Read ALL doc templates and concatenate
         let all_doc_content = collect_all_docs(&crate_dir);
 
-        // Read SHAME.md.tmpl if it exists
-        let shame_doc = std::fs::read_to_string(crate_dir.join("SHAME.md.tmpl")).ok();
+        // Read SHAME.md.tmpl if it exists, matching the exact spelling the
+        // phase gates match. See `read_shame_template`.
+        let shame_doc = mockspace_lint_rules::read_shame_template(&crate_dir);
 
         // Per-crate lint pass
         let ctx = LintContext {
@@ -178,7 +229,12 @@ pub fn run_lints(
             primitive_introductions,
         };
 
-        all_errors.extend(mockspace_lint_rules::check_crate_with_extra(&ctx, doc_only, overrides, custom_lints));
+        all_errors.extend(mockspace_lint_rules::check_crate_with_extra(
+            &ctx,
+            doc_only,
+            overrides,
+            &pack.crate_lints,
+        ));
 
         parsed.push(ParsedCrate {
             crate_name: crate_name.clone(),
@@ -197,26 +253,23 @@ pub fn run_lints(
         .iter()
         .map(|p| {
             let info = &crates[p.crate_name.as_str()];
-            (
-                p.crate_name.as_str(),
-                LintContext {
-                    crate_name: &p.crate_name,
-                    short_name: &p.short_name,
-                    source: &p.source,
-                    tree: &p.tree,
-                    all_sources: &p.all_sources,
-                    deps: &info.deps,
-                    all_crates: &all_crate_names,
-                    design_doc: p.design_doc.as_deref(),
-                    all_doc_content: &p.all_doc_content,
-                    shame_doc: p.shame_doc.as_deref(),
-                    workspace_root,
-                    proc_macro_crates,
-                    lint_proc_macro_source,
-                    crate_prefix,
-                    primitive_introductions,
-                },
-            )
+            (p.crate_name.as_str(), LintContext {
+                crate_name: &p.crate_name,
+                short_name: &p.short_name,
+                source: &p.source,
+                tree: &p.tree,
+                all_sources: &p.all_sources,
+                deps: &info.deps,
+                all_crates: &all_crate_names,
+                design_doc: p.design_doc.as_deref(),
+                all_doc_content: &p.all_doc_content,
+                shame_doc: p.shame_doc.as_deref(),
+                workspace_root,
+                proc_macro_crates,
+                lint_proc_macro_source,
+                crate_prefix,
+                primitive_introductions,
+            })
         })
         .collect();
 
@@ -225,7 +278,32 @@ pub fn run_lints(
         .map(|(name, ctx)| (*name, ctx))
         .collect();
 
-    all_errors.extend(mockspace_lint_rules::check_cross_crate_with_extra(&cross_refs, doc_only, overrides, custom_cross_lints));
+    all_errors.extend(mockspace_lint_rules::check_workspace_with_extra(
+        &cross_refs,
+        doc_only,
+        overrides,
+        &pack.workspace_lints,
+    ));
+
+    // Repo lints take no crates at all, so they run even when the workspace has
+    // none. They used to be cross-crate lints that stole a path from the first
+    // crate, which made them silently inert in exactly that case.
+    let repo_ctx = RepoContext {
+        mock_dir: workspace_root,
+        repo_root: workspace_root.parent().unwrap_or(workspace_root),
+        all_crates: &all_crate_names,
+        src_dirs,
+        invocation: None,
+        canon_paths,
+        open_panels,
+        registry,
+    };
+    all_errors.extend(mockspace_lint_rules::check_repo_with_extra(
+        &repo_ctx,
+        doc_only,
+        overrides,
+        &pack.repo_lints,
+    ));
 
     // Partition by effective severity
     let mut info = Vec::new();
@@ -234,7 +312,7 @@ pub fn run_lints(
 
     for e in all_errors {
         match e.severity.effective(mode) {
-            Level::Pass => {} // skip silently
+            Level::Pass => {}, // skip silently
             Level::Info => info.push(e),
             Level::Warn => warnings.push(e),
             Level::Error => errors.push(e),

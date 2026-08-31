@@ -1,8 +1,12 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Error type for the bench harness.
 
-use std::fmt;
-use std::io;
 use std::path::PathBuf;
+use std::{fmt, io};
 
 /// Error returned by [`crate::run`] and the harness sub-systems.
 ///
@@ -28,7 +32,7 @@ pub enum BenchError {
     },
     /// A variant cdylib could not be loaded via `dlopen`.
     DylibLoadFailed {
-        path: PathBuf,
+        path:   PathBuf,
         reason: String,
     },
     /// A variant cdylib's `bench_abi_hash` did not match the harness
@@ -36,28 +40,28 @@ pub enum BenchError {
     /// version the variant was built against and the one the harness
     /// is running.
     AbiMismatch {
-        path: PathBuf,
+        path:     PathBuf,
         expected: u64,
-        found: u64,
+        found:    u64,
     },
     /// Cross-variant validation failed. Carries the offending
     /// (variant, reason) pair; analysis in later rounds may extend
     /// this with the byte-level diff.
     ValidationFailed {
         variant: String,
-        reason: String,
+        reason:  String,
     },
     /// A subprocess worker crashed or returned a non-zero exit code.
     WorkerFailed {
-        variant: String,
+        variant:   String,
         exit_code: Option<i32>,
-        stderr: String,
+        stderr:    String,
     },
     /// Generic IO error, wrapped at the boundary so callers do not
     /// need to import [`std::io`].
     Io {
         context: &'static str,
-        source: io::Error,
+        source:  io::Error,
     },
     /// CSV cache parse/write error.
     Cache {
@@ -68,40 +72,75 @@ pub enum BenchError {
 impl fmt::Display for BenchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BenchError::NotImplemented { what } => {
+            BenchError::NotImplemented {
+                what,
+            } => {
                 write!(f, "not yet implemented: {what}")
-            }
-            BenchError::InvalidConfig { reason } => {
-                write!(f, "invalid bench config: {reason}")
-            }
-            BenchError::DylibLoadFailed { path, reason } => {
-                write!(f, "failed to load variant cdylib {}: {reason}", path.display())
-            }
-            BenchError::AbiMismatch { path, expected, found } => write!(
-                f,
-                "ABI mismatch in {}: expected {expected:#x}, found {found:#x}. \
-                 Rebuild the variant against the current mockspace-bench-core.",
-                path.display()
-            ),
-            BenchError::ValidationFailed { variant, reason } => {
-                write!(f, "validation failed for variant {variant}: {reason}")
-            }
-            BenchError::WorkerFailed { variant, exit_code, stderr } => match exit_code {
-                Some(c) => write!(
-                    f,
-                    "worker for variant {variant} exited with code {c}\nstderr:\n{stderr}"
-                ),
-                None => write!(
-                    f,
-                    "worker for variant {variant} terminated by signal\nstderr:\n{stderr}"
-                ),
             },
-            BenchError::Io { context, source } => {
+            BenchError::InvalidConfig {
+                reason,
+            } => {
+                write!(f, "invalid bench config: {reason}")
+            },
+            BenchError::DylibLoadFailed {
+                path,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "failed to load variant cdylib {}: {reason}",
+                    path.display()
+                )
+            },
+            BenchError::AbiMismatch {
+                path,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "ABI mismatch in {}: expected {expected:#x}, found {found:#x}. \
+                 Rebuild the variant against the current mockspace-bench-core.",
+                    path.display()
+                )
+            },
+            BenchError::ValidationFailed {
+                variant,
+                reason,
+            } => {
+                write!(f, "validation failed for variant {variant}: {reason}")
+            },
+            BenchError::WorkerFailed {
+                variant,
+                exit_code,
+                stderr,
+            } => {
+                match exit_code {
+                    Some(c) => {
+                        write!(
+                            f,
+                            "worker for variant {variant} exited with code {c}\nstderr:\n{stderr}"
+                        )
+                    },
+                    None => {
+                        write!(
+                            f,
+                            "worker for variant {variant} terminated by signal\nstderr:\n{stderr}"
+                        )
+                    },
+                }
+            },
+            BenchError::Io {
+                context,
+                source,
+            } => {
                 write!(f, "io error during {context}: {source}")
-            }
-            BenchError::Cache { reason } => {
+            },
+            BenchError::Cache {
+                reason,
+            } => {
                 write!(f, "cache error: {reason}")
-            }
+            },
         }
     }
 }
@@ -109,7 +148,10 @@ impl fmt::Display for BenchError {
 impl std::error::Error for BenchError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            BenchError::Io { source, .. } => Some(source),
+            BenchError::Io {
+                source,
+                ..
+            } => Some(source),
             _ => None,
         }
     }
@@ -118,6 +160,9 @@ impl std::error::Error for BenchError {
 impl BenchError {
     /// Wrap an [`io::Error`] with a static-lifetime context label.
     pub fn io(context: &'static str, source: io::Error) -> Self {
-        BenchError::Io { context, source }
+        BenchError::Io {
+            context,
+            source,
+        }
     }
 }

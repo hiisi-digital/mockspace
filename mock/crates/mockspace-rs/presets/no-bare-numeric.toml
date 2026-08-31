@@ -1,0 +1,18 @@
+schema_version = "1.0"
+name = "no-bare-numeric"
+primitive = "ast-type-position"
+description = "no bare numeric primitives in public API"
+
+[config]
+forbidden_types = ["u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128", "usize", "isize", "f32", "f64"]
+positions = ["fn-param", "fn-return", "struct-field", "enum-variant-field"]
+visibility = "public"
+
+[severity]
+commit = "error"
+build = "error"
+push = "error"
+
+[scope]
+paths = ["**/*.rs"]
+exempt_paths = ["**/ffi/**", "**/build.rs"]

@@ -1,0 +1,156 @@
+╔══ 00-control-valid 
+║ story: NEGATIVE CONTROL: nothing broken. Must load clean.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/00-control-valid/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 00b-control-must-fail 
+║ story: NEGATIVE CONTROL: a member with no points and no sweeps. Known-refused; proves the loader can error at all.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/00b-control-must-fail/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 01-typo-in-key 
+║ story: Typed `arm =` instead of `arms =`.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/01-typo-in-key/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 02-typo-in-section 
+║ story: Typed `[sweeps.width]` instead of `[sweep.width]`.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/02-typo-in-section/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 03-missing-title 
+║ story: Forgot `title`, which is the one required field.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/03-missing-title/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 04-unbalanced-toml 
+║ story: Left a bracket open. The single most common text mistake.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/04-unbalanced-toml/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 05-arm-named-not-present 
+║ story: Renamed the arm directory and forgot the manifest.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/05-arm-named-not-present/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 06-arm-present-not-named 
+║ story: Added an arm directory and forgot to list it. Silent?
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/06-arm-present-not-named/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 07-points-in-both-places 
+║ story: Left a top-level `points` when adding a sweep.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/07-points-in-both-places/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 08-seed-as-decimal-string 
+║ story: Wrote the seed as a quoted hex string.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/08-seed-as-decimal-string/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 09-root-toml-typo 
+║ story: Typo in the ROOT globals file: `runs_per_pas`.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/09-root-toml-typo/bench.toml: TOML parse error at line 3, column 1
+║     |
+║   3 | runs_per_pas = 5
+║     | ^^^^^^^^^^^^
+║   unknown field `runs_per_pas`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 10-member-listed-absent 
+║ story: Listed a member in [benchspace] and never created it.
+║ RESULT: Err
+║   invalid bench config: [benchspace] lists member `depths`, but /var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/10-member-listed-absent/depths/bench.toml does not exist. An explicitly listed member must be a directory with its own bench.toml; patterns (`*`) may match nothing.
+╚══
+
+╔══ 11-empty-arms 
+║ story: Wrote the sweep before writing any arms.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/11-empty-arms/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 12-no-bench-toml-at-all 
+║ story: Made the bench directory, forgot the file.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/12-no-bench-toml-at-all/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 13-baseline-names-missing-arm 
+║ story: `baseline` names an arm that is not in `arms`.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/13-baseline-names-missing-arm/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+
+╔══ 14-points-as-strings 
+║ story: Quoted the point values.
+║ RESULT: Err
+║   invalid bench config: /private/var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/diagprobe/14-points-as-strings/bench.toml: TOML parse error at line 2, column 1
+║     |
+║   2 | warmup_ms = 50
+║     | ^^^^^^^^^
+║   unknown field `warmup_ms`, expected one of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`
+╚══
+

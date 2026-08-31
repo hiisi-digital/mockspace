@@ -32,11 +32,11 @@ discovers hooks are inactive:
 2. On success, push a `"activated mockspace hooks (core.hooksPath set)"`
    action so the build-script output is transparent about what happened.
 3. On failure (e.g. not a git repo, permission denied), fall back to
-   the current "run `cargo mock activate`" message — don't fail the build.
+   the current "run `cargo mock activate`" message: don't fail the build.
 
 Edge cases:
 - Not a git repo → skip silently (same as current `is_active` returning
-  false with no `.git` present — maybe gate on `.git` existing before
+  false with no `.git` present: maybe gate on `.git` existing before
   attempting activation).
 - CI environments where `core.hooksPath` mutations are unwanted →
   respect an env var, something like `MOCKSPACE_NO_AUTO_ACTIVATE=1`, so
@@ -54,7 +54,7 @@ Edge cases:
 - `cargo check` a second time: verify no duplicate activation attempts,
   no error.
 - Manual `cargo mock deactivate` then `cargo check`: verify it re-
-  activates (or at least doesn't fight the user — we probably want the
+  activates (or at least doesn't fight the user: we probably want the
   user's deactivate to stick until they run `cargo mock activate`
   again; revisit).
 - `MOCKSPACE_NO_AUTO_ACTIVATE=1 cargo check`: verify no activation.
@@ -63,7 +63,7 @@ Edge cases:
 
 ## Severity
 
-Medium. Not a correctness bug — everything still compiles, lints still
+Medium. Not a correctness bug: everything still compiles, lints still
 run via `cargo mock`'s own pipeline. But it silently demotes the
 belt-and-suspenders story: pre-commit / pre-push become advisory
 instead of enforcing, which is exactly the opposite of what a

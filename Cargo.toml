@@ -1,10 +1,13 @@
 [workspace]
 members = [
     ".",
+    "cargo-mock",
+    "mockspace-manifest",
     "lint-rules",
     "bench-core",
     "bench-harness",
     "bench-macro",
+    "bench-matrix",
     "benches",
     "benches/variants/multiply-xor",
     "benches/variants/bitwise-rotate",
@@ -12,8 +15,8 @@ members = [
 
 [package]
 name = "mockspace"
-version = "0.1.0"
-edition = "2021"
+version = "0.0.2"
+edition = "2024"
 publish = false
 description = "Design-round workflow engine for mock workspaces"
 license = "MPL-2.0"
@@ -21,6 +24,32 @@ repository = "https://github.com/hiisi-digital/mockspace"
 readme = "README.md"
 categories = ["development-tools", "development-tools::build-utils"]
 keywords = ["design-rounds", "lints", "workflow", "mockspace"]
+# `docs/` does not ship, and this package does not either: it is `publish =
+# false` below, so the line is a statement of intent rather than a guard, and it
+# guards nothing today. What reaches crates.io is `cargo-mock`, which governs its
+# own contents with `include` and has never carried `docs/`, and the test that
+# checks a tarball asks `cargo-mock` rather than this.
+#
+# Kept because this package publishing is a one-line change somebody could make
+# without thinking about what it would take with it. Everything in that directory
+# is addressed to whoever works on the engine: bug notes and refactor scratch
+# under `research/`, three files of which carried project names and home paths
+# from the machine they were written on, plus migration guides that walk one
+# specific estate repo by repo by name.
+#
+# Op's call, and it is the resting state rather than the answer. The reference
+# material wants moving into `mock/` where the design trail already lives, and
+# that waits on v1 and v2 artifacts being able to coexist there, or on v2 reaching
+# implementation and the two merging.
+exclude = ["docs/"]
+# The `benches/` directory at the workspace root belongs to the
+# `self-bench` workspace member, not to this crate. Without this flag
+# cargo's edition-2021 auto-discovery picks up `benches/src/main.rs`
+# as a bench target named "src" of the root mockspace crate and tries
+# to compile it against this crate's deps: which lack the
+# mockspace-bench-core / mockspace-bench-harness imports the file
+# actually needs. Disabling auto-discovery is the targeted fix.
+autobenches = false
 
 [[bin]]
 name = "mockspace"
@@ -28,14 +57,25 @@ path = "src/main.rs"
 
 [dependencies]
 mockspace-lint-rules = { path = "lint-rules" }
+mockspace-bench-harness = { path = "bench-harness" }
+mockspace-manifest = { path = "mockspace-manifest" }
 libloading = "0.8"
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
 toml_edit = { version = "0.22", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+# `preserve_order`, because the agent settings this merges into are
+# hand-edited and read in diffs. Without it every key at every depth comes
+# back alphabetised, which loses the file's shape while preserving all of
+# its contents.
+serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]
 tempfile = "3"
+# Read by `tests/a_publishing_crate_has_no_git_dependency.rs`, which parses every
+# manifest in the tree. Already a normal dependency, so this adds nothing to
+# resolve.
+toml_edit = { version = "0.22", features = ["serde"] }
 
 # Release profile applies workspace-wide.
 [profile.release]

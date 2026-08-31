@@ -1,0 +1,24 @@
+[package]
+name = "mockspace-manifest"
+version = "0.0.2"
+edition = "2024"
+# The launcher-owned half of a repo's mockspace.toml, declared as a type so the
+# engine's config gate knows those keys are not its own, plus the durable hook
+# gate both sides plant. Published because the launcher (cargo-mock) is
+# published and depends on it.
+publish = true
+description = "The mockspace.toml keys the mockspace launcher reads, and the durable git-hook gate, shared between the launcher and the engine."
+readme = "../README.md"
+rust-version = "1.88"
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+homepage = "https://github.com/hiisi-digital/mockspace"
+categories = ["development-tools", "config"]
+keywords = ["mockspace", "manifest", "git-hooks", "toml"]
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+
+[dev-dependencies]
+tempfile = "3"

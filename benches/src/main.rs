@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Self-bench for mockspace. Compares two u64 hash-mixing functions
 //! through the full bench harness pipeline (orchestrator, worker
 //! subprocess, dlopen, CSV cache, findings.md). First real consumer
@@ -6,10 +11,8 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use mockspace_bench_core::{routine_bridge, Routine};
-use mockspace_bench_harness::{
-    self as harness, BenchManifest, RoutineSpec, Workload,
-};
+use mockspace_bench_core::{Routine, routine_bridge};
+use mockspace_bench_harness::{self as harness, BenchManifest, RoutineSpec, Workload};
 
 /// Routine: u64 hash-mixing. Variants differ in how they scramble the
 /// input seed into a 64-bit digest.
@@ -47,7 +50,7 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
-        }
+        },
     };
 
     let mock_benches_dir = std::env::current_dir()
@@ -65,7 +68,7 @@ fn main() -> ExitCode {
                 Err(e) => {
                     eprintln!("error: {e}");
                     return ExitCode::FAILURE;
-                }
+                },
             };
             config.variant_paths = config
                 .variant_paths
@@ -73,7 +76,7 @@ fn main() -> ExitCode {
                 .map(shape_variant_path)
                 .collect();
             let routine = RoutineSpec {
-                name: section.workload.clone(),
+                name:   section.workload.clone(),
                 bridge: routine_bridge!(HashMix),
             };
 
@@ -90,7 +93,7 @@ fn main() -> ExitCode {
                         );
                         eprintln!("hint: run the bench first to produce the csv");
                         return ExitCode::FAILURE;
-                    }
+                    },
                 };
                 if samples.is_empty() {
                     eprintln!(
@@ -119,7 +122,7 @@ fn main() -> ExitCode {
                     Err(e) => {
                         eprintln!("error: bench `{bench_name}` n={}: {e}", config.n);
                         return ExitCode::FAILURE;
-                    }
+                    },
                 };
                 if let Err(e) = harness::write_csv(&result, &csv_path) {
                     eprintln!("error: writing csv: {e}");
@@ -164,7 +167,7 @@ fn run_worker(args: &[String]) -> ExitCode {
         None => {
             eprintln!("worker: missing --worker <path>");
             return ExitCode::FAILURE;
-        }
+        },
     };
     let bench_name = get("--bench-name").unwrap_or_default();
     let seed: u64 = get("--seed").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -177,9 +180,12 @@ fn run_worker(args: &[String]) -> ExitCode {
     let max_call_us: Option<u64> = get("--max-call-us")
         .and_then(|s| s.parse().ok())
         .filter(|&v| v > 0);
+    // A bare flag the orchestrator passes for `threaded = true` manifests so the
+    // worker opts out of the self-pin (spawned threads never inherit the pin).
+    let threaded = args.iter().any(|a| a == "--threaded");
 
     let routine = RoutineSpec {
-        name: bench_name.clone(),
+        name:   bench_name.clone(),
         bridge: routine_bridge!(HashMix),
     };
 
@@ -187,6 +193,19 @@ fn run_worker(args: &[String]) -> ExitCode {
     workload.program("default", |b| {
         b.stage(vec![harness::algo_call(), harness::light_scalar()]);
     });
+
+    // The validation pass spawns this binary with `--mode validate` and a seed
+    // list, and reads `VOUT` lines back. Without this arm those flags fall
+    // through to the timing worker, which prints no `VOUT` and exits zero, so
+    // every variant is skipped for returning 0 of N outputs and the pass
+    // reports success over an empty set.
+    if mode == "validate" {
+        let seeds: Vec<u64> = get("--seeds")
+            .map(|s| s.split(',').filter_map(|t| t.parse().ok()).collect())
+            .unwrap_or_default();
+        harness::harness::run_worker_validate(&routine, &dylib_path, &seeds, n, threaded);
+        return ExitCode::SUCCESS;
+    }
 
     harness::run_worker(
         &routine,
@@ -200,6 +219,7 @@ fn run_worker(args: &[String]) -> ExitCode {
         n,
         batch_k,
         max_call_us,
+        threaded,
     );
     ExitCode::SUCCESS
 }

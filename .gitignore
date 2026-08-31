@@ -1,2 +1,12 @@
-/target
-/mock
+# === mockspace-managed build artifacts (do not edit) ===
+# Catch-all: every cargo build dir, including nested ones under benches/,
+# tests/, and research sketches. A leading-slash /target would miss those.
+target/
+# === end mockspace-managed build artifacts ===
+
+# The desktop indexer's opt-out marker. Every per-agent worktree gets one on
+# creation, per the workspace's worktree rule, because a build tree nobody
+# marked is a few thousand files for the indexer per run. It is a property of
+# the checkout rather than of the project, so it is ignored rather than
+# committed, and without this line every worktree spawned here starts dirty.
+.metadata_never_index

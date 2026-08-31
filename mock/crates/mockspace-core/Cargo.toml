@@ -1,0 +1,31 @@
+[package]
+name = "mockspace-core"
+version = "0.1.0"
+edition = "2021"
+description = "Ref-based storage foundation for mockspace v2."
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+readme = "README.md.tmpl"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+# Phase 5 IO storage substrate (orphan refs per spec §19). Same version
+# as homma uses for git ops to keep the workspace dep graph coherent.
+# Minimal feature set: enough to open + discover + read refs/objects.
+# Expanded by later Phase 5 slices as needed (network ops at the push CAS
+# slice; worktree-mutation NOT planned since spec §20 forbids `git worktree`).
+# `sha1` is not optional despite looking like it. gix-hash refuses to compile
+# without one of `sha1` or `sha256`, and `default-features = false` drops it,
+# so the build fails inside the registry source with a bare "Please set either
+# the `sha1` or the `sha256` feature flag" and a dozen cascading errors under
+# it. gix does not support sha256 object hashes, so sha1 is the only answer.
+gix = { version = "0.87", default-features = false, features = ["revision", "sha1"] }
+# Cross-platform advisory file locking for the Phase 5 transition lock
+# at `.git/mockspace/.lock`. fs2 wraps fcntl(F_SETLK) on POSIX and
+# LockFileEx on Windows; matches the flock(2) semantics spec §24 names.
+fs2 = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

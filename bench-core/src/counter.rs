@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Hardware performance counter reads + deterministic PRNG.
 //! CNTVCT_EL0 on aarch64 (24MHz, 41.67ns/tick).
 //! rdtsc on x86_64 (reference frequency).
@@ -12,7 +17,9 @@ pub struct Rng {
 impl Rng {
     #[must_use]
     pub fn new(seed: u64) -> Self {
-        Rng { state: seed }
+        Rng {
+            state: seed,
+        }
     }
 
     pub fn next(&mut self) -> u64 {
@@ -27,7 +34,7 @@ impl Rng {
     #[cfg(feature = "std")]
     #[must_use = "seeds advances RNG state; the returned Vec contains the only record of the produced values"]
     pub fn seeds(&mut self, n: usize) -> std::vec::Vec<u64> {
-        (0..n).map(|_| self.next()).collect()
+        (0 .. n).map(|_| self.next()).collect()
     }
 }
 
@@ -139,7 +146,7 @@ pub fn pin_to_perf_cores() {
 
     // QoS class: USER_INTERACTIVE = 0x21, biases toward P-cores
     unsafe {
-        extern "C" {
+        unsafe extern "C" {
             fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: c_int) -> c_int;
         }
         let ret = pthread_set_qos_class_self_np(0x21, 0);
@@ -150,7 +157,7 @@ pub fn pin_to_perf_cores() {
 
     // Thread affinity tag: keeps thread in same scheduling group
     unsafe {
-        extern "C" {
+        unsafe extern "C" {
             fn mach_thread_self() -> u32;
             fn thread_policy_set(
                 thread: u32,
@@ -175,10 +182,13 @@ pub fn pin_to_perf_cores() {
 /// Evict a range of memory from all cache levels.
 /// Used for "L2 warm, L1 cold" measurement modes.
 ///
-/// `ptr` must be aligned to cache line size (64 bytes on most platforms).
-/// `len` is in bytes.
+/// # Safety
+///
+/// `ptr` must be aligned to cache line size (64 bytes on most platforms) and
+/// `[ptr, ptr + len)` must be a valid readable range; the function issues
+/// cache-maintenance instructions across it. `len` is in bytes.
 #[inline(always)]
-pub fn evict_cache_range(ptr: *const u8, len: usize) {
+pub unsafe fn evict_cache_range(ptr: *const u8, len: usize) {
     const CACHE_LINE: usize = 64;
     let mut offset = 0;
     while offset < len {

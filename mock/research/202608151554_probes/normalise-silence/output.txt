@@ -1,0 +1,42 @@
+C1 real baseline changes the report: PASS
+C2 real floor changes the report: PASS
+C3 mode=ratio changes the report: PASS
+
+all controls pass; the instrument can see a role change.
+
+F1 baseline="charley" (typo) == no baseline at all: true
+F2 floor="alfa" (typo) == no floor at all:           true
+F3 mode="percent" == mode="subtract":              true
+F3 mode="none" == mode="subtract":              true
+F3 mode="percnt" == mode="subtract":              true
+F3 mode="" == mode="subtract":              true
+F3 mode="RATIO" == mode="subtract":              true
+F3 mode="banana" == mode="subtract":              true
+
+-- rows under the DECLARED baseline `charlie` --
+| alpha | 110ns | 110ns | 110ns | 110ns | 110ns | -73.17% |
+| charlie | 410ns | 410ns | 410ns | 410ns | 410ns | base |
+| alpha | 101ns | 100ns | 102ns | -74.81% |
+| charlie | 401ns | 400ns | 402ns | base |
+| alpha | 110ns | 110ns | -73.17% |
+| charlie | 410ns | 410ns | base |
+| charlie | 401ns | base | --- | [400, 402] | --- | --- | --- | --- |
+| alpha | 101ns | -300.0ns (-74.8%) | [-300, -300]ns | [100, 102] | YES | 0.0000 | 0.0000 | 0 |
+| alpha | -0.438 | moderate- |
+| charlie | -0.438 | moderate- |
+| alpha | 10.0ns | 101.0ns | 9.9% | HIGH |
+| charlie | 10.0ns | 401.0ns | 2.5% |  |
+
+-- rows under the TYPOED baseline `charley` --
+| alpha | 110ns | 110ns | 110ns | 110ns | 110ns | base |
+| charlie | 410ns | 410ns | 410ns | 410ns | 410ns | +272.73% |
+| alpha | 101ns | 100ns | 102ns | base |
+| charlie | 401ns | 400ns | 402ns | +297.03% |
+| alpha | 110ns | 110ns | base |
+| charlie | 410ns | 410ns | +272.73% |
+| alpha | 101ns | base | --- | [100, 102] | --- | --- | --- | --- |
+| charlie | 401ns | +300.0ns (+297.0%) | [+300, +300]ns | [400, 402] | YES | 0.0000 | 0.0000 | 0 |
+| alpha | -0.438 | moderate- |
+| charlie | -0.438 | moderate- |
+| alpha | 10.0ns | 101.0ns | 9.9% | HIGH |
+| charlie | 10.0ns | 401.0ns | 2.5% |  |

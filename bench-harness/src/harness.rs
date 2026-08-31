@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Harness: one binary, two modes.
 //!
 //! Orchestrator (default): spawns itself as subprocesses per
@@ -20,9 +25,12 @@
 //! `--worker` and per-config args; the worker mode loads the variant
 //! cdylib, runs one mode, prints per-batch lines to stdout, exits.
 //!
-//! Round 3 ships orchestrator + worker. The result type does NOT yet
-//! carry [`crate::analysis::DataSet`] aggregation; that lands in
-//! Round 5 as `BenchResult::dataset(mode)`.
+//! ## What the orchestrator does not do
+//!
+//! [`run_orchestrator`] spawns workers and collects samples. It does not run
+//! [`crate::validation::validate`], and it does not use the `workload` it is
+//! handed: the worker builds its own from its own `main`. The validation pass
+//! and the duplicate-disassembly check live in [`crate::driver`].
 
 use std::process::Command;
 use std::thread::sleep;
@@ -30,21 +38,43 @@ use std::time::{Duration, Instant};
 
 use crate::config::BenchConfig;
 use crate::core::counter::{self, Rng};
-use crate::core::{abi_hash, AbiHashFn, BenchEntryFn, BenchNameFn};
-use crate::env::{collect_env_meta, EnvMeta};
+use crate::core::{AbiHashFn, BenchEntryFn, BenchNameFn, abi_hash};
+use crate::env::{EnvMeta, collect_env_meta};
 use crate::error::BenchError;
 use crate::sample::{BenchResult, Sample};
 use crate::spec::RoutineSpec;
-use crate::workload::{mix, Workload};
+use crate::workload::{Workload, mix};
 
 // ── Environment metadata helpers ──
 
+/// The environment variable the tool sets on the driver it spawns,
+/// carrying the release-profile settings it actually passed on the
+/// builds (`opt-level=..,lto=..,codegen-units=..`).
+pub const BUILD_PROFILE_ENV: &str = "MOCKSPACE_BENCH_PROFILE";
+
 /// Serialize [`EnvMeta`] to a JSON string (no serde_json dependency).
+///
+/// `build_profile` records the settings the tool passed on the
+/// builds, read from [`BUILD_PROFILE_ENV`]. It was previously a
+/// hardcoded constant, which became a lie the moment `[build]`
+/// overrides existed: a tree overriding the profile got artifacts
+/// recording a profile that was not used, and a comparison across
+/// that change read as a performance shift with no visible cause.
+/// When the variable is absent (the binary run by hand, outside the
+/// tool), the field is omitted: no claim beats a wrong one.
 fn env_meta_to_json(meta: &EnvMeta) -> String {
+    env_meta_to_json_with(meta, std::env::var(BUILD_PROFILE_ENV).ok().as_deref())
+}
+
+fn env_meta_to_json_with(meta: &EnvMeta, build_profile: Option<&str>) -> String {
+    let profile_field = match build_profile {
+        Some(p) => format!(",\"build_profile\":\"{}\"", json_escape(p)),
+        None => String::new(),
+    };
     format!(
         "{{\"cpu\":\"{cpu}\",\"os\":\"{os}\",\"rustc\":\"{rustc}\",\
         \"git_commit\":\"{git}\",\"timestamp\":{ts},\
-        \"counter_freq\":{freq},\"framework\":\"mockspace-bench-harness\"}}",
+        \"counter_freq\":{freq},\"framework\":\"mockspace-bench-harness\"{profile_field}}}",
         cpu = json_escape(&meta.cpu),
         os = json_escape(&meta.os),
         rustc = json_escape(&meta.rustc),
@@ -112,11 +142,9 @@ unsafe fn load_variant(dylib_path: &str) -> Result<(String, BenchEntryFn), Strin
         .map_err(|e| format!("missing bench_entry symbol: {e}"))?;
     let entry_fn: BenchEntryFn = *entry;
 
-    let name_fn: libloading::Symbol<BenchNameFn> = unsafe { lib.get(b"bench_name") }
-        .map_err(|e| format!("missing bench_name symbol: {e}"))?;
-    let name = unsafe { std::ffi::CStr::from_ptr(name_fn() as *const i8) }
-        .to_string_lossy()
-        .into_owned();
+    let name_fn: libloading::Symbol<BenchNameFn> =
+        unsafe { lib.get(b"bench_name") }.map_err(|e| format!("missing bench_name symbol: {e}"))?;
+    let name = unsafe { variant_name(*name_fn) };
 
     // Leak the library so the function pointers stay valid for the
     // remainder of the worker's lifetime.
@@ -131,8 +159,12 @@ unsafe fn load_variant(dylib_path: &str) -> Result<(String, BenchEntryFn), Strin
 /// Output format on stdout, one line per batch:
 ///
 /// ```text
-/// <name>\t<mode>\t<batch_idx>\t<e2e_ns>\t<algo_ns>\t<bridge_ns>\t<batch_count>[\t<score>]
+/// <name>\t<mode>\t<batch_idx>\t<e2e_ns>\t<algo_ns>\t<bridge_ns>\t<batch_count>\t<instructions>\t<cycles>\t<setup_ns>\t<first_ns>\t<digest>[\t<score>]
 /// ```
+///
+/// `setup_ns`/`first_ns`/`digest` are always present (zero when a variant
+/// does not measure them, e.g. plain `timed!` variants); `score` is the
+/// optional trailing column.
 ///
 /// Or `TIMEOUT\t<name>\t<mode>\t<value>` on early abort.
 #[allow(clippy::too_many_arguments)]
@@ -148,8 +180,63 @@ pub fn run_worker(
     n: usize,
     batch_k: usize,
     max_call_us: Option<u64>,
+    threaded: bool,
 ) {
-    counter::pin_to_perf_cores();
+    // A threaded bench's spawned workers never inherit the pin, and
+    // pinning only the coordinating thread skews the workload; the
+    // manifest's `threaded = true` opts out of the self-pin entirely.
+    if !threaded {
+        counter::pin_to_perf_cores();
+    }
+
+    // Optional hardware perf counters: arm on this worker thread when the env
+    // opts in (set by running the bench with `--perf-counters`, which requires
+    // sudo; the env inherits to each serially-spawned worker). The RAII guard
+    // releases the PMU on every exit path, including early returns and panics,
+    // so the exclusive claim is never left for the next worker.
+    struct PerfGuard;
+    impl Drop for PerfGuard {
+        fn drop(&mut self) {
+            crate::perf::teardown();
+        }
+    }
+    if std::env::var("MOCKSPACE_BENCH_PERF").is_ok() {
+        crate::perf::setup();
+    }
+    let _perf_guard = PerfGuard;
+
+    // One-shot validation diagnostic: with MOCKSPACE_BENCH_PERF_DIAG set (and the
+    // PMU armed), run a known ~1e6-iteration loop and dump the raw per-slot
+    // counter deltas to stderr. The slot whose delta is ~a few million is the
+    // instructions counter; the larger one is cycles. This is the single command
+    // that confirms (or corrects) the FIXED_*_SUBINDEX guesses in perf.rs.
+    if std::env::var("MOCKSPACE_BENCH_PERF_DIAG").is_ok() && crate::perf::available() {
+        let before = crate::perf::read_all_raw();
+        let mut acc = 0u64;
+        for i in 0 .. 1_000_000u64 {
+            acc = acc.wrapping_add(std::hint::black_box(i));
+        }
+        std::hint::black_box(acc);
+        let after = crate::perf::read_all_raw();
+        let deltas: Vec<i128> = after
+            .iter()
+            .zip(before.iter())
+            .map(|(a, b)| *a as i128 - *b as i128)
+            .collect();
+        eprintln!("PERF_DIAG raw before: {:?}", before);
+        eprintln!("PERF_DIAG raw after:  {:?}", after);
+        eprintln!(
+            "PERF_DIAG deltas (1e6-iter loop): {:?} -- the slot ~a few million is instructions, the larger is cycles",
+            deltas
+        );
+        let snap = crate::perf::read();
+        eprintln!(
+            "PERF_DIAG current perf.rs mapping reads: instructions={} cycles={} ipc={:.3}",
+            snap.instructions,
+            snap.cycles,
+            snap.ipc()
+        );
+    }
 
     // Worker mode emits structured failure on stderr + a TIMEOUT-shaped
     // line on stdout so the orchestrator can categorise the failure
@@ -162,7 +249,7 @@ pub fn run_worker(
                 eprintln!("  WORKER LOAD FAIL: {} :: {}", dylib_path, reason);
                 println!("TIMEOUT\t<load-fail>\t{}\t0", mode);
                 return;
-            }
+            },
         }
     };
 
@@ -170,12 +257,13 @@ pub fn run_worker(
     let output_size = routine.bridge.output_size;
     // Use the routine's scorer iff the routine declared a score label
     // (presence of label is the consent signal that scoring is meaningful).
-    let output_scorer: Option<fn(&[u8], &[u8]) -> Option<f64>> = routine
-        .bridge
-        .score_label
-        .map(|_| routine.bridge.scorer);
+    let output_scorer: Option<fn(&[u8], &[u8]) -> Option<f64>> =
+        routine.bridge.score_label.map(|_| routine.bridge.scorer);
 
-    let warmup = runs / 5;
+    // At least one warmup call always runs, so lazy per-process state
+    // (a variant caching an expensive structure across calls) is built
+    // outside the preflight probe and the timed batches.
+    let warmup = (runs / 5).max(1);
     let mut rng = Rng::new(seed);
     let sub_seeds = rng.seeds(warmup + runs);
     let sleep_dur = Duration::from_millis(cooldown_ms);
@@ -187,7 +275,7 @@ pub fn run_worker(
     let mut warm_output = vec![0u8; output_size];
 
     // Warmup
-    for i in 0..warmup {
+    for i in 0 .. warmup {
         let s = sub_seeds[i];
         if mode == "warm" {
             workload.run_program(s, &mut |_| unsafe {
@@ -226,17 +314,31 @@ pub fn run_worker(
     let mut last_cold_input: Option<Vec<u8>> = None;
     let mut last_cold_output: Option<Vec<u8>> = None;
 
-    for b in 0..batches {
+    for b in 0 .. batches {
         let base = warmup + b * batch_size;
         let mut batch_e2e_ticks = 0u64;
         let mut batch_algo_ticks = 0u64;
         let mut batch_bridge_ticks = 0u64;
+        // host-side PMU deltas over the measured region, accumulated per batch.
+        // Zero when perf counters are unavailable / off (the reads return zeros).
+        let mut batch_instructions = 0u64;
+        let mut batch_cycles = 0u64;
+        // matrix-scaffold data carried on the FfiBenchCall: the one-time setup
+        // cost S and the cold first-touch pass (both summed per program like the
+        // algo ticks, then meaned over the batch), plus the reps-invariant
+        // fidelity digest (a witness, captured not summed). All zero for plain
+        // timed! variants and in the amortised-batch path, which does not capture
+        // the call result.
+        let mut batch_setup_ticks = 0u64;
+        let mut batch_first_ticks = 0u64;
+        let mut batch_digest = 0u64;
 
         if batch_k > 1 {
-            for i in 0..batch_size {
+            for i in 0 .. batch_size {
+                let pf_start = crate::perf::read();
                 let fw_start = counter::read_counter();
                 if mode == "warm" {
-                    for _ in 0..batch_k {
+                    for _ in 0 .. batch_k {
                         unsafe {
                             entry(warm_input.as_ptr(), warm_output.as_mut_ptr(), n);
                         }
@@ -245,7 +347,7 @@ pub fn run_worker(
                     let s = sub_seeds[base + i];
                     let input = input_builder(s);
                     let mut output = vec![0u8; output_size];
-                    for _ in 0..batch_k {
+                    for _ in 0 .. batch_k {
                         unsafe {
                             entry(input.as_ptr(), output.as_mut_ptr(), n);
                         }
@@ -254,27 +356,41 @@ pub fn run_worker(
                     last_cold_output = Some(output);
                 }
                 let fw_end = counter::read_counter();
-                let per_call = (fw_end - fw_start) / batch_k as u64;
+                // bracket PMU symmetrically with the timer and divide by batch_k
+                // for a per-call count, so amortized-batch samples carry real
+                // counters too (not zeros that would dilute the per-variant mean).
+                let pd = crate::perf::read().delta(&pf_start);
+                let bk = batch_k as u64;
+                batch_instructions += pd.instructions / bk;
+                batch_cycles += pd.cycles / bk;
+                let per_call = (fw_end - fw_start) / bk;
                 batch_algo_ticks += per_call;
                 batch_e2e_ticks += per_call;
             }
         } else {
-            for i in 0..batch_size {
+            for i in 0 .. batch_size {
                 let s = sub_seeds[base + i];
+                let pf_start = crate::perf::read();
                 let fw_start = counter::read_counter();
                 let wall_start = Instant::now();
                 let mut algo_accum = 0u64;
                 // outer timer around entry()
                 let mut call_accum = 0u64;
+                // matrix-scaffold fields off the FfiBenchCall, per program.
+                let mut setup_accum = 0u64;
+                let mut first_accum = 0u64;
+                let mut digest_last = 0u64;
 
                 if mode == "warm" {
                     workload.run_program(s, &mut |_| {
                         let call_start = counter::read_counter();
-                        let result = unsafe {
-                            entry(warm_input.as_ptr(), warm_output.as_mut_ptr(), n)
-                        };
+                        let result =
+                            unsafe { entry(warm_input.as_ptr(), warm_output.as_mut_ptr(), n) };
                         let call_end = counter::read_counter();
                         algo_accum += result.run_ticks;
+                        setup_accum += result.setup_ticks;
+                        first_accum += result.first_ticks;
+                        digest_last = result.digest;
                         call_accum += call_end - call_start;
                         result
                     });
@@ -286,6 +402,9 @@ pub fn run_worker(
                         let result = unsafe { entry(input.as_ptr(), output.as_mut_ptr(), n) };
                         let call_end = counter::read_counter();
                         algo_accum += result.run_ticks;
+                        setup_accum += result.setup_ticks;
+                        first_accum += result.first_ticks;
+                        digest_last = result.digest;
                         call_accum += call_end - call_start;
                         result
                     });
@@ -308,7 +427,15 @@ pub fn run_worker(
                 }
 
                 let fw_end = counter::read_counter();
+                let pd = crate::perf::read().delta(&pf_start);
+                batch_instructions += pd.instructions;
+                batch_cycles += pd.cycles;
                 batch_algo_ticks += algo_accum;
+                batch_setup_ticks += setup_accum;
+                batch_first_ticks += first_accum;
+                // digest is a fidelity witness, reps-invariant and identical
+                // across programs; the last one seen represents the batch.
+                batch_digest = digest_last;
                 // bridge = conversion overhead = (outer algo - inner algo)
                 let bridge = call_accum.saturating_sub(algo_accum);
                 // e2e = program time minus conversion overhead
@@ -322,6 +449,9 @@ pub fn run_worker(
         let e2e_ns = (batch_e2e_ticks as f64 / count) * ticks_to_ns;
         let algo_ns = (batch_algo_ticks as f64 / count) * ticks_to_ns;
         let bridge_ns = (batch_bridge_ticks as f64 / count) * ticks_to_ns;
+        // matrix-scaffold means (0 for plain timed! variants / amortised path).
+        let setup_ns = (batch_setup_ticks as f64 / count) * ticks_to_ns;
+        let first_ns = (batch_first_ticks as f64 / count) * ticks_to_ns;
 
         // Score at multiple evenly-spaced points within each batch in
         // normal (non-batch-amortised) warm mode, average the scores.
@@ -356,16 +486,46 @@ pub fn run_worker(
             }
         });
 
-        // One line per batch
+        // per-call PMU means for this batch (0 when counters are off).
+        let bs = batch_size.max(1) as u64;
+        let instr_per_call = batch_instructions / bs;
+        let cycles_per_call = batch_cycles / bs;
+
+        // One line per batch. instructions/cycles sit at fixed columns 7,8; the
+        // always-present matrix columns setup_ns/first_ns/digest at 9,10,11; and
+        // the optional score at 12. The parser reads them positionally.
         if let Some(s) = batch_score {
             println!(
-                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{:.2}",
-                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size, s
+                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}\t{:.2}",
+                name,
+                mode,
+                b,
+                e2e_ns,
+                algo_ns,
+                bridge_ns,
+                batch_size,
+                instr_per_call,
+                cycles_per_call,
+                setup_ns,
+                first_ns,
+                batch_digest,
+                s
             );
         } else {
             println!(
-                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}",
-                name, mode, b, e2e_ns, algo_ns, bridge_ns, batch_size
+                "{}\t{}\t{}\t{:.1}\t{:.1}\t{:.1}\t{}\t{}\t{}\t{:.1}\t{:.1}\t{}",
+                name,
+                mode,
+                b,
+                e2e_ns,
+                algo_ns,
+                bridge_ns,
+                batch_size,
+                instr_per_call,
+                cycles_per_call,
+                setup_ns,
+                first_ns,
+                batch_digest
             );
         }
 
@@ -455,29 +615,36 @@ pub fn run_orchestrator(
     let _ = (routine, workload);
     let input_tagger = routine.bridge.input_tagger;
 
-    for hr in 0..config.harness_runs {
+    for hr in 0 .. config.harness_runs {
         eprintln!("  ── Harness run {}/{} ──", hr + 1, config.harness_runs);
 
         let seed_source = if config.master_seed != 0 {
             config.master_seed
         } else {
-            Instant::now().elapsed().as_nanos() as u64
+            // Wall-clock entropy; the prior `Instant::now().elapsed()`
+            // form measured a freshly created Instant and was near-zero
+            // (and thus near-constant) every run.
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x9E37_79B9)
         };
         let mut rng = Rng::new(seed_source.wrapping_add(hr as u64 * 0xDEADBEEF));
 
         let total_passes = config.passes * nc;
-        let seeds: Vec<u64> = (0..total_passes).map(|_| rng.next()).collect();
+        let seeds: Vec<u64> = (0 .. total_passes).map(|_| rng.next()).collect();
 
-        for pass_idx in 0..total_passes {
+        for pass_idx in 0 .. total_passes {
             let ci = pass_idx % nc;
             let cd = config.cooldowns_ms[ci];
             let seed = seeds[pass_idx];
             let pass_num = pass_idx / nc + 1;
 
-            // Randomise variant order
-            let mut variant_order: Vec<usize> = (0..nv).collect();
+            // reshuffled per pass so a variant's position in the pass cannot
+            // bias its numbers.
+            let mut variant_order: Vec<usize> = (0 .. nv).collect();
             let mut h = mix(seed);
-            for i in (1..nv).rev() {
+            for i in (1 .. nv).rev() {
                 h = mix(h);
                 let j = (h as usize) % (i + 1);
                 variant_order.swap(i, j);
@@ -502,7 +669,11 @@ pub fn run_orchestrator(
                         })
                         .unwrap_or(300);
 
-                    let mut child = Command::new(&exe)
+                    let mut cmd = Command::new(&exe);
+                    if config.threaded {
+                        cmd.arg("--threaded");
+                    }
+                    let mut child = cmd
                         .args([
                             "--worker",
                             variant_path,
@@ -548,10 +719,10 @@ pub fn run_orchestrator(
                                     break;
                                 }
                                 std::thread::sleep(Duration::from_millis(10));
-                            }
+                            },
                             Err(e) => {
                                 return Err(BenchError::io("waiting on worker subprocess", e));
-                            }
+                            },
                         }
                     }
 
@@ -577,26 +748,53 @@ pub fn run_orchestrator(
                             continue;
                         }
                         let parts: Vec<&str> = line.split('\t').collect();
-                        if parts.len() >= 7 {
+                        if parts.len() >= 9 {
                             all_samples.push(Sample {
-                                run: hr + 1,
-                                pass: pass_num,
-                                cooldown_ms: cd,
-                                mode: parts[1].to_string(),
-                                variant: parts[0].to_string(),
-                                batch_idx: parts[2].parse().unwrap_or(0),
-                                e2e_ns: parts[3].parse().unwrap_or(0.0),
-                                algo_ns: parts[4].parse().unwrap_or(0.0),
-                                bridge_ns: parts[5].parse().unwrap_or(0.0),
-                                batch_count: parts[6].parse().unwrap_or(0),
-                                score: parts.get(7).and_then(|s| s.parse().ok()),
-                                input_tag: input_tagger.map(|f| f(seed).1),
+                                run:          hr + 1,
+                                pass:         pass_num,
+                                cooldown_ms:  cd,
+                                mode:         parts[1].to_string(),
+                                variant:      parts[0].to_string(),
+                                batch_idx:    parts[2].parse().unwrap_or(0),
+                                e2e_ns:       parts[3].parse().unwrap_or(0.0),
+                                algo_ns:      parts[4].parse().unwrap_or(0.0),
+                                bridge_ns:    parts[5].parse().unwrap_or(0.0),
+                                batch_count:  parts[6].parse().unwrap_or(0),
+                                // instructions/cycles at fixed 7,8; matrix
+                                // setup_ns/first_ns/digest at 9,10,11; optional
+                                // score at 12.
+                                instructions: parts
+                                    .get(7)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0),
+                                cycles:       parts
+                                    .get(8)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0),
+                                setup_ns:     parts
+                                    .get(9)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0.0),
+                                first_ns:     parts
+                                    .get(10)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0.0),
+                                digest:       parts
+                                    .get(11)
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0),
+                                score:        parts.get(12).and_then(|s| s.parse().ok()),
+                                input_tag:    input_tagger.map(|f| f(seed).1),
                             });
                         }
                     }
                 }
             }
-            eprintln!(" done");
+            let done_passes = hr * total_passes + pass_idx + 1;
+            let all_passes = config.harness_runs * total_passes;
+            let el = total_start.elapsed().as_secs_f64();
+            let eta = el / done_passes as f64 * (all_passes - done_passes) as f64;
+            eprintln!(" done ({el:.0}s elapsed, ~{eta:.0}s left)");
         }
     }
 
@@ -604,10 +802,10 @@ pub fn run_orchestrator(
     eprintln!("  Total: {:.1}s", total_secs);
 
     Ok(BenchResult {
-        title: config.title.clone(),
-        env: collect_env_meta(),
-        samples: all_samples,
-        cache_path: String::new(),
+        title:       config.title.clone(),
+        env:         collect_env_meta(),
+        samples:     all_samples,
+        cache_path:  String::new(),
         report_path: String::new(),
     })
 }
@@ -616,27 +814,115 @@ pub fn run_orchestrator(
 
 /// Write the result samples to a CSV at `path` plus a sidecar
 /// `<path>.meta.json` carrying [`EnvMeta`].
+///
+/// The rows come from [`crate::sample::to_csv`], the one writer, so this and
+/// the cache cannot disagree about the column order.
 pub fn write_csv(result: &BenchResult, path: &str) -> Result<(), BenchError> {
-    let mut csv = String::from(
-        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag\n",
-    );
-    for s in &result.samples {
-        let score_str = s.score.map(|v| format!("{:.2}", v)).unwrap_or_default();
-        let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
-        csv.push_str(&format!(
-            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{}\n",
-            s.run, s.pass, s.cooldown_ms, s.mode, s.variant,
-            s.batch_idx, s.e2e_ns, s.algo_ns, s.bridge_ns,
-            s.batch_count, score_str, tag_str
-        ));
-    }
+    let csv = crate::sample::to_csv(&result.samples);
     std::fs::write(path, &csv).map_err(|e| BenchError::io("writing csv", e))?;
     eprintln!("  CSV: {} ({} rows)", path, result.samples.len());
 
     let json = env_meta_to_json(&result.env);
     let meta_path = meta_json_path(path);
-    std::fs::write(&meta_path, &json)
-        .map_err(|e| BenchError::io("writing meta.json", e))?;
+    std::fs::write(&meta_path, &json).map_err(|e| BenchError::io("writing meta.json", e))?;
     eprintln!("  Meta: {}", meta_path);
     Ok(())
+}
+
+/// Validation worker: run the variant once per seed (twice, for the
+/// determinism pair) in THIS subprocess and emit outputs on stdout as
+/// `VOUT\t<seed>\t<hex_first>\t<hex_second>` lines. The variant's
+/// cached per-process state (the setup-once pattern) lives and dies
+/// with this process, so orchestrator memory stays bounded no matter
+/// how many variants or sizes a run visits.
+pub fn run_worker_validate(
+    routine: &RoutineSpec,
+    dylib_path: &str,
+    seeds: &[u64],
+    n: usize,
+    threaded: bool,
+) {
+    if !threaded {
+        counter::pin_to_perf_cores();
+    }
+    let (_name, entry) = unsafe {
+        match load_variant(dylib_path) {
+            Ok(pair) => pair,
+            Err(reason) => {
+                // Zero VOUT lines already read as a skip in the
+                // orchestrator; no protocol token needed.
+                eprintln!("  WORKER LOAD FAIL: {} :: {}", dylib_path, reason);
+                return;
+            },
+        }
+    };
+    let input_builder = routine.bridge.input_builder;
+    let output_size = routine.bridge.output_size;
+    for &seed in seeds {
+        let input = input_builder(seed);
+        let mut out_first = vec![0u8; output_size];
+        let mut out_second = vec![0u8; output_size];
+        unsafe {
+            entry(input.as_ptr(), out_first.as_mut_ptr(), n);
+            entry(input.as_ptr(), out_second.as_mut_ptr(), n);
+        }
+        println!(
+            "VOUT\t{}\t{}\t{}",
+            seed,
+            to_hex(&out_first),
+            to_hex(&out_second)
+        );
+    }
+}
+
+/// Read the name a loaded variant exports through `bench_name`.
+///
+/// The one place the pointer changes type, and it goes to `c_char` rather than
+/// to `i8`. **`c_char` is unsigned on aarch64, arm, riscv, powerpc and s390x
+/// Linux**, so `as *const i8` does not compile there at all, and three call
+/// sites each spelled it that way. Whether it happens to be signed is a fact
+/// about the host somebody built on, not about the code.
+///
+/// # Safety
+///
+/// `name_fn` must come from a loaded variant and return a pointer to a
+/// nul-terminated string that outlives the call, which is what the
+/// `bench_name` contract in `mockspace-bench-core` requires of a variant.
+pub(crate) unsafe fn variant_name(name_fn: BenchNameFn) -> String {
+    unsafe { std::ffi::CStr::from_ptr(name_fn().cast::<std::ffi::c_char>()) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+#[cfg(test)]
+mod env_meta_json_tests {
+    use super::*;
+
+    #[test]
+    fn the_profile_field_carries_the_passed_value_and_is_absent_when_unknown() {
+        let meta = crate::env::EnvMeta::default();
+        let with = env_meta_to_json_with(&meta, Some("opt-level=0,lto=\"off\",codegen-units=16"));
+        assert!(
+            with.contains("\"build_profile\":\"opt-level=0,lto=\\\"off\\\",codegen-units=16\""),
+            "{with}"
+        );
+        let without = env_meta_to_json_with(&meta, None);
+        assert!(
+            !without.contains("build_profile"),
+            "no claim beats a wrong one: {without}"
+        );
+        assert!(
+            !without.contains("opt-level=3"),
+            "the old hardcoded literal must be gone: {without}"
+        );
+    }
 }

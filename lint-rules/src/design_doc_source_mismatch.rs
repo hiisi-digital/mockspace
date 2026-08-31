@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: design doc / source mismatch.
 //!
 //! Cross-references each crate's DESIGN.md.tmpl type/signal/macro tables with
@@ -8,11 +13,11 @@
 //! SHAME.md.tmpl exists: document known gaps that cannot be fixed yet.
 //!
 //! Crates with no DESIGN.md.tmpl are skipped. Nuked crates (containing the
-//! xtask nuke marker) are skipped — there is no source to compare against.
+//! xtask nuke marker) are skipped: there is no source to compare against.
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "design-doc-source-mismatch";
 
@@ -32,20 +37,33 @@ const NAMED_ITEM_KINDS: &[&str] = &[
 pub struct DesignDocSourceMismatch;
 
 impl Lint for DesignDocSourceMismatch {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::PUSH_GATE }
+    /// Crate-scoped. It compares the design document against the whole crate
+    /// surface. Per file, every name declared elsewhere would read as missing.
+    fn per_file(&self) -> bool {
+        false
+    }
+
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::PUSH_GATE
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
 
-    fn source_only(&self) -> bool { false }
+    fn source_only(&self) -> bool {
+        false
+    }
+}
 
+impl CrateLint for DesignDocSourceMismatch {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let design_doc = match ctx.design_doc {
             Some(d) => d,
             None => return Vec::new(),
         };
 
-        // Skip nuked crates — no source to compare against
+        // Skip nuked crates: no source to compare against
         if ctx.source.contains("Nuked by") {
             return Vec::new();
         }
@@ -71,8 +89,8 @@ impl Lint for DesignDocSourceMismatch {
 
             // Check if the name appears in source (as a defined item or
             // inside a macro invocation that would generate it)
-            let found = source_names.iter().any(|s| s == name)
-                || source_contains_name(ctx.source, name);
+            let found =
+                source_names.iter().any(|s| s == name) || source_contains_name(ctx.source, name);
 
             if found {
                 continue;
@@ -85,7 +103,7 @@ impl Lint for DesignDocSourceMismatch {
                 if let Some(explanation) = find_shame_entry(shame, name) {
                     let word_count = explanation.split_whitespace().count();
                     if word_count >= 50 {
-                        continue; // sufficient SHAME entry — silenced
+                        continue; // sufficient SHAME entry: silenced
                     }
                     errors.push(LintError::push_error(
                         ctx.crate_name.to_string(),
@@ -93,7 +111,7 @@ impl Lint for DesignDocSourceMismatch {
                         LINT_NAME,
                         format!(
                             "`{name}` documented in DESIGN.md.tmpl but not found in source; \
-                             SHAME.md.tmpl entry only {word_count}/50 words — expand it or \
+                             SHAME.md.tmpl entry only {word_count}/50 words: expand it or \
                              remove `{name}` from DESIGN.md.tmpl."
                         ),
                     ));
@@ -106,7 +124,7 @@ impl Lint for DesignDocSourceMismatch {
                 *line,
                 LINT_NAME,
                 format!(
-                    "`{name}` documented in DESIGN.md.tmpl but not found in source — \
+                    "`{name}` documented in DESIGN.md.tmpl but not found in source: \
                      add it to source, remove from DESIGN, or add a SHAME.md.tmpl entry \
                      (`## {name}` header + 50+ word explanation).",
                 ),
@@ -130,9 +148,9 @@ impl Lint for DesignDocSourceMismatch {
 fn find_shame_entry<'a>(shame_content: &'a str, type_name: &str) -> Option<&'a str> {
     let header = format!("## {type_name}");
     let start = shame_content.find(&header)?;
-    let after_header = &shame_content[start + header.len()..];
+    let after_header = &shame_content[start + header.len() ..];
     let end = after_header.find("\n## ").unwrap_or(after_header.len());
-    let entry = after_header[..end].trim();
+    let entry = after_header[.. end].trim();
     if entry.is_empty() { None } else { Some(entry) }
 }
 
@@ -239,21 +257,18 @@ fn extract_design_type_names(doc: &str) -> Vec<(String, usize)> {
 /// Extract a name from backtick-wrapped text like `\`TypeName\`` or `\`Signal\` trait`.
 fn extract_backtick_name(cell: &str) -> Option<String> {
     let start = cell.find('`')?;
-    let rest = &cell[start + 1..];
+    let rest = &cell[start + 1 ..];
     let end = rest.find('`')?;
-    let inside = &rest[..end];
+    let inside = &rest[.. end];
 
-    // Handle macro syntax like `define_id!(Name)` — extract the macro name
+    // Handle macro syntax like `define_id!(Name)`: extract the macro name
     if inside.starts_with("define_") {
         // This is a macro usage example, not a type name
         return None;
     }
 
     // Strip trait/struct/enum suffix: `Signal trait` → `Signal`
-    let name = inside
-        .split_whitespace()
-        .next()
-        .unwrap_or(inside);
+    let name = inside.split_whitespace().next().unwrap_or(inside);
 
     // Strip generic params: `Collection<T>` → `Collection`
     let name = name.split('<').next().unwrap_or(name);
@@ -272,9 +287,8 @@ fn extract_backtick_name(cell: &str) -> Option<String> {
 /// but are not type names).
 fn is_table_noise(name: &str) -> bool {
     const NOISE: &[&str] = &[
-        "Type", "Purpose", "Mode", "Field", "Backend", "None", "Some",
-        "Self", "Ok", "Err", "Read", "Write", "Note", "Example",
-        "CPU", "GPU", "API", "FFI", "DSL",
+        "Type", "Purpose", "Mode", "Field", "Backend", "None", "Some", "Self", "Ok", "Err", "Read",
+        "Write", "Note", "Example", "CPU", "GPU", "API", "FFI", "DSL",
     ];
     NOISE.contains(&name)
 }

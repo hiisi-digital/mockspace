@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::*;
@@ -40,7 +45,7 @@ pub fn all_transitive(
                         }
                     }
                 }
-            }
+            },
             Step::Exit(curr) => {
                 on_stack.remove(&curr);
                 let mut result = BTreeSet::new();
@@ -53,7 +58,7 @@ pub fn all_transitive(
                     }
                 }
                 cache.insert(curr, result);
-            }
+            },
         }
     }
     cache.get(name).cloned().unwrap_or_default()
@@ -86,11 +91,7 @@ pub fn transitive_reduction(crates: &CrateMap) -> BTreeMap<String, Vec<String>> 
 /// the longest acyclic path through resolved members rather than the
 /// true longest path (which is undefined on a cycle). On an acyclic
 /// graph the result matches `1 + max(depth(dep))`.
-pub fn compute_depth(
-    root: &str,
-    crates: &CrateMap,
-    cache: &mut BTreeMap<String, usize>,
-) -> usize {
+pub fn compute_depth(root: &str, crates: &CrateMap, cache: &mut BTreeMap<String, usize>) -> usize {
     enum Step {
         Enter(String),
         Exit(String),
@@ -112,7 +113,7 @@ pub fn compute_depth(
                         }
                     }
                 }
-            }
+            },
             Step::Exit(name) => {
                 on_stack.remove(&name);
                 let d = crates
@@ -126,7 +127,7 @@ pub fn compute_depth(
                     })
                     .unwrap_or(0);
                 cache.insert(name, d);
-            }
+            },
         }
     }
     cache.get(root).copied().unwrap_or(0)
@@ -139,9 +140,9 @@ mod tests {
 
     fn make_crate(deps: &[&str]) -> CrateInfo {
         CrateInfo {
-            short_name: String::new(),
-            items: Vec::new(),
-            deps: deps.iter().map(|s| s.to_string()).collect(),
+            short_name:      String::new(),
+            items:           Vec::new(),
+            deps:            deps.iter().map(|s| s.to_string()).collect(),
             macro_generated: Vec::new(),
         }
     }
@@ -165,12 +166,7 @@ mod tests {
 
     #[test]
     fn diamond_depth() {
-        let crates = map(&[
-            ("a", &["b", "c"]),
-            ("b", &["d"]),
-            ("c", &["d"]),
-            ("d", &[]),
-        ]);
+        let crates = map(&[("a", &["b", "c"]), ("b", &["d"]), ("c", &["d"]), ("d", &[])]);
         let mut cache = BTreeMap::new();
         assert_eq!(compute_depth("a", &crates, &mut cache), 2);
         assert_eq!(compute_depth("d", &crates, &mut cache), 0);

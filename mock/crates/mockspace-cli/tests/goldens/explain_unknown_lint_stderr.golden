@@ -1,0 +1,1 @@
+explain failed: lint `no-such-lint-ever` not found in the registered catalog; check the spelling or ensure the lint pack is linked

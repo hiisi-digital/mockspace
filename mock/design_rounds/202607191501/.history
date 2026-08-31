@@ -1,0 +1,50 @@
+565656f chore: lock src changelist for restore-public-visibility round
+e1efdaa fix: restore public visibility of bootstrap functions after split
+6c7d182 docs: add src changelist for restore-public-visibility round
+d453fcb chore: lock doc changelist for restore-public-visibility round
+8d7e4e5 docs: add empty doc changelist for restore-public-visibility round
+1e1308c docs: open restore-public-visibility round
+1d3fbed chore: close design round 202607191401
+6a00933 chore: lock src changelist for split-large-modules round
+3a6393b refactor: split render_agent into a module tree
+d19ff3b refactor: split entry into a module tree, run_inner in its own file
+122fd0a refactor: split bootstrap into a module tree
+55c5ce5 refactor: split design_round into a module tree
+d75dc99 docs: add src changelist for split-large-modules round
+97ce0b2 chore: lock doc changelist for split-large-modules round
+1daea35 docs: add empty doc changelist for split-large-modules round
+dd0b3b6 docs: open split-large-modules round
+e4947a9 feat: install mock and cargo-mock launcher on path
+839d017 feat: durable mockspace gate surviving target cleans
+ea83982 feat: reject unknown cargo mock subcommands and fix mock-dir cwd
+2564594 fix: skip bootstrap inside cargo cache and under sudo
+e37c7e5 feat: add a query subcommand over the template syntax
+e386e44 fix: a schema check that examined no files is not a pass
+ac9fe33 feat: allow a method chain on a resolved reference
+c75a32c feat: split pathof from sourcesof
+3be27e1 feat: add pathof, which answers where a thing comes from
+4a44406 fix: drop an internal root's citation from prose, not only from table cells
+32c4222 revert: drop the cross-crate document tier
+7e49176 feat: add a document tier for subjects that cross crates
+1303655 fix: render a namespace table from the bare form
+ffcc180 refactor: generate every document through one pipeline
+0c8db96 fix: substitute a placeholder that arrives inside an expansion
+a47ad96 fix: accept a placeholder written with spaces inside its braces
+0b3b9e3 fix: resolve references in DESIGN.md, and report any that render literally
+65d8d7d fix: resolve a crate reference from a name rather than from the docs directory
+9661131 fix: resolve registry references in per-crate documents
+b47d8da feat: keep every branch-tracked git dependency current, not only mockspace
+2e8a5a4 fix: keep the internal-field note terse in the generated reference rule
+b0a7813 fix: rebuild the proxy when its revision moves, and report an edgeless graph
+c18a51f feat: let a registry field or a citation root stay out of the generated docs
+d489700 fix: remove a duplicated collision check left by the registry split
+21ed2fe refactor: split registry into six modules along the path a row takes
+6248b67 fix: drop the anchor stub block below registry tables
+d132b6d fix: recognise every dependency form, not only workspace inheritance
+8eb7bbf feat: render citations as short links by default, full on request
+39f1404 feat: render prose roots and citations, generate the syntax rule per project
+1b0ac86 feat: add crates:: as a reference root
+ebd8456 fix: address the locked mockspace by its full source spec
+2b8c809 docs: state what the phase gate actually covers
+ccb668d feat: a registry of terms and concepts, resolved at doc-generation time
+1a49a63 feat: derive a scoped agent rule from each crate's README

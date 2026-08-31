@@ -1,0 +1,20 @@
+v1 mockspace state discovered under `<FIXTURE>/mock/design_rounds/`:
+  1 round(s) to migrate
+
+Per-round migration plan:
+
+  round `2026-04-25_test-round`:
+    v1 state:    Topic
+    locked:      false
+    target v2:   phase = `topic`
+    action:      Empty v1 round (no CLs). Tool can construct the v2 ref directly: run `mock phase plan <slug>` once `mock migrate --auto` ships, or manually push an orphan ref carrying `.phase = topic`.
+
+To fix by hand:
+
+- CI workflows calling the old verbs:
+    lock      -> cargo mock phase apply <slug> --source-tip <hex>
+    deprecate -> cargo mock phase replan <slug> [--mode ...]
+    close     -> (unchanged)
+
+- Tasks, memos, prose that mention `mock lock` or `mock deprecate`.
+  Grep and update.

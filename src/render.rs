@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -12,6 +17,34 @@ fn esc(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Crate directories carrying a design document but no `src/lib.rs`.
+///
+/// Returned sorted, so the graph is stable between runs.
+pub fn designed_but_unbuilt(crates: &CrateMap, cfg: &Config) -> Vec<String> {
+    // Every source directory, not the first. A grouped project asked only about
+    // its first group would report a subset of its unbuilt crates as the whole,
+    // and the number would look plausible.
+    let mut out: Vec<String> = cfg
+        .src_dirs
+        .iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok().map(|e| (dir, e)))
+        .flat_map(|(dir, entries)| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .filter(|name| {
+                    let d = dir.join(name);
+                    d.join("DESIGN.md.tmpl").is_file() && !d.join("src/lib.rs").is_file()
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|name| !crates.contains_key(name.as_str()))
+        .collect();
+    out.sort();
+    out
+}
+
 pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
     let mut dot = String::new();
     let reduced = graph::transitive_reduction(crates);
@@ -21,15 +54,26 @@ pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
     let mut depth_cache = BTreeMap::new();
     let mut depths = BTreeMap::new();
     for name in crates.keys() {
-        depths.insert(name.clone(), graph::compute_depth(name, crates, &mut depth_cache));
+        depths.insert(
+            name.clone(),
+            graph::compute_depth(name, crates, &mut depth_cache),
+        );
     }
     let max_depth = depths.values().copied().max().unwrap_or(0);
 
-    writeln!(dot, "digraph {project_name} {{").unwrap();
+    // Quoted, because a DOT identifier may not contain a hyphen unquoted and a
+    // project name commonly does. Unquoted, graphviz fails on the graph line
+    // and the only symptom is a missing PNG and SVG, which reads as the render
+    // step being absent rather than broken.
+    writeln!(dot, "digraph \"{project_name}\" {{").unwrap();
     writeln!(dot, "    rankdir=BT;").unwrap();
     writeln!(dot, "    newrank=true;").unwrap();
     writeln!(dot, "    bgcolor=\"#FAFAFA\";").unwrap();
-    writeln!(dot, "    graph [fontname=\"Helvetica\", fontsize=10, pad=0.8, nodesep=0.4, ranksep=1.0];").unwrap();
+    writeln!(
+        dot,
+        "    graph [fontname=\"Helvetica\", fontsize=10, pad=0.8, nodesep=0.4, ranksep=1.0];"
+    )
+    .unwrap();
     writeln!(dot, "    node [fontname=\"Helvetica\", fontsize=8];").unwrap();
     writeln!(dot, "    edge [fontname=\"Helvetica\", fontsize=7, color=\"#BBBBBB\", arrowsize=0.5, penwidth=0.8];").unwrap();
     writeln!(dot).unwrap();
@@ -40,9 +84,40 @@ pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
     writeln!(dot, "    label=<<TABLE BORDER=\"0\" CELLBORDER=\"0\" CELLSPACING=\"0\"><TR><TD ALIGN=\"LEFT\"><FONT POINT-SIZE=\"18\" COLOR=\"#37474F\"><B>{project_name}</B></FONT></TD></TR><TR><TD ALIGN=\"LEFT\"><FONT POINT-SIZE=\"9\" COLOR=\"#999999\">crate architecture</FONT></TD></TR></TABLE>>;").unwrap();
     writeln!(dot).unwrap();
 
+    // Crates that have a design document but no source yet.
+    //
+    // mockspace discovers crates from `src/lib.rs`, which is the right source
+    // of truth for lints and for parsing. It is the wrong one for the
+    // architecture picture: this tool's premise is that docs are the design and
+    // source is what catches up, so a project whose source is deliberately
+    // gated would otherwise see its architecture document describe the small
+    // scaffolded subset and stay silent about the rest.
+    //
+    // These appear as nodes with no edges, because a crate with no manifest has
+    // declared no dependencies. Dashed and grey says designed-but-unbuilt
+    // without claiming to know where it will sit.
+    let designed_only = designed_but_unbuilt(crates, cfg);
+    if !designed_only.is_empty() {
+        writeln!(dot, "    // designed, not yet built").unwrap();
+        for dir_name in &designed_only {
+            let cid = dir_name.replace('-', "_");
+            let short = dir_name
+                .strip_prefix(&format!("{crate_prefix}-"))
+                .unwrap_or(dir_name);
+            writeln!(
+                dot,
+                "    {cid} [shape=box, style=\"dashed,rounded\", color=\"#BBBBBB\", fontcolor=\"#999999\", label=\"{short}\"];"
+            )
+            .unwrap();
+        }
+        writeln!(dot).unwrap();
+    }
+
     // Crate nodes
     for (dir_name, info) in crates {
-        if info.short_name == *project_name { continue; }
+        if info.short_name == *project_name {
+            continue;
+        }
         let cid = dir_name.replace('-', "_");
         let (bg, border) = cfg.crate_color(&info.short_name);
         let label = render_crate_node(&cid, info, &bg, &border, cfg);
@@ -61,7 +136,9 @@ pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
 
     let mut by_depth: Vec<Vec<&str>> = vec![Vec::new(); max_depth + 1];
     for (name, &d) in &depths {
-        if crates[name.as_str()].short_name == *project_name { continue; }
+        if crates[name.as_str()].short_name == *project_name {
+            continue;
+        }
         let short = &crates[name.as_str()].short_name;
         if let Some(&companion_d) = companion_depths.get(short.as_str()) {
             by_depth[companion_d].push(name.as_str());
@@ -70,7 +147,9 @@ pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
         }
     }
     for (d, names) in by_depth.iter().enumerate() {
-        if names.is_empty() { continue; }
+        if names.is_empty() {
+            continue;
+        }
         write!(dot, "    {{ rank=same; ").unwrap();
         for name in names {
             write!(dot, "{}; ", name.replace('-', "_")).unwrap();
@@ -83,17 +162,24 @@ pub fn generate_dot(crates: &CrateMap, cfg: &Config) -> String {
     for (source, target) in &cfg.crate_grouping {
         let prefix_under = crate_prefix.replace('-', "_");
         writeln!(dot, "    // Force {source} next to {target}").unwrap();
-        writeln!(dot, "    {prefix_under}_{target} -> {prefix_under}_{source} [style=invis, weight=10];").unwrap();
+        writeln!(
+            dot,
+            "    {prefix_under}_{target} -> {prefix_under}_{source} [style=invis, weight=10];"
+        )
+        .unwrap();
     }
     writeln!(dot).unwrap();
 
-    // Dependency edges (transitively reduced)
     writeln!(dot, "    // Dependency edges (transitively reduced)").unwrap();
     for (dir_name, deps) in &reduced {
-        if crates[dir_name.as_str()].short_name == *project_name { continue; }
+        if crates[dir_name.as_str()].short_name == *project_name {
+            continue;
+        }
         let from_cid = dir_name.replace('-', "_");
         for dep in deps {
-            if crates[dep.as_str()].short_name == *project_name { continue; }
+            if crates[dep.as_str()].short_name == *project_name {
+                continue;
+            }
             let to_cid = dep.replace('-', "_");
             writeln!(dot, "    {to_cid} -> {from_cid};").unwrap();
         }
@@ -109,7 +195,9 @@ fn port_id(name: &str) -> String {
 }
 
 fn render_crate_node(_cid: &str, info: &CrateInfo, bg: &str, border: &str, cfg: &Config) -> String {
-    let gen_lookup: BTreeMap<&str, &MacroGenerated> = info.macro_generated.iter()
+    let gen_lookup: BTreeMap<&str, &MacroGenerated> = info
+        .macro_generated
+        .iter()
         .map(|mg| (mg.generated_name.as_str(), mg))
         .collect();
 
@@ -172,30 +260,34 @@ fn write_domain_row(h: &mut String, item: &Item, mg: &MacroGenerated, cfg: &Conf
 
     match item {
         Item::Trait(t) => {
-            let gen = if t.generics.is_empty() { String::new() } else { esc(&t.generics) };
+            let gen_str = if t.generics.is_empty() { String::new() } else { esc(&t.generics) };
             let bounds_s = if t.bounds.is_empty() {
                 String::new()
             } else {
-                format!(" <FONT COLOR=\"#999999\" POINT-SIZE=\"5\">{}</FONT>", esc(&t.bounds))
+                format!(
+                    " <FONT COLOR=\"#999999\" POINT-SIZE=\"5\">{}</FONT>",
+                    esc(&t.bounds)
+                )
             };
-            write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\"><FONT COLOR=\"{}\" POINT-SIZE=\"7\">{}</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\" PORT=\"{}\"><FONT COLOR=\"{}\"><B>{} {}{gen}</B></FONT>{bounds_s}</TD></TR>",
+            write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\"><FONT COLOR=\"{}\" POINT-SIZE=\"7\">{}</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\" PORT=\"{}\"><FONT COLOR=\"{}\"><B>{} {}{gen_str}</B></FONT>{bounds_s}</TD></TR>",
                 style.bg, style.fg, style.label, style.bg, port_id(&t.name), style.fg, style.icon, t.name).unwrap();
             for m in &t.methods {
                 let p = esc(&m.params);
-                let r = if m.ret.is_empty() { String::new() } else { format!(" → {}", esc(&m.ret)) };
+                let r =
+                    if m.ret.is_empty() { String::new() } else { format!(" → {}", esc(&m.ret)) };
                 let g = esc(&m.generics);
                 write!(h, "<TR><TD></TD><TD ALIGN=\"LEFT\"><FONT COLOR=\"{}\" POINT-SIZE=\"5\">ƒ {}{g}({p}){r}</FONT></TD></TR>", style.fg, m.name).unwrap();
             }
-        }
+        },
         Item::Struct(s) => {
-            let gen = if s.generics.is_empty() { String::new() } else { esc(&s.generics) };
-            write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\"><FONT COLOR=\"{}\" POINT-SIZE=\"7\">{}</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\" PORT=\"{}\"><FONT COLOR=\"{}\"><B>{} {}{gen}</B></FONT></TD></TR>",
+            let gen_str = if s.generics.is_empty() { String::new() } else { esc(&s.generics) };
+            write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\"><FONT COLOR=\"{}\" POINT-SIZE=\"7\">{}</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\" PORT=\"{}\"><FONT COLOR=\"{}\"><B>{} {}{gen_str}</B></FONT></TD></TR>",
                 style.bg, style.fg, style.label, style.bg, port_id(&s.name), style.fg, style.icon, s.name).unwrap();
-        }
+        },
         Item::Enum(e) => {
             write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\"><FONT COLOR=\"{}\" POINT-SIZE=\"7\">{}</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"{}\" PORT=\"{}\"><FONT COLOR=\"{}\"><B>{} {}</B></FONT></TD></TR>",
                 style.bg, style.fg, style.label, style.bg, port_id(&e.name), style.fg, style.icon, e.name).unwrap();
-        }
+        },
         _ => write_raw_row(h, item),
     }
 }
@@ -204,36 +296,44 @@ fn write_raw_row(h: &mut String, item: &Item) {
     write!(h, "<HR/>").unwrap();
     match item {
         Item::Trait(t) => {
-            let gen = if t.generics.is_empty() { String::new() } else { esc(&t.generics) };
+            let gen_str = if t.generics.is_empty() { String::new() } else { esc(&t.generics) };
             let bounds_s = if t.bounds.is_empty() {
                 String::new()
             } else {
-                format!(" <FONT COLOR=\"#AAAAAA\" POINT-SIZE=\"5\">{}</FONT>", esc(&t.bounds))
+                format!(
+                    " <FONT COLOR=\"#AAAAAA\" POINT-SIZE=\"5\">{}</FONT>",
+                    esc(&t.bounds)
+                )
             };
-            write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">trait</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>◆ {}{gen}</B></FONT>{bounds_s}</TD></TR>", port_id(&t.name), t.name).unwrap();
+            write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">trait</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>◆ {}{gen_str}</B></FONT>{bounds_s}</TD></TR>", port_id(&t.name), t.name).unwrap();
             for m in &t.methods {
                 let p = esc(&m.params);
-                let r = if m.ret.is_empty() { String::new() } else { format!(" → {}", esc(&m.ret)) };
+                let r =
+                    if m.ret.is_empty() { String::new() } else { format!(" → {}", esc(&m.ret)) };
                 let g = esc(&m.generics);
                 write!(h, "<TR><TD></TD><TD ALIGN=\"LEFT\"><FONT COLOR=\"#90A4AE\" POINT-SIZE=\"5\">ƒ {}{g}({p}){r}</FONT></TD></TR>", m.name).unwrap();
             }
-        }
+        },
         Item::Struct(s) => {
-            let gen = if s.generics.is_empty() { String::new() } else { esc(&s.generics) };
-            write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">struct</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>■ {}{gen}</B></FONT></TD></TR>", port_id(&s.name), s.name).unwrap();
-        }
+            let gen_str = if s.generics.is_empty() { String::new() } else { esc(&s.generics) };
+            write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">struct</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>■ {}{gen_str}</B></FONT></TD></TR>", port_id(&s.name), s.name).unwrap();
+        },
         Item::Enum(e) => {
             write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">enum</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>▲ {}</B></FONT></TD></TR>", port_id(&e.name), e.name).unwrap();
-        }
+        },
         Item::Fn(f) => {
             let p = esc(&f.sig.params);
-            let r = if f.sig.ret.is_empty() { String::new() } else { format!(" → {}", esc(&f.sig.ret)) };
+            let r = if f.sig.ret.is_empty() {
+                String::new()
+            } else {
+                format!(" → {}", esc(&f.sig.ret))
+            };
             let g = esc(&f.sig.generics);
             write!(h, "<TR><TD ALIGN=\"LEFT\"><FONT COLOR=\"#78909C\" POINT-SIZE=\"6\">fn</FONT></TD><TD ALIGN=\"LEFT\" PORT=\"{}\"><FONT COLOR=\"#546E7A\" POINT-SIZE=\"7\"><B>ƒ {}{g}</B></FONT>({p}){r}</TD></TR>", port_id(&f.sig.name), f.sig.name).unwrap();
-        }
+        },
         Item::Macro(m) => {
             let kind = if m.is_proc { "proc" } else { "macro" };
             write!(h, "<TR><TD ALIGN=\"LEFT\" BGCOLOR=\"#FFCDD2\"><FONT COLOR=\"#B71C1C\" POINT-SIZE=\"7\">{kind}!</FONT></TD><TD ALIGN=\"LEFT\" BGCOLOR=\"#FFF8E1\" PORT=\"{}\"><FONT COLOR=\"#D32F2F\"><B>⚙ {}!</B></FONT></TD></TR>", port_id(&m.name), m.name).unwrap();
-        }
+        },
     }
 }

@@ -1,21 +1,26 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: macro-defining crates must not call their own macros.
 //!
 //! Infrastructure crates provide `define_*!` macro facilities for domain crates.
 //! They must never call those macros themselves. For example, the ID crate provides
-//! `define_id!` but must not call it — domain crates call
+//! `define_id!` but must not call it: domain crates call
 //! `define_id!(SignalId)` in their own source.
 //!
 //! This applies to BOTH the crate that defines the macro AND any crate that
 //! re-exports it. If the resource crate does `pub use <prefix>_storage::define_resource`,
 //! then the resource crate also must not call `define_resource!`.
 //!
-//! Proc-macro crates (`<prefix>-*-macros`) are checked too — they should not call
+//! Proc-macro crates (`<prefix>-*-macros`) are checked too: they should not call
 //! their own `define_*` proc macros. But only `define_*` macros are checked;
 //! other proc macros (derive macros, attribute macros) are not a concern.
 //!
 //! Severity: Error (blocks commit and push).
 //!
-//! Suppression: `// lint:allow(no_self_define) — <explanation>` requires a 50+
+//! Suppression: `// lint:allow(no_self_define): <explanation>` requires a 50+
 //! word explanation documenting why this invocation must live in the defining
 //! crate. Unexplained or too-short suppressions remain Error.
 //!
@@ -24,7 +29,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const LINT_NAME: &str = "no-self-define";
 
@@ -60,11 +65,16 @@ const MACRO_OWNERS: &[(&str, &[&str])] = &[
 pub struct NoSelfDefine;
 
 impl Lint for NoSelfDefine {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
-        LINT_NAME
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
     }
 
+    fn name(&self) -> &'static str {
+        LINT_NAME
+    }
+}
+
+impl CrateLint for NoSelfDefine {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         // Find which macros this crate owns or re-exports.
         let owned: Vec<&str> = MACRO_OWNERS
@@ -107,7 +117,6 @@ fn find_self_invocations(
             let clean = extract_macro_name(raw_name);
             if owned_macros.contains(&clean) {
                 let line_idx = node.start_position().row;
-                let line = ctx.source.lines().nth(line_idx).unwrap_or("");
 
                 // Check for lint:allow suppression with 50+ word explanation.
                 // Large look-back because 50+ word explanations span many comment lines.
@@ -120,7 +129,7 @@ fn find_self_invocations(
                             line_idx + 1,
                             LINT_NAME,
                             format!(
-                                "suppressed ({word_count} words): `{clean}!` in `{}` — {explanation}",
+                                "suppressed ({word_count} words): `{clean}!` in `{}`: {explanation}",
                                 ctx.crate_name,
                             ),
                         ));
@@ -130,8 +139,9 @@ fn find_self_invocations(
                             line_idx + 1,
                             LINT_NAME,
                             format!(
-                                "`{clean}!` suppression in `{}` too short ({word_count}/50 words) \
-                                 — explain in depth why this must live here, not in a domain crate",
+                                "`{clean}!` suppression in `{}` too short \
+                                 ({word_count}/50 words). Explain in depth why this must live \
+                                 here, not in a domain crate.",
                                 ctx.crate_name,
                             ),
                         ));
@@ -142,8 +152,9 @@ fn find_self_invocations(
                         line_idx + 1,
                         LINT_NAME,
                         format!(
-                            "`{clean}!` must not be called in `{}` (defines or re-exports it) \
-                             — domain crates call it, not the infrastructure crate",
+                            "`{clean}!` must not be called in `{}`, which defines or \
+                             re-exports it. Domain crates call it, the infrastructure crate \
+                             does not.",
                             ctx.crate_name,
                         ),
                     ));
@@ -182,10 +193,10 @@ fn extract_macro_name(raw: &str) -> &str {
 fn gather_context_lines(source: &str, target_line: usize, look_back: usize) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let start = target_line.saturating_sub(look_back);
-    lines[start..=target_line.min(lines.len().saturating_sub(1))].join("\n")
+    lines[start ..= target_line.min(lines.len().saturating_sub(1))].join("\n")
 }
 
-/// Extract the explanation text after `lint:allow(rule_name) —`.
+/// Extract the explanation text after `lint:allow(rule_name):`.
 /// Returns None if no suppression marker is found.
 /// Returns Some("") if marker exists but no explanation after the dash.
 ///
@@ -194,13 +205,23 @@ fn gather_context_lines(source: &str, target_line: usize, look_back: usize) -> S
 fn extract_allow_explanation(context: &str, rule_name: &str) -> Option<String> {
     let marker = format!("lint:allow({rule_name})");
     let pos = context.find(&marker)?;
-    let after = &context[pos + marker.len()..];
+    let after = &context[pos + marker.len() ..];
 
-    // Find the separator (em dash or hyphen).
-    let rest = if let Some(dash_pos) = after.find('—') {
-        &after[dash_pos + '—'.len_utf8()..]
+    // Find the separator.
+    //
+    // The em-dash here is GRAMMAR, not prose: it is the delimiter a consumer
+    // types in their own source after `lint:allow(rule)`, and the workspace
+    // em-dash ban governs text we print, not a directive we parse. It was
+    // chosen precisely because it does not occur in Rust source, so it cannot
+    // be confused with content. A colon does occur, constantly: `core::fmt`
+    // would split a suppression at the path and grant it on a fragment. See
+    // `feedback_delimiter_that_occurs_in_the_content.md`.
+    //
+    // lint:allow(no-em-dash): the delimiter is user-facing grammar, not text.
+    let rest = if let Some(dash_pos) = after.find('\u{2014}') {
+        &after[dash_pos + '\u{2014}'.len_utf8() ..]
     } else if let Some(dash_pos) = after.find(" - ") {
-        &after[dash_pos + 3..]
+        &after[dash_pos + 3 ..]
     } else {
         return Some(String::new()); // Marker found but no explanation.
     };
@@ -233,4 +254,57 @@ fn is_inside_macro_def(node: Node) -> bool {
         current = parent.parent();
     }
     false
+}
+
+#[cfg(test)]
+mod allow_grammar {
+    use super::extract_allow_explanation;
+
+    const DASH: char = '\u{2014}';
+
+    /// The delimiter is chosen so it cannot occur in the content it delimits.
+    /// A colon does occur in Rust constantly, so splitting on one grants a
+    /// suppression on a fragment of a type path and silently voids every
+    /// explanation written with the real delimiter.
+    #[test]
+    fn the_delimiter_is_the_em_dash_and_a_colon_is_content() {
+        let with_dash = format!(
+            "// lint:allow(no_self_define) {DASH} the id crate is the one place \
+             define_id may be called"
+        );
+        let got = extract_allow_explanation(&with_dash, "no_self_define").unwrap();
+        assert!(
+            got.contains("the id crate is the one place"),
+            "the explanation must survive the delimiter: {got:?}"
+        );
+
+        // A colon inside the explanation is content and must not split it.
+        let with_colon = format!(
+            "// lint:allow(no_self_define) {DASH} core::fmt cannot be reached from \
+             the infrastructure crate without a cycle"
+        );
+        let got = extract_allow_explanation(&with_colon, "no_self_define").unwrap();
+        assert!(
+            got.starts_with("core::fmt cannot be reached"),
+            "a colon in the content must not act as the delimiter: {got:?}"
+        );
+    }
+
+    #[test]
+    fn a_spaced_hyphen_is_the_accepted_alternative_and_a_bare_marker_is_empty() {
+        let hyphen = "// lint:allow(no_self_define) - the crate defines the primitive itself";
+        assert!(
+            extract_allow_explanation(hyphen, "no_self_define")
+                .unwrap()
+                .contains("defines the primitive")
+        );
+        assert_eq!(
+            extract_allow_explanation("// lint:allow(no_self_define)", "no_self_define").unwrap(),
+            ""
+        );
+        assert_eq!(
+            extract_allow_explanation("// nothing here", "no_self_define"),
+            None
+        );
+    }
 }

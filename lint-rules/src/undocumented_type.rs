@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Cross-crate lint: every source type must appear in at least one doc file.
 //!
 //! Two-pass lint:
@@ -22,20 +27,27 @@ use std::collections::HashSet;
 
 use tree_sitter::Node;
 
-use crate::{CrossCrateLint, LintContext, LintError};
+use crate::{Lint, LintContext, LintError, WorkspaceLint};
 
 const LINT_NAME: &str = "undocumented-type";
 
 pub struct UndocumentedType;
 
-impl CrossCrateLint for UndocumentedType {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::BUILD_GATE }
+impl Lint for UndocumentedType {
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::BUILD_GATE
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
 
-    fn source_only(&self) -> bool { false }
+    fn source_only(&self) -> bool {
+        false
+    }
+}
 
+impl WorkspaceLint for UndocumentedType {
     fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
         // Pass 1: collect all type names mentioned in ALL doc files.
         let mut documented_types: HashSet<String> = HashSet::new();
@@ -75,7 +87,7 @@ impl CrossCrateLint for UndocumentedType {
                                 line,
                                 LINT_NAME,
                                 format!(
-                                    "`{type_name}` is in SHAME.md.tmpl ({word_count} words) — \
+                                    "`{type_name}` is in SHAME.md.tmpl ({word_count} words): \
                                      add it to a design doc via a design round to resolve",
                                 ),
                             ));
@@ -86,7 +98,7 @@ impl CrossCrateLint for UndocumentedType {
                                 line,
                                 LINT_NAME,
                                 format!(
-                                    "`{type_name}` SHAME.md.tmpl entry too short ({word_count}/50 words) — \
+                                    "`{type_name}` SHAME.md.tmpl entry too short ({word_count}/50 words): \
                                      explain why it exists and how it will be documented. \
                                      BLOCKS BUILD AND PUSH until fixed.",
                                 ),
@@ -142,6 +154,9 @@ fn is_type_name(word: &str) -> bool {
 }
 
 /// Collect all struct/enum/trait definitions from a crate's source.
+// FIXME: walks the root tree only, so an undocumented pub item in a module
+// file is never seen; the lint whose whole subject is public items still
+// misses most of them in a multi-file crate. tracked: #33
 fn collect_source_type_defs(ctx: &LintContext) -> Vec<(String, usize)> {
     let mut defs = Vec::new();
     let root = ctx.tree.root_node();
@@ -157,6 +172,14 @@ fn collect_defs(node: Node, source: &str, out: &mut Vec<(String, usize)>) {
             continue;
         }
 
+        // Skip test modules. A fixture declared to exercise a trait is not
+        // public surface: it has no consumer, and demanding it appear in a
+        // design document would put test scaffolding in the shipping
+        // contract.
+        if crate::is_cfg_test_mod(child, source) {
+            continue;
+        }
+
         match child.kind() {
             "struct_item" | "enum_item" | "trait_item" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
@@ -165,12 +188,12 @@ fn collect_defs(node: Node, source: &str, out: &mut Vec<(String, usize)>) {
 
                     // Check for lint:allow suppression.
                     let line_text = source.lines().nth(child.start_position().row).unwrap_or("");
-                    if !line_text.contains("lint:allow(undocumented_type)") {
+                    if !crate::line_lint_allowed(line_text, "undocumented_type") {
                         out.push((name, line));
                     }
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         if child.named_child_count() > 0 {
@@ -190,17 +213,105 @@ fn collect_defs(node: Node, source: &str, out: &mut Vec<(String, usize)>) {
 fn find_shame_entry<'a>(shame_content: &'a str, type_name: &str) -> Option<&'a str> {
     let header = format!("## {type_name}");
     let start = shame_content.find(&header)?;
-    let after_header = &shame_content[start + header.len()..];
+    let after_header = &shame_content[start + header.len() ..];
 
     // Find the next `## ` header or end of file.
-    let end = after_header
-        .find("\n## ")
-        .unwrap_or(after_header.len());
+    let end = after_header.find("\n## ").unwrap_or(after_header.len());
 
-    let entry = after_header[..end].trim();
-    if entry.is_empty() {
-        None
-    } else {
-        Some(entry)
+    let entry = after_header[.. end].trim();
+    if entry.is_empty() { None } else { Some(entry) }
+}
+
+#[cfg(test)]
+mod cfg_test_module_tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::*;
+
+    /// Build a context whose tree is parsed from the source under test.
+    /// `file_size`'s helper parses an empty string, which is fine for a lint
+    /// that only counts lines and useless for one that walks the AST.
+    fn ctx_for(source: &'static str, design: &'static str) -> LintContext<'static> {
+        let mut parser = crate::make_parser();
+        let tree = parser.parse(source, None).unwrap();
+        LintContext {
+            crate_name: "test-crate",
+            short_name: "test-crate",
+            source,
+            tree: Box::leak(Box::new(tree)),
+            all_sources: &[],
+            deps: &[],
+            all_crates: Box::leak(Box::new(BTreeSet::new())),
+            design_doc: Some(design),
+            all_doc_content: design,
+            shame_doc: None,
+            workspace_root: std::path::Path::new("/tmp"),
+            proc_macro_crates: &[],
+            crate_prefix: "test",
+            lint_proc_macro_source: false,
+            primitive_introductions: Box::leak(Box::new(BTreeMap::new())),
+        }
+    }
+
+    fn reported(source: &'static str, design: &'static str) -> Vec<String> {
+        let ctx = ctx_for(source, design);
+        UndocumentedType
+            .check_all(&[("test-crate", &ctx)])
+            .into_iter()
+            .map(|e| e.message)
+            .collect()
+    }
+
+    #[test]
+    fn a_fixture_inside_a_test_module_is_not_public_surface() {
+        // The case that produced this: two structs implementing a trait so the type-level
+        // list could be exercised. Neither has a consumer, and the only ways to
+        // satisfy the lint were to put test scaffolding in a design document or
+        // to write a SHAME entry for it.
+        let reports = reported(
+            "#[cfg(test)]\nmod tests {\n    struct Fixture;\n    enum Shape { A }\n}\n",
+            "# test-crate\n\nNothing documented here.\n",
+        );
+        assert!(
+            reports.is_empty(),
+            "test fixtures were reported as undocumented public types: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn an_undocumented_type_outside_a_test_module_is_still_reported() {
+        // The control. Without it, a lint that reported nothing at all would
+        // satisfy the test above.
+        let reports = reported(
+            "pub struct Real;\n",
+            "# test-crate\n\nNothing documented here.\n",
+        );
+        assert!(
+            reports.iter().any(|m| m.contains("Real")),
+            "the lint stopped reporting real undocumented types: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_module_that_is_not_test_only_is_still_walked() {
+        // `not(test)` reads as a test module to a substring search, which would
+        // hide every type in an ordinary module behind it.
+        let reports = reported(
+            "#[cfg(not(test))]\nmod real {\n    pub struct Hidden;\n}\n",
+            "# test-crate\n\nNothing documented here.\n",
+        );
+        assert!(
+            reports.iter().any(|m| m.contains("Hidden")),
+            "a `cfg(not(test))` module was skipped as if it were a test module: {reports:?}"
+        );
+    }
+
+    #[test]
+    fn a_documented_type_is_not_reported() {
+        let reports = reported("pub struct Real;\n", "# test-crate\n\nThe `Real` type.\n");
+        assert!(
+            reports.is_empty(),
+            "a documented type was reported: {reports:?}"
+        );
     }
 }

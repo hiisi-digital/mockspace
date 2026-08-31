@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: no hand-written trait impls for framework traits.
 //!
 //! These traits must only be implemented via macros:
@@ -7,9 +12,9 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
-/// (trait_name, crate suffix — impls in `<prefix>-<suffix>` are exempt)
+/// (trait_name, crate suffix: impls in `<prefix>-<suffix>` are exempt)
 ///
 /// NOTE: this hardcoded list is a stopgap until #[only_macro_gen] attribute
 /// auto-discovery is implemented (Phase 1 of the audit round). After that,
@@ -42,6 +47,15 @@ impl Lint for NoManualImpl {
         "no-manual-impl"
     }
 
+    /// Encodes one downstream project's trait names, `Action` and
+    /// `Scope` among them, which are ordinary names anywhere else. Off until a
+    /// project asks for it.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
+}
+
+impl CrateLint for NoManualImpl {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
         let root = ctx.tree.root_node();
@@ -104,21 +118,22 @@ fn check_impl(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
             // Check for lint:allow(no_manual_impl) on the impl line
             let line_idx = node.start_position().row;
             let line = ctx.source.lines().nth(line_idx).unwrap_or("");
-            if line.contains("lint:allow(no_manual_impl)") {
+            if crate::line_lint_allowed(line, "no_manual_impl") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),
                     line_idx + 1,
                     "no-manual-impl",
-                    format!("suppressed by lint:allow(no_manual_impl) on `impl {forbidden_trait} for {type_part}` — review periodically"),
+                    format!("suppressed by lint:allow(no_manual_impl) on `impl {forbidden_trait} for {type_part}`: review periodically"),
                 ));
             } else {
                 errors.push(LintError {
+                    path: None,
                     crate_name: ctx.crate_name.to_string(),
                     line: line_idx + 1,
                     lint_name: "no-manual-impl",
                     severity: crate::Severity::HARD_ERROR,
                     message: format!(
-                        "manual `impl {forbidden_trait} for {type_part}` — use the appropriate define_*! macro",
+                        "manual `impl {forbidden_trait} for {type_part}`: use the appropriate define_*! macro",
                     ),
                     finding_kind: None,
                 });

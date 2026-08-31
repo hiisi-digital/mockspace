@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Dylib module loading check.
 //!
 //! Builds the workspace, then dlopen's each dylib module crate and verifies:
@@ -22,7 +27,10 @@ pub fn check_module_dylibs(cfg: &Config) -> usize {
         let dylib_path = cfg.mock_dir.join("target/debug").join(&dylib_name);
 
         if !dylib_path.exists() {
-            eprintln!("  FAIL {crate_name}: dylib not found at {}", dylib_path.display());
+            eprintln!(
+                "  FAIL {crate_name}: dylib not found at {}",
+                dylib_path.display()
+            );
             failures += 1;
             continue;
         }
@@ -32,7 +40,7 @@ pub fn check_module_dylibs(cfg: &Config) -> usize {
             Err(e) => {
                 eprintln!("  FAIL {crate_name}: {e}");
                 failures += 1;
-            }
+            },
         }
     }
 
@@ -48,8 +56,7 @@ fn check_one_dylib(path: &Path, expected_abi: u32, sym_prefix: &str) -> Result<(
     // Safety: we only read static data and call trivial functions.
     // The dylibs are our own code, built seconds ago.
     unsafe {
-        let lib = libloading::Library::new(path)
-            .map_err(|e| format!("dlopen failed: {e}"))?;
+        let lib = libloading::Library::new(path).map_err(|e| format!("dlopen failed: {e}"))?;
 
         // 1. ABI version handshake
         let abi_fn: libloading::Symbol<extern "C" fn() -> u32> = lib
@@ -58,7 +65,9 @@ fn check_one_dylib(path: &Path, expected_abi: u32, sym_prefix: &str) -> Result<(
 
         let ver = abi_fn();
         if ver != expected_abi {
-            return Err(format!("ABI version mismatch: got {ver}, expected {expected_abi}"));
+            return Err(format!(
+                "ABI version mismatch: got {ver}, expected {expected_abi}"
+            ));
         }
 
         // 2. Manifest function exists

@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: no deprecated behavior context API.
 //!
 //! Behaviors must declare resource access via `reads()` / `writes()` clauses
@@ -11,16 +16,21 @@
 //! This lint uses line-level text matching inside `define_behavior!` macro
 //! invocations, since tree-sitter sees macro bodies as token trees.
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoPoolAccess;
 
 impl Lint for NoPoolAccess {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
-        "no-pool-access"
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
     }
 
+    fn name(&self) -> &'static str {
+        "no-pool-access"
+    }
+}
+
+impl CrateLint for NoPoolAccess {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
         let mut in_behavior = false;
@@ -42,6 +52,7 @@ fn name(&self) -> &'static str {
                 // Check for banned patterns inside behavior body
                 if trimmed.contains(".pool()") || trimmed.contains(".pool_mut()") {
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: line_num + 1,
                         lint_name: "no-pool-access",
@@ -52,16 +63,20 @@ fn name(&self) -> &'static str {
                 }
                 if trimmed.contains(".resource(") || trimmed.contains(".resource::<") {
                     errors.push(LintError {
-                        crate_name: ctx.crate_name.to_string(),
-                        line: line_num + 1,
-                        lint_name: "no-pool-access",
-                        severity: crate::Severity::HARD_ERROR,
-                        message: "resource() is renamed to read(); declare reads(T) in define_behavior!".to_string(),
+                        path:         None,
+                        crate_name:   ctx.crate_name.to_string(),
+                        line:         line_num + 1,
+                        lint_name:    "no-pool-access",
+                        severity:     crate::Severity::HARD_ERROR,
+                        message:
+                            "resource() is renamed to read(); declare reads(T) in define_behavior!"
+                                .to_string(),
                         finding_kind: None,
                     });
                 }
                 if trimmed.contains(".resource_mut(") || trimmed.contains(".resource_mut::<") {
                     errors.push(LintError {
+                        path: None,
                         crate_name: ctx.crate_name.to_string(),
                         line: line_num + 1,
                         lint_name: "no-pool-access",

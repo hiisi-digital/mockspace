@@ -1,8 +1,9 @@
 [package]
 name = "self-bench"
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 publish = false
+license = "MPL-2.0"
 
 [[bin]]
 name = "self-bench"

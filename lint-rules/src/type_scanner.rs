@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Shared utility for extracting backtick-wrapped Rust type/trait/macro names
 //! from markdown text.
 //!
@@ -21,7 +26,7 @@ pub fn extract_backtick_names(text: &str) -> Vec<String> {
         }
 
         // Skip code blocks (``` or more)
-        if text[i..].starts_with("```") {
+        if text[i ..].starts_with("```") {
             // Skip past the code block
             // Consume all leading backticks
             while let Some(&(_, '`')) = chars.peek() {
@@ -42,7 +47,7 @@ pub fn extract_backtick_names(text: &str) -> Vec<String> {
             continue;
         }
 
-        // Single backtick — find the closing backtick
+        // Single backtick: find the closing backtick
         let start = i + 1;
         let mut end = None;
         for (j, c) in chars.by_ref() {
@@ -57,7 +62,7 @@ pub fn extract_backtick_names(text: &str) -> Vec<String> {
         }
 
         if let Some(end_pos) = end {
-            let content = &text[start..end_pos];
+            let content = &text[start .. end_pos];
             if is_rust_type_or_macro(content) {
                 names.insert(content.to_string());
             }
@@ -79,7 +84,7 @@ fn is_rust_type_or_macro(name: &str) -> bool {
 
     // Macro names end with `!`
     if name.ends_with('!') {
-        let base = &name[..name.len() - 1];
+        let base = &name[.. name.len() - 1];
         // Must have at least one char before the `!` and be a valid identifier
         return !base.is_empty() && base.chars().all(|c| c.is_alphanumeric() || c == '_');
     }
@@ -91,7 +96,8 @@ fn is_rust_type_or_macro(name: &str) -> bool {
     }
 
     // Rest should be valid identifier characters (allow :: for paths like Foo::Bar)
-    name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == ':')
+    name.chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == ':')
 }
 
 #[cfg(test)]

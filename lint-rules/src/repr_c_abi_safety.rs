@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: `#[repr(C)]` structs must not contain ABI-unsafe fields.
 //!
 //! Vec, String, Box, HashMap, and other dynamically-sized types are not
@@ -13,7 +18,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 const LINT_NAME: &str = "repr-c-abi-safety";
 
@@ -49,6 +54,14 @@ impl Lint for ReprCAbiSafety {
         LINT_NAME
     }
 
+    /// A type that is not ABI-safe inside `#[repr(C)]` is
+    /// undefined behaviour at the boundary, in any project, whatever its shape.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
+}
+
+impl CrateLint for ReprCAbiSafety {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.should_skip_proc_macro_source_lint() {
             return Vec::new();
@@ -132,7 +145,12 @@ fn check_field_list(node: Node, struct_name: &str, ctx: &LintContext, errors: &m
     }
 }
 
-fn check_single_field(field: Node, struct_name: &str, ctx: &LintContext, errors: &mut Vec<LintError>) {
+fn check_single_field(
+    field: Node,
+    struct_name: &str,
+    ctx: &LintContext,
+    errors: &mut Vec<LintError>,
+) {
     let field_text = &ctx.source[field.byte_range()];
     let line = field.start_position().row + 1;
 
@@ -147,12 +165,13 @@ fn check_single_field(field: Node, struct_name: &str, ctx: &LintContext, errors:
             // No suppression allowed for repr(C) ABI safety.
             // lint:allow(bare_collection) does NOT override this.
             errors.push(LintError {
+                path: None,
                 crate_name: ctx.crate_name.to_string(),
                 line,
                 lint_name: LINT_NAME,
                 severity: crate::Severity::HARD_ERROR,
                 message: format!(
-                    "`{unsafe_type}` in `#[repr(C)]` struct `{struct_name}` is not ABI-safe — {fix}",
+                    "`{unsafe_type}` in `#[repr(C)]` struct `{struct_name}` is not ABI-safe: {fix}",
                 ),
                 finding_kind: None,
             });

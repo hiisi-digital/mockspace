@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Default Routine impl for byte-input / byte-output workloads.
 //!
 //! `ByteRoutine<IN, OUT, MAY_DIFFER>` is the canonical Routine for
@@ -68,7 +73,26 @@ impl<const IN: usize, const OUT: usize, const MAY_DIFFER: bool> Routine
             x ^= x >> 30;
             x = x.wrapping_mul(0xBF58476D1CE4E5B9);
             let bytes = x.to_le_bytes();
-            chunk.copy_from_slice(&bytes[..chunk.len()]);
+            chunk.copy_from_slice(&bytes[.. chunk.len()]);
+        }
+        buf
+    }
+
+    /// Heap-filling override of the bridge path: fill a Vec of
+    /// exactly IN bytes directly, never materialising `[u8; IN]` on
+    /// the stack. This removes the practical ceiling on IN (a
+    /// multi-megabyte input would otherwise be a stack overflow
+    /// hazard at build time) while staying fully const-generic: the
+    /// size is still a compile-time constant per monomorphisation.
+    #[cfg(feature = "std")]
+    fn build_input_bytes(seed: u64) -> std::vec::Vec<u8> {
+        let mut buf = std::vec![0u8; IN];
+        let mut x = seed.wrapping_mul(0x9E3779B97F4A7C15);
+        for chunk in buf.chunks_mut(8) {
+            x ^= x >> 30;
+            x = x.wrapping_mul(0xBF58476D1CE4E5B9);
+            let bytes = x.to_le_bytes();
+            chunk.copy_from_slice(&bytes[.. chunk.len()]);
         }
         buf
     }
@@ -110,6 +134,63 @@ mod tests {
     fn may_differ_flag_propagates() {
         assert!(!ByteRoutine::<64, 8, false>::outputs_may_differ());
         assert!(ByteRoutine::<64, 8, true>::outputs_may_differ());
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn heap_build_matches_typed_build() {
+        let typed = ByteRoutine::<64, 8, false>::build_input(7);
+        let heaped = <ByteRoutine<64, 8, false> as Routine>::build_input_bytes(7);
+        assert_eq!(&typed[..], &heaped[..]);
+    }
+
+    /// The same equivalence one chunk boundary past a single mixer word and
+    /// at a size no longer trivially inlined, since the override is the path
+    /// a footprint-sized bench takes and the pair is only useful if it agrees
+    /// somewhere other than the smallest case. This is as large as the pair
+    /// can be checked at all: the typed side materialises on the stack, which
+    /// is the ceiling the override exists to escape, so equivalence at a real
+    /// footprint size is not a test anyone can write.
+    #[cfg(feature = "std")]
+    #[test]
+    fn heap_build_matches_typed_build_at_a_larger_size() {
+        let typed = ByteRoutine::<65_536, 8, false>::build_input(7);
+        let heaped = <ByteRoutine<65_536, 8, false> as Routine>::build_input_bytes(7);
+        assert_eq!(&typed[..], &heaped[..]);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn dispatch_macro_declared_sizes_only() {
+        let d = crate::byte_routine_dispatch!(out = 8, sizes = [64, 1024]);
+        assert!((d.dispatch)(64, false).is_some());
+        assert!((d.dispatch)(1024, true).is_some());
+        assert!(
+            (d.dispatch)(512, false).is_none(),
+            "undeclared size rejects"
+        );
+        assert_eq!(d.sizes, &[64, 1024]);
+    }
+
+    #[test]
+    fn timed_accepts_plain_and_wrapped_setup() {
+        fn plain() -> crate::FfiBenchCall {
+            crate::timed! {
+                let x = 2u64;
+                run { core::hint::black_box(x * 2); }
+            }
+        }
+        fn wrapped() -> crate::FfiBenchCall {
+            crate::timed! {
+                setup {
+                    let x = 2u64;
+                }
+                run { core::hint::black_box(x * 2); }
+                let _teardown = x;
+            }
+        }
+        let _ = plain();
+        let _ = wrapped();
     }
 
     #[test]

@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: unified forbidden-imports rule.
 //!
 //! A single data-driven lint that replaces many individual forbidden-type lints.
@@ -10,29 +15,29 @@
 //! - `enabled`: optional, defaults to true
 //!
 //! Pattern matching:
-//! - `"String"` — matches the word `String` as a type (word boundary, not in quotes)
-//! - `"dyn *"` — matches `dyn ` keyword in type position
-//! - `"std::*"` — matches `use std::` or `std::` in type paths
-//! - `"f32"`, `"f64"` — matches these as type annotations
-//! - `"{prefix}_core::*"` — matches imports from sibling crates
+//! - `"String"`: matches the word `String` as a type (word boundary, not in quotes)
+//! - `"dyn *"`: matches `dyn ` keyword in type position
+//! - `"std::*"`: matches `use std::` or `std::` in type paths
+//! - `"f32"`, `"f64"`: matches these as type annotations
+//! - `"{prefix}_core::*"`: matches imports from sibling crates
 
 use std::collections::HashMap;
 
-use crate::{Lint, LintContext, LintError, Severity};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 /// A single forbidden-imports rule.
 #[derive(Clone, Debug)]
 struct ForbiddenRule {
     /// Rule name (from the TOML key, e.g. "no-std-in-primitives").
-    name: String,
+    name:      String,
     /// Crate glob pattern, e.g., `"*-sdk"`, `"*"`, `"{prefix}-primitives"`.
-    scope: String,
+    scope:     String,
     /// Forbidden patterns: `"String"`, `"dyn *"`, `"std::*"`, etc.
     forbidden: Vec<String>,
     /// Human-readable reason.
-    reason: String,
+    reason:    String,
     /// Whether this rule is active.
-    enabled: bool,
+    enabled:   bool,
 }
 
 pub struct ForbiddenImports {
@@ -41,7 +46,9 @@ pub struct ForbiddenImports {
 
 impl ForbiddenImports {
     pub fn new() -> Self {
-        Self { rules: Vec::new() }
+        Self {
+            rules: Vec::new(),
+        }
     }
 }
 
@@ -116,7 +123,9 @@ impl Lint for ForbiddenImports {
             }
         }
     }
+}
 
+impl CrateLint for ForbiddenImports {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
 
@@ -143,10 +152,10 @@ impl Lint for ForbiddenImports {
 /// Check if a crate name matches a scope glob pattern.
 ///
 /// Supported patterns:
-/// - `"*"` — matches all crates
-/// - `"*-sdk"` — crates ending in `-sdk`
-/// - `"prefix-*"` — crates starting with `prefix-`
-/// - `"prefix-connector-*"` — crates matching the prefix pattern
+/// - `"*"`: matches all crates
+/// - `"*-sdk"`: crates ending in `-sdk`
+/// - `"prefix-*"`: crates starting with `prefix-`
+/// - `"prefix-connector-*"`: crates matching the prefix pattern
 /// - Exact name: `"prefix-primitives"`
 fn scope_matches(scope: &str, crate_name: &str, crate_prefix: &str) -> bool {
     // Expand {prefix} placeholder
@@ -157,18 +166,18 @@ fn scope_matches(scope: &str, crate_name: &str, crate_prefix: &str) -> bool {
     }
 
     if scope.starts_with('*') && scope.ends_with('*') {
-        // *pattern* — contains
-        let inner = &scope[1..scope.len() - 1];
+        // *pattern*: contains
+        let inner = &scope[1 .. scope.len() - 1];
         return crate_name.contains(inner);
     }
 
     if let Some(suffix) = scope.strip_prefix('*') {
-        // *-sdk — ends with
+        // *-sdk: ends with
         return crate_name.ends_with(suffix);
     }
 
     if let Some(prefix) = scope.strip_suffix('*') {
-        // prefix-connector-* — starts with
+        // prefix-connector-*: starts with
         return crate_name.starts_with(prefix);
     }
 
@@ -201,7 +210,7 @@ fn check_forbidden_pattern(
     }
 }
 
-/// Check for forbidden module path imports (e.g., `std::`, `loimu_core::`).
+/// Check for forbidden module path imports (e.g., `std::`, `acme_core::`).
 fn check_module_path(
     ctx: &LintContext,
     rule: &ForbiddenRule,
@@ -220,7 +229,7 @@ fn check_module_path(
         }
 
         // Skip lint:allow
-        if line.contains(&format!("lint:allow({})", rule.name)) {
+        if crate::line_lint_allowed(line, &rule.name) {
             continue;
         }
 
@@ -236,7 +245,7 @@ fn check_module_path(
                 line_num + 1,
                 "forbidden-imports",
                 format!(
-                    "`{module_prefix}::*` import forbidden in this crate — {}",
+                    "`{module_prefix}::*` import forbidden in this crate: {}",
                     rule.reason
                 ),
                 Severity::HARD_ERROR,
@@ -262,7 +271,7 @@ fn check_keyword_pattern(
         }
 
         // Skip lint:allow
-        if line.contains(&format!("lint:allow({})", rule.name)) {
+        if crate::line_lint_allowed(line, &rule.name) {
             continue;
         }
 
@@ -271,17 +280,13 @@ fn check_keyword_pattern(
             continue;
         }
 
-        // Check for the keyword (not inside strings — rough heuristic)
+        // Check for the keyword (not inside strings: rough heuristic)
         if contains_keyword(trimmed, keyword) {
             errors.push(LintError::with_finding_kind(
                 ctx.crate_name.to_string(),
                 line_num + 1,
                 "forbidden-imports",
-                format!(
-                    "`{}` keyword forbidden — {}",
-                    keyword.trim(),
-                    rule.reason
-                ),
+                format!("`{}` keyword forbidden: {}", keyword.trim(), rule.reason),
                 Severity::HARD_ERROR,
                 leak_rule_name(&rule.name),
             ));
@@ -305,7 +310,7 @@ fn check_type_name(
         }
 
         // Skip lint:allow
-        if line.contains(&format!("lint:allow({})", rule.name)) {
+        if crate::line_lint_allowed(line, &rule.name) {
             continue;
         }
 
@@ -321,7 +326,7 @@ fn check_type_name(
                 line_num + 1,
                 "forbidden-imports",
                 format!(
-                    "`{type_name}` type forbidden in this crate — {}",
+                    "`{type_name}` type forbidden in this crate: {}",
                     rule.reason
                 ),
                 Severity::HARD_ERROR,
@@ -347,7 +352,7 @@ fn contains_type_name(line: &str, type_name: &str) -> bool {
 
     let mut i = 0;
     while i + pat_len <= bytes.len() {
-        if &bytes[i..i + pat_len] == pat_bytes {
+        if &bytes[i .. i + pat_len] == pat_bytes {
             // Check word boundary before
             let before_ok = if i == 0 {
                 true
@@ -367,7 +372,7 @@ fn contains_type_name(line: &str, type_name: &str) -> bool {
             if before_ok && after_ok {
                 // Make sure we're not inside a string literal
                 // (rough: count unescaped quotes before this position)
-                let prefix = &line[..i];
+                let prefix = &line[.. i];
                 let quote_count = prefix.chars().filter(|c| *c == '"').count();
                 if quote_count % 2 == 0 {
                     return true;
@@ -392,17 +397,13 @@ fn contains_keyword(line: &str, keyword: &str) -> bool {
 
     let mut i = 0;
     while i + pat_len <= bytes.len() {
-        if &bytes[i..i + pat_len] == pat_bytes {
+        if &bytes[i .. i + pat_len] == pat_bytes {
             // Check word boundary before
-            let before_ok = if i == 0 {
-                true
-            } else {
-                !is_ident_char(bytes[i - 1])
-            };
+            let before_ok = if i == 0 { true } else { !is_ident_char(bytes[i - 1]) };
 
             if before_ok {
                 // Check we're not inside a string literal
-                let prefix = &line[..i];
+                let prefix = &line[.. i];
                 let quote_count = prefix.chars().filter(|c| *c == '"').count();
                 if quote_count % 2 == 0 {
                     return true;
@@ -447,15 +448,23 @@ mod tests {
 
     #[test]
     fn test_scope_matches() {
-        assert!(scope_matches("*", "loimu-sdk", "loimu"));
-        assert!(scope_matches("*-sdk", "loimu-sdk", "loimu"));
-        assert!(!scope_matches("*-sdk", "loimu-core", "loimu"));
-        assert!(scope_matches("{prefix}-primitives", "loimu-primitives", "loimu"));
-        assert!(!scope_matches("{prefix}-primitives", "loimu-sdk", "loimu"));
-        assert!(scope_matches("{prefix}-connector-*", "loimu-connector-igdb", "loimu"));
-        assert!(!scope_matches("{prefix}-connector-*", "loimu-sdk", "loimu"));
-        assert!(scope_matches("loimu-sdk", "loimu-sdk", "loimu"));
-        assert!(!scope_matches("loimu-sdk", "loimu-core", "loimu"));
+        assert!(scope_matches("*", "acme-sdk", "acme"));
+        assert!(scope_matches("*-sdk", "acme-sdk", "acme"));
+        assert!(!scope_matches("*-sdk", "acme-core", "acme"));
+        assert!(scope_matches(
+            "{prefix}-primitives",
+            "acme-primitives",
+            "acme"
+        ));
+        assert!(!scope_matches("{prefix}-primitives", "acme-sdk", "acme"));
+        assert!(scope_matches(
+            "{prefix}-connector-*",
+            "acme-connector-igdb",
+            "acme"
+        ));
+        assert!(!scope_matches("{prefix}-connector-*", "acme-sdk", "acme"));
+        assert!(scope_matches("acme-sdk", "acme-sdk", "acme"));
+        assert!(!scope_matches("acme-sdk", "acme-core", "acme"));
     }
 
     #[test]

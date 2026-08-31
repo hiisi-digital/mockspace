@@ -1,0 +1,68 @@
+[package]
+name = "cargo-mock"
+version = "0.0.2"
+edition = "2024"
+# The engine (`mockspace`) does not publish. This thin launcher git-installs
+# whichever engine a repository pins, so it needs no version relationship to it.
+publish = true
+description = "Launcher for the mockspace design-round workflow engine: resolves the per-repo pinned mockspace, builds it once per version into a shared cache, and runs it from any working directory."
+# The repository's own, since this crate is the whole of what an operator
+# installs and there is nothing narrower to say. Cargo ships whatever `readme`
+# names whether or not `include` mentions it.
+readme = "../README.md"
+# `renki` is the floor and it declares 1.88. Stated here too, or an older
+# toolchain fails somewhere inside a dependency instead of at this manifest.
+rust-version = "1.88"
+license = "MPL-2.0"
+repository = "https://github.com/hiisi-digital/mockspace"
+homepage = "https://github.com/hiisi-digital/mockspace"
+categories = ["development-tools", "command-line-utilities"]
+keywords = ["mockspace", "cargo-subcommand", "design-rounds", "workflow"]
+
+# Installed as both the cargo external subcommand (`cargo mock ...` runs
+# `cargo-mock`) and the short direct form (`mock ...`). `cargo install
+# cargo-mock` installs both bins. Each `src/bin/*.rs` is a two-line shim over
+# the library, so the two binaries share one implementation without cargo's
+# "same file in multiple targets" warning.
+
+# The launcher machinery is `renki` and is shared with every other tool built
+# the same way. What is left here is mockspace's own: the tool descriptor, the
+# four hooks, and the legacy Cargo.lock pin, which needs a TOML reader of its
+# own. `mockspace-manifest` comes along for the durable hook gate.
+# Named one file at a time rather than globbed, because a glob cannot tell a
+# test about this crate from a test about this repository, and the second kind
+# does not compile where the package lands.
+#
+# `the_readme_pin_example_is_what_the_descriptor_reads.rs` is the second kind.
+# It reads the repository's own readme and the engine's manifest, both of which
+# sit above this package and neither of which is in the tarball. `cargo publish`
+# never notices, because verification builds the lib and the bins and no test at
+# all, so the failure would be the consumer's rather than ours.
+#
+# `from_any_directory.rs` is the first kind and ships: it reaches the binary
+# through `CARGO_BIN_EXE_mock`, which cargo sets wherever the package is built.
+include = [
+    "src/**/*.rs",
+    "tests/from_any_directory.rs",
+    # The licence, as a symlink to the repository root's, so the two cannot
+    # drift and the text still lands in the package: cargo resolves it when it
+    # copies. Named rather than assumed, because `include` overrides the
+    # defaults and MPL-2.0 section 3.1 wants the text travelling with the
+    # source.
+    "LICENSE",
+]
+
+[dependencies]
+# A `0.0.x` requirement is already the exact version and nothing else, which is
+# what this wants: the launcher is what every consumer repo installs, and it
+# moves when the number here moves rather than when a branch does.
+renki = "0.0.1"
+# The path is what a checkout builds against and the version is what the
+# registry resolves, since cargo strips the path on publish and a dependency
+# left with neither is refused.
+mockspace-manifest = { path = "../mockspace-manifest", version = "0.0.2" }
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
+
+[dev-dependencies]
+tempfile = "3"

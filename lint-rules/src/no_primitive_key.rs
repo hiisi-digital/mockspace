@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: no primitive-keyed maps.
 //!
 //! `HashMap`, `BTreeMap`, etc. should not be keyed on primitive types
@@ -6,24 +11,28 @@
 //!
 //! Exempt: the ID infrastructure crate (it IS the ID infrastructure).
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const MAP_TYPES: &[&str] = &["HashMap", "BTreeMap"];
 
 const PRIMITIVE_KEY_TYPES: &[&str] = &[
-    "String", "&str",
-    "u8", "u16", "u32", "u64", "u128", "usize",
-    "i8", "i16", "i32", "i64", "i128", "isize",
+    "String", "&str", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64",
+    "i128", "isize",
 ];
 
 pub struct NoPrimitiveKey;
 
 impl Lint for NoPrimitiveKey {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
-        "no-primitive-key"
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
     }
 
+    fn name(&self) -> &'static str {
+        "no-primitive-key"
+    }
+}
+
+impl CrateLint for NoPrimitiveKey {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();
@@ -43,30 +52,27 @@ fn name(&self) -> &'static str {
 
             for map_type in MAP_TYPES {
                 if let Some(pos) = trimmed.find(&format!("{map_type}<")) {
-                    let after_angle = &trimmed[pos + map_type.len() + 1..];
-                    let key_type = after_angle
-                        .split(',')
-                        .next()
-                        .unwrap_or("")
-                        .trim();
+                    let after_angle = &trimmed[pos + map_type.len() + 1 ..];
+                    let key_type = after_angle.split(',').next().unwrap_or("").trim();
 
                     for prim in PRIMITIVE_KEY_TYPES {
                         if key_type == *prim {
-                            if line.contains("lint:allow(no_primitive_key)") {
+                            if crate::line_lint_allowed(line, "no_primitive_key") {
                                 errors.push(LintError::warning(
                                     ctx.crate_name.to_string(),
                                     line_num + 1,
                                     "no-primitive-key",
-                                    "suppressed by lint:allow(no_primitive_key) — review periodically".to_string(),
+                                    "suppressed by lint:allow(no_primitive_key): review periodically".to_string(),
                                 ));
                             } else {
                                 errors.push(LintError {
-                                    crate_name: ctx.crate_name.to_string(),
-                                    line: line_num + 1,
-                                    lint_name: "no-primitive-key",
-                                    severity: crate::Severity::HARD_ERROR,
-                                    message: format!(
-                                        "`{map_type}<{prim}, ...>` — use a define_id! type as key",
+                                    path:         None,
+                                    crate_name:   ctx.crate_name.to_string(),
+                                    line:         line_num + 1,
+                                    lint_name:    "no-primitive-key",
+                                    severity:     crate::Severity::HARD_ERROR,
+                                    message:      format!(
+                                        "`{map_type}<{prim}, ...>`: use a define_id! type as key",
                                     ),
                                     finding_kind: None,
                                 });

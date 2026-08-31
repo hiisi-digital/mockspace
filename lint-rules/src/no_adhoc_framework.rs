@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: no ad-hoc framework pattern reimplementations.
 //!
 //! Heuristic detection of manually-built registries, markers, records, and
@@ -6,7 +11,7 @@
 //! patterns where someone builds the same thing without the trait.
 //!
 //! No crate-level exemptions. Every suppression must be at the use site with
-//! `// lint:allow(no_adhoc_framework) — <explanation>`. Unexplained
+//! `// lint:allow(no_adhoc_framework): <explanation>`. Unexplained
 //! suppressions are PushError; explained suppressions (8+ words) are Warning.
 //!
 //! Heuristics:
@@ -15,16 +20,21 @@
 //! 3. `OnceLock<Mutex<` or `OnceLock<RwLock<` pattern (global mutable singleton) → Warning
 //! 4. `HashMap<&str, usize>` or `HashMap<String, usize>` (index-lookup map) → Error
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoAdhocFramework;
 
 impl Lint for NoAdhocFramework {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
-        "no-adhoc-framework"
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
     }
 
+    fn name(&self) -> &'static str {
+        "no-adhoc-framework"
+    }
+}
+
+impl CrateLint for NoAdhocFramework {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let mut errors = Vec::new();
 
@@ -54,7 +64,7 @@ fn name(&self) -> &'static str {
                 if macro_brace_depth <= 0 && !trimmed.contains("macro_rules!") {
                     in_macro_def = false;
                 }
-                continue; // Inside macro_rules! body — skip all checks.
+                continue; // Inside macro_rules! body: skip all checks.
             }
 
             // Track define_registry! invocations.
@@ -63,8 +73,10 @@ fn name(&self) -> &'static str {
                 registry_brace_depth = 0;
             }
             if in_define_registry {
-                registry_brace_depth += trimmed.chars().filter(|c| *c == '{' || *c == '(').count() as i32;
-                registry_brace_depth -= trimmed.chars().filter(|c| *c == '}' || *c == ')').count() as i32;
+                registry_brace_depth +=
+                    trimmed.chars().filter(|c| *c == '{' || *c == '(').count() as i32;
+                registry_brace_depth -=
+                    trimmed.chars().filter(|c| *c == '}' || *c == ')').count() as i32;
                 if registry_brace_depth <= 0 && !trimmed.contains("define_registry!") {
                     in_define_registry = false;
                 }
@@ -77,9 +89,13 @@ fn name(&self) -> &'static str {
                     // Check current line AND up to 3 preceding lines for suppression.
                     let context_lines = gather_context_lines(ctx.source, line_num, 3);
                     emit_with_explanation(
-                        &context_lines, line_num, ctx.crate_name,
+                        &context_lines,
+                        line_num,
+                        ctx.crate_name,
                         crate::Severity::HARD_ERROR,
-                        &format!("struct `{name}` looks like an ad-hoc registry — use `define_registry!` instead"),
+                        &format!(
+                            "struct `{name}` looks like an ad-hoc registry: use `define_registry!` instead"
+                        ),
                         &mut errors,
                     );
                 }
@@ -89,9 +105,11 @@ fn name(&self) -> &'static str {
             if trimmed.contains("inventory::submit!") || trimmed.contains("inventory::collect!") {
                 let context_lines = gather_context_lines(ctx.source, line_num, 3);
                 emit_with_explanation(
-                    &context_lines, line_num, ctx.crate_name,
+                    &context_lines,
+                    line_num,
+                    ctx.crate_name,
                     crate::Severity::HARD_ERROR,
-                    "direct `inventory` usage outside macro definitions — use `define_registry!` which manages inventory integration",
+                    "direct `inventory` usage outside macro definitions: use `define_registry!` which manages inventory integration",
                     &mut errors,
                 );
             }
@@ -100,20 +118,26 @@ fn name(&self) -> &'static str {
             if trimmed.contains("OnceLock<Mutex<") || trimmed.contains("OnceLock<RwLock<") {
                 let context_lines = gather_context_lines(ctx.source, line_num, 3);
                 emit_with_explanation(
-                    &context_lines, line_num, ctx.crate_name,
+                    &context_lines,
+                    line_num,
+                    ctx.crate_name,
                     crate::Severity::ADVISORY,
-                    "`OnceLock<Mutex/RwLock<...>>` — global mutable singletons often indicate an ad-hoc registry; prefer `define_registry!` + `define_resource!`",
+                    "`OnceLock<Mutex/RwLock<...>>`: global mutable singletons often indicate an ad-hoc registry; prefer `define_registry!` + `define_resource!`",
                     &mut errors,
                 );
             }
 
             // ── Heuristic 4: HashMap index-lookup (registry smell) ───────
-            if trimmed.contains("HashMap<&str, usize>") || trimmed.contains("HashMap<String, usize>") {
+            if trimmed.contains("HashMap<&str, usize>")
+                || trimmed.contains("HashMap<String, usize>")
+            {
                 let context_lines = gather_context_lines(ctx.source, line_num, 3);
                 emit_with_explanation(
-                    &context_lines, line_num, ctx.crate_name,
+                    &context_lines,
+                    line_num,
+                    ctx.crate_name,
                     crate::Severity::HARD_ERROR,
-                    "`HashMap<&str/String, usize>` is a manual name→index registry — use `define_registry!` which provides `Registry::index_of()`",
+                    "`HashMap<&str/String, usize>` is a manual name→index registry: use `define_registry!` which provides `Registry::index_of()`",
                     &mut errors,
                 );
             }
@@ -128,10 +152,10 @@ fn name(&self) -> &'static str {
 fn gather_context_lines(source: &str, target_line: usize, look_back: usize) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let start = target_line.saturating_sub(look_back);
-    lines[start..=target_line.min(lines.len() - 1)].join("\n")
+    lines[start ..= target_line.min(lines.len() - 1)].join("\n")
 }
 
-/// Emit a lint violation respecting `// lint:allow(no_adhoc_framework) — <explanation>`.
+/// Emit a lint violation respecting `// lint:allow(no_adhoc_framework): <explanation>`.
 ///
 /// Searches `context_lines` (the target line + preceding lines) for the marker.
 ///
@@ -152,42 +176,47 @@ fn emit_with_explanation(
                 crate_name.to_string(),
                 line_num + 1,
                 "no-adhoc-framework",
-                format!("suppressed: {message} — {explanation}"),
+                format!("suppressed: {message}: {explanation}"),
             ));
         } else {
             errors.push(LintError::push_error(
                 crate_name.to_string(),
                 line_num + 1,
                 "no-adhoc-framework",
-                format!("suppressed without explanation (need 8+ words after `—`): {message}"),
+                format!("suppressed without explanation (need 8+ words after `:`): {message}"),
             ));
         }
     } else {
         errors.push(LintError {
-            crate_name: crate_name.to_string(),
-            line: line_num + 1,
-            lint_name: "no-adhoc-framework",
-            severity: base_severity,
-            message: message.to_string(),
+            path:         None,
+            crate_name:   crate_name.to_string(),
+            line:         line_num + 1,
+            lint_name:    "no-adhoc-framework",
+            severity:     base_severity,
+            message:      message.to_string(),
             finding_kind: None,
         });
     }
 }
 
-/// Extract explanation text after `lint:allow(no_adhoc_framework) —`.
+/// Extract explanation text after `lint:allow(no_adhoc_framework):`.
 /// Searches across all lines in the context (target + preceding lines).
 fn extract_allow_explanation(context: &str) -> Option<&str> {
     let marker = "lint:allow(no_adhoc_framework)";
     let pos = context.find(marker)?;
-    let after = &context[pos + marker.len()..];
+    let after = &context[pos + marker.len() ..];
 
     // Take only up to the end of the line containing the marker.
     let rest = after.split('\n').next().unwrap_or(after);
 
-    if let Some(dash_pos) = rest.find('—') {
-        Some(rest[dash_pos + '—'.len_utf8()..].trim())
+    // The em-dash is the directive's delimiter, written by consumers in their
+    // own source. It is grammar rather than text we print, and it was chosen
+    // because it does not occur in Rust while a colon occurs constantly.
+    // lint:allow(no-em-dash): the delimiter is user-facing grammar, not text.
+    if let Some(dash_pos) = rest.find('\u{2014}') {
+        Some(rest[dash_pos + '\u{2014}'.len_utf8() ..].trim())
     } else if let Some(dash_pos) = rest.find(" - ") {
-        Some(rest[dash_pos + 3..].trim())
+        Some(rest[dash_pos + 3 ..].trim())
     } else {
         Some("")
     }
@@ -207,9 +236,31 @@ fn extract_struct_name(line: &str) -> Option<&str> {
         .split(|c: char| !c.is_alphanumeric() && c != '_')
         .next()?;
 
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
+    if name.is_empty() { None } else { Some(name) }
+}
+
+#[cfg(test)]
+mod allow_grammar {
+    use super::extract_allow_explanation;
+
+    const DASH: char = '\u{2014}';
+
+    /// Same grammar, same reason: the delimiter must not occur in the content.
+    #[test]
+    fn the_delimiter_is_the_em_dash_and_a_colon_is_content() {
+        let line =
+            format!("// lint:allow(no_adhoc_framework) {DASH} the scheduler owns one global table");
+        assert_eq!(
+            extract_allow_explanation(&line),
+            Some("the scheduler owns one global table")
+        );
+
+        let colon =
+            format!("// lint:allow(no_adhoc_framework) {DASH} core::fmt is unreachable here");
+        assert_eq!(
+            extract_allow_explanation(&colon),
+            Some("core::fmt is unreachable here"),
+            "a colon in the content must not act as the delimiter"
+        );
     }
 }

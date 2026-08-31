@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: all `define_*!` macros must generate `Registrable` impls.
 //!
 //! The `Registrable` trait is the foundation of the registry system. Every
@@ -13,7 +18,7 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 const LINT_NAME: &str = "registrable-completeness";
 
@@ -26,17 +31,31 @@ const EXEMPT_MACROS: &[&str] = &[
     "define_raw_error",
     "define_record",
     "define_registry",
-    "define_resource",       // generates StorageRecord, not Registrable directly
+    "define_resource", // generates StorageRecord, not Registrable directly
     "define_resource_inline",
 ];
 
 pub struct RegistrableCompleteness;
 
 impl Lint for RegistrableCompleteness {
+    /// Crate-scoped. Completeness is a property of the crate's registrations taken together.
+    fn per_file(&self) -> bool {
+        false
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }
 
+    /// Encodes one downstream project's macro convention and
+    /// tells a stranger to use a macro their project does not have. Off until a
+    /// project asks for it.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
+}
+
+impl CrateLint for RegistrableCompleteness {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.should_skip_proc_macro_source_lint() {
             return Vec::new();
@@ -79,7 +98,6 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
         return;
     }
 
-    // skip exempt macros
     if EXEMPT_MACROS.contains(&macro_name) {
         return;
     }
@@ -88,14 +106,12 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     let line_idx = node.start_position().row;
     if line_idx > 0 {
         if let Some(prev_line) = ctx.source.lines().nth(line_idx - 1) {
-            if prev_line.contains("lint:allow(registrable_completeness)") {
+            if crate::line_lint_allowed(prev_line, "registrable_completeness") {
                 errors.push(LintError::warning(
                     ctx.crate_name.to_string(),
                     line_idx + 1,
                     LINT_NAME,
-                    format!(
-                        "`{macro_name}!` suppressed by lint:allow — review periodically",
-                    ),
+                    format!("`{macro_name}!` suppressed by lint:allow: review periodically",),
                 ));
                 return;
             }
@@ -106,17 +122,17 @@ fn check_macro_def(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     let body_text = &ctx.source[node.byte_range()];
 
     // check that the macro body generates Registrable impl
-    let has_registrable = body_text.contains("Registrable")
-        || body_text.contains("registrable");
+    let has_registrable = body_text.contains("Registrable") || body_text.contains("registrable");
 
     if !has_registrable {
         errors.push(LintError {
-            crate_name: ctx.crate_name.to_string(),
-            line: line_idx + 1,
-            lint_name: LINT_NAME,
-            severity: crate::Severity::HARD_ERROR,
-            message: format!(
-                "`{macro_name}!` does not generate `impl Registrable` — \
+            path:         None,
+            crate_name:   ctx.crate_name.to_string(),
+            line:         line_idx + 1,
+            lint_name:    LINT_NAME,
+            severity:     crate::Severity::HARD_ERROR,
+            message:      format!(
+                "`{macro_name}!` does not generate `impl Registrable`: \
                  every define_*! macro must produce a Registrable impl + inventory::submit!",
             ),
             finding_kind: None,

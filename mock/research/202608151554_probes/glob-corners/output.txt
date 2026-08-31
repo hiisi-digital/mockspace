@@ -1,0 +1,59 @@
+tree:   feat/bench-consolidation @ 657273f
+rustc:  rustc 1.98.0-nightly (cced03bfd 2026-05-28)
+
+controls (both from the existing suite, tree.rs:1031-1047):
+  C1 glob_match("a/**", "a/b/c") == true  : PASS
+  C2 glob_match("bench-*", "stranger") == false: PASS
+
+`**` matching zero components (the doc comment says it does):
+  glob_match("a/**", "a") = true   as documented
+  glob_match("**", "") = true   as documented
+  glob_match("a/**/b", "a/b") = true   as documented
+
+`**` as a prefix and in the middle:
+  glob_match("**/b", "b") = true         
+  glob_match("**/b", "a/b") = true         
+  glob_match("**/b", "a/x/b") = true         
+  glob_match("a/**/c", "a/b/c") = true         
+  glob_match("a/**/c", "a/b/x/c") = true         
+  glob_match("a/**/c", "a/c/c") = true         
+
+several `*` in one component, and `*` matching empty:
+  glob_match("a*b*c", "abc") = true         
+  glob_match("a*b*c", "aXbYc") = true         
+  glob_match("a*", "a") = true         
+  glob_match("*", "") = false        
+
+the empty pattern:
+  glob_match("", "") = true         
+  glob_match("", "a") = false        
+  glob_match("/", "a") = false        
+
+growth in the number of `*` in one component.
+This is an AD-HOC SPIKE, not a benchmark: it shows a shape,
+it prices nothing, and no fork may be decided on it.
+  stars  text  elapsed
+      4    24       1.4ms  (match=false)
+      5    24       6.0ms  (match=false)  x4.5 over the previous
+      6    24      21.9ms  (match=false)  x3.6 over the previous
+      7    24      64.0ms  (match=false)  x2.9 over the previous
+      8    24     158.2ms  (match=false)  x2.5 over the previous
+      9    24     356.7ms  (match=false)  x2.3 over the previous
+     10    24     596.0ms  (match=false)  x1.7 over the previous
+     11    24    1074.2ms  (match=false)  x1.8 over the previous
+     12    24    1531.2ms  (match=false)  x1.4 over the previous
+     13    24    1818.3ms  (match=false)  x1.2 over the previous
+
+The matcher at tree.rs:277-289 backtracks without memoisation.
+The cost is COMBINATORIAL in (stars k, component length n), not
+simply exponential in k: the ratios above flatten past k = n/2
+because the number of ways to place k cut points in n characters
+peaks there and then falls. An earlier run of this probe with
+k = 16 against n = 40, which is much nearer that peak, had not
+returned after roughly 400 seconds and was killed. That is an
+existence claim about non-termination in practice; the table
+above is a shape, and neither is a price.
+Patterns are consumer-authored in `[benchspace] members` / `exclude`
+and are matched against every discovered path (tree.rs:197, :261),
+so this is a hazard rather than a live defect: the realistic
+patterns (`**`, `bench-*`, `*-probe`) sit far from the wall.

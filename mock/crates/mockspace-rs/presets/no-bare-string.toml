@@ -1,0 +1,17 @@
+schema_version = "1.0"
+name = "no-bare-string"
+primitive = "ast-type-position"
+description = "no bare String / &str in public API"
+
+[config]
+forbidden_types = ["String"]
+positions = ["fn-param", "fn-return", "struct-field"]
+visibility = "public"
+
+[severity]
+commit = "error"
+build = "error"
+push = "error"
+
+[scope]
+paths = ["**/*.rs"]

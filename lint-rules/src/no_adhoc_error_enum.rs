@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: no ad-hoc error enums.
 //!
 //! All error types must be defined via `define_error!`, `define_warning!`,
@@ -8,16 +13,21 @@
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 pub struct NoAdhocErrorEnum;
 
 impl Lint for NoAdhocErrorEnum {
-        fn default_severity(&self) -> crate::Severity { crate::Severity::OFF }
-fn name(&self) -> &'static str {
-        "no-adhoc-error-enum"
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::OFF
     }
 
+    fn name(&self) -> &'static str {
+        "no-adhoc-error-enum"
+    }
+}
+
+impl CrateLint for NoAdhocErrorEnum {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();
@@ -55,21 +65,24 @@ fn check_enum(node: Node, ctx: &LintContext, errors: &mut Vec<LintError>) {
     if name.ends_with("Error") {
         let line_idx = node.start_position().row;
         let line = ctx.source.lines().nth(line_idx).unwrap_or("");
-        if line.contains("lint:allow(no_adhoc_error_enum)") {
+        if crate::line_lint_allowed(line, "no_adhoc_error_enum") {
             errors.push(LintError::warning(
                 ctx.crate_name.to_string(),
                 line_idx + 1,
                 "no-adhoc-error-enum",
-                format!("suppressed by lint:allow(no_adhoc_error_enum) on `{name}` — review periodically"),
+                format!(
+                    "suppressed by lint:allow(no_adhoc_error_enum) on `{name}`: review periodically"
+                ),
             ));
         } else {
             errors.push(LintError {
+                path: None,
                 crate_name: ctx.crate_name.to_string(),
                 line: line_idx + 1,
                 lint_name: "no-adhoc-error-enum",
                 severity: crate::Severity::HARD_ERROR,
                 message: format!(
-                    "ad-hoc error enum `{name}` — use define_error!, define_warning!, or define_raw_error!",
+                    "ad-hoc error enum `{name}`: use define_error!, define_warning!, or define_raw_error!",
                 ),
                 finding_kind: None,
             });

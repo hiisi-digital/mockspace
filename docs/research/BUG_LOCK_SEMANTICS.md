@@ -33,7 +33,7 @@ Session tripping this exposed the surprise: a user and an agent both expected to
 
 Two reasonable directions. Pick one; don't do both.
 
-### Option A — rename the suffixes / phase labels to match the user model
+### Option A: rename the suffixes / phase labels to match the user model
 
 Keep the state machine shape, relabel:
 - `.src.md` (active, pre-plan) → `.src.plan.md` or similar
@@ -43,7 +43,7 @@ Keep the state machine shape, relabel:
 
 Lowest-invasive relabel: rename `SRC-PLAN`→`DRAFT`, `SRC`→`IMPL`, `DONE`→`CLOSED`. Users then intuit "lock" applies to the CL filename state, not to "freeze".
 
-### Option B — introduce an actually-frozen-during-impl state
+### Option B: introduce an actually-frozen-during-impl state
 
 Add a phase between `SRC-PLAN` and the implementation phase:
 
@@ -61,7 +61,7 @@ SRC-LOCKED-PLAN  (src CL .src.plan.lock.md, impl can start, CL is frozen)
 DONE  (src CL .src.done.md or similar; no more writes)
 ```
 
-Filename suffix now tracks three states per CL kind instead of two: active / plan-locked / closed. The "lock" verb in `cargo mock lock` means what users expect — freeze the plan before impl.
+Filename suffix now tracks three states per CL kind instead of two: active / plan-locked / closed. The "lock" verb in `cargo mock lock` means what users expect: freeze the plan before impl.
 
 Would require:
 - new file-suffix parsing in `lint-rules/src/changelist_helpers.rs`
@@ -77,10 +77,10 @@ Option B is more correct but more work. Defer unless the relabelling in A feels 
 
 ## Severity
 
-Not a blocker. Workflow is usable with the current semantics once you know them. But it ambushed both the user and a subagent during the first real design round (arvo L0, 2026-04-19). Worth fixing before more users hit it.
+Not a blocker. Workflow is usable with the current semantics once you know them. But it ambushed both the user and a subagent during the first real design round (a first-layer design round, 2026-04-19). Worth fixing before more users hit it.
 
 ## Links
 
-- Session that tripped this: `~/Dev/clause-dev/arvo/` branch `feat/arvo-l0-design-round`, deprecated `202604192100_changelist.src.deprecated.md`, reopened as `202604192200_changelist.src.md`
+- The round that tripped this: a design round whose src changelist was deprecated at one timestamp and reopened at another, an hour apart.
 - Hook source: `.claude/hooks/mockspace-write-guard.sh` (generated; source in `mock/agent/hooks/` but this one is a builtin from `src/render_agent.rs`)
 - Phase logic: `lint-rules/src/changelist_helpers.rs` `current_phase()`

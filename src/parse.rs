@@ -1,15 +1,74 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tree_sitter::{Node, Parser};
 
 use crate::model::*;
 
+/// Every package directory across every source directory, sorted by name.
+///
+/// The one place that answers "what directories are the packages", so a caller
+/// cannot accidentally answer it for a single group. Returns full paths, since
+/// a bare name is ambiguous once there is more than one root.
+pub fn package_dirs_in(src_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = src_dirs
+        .iter()
+        .filter_map(|d| fs::read_dir(d).ok())
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .map(|e| e.path())
+        .collect();
+    out.sort_by_key(|p| p.file_name().map(|n| n.to_os_string()));
+    out
+}
+
+/// Every package across every source directory.
+///
+/// The directories are independent and a package belongs to exactly one, so a
+/// name appearing under two roots is a collision rather than a merge, and it is
+/// refused. Silently keeping one would make a real package disappear while the
+/// count still looked plausible.
+pub fn discover_crates_in(src_dirs: &[PathBuf], crate_prefix: &str) -> CrateMap {
+    let mut result = BTreeMap::new();
+    for dir in src_dirs {
+        for (name, info) in discover_crates(dir, crate_prefix) {
+            if let Some(existing) = result.insert(name.clone(), info) {
+                let _ = existing;
+                panic!(
+                    "two source directories both hold a package named `{name}`.\n  \
+                     Source directories are independent and a package belongs to \
+                     exactly one, so this is ambiguous rather than additive. \
+                     Rename one, or merge the directories if they were meant to be \
+                     one group.\n  Searched: {}",
+                    src_dirs
+                        .iter()
+                        .map(|d| d.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+            }
+        }
+    }
+    result
+}
+
 pub fn discover_crates(crates_dir: &Path, crate_prefix: &str) -> CrateMap {
     let mut result = BTreeMap::new();
-    let mut entries: Vec<_> = fs::read_dir(crates_dir)
-        .expect("can't read crates dir")
+    // A missing directory yields nothing rather than failing: the default
+    // `crates` is allowed not to exist for a project with no packages yet.
+    // A *named* directory that is missing is refused in `Config::from_dir`,
+    // where the name is known and the message can say which entry is wrong.
+    let Ok(read) = fs::read_dir(crates_dir) else {
+        return result;
+    };
+    let mut entries: Vec<_> = read
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
         .collect();
@@ -56,11 +115,28 @@ pub fn discover_crates(crates_dir: &Path, crate_prefix: &str) -> CrateMap {
     result
 }
 
+/// Sibling crates this crate depends on, by directory name.
+///
+/// Recognises every form a dependency is written in, not only workspace
+/// inheritance: `dep.workspace = true`, `dep = { path = "..." }`,
+/// `dep = { version = "..." }`, and a bare version string all count.
+///
+/// Matching only the workspace form meant a project using path dependencies
+/// had every dependency ignored, which is not a partial graph but an empty
+/// one: every crate computed to depth zero, the layer numbering said unbuilt
+/// for everything, and the structure graph showed nodes with no edges. Nothing
+/// reported it, because an empty graph looks exactly like a flat project.
 fn extract_deps(cargo_toml: &str, self_name: &str, crate_prefix: &str) -> Vec<String> {
     let mut deps = Vec::new();
+    let mut in_deps = false;
     for line in cargo_toml.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with(crate_prefix) && trimmed.contains("workspace") {
+        if trimmed.starts_with('[') {
+            // Any dependency table counts, including target-specific ones.
+            in_deps = trimmed.contains("dependencies");
+            continue;
+        }
+        if in_deps && trimmed.starts_with(crate_prefix) && trimmed.contains('=') {
             let dep: String = trimmed
                 .chars()
                 .take_while(|c| *c != '.' && *c != ' ' && *c != '=')
@@ -83,7 +159,7 @@ fn txt<'a>(node: Node<'a>, src: &'a str) -> &'a str {
 }
 
 fn is_pub(node: Node, src: &str) -> bool {
-    for i in 0..node.child_count() {
+    for i in 0 .. node.child_count() {
         let child = node.child(i).unwrap();
         if child.kind() == "visibility_modifier" {
             let t = txt(child, src);
@@ -149,27 +225,30 @@ fn parse_items(parser: &mut Parser, source: &str) -> Vec<Item> {
         match node.kind() {
             "struct_item" if is_pub(node, source) => {
                 items.push(parse_struct(node, source, detect_visibility(node, source)));
-            }
+            },
             "trait_item" if is_pub(node, source) => {
                 items.push(parse_trait(node, source, detect_visibility(node, source)));
-            }
+            },
             "enum_item" if is_pub(node, source) => {
                 items.push(parse_enum(node, source, detect_visibility(node, source)));
-            }
+            },
             "function_item" if is_pub(node, source) => {
                 items.push(Item::Fn(FnItem {
-                    sig: parse_fn_sig(node, source),
+                    sig:        parse_fn_sig(node, source),
                     visibility: detect_visibility(node, source),
                 }));
-            }
+            },
             "macro_definition" => {
                 if has_attribute(node, source, "macro_export") {
                     let name = get_name(node, source);
                     if !name.is_empty() {
-                        items.push(Item::Macro(MacroItem { name, is_proc: false }));
+                        items.push(Item::Macro(MacroItem {
+                            name,
+                            is_proc: false,
+                        }));
                     }
                 }
-            }
+            },
             "attribute_item" => {
                 let attr_text = txt(node, source);
                 if attr_text.contains("proc_macro") {
@@ -177,13 +256,16 @@ fn parse_items(parser: &mut Parser, source: &str) -> Vec<Item> {
                         if next.kind() == "function_item" {
                             let name = get_name(next, source);
                             if !name.is_empty() {
-                                items.push(Item::Macro(MacroItem { name, is_proc: true }));
+                                items.push(Item::Macro(MacroItem {
+                                    name,
+                                    is_proc: true,
+                                }));
                             }
                         }
                     }
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -205,13 +287,21 @@ fn parse_struct(node: Node, src: &str, visibility: ApiVisibility) -> Item {
                     .map(|t| txt(t, src).to_string())
                     .unwrap_or_default();
                 if !fname.is_empty() {
-                    fields.push(Field { name: fname, ty: ftype });
+                    fields.push(Field {
+                        name: fname,
+                        ty:   ftype,
+                    });
                 }
             }
         }
     }
 
-    Item::Struct(StructItem { name, generics, fields, visibility })
+    Item::Struct(StructItem {
+        name,
+        generics,
+        fields,
+        visibility,
+    })
 }
 
 fn parse_trait(node: Node, src: &str, visibility: ApiVisibility) -> Item {
@@ -233,13 +323,19 @@ fn parse_trait(node: Node, src: &str, visibility: ApiVisibility) -> Item {
             match child.kind() {
                 "function_item" | "function_signature_item" => {
                     methods.push(parse_fn_sig(child, src));
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
 
-    Item::Trait(TraitItem { name, generics, bounds, methods, visibility })
+    Item::Trait(TraitItem {
+        name,
+        generics,
+        bounds,
+        methods,
+        visibility,
+    })
 }
 
 fn parse_enum(node: Node, src: &str, visibility: ApiVisibility) -> Item {
@@ -270,7 +366,11 @@ fn parse_enum(node: Node, src: &str, visibility: ApiVisibility) -> Item {
         }
     }
 
-    Item::Enum(EnumItem { name, variants, visibility })
+    Item::Enum(EnumItem {
+        name,
+        variants,
+        visibility,
+    })
 }
 
 fn parse_fn_sig(node: Node, src: &str) -> FnSig {
@@ -299,7 +399,12 @@ fn parse_fn_sig(node: Node, src: &str) -> FnSig {
         })
         .unwrap_or_default();
 
-    FnSig { name, generics, params, ret }
+    FnSig {
+        name,
+        generics,
+        params,
+        ret,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +435,9 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
             let opens = trimmed.chars().filter(|c| *c == '{').count() as i32;
             let closes = trimmed.chars().filter(|c| *c == '}').count() as i32;
             inside_macro_rules += opens - closes;
-            if inside_macro_rules < 0 { inside_macro_rules = 0; }
+            if inside_macro_rules < 0 {
+                inside_macro_rules = 0;
+            }
             continue;
         }
 
@@ -344,19 +451,18 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
         //   <prefix>_signal::define_signal!(KeyPressed { key: String } buffering: Queue);
         //   define_behavior!(MyBehavior { ... });
 
-        // Find `define_*!(` pattern
         if let Some(macro_start) = trimmed.find("define_") {
-            let after_define = &trimmed[macro_start..];
+            let after_define = &trimmed[macro_start ..];
             // Extract macro name (up to `!`)
             if let Some(bang) = after_define.find('!') {
-                let macro_name = &after_define[..bang];
+                let macro_name = &after_define[.. bang];
                 // Check it looks valid (no spaces in macro name)
                 if macro_name.contains(' ') {
                     continue;
                 }
 
                 // Figure out source crate from path prefix
-                let prefix = &trimmed[..macro_start];
+                let prefix = &trimmed[.. macro_start];
                 let underscore_prefix = format!("{}_", crate_prefix.replace('-', "_"));
                 let source_crate = if prefix.ends_with("::") {
                     // e.g. "<prefix>_signal::" -> "signal"
@@ -371,7 +477,7 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
                 };
 
                 // Extract generated item name (first identifier after `!(`)
-                let after_bang = &after_define[bang + 1..];
+                let after_bang = &after_define[bang + 1 ..];
                 let after_paren = after_bang.trim_start_matches('(');
                 let generated_name: String = after_paren
                     .trim()
@@ -379,7 +485,9 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
                     .take_while(|c| c.is_alphanumeric() || *c == '_')
                     .collect();
 
-                if !generated_name.is_empty() && generated_name.chars().next().unwrap().is_uppercase() {
+                if !generated_name.is_empty()
+                    && generated_name.chars().next().unwrap().is_uppercase()
+                {
                     results.push(MacroGenerated {
                         macro_name: macro_name.to_string(),
                         generated_name,
@@ -391,4 +499,106 @@ fn parse_macro_invocations(source: &str, crate_prefix: &str) -> Vec<MacroGenerat
     }
 
     results
+}
+
+#[cfg(test)]
+mod deps_tests {
+    use super::*;
+
+    /// The failure this guards was silent: the old form required the line to
+    /// contain `workspace`, so a manifest using path deps yielded no edges at
+    /// all. An empty dependency graph is indistinguishable from a flat
+    /// architecture, so document ordering kept working and put every crate at
+    /// one level, confidently.
+    #[test]
+    fn a_path_dep_on_a_sibling_is_a_dependency_edge() {
+        let toml = r#"[package]
+name = "widget-store"
+version.workspace = true
+
+[dependencies]
+widget-contract = { path = "../widget-contract" }
+widget-world = { path = "../widget-world" }
+"#;
+        let deps = extract_deps(toml, "widget-store", "widget");
+        assert_eq!(deps, vec!["widget-contract", "widget-world"]);
+    }
+
+    #[test]
+    fn a_dep_outside_a_dependency_table_is_not_an_edge() {
+        // `[package]` carries a `name` that starts with the prefix. Reading it
+        // as a dependency would make every crate depend on itself.
+        let toml = r#"[package]
+name = "widget-store"
+
+[dependencies]
+widget-contract = { path = "../widget-contract" }
+"#;
+        let deps = extract_deps(toml, "widget-store", "widget");
+        assert_eq!(deps, vec!["widget-contract"]);
+    }
+
+    #[test]
+    fn the_workspace_form_still_reads() {
+        let toml = r#"[dependencies]
+widget-contract = { workspace = true }
+"#;
+        let deps = extract_deps(toml, "widget-store", "widget");
+        assert_eq!(deps, vec!["widget-contract"]);
+    }
+
+    /// A grouped project discovers every group, not the first one.
+    ///
+    /// The failure this pins is silent: reading one root returns a smaller map
+    /// that looks exactly like a smaller project, which is the shape this file's
+    /// own `extract_deps` comment already records as having shipped once.
+    #[test]
+    fn every_source_directory_contributes_its_packages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mock = tmp.path();
+        for (group, crate_name) in
+            [("abi", "proj-abi-bus"), ("sys", "proj-pwmon"), ("boot", "proj-pid1")]
+        {
+            let d = mock.join(group).join(crate_name).join("src");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("lib.rs"), "pub struct Thing;\n").unwrap();
+            std::fs::write(
+                mock.join(group).join(crate_name).join("Cargo.toml"),
+                format!("[package]\nname = \"{crate_name}\"\n"),
+            )
+            .unwrap();
+        }
+
+        let one = vec![mock.join("abi")];
+        let all = vec![mock.join("abi"), mock.join("sys"), mock.join("boot")];
+
+        // The control: one root really does yield only its own package, so a
+        // count of three below is the roots being walked and not an artefact.
+        assert_eq!(discover_crates_in(&one, "proj").len(), 1);
+
+        let found = discover_crates_in(&all, "proj");
+        assert_eq!(
+            found.len(),
+            3,
+            "every group contributes: {:?}",
+            found.keys()
+        );
+        for name in ["proj-abi-bus", "proj-pwmon", "proj-pid1"] {
+            assert!(
+                found.contains_key(name),
+                "{name} missing from {:?}",
+                found.keys()
+            );
+        }
+    }
+
+    /// A directory named in `src_dirs` that holds no packages is not an error
+    /// here; it is refused earlier, where the name is known.
+    #[test]
+    fn a_source_directory_with_nothing_in_it_contributes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(discover_crates_in(&[empty], "proj").is_empty());
+    }
 }

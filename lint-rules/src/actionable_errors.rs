@@ -1,12 +1,17 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: every `define_error!` invocation must include a non-empty `hint:` field.
 //!
-//! Errors must be actionable — the user seeing the error should know what to do
+//! Errors must be actionable: the user seeing the error should know what to do
 //! next. The `hint:` field provides that guidance. An empty hint (`hint: ""`)
 //! is treated the same as a missing hint.
 //!
 //! Also checks `define_warning!` and `define_hint!` invocations the same way.
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError, Severity};
 
 const TRACKED_MACROS: &[&str] = &["define_error!", "define_warning!", "define_hint!"];
 
@@ -17,6 +22,14 @@ impl Lint for ActionableErrors {
         "actionable-errors"
     }
 
+    /// Encodes one downstream project's error vocabulary, so it
+    /// is off until a project asks for it.
+    fn default_severity(&self) -> Severity {
+        Severity::HARD_ERROR
+    }
+}
+
+impl CrateLint for ActionableErrors {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         if ctx.is_proc_macro_crate() {
             return Vec::new();
@@ -72,10 +85,12 @@ impl Lint for ActionableErrors {
                     let after_colon = after_colon.trim();
 
                     // Empty if the value is `""` or `''`
-                    if after_colon == "\"\"," || after_colon == "\"\""
-                        || after_colon == "''," || after_colon == "''"
+                    if after_colon == "\"\","
+                        || after_colon == "\"\""
+                        || after_colon == "'',"
+                        || after_colon == "''"
                     {
-                        // Empty hint — do not mark as found
+                        // Empty hint: do not mark as found
                     } else {
                         found_hint = true;
                     }
@@ -85,22 +100,27 @@ impl Lint for ActionableErrors {
                 if brace_depth <= 0 && (trimmed.ends_with(");") || trimmed == ")") {
                     if !found_hint {
                         // Check the macro start line for lint:allow
-                        let start_line = ctx.source.lines().nth(macro_start_line.saturating_sub(1)).unwrap_or("");
-                        if start_line.contains("lint:allow(actionable_errors)") {
+                        let start_line = ctx
+                            .source
+                            .lines()
+                            .nth(macro_start_line.saturating_sub(1))
+                            .unwrap_or("");
+                        if crate::line_lint_allowed(start_line, "actionable_errors") {
                             errors.push(LintError::warning(
                                 ctx.crate_name.to_string(),
                                 macro_start_line,
                                 "actionable-errors",
-                                format!("suppressed by lint:allow(actionable_errors) on {macro_name} — review periodically"),
+                                format!("suppressed by lint:allow(actionable_errors) on {macro_name}: review periodically"),
                             ));
                         } else {
                             errors.push(LintError {
-                                crate_name: ctx.crate_name.to_string(),
-                                line: macro_start_line,
-                                lint_name: "actionable-errors",
-                                severity: crate::Severity::HARD_ERROR,
-                                message: format!(
-                                    "{macro_name} missing hint field — errors must be actionable \
+                                path:         None,
+                                crate_name:   ctx.crate_name.to_string(),
+                                line:         macro_start_line,
+                                lint_name:    "actionable-errors",
+                                severity:     crate::Severity::HARD_ERROR,
+                                message:      format!(
+                                    "{macro_name} missing hint field: errors must be actionable \
                                      (include what to do next)",
                                 ),
                                 finding_kind: None,

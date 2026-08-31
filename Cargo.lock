@@ -31,6 +31,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cargo-mock"
+version = "0.0.2"
+dependencies = [
+ "mockspace-manifest",
+ "renki",
+ "serde",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -180,11 +191,14 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "mockspace"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "libloading",
+ "mockspace-bench-harness",
  "mockspace-lint-rules",
+ "mockspace-manifest",
  "serde",
+ "serde_json",
  "tempfile",
  "toml_edit",
  "tree-sitter",
@@ -193,11 +207,11 @@ dependencies = [
 
 [[package]]
 name = "mockspace-bench-core"
-version = "0.1.0"
+version = "0.0.0"
 
 [[package]]
 name = "mockspace-bench-harness"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "libloading",
  "mockspace-bench-core",
@@ -207,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "mockspace-bench-macro"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "mockspace-bench-core",
  "proc-macro2",
@@ -216,12 +230,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "mockspace-bench-matrix"
+version = "0.0.0"
+dependencies = [
+ "libloading",
+ "mockspace-bench-core",
+ "mockspace-bench-harness",
+ "paste",
+]
+
+[[package]]
 name = "mockspace-lint-rules"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "tempfile",
  "tree-sitter",
  "tree-sitter-rust",
+]
+
+[[package]]
+name = "mockspace-manifest"
+version = "0.0.2"
+dependencies = [
+ "serde",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -236,6 +269,12 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "prettyplease"
@@ -301,6 +340,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "renki"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73d5bf35752f3e3da67d0dfb6a969f876c39d400754813c4d53ae179d083464e"
+dependencies = [
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "rustix"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -363,6 +412,7 @@ version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",

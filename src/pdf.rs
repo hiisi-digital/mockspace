@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
@@ -29,10 +34,10 @@ pub fn cmd_pdf(docs_dir: &Path, repo_root: &Path, extra_args: &[&str]) -> ExitCo
                 eprintln!("error: pdf generation failed (exit {code})");
             }
             ExitCode::FAILURE
-        }
+        },
         Err(e) => {
             eprintln!("error: failed to run pdf.sh: {e}");
             ExitCode::FAILURE
-        }
+        },
     }
 }

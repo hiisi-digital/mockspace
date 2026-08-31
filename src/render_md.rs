@@ -1,7 +1,11 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
-use std::path::Path;
 
 use crate::config::Config;
 use crate::graph;
@@ -16,20 +20,66 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
     let mut depth_cache = BTreeMap::new();
     let mut depths = BTreeMap::new();
     for name in crates.keys() {
-        depths.insert(name.clone(), graph::compute_depth(name, crates, &mut depth_cache));
+        depths.insert(
+            name.clone(),
+            graph::compute_depth(name, crates, &mut depth_cache),
+        );
     }
     let reduced = graph::transitive_reduction(crates);
 
     // Header
-    writeln!(md, "# {project_name} — Structure Reference").unwrap();
+    writeln!(md, "# {project_name}: Structure Reference").unwrap();
     writeln!(md).unwrap();
-    writeln!(md, "> Auto-generated from the mock workspace. This document is the canonical").unwrap();
-    writeln!(md, "> description of every crate, type, and macro in the framework.").unwrap();
+    writeln!(
+        md,
+        "> Auto-generated from the mock workspace. This document is the canonical"
+    )
+    .unwrap();
+    writeln!(
+        md,
+        "> description of every crate, type, and macro in the framework."
+    )
+    .unwrap();
     writeln!(md).unwrap();
-    writeln!(md, "See also: [STRUCTURE.GRAPH.svg](STRUCTURE.GRAPH.svg) for the visual dependency graph.").unwrap();
+    let graph_svg = crate::render_design::ordered_doc_name("STRUCTURE.GRAPH.svg", cfg);
+    writeln!(
+        md,
+        "See also: [{graph_svg}]({graph_svg}) for the visual dependency graph."
+    )
+    .unwrap();
     writeln!(md).unwrap();
 
-    // Table of contents
+    let designed_only = crate::render::designed_but_unbuilt(crates, cfg);
+    if !designed_only.is_empty() {
+        writeln!(md, "## Designed, not yet built").unwrap();
+        writeln!(md).unwrap();
+        writeln!(
+            md,
+            "{} crates carry a design document and no source yet. They are listed here rather than",
+            designed_only.len()
+        )
+        .unwrap();
+        writeln!(
+            md,
+            "omitted, because this document describes the architecture and the architecture"
+        )
+        .unwrap();
+        writeln!(
+            md,
+            "includes them. Their dependencies are undeclared until a manifest exists, so they"
+        )
+        .unwrap();
+        writeln!(md, "carry no edges in the graph.").unwrap();
+        writeln!(md).unwrap();
+        for name in &designed_only {
+            let short = name
+                .strip_prefix(&format!("{}-", cfg.crate_prefix))
+                .unwrap_or(name);
+            writeln!(md, "- `{short}`").unwrap();
+        }
+        writeln!(md).unwrap();
+    }
+
     writeln!(md, "## Table of Contents").unwrap();
     writeln!(md).unwrap();
 
@@ -44,9 +94,11 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
     }
 
     for (d, names) in by_depth.iter().enumerate() {
-        if names.is_empty() { continue; }
+        if names.is_empty() {
+            continue;
+        }
         let label = cfg.layer_label(d);
-        writeln!(md, "**Layer {d} — {label}**").unwrap();
+        writeln!(md, "**Layer {d}: {label}**").unwrap();
         writeln!(md).unwrap();
         for name in names {
             let short = &crates[*name].short_name;
@@ -60,14 +112,25 @@ pub fn generate_structure_md(crates: &CrateMap, cfg: &Config) -> String {
 
     // Each crate section
     for (d, names) in by_depth.iter().enumerate() {
-        if names.is_empty() { continue; }
+        if names.is_empty() {
+            continue;
+        }
         let label = cfg.layer_label(d);
-        writeln!(md, "## Layer {d} — {label}").unwrap();
+        writeln!(md, "## Layer {d}: {label}").unwrap();
         writeln!(md).unwrap();
 
         for dir_name in names {
             let info = &crates[*dir_name];
-            write_crate_section(&mut md, dir_name, info, &depths, &reduced, crates, &cfg.crates_dir, project_name, cfg);
+            write_crate_section(
+                &mut md,
+                dir_name,
+                info,
+                &depths,
+                &reduced,
+                crates,
+                project_name,
+                cfg,
+            );
         }
     }
 
@@ -81,7 +144,6 @@ fn write_crate_section(
     depths: &BTreeMap<String, usize>,
     reduced: &BTreeMap<String, Vec<String>>,
     crates: &CrateMap,
-    crates_dir: &Path,
     project_name: &str,
     cfg: &Config,
 ) {
@@ -94,18 +156,23 @@ fn write_crate_section(
     writeln!(md).unwrap();
 
     // Include README.md content
-    let readme_path = crates_dir.join(dir_name).join("README.md");
-    if let Ok(readme) = fs::read_to_string(&readme_path) {
+    // Searched across every source directory: the crate is in exactly one, and
+    // looking only in the first would silently drop the README of every crate
+    // outside it.
+    let readme_path = cfg
+        .src_dirs
+        .iter()
+        .map(|d| d.join(dir_name).join("README.md"))
+        .find(|p| p.is_file());
+    if let Some(readme) = readme_path.and_then(|p| fs::read_to_string(p).ok()) {
         let content: String = readme
             .lines()
             .skip_while(|l| l.starts_with('#') || l.is_empty())
-            .map(|l| {
-                if l.starts_with('#') {
-                    format!("###{l}")
-                } else {
-                    l.to_string()
-                }
-            })
+            .map(
+                |l| {
+                    if l.starts_with('#') { format!("###{l}") } else { l.to_string() }
+                },
+            )
             .collect::<Vec<_>>()
             .join("\n");
         if !content.trim().is_empty() {
@@ -115,11 +182,19 @@ fn write_crate_section(
     }
 
     // Dependencies table
-    let direct_deps: Vec<&str> = info.deps.iter()
-        .filter(|d| crates.get(d.as_str()).map(|c| c.short_name != project_name).unwrap_or(false))
+    let direct_deps: Vec<&str> = info
+        .deps
+        .iter()
+        .filter(|d| {
+            crates
+                .get(d.as_str())
+                .map(|c| c.short_name != project_name)
+                .unwrap_or(false)
+        })
         .map(|d| d.as_str())
         .collect();
-    let reduced_deps: Vec<&str> = reduced.get(dir_name)
+    let reduced_deps: Vec<&str> = reduced
+        .get(dir_name)
         .map(|v| v.iter().map(|s| s.as_str()).collect())
         .unwrap_or_default();
 
@@ -129,18 +204,25 @@ fn write_crate_section(
         writeln!(md, "| Dependency | Direct | Transitive-reduced |").unwrap();
         writeln!(md, "|------------|--------|--------------------|").unwrap();
         for dep in &direct_deps {
-            let dep_short = crates.get(*dep).map(|c| c.short_name.as_str()).unwrap_or(dep);
+            let dep_short = crates
+                .get(*dep)
+                .map(|c| c.short_name.as_str())
+                .unwrap_or(dep);
             let is_reduced = reduced_deps.contains(dep);
             let direct = "✓";
-            let reduced_mark = if is_reduced { "✓ (edge drawn)" } else { "— (transitively implied)" };
+            let reduced_mark =
+                if is_reduced { "✓ (edge drawn)" } else { "(transitively implied)" };
             writeln!(md, "| {dep_short} | {direct} | {reduced_mark} |").unwrap();
         }
         writeln!(md).unwrap();
     }
 
     // Dependees
-    let dependees: Vec<&str> = crates.iter()
-        .filter(|(n, c)| c.short_name != project_name && c.deps.iter().any(|d| d == dir_name) && *n != dir_name)
+    let dependees: Vec<&str> = crates
+        .iter()
+        .filter(|(n, c)| {
+            c.short_name != project_name && c.deps.iter().any(|d| d == dir_name) && *n != dir_name
+        })
         .map(|(_, c)| c.short_name.as_str())
         .collect();
     if !dependees.is_empty() {
@@ -149,15 +231,21 @@ fn write_crate_section(
     }
 
     // Build lookup: item_name -> MacroGenerated info
-    let gen_lookup: BTreeMap<&str, &MacroGenerated> = info.macro_generated.iter()
+    let gen_lookup: BTreeMap<&str, &MacroGenerated> = info
+        .macro_generated
+        .iter()
         .map(|mg| (mg.generated_name.as_str(), mg))
         .collect();
 
     // Domain items (macro-generated)
-    let domain_items: Vec<(&Item, &MacroGenerated)> = info.items.iter()
+    let domain_items: Vec<(&Item, &MacroGenerated)> = info
+        .items
+        .iter()
         .filter_map(|item| gen_lookup.get(item.name()).map(|mg| (item, *mg)))
         .collect();
-    let extra_domain: Vec<&MacroGenerated> = info.macro_generated.iter()
+    let extra_domain: Vec<&MacroGenerated> = info
+        .macro_generated
+        .iter()
         .filter(|mg| !info.items.iter().any(|i| i.name() == mg.generated_name))
         .collect();
 
@@ -172,20 +260,31 @@ fn write_crate_section(
         }
         for mg in &extra_domain {
             let kind = cfg.domain_kind(&mg.macro_name);
-            writeln!(md, "| {kind} | `{}` | `{}!` |", mg.generated_name, mg.macro_name).unwrap();
+            writeln!(
+                md,
+                "| {kind} | `{}` | `{}!` |",
+                mg.generated_name, mg.macro_name
+            )
+            .unwrap();
         }
         writeln!(md).unwrap();
     }
 
     // Raw Rust items (not macro-generated), split by visibility
-    let raw_items: Vec<&Item> = info.items.iter()
+    let raw_items: Vec<&Item> = info
+        .items
+        .iter()
         .filter(|item| !gen_lookup.contains_key(item.name()))
         .collect();
 
-    let public_items: Vec<&&Item> = raw_items.iter()
-        .filter(|i| i.visibility() == ApiVisibility::Public || i.visibility() == ApiVisibility::Unspecified)
+    let public_items: Vec<&&Item> = raw_items
+        .iter()
+        .filter(|i| {
+            i.visibility() == ApiVisibility::Public || i.visibility() == ApiVisibility::Unspecified
+        })
         .collect();
-    let internal_items: Vec<&&Item> = raw_items.iter()
+    let internal_items: Vec<&&Item> = raw_items
+        .iter()
         .filter(|i| i.visibility() == ApiVisibility::Internal)
         .collect();
 
@@ -206,10 +305,22 @@ fn write_crate_section(
 }
 
 fn render_item_list(md: &mut String, items: &[&&Item]) {
-    let macros: Vec<_> = items.iter().filter(|i| matches!(i, Item::Macro(_))).collect();
-    let traits: Vec<_> = items.iter().filter(|i| matches!(i, Item::Trait(_))).collect();
-    let structs: Vec<_> = items.iter().filter(|i| matches!(i, Item::Struct(_))).collect();
-    let enums: Vec<_> = items.iter().filter(|i| matches!(i, Item::Enum(_))).collect();
+    let macros: Vec<_> = items
+        .iter()
+        .filter(|i| matches!(i, Item::Macro(_)))
+        .collect();
+    let traits: Vec<_> = items
+        .iter()
+        .filter(|i| matches!(i, Item::Trait(_)))
+        .collect();
+    let structs: Vec<_> = items
+        .iter()
+        .filter(|i| matches!(i, Item::Struct(_)))
+        .collect();
+    let enums: Vec<_> = items
+        .iter()
+        .filter(|i| matches!(i, Item::Enum(_)))
+        .collect();
     let fns: Vec<_> = items.iter().filter(|i| matches!(i, Item::Fn(_))).collect();
 
     if !macros.is_empty() {
@@ -224,13 +335,17 @@ fn render_item_list(md: &mut String, items: &[&&Item]) {
     if !traits.is_empty() {
         for item in &traits {
             if let Item::Trait(t) = **item {
-                let gen = if t.generics.is_empty() { String::new() } else { t.generics.clone() };
-                let bounds = if t.bounds.is_empty() { String::new() } else { format!(": {}", t.bounds) };
-                writeln!(md, "- `{}{gen}`{bounds}", t.name).unwrap();
+                let gen_str =
+                    if t.generics.is_empty() { String::new() } else { t.generics.clone() };
+                let bounds =
+                    if t.bounds.is_empty() { String::new() } else { format!(": {}", t.bounds) };
+                writeln!(md, "- `{}{gen_str}`{bounds}", t.name).unwrap();
                 for m in &t.methods {
                     let params = if m.params.is_empty() { String::new() } else { m.params.clone() };
-                    let ret = if m.ret.is_empty() { String::new() } else { format!(" → {}", m.ret) };
-                    let gen2 = if m.generics.is_empty() { String::new() } else { m.generics.clone() };
+                    let ret =
+                        if m.ret.is_empty() { String::new() } else { format!(" → {}", m.ret) };
+                    let gen2 =
+                        if m.generics.is_empty() { String::new() } else { m.generics.clone() };
                     writeln!(md, "  - `fn {}{gen2}({params}){ret}`", m.name).unwrap();
                 }
             }
@@ -240,8 +355,9 @@ fn render_item_list(md: &mut String, items: &[&&Item]) {
     if !structs.is_empty() {
         for item in &structs {
             if let Item::Struct(s) = **item {
-                let gen = if s.generics.is_empty() { String::new() } else { s.generics.clone() };
-                writeln!(md, "- `{}{gen}`", s.name).unwrap();
+                let gen_str =
+                    if s.generics.is_empty() { String::new() } else { s.generics.clone() };
+                writeln!(md, "- `{}{gen_str}`", s.name).unwrap();
             }
         }
     }
@@ -257,10 +373,16 @@ fn render_item_list(md: &mut String, items: &[&&Item]) {
     if !fns.is_empty() {
         for item in &fns {
             if let Item::Fn(f) = **item {
-                let params = if f.sig.params.is_empty() { String::new() } else { f.sig.params.clone() };
-                let ret = if f.sig.ret.is_empty() { String::new() } else { format!(" → {}", f.sig.ret) };
-                let gen = if f.sig.generics.is_empty() { String::new() } else { f.sig.generics.clone() };
-                writeln!(md, "- `fn {}{gen}({params}){ret}`", f.sig.name).unwrap();
+                let params =
+                    if f.sig.params.is_empty() { String::new() } else { f.sig.params.clone() };
+                let ret = if f.sig.ret.is_empty() {
+                    String::new()
+                } else {
+                    format!(" → {}", f.sig.ret)
+                };
+                let gen_str =
+                    if f.sig.generics.is_empty() { String::new() } else { f.sig.generics.clone() };
+                writeln!(md, "- `fn {}{gen_str}({params}){ret}`", f.sig.name).unwrap();
             }
         }
     }

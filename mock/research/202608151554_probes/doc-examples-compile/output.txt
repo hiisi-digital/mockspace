@@ -1,0 +1,32 @@
+### run on feat/bench-consolidation (PR #21, the tree that lands first)
+tree:   feat/bench-consolidation @ 657273f
+rustc:  rustc 1.98.0-nightly (cced03bfd 2026-05-28)
+
+ex1_byte_routine_module      FAILS: error[E0432]: unresolved import `mockspace_bench_core::RoutineSpec`
+ex2a_dispatch_verbatim       COMPILES
+ex2b_dispatch_comment        FAILS: error[E0618]: expected function, found `ByteDispatch`
+ex3_routine_spec             COMPILES
+ex4_hooks_struct_update      COMPILES
+ex5_driver_module            COMPILES
+
+C1 at least one bin compiles: PASS
+compiled 4, failed 2
+
+### run on feat/bench-round-consolidation (this round's base, pre-PR-21)
+tree:   docs/the-smallest-mechanism-that-is-correct @ f100a50
+rustc:  rustc 1.98.0-nightly (cced03bfd 2026-05-28)
+
+ex1_byte_routine_module      FAILS: error[E0432]: unresolved import `mockspace_bench_core::RoutineSpec`
+ex2a_dispatch_verbatim       COMPILES
+ex2b_dispatch_comment        FAILS: error[E0618]: expected function, found `ByteDispatch`
+ex3_routine_spec             COMPILES
+ex4_hooks_struct_update      FAILS: error[E0432]: unresolved import `mockspace_bench_harness::driver::Hooks`
+ex5_driver_module            COMPILES
+
+C1 at least one bin compiles: PASS
+compiled 3, failed 3
+
+ex4 differs between the two trees: Hooks and routine_table! are PR #21
+additions. That difference is the control working, and it is also the
+finding's mechanism: an ignored example can be right on one branch and
+wrong on another with nothing to notice.

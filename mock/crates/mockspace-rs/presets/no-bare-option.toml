@@ -1,0 +1,19 @@
+schema_version = "1.0"
+name = "no-bare-option"
+primitive = "ast-type-position"
+description = "no bare Option<T> in public API; use notko::Maybe"
+
+[config]
+forbidden_types = ["Option"]
+positions = ["fn-param", "fn-return", "struct-field"]
+visibility = "public"
+replacements = [["Option", "Maybe"]]
+
+[severity]
+commit = "warn"
+build = "warn"
+push = "warn"
+
+[scope]
+paths = ["**/*.rs"]
+exempt_crates = ["notko"]

@@ -1,0 +1,22 @@
+tree:   feat/bench-consolidation @ 657273f
+rustc:  rustc 1.98.0-nightly (cced03bfd 2026-05-28)
+
+C1 per-file + flattened roles                        LOADS
+C2 root section + [normalise] table                  LOADS
+
+controls pass: both forms accept roles in the spelling they support.
+
+F1 per-file + [normalise] table                      REFUSED
+      | invalid bench config: /var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/probe-perfile-10897-f1/warm/bench.toml: TOML parse error at line 4, column 2
+      |   |
+      | 4 | [normalise]
+      |   |  ^^^^^^^^^
+      | unknown field `normalise`, expected one of `title`, `workload`, `master_seed`, `arms`, `variants`, `points`, `sizes`, `may_differ`, `required`, `threaded`, `baseline`, `floor`, `delta`, `timing`, `sweep`
+F2 root section + flattened roles                    LOADS
+F3 [sweep.a] + flattened roles                       LOADS
+F4 [sweep.a] + [normalise] table                     REFUSED
+      | invalid bench config: /var/folders/xs/n1j565392b196j2n8hkq8xph0000gn/T/probe-perfile-10897-f4/warm/bench.toml: TOML parse error at line 5, column 10
+      |   |
+      | 5 | [sweep.a.normalise]
+      |   |          ^^^^^^^^^
+      | unknown field `normalise`, expected one of `points`, `sizes`, `arms`, `variants`, `title`, `workload`, `master_seed`, `may_differ`, `required`, `threaded`, `baseline`, `floor`, `delta`, `timing`

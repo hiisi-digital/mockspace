@@ -1,3 +1,8 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Dylib hash cache: skip running variants whose dylib has not
 //! changed.
 //!
@@ -28,11 +33,7 @@ pub const DEFAULT_CACHE_ROOT: &str = ".bench_cache";
 /// replace any characters that are not alphanumeric or `_` with `_`.
 fn variant_short_name(path: &str) -> String {
     let stem = path.rsplit('/').next().unwrap_or(path);
-    let stem = if let Some(dot) = stem.rfind('.') {
-        &stem[..dot]
-    } else {
-        stem
-    };
+    let stem = if let Some(dot) = stem.rfind('.') { &stem[.. dot] } else { stem };
     stem.chars()
         .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
         .collect()
@@ -50,12 +51,12 @@ pub fn dylib_hash(path: &str) -> u64 {
 
 /// FNV-1a hash of a byte slice. Used for dylib and harness hashing.
 fn fnv1a(data: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
+    let mut h: u64 = 0xCBF29CE484222325;
     h ^= data.len() as u64;
-    h = h.wrapping_mul(0x100000001b3);
+    h = h.wrapping_mul(0x100000001B3);
     for &b in data {
         h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+        h = h.wrapping_mul(0x100000001B3);
     }
     h
 }
@@ -71,23 +72,23 @@ pub fn config_hash(
     harness_runs: usize,
     workload_hash: u64,
 ) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
+    let mut h: u64 = 0xCBF29CE484222325;
     for v in &[passes as u64, runs as u64, batch as u64, harness_runs as u64] {
         h ^= v;
-        h = h.wrapping_mul(0x100000001b3);
+        h = h.wrapping_mul(0x100000001B3);
     }
     for &cd in cooldowns {
         h ^= cd;
-        h = h.wrapping_mul(0x100000001b3);
+        h = h.wrapping_mul(0x100000001B3);
     }
     // Include harness binary hash. If the framework changes (workload,
     // measurement protocol, counter code), the cache is invalidated.
     h ^= harness_hash();
-    h = h.wrapping_mul(0x100000001b3);
+    h = h.wrapping_mul(0x100000001B3);
     // Include workload structure hash. Changes to program/stage/item
     // layout invalidate cached results.
     h ^= workload_hash;
-    h = h.wrapping_mul(0x100000001b3);
+    h = h.wrapping_mul(0x100000001B3);
     h
 }
 
@@ -101,8 +102,8 @@ fn harness_hash() -> u64 {
 }
 
 struct ManifestEntry {
-    dylib_hash: u64,
-    csv_path: String,
+    dylib_hash:       u64,
+    csv_path:         String,
     /// Mean algo_ns across warm-mode samples at the time this entry
     /// was recorded. Used as the warm-mode drift anchor.
     global_mean_warm: f64,
@@ -113,7 +114,7 @@ struct ManifestEntry {
 
 /// On-disk + in-memory cache of per-variant CSV results.
 pub struct Cache {
-    dir: String,
+    dir:      String,
     manifest: HashMap<String, ManifestEntry>,
 }
 
@@ -122,7 +123,7 @@ pub struct Cache {
 pub struct CachedBatch {
     pub global_mean_warm: f64,
     pub global_mean_cold: f64,
-    pub samples: Vec<Sample>,
+    pub samples:          Vec<Sample>,
 }
 
 impl Cache {
@@ -161,21 +162,21 @@ impl Cache {
                             let w = parts[3].parse::<f64>().unwrap_or(0.0);
                             (w, 0.0)
                         };
-                        manifest.insert(
-                            parts[0].to_string(),
-                            ManifestEntry {
-                                dylib_hash: hash,
-                                csv_path: parts[2].to_string(),
-                                global_mean_warm: gm_warm,
-                                global_mean_cold: gm_cold,
-                            },
-                        );
+                        manifest.insert(parts[0].to_string(), ManifestEntry {
+                            dylib_hash:       hash,
+                            csv_path:         parts[2].to_string(),
+                            global_mean_warm: gm_warm,
+                            global_mean_cold: gm_cold,
+                        });
                     }
                 }
             }
         }
 
-        Cache { dir, manifest }
+        Cache {
+            dir,
+            manifest,
+        }
     }
 
     /// Partition variants into to-run indices + cached batches.
@@ -231,9 +232,9 @@ impl Cache {
     /// Returns `(global_mean_warm, global_mean_cold, samples)`.
     pub fn load_old(&self, variant_path: &str) -> Option<(f64, f64, Vec<Sample>)> {
         self.manifest.get(variant_path).and_then(|entry| {
-            load_csv(&entry.csv_path).ok().map(|s| {
-                (entry.global_mean_warm, entry.global_mean_cold, s)
-            })
+            load_csv(&entry.csv_path)
+                .ok()
+                .map(|s| (entry.global_mean_warm, entry.global_mean_cold, s))
         })
     }
 
@@ -246,19 +247,27 @@ impl Cache {
         global_mean_cold: f64,
         samples: &[Sample],
     ) {
-        let _ = std::fs::create_dir_all(&self.dir);
+        // A manifest entry is a claim that the CSV it names is on disk, and the
+        // reader treats a missing file as a cache miss with no explanation.
+        // Every error here used to be discarded, so a failed write left an
+        // entry pointing at nothing.
+        if let Err(e) = std::fs::create_dir_all(&self.dir) {
+            eprintln!("  cache: creating {}: {e}; not recorded", self.dir);
+            return;
+        }
         let short = variant_short_name(variant_path);
         let csv_path = format!("{}/{}_{:016x}.csv", self.dir, short, hash);
-        write_csv(&csv_path, samples);
-        self.manifest.insert(
-            variant_path.to_string(),
-            ManifestEntry {
+        if let Err(e) = write_csv(&csv_path, samples) {
+            eprintln!("  cache: writing {csv_path}: {e}; not recorded");
+            return;
+        }
+        self.manifest
+            .insert(variant_path.to_string(), ManifestEntry {
                 dylib_hash: hash,
                 csv_path,
                 global_mean_warm,
                 global_mean_cold,
-            },
-        );
+            });
     }
 
     /// Write the manifest TSV to disk. Call after `save_variant`
@@ -271,8 +280,11 @@ impl Cache {
                 let _ = writeln!(
                     f,
                     "{}\t{}\t{}\t{:.2}\t{:.2}",
-                    path, entry.dylib_hash, entry.csv_path,
-                    entry.global_mean_warm, entry.global_mean_cold
+                    path,
+                    entry.dylib_hash,
+                    entry.csv_path,
+                    entry.global_mean_warm,
+                    entry.global_mean_cold
                 );
             }
         }
@@ -287,8 +299,8 @@ impl Cache {
 ///
 /// For each variant that has both old and new data, compute the ratio
 /// `new_median / old_median`. Average these ratios, weighting the
-/// baseline 2x. Using the median per variant is more robust to outlier
-/// batches than the mean.
+/// baseline 2x. The median per variant is less moved by an outlier batch
+/// than the mean is.
 ///
 /// Returns `(consensus_ratio, confidence)`: `confidence` is the number
 /// of overlapping variants used. Higher = more trustworthy.
@@ -376,11 +388,7 @@ fn variant_median(samples: &[Sample], name: &str, mode: &str) -> f64 {
     }
     vals.sort_by(|a, b| a.total_cmp(b));
     let n = vals.len();
-    if n % 2 == 0 {
-        (vals[n / 2 - 1] + vals[n / 2]) / 2.0
-    } else {
-        vals[n / 2]
-    }
+    if n % 2 == 0 { (vals[n / 2 - 1] + vals[n / 2]) / 2.0 } else { vals[n / 2] }
 }
 
 /// Global mean across all samples (for cache metadata), filtering by
@@ -405,47 +413,19 @@ pub fn global_mean(samples: &[Sample]) -> f64 {
     samples.iter().map(|s| s.algo_ns).sum::<f64>() / samples.len() as f64
 }
 
+/// Read a cache CSV. Delegates to [`crate::sample::load_samples_csv`], the one
+/// reader; the byte-identical copy that used to live here is exactly how a
+/// column order drifts between two files nobody diffs.
 fn load_csv(path: &str) -> Result<Vec<Sample>, std::io::Error> {
-    let file = std::fs::File::open(path)?;
-    let mut samples = Vec::new();
-    for line in std::io::BufReader::new(file).lines().flatten() {
-        if line.starts_with("run,") {
-            continue;
-        }
-        let p: Vec<&str> = line.split(',').collect();
-        if p.len() >= 10 {
-            samples.push(Sample {
-                run: p[0].parse().unwrap_or(0),
-                pass: p[1].parse().unwrap_or(0),
-                cooldown_ms: p[2].parse().unwrap_or(0),
-                mode: p[3].to_string(),
-                variant: p[4].to_string(),
-                batch_idx: p[5].parse().unwrap_or(0),
-                e2e_ns: p[6].parse().unwrap_or(0.0),
-                algo_ns: p[7].parse().unwrap_or(0.0),
-                bridge_ns: p[8].parse().unwrap_or(0.0),
-                batch_count: p[9].parse().unwrap_or(0),
-                score: p.get(10).and_then(|s| s.parse().ok()),
-                input_tag: p.get(11).and_then(|s| s.parse().ok()),
-            });
-        }
-    }
-    Ok(samples)
+    crate::sample::load_samples_csv(std::path::Path::new(path))
+        .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
-fn write_csv(path: &str, samples: &[Sample]) {
-    let mut csv = String::from(
-        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag\n",
-    );
-    for s in samples {
-        let score_str = s.score.map(|v| format!("{:.2}", v)).unwrap_or_default();
-        let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
-        csv.push_str(&format!(
-            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{}\n",
-            s.run, s.pass, s.cooldown_ms, s.mode, s.variant,
-            s.batch_idx, s.e2e_ns, s.algo_ns, s.bridge_ns,
-            s.batch_count, score_str, tag_str
-        ));
-    }
-    let _ = std::fs::write(path, &csv);
+/// Write samples to a cache CSV. Rows come from [`crate::sample::to_csv`] and
+/// are read back by [`crate::sample::load_samples_csv`]: one writer and one
+/// reader for the whole crate, because this file used to carry byte-identical
+/// copies of both and a fifth parser in `meta_report` had already drifted off
+/// the shared column order.
+fn write_csv(path: &str, samples: &[Sample]) -> std::io::Result<()> {
+    std::fs::write(path, crate::sample::to_csv(samples))
 }

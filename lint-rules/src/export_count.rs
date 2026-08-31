@@ -1,15 +1,20 @@
+//--------------------------------------------------------------------------------------------------
+// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
+//--------------------------------------------------------------------------------------------------
+
 //! Lint: export count warning.
 //!
 //! Warns when a file has more than 5 `pub` items at module root level.
 //! Re-exports (`pub use`) and submodules (`pub mod`) are excluded from the
 //! count. Items inside `define_*!` macro invocations are also excluded.
 //!
-//! This is a WARNING lint — it does not hard-block. The orchestrator may
+//! This is a WARNING lint: it does not hard-block. The orchestrator may
 //! choose to treat it differently from error-level lints.
 
 use tree_sitter::Node;
 
-use crate::{Lint, LintContext, LintError};
+use crate::{CrateLint, Lint, LintContext, LintError};
 
 const MAX_EXPORTS: usize = 5;
 
@@ -28,22 +33,35 @@ const COUNTABLE_KINDS: &[&str] = &[
 pub struct ExportCount;
 
 impl Lint for ExportCount {
-    fn default_severity(&self) -> crate::Severity { crate::Severity::ADVISORY }
+    /// Crate-scoped. The guideline counts a crate's exports. Per file it
+    /// would count each module's, which is a different number about a
+    /// different thing.
+    fn per_file(&self) -> bool {
+        false
+    }
+
+    fn default_severity(&self) -> crate::Severity {
+        crate::Severity::ADVISORY
+    }
+
     fn name(&self) -> &'static str {
         "export-count"
     }
+}
 
+impl CrateLint for ExportCount {
     fn check(&self, ctx: &LintContext) -> Vec<LintError> {
         let root = ctx.tree.root_node();
         let count = count_pub_exports(root, ctx.source);
 
         if count > MAX_EXPORTS {
             vec![LintError {
-                crate_name: ctx.crate_name.to_string(),
-                line: 1,
-                lint_name: "export-count",
-                severity: crate::Severity::ADVISORY,
-                message: format!(
+                path:         None,
+                crate_name:   ctx.crate_name.to_string(),
+                line:         1,
+                lint_name:    "export-count",
+                severity:     crate::Severity::ADVISORY,
+                message:      format!(
                     "file has {count} public exports (guideline: ~{MAX_EXPORTS})",
                 ),
                 finding_kind: None,
@@ -88,7 +106,7 @@ fn has_pub_visibility(node: Node, source: &str) -> bool {
             let text = &source[child.byte_range()];
             // Match `pub` but not `pub(crate)` or `pub(super)` etc.
             // All of these still count as public exports from the file's
-            // perspective — the guideline is about cognitive load, not
+            // perspective: the guideline is about cognitive load, not
             // strict API surface.
             return text.starts_with("pub");
         }

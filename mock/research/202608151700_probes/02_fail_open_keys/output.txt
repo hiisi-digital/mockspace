@@ -1,0 +1,10 @@
+case                       report header                    switch   threaded  nullfloor  floor-note
+A  correct                Baseline: **switch**              1.00×      0.38×      0.00×  present
+B  floor = "nulfloor"     Baseline: **switch**              1.00×      0.50×      0.20×  ABSENT
+C  baseline = "swtich"    Baseline: **nullfloor**           0.00×      0.00×      1.00×  present
+D  no floor declared      Baseline: **switch**              1.00×      0.50×      0.20×  ABSENT
+
+B identical to D (typo'd floor is indistinguishable from no floor): true
+B differs from A anywhere except the ratio digits and the note: true
+
+negative controls: all three passed (the correct spellings do change the report)
