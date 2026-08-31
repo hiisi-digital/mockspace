@@ -233,7 +233,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // repo's lints from a runtime cdylib. `loaded` holds the library so the
     // boxed lints' vtables outlive every use below; the shadowing binds the
     // effective slices for the rest of the function.
-    let loaded = if pack_is_empty(pack) {
+    let mut loaded = if pack_is_empty(pack) {
         match arg_value(&args, "--mockspace-lint-rules-dep") {
             Some(dep) => {
                 match crate::custom_lints::load(&cfg, &cfg.config_path, &dep) {
@@ -265,6 +265,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     } else {
         None
     };
+    // A pack's lints arrive holding their constructors' defaults, because the
+    // `lint_pack!` macro can only call a constructor. Nothing downstream gives
+    // them the project's parameters: `check_crate_with_extra` configures the
+    // builtins and skips the extras it was handed, and `check_message_with_extra`
+    // configures nothing, both because they take their extras as a shared slice
+    // and `configure` wants `&mut`. Here the pack is still owned, so this is
+    // where it happens, once, for every kind.
+    if let Some(l) = &mut loaded {
+        l.pack.configure_from(&cfg.lint_overrides);
+    }
     let pack = match &loaded {
         Some(l) => &l.pack,
         None => pack,
