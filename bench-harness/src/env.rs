@@ -25,11 +25,15 @@ pub struct EnvMeta {
     pub cpu:          String,
     /// `uname -sr` output. Identifies kernel + version.
     pub os:           String,
-    /// `rustc --version` output. Pins the toolchain that built the
-    /// variant cdylibs.
+    /// `rustc --version` of whatever `rustc` is on PATH when the harness runs.
+    /// That is not necessarily the toolchain the variant cdylibs were built
+    /// with: they may have been built earlier, or by a crate carrying its own
+    /// `rust-toolchain.toml`.
     pub rustc:        String,
-    /// Short git commit (`git rev-parse --short HEAD`) of the consumer
-    /// repo at run start. Empty when not in a git tree.
+    /// Short git commit (`git rev-parse --short HEAD`) of the consumer, with a
+    /// `-dirty` suffix when `git status --porcelain` reports anything.
+    /// Empty when not in a git tree. Written to the `.meta.json` sidecar and
+    /// read by nothing in this crate.
     pub git_commit:   String,
     /// Unix timestamp at run start (seconds since epoch).
     pub timestamp:    u64,
@@ -42,7 +46,7 @@ pub struct EnvMeta {
 ///
 /// Calls `sysctl` (macOS) or reads `/proc/cpuinfo` (Linux) for the CPU
 /// brand, `uname -sr` for the OS string, `rustc --version` for the
-/// toolchain pin, `git rev-parse --short HEAD` for the commit, the
+/// toolchain on PATH, `git rev-parse --short HEAD` for the commit, the
 /// system clock for `timestamp`, and
 /// [`mockspace_bench_core::counter::counter_frequency`] for the
 /// counter frequency. Any individual collection step that fails leaves

@@ -226,12 +226,14 @@ pub fn write_report_for_routine(
 /// or `"cold"`) to `output_path`.
 ///
 /// The synthetic result carries the CSV path as its `cache_path`
-/// and an empty [`EnvMeta`] (the original environment metadata is
-/// not preserved through the CSV cache today; reports generated
-/// from this path show "(env metadata unavailable)" in the
-/// methodology section). For full environment metadata, run the
-/// orchestrator via [`run`] and feed the [`BenchResult`] through
-/// [`write_report`] directly.
+/// and an empty [`EnvMeta`]. Nothing in this crate reads the
+/// `.meta.json` sidecar back, so a report regenerated this way is
+/// missing the environment the run happened in, and it is missing
+/// the methodology too: `passes`, `runs_per_pass`, `batch_size`,
+/// `harness_runs`, `cooldowns_ms` and `master_seed` are not
+/// persisted anywhere, and [`DataSet::with_methodology`] is the only
+/// way to supply them. For those, run the orchestrator via [`run`]
+/// and feed the [`BenchResult`] through [`write_report`] directly.
 ///
 /// Equivalent throughput-aware variant: [`report_from_csv_for_routine`].
 pub fn report_from_csv(
