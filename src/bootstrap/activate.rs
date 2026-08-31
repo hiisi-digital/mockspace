@@ -202,18 +202,41 @@ mod tests {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&dir).expect("temp dir");
+        // Cleared first, because the counter only fixes collisions inside one
+        // run. Nothing deletes these afterwards, `create_dir_all` succeeds on an
+        // existing directory and `git init` on an existing repository keeps its
+        // config, so a later process drawing a recycled pid inherits the earlier
+        // run's `mockspace.previousHooksPath`. The two tests asserting that key
+        // is absent then fail on correct code.
+        //
+        // The same bug as the one these tests were written for, with threads
+        // swapped for processes, which is worth saying: fixing an isolation
+        // defect on one axis does not fix it on the other, and I had already
+        // done exactly that once here.
+        init_repo_at(&dir);
+        dir
+    }
+
+    /// Clear `dir` and put a fresh repository in it.
+    ///
+    /// Split out of [`repo`] so the isolation property can be tested against a
+    /// directory a test chooses, rather than one drawn from the shared counter.
+    /// Reading that counter and then calling `repo` is not atomic, and a
+    /// parallel test taking the number in between would make such a test pass
+    /// for the wrong reason.
+    fn init_repo_at(dir: &PathBuf) {
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).expect("temp dir");
         let run = |args: &[&str]| {
             std::process::Command::new("git")
                 .args(args)
-                .current_dir(&dir)
+                .current_dir(dir)
                 .output()
                 .expect("git");
         };
         run(&["init", "-q"]);
         run(&["config", "user.email", "t@t"]);
         run(&["config", "user.name", "t"]);
-        dir
     }
 
     fn set(dir: &PathBuf, key: &str, value: &str) {
@@ -231,6 +254,47 @@ mod tests {
         let mock = dir.join("mock");
         std::fs::create_dir_all(mock.join("target").join("hooks")).expect("hooks dir");
         (dir, mock)
+    }
+
+    #[test]
+    fn a_fresh_repo_carries_nothing_from_a_previous_run() {
+        // The helper's own contract, asserted rather than assumed, because two
+        // tests here assert a config key is *absent* and would pass or fail on
+        // whatever a previous process left behind.
+        //
+        // Plants the exact leftover into the directory this helper is about to
+        // choose, then calls it. Without the `remove_dir_all`, `create_dir_all`
+        // succeeds on the existing directory, `git init` preserves the existing
+        // config, and the key survives into a test that is about to assert it is
+        // gone. A recycled pid is all that is needed, and there were over a
+        // hundred of these directories on the machine when this was written.
+        // A directory of this test's own, rather than one read off the shared
+        // counter: reading the counter and then calling `repo()` is not atomic,
+        // and a parallel test taking the number in between would make this pass
+        // for the wrong reason.
+        let planned =
+            std::env::temp_dir().join(format!("ms-activate-plant-{}", std::process::id()));
+        std::fs::create_dir_all(&planned).expect("plant dir");
+        let plant = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&planned)
+                .output()
+                .expect("git");
+        };
+        plant(&["init", "-q"]);
+        plant(&["config", "--local", PREVIOUS_HOOKS_PATH, ".husky-from-a-previous-run"]);
+        assert_eq!(
+            local_config(&planned, PREVIOUS_HOOKS_PATH).as_deref(),
+            Some(".husky-from-a-previous-run"),
+            "the control: the leftover must really be there before the helper runs"
+        );
+
+        init_repo_at(&planned);
+        assert!(
+            local_config(&planned, PREVIOUS_HOOKS_PATH).is_none(),
+            "a repository handed to a test carries nothing from a previous process"
+        );
     }
 
     #[test]
