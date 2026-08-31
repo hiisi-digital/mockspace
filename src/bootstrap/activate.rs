@@ -160,8 +160,12 @@ pub fn is_active(repo_root: &Path) -> bool {
     match output {
         Ok(o) if o.status.success() => {
             let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            // Active if it points to a mockspace-generated hooks dir.
-            path.contains("mockspace") || path.contains("target/hooks")
+            // The same predicate the gate uses to decide whether it may take the
+            // key, and it has to be the same one: a path this reports as active
+            // while the gate reads as somebody else's is a repo that believes it
+            // is gated and is not. It was spelled out twice, identically, which
+            // is two places to fix and one of them would have stayed wrong.
+            mockspace_manifest::gate::is_ours(&path)
         },
         _ => false,
     }
