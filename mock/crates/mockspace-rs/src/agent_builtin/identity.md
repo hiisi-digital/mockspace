@@ -58,7 +58,7 @@ disambiguation).
 Examples that validate:
 
 ```
-arvo-graph-csr
+graph-csr-backend
 a
 structural-robust-ir
 quickstart

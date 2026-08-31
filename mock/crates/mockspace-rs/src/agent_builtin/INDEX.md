@@ -19,8 +19,9 @@ inside the mockspace crate.
 | `sides.md` | Doc and src vocabulary. What a manifest is, what each side carries, how the two sides relate. |
 | `anchors.md` | What an anchor captures, when, why. Content-addressed snapshot storage. |
 | `suppressions.md` | The five comment-canonical directives (`lint:allow`, `lint:scope-add`, `lint:defer`, `lint:file-disable`, `lint:prop`) plus Rust attribute aliases. |
-| `commands.md` | The `cargo mock` subcommand surface as it ships today. |
+| `commands.md` | How mockspace is invoked, what the subcommand categories are, and why the list is read from `cargo mock tools` rather than written down. |
 | `identity.md` | Slugs, task IDs, ref paths, content hashes. How mockspace names things. |
+| `lints-and-tools.md` | The two kinds of check, which a given one is, and the contract each is held to. |
 
 ## What's NOT here
 
