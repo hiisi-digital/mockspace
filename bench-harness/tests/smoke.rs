@@ -113,8 +113,21 @@ fn dataset_aggregates_per_variant() {
     );
     assert_eq!(alpha.algo_per_cd[&0].count, 45);
     assert_eq!(alpha.algo_per_cd[&100].count, 45);
-    // The nonstop series is the cooldown-0 samples only.
-    assert_eq!(alpha.nonstop_per_pass.len(), 45);
+    // The nonstop series is one value per (run, pass) at cooldown 0: three runs
+    // of three passes, not the 45 batches those passes hold.
+    assert_eq!(alpha.nonstop_per_pass.len(), 9);
+    assert_eq!(
+        alpha
+            .nonstop_per_pass
+            .iter()
+            .map(|(k, _)| *k)
+            .collect::<Vec<_>>(),
+        vec![(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3), (3, 1), (3, 2), (3, 3)]
+    );
+    // Each pass holds five batches at 100.0, 100.3, 100.6, 100.9, 101.2.
+    for (k, v) in &alpha.nonstop_per_pass {
+        close(*v, 100.6, &format!("pass {k:?} median"));
+    }
 
     // Scores and tags come through, and the tag index is named.
     assert_eq!(alpha.scores.len(), 90);

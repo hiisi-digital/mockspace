@@ -508,17 +508,23 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
     }
 
     // ── Per-pass consistency (nonstop) with autocorrelation ──
-    md.push_str("\n## Per-pass consistency (nonstop e2e, Δ vs baseline)\n\n");
+    //
+    // One row per (run, pass) at cooldown 0, and each variant is looked up by
+    // that key rather than by position in its own vector: a variant that lost a
+    // pass to a timeout has a shorter series, and comparing by index put every
+    // row after the gap against a different pass. The column is the algorithm
+    // time, which is what the series holds.
+    md.push_str("\n## Per-pass consistency (nonstop algo, Δ vs baseline)\n\n");
     let n_passes = base.nonstop_per_pass.len();
     if n_passes > 0 {
-        md.push_str("| Pass |");
+        md.push_str("| Run | Pass |");
         md.push_str(&format!(" {} |", base.name));
         for v in &ds.variants {
             if v.name != base.name {
                 md.push_str(&format!(" {} |", v.name));
             }
         }
-        md.push_str("\n|---|");
+        md.push_str("\n|---|---|");
         md.push_str("---|");
         for v in &ds.variants {
             if v.name != base.name {
@@ -527,18 +533,17 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         }
         md.push('\n');
 
-        for p in 0 .. n_passes {
-            let bval = base.nonstop_per_pass[p];
-            md.push_str(&format!("| {} | {:.0}ns", p + 1, bval));
+        for &((run, pass), bval) in &base.nonstop_per_pass {
+            md.push_str(&format!("| {} | {} | {:.0}ns", run, pass, bval));
             for v in &ds.variants {
                 if v.name == base.name {
                     continue;
                 }
-                if p < v.nonstop_per_pass.len() {
-                    let d = pct_delta(v.nonstop_per_pass[p], bval);
-                    md.push_str(&format!(" | {:+.1}%", d));
-                } else {
-                    md.push_str(" | - ");
+                match v.nonstop_per_pass.iter().find(|(k, _)| *k == (run, pass)) {
+                    Some(&(_, vval)) => {
+                        md.push_str(&format!(" | {:+.1}%", pct_delta(vval, bval)));
+                    },
+                    None => md.push_str(" | - "),
                 }
             }
             md.push_str(" |\n");
@@ -567,17 +572,25 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             if v.name == base.name {
                 continue;
             }
+            // Counted over the passes both variants actually ran, which is what
+            // the denominator has to be: an index-paired count divided by the
+            // baseline's length reported wins against passes the variant never
+            // had.
             let mut wins = 0;
             let mut losses = 0;
-            for p in 0 .. n_passes.min(v.nonstop_per_pass.len()) {
-                let d = pct_delta(v.nonstop_per_pass[p], base.nonstop_per_pass[p]);
+            let mut total = 0;
+            for &(key, bval) in &base.nonstop_per_pass {
+                let Some(&(_, vval)) = v.nonstop_per_pass.iter().find(|(k, _)| *k == key) else {
+                    continue;
+                };
+                total += 1;
+                let d = pct_delta(vval, bval);
                 if d < -0.1 {
                     wins += 1;
                 } else if d > 0.1 {
                     losses += 1;
                 }
             }
-            let total = n_passes.min(v.nonstop_per_pass.len());
             md.push_str(&format!(
                 "- **{}**: won {}/{}, lost {}/{}\n",
                 v.name, wins, total, losses, total
