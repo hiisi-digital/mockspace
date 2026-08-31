@@ -136,7 +136,10 @@ fn a_stray_separator_inside_a_real_list_is_still_reported() {
     let nss = [ns("probe", &[]), ns("law", &[("evidence", "probe[]")])];
     let r = reg(&[
         ("probe", "the_sweep", &[]),
-        ("law", "associativity", &[("evidence", "the_sweep, , the_sweep")]),
+        ("law", "associativity", &[(
+            "evidence",
+            "the_sweep, , the_sweep",
+        )]),
     ]);
     let found = validate_row_references(&r, &nss);
     assert_eq!(kinds(&found), ["malformed-row-reference"], "{found:?}");

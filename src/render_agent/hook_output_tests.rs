@@ -9,8 +9,9 @@
 //! as malformed and the hook's decision is discarded. A helper that prints
 //! without exiting, followed by any second emit, produces exactly that.
 
-use super::*;
 use std::process::Command;
+
+use super::*;
 
 fn scratch() -> std::path::PathBuf {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -33,10 +34,7 @@ fn cfg_at(repo_root: &std::path::Path) -> Config {
 
 /// Every builtin hook, rendered against one platform's helpers as the writer
 /// renders them.
-fn every_hook_for(
-    repo_root: &std::path::Path,
-    helpers: &str,
-) -> Vec<(&'static str, String)> {
+fn every_hook_for(repo_root: &std::path::Path, helpers: &str) -> Vec<(&'static str, String)> {
     let cfg = cfg_at(repo_root);
     let subst = |raw: String| {
         raw.replace("{{HOOK_HELPERS}}", helpers)
@@ -53,9 +51,7 @@ fn every_hook_for(
 
 /// Both platforms, since the same five hooks are written twice and only one of
 /// them was ever swept.
-fn every_hook_everywhere(
-    repo_root: &std::path::Path,
-) -> Vec<(String, String)> {
+fn every_hook_everywhere(repo_root: &std::path::Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (platform, helpers) in [
         ("claude", crate::render_agent::CLAUDE_HOOK_HELPERS),

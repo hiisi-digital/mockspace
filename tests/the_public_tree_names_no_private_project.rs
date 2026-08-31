@@ -37,14 +37,7 @@ use std::process::Command;
 ///
 /// A name joins this list when `gh repo view <owner>/<name> --json visibility`
 /// says `PRIVATE`, and leaves it when that changes.
-const PRIVATE: &[&str] = &[
-    "clause-dev",
-    "kolli",
-    "ikiuni",
-    "loisto",
-    "loimu",
-    "saalis",
-];
+const PRIVATE: &[&str] = &["clause-dev", "kolli", "ikiuni", "loisto", "loimu", "saalis"];
 
 /// Where a path on somebody's own machine gives itself away.
 ///
