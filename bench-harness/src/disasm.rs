@@ -271,6 +271,28 @@ fn build_report(
     }
 }
 
+/// The name to print a variant under: its dylib's file name with the platform's
+/// library prefix and extension taken off.
+///
+/// The previous form was `path.rsplit('/').nth(1)`, the second component from
+/// the right, which on the path shape [`crate::config::resolve_variant_path`]
+/// builds is `release` for every variant, so both warnings below named every
+/// variant `release` and the duplicate line read `release == release`.
+fn short_name(path: &str) -> &str {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let file = file
+        .strip_suffix(std::env::consts::DLL_SUFFIX)
+        .unwrap_or(file);
+    // Not `strip_prefix(DLL_PREFIX)`: that is empty on Windows, where stripping
+    // it is a no-op, and `lib` on the platforms where it is not.
+    if std::env::consts::DLL_PREFIX.is_empty() {
+        file
+    } else {
+        file.strip_prefix(std::env::consts::DLL_PREFIX)
+            .unwrap_or(file)
+    }
+}
+
 /// Print a [`CheckReport`] to stderr. Total or partial extraction
 /// failure is reported before (and regardless of) any duplicate
 /// pairs, so a run that could not fully answer never reads the same
@@ -291,7 +313,7 @@ fn print_report(variant_paths: &[String], report: &CheckReport) {
                 variant_paths.len()
             );
             for path in &report.unreadable {
-                let short = path.rsplit('/').nth(1).unwrap_or(path);
+                let short = short_name(path);
                 eprintln!("    {}", short);
             }
         }
@@ -303,8 +325,8 @@ fn print_report(variant_paths: &[String], report: &CheckReport) {
             report.dupes.len()
         );
         for (a, b) in &report.dupes {
-            let a_short = a.rsplit('/').nth(1).unwrap_or(a);
-            let b_short = b.rsplit('/').nth(1).unwrap_or(b);
+            let a_short = short_name(a);
+            let b_short = short_name(b);
             eprintln!("    {} == {}", a_short, b_short);
         }
     }

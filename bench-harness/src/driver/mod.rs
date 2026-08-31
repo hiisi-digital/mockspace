@@ -256,12 +256,11 @@ fn warm_medians(result: &BenchResult) -> BTreeMap<String, Vec<f64>> {
     per_variant
 }
 
+/// The crate's one median, over a vector the caller owns. Delegates to
+/// [`crate::analysis::median`] so the summary table, the history ledger and the
+/// findings report cannot disagree about what "median" means on an even count.
 fn median(vals: &mut [f64]) -> f64 {
-    if vals.is_empty() {
-        return 0.0;
-    }
-    vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    vals[vals.len() / 2]
+    crate::analysis::median(vals)
 }
 
 /// The hook-less compat entry point: adapts a [`DriverRegistry`]
@@ -586,7 +585,9 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
             // every rendered delta (the % column and the paired absolute
             // Δ-median-ns + CI in the statistical comparison table) relative
             // to it, which cancels the shared common cost.
-            let mut ds = result.dataset_for_routine(&routine, "warm");
+            let mut ds = result
+                .dataset_for_routine(&routine, "warm")
+                .with_methodology(&config);
             if let Some(bl) = config.normalise_baseline.as_deref() {
                 ds = ds.with_baseline(bl);
             }
@@ -650,23 +651,19 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         }
         let historical = history::load_in(&history_root, &benchmark_key);
         let regressions = history::detect_regressions(&entries, &historical);
-        for (bench, variant, delta, flagged) in &regressions {
-            if *flagged {
-                eprintln!(
-                    "  REGRESSION: {bench} {variant} {:+.1}% vs history",
-                    delta * 100.0
-                );
+        for r in &regressions {
+            if r.flagged {
+                eprintln!("  REGRESSION: {}", r.render(&config.bench_name));
             }
         }
         for e in &entries {
-            let flagged = regressions.iter().any(|(_, v, _, f)| *f && v == &e.variant);
             summary.push(SummaryRow {
                 bench:         config.bench_name.clone(),
                 n:             config.n,
                 variant:       e.variant.clone(),
                 median_ns:     e.median_ns,
                 ratio_vs_best: if best > 0.0 { e.median_ns / best } else { 1.0 },
-                regression:    flagged,
+                regression:    history::flagged_for(&regressions, &e.variant),
             });
         }
         if cell_failed {
@@ -769,6 +766,11 @@ fn timeable_after_validation(
         },
         Err(e) => (Vec::new(), vec![format!("(validation error: {e})")]),
     }
+}
+
+#[cfg(test)]
+pub(crate) fn median_for_tests(vals: &mut [f64]) -> f64 {
+    median(vals)
 }
 
 #[cfg(test)]

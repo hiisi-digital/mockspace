@@ -103,6 +103,50 @@ pub struct BenchResult {
     pub report_path: String,
 }
 
+/// The header row every sample CSV in this crate carries. One definition: the
+/// column order is a contract between four places (this writer, this reader,
+/// the cache's copy, and the cross-bench report's parser) and it drifted, so
+/// `meta_report` read column 6 and called it `algo_ns` when column 6 is
+/// `e2e_ns`.
+pub const CSV_HEADER: &str = "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,\
+bridge_ns,batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n";
+
+/// Render samples as CSV, header included, in [`CSV_HEADER`]'s column order.
+///
+/// Nothing is quoted. `validation::first_unsafe_name` refuses a variant whose
+/// exported name carries a delimiter before a run reaches here, because both
+/// readers fall back silently on a short row and a shifted column comes back
+/// as a wrong number rather than an error.
+#[must_use]
+pub fn to_csv(samples: &[Sample]) -> String {
+    let mut csv = String::from(CSV_HEADER);
+    for s in samples {
+        let score_str = s.score.map(|v| format!("{:.2}", v)).unwrap_or_default();
+        let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{}\n",
+            s.run,
+            s.pass,
+            s.cooldown_ms,
+            s.mode,
+            s.variant,
+            s.batch_idx,
+            s.e2e_ns,
+            s.algo_ns,
+            s.bridge_ns,
+            s.batch_count,
+            score_str,
+            tag_str,
+            s.instructions,
+            s.cycles,
+            s.setup_ns,
+            s.first_ns,
+            s.digest
+        ));
+    }
+    csv
+}
+
 /// Load `Sample` rows from a CSV produced by [`crate::write_csv`].
 ///
 /// Used by `mock bench report --report-only` and by tooling that
@@ -217,4 +261,136 @@ mod tests {
     // The real thing needs the emitter and the orchestrator's parser in one
     // round trip, which is worth doing and is larger than the change that
     // removed this.
+}
+
+#[cfg(test)]
+mod round_trip_tests {
+    use super::*;
+    use crate::sample::Sample;
+
+    fn sample(variant: &str) -> Sample {
+        Sample {
+            run:          1,
+            pass:         2,
+            cooldown_ms:  600,
+            mode:         "warm".into(),
+            variant:      variant.into(),
+            e2e_ns:       123.4,
+            algo_ns:      100.1,
+            bridge_ns:    23.3,
+            batch_idx:    7,
+            batch_count:  5000,
+            score:        Some(0.5),
+            input_tag:    Some(3),
+            instructions: 4242,
+            cycles:       2121,
+            setup_ns:     9.9,
+            first_ns:     8.8,
+            digest:       0xFEED,
+        }
+    }
+
+    /// Neither CSV writer quotes and neither reader unquotes, and every field on
+    /// the read side falls back with `unwrap_or`, so a variant name carrying a
+    /// delimiter shifts every column after it and the row comes back with wrong
+    /// numbers in the wrong fields rather than failing.
+    ///
+    /// This is the law that ties `validation::first_unsafe_name` to what it
+    /// guards: every name that check accepts survives the write-and-read
+    /// round trip intact. Without the tie the check is a list of characters
+    /// somebody thought were bad.
+    #[test]
+    fn every_name_the_validator_accepts_survives_the_csv_round_trip() {
+        let candidates = [
+            "fnv1a",
+            "xx_hash-64",
+            "v1.2",
+            "a",
+            "two words",
+            "Mixed_Case9",
+            "with(parens)",
+            "with[brackets]",
+            "utf8-\u{e4}\u{f6}",
+        ];
+        for name in candidates {
+            let owned = vec![name.to_string()];
+            assert_eq!(
+                crate::validation::first_unsafe_name(&owned),
+                None,
+                "`{name}` is in this test because the validator accepts it"
+            );
+            let result = BenchResult {
+                title:       "t".into(),
+                env:         crate::env::EnvMeta::default(),
+                samples:     vec![sample(name)],
+                cache_path:  String::new(),
+                report_path: String::new(),
+            };
+            let dir =
+                std::env::temp_dir().join(format!("mockspace-bh-roundtrip-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("rt.csv");
+            crate::harness::write_csv(&result, &path.display().to_string()).unwrap();
+            let back = load_samples_csv(&path).unwrap();
+            std::fs::remove_dir_all(&dir).ok();
+
+            assert_eq!(back.len(), 1, "`{name}`: one row in, one row out");
+            let b = &back[0];
+            let a = &result.samples[0];
+            assert_eq!(b.variant, a.variant, "`{name}`: variant");
+            assert_eq!(b.run, a.run, "`{name}`: run");
+            assert_eq!(b.pass, a.pass, "`{name}`: pass");
+            assert_eq!(b.cooldown_ms, a.cooldown_ms, "`{name}`: cooldown");
+            assert_eq!(b.mode, a.mode, "`{name}`: mode");
+            assert_eq!(b.batch_idx, a.batch_idx, "`{name}`: batch_idx");
+            assert_eq!(b.batch_count, a.batch_count, "`{name}`: batch_count");
+            assert_eq!(b.instructions, a.instructions, "`{name}`: instructions");
+            assert_eq!(b.cycles, a.cycles, "`{name}`: cycles");
+            assert_eq!(b.digest, a.digest, "`{name}`: digest");
+            assert_eq!(b.input_tag, a.input_tag, "`{name}`: input_tag");
+            assert!((b.e2e_ns - a.e2e_ns).abs() < 0.05, "`{name}`: e2e_ns");
+            assert!((b.algo_ns - a.algo_ns).abs() < 0.05, "`{name}`: algo_ns");
+            assert!((b.setup_ns - a.setup_ns).abs() < 0.05, "`{name}`: setup_ns");
+            assert!((b.first_ns - a.first_ns).abs() < 0.05, "`{name}`: first_ns");
+        }
+    }
+
+    /// The negative control: a name the validator refuses does corrupt the row,
+    /// so the guard is refusing something real rather than a list of characters
+    /// somebody disliked.
+    #[test]
+    fn a_name_the_validator_refuses_does_corrupt_the_row() {
+        let bad = "has,comma";
+        assert!(
+            crate::validation::first_unsafe_name(&[bad.to_string()]).is_some(),
+            "the validator has to refuse this for the rest of the test to mean \
+             anything"
+        );
+        let result = BenchResult {
+            title:       "t".into(),
+            env:         crate::env::EnvMeta::default(),
+            samples:     vec![sample(bad)],
+            cache_path:  String::new(),
+            report_path: String::new(),
+        };
+        let dir =
+            std::env::temp_dir().join(format!("mockspace-bh-roundtrip-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rt.csv");
+        crate::harness::write_csv(&result, &path.display().to_string()).unwrap();
+        let back = load_samples_csv(&path).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(back.len(), 1);
+        assert_ne!(
+            back[0].variant, bad,
+            "the comma did not split the field, so this format is safe and the \
+             guard is unnecessary"
+        );
+        assert_ne!(
+            back[0].digest, 0xFEED,
+            "the columns did not shift, so the corruption this guard prevents \
+             does not happen"
+        );
+    }
 }

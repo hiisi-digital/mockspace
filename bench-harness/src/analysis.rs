@@ -57,7 +57,7 @@ impl Stats {
         let n = vals.len();
         let q = n / 5;
         let mean = vals.iter().sum::<f64>() / n as f64;
-        let median = if n % 2 == 0 { (vals[n / 2 - 1] + vals[n / 2]) / 2.0 } else { vals[n / 2] };
+        let median = median(vals);
         let best = if q > 0 { vals[.. q].iter().sum::<f64>() / q as f64 } else { vals[0] };
         let worst_start = 4 * q;
         let worst_count = n - worst_start;
@@ -90,7 +90,18 @@ pub struct VariantAnalysis {
     pub bridge_all:        Stats,
     pub algo_per_cd:       BTreeMap<u64, Stats>,
     pub e2e_per_cd:        BTreeMap<u64, Stats>,
-    pub nonstop_per_pass:  Vec<f64>,
+    /// One entry per `(run, pass)` at cooldown 0, keyed, in run-then-pass order.
+    /// The value is the median of that pass's batch samples.
+    ///
+    /// Keyed because the report compares this series between variants and a bare
+    /// `Vec<f64>` can only be compared by position, so a variant that lost a
+    /// pass to a timeout shifted every comparison after it onto a different
+    /// pass. One value per pass because the worker emits
+    /// `runs_per_pass / batch_size` lines per pass, ten on the shipped defaults,
+    /// and a per-batch series called per-pass makes the report's table thirty
+    /// times longer than the run and turns a within-pass warm ramp into
+    /// [`Self::autocorrelation`].
+    pub nonstop_per_pass:  Vec<((usize, usize), f64)>,
     /// Lag-1 autocorrelation of the nonstop per-pass time series.
     /// Values near +1 indicate persistent warm-up or drift; near -1
     /// indicate alternating high/low (thermal throttling bounce). Near
@@ -183,7 +194,6 @@ impl DataSet {
 
             let mut e2e_by_cd: BTreeMap<u64, Vec<f64>> = BTreeMap::new();
             let mut algo_by_cd: BTreeMap<u64, Vec<f64>> = BTreeMap::new();
-            let mut nonstop_passes = Vec::new();
             let mut keyed_algo: Vec<(usize, usize, u64, f64)> = Vec::new();
             let mut scores: Vec<f64> = Vec::new();
             let mut algo_by_tag: BTreeMap<u8, Vec<f64>> = BTreeMap::new();
@@ -191,9 +201,6 @@ impl DataSet {
             for s in vsamples.iter() {
                 e2e_by_cd.entry(s.cooldown_ms).or_default().push(s.e2e_ns);
                 algo_by_cd.entry(s.cooldown_ms).or_default().push(s.algo_ns);
-                if s.cooldown_ms == 0 {
-                    nonstop_passes.push(s.algo_ns);
-                }
                 keyed_algo.push((s.run, s.pass, s.cooldown_ms, s.algo_ns));
                 if let Some(sc) = s.score {
                     scores.push(sc);
@@ -216,7 +223,24 @@ impl DataSet {
                 .map(|(k, mut v)| (k, Stats::from_values(&mut v)))
                 .collect();
 
-            let autocorrelation = lag1_autocorrelation(&nonstop_passes);
+            // One value per (run, pass) at cooldown 0: the median of that
+            // pass's batches. `keyed_algo` is the per-batch series; this is the
+            // per-pass one and they are different lengths.
+            let mut nonstop_by_pass: BTreeMap<(usize, usize), Vec<f64>> = BTreeMap::new();
+            for s in vsamples.iter() {
+                if s.cooldown_ms == 0 {
+                    nonstop_by_pass
+                        .entry((s.run, s.pass))
+                        .or_default()
+                        .push(s.algo_ns);
+                }
+            }
+            let nonstop_passes: Vec<((usize, usize), f64)> = nonstop_by_pass
+                .into_iter()
+                .map(|(k, v)| (k, median(&v)))
+                .collect();
+            let nonstop_series: Vec<f64> = nonstop_passes.iter().map(|(_, v)| *v).collect();
+            let autocorrelation = lag1_autocorrelation(&nonstop_series);
 
             let algo_per_tag = algo_by_tag
                 .into_iter()
@@ -274,6 +298,24 @@ impl DataSet {
         for &(name, idx) in names {
             self.tag_names.insert(idx, name.into());
         }
+        self
+    }
+
+    /// Carry the run parameters the report's methodology table states.
+    ///
+    /// Without this the table is gated shut (it renders only when `passes` or
+    /// `harness_runs` is non-zero) and, worse, `meta.master_seed` stays 0, which
+    /// is the fixed point of the bootstrap RNG: every resample then draws the
+    /// same index and the interval collapses onto one order statistic.
+    #[must_use]
+    pub fn with_methodology(mut self, config: &crate::config::BenchConfig) -> Self {
+        self.meta.passes = config.passes;
+        self.meta.runs_per_pass = config.runs_per_pass;
+        self.meta.batch_size = config.batch_size;
+        self.meta.harness_runs = config.harness_runs;
+        self.meta.cooldowns_ms = config.cooldowns_ms.clone();
+        self.meta.master_seed = config.master_seed;
+        self.meta.counter_freq = crate::core::counter::counter_frequency();
         self
     }
 
@@ -414,6 +456,11 @@ const CI_LOWER: f64 = 0.025;
 const CI_UPPER: f64 = 0.975;
 
 /// Splitmix64 for the bootstrap RNG (deterministic, no external deps).
+///
+/// This is the finaliser only. It is a bijection but it is not the generator:
+/// `finalise(0) == 0`, so iterating it from a zero seed never leaves zero.
+/// [`bootstrap_ci_median`] advances a counter by the golden-ratio increment and
+/// finalises that, which is splitmix64 as specified and has no fixed point.
 fn bootstrap_mix(mut x: u64) -> u64 {
     x ^= x >> 30;
     x = x.wrapping_mul(0xBF58476D1CE4E5B9);
@@ -423,12 +470,42 @@ fn bootstrap_mix(mut x: u64) -> u64 {
     x
 }
 
+/// The median of `vals`, interpolating between the two middle order statistics
+/// on an even count. One definition, used by [`Stats`], by the bootstrap point
+/// estimate, by the driver's summary and history rows, and by the cross-bench
+/// report, so the same samples never yield two numbers both labelled "median".
+#[must_use]
+pub fn median(vals: &[f64]) -> f64 {
+    if vals.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = vals.to_vec();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let n = sorted.len();
+    if n % 2 == 0 {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    } else {
+        sorted[n / 2]
+    }
+}
+
 /// 95% bootstrap confidence interval on the median. Returns
 /// `(lower, median, upper)`.
+///
+/// Fewer than three values cannot be resampled into an interval, so the range
+/// of the data is returned instead of a bootstrap one. That is wide rather than
+/// precise, which is the honest direction: the previous form returned
+/// `(vals[0], vals[0], vals[0])` off the unsorted slice, so the "median" of two
+/// samples was whichever the collection happened to record first and the
+/// interval claimed zero width around it.
 pub fn bootstrap_ci_median(vals: &[f64], seed: u64) -> (f64, f64, f64) {
     if vals.len() < 3 {
-        let m = if vals.is_empty() { 0.0 } else { vals[0] };
-        return (m, m, m);
+        if vals.is_empty() {
+            return (0.0, 0.0, 0.0);
+        }
+        let lo = vals.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        return (lo, median(vals), hi);
     }
 
     let n = vals.len();
@@ -446,8 +523,8 @@ pub fn bootstrap_ci_median(vals: &[f64], seed: u64) -> (f64, f64, f64) {
     for _ in 0 .. BOOTSTRAP_ITERATIONS {
         let mut resample = Vec::with_capacity(n);
         for _ in 0 .. n {
-            rng = bootstrap_mix(rng);
-            let idx = (rng as usize) % n;
+            rng = rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let idx = (bootstrap_mix(rng) as usize) % n;
             resample.push(sorted[idx]);
         }
         resample.sort_by(|a, b| a.total_cmp(b));
@@ -698,6 +775,106 @@ impl BenchResult {
 }
 
 #[cfg(test)]
+mod bootstrap_rng_tests {
+    use super::*;
+
+    /// `bootstrap_mix` is splitmix64's finaliser, and the finaliser alone maps 0
+    /// to 0. The generator has to advance a counter and finalise that; iterating
+    /// the finaliser on itself never leaves zero, so every resample index was
+    /// `0 % n` and every replicate was the same constant vector.
+    ///
+    /// Asserted over the drawn indices rather than over `bootstrap_mix`, because
+    /// 0 mapping to 0 is correct for the finaliser and wrong for the generator.
+    #[test]
+    fn the_resample_indices_are_not_constant_at_any_seed() {
+        // Nine distinct values, so a constant resample is impossible to mistake
+        // for a lucky draw: the interval would sit on one order statistic.
+        let vals: Vec<f64> = (0 .. 9).map(|i| i as f64).collect();
+        for seed in [0u64, 1, 0xC0C0_CAFE, u64::MAX] {
+            let (lo, med, hi) = bootstrap_ci_median(&vals, seed);
+            assert!(
+                lo < hi,
+                "seed {seed:#x}: the bootstrap interval collapsed to a point \
+                 ({lo}), which is what a constant resample produces"
+            );
+            assert!(
+                lo <= med && med <= hi,
+                "seed {seed:#x}: CI [{lo}, {hi}] excludes the median {med}"
+            );
+        }
+    }
+
+    /// The consequence, stated over the quantity the report reads. Paired
+    /// differences symmetric about zero must not come back significant, at any
+    /// seed. Under the fixed point the CI collapses onto the minimum
+    /// difference, and `compare` reads a CI that excludes zero.
+    #[test]
+    fn a_symmetric_paired_difference_is_never_significant_at_any_seed() {
+        let variant = [7.0f64, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0];
+        let baseline = [10.0f64; 7];
+        // diffs are -3..=3, median 0.
+        for seed in [0u64, 1, 0xC0C0_CAFE, u64::MAX] {
+            let cmp = compare(&variant, &baseline, seed);
+            assert!(
+                !cmp.significant,
+                "seed {seed:#x}: symmetric differences reported significant, \
+                 ci=[{}, {}]",
+                cmp.ci_lo_ns, cmp.ci_hi_ns
+            );
+            assert!(
+                cmp.ci_lo_ns <= cmp.median_diff_ns && cmp.median_diff_ns <= cmp.ci_hi_ns,
+                "seed {seed:#x}: the CI [{}, {}] does not contain the point \
+                 estimate {} it is reported beside",
+                cmp.ci_lo_ns,
+                cmp.ci_hi_ns,
+                cmp.median_diff_ns
+            );
+        }
+    }
+
+    /// A CI is reported beside a point estimate, so it has to contain it, and
+    /// the point estimate has to be the median rather than whichever value the
+    /// collection happened to put first. Two samples is the smallest case that
+    /// separates the three candidate answers.
+    #[test]
+    fn the_two_sample_median_does_not_depend_on_collection_order() {
+        let (lo_a, med_a, hi_a) = bootstrap_ci_median(&[9.0, 1.0], 42);
+        let (lo_b, med_b, hi_b) = bootstrap_ci_median(&[1.0, 9.0], 42);
+        assert_eq!(
+            med_a, med_b,
+            "the reported median of the same two values changed with their \
+             order: {med_a} vs {med_b}"
+        );
+        assert!(
+            lo_a <= med_a && med_a <= hi_a,
+            "CI [{lo_a}, {hi_a}] excludes {med_a}"
+        );
+        assert!(
+            lo_b <= med_b && med_b <= hi_b,
+            "CI [{lo_b}, {hi_b}] excludes {med_b}"
+        );
+    }
+
+    /// Every median in this crate has to be the same median. `Stats` and the
+    /// bootstrap interpolate on even counts; the driver summary and the history
+    /// ledger take the upper of the two middles, so the ledger records a
+    /// different number from the one the report prints for the same samples.
+    #[test]
+    fn one_definition_of_median_across_the_crate() {
+        let vals = [1.0f64, 2.0, 3.0, 4.0];
+        let stats = Stats::from_values(&mut vals.to_vec());
+        let (_, boot_med, _) = bootstrap_ci_median(&vals, 0xABCD);
+        assert_eq!(stats.median, 2.5, "Stats interpolates");
+        assert_eq!(boot_med, 2.5, "the bootstrap point estimate interpolates");
+        assert_eq!(
+            crate::driver::median_for_tests(&mut vals.to_vec()),
+            stats.median,
+            "the driver's summary/history median disagrees with the report's"
+        );
+    }
+}
+
+#[cfg(test)]
 mod cost_model_tests {
     use super::*;
 
@@ -733,6 +910,140 @@ mod cost_model_tests {
         assert!(
             fit_cost_model(&[(512.0, 10.0), (512.0, 20.0)]).is_none(),
             "no k spread"
+        );
+    }
+}
+
+#[cfg(test)]
+mod nonstop_series_tests {
+    use super::*;
+    use crate::sample::Sample;
+
+    fn s(variant: &str, run: usize, pass: usize, cd: u64, batch: usize, algo: f64) -> Sample {
+        Sample {
+            run,
+            pass,
+            cooldown_ms: cd,
+            mode: "warm".into(),
+            variant: variant.into(),
+            e2e_ns: algo + 5.0,
+            algo_ns: algo,
+            bridge_ns: 5.0,
+            batch_idx: batch,
+            batch_count: 1,
+            score: None,
+            input_tag: None,
+            instructions: 0,
+            cycles: 0,
+            setup_ns: 0.0,
+            first_ns: 0.0,
+            digest: 0,
+        }
+    }
+
+    /// The series is per pass, not per batch. The worker emits
+    /// `runs_per_pass / batch_size` lines per pass, ten on the shipped
+    /// defaults, and pushing each of them made the report's per-pass table ten
+    /// times longer than the run and fed `lag1_autocorrelation` a series whose
+    /// correlation is mostly within-pass batch order, which the drift detector
+    /// then reports as "warm-up / thermal drift" across passes.
+    #[test]
+    fn the_nonstop_series_holds_one_value_per_pass() {
+        let mut samples = Vec::new();
+        for run in 1 ..= 2 {
+            for pass in 1 ..= 2 {
+                for batch in 0 .. 3 {
+                    // 10, 20, 30 in every pass: median 20.
+                    samples.push(s("a", run, pass, 0, batch, 10.0 * (batch + 1) as f64));
+                    // A cooldown cohort that must not enter the series at all.
+                    samples.push(s("a", run, pass, 100, batch, 999.0));
+                }
+            }
+        }
+        let ds = DataSet::from_samples(&samples, "warm");
+        let a = &ds.variants[0];
+        assert_eq!(
+            a.nonstop_per_pass.len(),
+            4,
+            "two runs of two passes is four entries, not the twelve batches"
+        );
+        assert_eq!(
+            a.nonstop_per_pass
+                .iter()
+                .map(|(k, _)| *k)
+                .collect::<Vec<_>>(),
+            vec![(1, 1), (1, 2), (2, 1), (2, 2)],
+            "keyed and in run-then-pass order"
+        );
+        for (key, v) in &a.nonstop_per_pass {
+            assert!(
+                (v - 20.0).abs() < 1e-9,
+                "{key:?}: median of 10/20/30 is 20, got {v}"
+            );
+        }
+        // The per-batch series is still available and is a different length.
+        assert_eq!(
+            a.keyed_algo.len(),
+            24,
+            "two runs x two passes x three batches x two cooldowns"
+        );
+    }
+
+    /// A constant series has no correlation to report, and the previous shape
+    /// would have found the within-pass 10/20/30 ramp instead.
+    #[test]
+    fn the_autocorrelation_is_computed_over_the_per_pass_series() {
+        let mut samples = Vec::new();
+        // Every pass has the identical rising batch pattern, so a per-batch
+        // series is strongly patterned while the per-pass series is flat.
+        for run in 1 ..= 3 {
+            for pass in 1 ..= 4 {
+                for batch in 0 .. 5 {
+                    samples.push(s("a", run, pass, 0, batch, 100.0 + 20.0 * batch as f64));
+                }
+            }
+        }
+        let ds = DataSet::from_samples(&samples, "warm");
+        let a = &ds.variants[0];
+        assert_eq!(a.nonstop_per_pass.len(), 12);
+        assert_eq!(
+            a.autocorrelation, 0.0,
+            "every pass has the same median, so there is nothing to correlate; \
+             a non-zero value here is the batch ramp leaking in"
+        );
+    }
+
+    /// A variant that lost a pass gets a shorter series, and the report looks
+    /// each entry up by key. The gap must be visible as a gap rather than
+    /// shifting every later pass onto its neighbour.
+    #[test]
+    fn a_variant_missing_a_pass_leaves_a_gap_rather_than_a_shift() {
+        let mut samples = Vec::new();
+        for pass in 1 ..= 3 {
+            samples.push(s("aaa_base", 1, pass, 0, 0, 100.0 * pass as f64));
+            // The rival is missing pass 2 entirely.
+            if pass != 2 {
+                samples.push(s("bbb_rival", 1, pass, 0, 0, 100.0 * pass as f64));
+            }
+        }
+        let ds = DataSet::from_samples(&samples, "warm");
+        let base = ds.variants.iter().find(|v| v.name == "aaa_base").unwrap();
+        let rival = ds.variants.iter().find(|v| v.name == "bbb_rival").unwrap();
+        assert_eq!(base.nonstop_per_pass.len(), 3);
+        assert_eq!(rival.nonstop_per_pass.len(), 2);
+        // Keyed, so pass 3 is still pass 3 and not slid into pass 2's row.
+        assert_eq!(rival.nonstop_per_pass[1].0, (1, 3));
+        assert!((rival.nonstop_per_pass[1].1 - 300.0).abs() < 1e-9);
+
+        let md = crate::report::generate(&ds, "t");
+        assert!(
+            md.contains("| 1 | 3 |"),
+            "the table is keyed by run and pass:\n{md}"
+        );
+        assert!(
+            md.contains("won 0/2"),
+            "the summary counts the two passes both ran, not the baseline's \
+             three:\n{md}"
         );
     }
 }

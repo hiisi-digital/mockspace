@@ -414,31 +414,9 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         }
 
         // Re-pair variant samples against base by matching (run, pass, cooldown_ms).
-        let mut variant_paired: Vec<f64> = Vec::new();
-        let mut base_paired: Vec<f64> = Vec::new();
-        {
-            let mut vi = 0;
-            let mut bi = 0;
-            let v_keyed = &v.keyed_algo;
-            while vi < v_keyed.len() && bi < base_keyed.len() {
-                let (vrun, vpass, vcd, vval) = v_keyed[vi];
-                let (brun, bpass, bcd, bval) = base_keyed[bi];
-                match (vrun, vpass, vcd).cmp(&(brun, bpass, bcd)) {
-                    std::cmp::Ordering::Equal => {
-                        variant_paired.push(vval);
-                        base_paired.push(bval);
-                        vi += 1;
-                        bi += 1;
-                    },
-                    std::cmp::Ordering::Less => {
-                        vi += 1;
-                    },
-                    std::cmp::Ordering::Greater => {
-                        bi += 1;
-                    },
-                }
-            }
-        }
+        // One helper, shared with the highlights engine, so the table and the
+        // highlights above it can never pair the same samples two ways.
+        let (variant_paired, base_paired) = crate::summary::pair_keyed(&v.keyed_algo, base_keyed);
 
         // Fall back to positional pairing if no key matches
         // (e.g. single-run data).
@@ -530,17 +508,23 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
     }
 
     // ── Per-pass consistency (nonstop) with autocorrelation ──
-    md.push_str("\n## Per-pass consistency (nonstop e2e, Δ vs baseline)\n\n");
+    //
+    // One row per (run, pass) at cooldown 0, and each variant is looked up by
+    // that key rather than by position in its own vector: a variant that lost a
+    // pass to a timeout has a shorter series, and comparing by index put every
+    // row after the gap against a different pass. The column is the algorithm
+    // time, which is what the series holds.
+    md.push_str("\n## Per-pass consistency (nonstop algo, Δ vs baseline)\n\n");
     let n_passes = base.nonstop_per_pass.len();
     if n_passes > 0 {
-        md.push_str("| Pass |");
+        md.push_str("| Run | Pass |");
         md.push_str(&format!(" {} |", base.name));
         for v in &ds.variants {
             if v.name != base.name {
                 md.push_str(&format!(" {} |", v.name));
             }
         }
-        md.push_str("\n|---|");
+        md.push_str("\n|---|---|");
         md.push_str("---|");
         for v in &ds.variants {
             if v.name != base.name {
@@ -549,18 +533,17 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         }
         md.push('\n');
 
-        for p in 0 .. n_passes {
-            let bval = base.nonstop_per_pass[p];
-            md.push_str(&format!("| {} | {:.0}ns", p + 1, bval));
+        for &((run, pass), bval) in &base.nonstop_per_pass {
+            md.push_str(&format!("| {} | {} | {:.0}ns", run, pass, bval));
             for v in &ds.variants {
                 if v.name == base.name {
                     continue;
                 }
-                if p < v.nonstop_per_pass.len() {
-                    let d = pct_delta(v.nonstop_per_pass[p], bval);
-                    md.push_str(&format!(" | {:+.1}%", d));
-                } else {
-                    md.push_str(" | - ");
+                match v.nonstop_per_pass.iter().find(|(k, _)| *k == (run, pass)) {
+                    Some(&(_, vval)) => {
+                        md.push_str(&format!(" | {:+.1}%", pct_delta(vval, bval)));
+                    },
+                    None => md.push_str(" | - "),
                 }
             }
             md.push_str(" |\n");
@@ -589,17 +572,25 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
             if v.name == base.name {
                 continue;
             }
+            // Counted over the passes both variants actually ran, which is what
+            // the denominator has to be: an index-paired count divided by the
+            // baseline's length reported wins against passes the variant never
+            // had.
             let mut wins = 0;
             let mut losses = 0;
-            for p in 0 .. n_passes.min(v.nonstop_per_pass.len()) {
-                let d = pct_delta(v.nonstop_per_pass[p], base.nonstop_per_pass[p]);
+            let mut total = 0;
+            for &(key, bval) in &base.nonstop_per_pass {
+                let Some(&(_, vval)) = v.nonstop_per_pass.iter().find(|(k, _)| *k == key) else {
+                    continue;
+                };
+                total += 1;
+                let d = pct_delta(vval, bval);
                 if d < -0.1 {
                     wins += 1;
                 } else if d > 0.1 {
                     losses += 1;
                 }
             }
-            let total = n_passes.min(v.nonstop_per_pass.len());
             md.push_str(&format!(
                 "- **{}**: won {}/{}, lost {}/{}\n",
                 v.name, wins, total, losses, total
@@ -998,6 +989,150 @@ mod tests {
         assert!(
             !md0.contains("## Setup vs iteration cost"),
             "section omitted when setup is zero"
+        );
+    }
+}
+
+#[cfg(test)]
+mod methodology_tests {
+    use crate::analysis::DataSet;
+    use crate::config::BenchConfig;
+    use crate::sample::Sample;
+
+    fn s(variant: &str, algo: f64, batch: usize) -> Sample {
+        Sample {
+            run:          1,
+            pass:         1,
+            cooldown_ms:  0,
+            mode:         "warm".into(),
+            variant:      variant.into(),
+            e2e_ns:       algo,
+            algo_ns:      algo,
+            bridge_ns:    0.0,
+            batch_idx:    batch,
+            batch_count:  5000,
+            score:        None,
+            input_tag:    None,
+            instructions: 0,
+            cycles:       0,
+            setup_ns:     0.0,
+            first_ns:     0.0,
+            digest:       0,
+        }
+    }
+
+    fn ds() -> DataSet {
+        let samples: Vec<Sample> = (0 .. 6)
+            .flat_map(|b| [s("aaa", 100.0 + b as f64, b), s("bbb", 50.0 + b as f64, b)])
+            .collect();
+        DataSet::from_samples(&samples, "warm")
+    }
+
+    /// The methodology table is what lets a reader judge how a number was
+    /// produced, and it is gated on `meta.passes > 0 || meta.harness_runs > 0`.
+    /// Nothing populated either field before, so the whole section was
+    /// unreachable on every path and no report ever stated its passes, runs,
+    /// batch size, cooldown schedule, seed or counter frequency.
+    #[test]
+    fn a_report_states_the_methodology_it_was_produced_under() {
+        let cfg = BenchConfig {
+            passes: 7,
+            runs_per_pass: 1234,
+            batch_size: 100,
+            harness_runs: 2,
+            cooldowns_ms: vec![0, 250],
+            master_seed: 0xDEAD_BEEF_0000_0001,
+            ..BenchConfig::default()
+        };
+        let md = super::generate(&ds().with_methodology(&cfg), "t");
+        assert!(
+            md.contains("## Methodology"),
+            "the report carries no methodology section"
+        );
+        assert!(md.contains("| Passes | 7 |"), "no pass count");
+        assert!(md.contains("| Runs per pass | 1234 |"), "no run count");
+        assert!(md.contains("| Batch size | 100 |"), "no batch size");
+        assert!(md.contains("| Harness runs | 2 |"), "no harness run count");
+        assert!(md.contains("| Master seed |"), "no master seed");
+        assert!(
+            md.contains("| Cooldown schedule | 0ms, 250ms |"),
+            "no schedule"
+        );
+    }
+
+    /// Catalogued gap, not a regression. `write_csv` persists the samples and an
+    /// `EnvMeta` sidecar; neither carries `passes`, `runs_per_pass`,
+    /// `batch_size`, `harness_runs`, `cooldowns_ms` or `master_seed`. So a
+    /// findings file regenerated with `--report-only` is missing the whole
+    /// methodology section that the original run's file carries, and nothing in
+    /// either file says the two were produced differently.
+    ///
+    /// Green when the run parameters reach the sidecar and `report_from_csv`
+    /// reads them back.
+    #[test]
+    #[ignore = "catalogue: run parameters are not persisted, so --report-only \
+                cannot restate the methodology of the run it re-renders"]
+    fn a_report_regenerated_from_a_csv_states_the_same_methodology() {
+        let dir =
+            std::env::temp_dir().join(format!("mockspace-bh-methodology-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let csv = dir.join("hash_n64.csv");
+        let out = dir.join("hash_n64_findings.md");
+        let cfg = BenchConfig {
+            passes: 7,
+            runs_per_pass: 1234,
+            batch_size: 100,
+            harness_runs: 2,
+            cooldowns_ms: vec![0, 250],
+            master_seed: 0xDEAD_BEEF_0000_0001,
+            ..BenchConfig::default()
+        };
+        let result = crate::sample::BenchResult {
+            title:       "t".into(),
+            env:         crate::env::EnvMeta::default(),
+            samples:     (0 .. 6)
+                .flat_map(|b| [s("aaa", 100.0 + b as f64, b), s("bbb", 50.0 + b as f64, b)])
+                .collect(),
+            cache_path:  csv.display().to_string(),
+            report_path: out.display().to_string(),
+        };
+        crate::harness::write_csv(&result, &csv.display().to_string()).expect("csv");
+        crate::report_from_csv(&csv, &out.display().to_string(), "warm", "t").expect("report");
+        let md = std::fs::read_to_string(&out).expect("read");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            md.contains("| Passes | 7 |"),
+            "the regenerated report states no pass count; the original states {}",
+            cfg.passes
+        );
+    }
+
+    /// The seed the report's Highlights section bootstraps with is
+    /// `ds.meta.master_seed`, so a dataset built for reporting has to carry the
+    /// seed the run actually used. A dataset that reports seed 0 is reporting a
+    /// seed no run ever had.
+    #[test]
+    fn a_dataset_built_for_a_config_carries_that_configs_methodology() {
+        let cfg = BenchConfig {
+            passes: 7,
+            runs_per_pass: 1234,
+            batch_size: 100,
+            harness_runs: 2,
+            cooldowns_ms: vec![0, 250],
+            master_seed: 0xDEAD_BEEF_0000_0001,
+            ..BenchConfig::default()
+        };
+        let d = ds().with_methodology(&cfg);
+        assert_eq!(d.meta.passes, 7);
+        assert_eq!(d.meta.runs_per_pass, 1234);
+        assert_eq!(d.meta.batch_size, 100);
+        assert_eq!(d.meta.harness_runs, 2);
+        assert_eq!(d.meta.cooldowns_ms, vec![0, 250]);
+        assert_eq!(d.meta.master_seed, 0xDEAD_BEEF_0000_0001);
+        assert_ne!(
+            d.meta.master_seed, 0,
+            "seed 0 is the bootstrap RNG's fixed point; a report must never \
+             bootstrap with it"
         );
     }
 }

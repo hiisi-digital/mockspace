@@ -247,10 +247,20 @@ impl Cache {
         global_mean_cold: f64,
         samples: &[Sample],
     ) {
-        let _ = std::fs::create_dir_all(&self.dir);
+        // A manifest entry is a claim that the CSV it names is on disk, and the
+        // reader treats a missing file as a cache miss with no explanation.
+        // Every error here used to be discarded, so a failed write left an
+        // entry pointing at nothing.
+        if let Err(e) = std::fs::create_dir_all(&self.dir) {
+            eprintln!("  cache: creating {}: {e}; not recorded", self.dir);
+            return;
+        }
         let short = variant_short_name(variant_path);
         let csv_path = format!("{}/{}_{:016x}.csv", self.dir, short, hash);
-        write_csv(&csv_path, samples);
+        if let Err(e) = write_csv(&csv_path, samples) {
+            eprintln!("  cache: writing {csv_path}: {e}; not recorded");
+            return;
+        }
         self.manifest
             .insert(variant_path.to_string(), ManifestEntry {
                 dylib_hash: hash,
@@ -403,66 +413,19 @@ pub fn global_mean(samples: &[Sample]) -> f64 {
     samples.iter().map(|s| s.algo_ns).sum::<f64>() / samples.len() as f64
 }
 
+/// Read a cache CSV. Delegates to [`crate::sample::load_samples_csv`], the one
+/// reader; the byte-identical copy that used to live here is exactly how a
+/// column order drifts between two files nobody diffs.
 fn load_csv(path: &str) -> Result<Vec<Sample>, std::io::Error> {
-    let file = std::fs::File::open(path)?;
-    let mut samples = Vec::new();
-    for line in std::io::BufReader::new(file).lines().flatten() {
-        if line.starts_with("run,") {
-            continue;
-        }
-        let p: Vec<&str> = line.split(',').collect();
-        if p.len() >= 10 {
-            samples.push(Sample {
-                run:          p[0].parse().unwrap_or(0),
-                pass:         p[1].parse().unwrap_or(0),
-                cooldown_ms:  p[2].parse().unwrap_or(0),
-                mode:         p[3].to_string(),
-                variant:      p[4].to_string(),
-                batch_idx:    p[5].parse().unwrap_or(0),
-                e2e_ns:       p[6].parse().unwrap_or(0.0),
-                algo_ns:      p[7].parse().unwrap_or(0.0),
-                bridge_ns:    p[8].parse().unwrap_or(0.0),
-                batch_count:  p[9].parse().unwrap_or(0),
-                score:        p.get(10).and_then(|s| s.parse().ok()),
-                input_tag:    p.get(11).and_then(|s| s.parse().ok()),
-                instructions: p.get(12).and_then(|s| s.parse().ok()).unwrap_or(0),
-                cycles:       p.get(13).and_then(|s| s.parse().ok()).unwrap_or(0),
-                setup_ns:     p.get(14).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-                first_ns:     p.get(15).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-                digest:       p.get(16).and_then(|s| s.parse().ok()).unwrap_or(0),
-            });
-        }
-    }
-    Ok(samples)
+    crate::sample::load_samples_csv(std::path::Path::new(path))
+        .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
-fn write_csv(path: &str, samples: &[Sample]) {
-    let mut csv = String::from(
-        "run,pass,cooldown_ms,mode,variant,batch_idx,e2e_ns,algo_ns,bridge_ns,batch_count,score,input_tag,instructions,cycles,setup_ns,first_ns,digest\n",
-    );
-    for s in samples {
-        let score_str = s.score.map(|v| format!("{:.2}", v)).unwrap_or_default();
-        let tag_str = s.input_tag.map(|v| v.to_string()).unwrap_or_default();
-        csv.push_str(&format!(
-            "{},{},{},{},{},{},{:.1},{:.1},{:.1},{},{},{},{},{},{:.1},{:.1},{}\n",
-            s.run,
-            s.pass,
-            s.cooldown_ms,
-            s.mode,
-            s.variant,
-            s.batch_idx,
-            s.e2e_ns,
-            s.algo_ns,
-            s.bridge_ns,
-            s.batch_count,
-            score_str,
-            tag_str,
-            s.instructions,
-            s.cycles,
-            s.setup_ns,
-            s.first_ns,
-            s.digest
-        ));
-    }
-    let _ = std::fs::write(path, &csv);
+/// Write samples to a cache CSV. Rows come from [`crate::sample::to_csv`] and
+/// are read back by [`crate::sample::load_samples_csv`]: one writer and one
+/// reader for the whole crate, because this file used to carry byte-identical
+/// copies of both and a fifth parser in `meta_report` had already drifted off
+/// the shared column order.
+fn write_csv(path: &str, samples: &[Sample]) -> std::io::Result<()> {
+    std::fs::write(path, crate::sample::to_csv(samples))
 }

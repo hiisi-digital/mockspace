@@ -194,6 +194,20 @@ fn run_worker(args: &[String]) -> ExitCode {
         b.stage(vec![harness::algo_call(), harness::light_scalar()]);
     });
 
+    // The validation pass spawns this binary with `--mode validate` and a seed
+    // list, and reads `VOUT` lines back. Without this arm those flags fall
+    // through to the timing worker, which prints no `VOUT` and exits zero, so
+    // every variant is skipped for returning 0 of N outputs and the pass
+    // reports success over an empty set.
+    if mode == "validate" {
+        let seeds: Vec<u64> = get("--seeds")
+            .map(|s| s.split(',').filter_map(|t| t.parse().ok()).collect())
+            .unwrap_or_default();
+        harness::harness::run_worker_validate(&routine, &dylib_path, &seeds, n, threaded);
+        return ExitCode::SUCCESS;
+    }
+
+
     harness::run_worker(
         &routine,
         &workload,

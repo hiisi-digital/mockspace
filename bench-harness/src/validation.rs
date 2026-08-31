@@ -4,7 +4,10 @@
 //--------------------------------------------------------------------------------------------------
 
 //! Validation pass: run every variant across deterministic seeds and
-//! compare outputs. Runs before any timing. Each variant executes in
+//! compare outputs. Runs before any timing **on the [`crate::driver`] path**,
+//! which is its only caller; [`crate::run`] and
+//! [`crate::harness::run_orchestrator`] do not call it, so a consumer using
+//! those times unvalidated dylibs. Each variant executes in
 //! its own worker subprocess (`--mode validate`), so a variant's
 //! cached per-process state (the setup-once pattern) lives and dies
 //! with its worker; the orchestrator's memory stays bounded no matter
@@ -215,6 +218,39 @@ fn surviving_variants(total: usize, active: usize, silent: usize) -> Result<Surv
     })
 }
 
+/// The first exported name that cannot survive the harness's own serialisation,
+/// as `(index, the name, what is wrong with it)`.
+///
+/// A sample is written into a comma-separated CSV and a tab-separated history
+/// ledger with the variant name in a field, and neither writer quotes and
+/// neither reader unquotes. Every field on the read side falls back with
+/// `unwrap_or`, so a name carrying a delimiter does not fail: it shifts every
+/// column after it and the row comes back with plausible wrong numbers in the
+/// wrong fields. A newline splits the row in two, and a leading `run,` makes a
+/// row look like the header both readers skip.
+///
+/// The name comes from the dylib's `bench_name` C string rather than from the
+/// manifest, so nothing upstream of here can catch it.
+pub(crate) fn first_unsafe_name(names: &[String]) -> Option<(usize, &str, &'static str)> {
+    for (i, name) in names.iter().enumerate() {
+        let bad = if name.is_empty() {
+            Some("is empty")
+        } else if name.contains(',') {
+            Some("contains a comma, which is the CSV field separator")
+        } else if name.contains('\t') {
+            Some("contains a tab, which is the history ledger's field separator")
+        } else if name.contains('\n') || name.contains('\r') {
+            Some("contains a line break, which ends a row in both formats")
+        } else {
+            None
+        };
+        if let Some(reason) = bad {
+            return Some((i, name.as_str(), reason));
+        }
+    }
+    None
+}
+
 /// First pair of variants sharing an exported name, as
 /// `(earlier index, later index, the name)`.
 ///
@@ -324,6 +360,19 @@ pub fn validate(
     // worst shape a wrong number can take. The manifest cannot catch it,
     // because the name lives in the dylib rather than in the path, so two
     // distinct crates with distinct dylib file names can still collide.
+    if let Some((i, name, reason)) = first_unsafe_name(&names) {
+        return Err(BenchError::InvalidConfig {
+            reason: format!(
+                "bench `{bench_name}` n={n}: variant {} exports the name `{name}`, which \
+                 {reason}. Every sample is written into a CSV and a tab-separated \
+                 history ledger with this name in a field, unquoted, and both readers \
+                 fall back silently on a short row, so the numbers would come back in \
+                 the wrong columns rather than failing. Give the variant a plain name.",
+                variant_paths[i],
+            ),
+        });
+    }
+
     if let Some((i, j, name)) = first_duplicate_name(&names) {
         return Err(BenchError::InvalidConfig {
             reason: format!(
@@ -798,6 +847,7 @@ mod tests {
         CrossVariant,
         check_each_variant,
         first_duplicate_name,
+        first_unsafe_name,
         from_hex,
         surviving_variants,
         validation_ok_line,
@@ -1033,6 +1083,44 @@ mod tests {
         v.iter().map(|s| (*s).to_string()).collect()
     }
 
+    #[test]
+    fn a_name_that_would_corrupt_the_csv_or_the_ledger_is_refused() {
+        // The comma is the CSV separator and the tab is the ledger's. Neither
+        // writer quotes and neither reader unquotes, and every field on the
+        // read side has a silent `unwrap_or` default, so a delimiter in a name
+        // shifts the columns after it and the row parses into wrong numbers
+        // instead of failing.
+        for (bad, what) in [
+            ("has,comma", "comma"),
+            ("has\ttab", "tab"),
+            ("has\nnewline", "newline"),
+            ("has\rcarriage", "carriage return"),
+            ("", "empty name"),
+        ] {
+            let n = names(&["fine", bad, "also_fine"]);
+            let found = first_unsafe_name(&n);
+            assert!(
+                found.is_some(),
+                "`{}` ({what}) was accepted",
+                bad.escape_debug()
+            );
+            assert_eq!(found.unwrap().0, 1, "the offending index is reported");
+        }
+    }
+
+    #[test]
+    fn ordinary_names_are_not_refused() {
+        // Underscores, digits, dashes and dots are all ordinary in a crate or
+        // symbol name and none of them is a delimiter in either format.
+        assert_eq!(
+            first_unsafe_name(&names(&["fnv1a", "xx_hash-64", "v1.2", "a"])),
+            None
+        );
+        assert_eq!(first_unsafe_name(&names(&[])), None);
+        // A space is awkward to read and does not corrupt anything, so it is
+        // not this check's business.
+        assert_eq!(first_unsafe_name(&names(&["two words"])), None);
+    }
     #[test]
     fn duplicate_exported_names_are_found() {
         // Adjacent, apart, and three-way, because a check that only sees the
