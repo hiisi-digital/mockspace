@@ -1,6 +1,6 @@
 [package]
 name = "mockspace-manifest"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 # The launcher-owned half of a repo's mockspace.toml, declared as a type so the
 # engine's config gate knows those keys are not its own, plus the durable hook
