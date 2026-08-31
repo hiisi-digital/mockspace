@@ -101,6 +101,59 @@ unique = true
     );
 }
 
+/// `[lint-crates]` is read, so declaring it is silent.
+///
+/// It is read out of the document directly by
+/// `src/bootstrap/lints.rs::parse_lint_crates` rather than through any struct,
+/// which is exactly why it went missing from the known-key list: a list derived
+/// from the structs cannot see it. `lints` is the same exception and was
+/// remembered; this one was not.
+///
+/// The cost was a false finding on every run of every repo that declares an
+/// external lint pack, telling the author their declaration was discarded while
+/// the pack compiled a few lines earlier in the same output. A false report that
+/// reads exactly like a real one is worse than no report, because it teaches the
+/// reader to skip the whole class.
+#[test]
+fn declaring_an_external_lint_pack_is_not_an_unknown_key() {
+    let found = config_unknown_keys(
+        r#"
+project_name = "x"
+
+[lint-crates]
+some-pack = { git = "ssh://git@example.invalid/pack.git", branch = "dev" }
+"#,
+    );
+    assert!(
+        found.is_empty(),
+        "`lint-crates` is read at src/bootstrap/lints.rs and must not be reported: {found:?}"
+    );
+}
+
+/// The control for the test above, and the reason it is not vacuous.
+///
+/// A known-key list that had simply stopped reporting root keys would pass that
+/// test and say nothing. A near-miss spelling has to still be caught, or the
+/// only thing established is that the check is off.
+#[test]
+fn a_near_miss_spelling_of_the_lint_pack_key_is_still_reported() {
+    let found = config_unknown_keys(
+        r#"
+project_name = "x"
+
+[lint-crate]
+some-pack = { git = "ssh://git@example.invalid/pack.git", branch = "dev" }
+"#,
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].kind, "unknown-config-key");
+    assert!(
+        found[0].message.contains("lint-crate"),
+        "the report has to name the key that was not read: {}",
+        found[0].message
+    );
+}
+
 #[test]
 fn a_config_with_no_registry_at_all_is_silent() {
     assert!(config_unknown_keys("project_name = \"x\"\n").is_empty());

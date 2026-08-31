@@ -1249,11 +1249,19 @@ mod key_lists_cannot_rot {
         let keys = declared_keys(&RawConfig::default());
         let launcher = declared_keys(&mockspace_manifest::ManifestHeader::default());
         for k in crate::registry::validate::ROOT_KEYS {
-            // `lints` is read through toml_edit rather than through RawConfig,
-            // deliberately, its values being heterogeneous. It is the one
-            // documented exception and the test knows it by name rather than
-            // by a rule that would hide the next one.
-            if *k == "lints" || launcher.iter().any(|l| l == k) {
+            // `lints` and `lint-crates` are read through toml_edit rather than
+            // through RawConfig, deliberately: the first because its values are
+            // heterogeneous, the second because `bootstrap::lints` reads it
+            // before a config is parsed at all. Both are named here rather than
+            // covered by a rule, so the next one has to be named too instead of
+            // slipping in behind a pattern.
+            //
+            // `lint-crates` was missing from ROOT_KEYS entirely, which made
+            // every repo declaring an external lint pack report its own
+            // declaration as discarded. This guard is what catches the opposite
+            // mistake, and it fired the moment the key was added, which is the
+            // guard working.
+            if *k == "lints" || *k == "lint-crates" || launcher.iter().any(|l| l == k) {
                 continue;
             }
             assert!(
