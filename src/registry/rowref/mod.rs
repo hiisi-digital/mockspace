@@ -172,6 +172,21 @@ pub fn validate_row_references(
             let Some(raw) = row.fields.get(name) else {
                 continue;
             };
+            // An explicitly empty list is no entries, not one empty entry.
+            //
+            // `evidence = []` says somebody looked and there is nothing to
+            // point at, which is a different claim from omitting the field,
+            // which says nobody has looked. Splitting an empty string yields
+            // one empty item, so the two collapsed and only omission was
+            // expressible: a project writing the honest form got one
+            // malformed-reference error per row and had to delete the
+            // distinction to get a clean gate.
+            //
+            // Checked before the split rather than inside it, so the rule
+            // below is untouched.
+            if raw.trim().is_empty() {
+                continue;
+            }
             // Empty elements are not skipped. `", display"` and `"a, , b"`
             // are a stray separator in hand-written TOML, and skipping them
             // meant a trailing comma was reported while a leading one was not,

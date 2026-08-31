@@ -104,6 +104,53 @@ fn the_same_bad_value_in_an_untyped_field_is_not_reported() {
     );
 }
 
+/// `evidence = []` is no entries, and it used to be one empty entry.
+///
+/// A writer wants to distinguish two states: nobody has looked, and somebody
+/// looked and there is nothing to point at. Omitting the field says the first
+/// and an empty array says the second, which is the whole reason for writing
+/// one. Splitting `""` on `", "` yields one empty item, so the second state
+/// produced a malformed-reference error per row and only the first was
+/// expressible. A project writing the honest form had to delete the
+/// distinction to get a clean gate.
+#[test]
+fn an_explicitly_empty_list_is_no_entries_rather_than_one_empty_one() {
+    let nss = [ns("probe", &[]), ns("law", &[("evidence", "probe[]")])];
+    let r = reg(&[("probe", "the_sweep", &[]), ("law", "associativity", &[("evidence", "")])]);
+    assert!(
+        validate_row_references(&r, &nss).is_empty(),
+        "an empty list says somebody looked and found nothing, which is a claim worth \
+         being able to write"
+    );
+}
+
+/// The control, and the reason the fix is a guard rather than a skip inside
+/// the split.
+///
+/// A stray separator in a non-empty list is still reported. Skipping every
+/// empty element would have made a trailing comma silent while a leading one
+/// was not, which is the arbitrary difference the original comment exists to
+/// prevent, and the fix keeps it by testing the whole value before splitting.
+#[test]
+fn a_stray_separator_inside_a_real_list_is_still_reported() {
+    let nss = [ns("probe", &[]), ns("law", &[("evidence", "probe[]")])];
+    let r = reg(&[
+        ("probe", "the_sweep", &[]),
+        ("law", "associativity", &[("evidence", "the_sweep, , the_sweep")]),
+    ]);
+    let found = validate_row_references(&r, &nss);
+    assert_eq!(kinds(&found), ["malformed-row-reference"], "{found:?}");
+}
+
+/// Whitespace is not content either, since a hand-written list may be spread
+/// over lines and arrive here as a blank.
+#[test]
+fn a_list_holding_only_whitespace_is_also_no_entries() {
+    let nss = [ns("probe", &[]), ns("law", &[("evidence", "probe[]")])];
+    let r = reg(&[("probe", "the_sweep", &[]), ("law", "associativity", &[("evidence", "  ")])]);
+    assert!(validate_row_references(&r, &nss).is_empty());
+}
+
 #[test]
 fn a_qualified_value_is_refused_and_the_message_says_what_to_write() {
     let nss = [ns("slot", &[]), ns("answer", &[("slot", "slot")])];
