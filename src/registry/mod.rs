@@ -266,6 +266,74 @@ mod tests {
         );
     }
 
+    /// The forge's own answers, so the claim is a test rather than a sentence.
+    ///
+    /// Every row was taken from the forge's markdown endpoint rather than from
+    /// anybody's recollection of the rule, and the first version of
+    /// `forge_heading_slug` disagreed with three of the seven while its doc
+    /// comment claimed the copied anchor now resolved. It dropped `-` and `_`,
+    /// which a forge keeps, so it missed the underscore and inner-hyphen
+    /// classes entirely and simultaneously started accepting `wellknown-types`,
+    /// a spelling nothing emits.
+    ///
+    /// Two of the headings below are real in a consumer's tree.
+    ///
+    /// Reproduce a row with:
+    ///
+    /// ```text
+    /// curl -s -X POST https://api.github.com/markdown \
+    ///   -d '{"text":"## no_std, no alloc\n"}' |
+    ///   grep -o 'id="user-content-[^"]*"'
+    /// ```
+    #[test]
+    fn the_forge_form_matches_the_forge() {
+        // (heading, what the forge emits)
+        let table = [
+            ("Well-known types", "well-known-types"),
+            ("Trait-contract crates", "trait-contract-crates"),
+            ("no_std, no alloc", "no_std-no-alloc"),
+            ("Pre-1.0 stability", "pre-10-stability"),
+            ("the_sweep probe", "the_sweep-probe"),
+            ("Warm's objective", "warms-objective"),
+            ("R(V), the drift class", "rv-the-drift-class"),
+        ];
+        for (heading, forge) in table {
+            assert_eq!(
+                forge_heading_slug(heading),
+                forge,
+                "`{heading}` is `{forge}` in the address bar"
+            );
+        }
+    }
+
+    /// Where the two forms genuinely differ, and where they do not.
+    ///
+    /// Three of the seven above are identical under both, which is why the
+    /// divergence went unnoticed: the ordinary heading is the common case and
+    /// agrees. Naming which rows differ is what keeps a future edit to either
+    /// function from quietly collapsing them.
+    #[test]
+    fn the_two_forms_differ_only_on_punctuation_inside_a_word() {
+        let same = ["Well-known types", "Trait-contract crates"];
+        for h in same {
+            assert_eq!(heading_slug(h), forge_heading_slug(h), "{h}");
+        }
+        let differ = [
+            "no_std, no alloc",
+            "Pre-1.0 stability",
+            "the_sweep probe",
+            "Warm's objective",
+            "R(V), the drift class",
+        ];
+        for h in differ {
+            assert_ne!(
+                heading_slug(h),
+                forge_heading_slug(h),
+                "{h} is the same under both, so one of the two functions has moved"
+            );
+        }
+    }
+
     /// The control. Accepting two forms must not turn into accepting anything.
     #[test]
     fn a_heading_that_is_not_there_still_fails_under_both() {

@@ -386,8 +386,19 @@ pub fn resolve_anchor(path: &Path, anchor: &Anchor) -> Option<usize> {
 ///
 /// This is the form every committed registry is written in, so it stays as it
 /// is and [`forge_heading_slug`] is accepted beside it rather than replacing
-/// it. It is also what [`crate::registry`] generates links with, which is why
-/// changing it is not a small edit.
+/// it. **The committed citations are the whole constraint**, which is countable
+/// and weaker than it sounds.
+///
+/// An earlier version of this paragraph also said this function is what link
+/// generation uses, "which is why changing it is not a small edit". **That was
+/// false and it was the entire argument for keeping two forms rather than
+/// fixing one.** Its only non-test caller is [`resolve_anchor`]; rendering
+/// emits the author's literal anchor text and recomputes nothing. So a citation
+/// written in this project's form validates green and renders a link a forge
+/// will not honour, which accepting a second form at resolution does not touch.
+/// **That is a real defect and it is not fixed here**; it wants the matched
+/// heading's forge slug emitted at render time, which is a change to what is
+/// generated rather than to what is accepted.
 pub fn heading_slug(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     let mut last_dash = false;
@@ -407,15 +418,29 @@ pub fn heading_slug(title: &str) -> String {
 
 /// The slug a forge puts in the address bar, so a copied anchor resolves.
 ///
-/// Whitespace becomes a hyphen and every other non-alphanumeric is dropped,
-/// which is where it parts company with [`heading_slug`]. Accepted when
-/// resolving and never generated, because generating it would repoint every
-/// link in every already-published document.
+/// Lowercase, whitespace to a hyphen, everything else dropped **except `-` and
+/// `_`, which a forge keeps.**
+///
+/// **That exception is the whole algorithm and the first version did not have
+/// it**, which made it wrong in both directions at once. `no_std, no alloc`
+/// became `nostd-no-alloc` where a forge emits `no_std-no-alloc`, so the copied
+/// anchor this function exists for still failed. And `Well-known types` became
+/// `wellknown-types`, a spelling nothing anywhere emits, newly accepted for no
+/// reason at all. Both of those headings are real in a consumer's tree, so the
+/// function did not close the class it was written for and widened a different
+/// one.
+///
+/// Established against the forge rather than from memory, and the table is a
+/// test in this module rather than a sentence here, because the version that
+/// was wrong read exactly as confident as this one.
+///
+/// Accepted when resolving and never generated. [`heading_slug`] says what is
+/// generated and why the two differ at all.
 pub fn forge_heading_slug(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     let mut last_dash = false;
     for c in title.chars() {
-        if c.is_alphanumeric() {
+        if c.is_alphanumeric() || c == '-' || c == '_' {
             for l in c.to_lowercase() {
                 out.push(l);
             }
