@@ -73,6 +73,7 @@ mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;
 pub mod src_layout;
+pub mod testkit;
 pub mod tool;
 pub mod type_scanner;
 mod undocumented_type;
@@ -94,6 +95,11 @@ pub use tool::{
     usage_line,
 };
 use tree_sitter::Tree;
+// Re-exported so a consumer whose `mock/lints/*.rs` compile into the
+// generated cdylib can name the grammar types. That cdylib depends on
+// this crate and on the declared packs, so without this there is no
+// route to `tree_sitter` from a repo's own lint file at all.
+pub use {tree_sitter, tree_sitter_rust};
 
 // ---------------------------------------------------------------------------
 // Proc-macro crate list (single source of truth)
