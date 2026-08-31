@@ -1,138 +1,69 @@
 # The `cargo mock` command surface
 
-Mockspace exposes its operations through a `cargo mock` alias. The
-bootstrap installs `[alias] mock = "run --manifest-path
-mock/Cargo.toml --bin mock --"` so `cargo mock <subcommand>` from
-the repo root resolves to the mockspace binary.
+Invoked as `cargo mock <subcommand>` from the repository root.
 
-This file covers what's shipping today. Newly added subcommands
-land here; retired ones leave.
+## Never write the list of subcommands from memory
 
-## Bootstrap commands
+```bash
+cargo mock tools           # every subcommand and every project tool, one line each
+cargo mock tools --long    # usage and declared arguments
+```
 
-### `cargo mock status`
+**That command is the surface.** It reads the same table the dispatcher does, so
+it cannot disagree with what actually runs, and it lists this repository's own
+tools alongside the builtins.
 
-Read-only. Reports the bootstrap state of the current repo:
-whether the cargo alias is installed, whether git hooks point at
-`mock/target/hooks/`, whether `mock/` exists.
+A list written into a document instead goes stale the moment a subcommand is
+added, renamed or retired, and nothing reports it. This file carried one for
+long enough to describe five subcommands that did not exist and to miss fifteen
+that did, so what follows says what the categories are and does not enumerate
+them.
 
-Exit 0 always; the report is the output.
+## How mockspace is reached
 
-### `cargo mock install`
+**Through the installed launcher, invoked as `cargo mock`.** There is no cargo
+alias, no `build.rs` bootstrap and no proxy crate. Anything describing one is
+describing a mechanism that was dissolved; `bootstrap_from_buildscript` survives
+only as a tombstone that fails the build with the migration steps.
 
-Writes the bootstrap state into the current repo:
-- Adds `[alias] mock = ...` to `.cargo/config.toml`.
-- Sets `core.hooksPath` to `mock/target/hooks/`.
-- Writes the canonical git hook scripts under `mock/target/hooks/`.
-- Extracts the canonical agent rule files to `mock/target/agent/`.
+On any normal invocation the engine writes the generated validator, ensures the
+durable hooks that delegate to it, and points `core.hooksPath` at them. The
+durable hooks live outside the repository, in the user config home; the
+per-repository validator lives under the mock directory's `target/`.
 
-Idempotent. Re-running on an already-installed repo prints
-"already installed" and exits 0.
+**Deleting `target/` does not uninstall anything.** The durable hooks and
+`core.hooksPath` survive it. What goes is the generated validator, and the hook
+then blocks and says to run `cargo mock`.
 
-### `cargo mock uninstall`
+## What the categories are
 
-Reverses `install`. Removes the alias, the `core.hooksPath` setting,
-and the contents of `mock/target/hooks/` and `mock/target/agent/`.
-The `mock/` directory itself stays (it carries the consumer's
-round content).
+**Bare `cargo mock`, with no subcommand**, regenerates the documents and the
+agent instructions under `.claude/` and `.github/` from `mock/agent/` templates,
+or from the builtin templates where a repository has none. Those generated files
+are never hand-edited: edit the template and regenerate.
 
-### `cargo mock refresh`
+**Round transitions** move a design round between phases by renaming its files,
+so the phase follows from the rename. Do not hand-rename to lock or close; the
+subcommand writes the bookkeeping that goes with it. `phases.md` and `verbs.md`
+carry the state machine.
 
-Functionally identical to `install`. Named separately so
-drift-repair has a distinct command-line affordance. Overwrites the
-hooks and agent rule extracts with the canonical content for the
-installed mockspace version.
+**Gate control** points `core.hooksPath` at the mockspace gate, or restores
+git's default.
 
-## Engine commands
+**Reports** answer a question and change nothing: the readiness report, the
+round's current phase, the registry query, the tool listing.
 
-### `cargo mock check`
+**Runners** drive something else: the test trees, the bench harness, the
+document rendering.
 
-Runs the lint engine against the repo. Surfaces findings to stdout
-in `<file>:<line>:<col>: [<severity>] <name>: <message>` format
-(or `--json` for machine consumers).
+**Message linting** checks one commit message or forge body against the
+configured attribution and style policy.
 
-Flags:
-- `--gate <commit|build|push>`: which severity gate to evaluate at.
-  Default `commit`. Pre-commit hooks use `commit`; CI uses `build`;
-  pre-push uses `push`.
-- `--json`: emit findings as a JSON array.
-- `--surface <local|ci|editor>`: run surface. Default `local`. `ci`
-  simulates a CI run; `editor` is LSP-shaped.
+## Two things that are easy to get wrong
 
-Exits non-zero if any finding is classified as error at the chosen
-gate.
+**A subcommand that is not in `mock tools` does not exist**, whatever a document
+says. Check before telling somebody to run it.
 
-### `cargo mock explain <lint>`
-
-Reports how the named lint resolves through the config cascade.
-Prints catalog defaults plus any user TOML override seen for that
-lint. Full per-layer breakdown (presets, workspace defaults, CLI
-overrides) lands progressively as the cascade implementation
-completes.
-
-## Phase transition commands
-
-### `cargo mock phase plan <slug>`
-
-Opens PlanDoc on a Topic-phase round. See `phases.md` and
-`verbs.md` for the full state machine.
-
-### `cargo mock phase apply <slug> --source-tip <hex>`
-
-Seals the current authoring manifest and transitions to the
-matching APPLY phase. The transition validity matrix lives in
-`mockspace-core::transition`; the I/O sequence (read manifest,
-hash claimed files, write anchor TOML and blobs, rename manifest
-to `.locked` form, bump phase marker, push with CAS) is the Phase 5
-executor and lands progressively under
-`mock/research/202605220843_phase-5-io-slice-plan.md`. Requires the
-source-side branch tip OID as a hex SHA so the anchor records a
-stable input for restoration.
-
-### `cargo mock phase finish <slug>`
-
-Advances past APPLY. From ApplyDoc lands in PlanSrc; from ApplySrc
-lands in Done.
-
-### `cargo mock phase replan <slug> [--mode <mode>] [--accept-loss-path <path>]...`
-
-Deprecates the current sealed manifest and returns to PLAN on the
-same side. See `verbs.md` for the three mode options.
-
-### `cargo mock close <slug>`
-
-Archives a Done-phase round into `refs/mock/round-archive` and
-deletes the source round ref. Idempotent on partial-success
-(source-ref delete failure can be retried; the archive write is
-already content-addressed).
-
-## Migration
-
-### `cargo mock migrate`
-
-Walks the v1 mockspace state under `mock/design_rounds/` (the
-filesystem layout from before the v2 ref-based storage) and prints
-a per-round migration report. Each round shows its v1 state, the
-target v2 phase, and the action needed.
-
-Print-only today. Auto-conversion is a future slice.
-
-## What's not yet shipped
-
-- `cargo mock task {create|list|close|move}`: task identity commands.
-- `cargo mock check --fix`: auto-fix integration. The fix recipes
-  exist in the catalog; the CLI wiring lands later.
-- Network-side commands (push CAS for round refs).
-
-Each is tracked under task #579 / #580 in the project's task tree.
-
-## Exit codes
-
-- `0`: success.
-- `1`: command-level failure (verifier finding at gate, validation
-  error, IO error, transition-validity refusal).
-- `2`: usage error (bad flags, unknown subcommand).
-
-The pre-commit and pre-push hook scripts treat exit code 1 from
-`mock check` as commit-blocking; exit code 2 also blocks but
-indicates a config error rather than a lint finding.
+**A project's own tools appear in that listing too**, under their own heading,
+and they are declared per repository rather than shipped by mockspace.
+`lints-and-tools.md` says what belongs in one.

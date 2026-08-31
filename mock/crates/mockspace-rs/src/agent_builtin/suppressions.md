@@ -1,152 +1,91 @@
 # Suppression directives
 
-Mockspace ships five directives that source files can carry to
-modify how lints apply at specific sites. The directives are
-comment-canonical: every language preprocessor parses the same five
-verbs from comment syntax. Per-language attribute aliases (Rust
-attributes, TS decorators) map to the same internal record.
+Five directives, comment-canonical, parsed the same way in every language.
+**Lint packs ship new lint names and categories, never a sixth directive**; that
+takes a schema version bump.
 
-Lint packs ship new lint names and new categories, but cannot ship
-new directive variants. The directive set is bounded to these five;
-adding a sixth requires a framework schema version bump.
+## lint:allow
 
-## The five directives
-
-### lint:allow
-
-Per-site suppression of a specific lint at a single source location.
-
-Comment form:
+Suppresses one lint at one site. Applies to the item immediately following.
 
 ```rust
 // lint:allow(no-bare-string, reason = "ABI boundary; FFI shim", tracked = "#42")
-const C_NAME: &str = "...";
 ```
 
-Rust attribute alias:
+`lint_name` required. `reason` and `tracked` are required by project policy and
+optional to the parser, so a missing one is a finding rather than a parse error.
 
-```rust
-#[lint::allow(no_bare_string, reason = "ABI boundary; FFI shim", tracked = "#42")]
-const C_NAME: &str = "...";
-```
+## lint:scope-add
 
-Required fields: `lint_name`. The `reason` and `tracked` clauses are
-required at the project level (per the `lint-allow-requires-task-id`
-workspace rule) but parsed as optional at the directive parsing
-layer; the meta-lint reports missing fields as findings rather than
-parser failures.
-
-### lint:scope-add
-
-At a module or file boundary, extends a lint's scope along one axis
-for the contained items. Useful for opt-in patterns where a few
-modules need a stricter scope than the workspace default.
-
-Comment form:
+Extends a lint's scope along one axis for the items below, at module or file
+boundary.
 
 ```rust
 // lint:scope-add(no-bare-vec, axis = "crates", value = "loimu-bench")
 ```
 
-The axis must be one of the `ScopeAxis` variants:
-`paths`, `exempt_paths`, `crates`, `exempt_crates`, `languages`,
-`exempt_categories`. Lint packs cannot invent new axes through this
-directive; the axis set is bounded to the `ScopeConfig` fields.
+Axis is one of `paths`, `exempt_paths`, `crates`, `exempt_crates`, `languages`,
+`exempt_categories`. **Bounded to the `ScopeConfig` fields**; a pack cannot
+invent one.
 
-### lint:defer
+## lint:defer
 
-Acknowledges a known violation that will be fixed when the linked
-task closes. Semantically distinct from `allow`: defers expire when
-the linked task closes, while allows accumulate as a policy
-question.
-
-Comment form:
+A known violation with a task that closes it. **Not `allow` with nicer wording**:
+a defer expires when its task closes, an allow accumulates as a policy question.
 
 ```rust
 // lint:defer(no-bare-numeric, until = "#118", reason = "post-Round-D type debt")
 ```
 
-The `SuppressionMetaLint`'s `forbid_expired` config flags defers
-that reference closed tasks; the lint catches the case where a
-defer outlives its anchor.
+`SuppressionMetaLint`'s `forbid_expired` flags a defer whose anchor has closed.
 
-### lint:file-disable
+## lint:file-disable
 
-File-level disable for the named lint. Placed at the top of a file.
-Distinct from `scope-add` in that it is a disable, not a scope
-extension.
-
-Comment form (must be the first non-blank line of the file):
+Disables a lint for the whole file. **First non-blank line.** Same `reason` and
+`tracked` shape as `allow`. A disable rather than a scope extension.
 
 ```rust
 // lint:file-disable(no-bare-vec, reason = "generated code", tracked = "#0")
 ```
 
-Requires the same `reason` + `tracked` shape as `allow`.
+## lint:prop
 
-### lint:prop
-
-Lint-provided per-site property consumed by lints. The framework
-does not interpret the prop name or value; lints declare via
-`Lint::declared_props` which names they read and query the resolved
-`PropMap` for matches.
-
-Comment forms:
+A per-site property a lint reads. The framework interprets neither name nor
+value; a lint declares what it reads via `Lint::declared_props` and queries the
+resolved `PropMap`.
 
 ```rust
-// lint:prop(audited)                          # presence form, true bool
-// lint:prop(rate-limit = 100)                 # key-value, integer
-// lint:prop(category = "experimental")        # key-value, string
-// lint:prop(audited, reason = "see #42")      # presence + reason
+// lint:prop(audited)                     presence, true
+// lint:prop(rate-limit = 100)            integer
+// lint:prop(category = "experimental")   string
+// lint:prop(audited, reason = "see #42")
 ```
 
-Value types: bool, integer (i64), string. No list variant; multi-value
-props write multiple directives that accumulate in the `PropMap`
-naturally.
+Types are bool, i64, string. No list: write several and they accumulate.
 
-## Where directives go
+## Where they attach
 
-All five directives parse from comments anywhere a comment can
-appear in the source file. The preprocessor pairs each directive
-with the item it precedes (per-site directives) or with the file
-itself (`lint:file-disable` only).
-
-`lint:allow` and `lint:defer` apply to the immediately following
-item: function definition, type declaration, impl block, etc. A
-directive at end-of-file or between items unaffiliates and surfaces
-as a warning.
-
-`lint:scope-add` and `lint:file-disable` apply at module or file
-scope. They land before any item declaration.
-
-`lint:prop` applies to the next item, same as `lint:allow`. Props
-do not stack with other directives on the same item; if both
-`lint:allow` and `lint:prop` precede an item, they each take effect
-once.
+- **To the next item** (`allow`, `defer`, `prop`): function, type, impl block.
+  One at end-of-file or between items attaches to nothing and warns.
+- **To the file or module** (`scope-add`, `file-disable`): before any item.
+- Props do not stack with other directives on one item. Each takes effect once.
 
 ## Rust attribute aliases
 
-The five verbs all have Rust attribute aliases under the `lint::`
-prefix:
-
-| Comment form | Attribute form |
+| Comment | Attribute |
 |---|---|
 | `lint:allow` | `#[lint::allow(...)]` |
 | `lint:scope-add` | `#[lint::scope_add(...)]` |
 | `lint:defer` | `#[lint::defer(...)]` |
-| `lint:file-disable` | comment form only (no attribute alias yet) |
 | `lint:prop` | `#[lint::prop(...)]` |
+| `lint:file-disable` | comment only |
 
-The attribute aliases parse into the same `Directive` enum as the
-comment form. `lint:file-disable` currently ships as comment-only;
-the inner-attribute alias `#![lint::file_disable(...)]` is reserved
-for future wiring. Style preference for the four wired aliases is
-per-project; mockspace does not prefer one over the other.
+Both forms parse to the same `Directive`. `#![lint::file_disable(...)]` is
+reserved and unwired. Neither form is preferred.
 
-## What directives do NOT cover
+## What a directive cannot do
 
-- Reordering lint priority. Use TOML config + the cascade.
-- Adding new lint names. Lint packs do that via the catalog.
-- Defining new severity levels. Severity is a fixed enum
-  (`info / warn / error`).
-- Disabling lints workspace-wide. Use `mockspace.toml`.
+- Reorder lint priority. That is TOML config and the cascade.
+- Add a lint name. That is the pack's catalog.
+- Add a severity. Fixed at `info` / `warn` / `error`.
+- Disable a lint workspace-wide. That is `mockspace.toml`.

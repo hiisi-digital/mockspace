@@ -1,34 +1,28 @@
 # Mockspace builtin agent rules
 
-This directory carries the canonical descriptions of mockspace
-itself. Read these when you need to understand what mockspace is
-and how to use it.
+What mockspace is and how to use it. Extracted from the binary on install and
+refresh, landing at `mock/target/agent/`, gitignored.
 
-The files are extracted from the mockspace binary on
-`cargo mock install` / `refresh` and land at
-`mock/target/agent/`. They are gitignored. Edits to the extracted
-copies are blown away on next refresh; the source of truth lives
-inside the mockspace crate.
-
-## Files
+**Never hand-edit the extracted copies.** They are overwritten on the next
+refresh; the source is inside the mockspace crate.
 
 | File | Subject |
 |---|---|
-| `phases.md` | The six-phase state machine. What each phase means, what enters and exits it. |
-| `verbs.md` | The four transition verbs (`plan`, `apply`, `finish`, `replan`) and the full validity matrix. |
-| `sides.md` | Doc and src vocabulary. What a manifest is, what each side carries, how the two sides relate. |
-| `anchors.md` | What an anchor captures, when, why. Content-addressed snapshot storage. |
-| `suppressions.md` | The five comment-canonical directives (`lint:allow`, `lint:scope-add`, `lint:defer`, `lint:file-disable`, `lint:prop`) plus Rust attribute aliases. |
-| `commands.md` | The `cargo mock` subcommand surface as it ships today. |
-| `identity.md` | Slugs, task IDs, ref paths, content hashes. How mockspace names things. |
+| `phases.md` | The six phases, what each is, what runs in it |
+| `verbs.md` | The four transitions, their validity matrix, what each costs |
+| `sides.md` | Doc and src: what a manifest carries, the tree layout, which verifiers run when |
+| `anchors.md` | What is snapshotted at apply, what is not, and why not git history |
+| `suppressions.md` | The five directives, where each attaches, what none of them can do |
+| `commands.md` | How mockspace is invoked, and why the subcommand list is read rather than written |
+| `identity.md` | Slugs, task ids, ref paths, hashes, and identifier against content |
+| `lints-and-tools.md` | The two kinds of check, which a given one is, the contract each is held to |
 
-## What's NOT here
+## Not here
 
-These are mockspace-internal facts only. Project-specific
-conventions, domain rules, repo workflows belong in the consumer's
-own agent rules at `mock/agent/<whatever>`. Those stay
-consumer-authored and mockspace never touches them.
+**Project conventions, domain rules, repository workflow.** Those are the
+consumer's own, at `mock/agent/`, and mockspace never touches them.
 
-When the mockspace binary updates, this directory updates with it
-(via `cargo mock refresh`). When the consumer updates their own
-project rules, that's their working tree to manage.
+**Nor anything about what surrounds a repository.** Mockspace cannot know
+whether a workspace harness, a team convention or a second trunk exists around
+it, so it does not describe one. A test refuses a builtin that names something
+outside mockspace.

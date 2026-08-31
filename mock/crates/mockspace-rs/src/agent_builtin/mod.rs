@@ -30,13 +30,22 @@ pub const FILES: &[(&str, &str)] = &[
     ("suppressions.md", include_str!("suppressions.md")),
     ("commands.md", include_str!("commands.md")),
     ("identity.md", include_str!("identity.md")),
+    ("lints-and-tools.md", include_str!("lints-and-tools.md")),
     ("INDEX.md", include_str!("INDEX.md")),
 ];
 
 /// File names only, derived from [`FILES`]. Provided as a const
 /// for callers that only need the directory listing.
 pub const FILE_NAMES: &[&str] = &[
-    FILES[0].0, FILES[1].0, FILES[2].0, FILES[3].0, FILES[4].0, FILES[5].0, FILES[6].0, FILES[7].0,
+    FILES[0].0,
+    FILES[1].0,
+    FILES[2].0,
+    FILES[3].0,
+    FILES[4].0,
+    FILES[5].0,
+    FILES[6].0,
+    FILES[7].0,
+    FILES[8].0,
 ];
 
 /// Look up the embedded content for a builtin file name. Returns
@@ -99,6 +108,59 @@ mod tests {
         assert_eq!(FILE_NAMES.len(), FILES.len());
         for (i, name) in FILE_NAMES.iter().enumerate() {
             assert_eq!(*name, FILES[i].0);
+        }
+    }
+
+    /// `INDEX.md` names every shipped file.
+    ///
+    /// It is what a reader consults to find out what is here, so a file
+    /// missing from it is a file nobody opens. Nothing checked this, and the
+    /// index is prose, which is exactly the shape that goes stale without
+    /// anything failing.
+    #[test]
+    fn the_index_names_every_file() {
+        let index = content("INDEX.md").expect("INDEX.md is shipped");
+        for (name, _) in FILES {
+            if *name == "INDEX.md" {
+                continue;
+            }
+            assert!(
+                index.contains(name),
+                "`{name}` ships and `INDEX.md` does not name it"
+            );
+        }
+    }
+
+    /// A builtin describes mockspace and nothing around it.
+    ///
+    /// These files are written into every consumer on every run, so anything
+    /// specific to one workspace, one repository or one team's conventions
+    /// arrives in repositories it is false about. Mockspace does not know
+    /// whether a workspace harness exists around it, so it may not describe
+    /// one.
+    #[test]
+    fn no_builtin_names_something_outside_mockspace() {
+        // Names of consumers and of the workspace layer, which are the two
+        // things that have leaked before.
+        const OUTSIDE: &[&str] = &[
+            "clause-dev",
+            "homma",
+            "arvo",
+            "hilavitkutin",
+            "vehje",
+            "notko",
+            "kamu",
+            "kolli",
+            "tarina",
+        ];
+        for (name, body) in FILES {
+            let lower = body.to_lowercase();
+            for needle in OUTSIDE {
+                assert!(
+                    !lower.contains(needle),
+                    "builtin `{name}` names `{needle}`, which is outside mockspace"
+                );
+            }
         }
     }
 }
