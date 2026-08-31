@@ -1813,7 +1813,10 @@ pub fn check_crate_with_extra(
     extra_lints: &[Box<dyn CrateLint>],
 ) -> Vec<LintError> {
     let mut lints = all_lints();
-    configure_all(lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint), overrides);
+    configure_all(
+        lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint),
+        overrides,
+    );
 
     let mut errors = Vec::new();
 
@@ -1943,7 +1946,10 @@ pub fn check_workspace_with_extra(
     extra_lints: &[Box<dyn WorkspaceLint>],
 ) -> Vec<LintError> {
     let mut lints = all_workspace_lints();
-    configure_all(lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint), overrides);
+    configure_all(
+        lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint),
+        overrides,
+    );
     let mut errors = Vec::new();
     for lint in lints
         .iter()
@@ -1996,7 +2002,10 @@ pub fn check_repo_with_extra(
     extra_lints: &[Box<dyn RepoLint>],
 ) -> Vec<LintError> {
     let mut lints = all_repo_lints();
-    configure_all(lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint), overrides);
+    configure_all(
+        lints.iter_mut().map(|l| l.as_mut() as &mut dyn Lint),
+        overrides,
+    );
     let mut errors = Vec::new();
     for lint in lints
         .iter()
@@ -2290,7 +2299,11 @@ mod pack_configuration_tests {
         let pack = a_pack();
         assert!(pack.crate_lints[0].check(&empty_lint_context()).is_empty());
         assert!(pack.workspace_lints[0].check_all(&[]).is_empty());
-        assert!(pack.repo_lints[0].check_repo(&empty_repo_context()).is_empty());
+        assert!(
+            pack.repo_lints[0]
+                .check_repo(&empty_repo_context())
+                .is_empty()
+        );
         assert!(
             pack.message_lints[0]
                 .check_message(&a_message_context())
@@ -2306,7 +2319,11 @@ mod pack_configuration_tests {
         // The message kind is the one that had no configuration path whatsoever,
         // so it is named first and separately rather than folded into a loop.
         let msg = pack.message_lints[0].check_message(&a_message_context());
-        assert_eq!(msg.len(), 1, "a message lint reported nothing after being configured");
+        assert_eq!(
+            msg.len(),
+            1,
+            "a message lint reported nothing after being configured"
+        );
         assert_eq!(msg[0].message, "configured: yes");
 
         assert_eq!(
@@ -2398,7 +2415,8 @@ mod pack_configuration_tests {
     #[test]
     fn the_walk_reaches_past_the_first_lint_of_a_kind() {
         let mut pack = a_pack();
-        pack.message_lints.push(Box::new(ConfigurableMessage::default()));
+        pack.message_lints
+            .push(Box::new(ConfigurableMessage::default()));
         pack.configure_from(&config_for(&["configurable-message"], "both"));
 
         assert_eq!(pack.message_lints.len(), 2);

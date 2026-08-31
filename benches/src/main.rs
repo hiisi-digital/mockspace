@@ -207,7 +207,6 @@ fn run_worker(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-
     harness::run_worker(
         &routine,
         &workload,

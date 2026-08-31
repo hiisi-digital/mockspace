@@ -40,9 +40,18 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
     // Only saved when there is something to save and it is not already ours, so
     // running `activate` twice does not overwrite the real previous value with
     // mockspace's own path.
+    // `is_ours` rather than a comparison against the path we are about to write,
+    // because mockspace writes more than one value. `hooks_path_target` returns
+    // the durable dir where it exists and `<mock>/target/hooks` otherwise, and
+    // the durable one is version-keyed, so the two differ routinely: the first
+    // run after the durable dir becomes writable, and every `HOOK_VERSION` bump.
+    //
+    // An exact comparison there records mockspace's own previous path as the
+    // repository's, and `deactivate` then restores the gate while reporting that
+    // it handed the repository back. `is_active` agrees it is still on, so
+    // nothing downstream contradicts it either.
     if let Some(existing) = local_config(repo_root, "core.hooksPath") {
-        let ours = hooks_dir.to_str().unwrap_or("");
-        if !existing.is_empty() && existing != ours {
+        if !existing.is_empty() && !mockspace_manifest::gate::is_ours(&existing) {
             let _ = std::process::Command::new("git")
                 .args(["config", "--local", PREVIOUS_HOOKS_PATH, &existing])
                 .current_dir(repo_root)
@@ -178,14 +187,20 @@ mod tests {
     use super::{PREVIOUS_HOOKS_PATH, deactivate, local_config};
 
     /// A repository with no remote and no hooks configuration.
+    ///
+    /// The counter is what makes it unique, not the clock. Keying on pid plus
+    /// nanoseconds looks unique and is not: these tests run on parallel threads,
+    /// the clock's resolution is coarser than the gap between two of them, and
+    /// two tests then share one repository. That is not a flake, it is one test
+    /// reading another's git config, and it presented as the version-bump arm
+    /// failing while the code under it was correct.
     fn repo() -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
             "ms-activate-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let run = |args: &[&str]| {
@@ -207,6 +222,73 @@ mod tests {
             .current_dir(dir)
             .output()
             .expect("git config");
+    }
+
+    /// A repository with a generated hooks dir, so `activate` gets past its
+    /// precondition and reaches the save decision.
+    fn repo_ready_to_activate() -> (PathBuf, PathBuf) {
+        let dir = repo();
+        let mock = dir.join("mock");
+        std::fs::create_dir_all(mock.join("target").join("hooks")).expect("hooks dir");
+        (dir, mock)
+    }
+
+    #[test]
+    fn activating_over_our_own_path_saves_nothing() {
+        // The case the first four tests could not see, because every one of them
+        // set `mockspace.previousHooksPath` by hand and none went through
+        // `activate`. The save decision was uncovered, and it was wrong.
+        //
+        // It compared against the exact path about to be written, but mockspace
+        // writes more than one: the durable dir when it exists and
+        // `<mock>/target/hooks` otherwise, with the durable one version-keyed.
+        // So on the first run after the durable dir appears, and on every
+        // `HOOK_VERSION` bump, activate recorded mockspace's own previous path
+        // as the repository's and deactivate restored the gate while saying it
+        // had handed the repository back.
+        let (dir, mock) = repo_ready_to_activate();
+        set(&dir, "core.hooksPath", "mock/target/hooks");
+
+        let _ = super::activate(&dir, &mock);
+
+        assert!(
+            local_config(&dir, PREVIOUS_HOOKS_PATH).is_none(),
+            "a mockspace path is not the repository's previous setting, whichever \
+             of ours it happens to be"
+        );
+    }
+
+    #[test]
+    fn activating_over_a_different_mockspace_version_saves_nothing() {
+        // The version-bump arm specifically, since that is the one that fires on
+        // an ordinary upgrade rather than on a first install.
+        let (dir, mock) = repo_ready_to_activate();
+        set(&dir, "core.hooksPath", "/home/x/.config/mockspace/hooks-v2");
+
+        let _ = super::activate(&dir, &mock);
+
+        assert!(
+            local_config(&dir, PREVIOUS_HOOKS_PATH).is_none(),
+            "an older mockspace hooks dir is still ours"
+        );
+    }
+
+    #[test]
+    fn activating_over_a_foreign_path_saves_it() {
+        // The positive control, and it is what makes the two above mean
+        // something: without it they are satisfied by an activate that never
+        // saves anything at all, which is the behaviour before the fix that
+        // introduced saving.
+        let (dir, mock) = repo_ready_to_activate();
+        set(&dir, "core.hooksPath", ".husky");
+
+        let _ = super::activate(&dir, &mock);
+
+        assert_eq!(
+            local_config(&dir, PREVIOUS_HOOKS_PATH).as_deref(),
+            Some(".husky"),
+            "a path we do not own is exactly what must be kept"
+        );
     }
 
     #[test]

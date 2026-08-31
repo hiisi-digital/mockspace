@@ -37,14 +37,13 @@ use std::process::Command;
 ///
 /// A name joins this list when `gh repo view <owner>/<name> --json visibility`
 /// says `PRIVATE`, and leaves it when that changes.
-const PRIVATE: &[&str] = &[
-    "clause-dev",
-    "kolli",
-    "ikiuni",
-    "loisto",
-    "loimu",
-    "saalis",
-];
+///
+/// **Hand-maintained, which is the standing weakness.** Nothing re-runs that
+/// command, so a sibling going private later stops being caught and nothing
+/// says so. Deriving it would mean a network call from a test, which is worse;
+/// what is written down instead is that the list is a snapshot of a fact that
+/// can move.
+const PRIVATE: &[&str] = &["clause-dev", "kolli", "ikiuni", "loisto", "loimu", "saalis"];
 
 /// Where a path on somebody's own machine gives itself away.
 ///
@@ -81,6 +80,17 @@ fn tracked_files() -> Vec<PathBuf> {
         .lines()
         // `mock/` is this repository's own design trail and the v2 redesign,
         // which is history and work in progress rather than a surface.
+        //
+        // **It is excluded on purpose and it is not clean.** Twenty tracked
+        // files under it carry `~/Dev/clause-dev` paths, in research notes and
+        // in committed probe scripts where the path is what the probe reads.
+        // Scrubbing them would rewrite the audit trail and break instruments
+        // whose whole value is that they can be re-run.
+        //
+        // So this is a decision rather than an oversight, and the number is here
+        // so a later reader can tell whether it grew. The exposure is a reader
+        // learning the directory layout of one machine, which is real and is
+        // smaller than the cost of editing evidence.
         //
         // `docs/` used to be excluded here, and the exclusion carried a comment
         // saying it should not be: it is a tier one surface a reader reaches

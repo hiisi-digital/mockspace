@@ -481,7 +481,10 @@ mod ownership_tests {
         assert!(is_ours("mock/target/hooks"));
         assert!(is_ours("/home/x/.config/mockspace/hooks"));
         assert!(is_ours("some/deep/mock/target/hooks"));
-        assert!(is_ours("mock/target/hooks/"), "a trailing slash is the same path");
+        assert!(
+            is_ours("mock/target/hooks/"),
+            "a trailing slash is the same path"
+        );
     }
 
     #[test]
