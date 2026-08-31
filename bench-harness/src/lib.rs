@@ -106,10 +106,12 @@ pub use harness::{run_orchestrator, run_worker, write_csv};
 pub use history::{
     DEFAULT_HISTORY_DIR,
     HistoryEntry,
+    Regression,
     append as append_history,
     append_in as append_history_in,
     detect_regressions,
     detect_regressions_window,
+    flagged_for as regression_flagged_for,
     git_commit,
     load as load_history,
     load_in as load_history_in,

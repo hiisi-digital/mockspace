@@ -416,8 +416,7 @@ pub fn generate(ds: &DataSet, title: &str) -> String {
         // Re-pair variant samples against base by matching (run, pass, cooldown_ms).
         // One helper, shared with the highlights engine, so the table and the
         // highlights above it can never pair the same samples two ways.
-        let (variant_paired, base_paired) =
-            crate::summary::pair_keyed(&v.keyed_algo, base_keyed);
+        let (variant_paired, base_paired) = crate::summary::pair_keyed(&v.keyed_algo, base_keyed);
 
         // Fall back to positional pairing if no key matches
         // (e.g. single-run data).
@@ -989,23 +988,23 @@ mod methodology_tests {
 
     fn s(variant: &str, algo: f64, batch: usize) -> Sample {
         Sample {
-            run: 1,
-            pass: 1,
-            cooldown_ms: 0,
-            mode: "warm".into(),
-            variant: variant.into(),
-            e2e_ns: algo,
-            algo_ns: algo,
-            bridge_ns: 0.0,
-            batch_idx: batch,
-            batch_count: 5000,
-            score: None,
-            input_tag: None,
+            run:          1,
+            pass:         1,
+            cooldown_ms:  0,
+            mode:         "warm".into(),
+            variant:      variant.into(),
+            e2e_ns:       algo,
+            algo_ns:      algo,
+            bridge_ns:    0.0,
+            batch_idx:    batch,
+            batch_count:  5000,
+            score:        None,
+            input_tag:    None,
             instructions: 0,
-            cycles: 0,
-            setup_ns: 0.0,
-            first_ns: 0.0,
-            digest: 0,
+            cycles:       0,
+            setup_ns:     0.0,
+            first_ns:     0.0,
+            digest:       0,
         }
     }
 
@@ -1042,7 +1041,10 @@ mod methodology_tests {
         assert!(md.contains("| Batch size | 100 |"), "no batch size");
         assert!(md.contains("| Harness runs | 2 |"), "no harness run count");
         assert!(md.contains("| Master seed |"), "no master seed");
-        assert!(md.contains("| Cooldown schedule | 0ms, 250ms |"), "no schedule");
+        assert!(
+            md.contains("| Cooldown schedule | 0ms, 250ms |"),
+            "no schedule"
+        );
     }
 
     /// Catalogued gap, not a regression. `write_csv` persists the samples and an
@@ -1058,10 +1060,8 @@ mod methodology_tests {
     #[ignore = "catalogue: run parameters are not persisted, so --report-only \
                 cannot restate the methodology of the run it re-renders"]
     fn a_report_regenerated_from_a_csv_states_the_same_methodology() {
-        let dir = std::env::temp_dir().join(format!(
-            "mockspace-bh-methodology-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mockspace-bh-methodology-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let csv = dir.join("hash_n64.csv");
         let out = dir.join("hash_n64_findings.md");
@@ -1075,12 +1075,12 @@ mod methodology_tests {
             ..BenchConfig::default()
         };
         let result = crate::sample::BenchResult {
-            title: "t".into(),
-            env: crate::env::EnvMeta::default(),
-            samples: (0 .. 6)
+            title:       "t".into(),
+            env:         crate::env::EnvMeta::default(),
+            samples:     (0 .. 6)
                 .flat_map(|b| [s("aaa", 100.0 + b as f64, b), s("bbb", 50.0 + b as f64, b)])
                 .collect(),
-            cache_path: csv.display().to_string(),
+            cache_path:  csv.display().to_string(),
             report_path: out.display().to_string(),
         };
         crate::harness::write_csv(&result, &csv.display().to_string()).expect("csv");

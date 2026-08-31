@@ -767,7 +767,15 @@ mod tests {
             .find(|h| h.kind == "two_tiers")
             .expect("fires");
         // The headline names both tiers; neither side may be empty.
-        assert!(!h.headline.contains("{} vs"), "empty fast tier: {}", h.headline);
-        assert!(!h.headline.contains("vs {}"), "empty slow tier: {}", h.headline);
+        assert!(
+            !h.headline.contains("{} vs"),
+            "empty fast tier: {}",
+            h.headline
+        );
+        assert!(
+            !h.headline.contains("vs {}"),
+            "empty slow tier: {}",
+            h.headline
+        );
     }
 }

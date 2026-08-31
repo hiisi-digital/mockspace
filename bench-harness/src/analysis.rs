@@ -458,7 +458,11 @@ pub fn median(vals: &[f64]) -> f64 {
     let mut sorted = vals.to_vec();
     sorted.sort_by(|a, b| a.total_cmp(b));
     let n = sorted.len();
-    if n % 2 == 0 { (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0 } else { sorted[n / 2] }
+    if n % 2 == 0 {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    } else {
+        sorted[n / 2]
+    }
 }
 
 /// 95% bootstrap confidence interval on the median. Returns
@@ -817,8 +821,14 @@ mod bootstrap_rng_tests {
             "the reported median of the same two values changed with their \
              order: {med_a} vs {med_b}"
         );
-        assert!(lo_a <= med_a && med_a <= hi_a, "CI [{lo_a}, {hi_a}] excludes {med_a}");
-        assert!(lo_b <= med_b && med_b <= hi_b, "CI [{lo_b}, {hi_b}] excludes {med_b}");
+        assert!(
+            lo_a <= med_a && med_a <= hi_a,
+            "CI [{lo_a}, {hi_a}] excludes {med_a}"
+        );
+        assert!(
+            lo_b <= med_b && med_b <= hi_b,
+            "CI [{lo_b}, {hi_b}] excludes {med_b}"
+        );
     }
 
     /// Every median in this crate has to be the same median. `Stats` and the

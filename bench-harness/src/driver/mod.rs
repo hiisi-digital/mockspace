@@ -659,23 +659,19 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         }
         let historical = history::load_in(&history_root, &benchmark_key);
         let regressions = history::detect_regressions(&entries, &historical);
-        for (bench, variant, delta, flagged) in &regressions {
-            if *flagged {
-                eprintln!(
-                    "  REGRESSION: {bench} {variant} {:+.1}% vs history",
-                    delta * 100.0
-                );
+        for r in &regressions {
+            if r.flagged {
+                eprintln!("  REGRESSION: {}", r.render(&config.bench_name));
             }
         }
         for e in &entries {
-            let flagged = regressions.iter().any(|(_, v, _, f)| *f && v == &e.variant);
             summary.push(SummaryRow {
                 bench:         config.bench_name.clone(),
                 n:             config.n,
                 variant:       e.variant.clone(),
                 median_ns:     e.median_ns,
                 ratio_vs_best: if best > 0.0 { e.median_ns / best } else { 1.0 },
-                regression:    flagged,
+                regression:    history::flagged_for(&regressions, &e.variant),
             });
         }
         if cell_failed {
