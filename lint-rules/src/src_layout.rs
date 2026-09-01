@@ -182,7 +182,58 @@ pub fn changed_files(
         files.retain(|(file, source)| source != "staged" || !merge.inherited(mock_dir, file));
     }
 
+    // A file that only moved says exactly what it said before, so no phase can
+    // be protecting anything by refusing it. The gates freeze what a document
+    // states and what source declares; a path is neither.
+    //
+    // Without this a crate cannot be renamed at all. The directory carries both
+    // templates and source, the doc gate refuses the templates in every phase
+    // but DOC and the source gate refuses the source in every phase but IMPL,
+    // so one of the two fires whichever phase the move is made in. Splitting it
+    // across two phases is not a way out either, since a crate is required to
+    // have both a `src/lib.rs` and a `README.md.tmpl` and the halfway state has
+    // one crate missing each.
+    let renamed = pure_renames(mock_dir, &specs);
+    files.retain(|(file, _)| !renamed.iter().any(|r| r == file));
+
     files
+}
+
+/// Paths on the near side of a rename that changed no content, staged or not.
+///
+/// `-M100%` is the whole of the check: git reports `R100` only when the two
+/// blobs are identical, so anything that moved and was edited keeps its
+/// finding. `--name-status` gives `R100\told\tnew`, and the new path is what
+/// the `--name-only` walks above report, so that is the one to match on.
+fn pure_renames(mock_dir: &Path, specs: &[String]) -> Vec<String> {
+    let mut renamed = Vec::new();
+    for base in [
+        &["diff", "--cached", "--name-status", "-M100%", "--relative", "--"][..],
+        &["diff", "--name-status", "-M100%", "--relative", "--"][..],
+    ] {
+        let mut argv: Vec<&str> = base.to_vec();
+        argv.extend(specs.iter().map(String::as_str));
+        let Some(output) = run_git(mock_dir, &argv) else {
+            continue;
+        };
+        for line in output.lines() {
+            let mut parts = line.split('\t');
+            // Only `R100`. A lower similarity means the content moved and
+            // changed, which is an edit wearing a rename's clothes.
+            if parts.next() != Some("R100") {
+                continue;
+            }
+            // The old path, then the new one, which is the side to keep.
+            let (_, Some(new)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            let new = new.trim();
+            if !new.is_empty() && !renamed.iter().any(|r| r == new) {
+                renamed.push(new.to_string());
+            }
+        }
+    }
+    renamed
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
@@ -458,6 +509,96 @@ mod tests {
         assert!(
             is_source_today("src/main.zig"),
             "a zig project's source is not guarded, and the gate reports cleanly"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The rename carve-out, over a real git repository, because what is being
+    // tested is what git reports rather than what this module computes.
+    // -----------------------------------------------------------------------
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git is on PATH");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// A repository with one committed file at `crates/old/thing.rs`.
+    fn repo_with_a_committed_file() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let root = dir.path();
+        git(root, &["init", "-q"]);
+        git(root, &["config", "user.email", "t@example.invalid"]);
+        git(root, &["config", "user.name", "t"]);
+        std::fs::create_dir_all(root.join("crates/old")).unwrap();
+        std::fs::write(root.join("crates/old/thing.rs"), "pub fn a() {}\n").unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "seed"]);
+        dir
+    }
+
+    fn changed(root: &Path) -> Vec<(String, String)> {
+        let abs = vec![root.join("crates")];
+        let layout = SrcLayout::new(root, &abs);
+        changed_files(root, &layout, |f| f.ends_with(".rs"))
+    }
+
+    #[test]
+    fn a_file_that_only_moved_is_not_a_change() {
+        let dir = repo_with_a_committed_file();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("crates/new")).unwrap();
+        git(root, &["mv", "crates/old/thing.rs", "crates/new/thing.rs"]);
+
+        assert_eq!(
+            changed(root),
+            Vec::new(),
+            "a rename with identical content was reported as an edit, which is \
+             what makes a crate impossible to rename under the phase gates"
+        );
+    }
+
+    /// The control. Without it the case above passes against an implementation
+    /// that reports nothing at all, which is the shape a broken walk has too.
+    #[test]
+    fn a_file_that_moved_and_changed_is_still_a_change() {
+        let dir = repo_with_a_committed_file();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("crates/new")).unwrap();
+        git(root, &["mv", "crates/old/thing.rs", "crates/new/thing.rs"]);
+        std::fs::write(
+            root.join("crates/new/thing.rs"),
+            "pub fn a() {}\npub fn b() {}\npub fn c() {}\npub fn d() {}\n",
+        )
+        .unwrap();
+        git(root, &["add", "-A"]);
+
+        let found = changed(root);
+        assert!(
+            found.iter().any(|(f, _)| f == "crates/new/thing.rs"),
+            "content that moved and changed escaped the gate: {found:?}"
+        );
+    }
+
+    /// And the ordinary case, so the carve-out is not swallowing edits that
+    /// never moved anywhere.
+    #[test]
+    fn a_file_edited_in_place_is_still_a_change() {
+        let dir = repo_with_a_committed_file();
+        let root = dir.path();
+        std::fs::write(root.join("crates/old/thing.rs"), "pub fn changed() {}\n").unwrap();
+
+        let found = changed(root);
+        assert!(
+            found.iter().any(|(f, _)| f == "crates/old/thing.rs"),
+            "an in-place edit escaped the gate: {found:?}"
         );
     }
 }
