@@ -156,14 +156,21 @@ fn a_file_that_moved_and_changed_is_still_a_change() {
     );
 }
 
-/// And the same in the band that decides whether the threshold is doing
-/// anything.
+/// And the same in the band where the two thresholds actually disagree, which
+/// is where what the walk reports changes shape.
 ///
-/// A file rewritten wholesale is refused by any threshold, so a test over one
-/// says nothing about which was set. Three lines added to twenty is around
-/// `R085`: the default detection calls it a rename and `-M100%` refuses it, so
-/// this fails the moment the threshold is loosened and passes only while it is
-/// exact.
+/// Three lines added to twenty measures `R083`. Under `-M100%` git refuses the
+/// pairing and prints an add and a delete, so the walk reports both paths and
+/// the second names a file no longer on disk. Under `-M50%` it prints one
+/// `R083` line and the walk reports only the destination, because
+/// `changed_path` drops `R100` alone.
+///
+/// So this does not guard the threshold, and an earlier version of this comment
+/// claimed it did. Nothing needs to: the discrimination sits on the exact
+/// status rather than on the similarity number, so loosening `-M100%` cannot
+/// open a hole, only change how many findings one move produces. The exact set
+/// is asserted because that is the part the thresholds disagree about, where
+/// asking whether the destination appears holds under both and says nothing.
 #[test]
 fn a_mostly_unchanged_file_that_moved_is_still_a_change() {
     let dir = repo_with_a_committed_file();
@@ -174,10 +181,14 @@ fn a_mostly_unchanged_file_that_moved_is_still_a_change() {
     std::fs::write(root.join("crates/new/thing.rs"), text).unwrap();
     git(root, &["add", "-A"]);
 
-    let found = changed(root);
-    assert!(
-        found.iter().any(|(f, _)| f == "crates/new/thing.rs"),
-        "a threshold below 100% let an edited file through as a rename: {found:?}"
+    assert_eq!(
+        changed(root),
+        vec![
+            ("crates/new/thing.rs".to_string(), "staged".to_string()),
+            ("crates/old/thing.rs".to_string(), "staged".to_string()),
+        ],
+        "an edited file that moved is reported as an add and a delete, in git's \
+         order, and neither side is dropped"
     );
 }
 
@@ -213,6 +224,42 @@ fn a_doc_template_that_only_moved_is_not_a_change_either() {
         Vec::new(),
         "the doc gate would still refuse a crate rename"
     );
+}
+
+/// The widening, asserted rather than only described.
+///
+/// A crate rename moves a whole directory and is what the carve-out is for.
+/// One document moving from a crate that stays to a crate that stays is a
+/// different thing, and it is permitted too, because the two are
+/// indistinguishable per file: a crate rename is a directory of exactly this.
+///
+/// Here so the edge case is a decision on the record. If it should be refused,
+/// this test fails and says where.
+#[test]
+fn one_document_moving_between_two_crates_that_both_remain_is_permitted() {
+    let dir = repo_with_a_committed_file();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("crates/other/src")).unwrap();
+    std::fs::write(root.join("crates/old/DESIGN.md.tmpl"), "a design.\n").unwrap();
+    std::fs::write(root.join("crates/other/src/lib.rs"), "pub fn b() {}\n").unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "two crates"]);
+    git(root, &[
+        "mv",
+        "crates/old/DESIGN.md.tmpl",
+        "crates/other/DESIGN.md.tmpl",
+    ]);
+
+    assert_eq!(
+        changed_in(root, &["crates"], |f| f.ends_with(".md.tmpl")),
+        Vec::new(),
+        "a document moved between two surviving crates, which the carve-out \
+         permits and this pins"
+    );
+    // And both crates are still there, so this really is the other shape and
+    // not a rename wearing its clothes.
+    assert!(root.join("crates/old/thing.rs").exists());
+    assert!(root.join("crates/other/src/lib.rs").exists());
 }
 
 /// A move between two declared source directories, which is the shape this

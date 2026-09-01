@@ -251,6 +251,13 @@ fn changed_path(line: &str) -> Option<&str> {
         // The whole of the carve-out, and only a rename. A copy leaves the
         // original where it was and declares the content a second time, which
         // is a new declaration however identical it is.
+        //
+        // No `C` reaches here today, and the reason is the flag rather than the
+        // repository: `-M100%` on the command line overrides a
+        // `diff.renames = copies` config and suppresses copy detection
+        // outright, so a copy arrives as an add beside whatever happened to its
+        // source. Written on the shape anyway, so that adding `-C` later finds
+        // this branch already correct.
         if status == "R100" {
             return None;
         }
