@@ -144,28 +144,60 @@ pub fn changed_files(
     let specs = layout.pathspecs();
 
     let mut files: Vec<(String, String)> = Vec::new();
-    let walks: [(&[&str], &str); 3] = [
+
+    // The two diff views ask for status rather than names alone, so each one
+    // recognises a rename in the same invocation that reports the change.
+    //
+    // Asking separately is what a first attempt did and it is wrong twice over.
+    // A rename query passing `-M100%` overrides whatever `diff.renames` the
+    // config chain sets while a bare `--name-only` inherits it, so under
+    // `renames = false` the walk reported a delete and an add while the query
+    // still paired them, the old path survived the filter, and the gate blocked
+    // on a file no longer on disk. And one set of pairs shared between the views
+    // let a staged rename hide an unstaged edit to the same file, which
+    // reinstates exactly the staged-only hole the paragraph above exists to
+    // close.
+    let diffs: [(&[&str], &str); 2] = [
         (
-            &["diff", "--cached", "--name-only", "--relative", "--"],
+            &["diff", "--cached", "--name-status", "-M100%", "--relative", "--"],
             "staged",
         ),
-        (&["diff", "--name-only", "--relative", "--"], "unstaged"),
         (
-            &["ls-files", "--others", "--exclude-standard", "--"],
-            "untracked",
+            &["diff", "--name-status", "-M100%", "--relative", "--"],
+            "unstaged",
         ),
     ];
 
-    for (args, source) in walks {
+    for (args, source) in diffs {
         let mut argv: Vec<&str> = args.to_vec();
         argv.extend(specs.iter().map(String::as_str));
         let Some(output) = run_git(mock_dir, &argv) else {
             continue;
         };
         for line in output.lines() {
-            let file = line.trim();
+            let Some(file) = changed_path(line) else {
+                continue;
+            };
             if keep(file) && !files.iter().any(|(f, _)| f == file) {
                 files.push((file.to_string(), source.to_string()));
+            }
+        }
+    }
+
+    // Untracked files have no status to read and no rename to detect: git has
+    // never seen the path before, so a shell `mv` arrives here as an add and in
+    // the walk above as a delete, and both sides are reported. Moving a
+    // directory with `git mv`, or staging the move, is what puts it in front of
+    // the carve-out.
+    {
+        let mut argv: Vec<&str> = vec!["ls-files", "--others", "--exclude-standard", "--"];
+        argv.extend(specs.iter().map(String::as_str));
+        if let Some(output) = run_git(mock_dir, &argv) {
+            for line in output.lines() {
+                let file = line.trim();
+                if keep(file) && !files.iter().any(|(f, _)| f == file) {
+                    files.push((file.to_string(), "untracked".to_string()));
+                }
             }
         }
     }
@@ -183,6 +215,57 @@ pub fn changed_files(
     }
 
     files
+}
+
+/// The path a `--name-status` line reports as changed, or nothing where the
+/// line reports something no phase protects anything by refusing.
+///
+/// A file that only moved says exactly what it said before. The gates freeze
+/// what a document states and what source declares, and a path is neither, so
+/// a rename with identical content contributes neither of its two sides.
+///
+/// Without that a crate cannot be renamed at all. Its directory carries both
+/// templates and source, the doc gate refuses the templates in every phase but
+/// DOC and the source gate refuses the source in every phase but IMPL, so one
+/// of the two fires whichever phase the move is made in. Splitting the move
+/// across the two phases is not a way out either, since a crate is required to
+/// have both a `src/lib.rs` and a `README.md.tmpl` and the halfway state leaves
+/// one crate missing each.
+///
+/// This does permit a single document to move between crates during a phase
+/// that would otherwise refuse it, which is wider than the argument above.
+/// Accepted rather than overlooked: the two are indistinguishable per file, a
+/// crate rename being a directory of them and nothing more, and the source side
+/// self-heals because a moved `.rs` forces a `mod` line to change in a `lib.rs`
+/// that stays gated.
+fn changed_path(line: &str) -> Option<&str> {
+    let mut parts = line.split('\t');
+    let status = parts.next()?;
+
+    // `R` and `C` carry a source and a destination; every other status carries
+    // one path. Parsed on the shape rather than on the flag, so a later change
+    // to the rename options cannot silently turn a destination into a source.
+    if status.starts_with('R') || status.starts_with('C') {
+        let _from = parts.next()?;
+        let to = parts.next()?.trim();
+        // The whole of the carve-out, and only a rename. A copy leaves the
+        // original where it was and declares the content a second time, which
+        // is a new declaration however identical it is.
+        //
+        // No `C` reaches here today, and the reason is the flag rather than the
+        // repository: `-M100%` on the command line overrides a
+        // `diff.renames = copies` config and suppresses copy detection
+        // outright, so a copy arrives as an add beside whatever happened to its
+        // source. Written on the shape anyway, so that adding `-C` later finds
+        // this branch already correct.
+        if status == "R100" {
+            return None;
+        }
+        return (!to.is_empty()).then_some(to);
+    }
+
+    let path = parts.next()?.trim();
+    (!path.is_empty()).then_some(path)
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
@@ -335,6 +418,13 @@ mod merge_walk_tests {
         )]);
     }
 }
+
+/// The walk over real git repositories, which is most of what this module owes
+/// a test and none of what `SrcLayout` itself does. Kept in its own file so the
+/// two kinds do not have to be read past each other.
+#[cfg(test)]
+#[path = "src_layout_walk_tests.rs"]
+mod walk_tests;
 
 #[cfg(test)]
 mod tests {
