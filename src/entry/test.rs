@@ -44,15 +44,20 @@ use crate::config::Config;
 
 /// One tree, its label, and where its manifest lives.
 struct Tree {
-    what:    &'static str,
-    dir:     PathBuf,
+    what:     &'static str,
+    dir:      PathBuf,
     /// Why this tree is not reached by a plain `cargo test` in `mock/`, so a
     /// reader of the output knows what each row is for.
-    because: &'static str,
-    /// Whether this tree is its own cargo root, which is the same property
-    /// that keeps it out of a plain `cargo test` and the reason it needs
-    /// [`shared_target_dir`]: its default `target/` sits next to its own
-    /// manifest and is shared with nothing.
+    because:  &'static str,
+    /// Whether this tree's own manifest declares `[workspace]`, which is what
+    /// makes it a cargo root and the reason it needs [`shared_target_dir`]:
+    /// its default `target/` sits next to that manifest and is shared with
+    /// nothing.
+    ///
+    /// Not the same property as being outside a plain `cargo test`. A crate
+    /// under `tools/` that the workspace lists in `members` is also outside
+    /// nothing, and is not a root either: its default is already `mock/target/`
+    /// and redirecting it opens a second build tree rather than closing one.
     own_root: bool,
 }
 
@@ -111,11 +116,19 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             orphaned.push(dir);
             continue;
         }
+        // Two ways past `is_orphaned` and only one of them is a root. A
+        // manifest declaring `[workspace]` is its own; a crate the workspace
+        // lists in `members` is not, and already builds into `mock/target/`.
+        let own_root = declares_its_own_workspace(&dir);
         trees.push(Tree {
             what: "tool",
             dir,
-            because: "compiled as a path dependency of the lint cdylib, never a member",
-            own_root: true,
+            because: if own_root {
+                "compiled as a path dependency of the lint cdylib, never a member"
+            } else {
+                "listed in the workspace members, so a plain cargo test reaches it too"
+            },
+            own_root,
         });
     }
 
@@ -172,6 +185,11 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     }
 
     let mut failed = Vec::new();
+    // Counted rather than derived from `trees`, because the benches tree is
+    // run below and is deliberately not in it. Reporting `trees.len()` said
+    // `7 tree(s) green` on a run that tested eight, and `1 of 0` where the
+    // only tree was benches.
+    let ran = ran_count(trees.len(), has_benches);
 
     if has_benches {
         println!("\n=== benches : {} ===", bench_dir.display());
@@ -181,13 +199,13 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         }
     }
 
-    let shared = shared_target_dir(cfg, args);
+    let shared = shared_target_dir(cfg, &trees, args);
 
     for t in &trees {
         println!("\n=== {} : {} ===", t.what, t.dir.display());
         println!("    ({})", t.because);
         let mut cmd = crate::entry::cargo_gate::cargo(&t.dir, &["test"]);
-        if let (true, Some(dir)) = (t.own_root, shared.as_ref()) {
+        if let Some(dir) = redirect_for(t, shared.as_ref()) {
             // Before `args`, so a `--` the caller passed still separates
             // cargo's flags from the test binary's.
             cmd.arg("--target-dir").arg(dir);
@@ -204,19 +222,24 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
 
     println!();
     if failed.is_empty() {
-        println!("mock test: {} tree(s) green", trees.len());
+        println!("mock test: {ran} tree(s) green");
         ExitCode::SUCCESS
     } else {
         for f in &failed {
             eprintln!("mock test: FAILED {f}");
         }
-        eprintln!(
-            "mock test: {} of {} tree(s) failed",
-            failed.len(),
-            trees.len()
-        );
+        eprintln!("mock test: {} of {ran} tree(s) failed", failed.len());
         ExitCode::FAILURE
     }
+}
+
+/// How many trees this run actually tested.
+///
+/// The benches tree is run beside `trees` rather than inside it, for the
+/// reason stated where the walk skips it, so the population the report counts
+/// is not the population the loop iterates.
+fn ran_count(trees: usize, has_benches: bool) -> usize {
+    trees + usize::from(has_benches)
 }
 
 /// One target directory for every tree here that is its own cargo root.
@@ -224,10 +247,10 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
 /// The empty `[workspace]` table that keeps a tool crate out of the consumer's
 /// dependency graph also makes it its own root, so cargo builds it into a
 /// `target/` beside its own manifest and shares nothing with its neighbours.
-/// Six tool crates in one repository here compile thirteen dependency crates
-/// each, `tree-sitter` and the `regex` stack among them, with only the leaf
-/// differing, and leave 753M of near-identical build directories behind. Across
-/// the worktrees of one machine that came to 3.0G.
+/// Six tool crates in one repository compile thirteen dependency crates each,
+/// `tree-sitter` and the `regex` stack among them, with only the leaf
+/// differing. The mechanism and its controls are in
+/// `mock/research/202608151554_probes/standalone-target-dir-sharing/`.
 ///
 /// The lint crate joins them rather than getting a directory of its own,
 /// because it takes the tools as path dependencies and so wants the same
@@ -240,10 +263,39 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
 ///
 /// `mock bench test` reached the same shape first, for the same reason on a
 /// larger tree; see the target directory it passes in `bench.rs`.
-fn shared_target_dir(cfg: &Config, args: &[&str]) -> Option<PathBuf> {
-    may_share(args, std::env::var_os("CARGO_TARGET_DIR").as_deref()).then(|| {
-        crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test"])
-    })
+fn shared_target_dir(cfg: &Config, trees: &[Tree], args: &[&str]) -> Option<PathBuf> {
+    // Nothing to share means nothing to create. A repository with members and
+    // no tools and no generated lint crate would otherwise get an empty
+    // `mock/target/mockspace-test/` it never writes into, which is the split
+    // `build_dir.rs` exists to keep clean.
+    let wanted = trees.iter().any(|t| t.own_root);
+    let inherited = inherited_target_dir();
+    (wanted && may_share(args, inherited.as_deref()))
+        .then(|| crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test"]))
+}
+
+/// The `--target-dir` this tree gets, if any.
+///
+/// One line, and it is a function so a test can assert the per-tree half of the
+/// decision. Eight arms covered [`may_share`] and none covered this, which is
+/// why a workspace member under `tools/` was redirected into a second build
+/// tree with every test still green.
+fn redirect_for<'a>(t: &Tree, shared: Option<&'a PathBuf>) -> Option<&'a PathBuf> {
+    t.own_root.then_some(shared).flatten()
+}
+
+/// Every environment spelling that already fixes where cargo builds.
+///
+/// Both are honoured on the pinned toolchain and either one is enough to
+/// decline. `.cargo/config.toml`'s `[build] target-dir` is a third mechanism
+/// and is NOT read here: it is resolved by walking up from each tool's own
+/// directory, so there is no single answer to read, and the cost of missing it
+/// is the duplication that was there before rather than a wrong build.
+fn inherited_target_dir() -> Option<std::ffi::OsString> {
+    // `CARGO_TARGET_DIR` first, which is cargo's own precedence over the
+    // config-backed spelling. Only presence is read, so the order changes
+    // nothing here and is kept honest for the next reader.
+    std::env::var_os("CARGO_TARGET_DIR").or_else(|| std::env::var_os("CARGO_BUILD_TARGET_DIR"))
 }
 
 /// Whether this run may pass a `--target-dir` of its own.
@@ -252,12 +304,10 @@ fn shared_target_dir(cfg: &Config, args: &[&str]) -> Option<PathBuf> {
 /// than read, so the decision is testable without a test mutating the process
 /// environment out from under every other arm running beside it.
 fn may_share(args: &[&str], inherited: Option<&std::ffi::OsStr>) -> bool {
-    // An inherited CARGO_TARGET_DIR already puts every build in one place, and
+    // An inherited target directory already puts every build in one place, and
     // `--target-dir` overrides it, so passing ours would open a second build
     // directory beside the one the machine chose and duplicate the exact thing
-    // this is here to stop. Reading the environment is also the only way to
-    // know: cargo honours the variable and nothing here can guess where it
-    // points.
+    // this is here to stop.
     if inherited.is_some() {
         return false;
     }
@@ -287,14 +337,26 @@ fn crate_dirs(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Whether this crate's own manifest declares `[workspace]`, making it a cargo
+/// root whose `target/` sits beside it and is shared with nothing.
+///
+/// The one question behind two decisions: whether cargo will refuse the crate
+/// where it sits, and whether it needs a shared target directory. Reading it
+/// once means the two cannot disagree, which is how a workspace member under
+/// `tools/` came to be redirected into a second build tree.
+fn declares_its_own_workspace(crate_dir: &Path) -> bool {
+    std::fs::read_to_string(crate_dir.join("Cargo.toml"))
+        .unwrap_or_default()
+        .contains("[workspace]")
+}
+
 /// Whether a crate sits inside a workspace directory without being a member and
 /// without declaring itself a root.
 fn is_orphaned(crate_dir: &Path, mock_dir: &Path) -> bool {
     if !crate_dir.starts_with(mock_dir) {
         return false;
     }
-    let own = std::fs::read_to_string(crate_dir.join("Cargo.toml")).unwrap_or_default();
-    if own.contains("[workspace]") {
+    if declares_its_own_workspace(crate_dir) {
         return false;
     }
     let ws = std::fs::read_to_string(mock_dir.join("Cargo.toml")).unwrap_or_default();
@@ -373,5 +435,98 @@ mod tests {
     #[test]
     fn a_bare_separator_alone_changes_nothing() {
         assert!(may_share(&["--"], None));
+    }
+
+    /// Cargo honours this spelling too, and reading only the first one leaves
+    /// a machine that has already chosen a build directory getting a second.
+    #[test]
+    fn the_build_spelling_of_the_variable_counts_as_set() {
+        // The value `inherited_target_dir` would have found, either way round.
+        assert!(!may_share(
+            &[],
+            Some(OsStr::new("/set/via/cargo_build_target_dir"))
+        ));
+    }
+
+    /// The report counts what ran, and the benches tree runs outside `trees`.
+    /// Before this, seven trees plus benches printed `7 tree(s) green`, and a
+    /// benches-only repository printed `1 of 0 tree(s) failed`.
+    #[test]
+    fn the_report_counts_the_benches_tree_it_also_ran() {
+        assert_eq!(ran_count(7, true), 8);
+        assert_eq!(ran_count(7, false), 7);
+        assert_eq!(ran_count(0, true), 1);
+        assert_eq!(ran_count(0, false), 0);
+    }
+
+    fn tree(what: &'static str, own_root: bool) -> Tree {
+        Tree {
+            what,
+            dir: PathBuf::from("/nowhere"),
+            because: "fixture",
+            own_root,
+        }
+    }
+
+    /// The property the whole change is for, which nothing asserted until a
+    /// reviewer found a member tool being redirected into a second build tree.
+    #[test]
+    fn only_a_tree_that_is_its_own_root_is_redirected() {
+        let shared = PathBuf::from("/shared");
+        assert_eq!(
+            redirect_for(&tree("tool", true), Some(&shared)),
+            Some(&shared)
+        );
+        assert_eq!(
+            redirect_for(&tree("lints", true), Some(&shared)),
+            Some(&shared)
+        );
+        assert_eq!(
+            redirect_for(&tree("workspace members", false), Some(&shared)),
+            None
+        );
+        // A tool the workspace lists in `members` reaches this with
+        // `own_root == false`, and its default is already `mock/target/`.
+        assert_eq!(redirect_for(&tree("tool", false), Some(&shared)), None);
+    }
+
+    /// Deleting the `may_share` guard must not leak a directory in through the
+    /// per-tree half, so the two halves are asserted independently.
+    #[test]
+    fn no_shared_directory_means_no_redirect_for_anyone() {
+        assert_eq!(redirect_for(&tree("tool", true), None), None);
+        assert_eq!(redirect_for(&tree("workspace members", false), None), None);
+    }
+
+    /// `[workspace]` in the crate's own manifest is the whole test, and a
+    /// crate without one is not a root however it got past `is_orphaned`.
+    #[test]
+    fn a_root_is_the_manifest_declaring_a_workspace_and_nothing_else() {
+        let tmp = std::env::temp_dir().join(format!(
+            "mockspace-test-own-root-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        let root = tmp.join("is-a-root");
+        let member = tmp.join("is-a-member");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\n\n[package]\nname = \"r\"\n",
+        )
+        .unwrap();
+        std::fs::write(member.join("Cargo.toml"), "[package]\nname = \"m\"\n").unwrap();
+
+        assert!(declares_its_own_workspace(&root));
+        assert!(!declares_its_own_workspace(&member));
+        // A directory with no manifest at all reads as not a root rather than
+        // panicking, which is what `is_orphaned` has always relied on.
+        assert!(!declares_its_own_workspace(&tmp.join("nothing-here")));
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
