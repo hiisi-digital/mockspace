@@ -31,11 +31,14 @@
 //! `[workspace]` table each tool crate carries is what keeps a cdylib out of
 //! the consumer's dependency graph, and it is equally what makes the crate its
 //! own cargo root: its `target/` sits beside its own manifest and is shared
-//! with nothing. Six tools compiling the same thirteen dependency crates each
-//! is six builds of those thirteen and six copies kept, on every run, and the
-//! lint crate that takes those tools as path dependencies is a seventh. One
-//! shared `--target-dir` for the roots collapses that, and `mock bench test`
-//! had already done it for the bench arms.
+//! with nothing. So every tool in a repository compiles that repository's
+//! dependency set again and keeps its own copy, on every run, and the lint
+//! crate taking those tools as path dependencies pays for one more. One shared
+//! `--target-dir` for the roots collapses that, and `mock bench test` had
+//! already done it for the bench arms.
+//!
+//! The counts differ per repository and move whenever a tool is added, so they
+//! are not written here. `mock tools` reports what a given tree holds.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -345,9 +348,25 @@ fn crate_dirs(root: &Path) -> Vec<PathBuf> {
 /// once means the two cannot disagree, which is how a workspace member under
 /// `tools/` came to be redirected into a second build tree.
 fn declares_its_own_workspace(crate_dir: &Path) -> bool {
-    std::fs::read_to_string(crate_dir.join("Cargo.toml"))
-        .unwrap_or_default()
-        .contains("[workspace]")
+    let Ok(text) = std::fs::read_to_string(crate_dir.join("Cargo.toml")) else {
+        return false;
+    };
+    // Parsed rather than searched. A substring match reads a commented-out
+    // table, or the word inside a description string, as a root, and gets the
+    // answer backwards in the direction that matters: the crate is then given a
+    // shared target directory it must not have, or denied one it should.
+    // A manifest that does not parse is not a root, which is the same answer an
+    // absent one gives and is what cargo will say about it too.
+    //
+    // `[workspace.package]` and its siblings count. They define the `workspace`
+    // key just as the bare table does, so cargo reads the manifest as a root
+    // either way, and only the bare-table spelling was being looked for.
+    //
+    // A different question from `cargo_gate::is_memberless_virtual_workspace`,
+    // which asks whether a root has anything to build. Both read the same file
+    // and neither answers the other, so they stay separate.
+    text.parse::<toml_edit::DocumentMut>()
+        .is_ok_and(|doc| doc.get("workspace").is_some())
 }
 
 /// Whether a crate sits inside a workspace directory without being a member and
@@ -526,6 +545,45 @@ mod tests {
         // A directory with no manifest at all reads as not a root rather than
         // panicking, which is what `is_orphaned` has always relied on.
         assert!(!declares_its_own_workspace(&tmp.join("nothing-here")));
+
+        // The four a substring match gets wrong. The first two are the ones
+        // that bite: a manifest naming the table in a comment or in prose was
+        // handed a shared target directory it must not have, and nothing said
+        // so, because the answer looks the same either way from outside.
+        let cases: [(&str, bool, &str); 4] = [
+            (
+                "# [workspace] was removed when this became a member\n[package]\nname = \"c\"\n",
+                false,
+                "a commented-out table is not a declaration",
+            ),
+            (
+                "[package]\nname = \"d\"\ndescription = \"how [workspace] roots behave\"\n",
+                false,
+                "the word inside a string is not a declaration",
+            ),
+            (
+                "[workspace.package]\nversion = \"0.1.0\"\n\n[package]\nname = \"e\"\n",
+                true,
+                "a dotted workspace table defines the key just as the bare one does, \
+                 and cargo reads the manifest as a root either way",
+            ),
+            (
+                "[package\nname = \"f\"\n",
+                false,
+                "a manifest that does not parse is not a root, which is the answer \
+                 cargo gives it too",
+            ),
+        ];
+        for (i, (text, want, why)) in cases.iter().enumerate() {
+            let dir = tmp.join(format!("case-{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("Cargo.toml"), text).unwrap();
+            assert_eq!(
+                declares_its_own_workspace(&dir),
+                *want,
+                "{why}; manifest was {text:?}"
+            );
+        }
 
         std::fs::remove_dir_all(&tmp).ok();
     }
