@@ -26,6 +26,16 @@
 //! `#[cfg(test)] mod tests` in a lint file compiles into it and `cargo test`
 //! in the generated directory runs it. What was missing was anything that ran
 //! that command.
+//!
+//! **What made the trees reachable also made them expensive.** The empty
+//! `[workspace]` table each tool crate carries is what keeps a cdylib out of
+//! the consumer's dependency graph, and it is equally what makes the crate its
+//! own cargo root: its `target/` sits beside its own manifest and is shared
+//! with nothing. Six tools compiling the same thirteen dependency crates each
+//! is six builds of those thirteen and six copies kept, on every run, and the
+//! lint crate that takes those tools as path dependencies is a seventh. One
+//! shared `--target-dir` for the roots collapses that, and `mock bench test`
+//! had already done it for the bench arms.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -39,6 +49,11 @@ struct Tree {
     /// Why this tree is not reached by a plain `cargo test` in `mock/`, so a
     /// reader of the output knows what each row is for.
     because: &'static str,
+    /// Whether this tree is its own cargo root, which is the same property
+    /// that keeps it out of a plain `cargo test` and the reason it needs
+    /// [`shared_target_dir`]: its default `target/` sits next to its own
+    /// manifest and is shared with nothing.
+    own_root: bool,
 }
 
 pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
@@ -72,9 +87,10 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             );
         } else {
             trees.push(Tree {
-                what:    "workspace members",
-                dir:     cfg.mock_dir.clone(),
-                because: "reached by a plain cargo test",
+                what:     "workspace members",
+                dir:      cfg.mock_dir.clone(),
+                because:  "reached by a plain cargo test",
+                own_root: false,
             });
         }
     }
@@ -99,6 +115,7 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             what: "tool",
             dir,
             because: "compiled as a path dependency of the lint cdylib, never a member",
+            own_root: true,
         });
     }
 
@@ -120,9 +137,10 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     let lints_gen = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-lints"]);
     if lints_gen.join("Cargo.toml").exists() {
         trees.push(Tree {
-            what:    "lints",
-            dir:     lints_gen,
-            because: "generated under target/, its own workspace, never a member",
+            what:     "lints",
+            dir:      lints_gen,
+            because:  "generated under target/, its own workspace, never a member",
+            own_root: true,
         });
     } else {
         eprintln!(
@@ -163,10 +181,18 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         }
     }
 
+    let shared = shared_target_dir(cfg, args);
+
     for t in &trees {
         println!("\n=== {} : {} ===", t.what, t.dir.display());
         println!("    ({})", t.because);
-        let ok = crate::entry::cargo_gate::cargo(&t.dir, &["test"])
+        let mut cmd = crate::entry::cargo_gate::cargo(&t.dir, &["test"]);
+        if let (true, Some(dir)) = (t.own_root, shared.as_ref()) {
+            // Before `args`, so a `--` the caller passed still separates
+            // cargo's flags from the test binary's.
+            cmd.arg("--target-dir").arg(dir);
+        }
+        let ok = cmd
             .args(args)
             .status()
             .map(|s| s.success())
@@ -191,6 +217,56 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         );
         ExitCode::FAILURE
     }
+}
+
+/// One target directory for every tree here that is its own cargo root.
+///
+/// The empty `[workspace]` table that keeps a tool crate out of the consumer's
+/// dependency graph also makes it its own root, so cargo builds it into a
+/// `target/` beside its own manifest and shares nothing with its neighbours.
+/// Six tool crates in one repository here compile thirteen dependency crates
+/// each, `tree-sitter` and the `regex` stack among them, with only the leaf
+/// differing, and leave 753M of near-identical build directories behind. Across
+/// the worktrees of one machine that came to 3.0G.
+///
+/// The lint crate joins them rather than getting a directory of its own,
+/// because it takes the tools as path dependencies and so wants the same
+/// compiled copies.
+///
+/// The members tree is not redirected, which is what `own_root` on [`Tree`]
+/// decides. Its default is `mock/target/`, which a plain `cargo test` in
+/// `mock/` and every other cargo invocation this engine makes already use, so
+/// pointing it elsewhere would stop it sharing rather than start it.
+///
+/// `mock bench test` reached the same shape first, for the same reason on a
+/// larger tree; see the target directory it passes in `bench.rs`.
+fn shared_target_dir(cfg: &Config, args: &[&str]) -> Option<PathBuf> {
+    may_share(args, std::env::var_os("CARGO_TARGET_DIR").as_deref()).then(|| {
+        crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test"])
+    })
+}
+
+/// Whether this run may pass a `--target-dir` of its own.
+///
+/// Split out from [`shared_target_dir`] with the environment passed in rather
+/// than read, so the decision is testable without a test mutating the process
+/// environment out from under every other arm running beside it.
+fn may_share(args: &[&str], inherited: Option<&std::ffi::OsStr>) -> bool {
+    // An inherited CARGO_TARGET_DIR already puts every build in one place, and
+    // `--target-dir` overrides it, so passing ours would open a second build
+    // directory beside the one the machine chose and duplicate the exact thing
+    // this is here to stop. Reading the environment is also the only way to
+    // know: cargo honours the variable and nothing here can guess where it
+    // points.
+    if inherited.is_some() {
+        return false;
+    }
+    // The caller's own flag wins, and only up to `--`, after which the tokens
+    // belong to the test binary and say nothing about where cargo builds.
+    !args
+        .iter()
+        .take_while(|a| **a != "--")
+        .any(|a| *a == "--target-dir" || a.starts_with("--target-dir="))
 }
 
 /// Every directory under `root` holding a `Cargo.toml`, one level down.
@@ -226,4 +302,76 @@ fn is_orphaned(crate_dir: &Path, mock_dir: &Path) -> bool {
         return false;
     };
     !ws.contains(&format!("\"{}\"", rel.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use super::*;
+
+    /// The ordinary case, and the one the whole change is for.
+    #[test]
+    fn nothing_in_the_way_means_the_roots_share_one_directory() {
+        assert!(may_share(&[], None));
+        assert!(may_share(&["--nocapture"], None));
+    }
+
+    /// Deleting this check leaves a machine that already shares one build
+    /// directory with two of them, which is the duplication this exists to
+    /// remove, arrived at from the other side.
+    #[test]
+    fn an_inherited_target_dir_is_left_alone() {
+        assert!(!may_share(&[], Some(OsStr::new("/somewhere/shared"))));
+        assert!(!may_share(&["--nocapture"], Some(OsStr::new("/elsewhere"))));
+    }
+
+    /// Set but empty is read as set. Cargo's own handling of an empty value is
+    /// not something this can observe, and declining to pass a flag is the
+    /// reading that cannot break anything: the worst it costs is the
+    /// duplication that was there before.
+    #[test]
+    fn an_empty_inherited_value_still_counts_as_set() {
+        assert!(!may_share(&[], Some(OsStr::new(""))));
+    }
+
+    #[test]
+    fn the_callers_own_flag_wins_in_both_spellings() {
+        assert!(!may_share(&["--target-dir", "/mine"], None));
+        assert!(!may_share(&["--target-dir=/mine"], None));
+        assert!(!may_share(&["--release", "--target-dir", "/mine"], None));
+    }
+
+    /// After `--` the tokens are the test binary's and say nothing about where
+    /// cargo builds, so one there must not suppress the shared directory.
+    /// Without the `take_while` this arm is the one that fails.
+    #[test]
+    fn the_same_flag_past_the_separator_is_not_cargos() {
+        assert!(may_share(&["--", "--target-dir"], None));
+        assert!(may_share(&["--", "--target-dir=/not-cargos"], None));
+        assert!(may_share(&["--nocapture", "--", "--target-dir"], None));
+    }
+
+    /// One before and one after: the one before is cargo's and decides it.
+    #[test]
+    fn a_flag_on_each_side_of_the_separator_is_decided_by_the_first() {
+        assert!(!may_share(
+            &["--target-dir", "/mine", "--", "--target-dir"],
+            None
+        ));
+    }
+
+    /// `--target` selects a triple and is not this flag. A prefix test written
+    /// without the `=` would swallow it, and cross-compiling would silently
+    /// lose the shared directory.
+    #[test]
+    fn a_neighbouring_flag_is_not_mistaken_for_it() {
+        assert!(may_share(&["--target", "x86_64-unknown-linux-gnu"], None));
+        assert!(may_share(&["--target-dirty-is-not-a-flag"], None));
+    }
+
+    #[test]
+    fn a_bare_separator_alone_changes_nothing() {
+        assert!(may_share(&["--"], None));
+    }
 }
