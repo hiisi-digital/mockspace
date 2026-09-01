@@ -144,28 +144,60 @@ pub fn changed_files(
     let specs = layout.pathspecs();
 
     let mut files: Vec<(String, String)> = Vec::new();
-    let walks: [(&[&str], &str); 3] = [
+
+    // The two diff views ask for status rather than names alone, so each one
+    // recognises a rename in the same invocation that reports the change.
+    //
+    // Asking separately is what a first attempt did and it is wrong twice over.
+    // A rename query passing `-M100%` overrides whatever `diff.renames` the
+    // config chain sets while a bare `--name-only` inherits it, so under
+    // `renames = false` the walk reported a delete and an add while the query
+    // still paired them, the old path survived the filter, and the gate blocked
+    // on a file no longer on disk. And one set of pairs shared between the views
+    // let a staged rename hide an unstaged edit to the same file, which
+    // reinstates exactly the staged-only hole the paragraph above exists to
+    // close.
+    let diffs: [(&[&str], &str); 2] = [
         (
-            &["diff", "--cached", "--name-only", "--relative", "--"],
+            &["diff", "--cached", "--name-status", "-M100%", "--relative", "--"],
             "staged",
         ),
-        (&["diff", "--name-only", "--relative", "--"], "unstaged"),
         (
-            &["ls-files", "--others", "--exclude-standard", "--"],
-            "untracked",
+            &["diff", "--name-status", "-M100%", "--relative", "--"],
+            "unstaged",
         ),
     ];
 
-    for (args, source) in walks {
+    for (args, source) in diffs {
         let mut argv: Vec<&str> = args.to_vec();
         argv.extend(specs.iter().map(String::as_str));
         let Some(output) = run_git(mock_dir, &argv) else {
             continue;
         };
         for line in output.lines() {
-            let file = line.trim();
+            let Some(file) = changed_path(line) else {
+                continue;
+            };
             if keep(file) && !files.iter().any(|(f, _)| f == file) {
                 files.push((file.to_string(), source.to_string()));
+            }
+        }
+    }
+
+    // Untracked files have no status to read and no rename to detect: git has
+    // never seen the path before, so a shell `mv` arrives here as an add and in
+    // the walk above as a delete, and both sides are reported. Moving a
+    // directory with `git mv`, or staging the move, is what puts it in front of
+    // the carve-out.
+    {
+        let mut argv: Vec<&str> = vec!["ls-files", "--others", "--exclude-standard", "--"];
+        argv.extend(specs.iter().map(String::as_str));
+        if let Some(output) = run_git(mock_dir, &argv) {
+            for line in output.lines() {
+                let file = line.trim();
+                if keep(file) && !files.iter().any(|(f, _)| f == file) {
+                    files.push((file.to_string(), "untracked".to_string()));
+                }
             }
         }
     }
@@ -182,58 +214,51 @@ pub fn changed_files(
         files.retain(|(file, source)| source != "staged" || !merge.inherited(mock_dir, file));
     }
 
-    // A file that only moved says exactly what it said before, so no phase can
-    // be protecting anything by refusing it. The gates freeze what a document
-    // states and what source declares; a path is neither.
-    //
-    // Without this a crate cannot be renamed at all. The directory carries both
-    // templates and source, the doc gate refuses the templates in every phase
-    // but DOC and the source gate refuses the source in every phase but IMPL,
-    // so one of the two fires whichever phase the move is made in. Splitting it
-    // across two phases is not a way out either, since a crate is required to
-    // have both a `src/lib.rs` and a `README.md.tmpl` and the halfway state has
-    // one crate missing each.
-    let renamed = pure_renames(mock_dir, &specs);
-    files.retain(|(file, _)| !renamed.iter().any(|r| r == file));
-
     files
 }
 
-/// Paths on the near side of a rename that changed no content, staged or not.
+/// The path a `--name-status` line reports as changed, or nothing where the
+/// line reports something no phase protects anything by refusing.
 ///
-/// `-M100%` is the whole of the check: git reports `R100` only when the two
-/// blobs are identical, so anything that moved and was edited keeps its
-/// finding. `--name-status` gives `R100\told\tnew`, and the new path is what
-/// the `--name-only` walks above report, so that is the one to match on.
-fn pure_renames(mock_dir: &Path, specs: &[String]) -> Vec<String> {
-    let mut renamed = Vec::new();
-    for base in [
-        &["diff", "--cached", "--name-status", "-M100%", "--relative", "--"][..],
-        &["diff", "--name-status", "-M100%", "--relative", "--"][..],
-    ] {
-        let mut argv: Vec<&str> = base.to_vec();
-        argv.extend(specs.iter().map(String::as_str));
-        let Some(output) = run_git(mock_dir, &argv) else {
-            continue;
-        };
-        for line in output.lines() {
-            let mut parts = line.split('\t');
-            // Only `R100`. A lower similarity means the content moved and
-            // changed, which is an edit wearing a rename's clothes.
-            if parts.next() != Some("R100") {
-                continue;
-            }
-            // The old path, then the new one, which is the side to keep.
-            let (_, Some(new)) = (parts.next(), parts.next()) else {
-                continue;
-            };
-            let new = new.trim();
-            if !new.is_empty() && !renamed.iter().any(|r| r == new) {
-                renamed.push(new.to_string());
-            }
+/// A file that only moved says exactly what it said before. The gates freeze
+/// what a document states and what source declares, and a path is neither, so
+/// a rename with identical content contributes neither of its two sides.
+///
+/// Without that a crate cannot be renamed at all. Its directory carries both
+/// templates and source, the doc gate refuses the templates in every phase but
+/// DOC and the source gate refuses the source in every phase but IMPL, so one
+/// of the two fires whichever phase the move is made in. Splitting the move
+/// across the two phases is not a way out either, since a crate is required to
+/// have both a `src/lib.rs` and a `README.md.tmpl` and the halfway state leaves
+/// one crate missing each.
+///
+/// This does permit a single document to move between crates during a phase
+/// that would otherwise refuse it, which is wider than the argument above.
+/// Accepted rather than overlooked: the two are indistinguishable per file, a
+/// crate rename being a directory of them and nothing more, and the source side
+/// self-heals because a moved `.rs` forces a `mod` line to change in a `lib.rs`
+/// that stays gated.
+fn changed_path(line: &str) -> Option<&str> {
+    let mut parts = line.split('\t');
+    let status = parts.next()?;
+
+    // `R` and `C` carry a source and a destination; every other status carries
+    // one path. Parsed on the shape rather than on the flag, so a later change
+    // to the rename options cannot silently turn a destination into a source.
+    if status.starts_with('R') || status.starts_with('C') {
+        let _from = parts.next()?;
+        let to = parts.next()?.trim();
+        // The whole of the carve-out, and only a rename. A copy leaves the
+        // original where it was and declares the content a second time, which
+        // is a new declaration however identical it is.
+        if status == "R100" {
+            return None;
         }
+        return (!to.is_empty()).then_some(to);
     }
-    renamed
+
+    let path = parts.next()?.trim();
+    (!path.is_empty()).then_some(path)
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
@@ -387,6 +412,13 @@ mod merge_walk_tests {
     }
 }
 
+/// The walk over real git repositories, which is most of what this module owes
+/// a test and none of what `SrcLayout` itself does. Kept in its own file so the
+/// two kinds do not have to be read past each other.
+#[cfg(test)]
+#[path = "src_layout_walk_tests.rs"]
+mod walk_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,96 +541,6 @@ mod tests {
         assert!(
             is_source_today("src/main.zig"),
             "a zig project's source is not guarded, and the gate reports cleanly"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // The rename carve-out, over a real git repository, because what is being
-    // tested is what git reports rather than what this module computes.
-    // -----------------------------------------------------------------------
-
-    fn git(dir: &Path, args: &[&str]) {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .expect("git is on PATH");
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
-    /// A repository with one committed file at `crates/old/thing.rs`.
-    fn repo_with_a_committed_file() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().expect("a temp dir");
-        let root = dir.path();
-        git(root, &["init", "-q"]);
-        git(root, &["config", "user.email", "t@example.invalid"]);
-        git(root, &["config", "user.name", "t"]);
-        std::fs::create_dir_all(root.join("crates/old")).unwrap();
-        std::fs::write(root.join("crates/old/thing.rs"), "pub fn a() {}\n").unwrap();
-        git(root, &["add", "-A"]);
-        git(root, &["commit", "-qm", "seed"]);
-        dir
-    }
-
-    fn changed(root: &Path) -> Vec<(String, String)> {
-        let abs = vec![root.join("crates")];
-        let layout = SrcLayout::new(root, &abs);
-        changed_files(root, &layout, |f| f.ends_with(".rs"))
-    }
-
-    #[test]
-    fn a_file_that_only_moved_is_not_a_change() {
-        let dir = repo_with_a_committed_file();
-        let root = dir.path();
-        std::fs::create_dir_all(root.join("crates/new")).unwrap();
-        git(root, &["mv", "crates/old/thing.rs", "crates/new/thing.rs"]);
-
-        assert_eq!(
-            changed(root),
-            Vec::new(),
-            "a rename with identical content was reported as an edit, which is \
-             what makes a crate impossible to rename under the phase gates"
-        );
-    }
-
-    /// The control. Without it the case above passes against an implementation
-    /// that reports nothing at all, which is the shape a broken walk has too.
-    #[test]
-    fn a_file_that_moved_and_changed_is_still_a_change() {
-        let dir = repo_with_a_committed_file();
-        let root = dir.path();
-        std::fs::create_dir_all(root.join("crates/new")).unwrap();
-        git(root, &["mv", "crates/old/thing.rs", "crates/new/thing.rs"]);
-        std::fs::write(
-            root.join("crates/new/thing.rs"),
-            "pub fn a() {}\npub fn b() {}\npub fn c() {}\npub fn d() {}\n",
-        )
-        .unwrap();
-        git(root, &["add", "-A"]);
-
-        let found = changed(root);
-        assert!(
-            found.iter().any(|(f, _)| f == "crates/new/thing.rs"),
-            "content that moved and changed escaped the gate: {found:?}"
-        );
-    }
-
-    /// And the ordinary case, so the carve-out is not swallowing edits that
-    /// never moved anywhere.
-    #[test]
-    fn a_file_edited_in_place_is_still_a_change() {
-        let dir = repo_with_a_committed_file();
-        let root = dir.path();
-        std::fs::write(root.join("crates/old/thing.rs"), "pub fn changed() {}\n").unwrap();
-
-        let found = changed(root);
-        assert!(
-            found.iter().any(|(f, _)| f == "crates/old/thing.rs"),
-            "an in-place edit escaped the gate: {found:?}"
         );
     }
 }
