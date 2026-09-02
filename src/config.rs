@@ -297,6 +297,17 @@ pub struct AgentConfig {
     /// using is noise in the agent's context, the same reasoning
     /// `accelerated_interactive_design_talks` is off by default for.
     pub panel_discipline: bool,
+
+    /// What the load had to say about keys this config still spells the old
+    /// way, one string per complaint, empty when there is nothing to say.
+    ///
+    /// The complaint goes to stderr as it is found, and printing was all it
+    /// did for a while, which is a thing no test can hold onto: commenting the
+    /// call out left the suite green, because every test that knew about the
+    /// rename called the helper directly and none of them went through a load.
+    /// Recording it here is what lets a test ask a real `from_dir` whether it
+    /// noticed.
+    pub renamed_keys: Vec<String>,
 }
 
 // Not derived: the derive would default every bool to false, and the two
@@ -311,6 +322,7 @@ impl Default for AgentConfig {
             benchmarking_skill: true,
             catalogues: true,
             panel_discipline: false,
+            renamed_keys: Vec::new(),
         }
     }
 }
@@ -800,11 +812,14 @@ impl Config {
             })
             .unwrap_or_default();
 
+        let mut renamed_keys = Vec::new();
         if let Some(complaint) = renamed_agent_key(raw_agent.agent_tool_catalogue.is_some()) {
             eprintln!("{complaint}");
+            renamed_keys.push(complaint);
         }
 
         let agent = AgentConfig {
+            renamed_keys,
             attribution,
             accelerated_interactive_design_talks: raw_agent
                 .agent_accelerated_interactive_design_talks
@@ -1270,6 +1285,55 @@ mod a_renamed_key_is_not_dropped_in_silence {
         assert!(
             renamed_agent_key(raw.agent_tool_catalogue.is_some()).is_some(),
             "and noticing it has to reach the complaint"
+        );
+    }
+
+    /// A `mock` dir carrying an `agent/config.toml` with the given body.
+    fn mock_dir_with_agent_config(body: &str) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let agent = tmp.path().join("agent");
+        std::fs::create_dir_all(&agent).expect("create agent dir");
+        std::fs::write(agent.join("config.toml"), body).expect("write agent config");
+        tmp
+    }
+
+    /// The load itself notices, which is the half nothing held.
+    ///
+    /// The three arms above all call `renamed_agent_key` themselves, so every
+    /// one of them passes with the call site deleted from `from_dir` and the
+    /// old key going through in silence again. Measured: commenting that block
+    /// out left the suite green at 26 of 26. This is the arm that goes red.
+    #[test]
+    fn a_load_records_the_complaint_it_printed() {
+        let tmp = mock_dir_with_agent_config("agent_tool_catalogue = false\n");
+        let cfg = Config::from_dir(tmp.path());
+        assert_eq!(
+            cfg.agent.renamed_keys.len(),
+            1,
+            "a load that read the old key has one thing to say about it"
+        );
+        let complaint = &cfg.agent.renamed_keys[0];
+        assert!(
+            complaint.contains("agent_tool_catalogue") && complaint.contains("agent_catalogues"),
+            "and it is the complaint naming both spellings: {complaint}"
+        );
+    }
+
+    /// The control. Without it an implementation pushing unconditionally, or
+    /// one seeding the field with a line of text, satisfies the arm above.
+    #[test]
+    fn a_load_of_a_config_spelling_the_new_key_records_nothing() {
+        let tmp = mock_dir_with_agent_config("agent_catalogues = false\n");
+        let cfg = Config::from_dir(tmp.path());
+        assert!(
+            cfg.agent.renamed_keys.is_empty(),
+            "nothing was renamed, so there is nothing to say: {:?}",
+            cfg.agent.renamed_keys
+        );
+        assert!(
+            !cfg.agent.catalogues,
+            "control on the control: the new key is read, so this config is one \
+             the loader genuinely understood rather than one it failed to open"
         );
     }
 }
