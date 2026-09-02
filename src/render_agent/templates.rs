@@ -598,14 +598,14 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
     // answer the same way, and an immediate answer beats a mandatory extra
     // command for the common case where nothing has changed since the last
     // `cargo mock`.
-    if cfg.agent.tool_catalogue {
+    if cfg.agent.catalogues {
         let snapshot = crate::tool_catalogue::render_table(&crate::tool_catalogue::enumerate(pack));
         let lints = crate::lint_catalogue::render_table(
             &crate::lint_catalogue::enumerate(pack, &cfg.lint_overrides),
             &crate::lint_catalogue::configured_but_absent(pack, &cfg.lint_overrides),
         );
         rules.push(BuiltinRule {
-            name: "tool-catalogue".to_string(),
+            name: "catalogues".to_string(),
             apply_to: vec!["**".to_string()],
             body: format!(
                 "## What is available here, and what is checking you\n\n{}\n\n{}\n\n{}\n\n```\n{}```\n\n{}\n\n{}\n\n```\n{}```\n",

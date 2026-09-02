@@ -789,7 +789,7 @@ fn the_shame_escape_hatch_stays_writable_while_a_lookalike_is_gated() {
 }
 
 // ---------------------------------------------------------------------------
-// The tool-catalogue and panel-discipline builtin rules
+// The catalogues and panel-discipline builtin rules
 // ---------------------------------------------------------------------------
 
 struct StubTool;
@@ -830,25 +830,25 @@ fn pack_with_stub_tool() -> LintPack {
 }
 
 #[test]
-fn tool_catalogue_rule_is_on_by_default_and_off_when_declared_false() {
+fn catalogues_rule_is_on_by_default_and_off_when_declared_false() {
     let cfg = crate::config::Config::from_dir(&skill_fixture(None));
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     assert!(
-        builtins.rules.iter().any(|r| r.name == "tool-catalogue"),
+        builtins.rules.iter().any(|r| r.name == "catalogues"),
         "on by default, no config.toml at all"
     );
 
-    let mock = skill_fixture_config("agent_tool_catalogue = false\n");
+    let mock = skill_fixture_config("agent_catalogues = false\n");
     let cfg = crate::config::Config::from_dir(&mock);
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     assert!(
-        !builtins.rules.iter().any(|r| r.name == "tool-catalogue"),
+        !builtins.rules.iter().any(|r| r.name == "catalogues"),
         "declared false must turn it off"
     );
 }
 
 #[test]
-fn tool_catalogue_rule_embeds_a_live_snapshot_not_a_fixed_string() {
+fn catalogues_rule_embeds_a_live_snapshot_not_a_fixed_string() {
     // The claim this rule makes about itself ("never drifts, computed from
     // what actually exists") is only true if a project tool passed into the
     // generator actually shows up in the generated body. Without this, the
@@ -859,7 +859,7 @@ fn tool_catalogue_rule_embeds_a_live_snapshot_not_a_fixed_string() {
     let rule = builtins
         .rules
         .iter()
-        .find(|r| r.name == "tool-catalogue")
+        .find(|r| r.name == "catalogues")
         .expect("on by default");
     assert!(
         rule.body.contains("phrase-search"),
@@ -878,9 +878,41 @@ fn tool_catalogue_rule_embeds_a_live_snapshot_not_a_fixed_string() {
     let rule_empty = builtins_empty
         .rules
         .iter()
-        .find(|r| r.name == "tool-catalogue")
+        .find(|r| r.name == "catalogues")
         .unwrap();
     assert!(!rule_empty.body.contains("phrase-search"));
+}
+
+/// The rule carries both catalogues, which is why the key names neither.
+///
+/// It listed only tools when the key was `agent_tool_catalogue`, so a consumer
+/// switching it off for the reason the name gave would now be silently dropping
+/// the lint half too. The rename is the fix and this is what holds it: if the
+/// lint half ever stops rendering, the key is wrong again and says so here.
+#[test]
+fn the_catalogues_rule_carries_the_lints_as_well_as_the_tools() {
+    let cfg = crate::config::Config::from_dir(&skill_fixture(None));
+    let builtins = generate_builtin_templates(&cfg, &pack_with_stub_tool());
+    let rule = builtins
+        .rules
+        .iter()
+        .find(|r| r.name == "catalogues")
+        .expect("on by default");
+    assert!(
+        rule.body.contains("phrase-search"),
+        "the tool half:\n{}",
+        rule.body
+    );
+    assert!(
+        rule.body.contains("mock lints"),
+        "and the lint half, which the old key's name did not cover:\n{}",
+        rule.body
+    );
+    assert!(
+        rule.body.contains("CRATE LINTS"),
+        "the lint listing itself, not only the command name:\n{}",
+        rule.body
+    );
 }
 
 #[test]

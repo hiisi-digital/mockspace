@@ -274,11 +274,19 @@ pub struct AgentConfig {
     /// On by default, same reasoning as `sketching_skill`.
     pub benchmarking_skill: bool,
 
-    /// On by default: a generated rule pointing at `mock tools` rather than
-    /// a hand-maintained list. The knob exists for the same reason the other
-    /// two do, no builtin prose lands in a consumer's context without one,
-    /// not because there is a real cost to leaving it on.
-    pub tool_catalogue: bool,
+    /// On by default: a generated rule pointing at `mock tools` and
+    /// `mock lints` rather than at a hand-maintained list of either. The knob
+    /// exists for the same reason the other two do, no builtin prose lands in
+    /// a consumer's context without one, not because there is a real cost to
+    /// leaving it on.
+    ///
+    /// **Both catalogues, under one key.** They answer one question in two
+    /// halves, what is available here and what is checking you, and a
+    /// consumer wanting the rule at all wants both halves of it. Splitting
+    /// them would mean a project could ship an agent rule that names the tools
+    /// and leaves the agent to grep for the lints, which is the thing the rule
+    /// exists to stop.
+    pub catalogues: bool,
 
     /// Off by default. Ships the panel-discipline rule: how a panel mints
     /// and consolidates seats, the seat cap, and that a panel converges and
@@ -301,7 +309,7 @@ impl Default for AgentConfig {
             accelerated_interactive_design_talks: false,
             sketching_skill: true,
             benchmarking_skill: true,
-            tool_catalogue: true,
+            catalogues: true,
             panel_discipline: false,
         }
     }
@@ -382,8 +390,13 @@ struct RawAgentConfig {
     /// Opt out of the benchmarking skill builtin; absent means on.
     agent_benchmarking_skill: Option<bool>,
 
-    /// Opt out of the tool-catalogue rule builtin; absent means on.
-    agent_tool_catalogue: Option<bool>,
+    /// Opt out of the catalogues rule builtin; absent means on.
+    ///
+    /// The rule covers tools and lints, so the key names neither. It was
+    /// `agent_tool_catalogue` while the rule listed only tools, and a consumer
+    /// who set that to `false` for the reason the name gave would now be
+    /// dropping the lint half without having said so.
+    agent_catalogues: Option<bool>,
 
     /// Opt in to the panel-discipline rule builtin; absent means off.
     agent_panel_discipline: Option<bool>,
@@ -757,7 +770,7 @@ impl Config {
                 .unwrap_or(false),
             sketching_skill: raw_agent.agent_sketching_skill.unwrap_or(true),
             benchmarking_skill: raw_agent.agent_benchmarking_skill.unwrap_or(true),
-            tool_catalogue: raw_agent.agent_tool_catalogue.unwrap_or(true),
+            catalogues: raw_agent.agent_catalogues.unwrap_or(true),
             panel_discipline: raw_agent.agent_panel_discipline.unwrap_or(false),
         };
 

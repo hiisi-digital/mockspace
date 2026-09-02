@@ -32,6 +32,7 @@ pub mod dylib_check;
 mod entry;
 pub mod graph;
 pub mod lint;
+pub mod lint_catalogue;
 pub mod model;
 pub mod panel;
 pub mod parse;
@@ -41,7 +42,6 @@ pub mod render;
 pub mod render_agent;
 pub mod render_design;
 pub mod render_md;
-pub mod lint_catalogue;
 pub mod tool_catalogue;
 
 /// Path to the mockspace source directory, captured at compile time.

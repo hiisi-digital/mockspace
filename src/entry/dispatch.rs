@@ -496,6 +496,18 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 let listings = crate::lint_catalogue::enumerate(pack, &cfg.lint_overrides);
                 let absent =
                     crate::lint_catalogue::configured_but_absent(pack, &cfg.lint_overrides);
+                let dupes = crate::lint_catalogue::duplicates(pack);
+                if !dupes.is_empty() {
+                    eprintln!(
+                        "mock: {} lint name(s) registered more than once: {}",
+                        dupes.len(),
+                        dupes.join(", ")
+                    );
+                    eprintln!(
+                        "  both run, and one `[lints.<name>]` table governs both, so the listing \
+                         below understates what is checking you."
+                    );
+                }
                 print!(
                     "{}",
                     crate::lint_catalogue::render_table(&listings, &absent)
