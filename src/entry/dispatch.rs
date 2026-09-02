@@ -492,6 +492,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 );
                 return ExitCode::SUCCESS;
             },
+            "lints" => {
+                let listings = crate::lint_catalogue::enumerate(pack, &cfg.lint_overrides);
+                let absent =
+                    crate::lint_catalogue::configured_but_absent(pack, &cfg.lint_overrides);
+                print!(
+                    "{}",
+                    crate::lint_catalogue::render_table(&listings, &absent)
+                );
+                return ExitCode::SUCCESS;
+            },
             "query" => {
                 // The argument after the subcommand, not a fixed position:
                 // `--dir` and friends may precede it.
