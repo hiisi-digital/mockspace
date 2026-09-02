@@ -374,6 +374,31 @@ impl MacroStyle {
 // Serde deserialization structs
 // ---------------------------------------------------------------------------
 
+/// What to say about a config still setting a key that has been renamed.
+///
+/// `Some` when the old key is present, and the text names the new one.
+///
+/// **Split out so it can be tested.** `Config::from_dir` returns `Self` with no
+/// error channel and nothing in this crate exits from a config load, so the
+/// refusal is a message rather than a stop, and a message nobody asserts is a
+/// message that quietly stops being printed. What must not happen is silence:
+/// `#[serde(default)]` with no `deny_unknown_fields` drops an unknown key
+/// without a word, so a consumer who wrote `agent_tool_catalogue = false` gets
+/// the rule shipped anyway and never learns their opt-out went unread.
+///
+/// **Not an alias.** The value is deliberately not consulted. Reading it would
+/// hand a consumer the wider rule they never asked for, and pre-1.0 the old
+/// shape is deleted rather than carried.
+fn renamed_agent_key(old_key_present: bool) -> Option<String> {
+    old_key_present.then(|| {
+        "mock: `agent_tool_catalogue` in mock/agent/config.toml has been renamed to \
+         `agent_catalogues`.\n  The rule it gates now lists the lints as well as the tools, so \
+         the old name no longer describes it.\n  The old key is NOT read: rename it, or the rule \
+         ships despite your opt-out."
+            .to_string()
+    })
+}
+
 /// Raw deserialization struct for `mock/agent/config.toml`.
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -397,6 +422,18 @@ struct RawAgentConfig {
     /// who set that to `false` for the reason the name gave would now be
     /// dropping the lint half without having said so.
     agent_catalogues: Option<bool>,
+
+    /// The name that key had, kept only so a config still using it is refused.
+    ///
+    /// **Not an alias.** Reading it as one would silently give a consumer the
+    /// wider rule they never asked for, and pre-1.0 the old shape is deleted
+    /// rather than carried. What is not acceptable is deleting it into silence:
+    /// `#[serde(default)]` with no `deny_unknown_fields` drops an unknown key
+    /// without a word, so a consumer who wrote `agent_tool_catalogue = false`
+    /// gets the rule shipped anyway and nothing tells them their opt-out
+    /// stopped being read. The field exists so [`Config::from_dir`] can refuse
+    /// and name the rename.
+    agent_tool_catalogue: Option<bool>,
 
     /// Opt in to the panel-discipline rule builtin; absent means off.
     agent_panel_discipline: Option<bool>,
@@ -762,6 +799,10 @@ impl Config {
                 }
             })
             .unwrap_or_default();
+
+        if let Some(complaint) = renamed_agent_key(raw_agent.agent_tool_catalogue.is_some()) {
+            eprintln!("{complaint}");
+        }
 
         let agent = AgentConfig {
             attribution,
@@ -1175,6 +1216,61 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
             return Some(dir.to_path_buf());
         }
         dir = dir.parent()?;
+    }
+}
+
+#[cfg(test)]
+mod a_renamed_key_is_not_dropped_in_silence {
+    //! `#[serde(default)]` with no `deny_unknown_fields` drops an unknown key
+    //! without a word. For a key that used to mean something that is not a
+    //! tidiness matter: the consumer wrote `false` to keep builtin prose out of
+    //! their agent context, the key stops being read, the rule defaults on, and
+    //! the prose lands anyway with nothing said. The decision to complain is
+    //! split out of the loader precisely so this can assert it.
+
+    use super::*;
+
+    #[test]
+    fn the_old_key_is_named_along_with_what_replaced_it() {
+        let complaint = renamed_agent_key(true).expect("the old key must not pass in silence");
+        assert!(
+            complaint.contains("agent_tool_catalogue"),
+            "a reader has to find the line they wrote: {complaint}"
+        );
+        assert!(
+            complaint.contains("agent_catalogues"),
+            "and be told what to write instead: {complaint}"
+        );
+        assert!(
+            complaint.contains("NOT read"),
+            "and that the old one governs nothing, or they will assume it still works: \
+             {complaint}"
+        );
+    }
+
+    /// The control. Without it the function could return the complaint always.
+    #[test]
+    fn a_config_that_does_not_use_the_old_key_is_not_complained_at() {
+        assert!(renamed_agent_key(false).is_none());
+    }
+
+    /// The old key is captured rather than passing as an unknown field.
+    ///
+    /// This is the half that actually breaks if somebody deletes the field as
+    /// dead code: serde would drop it silently again and the complaint above
+    /// would never fire, while both arms of that test still pass.
+    #[test]
+    fn the_raw_config_still_captures_the_old_key_so_it_can_be_refused() {
+        let raw: RawAgentConfig =
+            toml_edit::de::from_str("agent_tool_catalogue = false").expect("parses");
+        assert!(
+            raw.agent_tool_catalogue.is_some(),
+            "the field exists only to notice the key; without it the rename is silent"
+        );
+        assert!(
+            renamed_agent_key(raw.agent_tool_catalogue.is_some()).is_some(),
+            "and noticing it has to reach the complaint"
+        );
     }
 }
 

@@ -23,6 +23,19 @@ use crate::render_design;
 /// since the rename is exactly the one that needs the cleanup, and nothing says
 /// when the last of those has caught up.
 ///
+/// **This is a stopgap and does not close the class.** A hand-kept table is a
+/// thing somebody has to remember at the next rename, which is how the orphan
+/// it cleans up came to exist. And renaming is only one way a builtin rule
+/// stops being written: switching one off leaves its file on disk exactly the
+/// same way, and this table says nothing about that.
+///
+/// The general fix is a sweep keyed on the generated marker that
+/// `render_design::write_generated` already puts in the content, which would
+/// cover every route rather than the one enumerated here. It is not done, and
+/// the reason is only that a content-keyed sweep over a directory holding
+/// consumer-authored rules wants its own careful pass rather than riding along
+/// with a rename.
+///
 /// `catalogues` was `tool-catalogue` while it listed only tools. It lists the
 /// lints too now, which is why the name no longer says tools, and the rename is
 /// what leaves the old file behind.
