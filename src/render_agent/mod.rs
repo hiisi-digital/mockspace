@@ -39,6 +39,10 @@ use crate::render_design;
 /// `catalogues` was `tool-catalogue` while it listed only tools. It lists the
 /// lints too now, which is why the name no longer says tools, and the rename is
 /// what leaves the old file behind.
+// FIXME: hand-kept rename table, and it covers renames only; a builtin switched
+// off leaves its file behind the same way. The replacement is a sweep keyed on
+// the generated marker `render_design::write_generated` already writes, which
+// needs its own pass because the directory also holds consumer-authored rules.
 const RENAMED_BUILTIN_RULES: &[(&str, &str)] = &[("tool-catalogue", "catalogues")];
 
 mod helpers;
