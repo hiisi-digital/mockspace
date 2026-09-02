@@ -16,7 +16,8 @@
 //!
 //! That is the asymmetry this closes. A lint already declares its own name and
 //! its own default severity, exactly as a tool declares its name and summary,
-//! so the authoritative set was always in the pack and only ever needed asking.
+//! so the authoritative set was always there to be asked for rather than
+//! grepped. Asked of two places: the engine's builtins and the loaded pack.
 //!
 //! # The cross-check is the point, not the list
 //!
@@ -38,7 +39,10 @@
 //!
 //! # Scope
 //!
-//! **Every lint the pack carries, whatever kind.** The four kinds differ in
+//! **Every lint that runs here, whatever kind and wherever it comes from.** The
+//! engine's builtins and the loaded pack both, because both run at every gate,
+//! and a listing of one of them is the under-count this exists to close. The
+//! four kinds differ in
 //! what the engine hands them and not in whether they check you, so a listing
 //! that showed one kind would be the same under-count in a different shape.
 
@@ -287,7 +291,7 @@ pub fn render_table(listings: &[Listing], absent: &[String]) -> String {
         let one = absent.len() == 1;
         let _ = writeln!(
             s,
-            "\n{} configured name{} match{} no lint in the pack, so {} govern{} nothing:",
+            "\n{} configured name{} match{} no lint that runs here, so {} govern{} nothing:",
             absent.len(),
             if one { "" } else { "s" },
             if one { "es" } else { "" },
@@ -343,7 +347,11 @@ mod tests {
         Lint,
         LintContext,
         LintError,
+        MessageContext,
+        MessageLint,
         PathFilter,
+        RepoContext,
+        RepoLint,
         WorkspaceLint,
     };
 
@@ -372,6 +380,20 @@ mod tests {
     // one of them would let a check reading a single list pass.
     impl WorkspaceLint for Named {
         fn check_all(&self, _crates: &[(&str, &LintContext)]) -> Vec<LintError> {
+            Vec::new()
+        }
+    }
+
+    // All four kinds, so an arm that stops enumerating one of them has
+    // something to fail. Three of the four had nothing.
+    impl RepoLint for Named {
+        fn check_repo(&self, _ctx: &RepoContext) -> Vec<LintError> {
+            Vec::new()
+        }
+    }
+
+    impl MessageLint for Named {
+        fn check_message(&self, _ctx: &MessageContext) -> Vec<LintError> {
             Vec::new()
         }
     }
@@ -644,21 +666,25 @@ mod tests {
     ///
     /// Both call sites passed an empty slice, so the singular and plural arms
     /// had never run. The first real invocation printed "1 configured severity
-    /// name no lint in the pack, so it govern nothing".
+    /// name no lint that runs here, so it govern nothing".
     #[test]
     fn the_absent_line_agrees_with_itself_in_both_numbers() {
         let listings = enumerate(&LintPack::default(), &LintConfig::empty());
 
         let one = render_table(&listings, &["gone".to_string()]);
         assert!(
-            one.contains("1 configured name matches no lint in the pack, so it governs nothing:"),
+            one.contains(
+                "1 configured name matches no lint that runs here, so it governs nothing:"
+            ),
             "the singular arm has to inflect every verb in it, not one of them: {one}"
         );
         assert!(one.contains("    gone"), "and name the offender: {one}");
 
         let many = render_table(&listings, &["gone".to_string(), "also-gone".to_string()]);
         assert!(
-            many.contains("2 configured names match no lint in the pack, so they govern nothing:"),
+            many.contains(
+                "2 configured names match no lint that runs here, so they govern nothing:"
+            ),
             "{many}"
         );
     }
@@ -717,6 +743,39 @@ mod tests {
             expected,
             "an empty pack still has every builtin checking you"
         );
+    }
+
+    /// Every kind the pack can carry is enumerated, one arm each.
+    ///
+    /// **Three of the four arms were unguarded and deleting any of them left
+    /// the suite green.** Not hypothetical: the shared pack this workspace uses
+    /// registers one workspace lint and three message lints, so the kinds
+    /// nothing pinned are kinds a consumer actually has. Under-counting is the
+    /// one failure this module exists to prevent, and it had the same defect in
+    /// the pack direction that it had just been fixed for in the builtin one.
+    #[test]
+    fn a_pack_lint_of_every_kind_is_enumerated_under_its_own_kind() {
+        let pack = LintPack {
+            crate_lints: vec![Box::new(Named("a-crate-lint", Severity::ADVISORY))],
+            workspace_lints: vec![Box::new(Named("a-workspace-lint", Severity::ADVISORY))],
+            repo_lints: vec![Box::new(Named("a-repo-lint", Severity::ADVISORY))],
+            message_lints: vec![Box::new(Named("a-message-lint", Severity::ADVISORY))],
+            ..Default::default()
+        };
+        let listings = enumerate(&pack, &LintConfig::empty());
+        for (name, kind) in [
+            ("a-crate-lint", Kind::Crate),
+            ("a-workspace-lint", Kind::Workspace),
+            ("a-repo-lint", Kind::Repo),
+            ("a-message-lint", Kind::Message),
+        ] {
+            assert_eq!(
+                listing(&listings, name).kind,
+                kind,
+                "`{name}` has to be listed, under its own kind: deleting the arm that lists it \
+                 must not leave this suite green"
+            );
+        }
     }
 
     /// And a pack lint joins them rather than replacing them.

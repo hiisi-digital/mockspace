@@ -248,14 +248,16 @@ const COMMANDS: &[Cmd] = &[
         name:    "lints",
         summary: "list every lint, with the severity this project gave it",
         args:    &[],
-        help:    "Enumerates every lint in the loaded pack, of every kind, with \
-                  the severity that actually governs it and whether that came \
-                  from this project's [lints] tables or from the pack's own \
-                  default. Two disagreements are reported because nothing else \
-                  reports them: a lint the project never named, which runs at a \
-                  default nobody here chose, and a configured severity naming no \
-                  lint in the pack, which reads like a live decision and governs \
-                  nothing. Neither is presented as a fault. The set is read from \
+        help:    "Enumerates every lint that runs here, of every kind, with the \
+                  severity that actually governs it and whether that came from \
+                  this project's [lints] tables or from a default nobody here \
+                  chose. That is the builtins and the loaded pack together, \
+                  because the engine runs both and a listing of either alone \
+                  under-counts what is checking you. Two disagreements are \
+                  reported because nothing else reports them: a lint the project \
+                  never named, and a configured severity naming no lint at all, \
+                  which reads like a live decision and governs nothing. Neither \
+                  is presented as a fault. The set is read from the engine and \
                   the pack rather than from source, because a lint declares its \
                   own name and grepping for the convention under-counts.",
     },

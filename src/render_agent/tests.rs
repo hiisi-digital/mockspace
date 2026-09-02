@@ -883,6 +883,55 @@ fn catalogues_rule_embeds_a_live_snapshot_not_a_fixed_string() {
     assert!(!rule_empty.body.contains("phrase-search"));
 }
 
+/// The renamed rule's old file is removed rather than left beside the new one.
+///
+/// **The pipeline is additive and writes builtin rules by name**, so a rename
+/// leaves the old file exactly where it was and nothing ever touches it again.
+/// Both load at session start, so a consumer that generated before the rename
+/// reads two rules both claiming to be the catalogue, one live and one frozen.
+/// Found on disk in two repositories here.
+#[test]
+fn a_renamed_builtin_rule_takes_its_old_file_with_it() {
+    let root = skill_fixture(None);
+    let claude = root.join(".claude").join("rules");
+    let copilot = root.join(".github").join("instructions");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::create_dir_all(&copilot).unwrap();
+    let stale_claude = claude.join("tool-catalogue.md");
+    let stale_copilot = copilot.join("tool-catalogue.instructions.md");
+    std::fs::write(&stale_claude, "the listing as it stood before the rename").unwrap();
+    std::fs::write(&stale_copilot, "the same, for the other surface").unwrap();
+
+    // A consumer-authored rule sitting in the same directory, to prove the
+    // cleanup is by name rather than a sweep. A sweep with no prefix to key on
+    // would take this with it.
+    let theirs = claude.join("a-rule-the-consumer-wrote.md");
+    std::fs::write(&theirs, "not generated, not ours to delete").unwrap();
+
+    let cfg = crate::config::Config::from_dir(&root);
+    let registry = crate::registry::Registry::default();
+    generate_agent_rules(
+        &CrateMap::default(),
+        &cfg,
+        &registry,
+        &pack_with_stub_tool(),
+    );
+
+    assert!(
+        !stale_claude.is_file(),
+        "the superseded rule has to go, or two of them describe the same thing"
+    );
+    assert!(!stale_copilot.is_file(), "and on the copilot surface too");
+    assert!(
+        claude.join("catalogues.md").is_file(),
+        "the replacement is what should be there instead"
+    );
+    assert!(
+        theirs.is_file(),
+        "a consumer's own rule is not a candidate: the cleanup names one file, it does not sweep"
+    );
+}
+
 /// The rule carries both catalogues, which is why the key names neither.
 ///
 /// It listed only tools when the key was `agent_tool_catalogue`, so a consumer

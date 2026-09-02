@@ -122,9 +122,9 @@ Those are the transitions. The subcommands that are not transitions:
 | `cargo mock clean` | Remove generated output |
 | `cargo mock activate` / `deactivate` | Point `core.hooksPath` at the gate, or hand it back |
 | `cargo mock tools` | Every subcommand and project tool, with usage |
-| `cargo mock lints` | Every lint in the pack, the severity this project gave it, and where the two sides disagree |
+| `cargo mock lints` | Every lint that runs here, builtin and pack alike, the severity this project gave it, and where the two sides disagree |
 
-**`cargo mock tools` and `cargo mock lints` are the lists that cannot go stale**, since they read what the binary actually ships and what the pack actually registers, neither of which this table can know about. Prefer them over this table wherever the two might disagree.
+**`cargo mock tools` and `cargo mock lints` are the lists that cannot go stale**, since they read what the binary actually ships and what the engine and the loaded pack actually register between them, none of which this table can know about. Prefer them over this table wherever the two might disagree.
 
 ## `cargo mock` pipeline
 
