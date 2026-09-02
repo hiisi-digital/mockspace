@@ -96,7 +96,7 @@ pub struct Listing {
     /// A `[lints.<name>]` table carrying only `findings`, only `params` or only
     /// path filters populates no base severity and is still a decision the
     /// project made. The engine counts it as one, in
-    /// `configure_and_run`'s `named_in_config`, and a catalogue that counted
+    /// `run_with_overrides`'s `named_in_config`, and a catalogue that counted
     /// only `base` reported four such shapes as "pack default" while the engine
     /// treated them as configured. One of those directions is dangerous rather
     /// than merely wrong: a lint whose pack default is `OFF`, named only under
@@ -122,12 +122,17 @@ impl Listing {
         self.named
     }
 
-    /// Whether the engine will actually run it, by the engine's own rule.
+    /// Whether the engine runs it at an ordinary gate.
     ///
-    /// Mirrors `configure_and_run`: a lint is skipped when its default is off
-    /// and nothing named it, and skipped when a base override turns it off.
-    /// Anything else runs, including a lint whose default is off that the
-    /// project named without giving it a base severity.
+    /// Two of `run_with_overrides`'s three skip conditions: a lint is skipped
+    /// when its default is off and nothing named it, and skipped when a base
+    /// override turns it off.
+    ///
+    /// **The third is not modelled and cannot be, from here.** A `--doc-only`
+    /// run also skips every lint whose `source_only` is true, which defaults to
+    /// true, so in that mode nearly everything is skipped. This takes no such
+    /// flag, so it describes the ordinary gate and says so rather than claiming
+    /// to mirror the engine in every mode.
     #[must_use]
     pub fn runs(&self) -> bool {
         if self.confirmed.is_some_and(|s| s.is_off()) {
@@ -137,14 +142,37 @@ impl Listing {
     }
 }
 
-/// Every lint in the pack, with the severity this project gave it.
+/// Every lint that runs here, with the severity this project gave it.
 ///
-/// Sorted by kind and then by name, because the pack's own order is a
-/// declaration order nobody reading a listing cares about, and a stable order
-/// is what makes two runs comparable.
+/// **The builtins and the pack, because the engine runs both.** A `LintPack`
+/// holds what this repository and its declared lint crates contribute, and the
+/// engine adds `all_lints`, `all_workspace_lints` and `all_repo_lints` at every
+/// gate. Reading only the pack was the shape this module inherited from
+/// [`crate::tool_catalogue`], where it is correct: a tool exists only in the
+/// pack. A lint does not, and the difference is the whole of what went wrong.
+///
+/// What it cost, before the fix: the command whose entire purpose is answering
+/// what is checking you omitted 29 lints that were, and the cross-check below
+/// then reported every configured builtin as a name governing nothing. Against
+/// one real project that was 15 of its 59 configured names, each of them
+/// governing a lint that runs.
+///
+/// Sorted by kind and then by name, because declaration order is not something
+/// a reader of a listing cares about, and a stable order is what makes two runs
+/// comparable.
 #[must_use]
 pub fn enumerate(pack: &LintPack, config: &LintConfig) -> Vec<Listing> {
     let mut out: Vec<Listing> = Vec::new();
+
+    for l in mockspace_lint_rules::all_lints() {
+        out.push(one(l.name(), Kind::Crate, l.default_severity(), config));
+    }
+    for l in mockspace_lint_rules::all_workspace_lints() {
+        out.push(one(l.name(), Kind::Workspace, l.default_severity(), config));
+    }
+    for l in mockspace_lint_rules::all_repo_lints() {
+        out.push(one(l.name(), Kind::Repo, l.default_severity(), config));
+    }
 
     for l in &pack.crate_lints {
         out.push(one(l.name(), Kind::Crate, l.default_severity(), config));
@@ -165,7 +193,7 @@ pub fn enumerate(pack: &LintPack, config: &LintConfig) -> Vec<Listing> {
 
 /// Whether the project named this lint anywhere in its configuration.
 ///
-/// The same four sections `configure_and_run` reads, in the same order. Spelled
+/// The same four sections `run_with_overrides` reads, in the same order. Spelled
 /// once here so a fifth section added to [`LintConfig`] is one edit rather than
 /// two places that agree until they do not.
 fn named_in_config(name: &str, config: &LintConfig) -> bool {
@@ -185,36 +213,23 @@ fn one(name: &str, kind: Kind, default: Severity, config: &LintConfig) -> Listin
     }
 }
 
-/// Lint names the pack registers more than once, sorted, deduplicated.
+/// Lint names registered more than once, sorted, deduplicated.
 ///
-/// Two lints sharing a name list twice while one `[lints.<name>]` table governs
-/// both, so the configuration a reader writes against the listing does not do
-/// what the listing implies. The tool catalogue reports this for tools; lints
-/// come from the same packs and collide the same way.
+/// The engine's own [`mockspace_lint_rules::duplicate_lint_names`], rather than
+/// a second implementation beside it. This module briefly had one that counted
+/// the pack against itself, which cannot see the collision that actually
+/// happens: a pack shadowing a builtin. That one is fatal, because
+/// `run_lints` returns early on it and every gate then refuses, and `mock lints`
+/// is the command somebody would run to find out why.
 ///
-/// Unlike a duplicate tool name it is not refused, because two lints with one
-/// name both run and both report, which is untidy rather than ambiguous. A tool
-/// has to pick one to execute and cannot.
+/// Kept as a named function here so the subcommand reads against this module
+/// like the rest of the listing does.
 #[must_use]
 pub fn duplicates(pack: &LintPack) -> Vec<String> {
-    let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
-    for name in pack
-        .crate_lints
-        .iter()
-        .map(|l| l.name())
-        .chain(pack.workspace_lints.iter().map(|l| l.name()))
-        .chain(pack.repo_lints.iter().map(|l| l.name()))
-        .chain(pack.message_lints.iter().map(|l| l.name()))
-    {
-        *seen.entry(name).or_default() += 1;
-    }
-    seen.into_iter()
-        .filter(|&(_, n)| n > 1)
-        .map(|(name, _)| name.to_string())
-        .collect()
+    mockspace_lint_rules::duplicate_lint_names(pack)
 }
 
-/// Configuration written for a name no lint in the pack answers to.
+/// Configuration written for a name no lint here answers to.
 ///
 /// Sorted. Empty is the ordinary case. A non-empty answer is a table governing
 /// nothing, which reads exactly like one that governs something.
@@ -223,16 +238,16 @@ pub fn duplicates(pack: &LintPack) -> Vec<String> {
 /// or a bare `[lints.<gone>] include = [...]` is exactly the thing this reports,
 /// a table reading as a live decision and governing nothing, and reading only
 /// `base` missed the whole of that half.
+///
+/// **And the builtins count as present.** Asking only the pack made this report
+/// every configured builtin as governing nothing, which is the opposite of true
+/// and is worse than reporting nothing at all: a reader acting on it would
+/// delete the configuration for a lint that runs.
 #[must_use]
 pub fn configured_but_absent(pack: &LintPack, config: &LintConfig) -> Vec<String> {
-    let present: BTreeMap<&str, ()> = pack
-        .crate_lints
-        .iter()
-        .map(|l| l.name())
-        .chain(pack.workspace_lints.iter().map(|l| l.name()))
-        .chain(pack.repo_lints.iter().map(|l| l.name()))
-        .chain(pack.message_lints.iter().map(|l| l.name()))
-        .map(|n| (n, ()))
+    let present: BTreeMap<String, ()> = enumerate(pack, config)
+        .into_iter()
+        .map(|l| (l.name, ()))
         .collect();
 
     let mut out: Vec<String> = config
@@ -241,7 +256,7 @@ pub fn configured_but_absent(pack: &LintPack, config: &LintConfig) -> Vec<String
         .chain(config.findings.keys())
         .chain(config.params.keys())
         .chain(config.paths.keys())
-        .filter(|k| !present.contains_key(k.as_str()))
+        .filter(|k| !present.contains_key(*k))
         .cloned()
         .collect();
     out.sort();
@@ -304,11 +319,16 @@ fn render_group(out: &mut String, kind: Kind, listings: &[Listing]) {
         // severity alone reads as "this is not running" in exactly that case,
         // which is the one where it is.
         let note = if l.runs() { "" } else { "  (not run)" };
+        // `label()` rather than the derived `Debug`. `Severity` is three fields,
+        // so `{:?}` prints `Severity { on_commit: Warn, on_build: Warn, ... }`,
+        // 58 characters where a word belongs, and a width specifier does not
+        // apply to it, so every following column stops lining up. This output
+        // is embedded verbatim into the generated agent rules.
         let _ = writeln!(
             out,
-            "    {:<width$}  {:<9?}  {}{}",
+            "    {:<width$}  {:<10}  {}{}",
             l.name,
-            l.effective(),
+            l.effective().label(),
             source,
             note,
             width = width
@@ -363,6 +383,19 @@ mod tests {
         }
     }
 
+    /// The listing for one lint by name.
+    ///
+    /// Every arm below used to index position zero, which held only while the
+    /// listing was the pack and the pack was one lint. It is the builtins plus
+    /// the pack now, so position says nothing and the name is the only handle
+    /// that means anything.
+    fn listing<'a>(listings: &'a [Listing], name: &str) -> &'a Listing {
+        listings
+            .iter()
+            .find(|l| l.name == name)
+            .unwrap_or_else(|| panic!("`{name}` is not in the listing"))
+    }
+
     fn config_with(pairs: &[(&str, Severity)]) -> LintConfig {
         let mut c = LintConfig::empty();
         for (k, v) in pairs {
@@ -377,9 +410,7 @@ mod tests {
     fn a_lint_in_the_pack_is_listed() {
         let pack = pack_with(vec![Box::new(Named("a-lint", Severity::ADVISORY))]);
         let listings = enumerate(&pack, &LintConfig::empty());
-        assert_eq!(listings.len(), 1);
-        assert_eq!(listings[0].name, "a-lint");
-        assert_eq!(listings[0].kind, Kind::Crate);
+        assert_eq!(listing(&listings, "a-lint").kind, Kind::Crate);
     }
 
     /// The half nothing reported before: a lint nobody configured runs anyway.
@@ -387,12 +418,13 @@ mod tests {
     fn a_lint_the_project_never_named_reports_as_running_at_the_default() {
         let pack = pack_with(vec![Box::new(Named("unchosen", Severity::ADVISORY))]);
         let listings = enumerate(&pack, &LintConfig::empty());
+        let l = listing(&listings, "unchosen");
         assert!(
-            !listings[0].is_configured(),
+            !l.is_configured(),
             "a lint with no configured severity must report as unconfigured"
         );
         assert_eq!(
-            listings[0].effective(),
+            l.effective(),
             Severity::ADVISORY,
             "and must report the default as what actually governs"
         );
@@ -404,8 +436,9 @@ mod tests {
         let pack = pack_with(vec![Box::new(Named("chosen", Severity::ADVISORY))]);
         let config = config_with(&[("chosen", Severity::HARD_ERROR)]);
         let listings = enumerate(&pack, &config);
-        assert!(listings[0].is_configured());
-        assert_eq!(listings[0].effective(), Severity::HARD_ERROR);
+        let l = listing(&listings, "chosen");
+        assert!(l.is_configured());
+        assert_eq!(l.effective(), Severity::HARD_ERROR);
     }
 
     /// The other half: a table that governs nothing, which reads like one that does.
@@ -430,14 +463,22 @@ mod tests {
     }
 
     /// An empty pack is a legitimate state and must not be a panic or a lie.
+    ///
+    /// It no longer enumerates to nothing, and that is the fix rather than a
+    /// regression: a repository with no pack still has every builtin checking
+    /// it. What is asserted is that the render holds up, not that the answer is
+    /// empty.
     #[test]
-    fn an_empty_pack_enumerates_to_nothing_rather_than_failing() {
+    fn an_empty_pack_renders_rather_than_failing() {
         let listings = enumerate(&LintPack::default(), &LintConfig::empty());
-        assert!(listings.is_empty());
         let table = render_table(&listings, &[]);
         assert!(
-            table.contains("0 lints"),
-            "an empty pack must say so rather than rendering an empty table: {table}"
+            table.contains(&format!("{} lints", listings.len())),
+            "the count has to match what was listed: {table}"
+        );
+        assert!(
+            !listings.is_empty(),
+            "and a repository with no pack is still being checked by the builtins"
         );
     }
 
@@ -487,13 +528,14 @@ mod tests {
             [("findings", findings_only), ("params", params_only), ("paths", paths_only)]
         {
             let listings = enumerate(&pack, &config);
+            let l = listing(&listings, "named");
             assert!(
-                listings[0].is_configured(),
+                l.is_configured(),
                 "a lint named only under `{what}` is one the project decided about, and the \
                  engine treats it as such"
             );
             assert!(
-                listings[0].confirmed.is_none(),
+                l.confirmed.is_none(),
                 "and it still has no base severity, which is the narrower question `{what}` does \
                  not answer"
             );
@@ -517,14 +559,18 @@ mod tests {
         );
         let listings = enumerate(&pack, &config);
         assert!(
-            listings[0].runs(),
+            listing(&listings, "woken").runs(),
             "the engine skips a lint only when nothing named it and its default is off; this one \
              was named"
         );
-        let table = render_table(&listings, &[]);
+        let row = render_table(&listings, &[])
+            .lines()
+            .find(|l| l.contains("woken"))
+            .expect("listed")
+            .to_string();
         assert!(
-            !table.contains("(not run)"),
-            "and the table must not say otherwise: {table}"
+            !row.contains("(not run)"),
+            "and its row must not say otherwise: {row}"
         );
     }
 
@@ -534,11 +580,15 @@ mod tests {
         let pack = pack_with(vec![Box::new(Named("asleep", Severity::OFF))]);
         let listings = enumerate(&pack, &LintConfig::empty());
         assert!(
-            !listings[0].runs(),
+            !listing(&listings, "asleep").runs(),
             "nothing named it and its default is off"
         );
-        let table = render_table(&listings, &[]);
-        assert!(table.contains("(not run)"), "{table}");
+        let row = render_table(&listings, &[])
+            .lines()
+            .find(|l| l.contains("asleep"))
+            .expect("listed")
+            .to_string();
+        assert!(row.contains("(not run)"), "{row}");
     }
 
     /// And a base severity of `OFF` turns one off whatever else named it.
@@ -547,7 +597,7 @@ mod tests {
         let pack = pack_with(vec![Box::new(Named("silenced", Severity::HARD_ERROR))]);
         let config = config_with(&[("silenced", Severity::OFF)]);
         let listings = enumerate(&pack, &config);
-        assert!(!listings[0].runs());
+        assert!(!listing(&listings, "silenced").runs());
     }
 
     /// The cross-check's other half, which never fired.
@@ -643,5 +693,103 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(duplicates(&pack), vec!["shared".to_string()]);
+    }
+
+    /// The builtins are listed, and an empty pack is not an empty answer.
+    ///
+    /// **The defect this module shipped with.** Every function here read the
+    /// pack and only the pack, which is right for a tool and wrong for a lint:
+    /// the engine adds `all_lints`, `all_workspace_lints` and `all_repo_lints`
+    /// at every gate and none of them is ever a pack member. So the command
+    /// answering what is checking you could not see most of it.
+    #[test]
+    fn the_builtins_the_engine_runs_are_listed_even_with_an_empty_pack() {
+        let listings = enumerate(&LintPack::default(), &LintConfig::empty());
+        let expected = mockspace_lint_rules::all_lints().len()
+            + mockspace_lint_rules::all_workspace_lints().len()
+            + mockspace_lint_rules::all_repo_lints().len();
+        assert!(
+            expected > 0,
+            "the engine ships builtins, or this arm proves nothing"
+        );
+        assert_eq!(
+            listings.len(),
+            expected,
+            "an empty pack still has every builtin checking you"
+        );
+    }
+
+    /// And a pack lint joins them rather than replacing them.
+    #[test]
+    fn a_pack_lint_joins_the_builtins_rather_than_replacing_them() {
+        let builtins = enumerate(&LintPack::default(), &LintConfig::empty()).len();
+        let pack = pack_with(vec![Box::new(Named("from-a-pack", Severity::ADVISORY))]);
+        let listings = enumerate(&pack, &LintConfig::empty());
+        assert_eq!(listings.len(), builtins + 1);
+        assert!(listings.iter().any(|l| l.name == "from-a-pack"));
+    }
+
+    /// A configured builtin is not a name governing nothing.
+    ///
+    /// The cross-check's false-positive half, and the dangerous direction:
+    /// acting on the old output meant deleting the configuration for a lint
+    /// that runs.
+    #[test]
+    fn a_configured_builtin_is_not_reported_as_governing_nothing() {
+        let builtins = mockspace_lint_rules::all_lints();
+        let name = builtins
+            .first()
+            .expect("the engine ships at least one crate lint")
+            .name();
+        let config = config_with(&[(name, Severity::HARD_ERROR)]);
+        assert!(
+            !configured_but_absent(&LintPack::default(), &config).contains(&name.to_string()),
+            "`{name}` is a lint the engine runs, so configuring it governs something"
+        );
+    }
+
+    /// A pack shadowing a builtin is the collision that actually happens.
+    ///
+    /// It is also the fatal one: the engine returns early on it and every lint
+    /// gate then refuses. A check counting the pack against itself reported
+    /// clean here, which is the state somebody would run `mock lints` to
+    /// diagnose.
+    #[test]
+    fn a_pack_lint_shadowing_a_builtin_is_a_duplicate() {
+        let builtins = mockspace_lint_rules::all_lints();
+        let name: &'static str = builtins
+            .first()
+            .expect("the engine ships at least one crate lint")
+            .name();
+        let pack = pack_with(vec![Box::new(Named(name, Severity::ADVISORY))]);
+        assert!(
+            duplicates(&pack).contains(&name.to_string()),
+            "a pack registering `{name}` shadows the builtin of that name, and nothing else \
+             reports it"
+        );
+    }
+
+    /// The severity column is a word rather than a struct dump.
+    ///
+    /// `Severity` is three fields with a derived `Debug`, which a width
+    /// specifier does not apply to, so `{:?}` printed 58 characters and took
+    /// every column after it out of alignment. This output is embedded verbatim
+    /// into the generated agent rules.
+    #[test]
+    fn the_rendered_row_names_the_severity_rather_than_dumping_it() {
+        let pack = pack_with(vec![Box::new(Named("a-lint", Severity::ADVISORY))]);
+        let table = render_table(&enumerate(&pack, &LintConfig::empty()), &[]);
+        let row = table
+            .lines()
+            .find(|l| l.contains("a-lint"))
+            .expect("the lint is listed");
+        assert!(
+            !row.contains("on_commit"),
+            "the derived Debug leaked into the table: {row}"
+        );
+        assert!(
+            row.contains(Severity::ADVISORY.label()),
+            "the row has to name the severity that governs: {row}"
+        );
     }
 }

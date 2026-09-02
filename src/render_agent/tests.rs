@@ -908,9 +908,17 @@ fn the_catalogues_rule_carries_the_lints_as_well_as_the_tools() {
         "and the lint half, which the old key's name did not cover:\n{}",
         rule.body
     );
+    // A lint's own name, not the group heading. `render_group` emits `CRATE
+    // LINTS` whether or not anything is under it, so asserting the heading was
+    // satisfied by four empty headers, which was the state the code was in.
+    let a_builtin = mockspace_lint_rules::all_lints();
+    let name = a_builtin
+        .first()
+        .expect("the engine ships at least one crate lint")
+        .name();
     assert!(
-        rule.body.contains("CRATE LINTS"),
-        "the lint listing itself, not only the command name:\n{}",
+        rule.body.contains(name),
+        "the listing has to carry a lint somebody is actually checked by, and `{name}` is one:\n{}",
         rule.body
     );
 }
