@@ -7,6 +7,12 @@ license = "MPL-2.0"
 description = "AST lint rules for mockspace workspaces"
 
 [dependencies]
+# Parse-only, and already in this workspace's lockfile through
+# `mockspace-manifest`, so the pack's cdylib gains no new transitive tree. A
+# hand scanner was tried first and is what the toolchain lint's tests now
+# document: it read a multi-line array as an absent key, which is a silent
+# false negative in exactly the direction that lint exists to catch.
+toml = { version = "0.8", default-features = false, features = ["parse"] }
 tree-sitter = "0.24"
 tree-sitter-rust = "0.23"
 
