@@ -172,10 +172,25 @@ attribution_names_agent() {
 # in order to forbid them, and a scanner that cannot tell a rule from a
 # violation is a scanner that condemns the rule.
 #
+# A code span may wrap, so the inline strip runs over a paragraph rather than
+# over a line. Prose wraps and a commit body wraps hardest, so the quotation
+# this exists to spare arrives split as often as not, and a line-oriented strip
+# sees an opening backtick with no closing one and leaves the span standing.
+#
+# The paragraph is the bound and it is deliberate. Joining the whole message
+# instead would let one unbalanced backtick swallow everything up to the next
+# one anywhere later, hiding a real suffix behind a stray quote written
+# paragraphs above it. A blank line closes a span whatever the backticks are
+# doing, and a tool's suffix sits in its own paragraph, which is what keeps the
+# repair from buying a hole. Both directions are pinned in the suite.
+#
 # Usage: printf '%s' "$text" | attribution_strip_quoted
 #[pub]
 attribution_strip_quoted() {
-    sed -e '/^```/,/^```/d' -e 's/`[^`]*`//g'
+    sed -e '/^```/,/^```/d' | awk '
+        BEGIN { RS = ""; ORS = "\n\n" }
+        { gsub(/\n/, " "); gsub(/`[^`]*`/, ""); print }
+    '
 }
 
 # attribution_has_advert <text>
