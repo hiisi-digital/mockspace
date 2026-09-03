@@ -21,9 +21,11 @@
 //! machine defaults to, so a formatter gate relying on the pin to supply
 //! `rustfmt` relies on a coincidence.
 //!
-//! Measured on three repositories at once, each with a correctly pinned root
-//! file one directory above a floating copy, and each resolving a nightly four
-//! months newer than the one it declared.
+//! The shape is not hypothetical: it was found in this workspace on more than
+//! one repository at once, each with a correctly pinned root file one directory
+//! above a floating copy, and each resolving a nightly months newer than the one
+//! it declared. The lint is the instrument for the count, and a figure written
+//! here would be true on the day it was typed and wrong after the next merge.
 //!
 //! **Every key the root declares, the copy declares, with the same value.** A
 //! string value is equal; an array value is a superset, so the copy may add a
@@ -216,12 +218,18 @@ pub fn disagreements(root: &str, copy: &str) -> Vec<String> {
     out
 }
 
-/// The file at `dir/rust-toolchain.toml`, or nothing where it is absent.
+/// The toolchain file in `dir` under either spelling, or nothing where neither
+/// is there.
 ///
-/// Both spellings, because rustup accepts the extensionless one and a repository
-/// reaching for it would otherwise be reported as pinning nothing.
+/// The extensionless `rust-toolchain` first, because that is the one rustup
+/// uses where both are present, and this lint has to read what rustup reads or
+/// it reports about a file nothing runs on. Measured on rustup 1.29.0 with the
+/// two spellings naming two different nightlies: it warns that both exist, says
+/// which it takes, and takes `rust-toolchain`. The order here is the opposite of
+/// what it reads like it should be, and `rustup_prefers_the_extensionless_file`
+/// is what holds it.
 fn toolchain_file(dir: &Path) -> Option<(std::path::PathBuf, String)> {
-    for name in ["rust-toolchain.toml", "rust-toolchain"] {
+    for name in ["rust-toolchain", "rust-toolchain.toml"] {
         let path = dir.join(name);
         if let Ok(text) = std::fs::read_to_string(&path) {
             return Some((path, text));
@@ -385,15 +393,32 @@ mod tests {
     /// two files off the wrong ends of the context reports a repository as
     /// agreeing with itself and passes every arm above.
     fn run(root: Option<&str>, copy: Option<&str>) -> Vec<LintError> {
+        run_named(
+            &[("rust-toolchain.toml", root)],
+            &[("rust-toolchain.toml", copy)],
+        )
+    }
+
+    /// The same wiring with the filenames given, because the spelling is the
+    /// thing under test in the arms below and `run` fixes it.
+    ///
+    /// Each end takes a list, so a directory can hold both spellings at once,
+    /// which is the case rustup warns about and the one the loop's order
+    /// decides.
+    fn run_named(root: &[(&str, Option<&str>)], copy: &[(&str, Option<&str>)]) -> Vec<LintError> {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path();
         let mock = repo.join("mock");
         std::fs::create_dir_all(&mock).unwrap();
-        if let Some(t) = root {
-            std::fs::write(repo.join("rust-toolchain.toml"), t).unwrap();
+        for (name, body) in root {
+            if let Some(t) = body {
+                std::fs::write(repo.join(name), t).unwrap();
+            }
         }
-        if let Some(t) = copy {
-            std::fs::write(mock.join("rust-toolchain.toml"), t).unwrap();
+        for (name, body) in copy {
+            if let Some(t) = body {
+                std::fs::write(mock.join(name), t).unwrap();
+            }
         }
         let registry = crate::RegistryView::default();
         let no_crates = std::collections::BTreeSet::new();
@@ -556,6 +581,64 @@ mod tests {
         let root = "[toolchain]\nchannel = \"nightly-2026-05-28\"\ncomponents = [\"rustfmt\", \
                     \"clippy\", \"rust-src\"]\nsomething = 3\n";
         assert_eq!(disagreements(root, ROOT), Vec::<String>::new());
+    }
+
+    /// The extensionless spelling is the whole subject of this round, and until
+    /// this arm existed nothing read it off a disk.
+    ///
+    /// Every other arm hands `disagreements` two strings, and the one wiring
+    /// arm wrote `rust-toolchain.toml` at both ends, so `toolchain_file`'s loop
+    /// was never taken past its first entry. Drop the other entry and all
+    /// fourteen of them stay green while the defect returns.
+    #[test]
+    fn the_extensionless_spelling_is_read_off_the_disk() {
+        let copy = "nightly\n";
+        let errs = run_named(
+            &[("rust-toolchain", Some(ROOT))],
+            &[("rust-toolchain", Some(copy))],
+        );
+        // Two, because a legacy file carries a channel and can carry nothing
+        // else, so the root's `components` is missing from it as well.
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert!(
+            errs[0].message.contains("`channel` is `nightly` here"),
+            "{}",
+            errs[0].message
+        );
+    }
+
+    /// Where a directory holds both, rustup takes the extensionless one, so
+    /// this lint has to as well or it reports about a file nothing runs on.
+    ///
+    /// Measured on rustup 1.29.0: with `rust-toolchain.toml` naming
+    /// `nightly-2026-06-18` and `rust-toolchain` naming `nightly-2026-05-28`,
+    /// `rustup show active-toolchain` warns that both exist and resolves
+    /// `nightly-2026-05-28`, naming `rust-toolchain` as the override.
+    ///
+    /// The control is the pairing: the `.toml` in the copy agrees with the root
+    /// and the extensionless one does not, so an implementation reading the
+    /// `.toml` returns no error and this arm fails. Reversing the loop's order
+    /// is what makes it pass.
+    #[test]
+    fn rustup_prefers_the_extensionless_file() {
+        let errs = run_named(
+            &[("rust-toolchain.toml", Some(ROOT))],
+            &[
+                ("rust-toolchain.toml", Some(ROOT)),
+                ("rust-toolchain", Some("nightly\n")),
+            ],
+        );
+        assert_eq!(
+            errs.len(),
+            2,
+            "the copy rustup would actually use declares a floating channel and no \
+             components: {errs:?}"
+        );
+        assert!(
+            errs[0].message.contains("`channel` is `nightly` here"),
+            "{}",
+            errs[0].message
+        );
     }
 
     #[test]
