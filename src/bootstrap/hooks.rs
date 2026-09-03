@@ -275,14 +275,26 @@ if [ -n "$CHANGED_CRATES" ]; then
     # `lints/` and a tool's own source are all `.rs` and none is source to any
     # gate, so staging one cannot turn a doc commit into a source commit.
     #
-    # FIXME: this is the default and not the declaration. `gen_pre_commit` is
-    # handed `mock_rel` and nothing else, so it cannot read `src_dirs`, and on a
-    # project declaring another source directory the hook claims `--doc-only`
-    # over source the engine's guard then refuses, which is the deadlock this
-    # whole change removed for the default case. Threading `src_dirs` down
-    # through `ensure_gate` and `ensure_generated_hooks` closes it; the arm that
-    # would catch it is `a_declared_source_directory_outside_crates_deadlocks`,
+    # FIXME: this is the default and not the declaration, and it is a class
+    # rather than this line. `gen_pre_commit` and `gen_pre_push` are handed
+    # `mock_rel` and nothing else, so neither can read `src_dirs`, and the
+    # generated hooks write `crates` as a literal in six places: the two that
+    # build `CHANGED_CRATES` above, this one, the two that build
+    # `PUSH_CHANGED` in the pre-push hook, and the nuke scan under it.
+    #
+    # The two above fail worse than this one and fail silently. On a project
+    # whose `src_dirs` names another directory, staging source under it leaves
+    # `CHANGED_CRATES` empty, the hook takes the `infrastructure-only` branch
+    # and passes `--scope infra`, so the crate lints never run at all. Nothing
+    # refuses and nothing says so. This line's failure is the loud one: the
+    # hook claims `--doc-only` over source the engine's guard then refuses,
+    # which is the deadlock this whole change removed for the default case, and
+    # `a_declared_source_directory_outside_crates_deadlocks` catches it,
     # ignored below.
+    #
+    # Threading `src_dirs` down through `ensure_gate` and
+    # `ensure_generated_hooks` closes all six. Closing this one alone reads as
+    # closing the class and does not.
     STAGED_RS=$(echo "$STAGED" \
         | grep "^$MOCK_DIR/crates/.*\.rs$" \
         || true)
@@ -1083,6 +1095,67 @@ mod generated_pre_commit_tests {
             hook_claims_doc_only, engine_allows_doc_only,
             "the hook claims the flag and the guard verifies the claim, so the two \
              answer the same question about the same tree"
+        );
+    }
+
+    /// The same blindness one branch over, and this one nothing refuses.
+    ///
+    /// Where the arm above stages source under a declared directory *beside*
+    /// something under `crates/`, this one stages source under the declared
+    /// directory and nothing else. `CHANGED_CRATES` is built from the same
+    /// literal, so it comes out empty, the hook takes the
+    /// `infrastructure-only` branch and passes `--scope infra`, and the crate
+    /// lints never run over the source that was staged.
+    ///
+    /// The deadlock above is loud: the guard refuses and somebody reads the
+    /// message. This is silent, and it is the worse of the two, because green
+    /// is what it looks like.
+    ///
+    /// One threading of `src_dirs` closes both, and closing only the loud one
+    /// reads as closing the class.
+    #[test]
+    #[ignore = "catalogue: the generated hook builds `CHANGED_CRATES` from a literal \
+                `crates/`, so source under another declared source directory scopes \
+                to `infra` and its crate lints never run; threading `src_dirs` into \
+                `gen_pre_commit` closes it"]
+    fn source_under_a_declared_directory_alone_scopes_to_infra() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("git runs")
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@example.invalid"]);
+        git(&["config", "user.name", "t"]);
+        // Nothing under `crates/`, which is the whole of the case. Anything
+        // under `mock/` puts the hook past its own early exit, so one source
+        // file is the entire fixture.
+        for (path, body) in [("mock/libs/bar/src/lib.rs", "fn b() {}\n")] {
+            let p = root.join(path);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, body).unwrap();
+            git(&["add", path]);
+        }
+        let hook = root.join("hook.sh");
+        fs::write(&hook, gen_pre_commit("mock", &root.join("no-user-hook"))).unwrap();
+        let out = Command::new("bash")
+            .arg(&hook)
+            .current_dir(root)
+            .output()
+            .expect("bash runs");
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        assert!(
+            !printed.contains("infrastructure-only"),
+            "staged source scoped to `infra`, so no crate lint ran over it: {printed}"
         );
     }
 }
