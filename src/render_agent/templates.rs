@@ -233,9 +233,17 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
              that no row backs is the failure this shape exists to prevent: it reads exactly like \
              canon and nothing points at it, nothing checks it, and nothing else renders from it."
         )
+    } else if declared_canon.is_empty() {
+        // Not "the rows are the whole of it", which was the first wording and
+        // is a claim that the project has rows that are its canon. It has said
+        // no such thing, and the sentence above it in the same file says so, so
+        // the two disagreed inside one document.
+        "There is no reading surface here either, and there could not be: a rendered canon renders \
+         something, and this project has not said what. The two questions are one question."
+            .to_string()
     } else {
-        "This project keeps no rendered canon directory, so there is no reading surface to read \
-         instead of the rows. The rows are the whole of it."
+        "This project keeps no rendered canon directory, so there is nothing to read instead of \
+         the rows it has declared. The rows are the whole of it."
             .to_string()
     };
 
@@ -1313,10 +1321,14 @@ mod canon_location_is_derived {
     ///
     /// `canon_paths` empty was read as "the default directory", so a project
     /// that has declared no canon anywhere got a rule naming `<mock>/registry/`
-    /// as where its canon lives and `<mock>/canon/` as where it is read.
-    /// Measured against the remote `dev` of every consumer: four of them
-    /// declare neither and have neither directory, so every agent session in
-    /// four repositories loaded two addresses that resolve to nothing.
+    /// as where its canon lives and `<mock>/canon/` as where it is read, and
+    /// every agent session in such a repository loaded two addresses that
+    /// resolve to nothing.
+    ///
+    /// How many that is at any moment is a question for the tree, not for this
+    /// comment: `git show origin/dev:mockspace.toml | grep -c canon_paths` in
+    /// each consumer answers it. An earlier version wrote a figure here and
+    /// called it measured, and the figure was wrong.
     ///
     /// The builtins are why the predicate is not `is_empty`: `with_builtins`
     /// prepends `vocab` and `reference` to every project, so a check on the
@@ -1485,10 +1497,15 @@ mod canon_location_is_derived {
     /// `<mock>/canon/` in the other is worse than either sentence by itself.
     #[test]
     fn the_skill_and_the_rule_answer_the_same_way_on_every_shape() {
-        for (canon_paths, keeps_the_surface, shape) in [
-            (vec!["mock/registry/*.toml".to_string()], false, "a registry canon"),
-            (vec!["mock/canon/**".to_string()], true, "the reserved directory"),
-            (Vec::new(), false, "nothing declared"),
+        // Three shapes, and two facts per shape rather than one. Checking only
+        // the view sentence let a disagreement through: with nothing declared
+        // both files said `false` to it while the rule said the project has no
+        // canon and the skill said its rows are the whole of it, which is a
+        // claim that it has some.
+        for (canon_paths, keeps_the_surface, declares_a_canon, shape) in [
+            (vec!["mock/registry/*.toml".to_string()], false, true, "a registry canon"),
+            (vec!["mock/canon/**".to_string()], true, true, "the reserved directory"),
+            (Vec::new(), false, false, "nothing declared"),
         ] {
             let cfg = cfg_for(canon_paths);
             let t = generate_builtin_templates(&cfg, &LintPack::default());
@@ -1513,6 +1530,25 @@ mod canon_location_is_derived {
                 rule.contains("is the reading surface"),
                 keeps_the_surface,
                 "the rule is wrong about the reading surface on {shape}: {rule}"
+            );
+            // The second fact. `nowhere this project has declared` is the
+            // sentence both files carry when there is nothing to name, and
+            // neither may say anything about rows the project has beside it.
+            let nowhere = "nowhere this project has declared";
+            assert_eq!(
+                !rule.contains(nowhere),
+                declares_a_canon,
+                "the rule is wrong about whether a canon is declared on {shape}: {rule}"
+            );
+            assert_eq!(
+                !skill.contains(nowhere),
+                declares_a_canon,
+                "the skill is wrong about whether a canon is declared on {shape}: {skill}"
+            );
+            assert_eq!(
+                skill.contains("The rows are the whole of it"),
+                declares_a_canon && !keeps_the_surface,
+                "the skill claims rows the project has not declared on {shape}: {skill}"
             );
         }
     }
