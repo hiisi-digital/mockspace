@@ -268,12 +268,21 @@ CHANGED_CRATES=$(echo "$STAGED" \
 ARGS=(--lint-only --commit)
 
 if [ -n "$CHANGED_CRATES" ]; then
-    # `crates/` rather than the whole mock tree, because that is what the phase
-    # gates call source: both of them ask `SrcLayout::holds`, which answers for
-    # the declared source directories and nothing else. A probe under
-    # `research/`, a lint under `lints/` and a tool's own source are all `.rs`
-    # and none of them is source to any gate, so staging one cannot make a
-    # doc-only commit into a source commit.
+    # `crates/` rather than the whole mock tree. The phase gates ask
+    # `SrcLayout::holds`, which answers for the declared source directories, and
+    # `crates` is what `src_dirs` defaults to, so on a project that leaves it
+    # alone this is the same question. A probe under `research/`, a lint under
+    # `lints/` and a tool's own source are all `.rs` and none is source to any
+    # gate, so staging one cannot turn a doc commit into a source commit.
+    #
+    # FIXME: this is the default and not the declaration. `gen_pre_commit` is
+    # handed `mock_rel` and nothing else, so it cannot read `src_dirs`, and on a
+    # project declaring another source directory the hook claims `--doc-only`
+    # over source the engine's guard then refuses, which is the deadlock this
+    # whole change removed for the default case. Threading `src_dirs` down
+    # through `ensure_gate` and `ensure_generated_hooks` closes it; the arm that
+    # would catch it is `a_declared_source_directory_outside_crates_deadlocks`,
+    # ignored below.
     STAGED_RS=$(echo "$STAGED" \
         | grep "^$MOCK_DIR/crates/.*\.rs$" \
         || true)
@@ -1002,5 +1011,78 @@ mod generated_pre_commit_tests {
         let (hook, engine) = both_sides(&[("mock/crates/foo/DESIGN.md.tmpl", "x\n")]);
         assert!(hook, "the flag exists for exactly this commit");
         assert_eq!(hook, engine, "the two sides disagree about the same tree");
+    }
+
+    /// The gap the fix left, written down as the arm that will catch it.
+    ///
+    /// `src_dirs` defaults to `crates`, and every repository here leaves it
+    /// alone, so the hook's literal `crates/` and the engine's declared layout
+    /// ask one question in practice. They stop agreeing the moment a project
+    /// declares another source directory: the hook cannot see the declaration,
+    /// claims `--doc-only` over source under it, and the guard refuses. That is
+    /// the same deadlock this change removed for the default case, surviving in
+    /// a shape nothing here reaches.
+    ///
+    /// `changelist_lock` and `changelist_required` both carry arms over
+    /// `["crates", "libs"]`, so the shape is real rather than hypothetical.
+    ///
+    /// Red until `src_dirs` is threaded through `ensure_gate` and
+    /// `ensure_generated_hooks` into `gen_pre_commit`. `both_sides` hardcodes
+    /// the default layout too and moves with it.
+    #[test]
+    #[ignore = "catalogue: the generated hook cannot read `src_dirs`, so it claims \
+                `--doc-only` over source under a declared directory the guard refuses; \
+                threading `src_dirs` into `gen_pre_commit` closes it"]
+    fn a_declared_source_directory_outside_crates_deadlocks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("git runs")
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@example.invalid"]);
+        git(&["config", "user.name", "t"]);
+        for (path, body) in [
+            ("mock/crates/foo/DESIGN.md.tmpl", "x\n"),
+            ("mock/libs/bar/src/lib.rs", "fn b() {}\n"),
+        ] {
+            let p = root.join(path);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, body).unwrap();
+            git(&["add", path]);
+        }
+        let hook = root.join("hook.sh");
+        fs::write(&hook, gen_pre_commit("mock", &root.join("no-user-hook"))).unwrap();
+        let out = Command::new("bash")
+            .arg(&hook)
+            .current_dir(root)
+            .output()
+            .expect("bash runs");
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let hook_claims_doc_only = printed.contains(DOC_ONLY);
+
+        // The project declares both, which is what makes `mock/libs/bar/src`
+        // source and what the hook has no way to learn.
+        let mock = root.join("mock");
+        let layout = mockspace_lint_rules::src_layout::SrcLayout::new(&mock, &[
+            mock.join("crates"),
+            mock.join("libs"),
+        ]);
+        let engine_allows_doc_only =
+            crate::entry::escape_hatch::verify_doc_only(root, "mock", &layout).is_none();
+
+        assert_eq!(
+            hook_claims_doc_only, engine_allows_doc_only,
+            "the hook claims the flag and the guard verifies the claim, so the two \
+             answer the same question about the same tree"
+        );
     }
 }
