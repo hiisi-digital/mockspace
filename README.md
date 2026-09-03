@@ -180,20 +180,6 @@ A `cargo mock` run with no subcommand regenerates the `docs/` tree from template
 
 If `mock/agent/` is populated with templates, mockspace renders coordinated configuration from those templates for common AI coding assistants (Claude Code, GitHub Copilot CLI, others as templates require). One source produces semantically equivalent output for each platform. A small set of builtin skills renders alongside: sketching and benchmarking discipline on by default, an interactive design-talk flow opt-in, each declinable per repository in `mock/agent/config.toml`. This is a configuration surface, not a feature; the tool's identity is what it does for human developers.
 
-If you choose to use this surface:
-
-> ## A note on coding agents
->
-> We do not recommend using coding agents with mockspace-managed codebases. Mockspace exists because design discipline is hard to enforce mechanically, and that discipline does not transfer cleanly to a system that has been trained primarily on patterns where source is the authority and design is post-hoc. Models default to writing the source first and treating the docs as documentation; mockspace inverts that. Expect friction.
->
-> If you still choose to use a coding agent:
->
-> - Be aware of the environmental and social impact of large-scale model inference. Minimise agent use where it is not needed. Be responsible.
-> - Only use an agent if you yourself understand the architecture. Do not use an agent because you do not understand; you will waste time and energy, both yours and the planet's.
-> - The agent template surface (`mock/agent/*.tmpl`) lets you encode your project's actual rules in one place that emits to every supported assistant. It helps but does not eliminate the problem. You will still need to correct the agent frequently.
->
-> The recommendation stands: do this work yourself unless you know what you are doing and why.
-
 ## Support
 
 Whether you use this project, have learned something from it, or just like it, please consider supporting it by buying me a coffee, so I can dedicate more time on open-source projects like this :)
