@@ -174,7 +174,7 @@ A `cargo mock` run with no subcommand regenerates the `docs/` tree from template
 
 ## Git hooks
 
-`mockspace` never touches `.git/hooks/`. Durable hooks live in the user config home and delegate to a per-repo validator under the mock directory's `target/hooks/`, sourcing the user's existing `.git/hooks/<name>` first and then running mockspace's own validation. The launcher wires them on first contact and the engine keeps them current; deactivation (`cargo mock deactivate`) is explicit and reversible, and git then falls back to whatever the user already had.
+`mockspace` never touches `.git/hooks/`. Durable hooks live in the user config home and delegate to a per-repo validator under the mock directory's `target/hooks/`, which runs mockspace's own validation and then whatever the repository keeps at `.git/hooks/<name>`, with the same arguments and the same stdin, so a hook another tool installed there still runs and its refusal still counts. Nothing runs past a refusal of mockspace's own. The launcher wires them on first contact and the engine keeps them current; deactivation (`cargo mock deactivate`) is explicit and reversible, and git then falls back to whatever the user already had.
 
 ## Optional: AI assistant integration
 

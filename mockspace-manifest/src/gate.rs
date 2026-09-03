@@ -30,6 +30,18 @@
 //! generated per-repo hook or blocks at the configured scope. It carries no
 //! policy, because it is machine-global (one body serves every repo on this
 //! version) while policy is per-repo.
+//!
+//! # The repository's own hook runs after it
+//!
+//! `core.hooksPath` pointing here means git never reads `.git/hooks/` on its
+//! own, so whatever another tool installed there would be silent. Every pass
+//! through the gate therefore ends by running `.git/hooks/<event>` when one
+//! exists and is executable, with the same arguments and, for `pre-push`, the
+//! same refs on stdin, and its exit status is the hook's. The generated
+//! per-repo hook does the same at its own tail, so the gate chains only on the
+//! exits it takes itself: a repository it does not govern, and an uninitialised
+//! one whose commit stays outside the design surface. A block never chains:
+//! mockspace names nobody and runs nothing past its own refusal.
 
 use std::path::{Path, PathBuf};
 
@@ -82,9 +94,12 @@ pub fn durable_hooks_dir(hook_version: u32) -> Option<PathBuf> {
 
 /// The one shell implementation of mockspace-project discovery.
 ///
-/// Resolves `root`, `cfg`, `mockdir`, `cfgrel` and `mockrel`, then exits 0 when
-/// the repo is not a mockspace project at all. Also defines `ms_read_key`, which
-/// reads a top-level scalar from a `mockspace.toml`.
+/// Resolves `root`, `cfg`, `mockdir`, `cfgrel` and `mockrel`, then hands over
+/// to the repository's own hook through `ms_chain` when the repo is not a
+/// mockspace project at all, which is the pass that used to be a bare exit.
+/// `ms_chain` is defined by the hook body above this text, since what it
+/// replays on stdin differs per event. Also defines `ms_read_key`, which reads
+/// a top-level scalar from a `mockspace.toml`.
 ///
 /// Mirrors the launcher's `discover::locate`, including the single-config rule: a
 /// repo has exactly one `mockspace.toml`, and more than one is a hard error.
@@ -139,21 +154,48 @@ if [ "$cfgcount" -gt 1 ]; then
     exit 1
 fi
 
-# Not a mockspace project: the gate governs nothing here.
-[ -z "$cfg" ] && exit 0
+# Not a mockspace project: the gate governs nothing here, and whatever the
+# repository keeps under .git/hooks still runs.
+[ -z "$cfg" ] && ms_chain "$@"
 
 mockrel="${mockdir#"$root"/}"
 cfgrel="${cfg#"$root"/}"
 "##;
 
+/// The shell tail every pass through a hook ends in: the repository's own
+/// `.git/hooks/<name>`, when it exists and is executable, with the same
+/// arguments, `stdin_replay` piped in ahead of it, and its exit status as the
+/// script's. Nothing there is an exit 0. The hooks directory is the git dir's,
+/// asked for by `--git-dir` rather than `--git-path hooks`, since the second
+/// honours `core.hooksPath` and would answer with the durable directory itself.
+#[must_use]
+pub fn chain_tail(name: &str, stdin_replay: &str) -> String {
+    format!(
+        r##"# The repository's own hook, once the gate has passed: what another tool
+# installed under .git/hooks, which git does not read while core.hooksPath
+# points elsewhere. Same arguments, same stdin, its exit status.
+ms_chain() {{
+    gitdir=$(git -C "$root" rev-parse --git-dir 2>/dev/null) || exit 0
+    case "$gitdir" in /*) ;; *) gitdir="$root/$gitdir" ;; esac
+    own="$gitdir/hooks/{name}"
+    [ -x "$own" ] || exit 0
+    {stdin_replay}"$own" "$@"
+    exit $?
+}}
+"##
+    )
+}
+
 /// The full script for one durable hook.
 ///
 /// Discover, then delegate to the generated per-repo hook when one exists, or
 /// block at the repo's configured `uninitialised_blocks` scope when it does not.
+/// Every pass ends in the repository's own hook; see [`chain_tail`].
 #[must_use]
 pub fn durable_hook(name: &str, hook_version: u32) -> String {
     let stdin_capture = if name == "pre-push" { "PREPUSH_STDIN=$(cat)\n" } else { "" };
     let stdin_replay = if name == "pre-push" { "printf '%s\\n' \"$PREPUSH_STDIN\" | " } else { "" };
+    let chain = chain_tail(name, stdin_replay);
     format!(
         r##"#!/usr/bin/env bash
 {MANAGED_MARKER}
@@ -163,6 +205,7 @@ pub fn durable_hook(name: &str, hook_version: u32) -> String {
 # when mockspace is initialised, and blocks at the configured scope when it is not.
 set -u
 {stdin_capture}
+{chain}
 {DISCOVERY}
 # --- initialised? then the generated per-repo hook owns this ---
 generated="$mockdir/target/hooks/{name}"
@@ -183,7 +226,7 @@ if [ "$scope" != "all" ]; then
     if [ -z "$surface" ] && [ -n "$cfgrel" ]; then
         surface=$(git diff --cached --name-only -- "$cfgrel" 2>/dev/null || true)
     fi
-    [ -z "$surface" ] && exit 0
+    [ -z "$surface" ] && ms_chain "$@"
 fi
 
 echo "" >&2
@@ -368,20 +411,62 @@ mod tests {
     }
 
     #[test]
-    fn a_non_project_exits_zero() {
-        let h = durable_hook("pre-commit", 3);
-        assert!(h.contains(r#"[ -z "$cfg" ] && exit 0"#));
+    fn a_non_project_hands_over_to_the_repositorys_own_hook() {
+        // Every pass ends in the repository's own hook rather than a bare exit:
+        // the two passes the gate takes itself, and never the block. The
+        // delegation to the generated hook is not a chain site, since that hook
+        // chains at its own tail and a second run would be a double.
+        for name in HOOK_NAMES {
+            let h = durable_hook(name, 3);
+            assert!(
+                h.contains(r#"[ -z "$cfg" ] && ms_chain "$@""#),
+                "{name}: a non-project chains"
+            );
+            assert!(
+                h.contains(r#"[ -z "$surface" ] && ms_chain "$@""#),
+                "{name}: outside the surface chains"
+            );
+            assert!(
+                !h.contains(r#"[ -z "$cfg" ] && exit 0"#),
+                "{name}: the bare exit is gone"
+            );
+            assert!(
+                h.contains(&format!(r#"own="$gitdir/hooks/{name}""#)),
+                "{name}: its own event"
+            );
+            let define = h.find("ms_chain() {").expect("the chain is defined");
+            let first_use = h.find(r#"ms_chain "$@""#).expect("the chain is used");
+            assert!(
+                define < first_use,
+                "{name}: defined before the discovery that calls it"
+            );
+            let block = h.find("BLOCKED:").unwrap();
+            assert!(
+                h[block ..].find("ms_chain").is_none(),
+                "{name}: a block never chains"
+            );
+            // the git dir, never the hooks path, which would point back here
+            assert!(h.contains("rev-parse --git-dir"), "{name}");
+            assert!(!h.contains("--git-path hooks"), "{name}");
+        }
     }
 
     #[test]
     fn only_pre_push_captures_and_replays_stdin() {
         // git hands pre-push its refs on stdin; the others get none, and reading
-        // stdin they will never receive would hang the hook.
+        // stdin they will never receive would hang the hook. Both the delegate
+        // and the repository's own hook get the refs back.
         let pp = durable_hook("pre-push", 3);
         assert!(pp.contains("PREPUSH_STDIN=$(cat)"));
         assert!(pp.contains(r#"printf '%s\n' "$PREPUSH_STDIN" | "$generated""#));
+        assert!(pp.contains(r#"printf '%s\n' "$PREPUSH_STDIN" | "$own" "$@""#));
         for other in ["pre-commit", "commit-msg"] {
-            assert!(!durable_hook(other, 3).contains("$(cat)"), "{other}");
+            let h = durable_hook(other, 3);
+            assert!(!h.contains("$(cat)"), "{other}");
+            assert!(
+                h.contains(r#"    "$own" "$@""#),
+                "{other}: the chain takes no stdin"
+            );
         }
     }
 

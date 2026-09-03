@@ -13,12 +13,15 @@
 //!
 //! # Hook model
 //!
-//! mockspace never touches `.git/hooks/`. Those are the user's hooks and
-//! always run: with or without mockspace. Generated hooks source the user's
-//! `.git/hooks/*` first, then run mockspace validation. Activation is
-//! explicit and reversible (`cargo mock activate` / `deactivate` drive
-//! `core.hooksPath`); deactivated, git falls back to the user's hooks as if
-//! mockspace was never there.
+//! mockspace never touches `.git/hooks/`. Those are the repository's own
+//! hooks, whatever tool put them there, and they always run: with or without
+//! mockspace. A generated hook runs mockspace validation first and then the
+//! repository's `.git/hooks/<name>`, with the same arguments and the same
+//! stdin, and never past a refusal; the durable gate does the same on the
+//! passes it takes itself. Activation is explicit and reversible
+//! (`cargo mock activate` / `deactivate` drive `core.hooksPath`);
+//! deactivated, git falls back to the repository's hooks as if mockspace was
+//! never there.
 //!
 //! # Custom lints
 //!
