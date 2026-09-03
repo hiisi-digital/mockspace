@@ -22,6 +22,8 @@ pub(crate) const BUILTIN_SKILL_DIRS: &[&str] = &[
     "sketching",
     "benchmarking",
     "design-talk",
+    "canon-tiers",
+    "reference-syntax",
 ];
 
 pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> BuiltinTemplates {
@@ -172,7 +174,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             .iter()
             .any(|p| p.contains("/canon/") || p.trim_end_matches('/').ends_with("/canon"));
     let canon_location = if declared_canon.is_empty() {
-        format!("`{mock_rel}/canon/`, a directory reserved for it alone")
+        format!("`{mock_rel}/registry/`, this project having named no narrower `canon_paths`")
     } else {
         let named = declared_canon
             .iter()
@@ -181,13 +183,29 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             .join(", ");
         format!("{named}, which this project declares as its canon")
     };
+    // **The reading surface, named only where the project has one.**
+    //
+    // A canon is rows; a document that renders those rows is how it is read
+    // and printed. Where the project keeps no such directory, the paragraph
+    // describing one is a paragraph about a thing it does not have, which is
+    // the same defect `canon_location` above exists to avoid.
+    let canon_view = if canon_is_the_reserved_directory {
+        format!(
+            "**`{mock_rel}/canon/` is the reading surface, never the authority.** It holds \
+             `.md.tmpl` documents that render those rows for reading and for print. Editing one \
+             changes nothing and is overwritten when documents generate; changing what the canon \
+             says means changing rows.\n\n"
+        )
+    } else {
+        String::new()
+    };
 
     let mut rules = vec![
         BuiltinRule {
             name: "reference-syntax".to_string(),
             apply_to: vec!["**/*.md".to_string(), "**/*.md.tmpl".to_string(), "**/*.toml".to_string()],
             body: format!(
-                "## Reference syntax\n\n                 Write a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry\n                 field declared to hold one. It resolves when documents are generated, and it is checked:\n                 a reference that points nowhere is reported rather than rendered as something that looks\n                 fine.\n\n                 The braces are required. They make a reference something you state rather than something\n                 the renderer guesses from a pattern, so prose about code is never rewritten by accident.\n                 References inside code fences are left alone.\n\n                 ### Roots in this project\n\n{roots_doc}\n                 A citation is `root::path::anchor`. The anchor is a heading (`#the-four-lanes`) or a line\n                 number. **Prefer the heading.** A line number fails silently: an edit above it shifts the\n                 target, the citation still resolves, and it now points at different content. A heading\n                 fails loudly when renamed, which is a report rather than a lie. Line numbers are honest\n                 only in a root declared frozen.\n\n                 A path may have any depth and the extension may be omitted, so `mock::DESIGN::12` finds\n                 `DESIGN.md.tmpl` without you tracking which form exists where. Two matches is an error\n                 rather than a guess.\n\n                 ### Registry namespaces in this project\n\n{ns_doc}\n                 A namespace is addressed by its own name: `law::keys`, `vocab::xpbd`. There is no\n                 prefix, because slot zero is either a declared root or a declared namespace and the\n                 two cannot collide. The older `reg::law::keys` still resolves.\n\n                 `{{{{ <ns> }}}}` renders that namespace's whole table inline. `{{{{ <ns>::<slug>::<field> }}}}`\n                 renders one field, which is how a document states a value once and every mention of it\n                 stays current instead of drifting into a copy.\n\n                 ### Fields that hold a row\n\n                 A field's declared `type` is either a builtin (`string`, `string[]`, `integer`,\n                 `boolean`, `ref`, `ref[]`) or **the name of a namespace**, and the second form makes\n                 the field hold references to rows in that namespace. `type = \"slot\"` holds one,\n                 `type = \"slot[]\"` holds several.\n\n                 The value is a bare slug, `\"display\"`, never `\"slot::display\"`: the type already says\n                 which namespace, and one thing written two ways is one thing that can disagree with\n                 itself. A slug naming no row is reported, so a relation cannot rot the way a\n                 hand-maintained list does. A type naming neither a builtin nor a namespace is reported\n                 too, rather than quietly becoming a string field that constrains nothing. So is a\n                 target declaring `value_field`, which renders a value rather than a link and so\n                 cannot carry a relation.\n\n                 Three functions answer questions about a thing rather than rendering it.\n                 `{{{{ pathof(x) }}}}` is where x is DECLARED, the file to open to change it: a crate's\n                 directory, a cited file, or the TOML a registry row sits in. `{{{{ sourcesof(x) }}}}` is\n                 what x RESTS ON, its provenance, plural because provenance is an array.\n                 `{{{{ refsto(x) }}}}` is what POINTS AT x, derived from the typed fields above rather\n                 than stored, so nothing has to be kept in step. It is the direction most questions are\n                 asked in, and an empty answer is the finding: nothing answers that row.\n\n                 A postfix chain narrows the result: `pathof(crates::store).dir()`. Four methods read a\n                 path (`dir`, `filename`, `stem`, `ext`) and three read a list (`first`, `last`,\n                 `count`), applied left to right. An unknown method is reported rather than ignored,\n                 because a method that silently does nothing reads as one that worked.\n\n                 Registry rows are identified by a snake_case slug, never a number. A number carries no\n                 meaning and so has to be managed: never reused, never renumbered, never reordered, since\n                 any of those silently repoints every reference to it.\n"
+                "## Reference syntax\n\nWrite a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry field declared to hold one. It resolves when documents are generated, and it is checked: a reference that points nowhere is reported rather than rendered as something that looks fine.\n\n**The braces are required.** They make a reference something you state rather than something the renderer guesses from a pattern, so prose about code is never rewritten by accident. References inside code fences are left alone.\n\n**A citation is `root::path::anchor`, and the anchor should be a heading rather than a line number.** A line number fails silently: an edit above it shifts the target, the citation still resolves, and it now points at different content. A heading fails loudly when renamed, which is a report rather than a lie.\n\n**`{{{{ <ns> }}}}` renders a namespace's whole table inline**, and `{{{{ <ns>::<slug>::<field> }}}}` renders one field, which is how a document states a value once and every mention of it stays current instead of drifting into a copy.\n\n**Rows are identified by a snake_case slug, never a number.** A number carries no meaning and so has to be managed: never reused, never renumbered, never reordered, since any of those silently repoints every reference to it.\n\n### Roots in this project\n\n{roots_doc}\n### Registry namespaces in this project\n\n{ns_doc}\nFires when writing a reference, a citation, or a registry field that holds one.\n\n**Use the `reference-syntax` skill** for fields that hold a row, the three functions that ask about a thing rather than render it, and the postfix chains that narrow a result.\n"
             ),
         },
         BuiltinRule {
@@ -253,24 +271,17 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     "### Design rounds\n",
                     "No design modification without a completed design round document in `design_rounds/`. Each round has \"Current state\" and \"Changes proposed\" sections. When the round supersedes a deprecated CL, the active CL must carry a `## Comparison to deprecated changelist` section (enforced by the `deprecation-comparison` lint).\n",
                     "\n",
-                    "### What the phase gate actually covers\n",
+                    "### What the phase gate covers\n",
                     "\n",
-                    "The gate protects two things and nothing else: per-crate documents under `crates/*/`, and Rust source. Knowing the boundary saves opening a round for work that never needed one.\n",
-                    "\n",
-                    "- **Root documents (`mock/*.md.tmpl`: DESIGN, PRINCIPLES, WORKFLOW, and any other) are NOT gated.** Edit them in any phase. They describe the workspace rather than a crate's contract, so they are not what a round exists to keep honest.\n",
-                    "- **`Cargo.toml` is NOT gated.** Manifests are wiring: dependency edges are what the layer numbering, the structure graph, and the document ordering all read, and a crate with no manifest contributes none. Only `*.rs` files trip the source gate.\n",
-                    "- **A `.rs` file that declares nothing is NOT gated.** A crate root carrying only module documentation and inner attributes is scaffolding, not source. It becomes source the moment it declares anything, and every commit is re-checked, so nothing lands behind a stub.\n",
-                    "- **Per-crate `*.md.tmpl` IS gated**, to the DOC phase. **`*.rs` with declarations IS gated**, to IMPL.\n",
-                    "\n",
-                    "### Validation pipeline\n",
-                    "1. `cargo check` -- all mock crates must compile\n",
-                    "2. Parse -- tree-sitter extracts pub items from lib.rs\n",
-                    "3. Lint -- architecture rules enforced\n",
-                    "4. Generate -- docs, graphs, agent rules from templates\n",
+                    "**Per-crate documents under `crates/*/` and Rust source that declares something. Nothing else.** Root documents, `Cargo.toml` and a `.rs` file carrying only module docs are not gated, so editing one needs no round.\n",
                     "\n",
                     "### Rules\n",
                     "- Every crate must have `src/lib.rs` and `README.md.tmpl`\n",
                     "- Dependencies in `Cargo.toml` must match the target architecture layers\n",
+                    "\n",
+                    "Fires when changing framework design, adding or modifying a type or a crate, or editing anything under `{mock_dir}/`.\n",
+                    "\n",
+                    "**Use the `mockup-workflow` skill** for what each gate boundary means and why, and for the validation pipeline each run walks.\n",
                 ),
                 &mock_rel, project_name, crate_prefix,
             ),
@@ -296,24 +307,19 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     "claim, it is a bench and it moves to `{mock_dir}/benches/` under the harness. A question with both ",
                     "halves splits: the feasibility half is a sketch, the measurement half is a bench.\n",
                     "\n",
-                    "Why the framework and not a hand-rolled timing loop: each variant compiles and loads as its own ",
-                    "cdylib, so no accidental LTO or inlining across variants can contaminate a comparison; the harness ",
-                    "surrounds the measured call with a shared realistic workload so numbers approximate real calling ",
-                    "context instead of an empty loop; warmups, cooldowns, and repeated runs are calibrated by design; ",
-                    "and every run emits the CSV + meta + findings artifact trail that makes the result reproducible, ",
-                    "auditable, and citable. A bare timing loop in a sketch or a one-off binary has none of that: its ",
-                    "numbers are unreproducible one-offs that cannot decide anything. Do not re-roll timing helpers, ",
-                    "bump providers, or stat collection inside a bench crate either: the framework is the reusable ",
-                    "surface, use it.\n",
+                    "**Do not re-roll the framework's own pieces inside a bench.** Timing helpers, bump ",
+                    "providers and stat collection come from `mockspace-bench-core`; a bench crate ",
+                    "hand-rolling them is reinventing the framework it sits next to.\n",
                     "\n",
-                    "**Invoke the skill before starting, not after.** The `sketching` skill governs feasibility work ",
-                    "and the `benchmarking` skill governs measurement, and each carries the conventions, the ",
-                    "deliverable format and the failure modes for its side. This is not optional and it is not a ",
-                    "reference to consult when stuck: the mistake both prevent is made in the first thirty seconds, ",
-                    "when a quick probe in a temp directory or a quick timing loop in a scratch file feels cheaper ",
-                    "than doing it properly. It is cheaper, and it produces a number or an answer that nobody can ",
-                    "re-run, that was very possibly measured against the wrong toolchain or optimised away entirely, ",
-                    "and that a decision then rests on.\n",
+                    "Fires before writing any timing loop, and before any claim that one thing is faster, ",
+                    "cheaper or smaller than another.\n",
+                    "\n",
+                    "**Invoke the skill before starting, not after**, because the mistake both prevent is ",
+                    "made in the first thirty seconds, when a quick probe in a temp directory or a quick ",
+                    "timing loop in a scratch file feels cheaper than doing it properly. **Use the ",
+                    "`sketching` skill** for feasibility work and **the `benchmarking` skill** for ",
+                    "measurement; each carries the conventions, the deliverable and the failure modes for ",
+                    "its side, and why the framework beats a hand-rolled loop.\n",
                 ),
                 &mock_rel, project_name, crate_prefix,
             ),
@@ -341,183 +347,62 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     "\n",
                     "Three tiers, and they govern each other in one direction only.\n",
                     "\n",
-                    "**Canon is the theory: the intent, the choices made, and the reasoning behind them, in ",
-                    "the abstract.** It governs what the design is and how the design converges. It is not a ",
-                    "spec sheet. It lives at {canon_location}. Canon scattered across research notes in ",
-                    "whatever shape each round left it is not canon; it is drift with a confident name.\n",
+                    "**Canon is the theory: the intent, the choices made, and the reasoning behind ",
+                    "them, in the abstract.** It is typed rows rather than prose, it governs what the ",
+                    "design is and how the design converges, and it lives at {canon_location}. Canon ",
+                    "scattered across research notes in whatever shape each round left it is not ",
+                    "canon; it is drift with a confident name.\n",
                     "\n",
-                    "**Design is the spec.** In this project that is `{mock_dir}/crates/**/*.md.tmpl` and its ",
-                    "siblings. A design says what a specific thing is, concretely enough that a competent ",
-                    "reader can implement it. This is where concrete snippets, concrete namings, and backticks ",
-                    "earn their place; they do not belong in the canon.\n",
+                    "{canon_view}",
+                    "**Design is the spec.** In this project that is `{mock_dir}/crates/**/*.md.tmpl` ",
+                    "and its siblings. A design says what a specific thing is, concretely enough that a ",
+                    "competent reader can implement it. This is where concrete snippets, concrete ",
+                    "namings and backticks earn their place; they do not belong in the canon. Design ",
+                    "rounds sit below the canon too, and reason from it rather than settling it.\n",
                     "\n",
-                    "**Code is last, and it is the tier that gets nuked.** Implementation is mechanical: it ",
-                    "writes down what the design says, and the design only says what the canon told it to.\n",
-                    "\n",
-                    "### The shape of mock/canon/\n",
-                    "\n",
-                    "`{mock_dir}/canon/` mirrors `{mock_dir}/design_rounds/`, with one deliberate difference.\n",
-                    "\n",
-                    "Anything flat in `{mock_dir}/canon/` is the canon, exactly as anything flat in ",
-                    "`{mock_dir}/design_rounds/` is the current round. `{mock_dir}/canon/archive/` is archived: ",
-                    "locked, frozen, stale, and deprecated, the same treatment an archived design round gets. ",
-                    "`{mock_dir}/canon/examples/` holds worked examples and demos linked from the canon; it is ",
-                    "live, not archived.\n",
-                    "\n",
-                    "A canon file is `.md`, not `.md.tmpl`. This is derived rather than decided: it follows ",
-                    "the same parallel as everything else in this section, `{mock_dir}/design_rounds/` files ",
-                    "are `.md`, and canon is internal design authority the way a round is, not a template ",
-                    "rendered into public docs. `.md.tmpl` exists for the rendered kind. Treat this as the ",
-                    "derived answer, not the settled one, until stated otherwise.\n",
-                    "\n",
-                    "The difference from `{mock_dir}/design_rounds/` is deliberate, and it inverts a rule a ",
-                    "reader already knows from that directory: there, any subdirectory means archived. In ",
-                    "`{mock_dir}/canon/`, only `archive/` does, because canon needs other formalised ",
-                    "subdirectories and `examples/` is the first; more may follow.\n",
-                    "\n",
-                    "An archived canon may be referenced, from canon itself, from design talks, and from ",
-                    "research, as history. It may never be depended on. A design that names something under ",
-                    "`archive/` is naming a dead authority, which is exactly what one of the two rules below ",
-                    "forbids.\n",
-                    "\n",
-                    "### The reproduction property\n",
-                    "\n",
-                    "Nuke the code and lose nothing: the design says what the code was, so the code is a ",
-                    "mechanical transcription and nothing more. Nuke the design and lose little: an equivalent ",
-                    "design can be written from the canon, and it may differ from the original and still be ",
-                    "valid. The canon is the only tier that is not reproducible from anything above it.\n",
-                    "\n",
-                    "Two acceptance tests follow from this. A design is good enough when two implementers, ",
-                    "reading it independently, produce working implementations of the same thing. A canon is ",
-                    "good enough when two designers, reading it independently, produce designs that yield ",
-                    "equivalent working units.\n",
+                    "**Code is last, and it is the tier that gets nuked.** Implementation is ",
+                    "mechanical: it writes down what the design says, and the design only says what ",
+                    "the canon told it to.\n",
                     "\n",
                     "### The mutation order\n",
                     "\n",
-                    "This is the enforceable part.\n",
+                    "To change code, nothing is nuked first, but **nothing may appear in code that the ",
+                    "design does not say**: a change introducing something the design is silent on is ",
+                    "an undeclared design change wearing the leaf tier's freedom. To change a design, ",
+                    "the code under it is nuked first, not migrated. To change a canon row, every ",
+                    "design that declares it is nuked first, and the code beneath those. Adding a row ",
+                    "nukes nothing, and neither does a purely additive edit: the trigger is ",
+                    "invalidation, not editing.\n",
                     "\n",
-                    "To change the code: nothing has to be nuked first, because code is the leaf and nothing ",
-                    "depends on it. That is the only sense in which it is free, and \"just change it\" ",
-                    "overstates it into no constraints at all. Two still bind it, and neither belongs to the ",
-                    "mutation order. The mockspace round ceremony applies in full: topic, doc changelist, ",
-                    "lock, source changelist, lock, close; the phase gates enforce it. And nothing may appear ",
-                    "in code that is not in the design; design first, code follows. A change that introduces ",
-                    "something the design does not say is not a code change at all. **It is an undeclared ",
-                    "design change wearing the leaf tier's freedom**, while actually mutating the tier above, ",
-                    "and it is the most common failure here precisely because it does not feel like editing a ",
-                    "design at the moment it happens.\n",
-                    "\n",
-                    "The leaf is unconstrained downward and fully constrained upward. That generalises: each ",
-                    "tier is unconstrained toward what depends on it and constrained by what it depends on, ",
-                    "the same statement the mutation order makes about the tiers above it, from the other ",
-                    "direction.\n",
-                    "\n",
-                    "To change a design: the code under that design is nuked first, not migrated, not adapted, ",
-                    "then rewritten from the changed design.\n",
-                    "\n",
-                    "To change a canon file: every design that declares that file is nuked first, and ",
-                    "therefore the code beneath those designs. **Not every design in the project. Only the ",
-                    "declared dependents.** The declaration each design carries (see the two rules below) is ",
-                    "what makes that scoping possible; without it, the only honest blast radius would be ",
-                    "everything.\n",
-                    "\n",
-                    "Two consequences follow from the same reasoning, and neither is an exception carved into ",
-                    "the rule; both fall out of it. Adding a new canon file nukes nothing, since nothing ",
-                    "declares it yet. Appending to an existing canon file also nukes nothing: the trigger is ",
-                    "invalidation, not editing, and a purely additive change leaves every prior sentence ",
-                    "standing, so a design already derived from that file is still derivable from it as it now ",
-                    "reads. A modification or a deletion invalidates, and that file's declared dependents go.\n",
-                    "\n",
-                    "File granularity is the right unit because one file is one topic: one aspect of the ",
-                    "canon, the way a chapter works in academic literature. A file carrying two unrelated ",
-                    "topics drags an unrelated design into every nuke it never actually depended on. The fix ",
-                    "for that is splitting the file, not refining the granularity below it.\n",
-                    "\n",
-                    "Canon is never deleted, only demoted. A superseded canon stays referenceable so the next ",
-                    "canon can be built with the old one in view. That is the one exception to nuking, because ",
-                    "the canon is the only tier carrying reasoning rather than consequence. It demotes the same ",
-                    "way a design round closes: moved as a whole into `{mock_dir}/canon/archive/<timestamp>/`, a ",
-                    "directory rather than a filename suffix, exactly parallel to ",
-                    "`{mock_dir}/design_rounds/<timestamp>/`. That keeps `archive/` the single marker of ",
-                    "archived status and lets a whole canon generation move as one unit, the way a round does, ",
-                    "so the superseded canon is dated, kept, and marked stale rather than overwritten in ",
-                    "place.\n",
-                    "\n",
-                    "A lower tier that survives a change above it becomes a claim about something that no ",
-                    "longer exists. It still gets read, and it still gets defended, because it is concrete and ",
-                    "detailed and looks authoritative next to the abstract statement that replaced it.\n",
-                    "\n",
-                    "### What this means for canon work\n",
-                    "\n",
-                    "Declaring a canon file's dependents stale is not a quality complaint. It is the ",
-                    "precondition the mutation order requires: while a design that declares a canon file is ",
-                    "live, that file is frozen, and nuking its declared dependents is what unfreezes it. An ",
-                    "agent that consults a live dependent design or its shipped source while editing the canon ",
-                    "file it declares is reattaching a tier that had to be detached for the edit to be ",
-                    "permitted, and every observation it brings back is a fact about a document already ",
-                    "declared dead.\n",
-                    "\n",
-                    "### Telling which tier a document is\n",
-                    "\n",
-                    "Ask what it costs to be wrong. If being wrong means the code is wrong, it is a design. If ",
-                    "being wrong means every design built on it is wrong, it is canon. If it can be regenerated ",
-                    "from the tier above without loss, it is not that tier.\n",
-                    "\n",
-                    "Ask what it survives. A canon survives a total rewrite of every implementation, in a ",
-                    "different style, a different language, a different decade. A design does not, and is not ",
-                    "meant to.\n",
+                    "**Canon is never deleted, only demoted**, and a superseded row stays referenceable ",
+                    "through its provenance, so the next canon is built with the old one in view.\n",
                     "\n",
                     "### Two rules that hold now\n",
                     "\n",
-                    "Two requirements are rules, not aspiration, whether or not a lint enforces them yet.\n",
+                    "**Every design document must declare the canon it relates to.** A design that ",
+                    "serves ",
+                    "no canon has no reason to exist: if a piece of the spec answers to nothing in the ",
+                    "canon, that is a defect in the design, not a missing footnote.\n",
                     "\n",
-                    "**Every design document must declare the canon it relates to.** A design that serves no ",
-                    "canon has no reason to exist: if a piece of the spec answers to nothing in the canon, ",
-                    "that is a defect in the design itself, not a missing footnote. A design carrying no such ",
-                    "declaration has not merely omitted paperwork; it has not justified itself.\n",
+                    "**Naming a canon that does not exist is a hard failure**, and so is depending on ",
+                    "one that has been superseded. Both are meant to fail every gate a document passes ",
+                    "through: commit, push and build.\n",
                     "\n",
-                    "**Naming a canon that does not exist is a hard failure, and so is naming anything under ",
-                    "`{mock_dir}/canon/archive/`.** The first is a design pointing at nothing. The second is a ",
-                    "design depending on a dead, deprecated authority, exactly what the archive exists to keep ",
-                    "from happening. Both are meant to fail every gate a document passes through: commit, ",
-                    "push, and build.\n",
+                    "Fires when writing or changing canon, a design, or the code beneath them.\n",
                     "\n",
-                    "### What canon files owe each other is not formalised yet\n",
-                    "\n",
-                    "Canon files are expected, eventually, to declare relationships to one another, with ",
-                    "invalidation cascading through those relations the way nuking a canon file already ",
-                    "cascades to the designs that declare it. That is anticipated and **not specified**. It ",
-                    "stays unspecified on purpose: how it should work in practice is not yet known, and the ",
-                    "plan is to dogfood the three-tier shape first, see what actually happens across real ",
-                    "canon work, and formalise the relation and cascade mechanism from that experience rather ",
-                    "than from guesswork now. Do not invent a relation or cascade mechanism ahead of that. And ",
-                    "do not read its absence as meaning canon files are independent of one another; absence ",
-                    "here means undecided, not decided-independent.\n",
-                    "\n",
-                    "### No tooling enforces any of this yet\n",
-                    "\n",
-                    "`{mock_dir}/canon/` is reserved so every rule above has an address to hold itself ",
-                    "against, not because any of them are mechanically enforced today. Three things remain ",
-                    "unbuilt: the mutation-order guard (refusing an edit to a canon file outside `archive/` ",
-                    "while any design that declares it remains under `{mock_dir}/crates/`), the ",
-                    "design-declares-canon rule, and the failure on naming a missing or archived canon. ",
-                    "**None of these has a lint, phase gate, or hook behind it yet.** mockspace's lint gate is ",
-                    "expected to eventually carry the design-facing checks; it does not carry them today, and ",
-                    "nothing currently stops any of the three violations. Every rule in this document binds on ",
-                    "how canon and designs are written regardless, because that is what the rule says, not ",
-                    "because something currently catches a violation of it.\n",
+                    "**Use the `canon-tiers` skill** for where the canon lives and why, the mutation ",
+                    "order at length, telling which tier something is, and what is built as against ",
+                    "what is intended.\n",
                 ),
                     &mock_rel, project_name, crate_prefix,
                 )
-                .replace("{canon_location}", &canon_location);
-                if canon_is_the_reserved_directory {
-                    body
-                } else {
-                    drop_directory_convention(body)
-                }
+                .replace("{canon_location}", &canon_location)
+                .replace("{canon_view}", &canon_view);
+                body
             },
         },
-        BuiltinRule {
+    ];
+    rules.push(BuiltinRule {
             name: "design-round-consumes-its-inheritance".to_string(),
             apply_to: vec![format!("{mock_rel}/design_rounds/**")],
             body: substitute_builtin_vars(
@@ -537,47 +422,27 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     "not close the round leaving it unmentioned. If it genuinely belongs to later work it is re-filed ",
                     "as a fresh flat topic after this round closes, so the next round inherits it the same way.\n",
                     "\n",
-                    "### Three ways a filing disappears, all observed\n",
+                    "**Before opening a changelist, check every ref** for flat topics and archived round ",
+                    "directories this branch cannot see, and pull in what it finds. Do this while still in ",
+                    "TOPIC: consuming a topic into a round whose changelist is already written adds work the ",
+                    "changelist does not cover, which is the failure this prevents rather than a way around ",
+                    "it.\n",
                     "\n",
-                    "**A topic on a branch that never merged.** The next round branches from trunk, cannot see it, and ",
-                    "reports the question as still open because the files say so. Starting a round by branching fresh ",
-                    "from trunk drops every filing that has not landed there.\n",
+                    "**A topic file is a transcript and accretes.** One file per subject, added to as the ",
+                    "round returns to it, and the freeze on a committed topic is against rewriting rather ",
+                    "than against appending. Never edit or delete what is already recorded, because that is ",
+                    "the audit trail.\n",
                     "\n",
-                    "**A topic swept into somebody else's archive.** `close` sweeps every loose flat file into the one ",
-                    "subdirectory it is building, regardless of which round the file belonged to. A topic filed while ",
-                    "another round is in flight is archived by that round's close, under that round's name.\n",
+                    "Fires while a design round is open, and before opening a changelist in one.\n",
                     "\n",
-                    "**An archive missing from a branch.** A closed round's directory is finished history and belongs ",
-                    "on every branch. When it exists only on a branch that never merged, the entire paper trail for ",
-                    "that design conversation is absent from trunk, and nothing reports it.\n",
-                    "\n",
-                    "### Before opening a changelist\n",
-                    "\n",
-                    "Check every ref for flat topics and archived round directories this branch cannot see, and pull ",
-                    "in what it finds. Do this while still in TOPIC: consuming a topic into a round whose changelist is ",
-                    "already written adds work the changelist does not cover, which is the failure this prevents rather ",
-                    "than a way around it. If the round has moved past TOPIC, deprecate the changelist and return to ",
-                    "TOPIC first.\n",
-                    "\n",
-                    "### A topic file is a transcript, and accretes\n",
-                    "\n",
-                    "One file per subject, added to as the round returns to it. A topic that settles in three ",
-                    "lines does not earn a file: it is appended to the file for the subject it belongs to, under ",
-                    "a new heading. Start a new file when the SUBJECT changes, not when a question is answered.\n",
-                    "\n",
-                    "Size is the check. Under roughly 300 words a topic file is almost certainly a fragment of ",
-                    "another one, and most of what is in it will be heading and metadata rather than content; find ",
-                    "the file it belongs to and append there. Over roughly 2000 words it is carrying more than one ",
-                    "subject and wants splitting along the seam.\n",
-                    "\n",
-                    "The freeze on a committed topic is against **rewriting**, never against appending. Never edit ",
-                    "or delete what is already recorded, because that is the audit trail. Adding a later section is ",
-                    "how a transcript works and is expected.\n",
+                    "**Use the `design-round` skill** for the three ways a filing disappears, and for how ",
+                    "long a topic file should be before it wants splitting or appending elsewhere.\n",
                 ),
                 &mock_rel, project_name, crate_prefix,
             ),
-        },
-        BuiltinRule {
+    });
+
+    rules.push(BuiltinRule {
             name: "readmes".to_string(),
             apply_to: vec![
                 "**/README.md".to_string(),
@@ -586,8 +451,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 format!("{mock_rel}/crates/**/*.md.tmpl"),
             ],
             body: "## Per-crate documentation templates\nREADME.md.tmpl files are SHORT (3-10 lines). They contain the crate's purpose, what it depends on, and what depends on it. They are inserted into the generated DESIGN.md via {{crate_summaries}}. Do not put detailed design information here -- that goes in DESIGN.md.tmpl or DEEPDIVE_*.md.tmpl.".to_string(),
-        },
-    ];
+    });
 
     // On by default, from `mock/agent/config.toml`. A generated snapshot of
     // `mock tools`, with the live command named as the thing to trust once
@@ -829,6 +693,37 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             "  no separate \"implementation plan\" step.\n",
             "- This is not a rubber stamp. The user makes the design decisions. You\n",
             "  research, present options, and record.\n",
+            "\n",
+            "## Three ways a filing disappears, all observed\n",
+            "\n",
+            "**A topic on a branch that never merged.** The next round branches from trunk, ",
+            "cannot see it, and reports the question as still open because the files say so. ",
+            "Starting a round by branching fresh from trunk drops every filing that has not landed ",
+            "there.\n",
+            "\n",
+            "**A topic swept into somebody else's archive.** `close` sweeps every loose flat file ",
+            "into the one subdirectory it is building, regardless of which round the file belonged ",
+            "to. A topic filed while another round is in flight is archived by that round's close, ",
+            "under that round's name.\n",
+            "\n",
+            "**An archive missing from a branch.** A closed round's directory is finished history ",
+            "and belongs on every branch. When it exists only on a branch that never merged, the ",
+            "entire paper trail for that design conversation is absent from trunk, and nothing ",
+            "reports it.\n",
+            "\n",
+            "If the round has moved past TOPIC when a filing turns up, deprecate the changelist and ",
+            "return to TOPIC rather than folding the work in behind it.\n",
+            "\n",
+            "## How long a topic file should be\n",
+            "\n",
+            "Size is the check. Under roughly 300 words a topic file is almost certainly a fragment ",
+            "of another one, and most of what is in it will be heading and metadata rather than ",
+            "content; find the file it belongs to and append there. Over roughly 2000 words it is ",
+            "carrying more than one subject and wants splitting along the seam.\n",
+            "\n",
+            "A topic that settles in three lines does not earn a file: it is appended to the file ",
+            "for the subject it belongs to, under a new heading. **Start a new file when the subject ",
+            "changes, not when a question is answered.**\n",
         ),
         &mock_rel,
         project_name,
@@ -990,6 +885,32 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             "```\n",
             "\n",
             "If you see this header, do not edit the file.\n",
+            "\n",
+            "## What the phase gate covers, and what it does not\n",
+            "\n",
+            "The gate protects two things and nothing else: per-crate documents under ",
+            "`crates/*/`, and Rust source. Knowing the boundary saves opening a round for work ",
+            "that never needed one.\n",
+            "\n",
+            "- **Root documents (`{mock_dir}/*.md.tmpl`: DESIGN, PRINCIPLES, WORKFLOW, and any ",
+            "other) are NOT gated.** Edit them in any phase. They describe the workspace rather ",
+            "than a crate's contract, so they are not what a round exists to keep honest.\n",
+            "- **`Cargo.toml` is NOT gated.** Manifests are wiring: dependency edges are what the ",
+            "layer numbering, the structure graph and the document ordering all read, and a crate ",
+            "with no manifest contributes none. Only `*.rs` files trip the source gate.\n",
+            "- **A `.rs` file that declares nothing is NOT gated.** A crate root carrying only ",
+            "module documentation and inner attributes is scaffolding, not source. It becomes ",
+            "source the moment it declares anything, and every commit is re-checked, so nothing ",
+            "lands behind a stub.\n",
+            "- **Per-crate `*.md.tmpl` IS gated**, to the DOC phase. **`*.rs` with declarations IS ",
+            "gated**, to IMPL.\n",
+            "\n",
+            "## The validation pipeline each run walks\n",
+            "\n",
+            "1. `cargo check`, and every mock crate must compile\n",
+            "2. Parse, where tree-sitter extracts the pub items from each `lib.rs`\n",
+            "3. Lint, where the architecture rules are enforced\n",
+            "4. Generate: docs, graphs and agent rules, from the templates\n",
         ),
         &mock_rel,
         project_name,
@@ -1096,6 +1017,40 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             body: mockup_workflow_body,
             files: vec![],
         },
+        // The reasoning under the `canon-design-code-chain` rule. The rule
+        // carries the three tiers, the mutation order and the two standing
+        // requirements, which is what a session has to have in front of it; the
+        // why, and where the canon actually lives, is fetched when somebody is
+        // working on canon rather than carried by everybody who is not.
+        BuiltinSkill {
+            dir_name: "canon-tiers".to_string(),
+            skill_name: "canon-tiers".to_string(),
+            skill_description: "Use when writing, changing or citing canon, a design, or the code beneath them, and when deciding which of the three a document is. Covers where the canon lives (typed registry rows, with the canon documents as a rendered view), what supersession means, the mutation order at length, and which parts are built as against intended.".to_string(),
+            body: substitute_builtin_vars(
+                include_str!("skills/canon-tiers/SKILL.md"),
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            )
+            .replace("{canon_location}", &canon_location),
+            files: vec![],
+        },
+        // The half of the reference syntax a session needs only once it is
+        // writing one. The rule carries the syntax, the heading-over-line-number
+        // preference and this project's live roots and namespaces; the field
+        // types, the three functions and the postfix chains are fetched.
+        BuiltinSkill {
+            dir_name: "reference-syntax".to_string(),
+            skill_name: "reference-syntax".to_string(),
+            skill_description: "Use when writing a reference, a citation, or a registry field that holds a row, and when a reference is reported as pointing nowhere. Covers the field types that hold rows, pathof / sourcesof / refsto and what each answers, the postfix chains that narrow a result, and how a citation is addressed.".to_string(),
+            body: substitute_builtin_vars(
+                include_str!("skills/reference-syntax/SKILL.md"),
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            ),
+            files: vec![],
+        },
         BuiltinSkill {
             dir_name: "real-code-guard".to_string(),
             skill_name: "real-code-guard".to_string(),
@@ -1177,41 +1132,6 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
 // Main entry point
 // ---------------------------------------------------------------------------
 
-/// Everything from the directory-convention heading up to the next `##`.
-///
-/// The tier argument, canon governs design governs code and the mutation order
-/// that follows from it, is true of every project. **The shape of the reserved
-/// directory is not**: a project declaring its canon somewhere else, a typed
-/// registry say, has no `archive/`, no `examples/`, and no `.md` files to have
-/// an opinion about. Shipping that section to it describes a tree it does not
-/// have, which is what this rule did to one project for as long as that project
-/// has existed.
-fn drop_directory_convention(body: String) -> String {
-    let Some(start) = body.find("### The shape of ") else {
-        return body;
-    };
-    let rest = &body[start ..];
-    // **The next heading at any level, not the next top-level one.**
-    //
-    // The first version looked only for `\n## `. This rule's body has exactly
-    // one `##`, its title, and every other section is `###`, so the search
-    // always missed and the `None` arm took the rest of the document with it:
-    // nine sections became one, and the mutation order, which is the most
-    // load-bearing part of the rule, went with them. The PR that introduced
-    // this said in as many words that the mutation order stays.
-    //
-    // NOTE: skip one byte rather than three before searching, so a heading
-    // immediately after the cut point is still found.
-    let end = ["\n## ", "\n### "]
-        .iter()
-        .filter_map(|h| rest[1 ..].find(h).map(|i| start + 1 + i + 1))
-        .min();
-    match end {
-        Some(e) => format!("{}{}", &body[.. start], &body[e ..]),
-        None => body[.. start].to_string(),
-    }
-}
-
 #[cfg(test)]
 mod canon_location_is_derived {
     //! The canon rule reads where the canon is, rather than asserting it.
@@ -1224,6 +1144,15 @@ mod canon_location_is_derived {
     use super::*;
 
     fn rule_for(canon_paths: Vec<String>) -> BuiltinRule {
+        let cfg = cfg_for(canon_paths);
+        generate_builtin_templates(&cfg, &LintPack::default())
+            .rules
+            .into_iter()
+            .find(|r| r.name == "canon-design-code-chain")
+            .expect("the rule is always minted")
+    }
+
+    fn cfg_for(canon_paths: Vec<String>) -> crate::config::Config {
         // Through a real config file rather than a hand-built struct, so the
         // test exercises the same `canon_paths` parse a project does.
         let tmp = tempfile::tempdir().unwrap();
@@ -1251,11 +1180,7 @@ mod canon_location_is_derived {
             cfg.canon_paths, canon_paths,
             "control: the config parsed what we wrote"
         );
-        generate_builtin_templates(&cfg, &LintPack::default())
-            .rules
-            .into_iter()
-            .find(|r| r.name == "canon-design-code-chain")
-            .expect("the rule is always minted")
+        cfg
     }
 
     #[test]
@@ -1272,12 +1197,12 @@ mod canon_location_is_derived {
     #[test]
     fn and_is_not_told_about_a_directory_it_does_not_have() {
         // the arm that matters. the tier argument is universal and stays; the
-        // reserved-directory convention describes a tree this project has none
-        // of, and shipping it is the defect.
+        // reading surface describes a tree this project has none of, and
+        // shipping it is the defect.
         let r = rule_for(vec!["mock/registry/*.toml".into()]);
         assert!(
-            !r.body.contains("### The shape of"),
-            "the directory convention must not ship: {}",
+            !r.body.contains("is the reading surface"),
+            "the reading surface must not ship to a project without one: {}",
             r.body
         );
         assert!(
@@ -1297,11 +1222,10 @@ mod canon_location_is_derived {
         for kept in [
             "The canon, design, code chain",
             "Code is last",
-            "### The reproduction property",
+            "typed rows",
             "### The mutation order",
-            "### Telling which tier a document is",
             "### Two rules that hold now",
-            "### No tooling enforces any of this yet",
+            "canon-tiers",
         ] {
             assert!(
                 r.body.contains(kept),
@@ -1322,16 +1246,11 @@ mod canon_location_is_derived {
     }
 
     #[test]
-    fn declaring_nothing_keeps_the_reserved_directory_convention() {
+    fn declaring_nothing_keeps_the_reading_surface() {
         // the control. without it both arms above pass on a rule that simply
         // never mentions a canon directory at all.
         let r = rule_for(Vec::new());
-        assert!(r.body.contains("### The shape of"), "{}", r.body);
-        assert!(
-            r.body.contains("a directory reserved for it alone"),
-            "{}",
-            r.body
-        );
+        assert!(r.body.contains("is the reading surface"), "{}", r.body);
         assert!(
             r.apply_to.iter().any(|p| p.ends_with("/canon/**")),
             "{:?}",
@@ -1342,8 +1261,75 @@ mod canon_location_is_derived {
     #[test]
     fn a_project_whose_canon_is_that_directory_keeps_it_too() {
         // declaring the conventional location explicitly must not lose the
-        // convention, else the check is on emptiness rather than on location.
+        // reading surface, else the check is on emptiness rather than on
+        // location.
         let r = rule_for(vec!["mock/canon/**".into()]);
-        assert!(r.body.contains("### The shape of"), "{}", r.body);
+        assert!(r.body.contains("is the reading surface"), "{}", r.body);
+    }
+
+    /// The canon is rows, and the documents beside them are a view.
+    ///
+    /// The rule said the opposite for as long as it existed: it named a
+    /// directory of prose as the canon and said a canon file is `.md` rather
+    /// than `.md.tmpl`. Both are pinned here because the old wording is what an
+    /// agent will reach for from memory.
+    #[test]
+    fn the_canon_is_rows_and_the_documents_are_a_view() {
+        let r = rule_for(Vec::new());
+        assert!(
+            r.body.contains("typed rows"),
+            "the canon is rows: {}",
+            r.body
+        );
+        assert!(
+            r.body.contains("never the authority"),
+            "and the documents beside them are not: {}",
+            r.body
+        );
+        assert!(
+            !r.body.contains("A canon file is `.md`, not `.md.tmpl`"),
+            "the old claim must not come back: {}",
+            r.body
+        );
+    }
+
+    /// What the card drops, the skill carries.
+    ///
+    /// A split that loses a section is worse than no split, and nothing else
+    /// notices: the card reads complete either way.
+    #[test]
+    fn what_the_card_drops_the_skill_carries() {
+        let cfg = cfg_for(Vec::new());
+        let t = generate_builtin_templates(&cfg, &LintPack::default());
+        let skill = t
+            .skills
+            .iter()
+            .find(|s| s.dir_name == "canon-tiers")
+            .expect("the skill ships beside the rule");
+        for moved in [
+            "The reproduction property",
+            "The mutation order, at length",
+            "Telling which tier something is",
+            "What is built and what is not",
+            "Where a superseded canon goes",
+        ] {
+            assert!(
+                skill.body.contains(moved),
+                "`{moved}` left the card and must be in the skill: {}",
+                skill.body
+            );
+        }
+        // The token substitution reaches the skill too. Without this the skill
+        // ships `{mock_dir}` to every reader and nothing else reports it.
+        assert!(
+            !skill.body.contains("{mock_dir}"),
+            "the skill's tokens are substituted: {}",
+            skill.body
+        );
+        assert!(
+            !skill.body.contains("{canon_location}"),
+            "including the canon location: {}",
+            skill.body
+        );
     }
 }
