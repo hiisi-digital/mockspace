@@ -258,16 +258,20 @@ fn agent_gate_hook_self_heals_then_blocks() {
 
 #[test]
 fn canon_design_code_chain_is_a_generated_builtin() {
-    // A project that HAS a canon, which is what the rest of this test is about.
-    // Built from an empty directory it was a project declaring none, and the
-    // rule then told it its canon lived at a path it does not have.
+    // A project that HAS a canon, which is what the rest of this test is about,
+    // and that keeps it in the reserved directory, which is what the
+    // reading-surface arms below are about.
+    //
+    // `canon_paths` is what says so. A namespace alone does not: this fixture
+    // carried one and no `canon_paths` for a round, and the rule read that as a
+    // declaration and sent the project to two directories it had never named.
     let tmp = tempfile::tempdir().expect("tempdir");
     let mock = tmp.path().join("mock");
     std::fs::create_dir_all(&mock).expect("mock dir");
     std::fs::write(
         mock.join("mockspace.toml"),
-        "project_name = \"probe\"\n\n[[registry.namespace]]\nkey = \"ruling\"\ndescription = \
-         \"a thing op has stated\"\n",
+        "project_name = \"probe\"\ncanon_paths = [\"mock/canon/**\"]\n\n[[registry.namespace]]\nkey \
+         = \"ruling\"\ndescription = \"a thing op has stated\"\n",
     )
     .expect("config");
     let cfg = Config::from_dir(&mock);

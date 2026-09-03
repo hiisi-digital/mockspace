@@ -5,13 +5,14 @@ what they are and the order they may change in. This is the reasoning under it:
 where the canon actually lives, what each tier owes, and how to tell which one a
 document belongs to.
 
-## The canon is the registry
+## The canon is typed rows
 
-The canon is typed rows in `{mock_dir}/registry/`, in namespaces the project
-declares. Not prose, not a directory of documents: rows with declared fields, a
-snake_case slug each, and provenance saying what every row rests on.
-`canon_paths` in `mockspace.toml` is where the project says which of that is its
-canon, and it is what `mock check` refuses a write to while a panel is open.
+The canon is typed rows in a registry, in namespaces the project declares. Not
+prose, not a directory of documents: rows with declared fields, a snake_case
+slug each, and provenance saying what every row rests on. `canon_paths` in
+`mockspace.toml` is where the project says which of that is its canon, and it is
+what `mock check` refuses a write to while a panel is open. **Here it is
+{canon_location}.**
 
 Rows rather than prose because a canon is read in every direction and prose only
 reads in one. A typed field can be pointed at from a design, counted, checked for
@@ -19,17 +20,7 @@ a slug that names nothing, and rendered into twenty documents that cannot drift
 from each other. A paragraph can do none of that, and the drift is silent every
 time.
 
-`{canon_view_dir}` is the reading surface, not the authority. It holds `.md.tmpl`
-documents that pull the canon in with `{{ <ns> }}` for a whole namespace or
-`{{ <ns>::<slug>::<field> }}` for one field, so the canon reads as a document
-and prints as a PDF without anybody transcribing it. **Those documents
-are a view.** Changing what the canon says means changing rows; editing the view
-changes nothing and is overwritten the next time documents generate.
-
-**So a canon file is `.md.tmpl` and it is generated from rows.** A `.md` sitting
-there holding canon prose that no row backs is the failure this shape exists to
-prevent: it reads exactly like canon and nothing points at it, nothing checks it,
-and nothing else renders from it.
+{canon_view_paragraphs}
 
 ## Where a superseded canon goes
 

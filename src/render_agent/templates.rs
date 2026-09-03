@@ -167,38 +167,32 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
     // two lines from a config that says so, and every agent session loaded
     // it.
     let declared_canon: Vec<String> = cfg.canon_paths.clone();
-    // Beyond the two builtins, because `with_builtins` prepends `vocab` and
-    // `reference` to every project, so `!is_empty()` is true everywhere and a
-    // predicate built on it decides nothing while reading as if it did.
-    let declares_registry = cfg
-        .registry_namespaces
+    // `canon_paths` decides, and nothing else does. A registry namespace is not
+    // a canon declaration: a project can hold rows nobody has called canon, and
+    // reading a namespace as one guesses at what the project deliberately did
+    // not say.
+    //
+    // An earlier version guessed exactly that, so a project with a namespace
+    // and no `canon_paths` was told its canon lives at `<mock>/registry/`,
+    // which it had never declared, in the same paragraph that says the
+    // declaration is the answer.
+    let canon_is_the_reserved_directory = declared_canon
         .iter()
-        .any(|n| n.key != "vocab" && n.key != "reference");
-    // The directory convention still applies where the project has a canon and
-    // has not said it lives somewhere narrower, which is the common case and
-    // the default this ships.
-    let canon_is_the_reserved_directory = (declared_canon.is_empty() && declares_registry)
-        || declared_canon
-            .iter()
-            .any(|p| p.contains("/canon/") || p.trim_end_matches('/').ends_with("/canon"));
-    // A project declaring neither `canon_paths` nor a registry namespace has
-    // not said where its canon is, and naming `<mock>/registry/` at it invents
-    // a second address after the first one was wrong. Measured across the
-    // consumers on hand: four declare no `canon_paths` and have neither
-    // directory, so four repositories' every agent session loaded an address
-    // that resolves to nothing.
+        .any(|p| p.contains("/canon/") || p.trim_end_matches('/').ends_with("/canon"));
+    // A project declaring no `canon_paths` has not said where its canon is, and
+    // naming a directory at it invents a second address after the first one was
+    // wrong. Which consumers those are is a question for the tree rather than
+    // for this comment: `rg -L canon_paths <repo>/mockspace.toml` answers it,
+    // and a figure written here would be true the day it was typed.
     //
     // The honest answer is to say so. An agent told the project has not
     // declared its canon goes and asks; one told it lives at a path that does
     // not exist goes and looks, finds nothing, and concludes the repository is
     // broken.
-    let canon_location = if declared_canon.is_empty() && !declares_registry {
-        "nowhere this project has declared: it names no `canon_paths` and no registry namespace, \
-         so there is no canon here to reason from and the question of where it should live is \
-         open"
+    let canon_location = if declared_canon.is_empty() {
+        "nowhere this project has declared: it names no `canon_paths`, so there is no canon here \
+         to reason from and the question of where it should live is open"
             .to_string()
-    } else if declared_canon.is_empty() {
-        format!("`{mock_rel}/registry/`, this project having named no narrower `canon_paths`")
     } else {
         let named = declared_canon
             .iter()
@@ -222,6 +216,27 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
         )
     } else {
         String::new()
+    };
+    // The skill's longer form of the same two paragraphs, gated on the same
+    // fact. Empty where the project keeps no such directory, so the skill says
+    // nothing about a reading surface rather than naming one that resolves to
+    // nothing.
+    let canon_view_paragraphs = if canon_is_the_reserved_directory {
+        format!(
+            "`{mock_rel}/canon/` is the reading surface, not the authority. It holds `.md.tmpl` \
+             documents that pull the canon in with `{{{{ <ns> }}}}` for a whole namespace or \
+             `{{{{ <ns>::<slug>::<field> }}}}` for one field, so the canon reads as a document and \
+             prints as a PDF without anybody transcribing it. **Those documents are a view.** \
+             Changing what the canon says means changing rows; editing the view changes nothing \
+             and is overwritten the next time documents generate.\n\n**So a canon file is \
+             `.md.tmpl` and it is generated from rows.** A `.md` sitting there holding canon prose \
+             that no row backs is the failure this shape exists to prevent: it reads exactly like \
+             canon and nothing points at it, nothing checks it, and nothing else renders from it."
+        )
+    } else {
+        "This project keeps no rendered canon directory, so there is no reading surface to read \
+         instead of the rows. The rows are the whole of it."
+            .to_string()
     };
 
     let mut rules = vec![
@@ -369,11 +384,12 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 format!("{mock_rel}/design_rounds/**"),
             ]
             .into_iter()
-            .chain(if declared_canon.is_empty() {
-                vec![format!("{mock_rel}/canon/**")]
-            } else {
-                declared_canon.clone()
-            })
+            // What the project declared, and nothing where it declared
+            // nothing. The reserved directory used to be chained in as a guess
+            // for the undeclared case, which attached the rule to a path the
+            // body in the same breath says the project has not named. The
+            // other five globs are structural and cover a project either way.
+            .chain(declared_canon.clone())
             .collect(),
             body:     {
                 let body = substitute_builtin_vars(
@@ -1067,17 +1083,14 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 project_name,
                 crate_prefix,
             )
-            // Two tokens and they are not interchangeable. `{canon_location}`
-            // is a sentence saying where the canon is; `{canon_view_dir}` is a
-            // path. Substituting the first into the second's slot produced
-            // "`<the declared canon>` is the reading surface, not the
-            // authority", which tells every consumer its own canon does not
-            // bind, twelve lines under the sentence saying it does.
+            // Both tokens are gated on the same fact the rule gates on, which
+            // is the whole of what the earlier round got wrong. It fixed the
+            // rule and left the skill substituting a directory unconditionally,
+            // so a project with no such directory read "this project has
+            // declared no canon" in one file and "`<mock>/canon/` is the
+            // reading surface" in the other, loaded beside it.
             .replace("{canon_location}", &canon_location)
-            // No backticks here: the template already wraps the token, and the
-            // nested pair is what broke the markdown when a backticked value
-            // was substituted into a backticked slot.
-            .replace("{canon_view_dir}", &format!("{mock_rel}/canon/")),
+            .replace("{canon_view_paragraphs}", &canon_view_paragraphs),
             files: vec![],
         },
         // The half of the reference syntax a session needs only once it is
@@ -1342,14 +1355,19 @@ mod canon_location_is_derived {
     }
 
     #[test]
-    fn declaring_nothing_keeps_the_reading_surface() {
-        // the control. without it both arms above pass on a rule that simply
-        // never mentions a canon directory at all.
+    fn declaring_nothing_names_no_reading_surface() {
+        // `canon_paths` decides and a registry namespace does not, so this
+        // fixture, which declares a namespace and no canon, is a project that
+        // has said nothing about where its canon lives.
+        //
+        // It read the other way for one round: the namespace was taken as a
+        // declaration, so the project was sent to `<mock>/canon/` and to
+        // `<mock>/registry/`, neither of which it had named.
         let r = rule_for(Vec::new());
-        assert!(r.body.contains("is the reading surface"), "{}", r.body);
+        assert!(!r.body.contains("is the reading surface"), "{}", r.body);
         assert!(
-            r.apply_to.iter().any(|p| p.ends_with("/canon/**")),
-            "{:?}",
+            !r.apply_to.iter().any(|p| p.ends_with("/canon/**")),
+            "and the rule does not attach itself to that directory either: {:?}",
             r.apply_to
         );
     }
@@ -1371,7 +1389,9 @@ mod canon_location_is_derived {
     /// agent will reach for from memory.
     #[test]
     fn the_canon_is_rows_and_the_documents_are_a_view() {
-        let r = rule_for(Vec::new());
+        // A project that does keep the reserved directory, since the second
+        // half of this is about what the documents there are.
+        let r = rule_for(vec!["mock/canon/**".into()]);
         assert!(
             r.body.contains("typed rows"),
             "the canon is rows: {}",
@@ -1395,7 +1415,7 @@ mod canon_location_is_derived {
     /// notices: the card reads complete either way.
     #[test]
     fn what_the_card_drops_the_skill_carries() {
-        let cfg = cfg_for(Vec::new());
+        let cfg = cfg_for(vec!["mock/canon/**".into()]);
         let t = generate_builtin_templates(&cfg, &LintPack::default());
         let skill = t
             .skills
@@ -1434,8 +1454,8 @@ mod canon_location_is_derived {
         // project declares as its canon"); the view slot wants a path, and the
         // one put in it was the sentence.
         assert!(
-            !skill.body.contains("{canon_view_dir}"),
-            "the view path is substituted too: {}",
+            !skill.body.contains("{canon_view_paragraphs}"),
+            "the view paragraphs are substituted too: {}",
             skill.body
         );
         assert!(
@@ -1449,6 +1469,77 @@ mod canon_location_is_derived {
                 .contains("which this project declares as its canon is the reading surface"),
             "the canon location must not land in the view slot: {}",
             skill.body
+        );
+    }
+
+    /// The skill's own reading surface, over all three config shapes.
+    ///
+    /// The arm above renders one shape, and one shape cannot catch this: the
+    /// skill substituted its directory unconditionally, so its section came out
+    /// byte-identical whatever the project declared, and an assertion made
+    /// against the one shape where that answer is right passes on all three.
+    ///
+    /// The rule is checked in the same arm because the defect was the two
+    /// disagreeing rather than either alone. A project reads both in one
+    /// session, and being told it has no canon in one file and sent to
+    /// `<mock>/canon/` in the other is worse than either sentence by itself.
+    #[test]
+    fn the_skill_and_the_rule_answer_the_same_way_on_every_shape() {
+        for (canon_paths, keeps_the_surface, shape) in [
+            (vec!["mock/registry/*.toml".to_string()], false, "a registry canon"),
+            (vec!["mock/canon/**".to_string()], true, "the reserved directory"),
+            (Vec::new(), false, "nothing declared"),
+        ] {
+            let cfg = cfg_for(canon_paths);
+            let t = generate_builtin_templates(&cfg, &LintPack::default());
+            let skill = &t
+                .skills
+                .iter()
+                .find(|s| s.dir_name == "canon-tiers")
+                .expect("the skill ships beside the rule")
+                .body;
+            let rule = &t
+                .rules
+                .iter()
+                .find(|r| r.name == "canon-design-code-chain")
+                .expect("the rule is always minted")
+                .body;
+            assert_eq!(
+                skill.contains("is the reading surface"),
+                keeps_the_surface,
+                "the skill is wrong about the reading surface on {shape}: {skill}"
+            );
+            assert_eq!(
+                rule.contains("is the reading surface"),
+                keeps_the_surface,
+                "the rule is wrong about the reading surface on {shape}: {rule}"
+            );
+        }
+    }
+
+    /// And the skill names the same place the rule does, rather than a second
+    /// address of its own.
+    ///
+    /// It carried `The canon is typed rows in <mock>/registry/` as a literal,
+    /// so a project whose canon is somewhere else was told two different
+    /// things by two files generated in the same run.
+    #[test]
+    fn the_skill_names_the_declared_canon_and_invents_no_second_address() {
+        let cfg = cfg_for(vec!["mock/rulings/*.toml".to_string()]);
+        let t = generate_builtin_templates(&cfg, &LintPack::default());
+        let skill = &t
+            .skills
+            .iter()
+            .find(|s| s.dir_name == "canon-tiers")
+            .expect("the skill ships beside the rule")
+            .body;
+        assert!(
+            skill.contains("mock/rulings/*.toml"),
+            "the skill names what the project declared: {skill}"
+        );
+        assert!(
+            !skill.contains("typed rows in `mock/registry/`"),
+            "and does not name a directory the project never mentioned: {skill}"
         );
     }
 }
