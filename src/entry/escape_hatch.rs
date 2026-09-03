@@ -50,7 +50,13 @@ fn staged_paths(repo_root: &Path, mock_rel: &str) -> Vec<String> {
     }
 }
 
-/// Staged Rust source files under the mock workspace's crates.
+/// Staged Rust source files anywhere under the mock workspace.
+///
+/// The whole tree rather than `crates/`, because `--doc-only` skips repo lints
+/// as well as crate lints and a repo lint reads the probes under `research/`,
+/// the lints under `lints/` and the tools under `tools/`. The pre-commit hook
+/// decides the flag from the same set, and the two answering differently is
+/// what refused a commit that had nothing wrong with it.
 #[must_use]
 pub fn staged_source_files(repo_root: &Path, mock_rel: &str) -> Vec<String> {
     staged_paths(repo_root, mock_rel)
