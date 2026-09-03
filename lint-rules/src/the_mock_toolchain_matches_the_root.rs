@@ -58,10 +58,13 @@ impl Lint for TheMockToolchainMatchesTheRoot {
 
     /// Not a source lint, so `--doc-only` does not skip it.
     ///
-    /// The default is `true` and it is wrong here: this reads two TOML files
-    /// and no Rust at all, so skipping it on a doc commit skips it on most
-    /// commits. The four sibling repo lints all declare `false` for the same
-    /// reason.
+    /// The default is `true` and it is wrong here: this reads two toolchain
+    /// files and no Rust at all, so skipping it on a doc commit skips it on
+    /// most commits. Four of the five sibling repo lints declare `false` for
+    /// the same reason; `canon_not_while_panel_open` declares nothing and
+    /// inherits `true`, so a lint about canon edits, which are doc edits, is
+    /// skipped in the mode a doc commit runs under. That one is not this
+    /// change's to fix and is worth its own look.
     fn source_only(&self) -> bool {
         false
     }
@@ -93,12 +96,15 @@ enum Value {
 /// `toml` parse-only is already in this workspace's lockfile through
 /// `mockspace-manifest`, so the pack's cdylib gains no new transitive tree.
 ///
-/// An unparseable file yields no keys. That is deliberate and it is the safe
-/// direction on both sides: an unreadable copy claims nothing, and an
-/// unreadable root demands nothing. A malformed toolchain file is rustup's
-/// complaint to make, and making it here too would report one fault twice.
+/// A file that is neither TOML nor rustup's legacy one-line form yields no
+/// keys. That is deliberate and it is the safe direction on both sides: an
+/// unreadable copy claims nothing, and an unreadable root demands nothing. A
+/// malformed toolchain file is rustup's complaint to make, and making it here
+/// too would report one fault twice.
 fn toolchain_table(text: &str) -> Option<Vec<(String, Value)>> {
-    let doc = text.parse::<toml::Table>().ok()?;
+    let Ok(doc) = text.parse::<toml::Table>() else {
+        return legacy_channel(text).map(|c| vec![("channel".to_string(), Value::Str(c))]);
+    };
     let Some(toml::Value::Table(t)) = doc.get("toolchain") else {
         return Some(Vec::new());
     };
@@ -107,6 +113,29 @@ fn toolchain_table(text: &str) -> Option<Vec<(String, Value)>> {
             .filter_map(|(k, v)| Some((k.clone(), read_value(v)?)))
             .collect(),
     )
+}
+
+/// The channel out of rustup's legacy one-line file, where that is what this is.
+///
+/// The extensionless `rust-toolchain` predates the TOML form and holds a bare
+/// channel name and nothing else, so it fails the parse. Treating that failure
+/// as "declares nothing" is silent in the bad direction: a root pinned in the
+/// legacy file with a floating copy under it would be excused, which is exactly
+/// what this lint exists to refuse.
+///
+/// One non-empty, non-comment line and no `=` in it is the whole test. Anything
+/// else is a malformed TOML file rather than a legacy one, and that is rustup's
+/// complaint to make.
+fn legacy_channel(text: &str) -> Option<String> {
+    let mut lines = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'));
+    let one = lines.next()?;
+    if lines.next().is_some() || one.contains('=') || one.starts_with('[') {
+        return None;
+    }
+    Some(one.to_string())
 }
 
 /// One value, or nothing for a type this does not compare.
@@ -334,8 +363,8 @@ mod tests {
 
     #[test]
     fn a_key_outside_the_toolchain_table_is_not_read() {
-        // The scan is a line scan, so the one thing it has to get right is where
-        // the table ends.
+        // Only `[toolchain]` is read, so a `channel` under another table is a
+        // different key and the two sides do not disagree over it.
         let root = "[toolchain]\nchannel = \"nightly-2026-05-28\"\n[other]\nchannel = \"beta\"\n";
         let copy = "[toolchain]\nchannel = \"nightly-2026-05-28\"\n[other]\nchannel = \"stable\"\n";
         assert_eq!(disagreements(root, copy), Vec::<String>::new());
@@ -453,6 +482,52 @@ mod tests {
         let copy = "[ toolchain ]\nchannel = \"nightly-2026-05-28\"\ncomponents = [\"rustfmt\", \
                     \"clippy\", \"rust-src\"]\n";
         assert_eq!(disagreements(ROOT, copy), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_legacy_root_still_demands_its_channel() {
+        // The silent one, and the reason `toolchain_file` may name the
+        // extensionless spelling at all. rustup's older form is a bare channel
+        // line, which is not TOML; reading the parse failure as "declares
+        // nothing" excuses a floating copy under a pinned root, which is what
+        // this lint exists to refuse.
+        let d = disagreements(
+            "nightly-2026-05-28\n",
+            "[toolchain]\nchannel = \"nightly\"\n",
+        );
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].contains("`channel` is `nightly` here"), "{}", d[0]);
+    }
+
+    #[test]
+    fn a_legacy_copy_is_read_as_the_channel_it_names() {
+        let d = disagreements(ROOT, "nightly-2026-05-28\n");
+        assert_eq!(
+            d.len(),
+            1,
+            "the channel agrees, the components are absent: {d:?}"
+        );
+        assert!(d[0].contains("`components`"), "{}", d[0]);
+    }
+
+    #[test]
+    fn a_legacy_file_with_a_comment_above_it_is_still_one_line() {
+        let d = disagreements(
+            "# the stack's pin\nnightly-2026-05-28\n",
+            "nightly-2026-05-28\n",
+        );
+        assert_eq!(d, Vec::<String>::new());
+    }
+
+    #[test]
+    fn two_bare_lines_are_not_a_legacy_file() {
+        // The control for the three above. Without it they are equally
+        // consistent with reading the first line of any unparseable file as a
+        // channel, which would invent a pin out of a malformed TOML file.
+        assert_eq!(
+            disagreements("nightly-2026-05-28\nsomething else\n", ROOT),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
