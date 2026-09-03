@@ -64,3 +64,114 @@ impl CrateLint for Trivial {
     // dispatch across the cdylib boundary.
     assert_eq!(loaded.pack.crate_lints[0].name(), "trivial-cdylib-probe");
 }
+
+#[test]
+#[ignore = "runs cargo; run with --ignored"]
+fn a_manifest_with_two_patch_tables_is_accepted_and_the_unused_one_is_inert() {
+    // The claim the two-spelling patch rests on, and nothing else in this repo
+    // could answer it: the generator emits a `[patch]` table for both url
+    // spellings of one repository, so in every real build one of the two names
+    // a source nothing resolves to. If cargo objected to that, or tried to
+    // fetch it, the fix would break every consumer instead of the one it
+    // repairs.
+    //
+    // It was established by hand first, by adding the second table to a
+    // consumer's generated manifest and watching the cdylib build, which is
+    // exactly the check that has to become a test rather than a memory.
+    //
+    // No network: the unused table names a host that does not exist, and the
+    // point is that cargo never reaches for it. A failure here is either a
+    // parse error on the second table or an attempted fetch, and both are
+    // loud.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"), "pub fn nothing() {}\n").unwrap();
+
+    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
+    fs::write(
+        root.join("Cargo.toml"),
+        format!(
+            "[workspace]\n\n\
+             [package]\nname = \"two-tables-probe\"\nversion = \"0.0.0\"\n\
+             edition = \"2024\"\npublish = false\n\n\
+             [dependencies]\n\
+             mockspace = {{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}\n\n\
+             [patch.\"https://example.invalid/mockspace.git\"]\n\
+             mockspace-lint-rules = {{ path = \"{lint_rules}\" }}\n\n\
+             [patch.\"ssh://git@example.invalid/mockspace.git\"]\n\
+             mockspace-lint-rules = {{ path = \"{lint_rules}\" }}\n"
+        ),
+    )
+    .unwrap();
+
+    let out = std::process::Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version=1")
+        .arg("--offline")
+        .current_dir(root)
+        .output()
+        .expect("cargo runs");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "cargo refused a manifest carrying two patch tables: {err}"
+    );
+    // The two together, since a duplicate key and an attempted fetch are the
+    // two ways this goes wrong and they report differently.
+    assert!(
+        !err.contains("duplicate key"),
+        "the two tables collided: {err}"
+    );
+    assert!(
+        !err.contains("example.invalid"),
+        "cargo reached for a source nothing names: {err}"
+    );
+}
+
+#[test]
+#[ignore = "runs cargo; run with --ignored"]
+fn two_tables_naming_one_source_is_refused_which_is_why_they_are_deduped() {
+    // The negative control for the case above, and the reason `spellings_of`
+    // deduplicates rather than trusting its own arithmetic. Two `[patch]`
+    // tables for the same url is a manifest cargo will not parse, so a future
+    // third spelling that happens to collide with one of the two would stop
+    // every `cargo mock` in the consumer repository.
+    //
+    // Without this, the case above passes whether or not the dedup exists and
+    // says nothing about why it is there.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"), "pub fn nothing() {}\n").unwrap();
+
+    let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
+    fs::write(
+        root.join("Cargo.toml"),
+        format!(
+            "[workspace]\n\n\
+             [package]\nname = \"dup-probe\"\nversion = \"0.0.0\"\n\
+             edition = \"2024\"\npublish = false\n\n\
+             [dependencies]\n\
+             mockspace = {{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}\n\n\
+             [patch.\"https://example.invalid/mockspace.git\"]\n\
+             mockspace-lint-rules = {{ path = \"{lint_rules}\" }}\n\n\
+             [patch.\"https://example.invalid/mockspace.git\"]\n\
+             mockspace-lint-rules = {{ path = \"{lint_rules}\" }}\n"
+        ),
+    )
+    .unwrap();
+
+    let out = std::process::Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version=1")
+        .arg("--offline")
+        .current_dir(root)
+        .output()
+        .expect("cargo runs");
+    assert!(
+        !out.status.success(),
+        "cargo accepted two tables naming one source, so the dedup guards \
+         nothing and this file's other case proves less than it says"
+    );
+}

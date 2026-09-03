@@ -223,6 +223,18 @@ fn patch_section(lint_rules_dep: &str, cargo_home: &Path) -> Option<String> {
 /// Only these two forms, and no attempt to normalise beyond them: a url this
 /// does not recognise is passed through unchanged, so a self-hosted forge or a
 /// scheme nobody here uses behaves exactly as it did before.
+///
+/// A `.git`-less spelling is deliberately not a third form. Cargo canonicalises
+/// that suffix away, so a patch key differing from the dependency url only by
+/// it already matches, while a key naming a different repository does not.
+/// Scheme and userinfo are what canonicalisation preserves, which is why this
+/// is the axis and the only one.
+///
+/// **The answers are distinct**, and that is load-bearing rather than tidy: two
+/// identical `[patch."X"]` tables is `error: duplicate key`, which cargo raises
+/// at manifest parse before resolving anything, so every `cargo mock` in that
+/// repository would stop. The dedup is what makes a future third form safe to
+/// add without knowing this.
 fn spellings_of(url: &str) -> Vec<String> {
     let (https, ssh) = if let Some(rest) = url.strip_prefix("https://") {
         (url.to_string(), format!("ssh://git@{rest}"))
@@ -231,7 +243,11 @@ fn spellings_of(url: &str) -> Vec<String> {
     } else {
         return vec![url.to_string()];
     };
-    vec![https, ssh]
+    let mut out = vec![https];
+    if !out.contains(&ssh) {
+        out.push(ssh);
+    }
+    out
 }
 
 /// Locate cargo's checkout of `lint-rules` at `rev` for the git repo `url`,
@@ -853,22 +869,65 @@ mod tests {
         // patch nothing matches is a manifest that no longer explains itself.
         assert_eq!(spellings_of("git://example.invalid/m.git").len(), 1);
         assert_eq!(spellings_of("ssh://x/mockspace.git").len(), 1);
-        assert_eq!(
-            spellings_of("file:///home/somebody/mockspace"),
-            vec!["file:///home/somebody/mockspace".to_string()]
-        );
+        assert_eq!(spellings_of("file:///home/somebody/mockspace"), vec![
+            "file:///home/somebody/mockspace".to_string()
+        ]);
     }
 
     #[test]
-    fn the_two_spellings_round_trip_to_each_other() {
-        // The law the pair rests on, over the form every repository here
-        // actually writes. Without it a one-sided mapping would pass both cases
-        // above while producing a second spelling that names a different
-        // repository.
+    fn exactly_these_two_spellings_and_no_others() {
+        // What this pins that the two cases above do not: that the set is
+        // exactly the pair, so a third form cannot be added without somebody
+        // reading the reasoning for why there are two.
+        //
+        // It carried a false claim before, that a one-sided mapping would pass
+        // both other cases while producing a wrong second spelling. It would
+        // not: mapping https to both and ssh only to itself fails the coverage
+        // case outright, since that case asserts the https table for ssh input.
+        // Verified by mutation rather than by reading, which is how the claim
+        // was found.
         let https = "https://github.com/hiisi-digital/mockspace.git";
         let ssh = "ssh://git@github.com/hiisi-digital/mockspace.git";
-        assert_eq!(spellings_of(https), vec![https.to_string(), ssh.to_string()]);
+        assert_eq!(spellings_of(https), vec![
+            https.to_string(),
+            ssh.to_string()
+        ]);
         assert_eq!(spellings_of(ssh), vec![https.to_string(), ssh.to_string()]);
+    }
+
+    #[test]
+    fn no_url_yields_the_same_spelling_twice() {
+        // Two identical `[patch."X"]` tables is `error: duplicate key`, raised
+        // at manifest parse before anything resolves, so every `cargo mock` in
+        // that repository stops. It cannot happen with the pair above, and the
+        // obvious next form somebody reaches for, dropping `.git`, collides
+        // with a url that never carried the suffix.
+        //
+        // Over the shapes a real dependency line carries, plus the degenerate
+        // ones, because a duplicate is a manifest that will not parse and the
+        // cost of finding out at a consumer's commit is a repository nobody can
+        // commit in.
+        for url in [
+            "https://github.com/hiisi-digital/mockspace.git",
+            "ssh://git@github.com/hiisi-digital/mockspace.git",
+            "https://github.com/o/r",
+            "ssh://git@host/r",
+            "https://git@github.com/o/r.git",
+            "git://example.invalid/m.git",
+            "file:///home/somebody/mockspace",
+            "ssh://x/mockspace.git",
+            "",
+        ] {
+            let out = spellings_of(url);
+            let mut sorted = out.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(
+                sorted.len(),
+                out.len(),
+                "{url:?} yields a repeated patch key: {out:?}"
+            );
+        }
     }
 
     #[test]

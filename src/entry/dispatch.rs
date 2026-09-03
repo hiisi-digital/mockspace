@@ -1504,10 +1504,9 @@ mod tests {
         // satisfy the arm above and break every repository-local tool.
         let (_t, mock) = mock_with_tool_dir("rounding-vocabulary");
         let empty = LintPack::default();
-        assert_eq!(
-            dispatchable_tool_names(&mock, &empty),
-            vec!["rounding-vocabulary".to_string()]
-        );
+        assert_eq!(dispatchable_tool_names(&mock, &empty), vec![
+            "rounding-vocabulary".to_string()
+        ]);
     }
 
     #[test]
@@ -1532,10 +1531,9 @@ mod tests {
         // there reads as two different tools rather than as one conflict.
         let (_t, mock) = mock_with_tool_dir("coverage");
         let pack = pack_with(&["coverage"]);
-        assert_eq!(
-            dispatchable_tool_names(&mock, &pack),
-            vec!["coverage".to_string()]
-        );
+        assert_eq!(dispatchable_tool_names(&mock, &pack), vec![
+            "coverage".to_string()
+        ]);
     }
 
     #[test]
