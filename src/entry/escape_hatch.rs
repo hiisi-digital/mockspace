@@ -27,6 +27,8 @@
 use std::path::Path;
 use std::process::Command;
 
+use mockspace_lint_rules::src_layout::SrcLayout;
+
 /// The staged paths under `mock_rel`, relative to the repo root.
 ///
 /// Empty when git is unavailable or nothing is staged. An error reading git is
@@ -50,18 +52,27 @@ fn staged_paths(repo_root: &Path, mock_rel: &str) -> Vec<String> {
     }
 }
 
-/// Staged Rust source files anywhere under the mock workspace.
+/// Staged Rust source files, meaning the ones the phase gates call source.
 ///
-/// The whole tree rather than `crates/`, because `--doc-only` skips repo lints
-/// as well as crate lints and a repo lint reads the probes under `research/`,
-/// the lints under `lints/` and the tools under `tools/`. The pre-commit hook
-/// decides the flag from the same set, and the two answering differently is
-/// what refused a commit that had nothing wrong with it.
+/// `layout` is the project's declared source directories, which is exactly what
+/// `changelist_required` and `changelist_lock` ask before treating a `.rs` file
+/// as a source change. So this asks the same question they do, and a flag whose
+/// claim is checked against a different definition than the gates use is a flag
+/// that refuses commits with nothing wrong with them.
+///
+/// It used to filter on the extension alone, over the whole mock tree. That
+/// counts a probe under `research/`, a lint under `lints/` and a tool's own
+/// source, none of which any gate reads, and it refused every merge of a trunk
+/// that had added a probe: the hook correctly saw no source staged, the guard
+/// saw eighty-three files, and no commit could satisfy both.
 #[must_use]
-pub fn staged_source_files(repo_root: &Path, mock_rel: &str) -> Vec<String> {
+pub fn staged_source_files(repo_root: &Path, mock_rel: &str, layout: &SrcLayout) -> Vec<String> {
+    let prefix = format!("{mock_rel}/");
     staged_paths(repo_root, mock_rel)
         .into_iter()
-        .filter(|p| p.ends_with(".rs"))
+        .filter(|p| {
+            p.ends_with(".rs") && p.strip_prefix(&prefix).is_some_and(|rel| layout.holds(rel))
+        })
         .collect()
 }
 
@@ -134,8 +145,8 @@ impl Refusal {
 
 /// Verify `--doc-only`'s claim that no source is staged.
 #[must_use]
-pub fn verify_doc_only(repo_root: &Path, mock_rel: &str) -> Option<Refusal> {
-    let staged = staged_source_files(repo_root, mock_rel);
+pub fn verify_doc_only(repo_root: &Path, mock_rel: &str, layout: &SrcLayout) -> Option<Refusal> {
+    let staged = staged_source_files(repo_root, mock_rel, layout);
     if staged.is_empty() {
         return None;
     }
@@ -211,21 +222,64 @@ mod tests {
         dir
     }
 
+    /// The default layout: one source directory, `crates`, under `mock`.
+    fn default_layout(repo: &std::path::Path) -> SrcLayout {
+        let mock = repo.join("mock");
+        SrcLayout::new(&mock, &[mock.join("crates")])
+    }
+
     #[test]
     fn doc_only_passes_when_only_docs_are_staged() {
         // The legitimate case the flag exists for, so verification must not
         // break it.
         let repo = repo_with_staged(&[("mock/crates/foo/DESIGN.md.tmpl", "x")]);
-        let r = verify_doc_only(&repo, "mock");
+        let r = verify_doc_only(&repo, "mock", &default_layout(&repo));
         let _ = std::fs::remove_dir_all(&repo);
         assert_eq!(r, None);
+    }
+
+    #[test]
+    fn a_staged_probe_is_not_source_and_does_not_refuse() {
+        // A probe under `research/`, a lint under `lints/` and a tool's own
+        // source are `.rs` and none of them is source to any phase gate, which
+        // both of them decide by asking the same layout this does.
+        //
+        // Merging a trunk that added probes stages every one of them, so the
+        // extension-alone reading refused a merge with nothing wrong with it and
+        // there was no commit that satisfied both halves of the flag.
+        let repo = repo_with_staged(&[
+            ("mock/crates/foo/DESIGN.md.tmpl", "x"),
+            ("mock/research/p01/probe.rs", "fn p() {}"),
+            ("mock/lints/a_rule.rs", "fn lint() {}"),
+            ("mock/tools/a-tool/src/lib.rs", "fn t() {}"),
+        ]);
+        let r = verify_doc_only(&repo, "mock", &default_layout(&repo));
+        let _ = std::fs::remove_dir_all(&repo);
+        assert_eq!(r, None, "none of those three is source to a phase gate");
+    }
+
+    #[test]
+    fn a_source_directory_the_project_declares_is_source_wherever_it_sits() {
+        // The control for the arm above, and what stops the narrowing from
+        // being "anything outside `crates/` is free": the layout is read from
+        // the project's declaration, so a project putting its packages
+        // somewhere else is guarded there and nowhere else.
+        let repo = repo_with_staged(&[("mock/packages/foo/src/lib.rs", "fn x() {}")]);
+        let mock = repo.join("mock");
+        let layout = SrcLayout::new(&mock, &[mock.join("packages")]);
+        let r = verify_doc_only(&repo, "mock", &layout);
+        let _ = std::fs::remove_dir_all(&repo);
+        assert!(
+            matches!(r, Some(Refusal::DocOnlyWithStagedSource { .. })),
+            "a declared source directory is source, whatever it is called: {r:?}"
+        );
     }
 
     #[test]
     fn doc_only_is_refused_when_source_is_staged() {
         // The bypass: source lints would be skipped on staged source.
         let repo = repo_with_staged(&[("mock/crates/foo/src/lib.rs", "fn x() {}")]);
-        let r = verify_doc_only(&repo, "mock");
+        let r = verify_doc_only(&repo, "mock", &default_layout(&repo));
         let _ = std::fs::remove_dir_all(&repo);
         match r {
             Some(Refusal::DocOnlyWithStagedSource {
@@ -305,7 +359,9 @@ mod tests {
         // repo there is nothing staged, so nothing is refused.
         let nowhere = std::env::temp_dir().join("ms_hatch_definitely_not_a_repo");
         let _ = std::fs::create_dir_all(&nowhere);
-        assert_eq!(verify_doc_only(&nowhere, "mock"), None);
+        let mock = nowhere.join("mock");
+        let layout = SrcLayout::new(&mock, &[mock.join("crates")]);
+        assert_eq!(verify_doc_only(&nowhere, "mock", &layout), None);
         assert_eq!(verify_scope(&nowhere, "mock", "foo"), None);
         let _ = std::fs::remove_dir_all(&nowhere);
     }

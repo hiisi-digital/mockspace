@@ -268,16 +268,14 @@ CHANGED_CRATES=$(echo "$STAGED" \
 ARGS=(--lint-only --commit)
 
 if [ -n "$CHANGED_CRATES" ]; then
-    # Every `.rs` under the mock directory, not only the ones under `crates/`.
-    # `--doc-only` skips repo lints as well as crate lints, and a repo lint reads
-    # the whole mock tree: the probes under `research/`, the lints under
-    # `lints/`, the tools under `tools/`. Narrowing this to `crates/` claimed
-    # doc-only over commits that staged source those lints read, and the engine's
-    # own check of the flag counts the whole tree, so the two disagreed and the
-    # commit was refused with nothing wrong with it. Merging a trunk carrying
-    # probes is where it shows, because the merge stages every one of them.
+    # `crates/` rather than the whole mock tree, because that is what the phase
+    # gates call source: both of them ask `SrcLayout::holds`, which answers for
+    # the declared source directories and nothing else. A probe under
+    # `research/`, a lint under `lints/` and a tool's own source are all `.rs`
+    # and none of them is source to any gate, so staging one cannot make a
+    # doc-only commit into a source commit.
     STAGED_RS=$(echo "$STAGED" \
-        | grep "^$MOCK_DIR/.*\.rs$" \
+        | grep "^$MOCK_DIR/crates/.*\.rs$" \
         || true)
 
     if [ -z "$STAGED_RS" ]; then
@@ -904,8 +902,11 @@ mod generated_pre_commit_tests {
     ///
     /// The hook claims `--doc-only` and the engine verifies the claim, so the
     /// two answer the same question and have to answer it the same way. They
-    /// did not: the hook counted `.rs` under `crates/` and the engine counts
-    /// `.rs` under the whole mock directory.
+    /// did not: the hook asked which `.rs` files sit under a source directory
+    /// and the engine asked which `.rs` files exist anywhere under the mock
+    /// tree, so a staged probe made the two disagree and no commit could
+    /// satisfy both. They ask the same question now, and every arm below
+    /// asserts that rather than asserting either answer on its own.
     fn both_sides(stage: &[(&str, &str)]) -> (bool, bool) {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
@@ -940,25 +941,28 @@ mod generated_pre_commit_tests {
             String::from_utf8_lossy(&out.stderr)
         );
         let hook_claims_doc_only = printed.contains(DOC_ONLY);
+        let mock = root.join("mock");
+        let layout =
+            mockspace_lint_rules::src_layout::SrcLayout::new(&mock, &[mock.join("crates")]);
         let engine_allows_doc_only =
-            crate::entry::escape_hatch::verify_doc_only(root, "mock").is_none();
+            crate::entry::escape_hatch::verify_doc_only(root, "mock", &layout).is_none();
         (hook_claims_doc_only, engine_allows_doc_only)
     }
 
     #[test]
-    fn a_probe_staged_beside_a_doc_change_is_not_claimed_doc_only() {
+    fn a_probe_staged_beside_a_doc_change_is_still_doc_only() {
         // The case that refused a merge with nothing wrong with it. Merging a
         // trunk into a branch stages every probe the trunk added, so a round
         // whose own change is one design template could not commit its merge.
+        //
+        // A probe is not source to either phase gate: both ask `SrcLayout`, and
+        // `research/` is not a declared source directory. So the commit is
+        // doc-only and both sides say so.
         let (hook, engine) = both_sides(&[
             ("mock/crates/foo/DESIGN.md.tmpl", "x\n"),
             ("mock/research/p01/probe.rs", "fn p() {}\n"),
         ]);
-        assert!(
-            !hook,
-            "a staged probe is source a repo lint reads, and `--doc-only` skips \
-             repo lints, so the hook may not claim it"
-        );
+        assert!(hook, "a probe is not source to any gate, so the flag holds");
         assert_eq!(
             hook, engine,
             "the hook claims the flag and the engine verifies the claim, so the \
@@ -967,40 +971,36 @@ mod generated_pre_commit_tests {
     }
 
     #[test]
-    fn a_lint_staged_beside_a_doc_change_is_not_claimed_doc_only() {
-        // The same defect one directory over, and the directory that matters
-        // most: `mock/lints/` is where a repo lint's own source lives.
+    fn a_lint_and_a_tool_staged_beside_a_doc_change_are_still_doc_only() {
+        // The same reading one directory over, twice. Neither `lints/` nor
+        // `tools/` is a declared source directory either.
         let (hook, engine) = both_sides(&[
             ("mock/crates/foo/DESIGN.md.tmpl", "x\n"),
             ("mock/lints/a_row_carries_keywords.rs", "fn lint() {}\n"),
+            ("mock/tools/a-tool/src/lib.rs", "fn t() {}\n"),
         ]);
-        assert!(!hook, "a staged lint is source the gate reads");
+        assert!(hook, "neither is source to any gate");
         assert_eq!(hook, engine, "the two sides disagree about the same tree");
     }
 
-    /// The positive control, and it is what stops the two above from passing
-    /// against a hook that never claims doc-only at all, which would be the
-    /// easy wrong fix and would cost every doc commit a full source pass.
+    /// The control that stops the two above from passing against a flag that is
+    /// claimed for everything, which would skip source lints on staged source
+    /// and is the one thing it must never do.
     #[test]
-    fn a_doc_change_alone_is_still_claimed_doc_only() {
-        let (hook, engine) = both_sides(&[("mock/crates/foo/DESIGN.md.tmpl", "x\n")]);
-        assert!(
-            hook,
-            "the flag exists for exactly this commit and must still be claimed"
-        );
-        assert_eq!(hook, engine, "the two sides disagree about the same tree");
-    }
-
-    /// The other direction of the same control: crate source staged is the
-    /// original thing the hook was right about, and the widening must not have
-    /// changed it.
-    #[test]
-    fn crate_source_staged_is_still_not_claimed_doc_only() {
+    fn crate_source_staged_is_not_doc_only() {
         let (hook, engine) = both_sides(&[
             ("mock/crates/foo/DESIGN.md.tmpl", "x\n"),
             ("mock/crates/foo/src/lib.rs", "fn x() {}\n"),
         ]);
-        assert!(!hook, "crate source staged was never doc-only");
+        assert!(!hook, "source under a declared source directory is source");
+        assert_eq!(hook, engine, "the two sides disagree about the same tree");
+    }
+
+    /// And the other end: a doc change alone is what the flag exists for.
+    #[test]
+    fn a_doc_change_alone_is_doc_only() {
+        let (hook, engine) = both_sides(&[("mock/crates/foo/DESIGN.md.tmpl", "x\n")]);
+        assert!(hook, "the flag exists for exactly this commit");
         assert_eq!(hook, engine, "the two sides disagree about the same tree");
     }
 }
