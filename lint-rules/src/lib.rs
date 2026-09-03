@@ -74,6 +74,7 @@ mod repr_c_abi_safety;
 mod single_source;
 pub mod src_layout;
 pub mod testkit;
+pub mod the_mock_toolchain_matches_the_root;
 pub mod tool;
 pub mod type_scanner;
 mod undocumented_type;
@@ -1764,6 +1765,7 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
         Box::new(canon_not_while_panel_open::CanonNotWhilePanelOpen),
         Box::new(changelist_required::ChangelistRequired),
         Box::new(changelist_immutability::ChangelistImmutability),
+        Box::new(the_mock_toolchain_matches_the_root::TheMockToolchainMatchesTheRoot),
     ]
 }
 
