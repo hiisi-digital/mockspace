@@ -13,7 +13,11 @@
 //! - `auto_fmt` runs `rustfmt` directly on the staged `.rs` files (those that
 //!   still exist; a staged deletion is skipped). rustfmt resolves `rustfmt.toml`
 //!   by walking the directory tree upward, so a repo-root config governs `mock/`
-//!   sources too.
+//!   sources too. The edition comes from that config as well, and assumes 2015
+//!   where no config up the tree declares one, so it is read off each file's own
+//!   package manifest and passed instead, with the files grouped by it. Passing
+//!   it overrides the config, which is what makes the answer the same in a repo
+//!   that declares one and a repo that does not.
 //! - `auto_clippy_fix` is crate-level (clippy cannot target single files), so it
 //!   runs `cargo clippy --fix` in each changed package, then **reverts** any file
 //!   clippy touched that is not part of the commit and was not already dirty.
@@ -31,7 +35,7 @@
 //! Opt out per-repo via `mockspace.toml`: `auto_fmt = false` /
 //! `auto_clippy_fix = false` (both default true).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -57,7 +61,9 @@ pub fn run(repo_root: &Path, auto_fmt: bool, auto_clippy_fix: bool) -> Vec<Strin
         .into_iter()
         .collect();
 
-    // auto_fmt: rustfmt ONLY the staged .rs files that still exist on disk.
+    // auto_fmt: rustfmt ONLY the staged .rs files that still exist on disk,
+    // grouped by the edition of the package each belongs to. Bare `rustfmt`
+    // assumes 2015 and refuses anything newer, so the edition is not optional.
     if auto_fmt {
         let files: Vec<PathBuf> = staged
             .iter()
@@ -66,10 +72,20 @@ pub fn run(repo_root: &Path, auto_fmt: bool, auto_clippy_fix: bool) -> Vec<Strin
             .cloned()
             .collect();
         if !files.is_empty() {
-            if run_rustfmt(repo_root, &files) {
-                actions.push(format!("auto_fmt: rustfmt {} staged file(s)", files.len()));
-            } else {
-                actions.push("auto_fmt: skipped, rustfmt failed".to_string());
+            let mut done = 0usize;
+            for (edition, group) in by_edition(&files, repo_root, |p| p.is_file()) {
+                match run_rustfmt(repo_root, &group, edition.as_deref()) {
+                    Ok(()) => done += group.len(),
+                    Err(why) => {
+                        actions.push(format!(
+                            "auto_fmt: {} file(s) skipped, rustfmt failed: {why}",
+                            group.len()
+                        ))
+                    },
+                }
+            }
+            if done > 0 {
+                actions.push(format!("auto_fmt: rustfmt {done} staged file(s)"));
             }
         }
     }
@@ -201,18 +217,122 @@ fn run_cargo(root: &Path, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// Run `rustfmt` on the given repo-relative files. rustfmt discovers
-/// `rustfmt.toml` (edition included) by walking up from each file, so the repo's
-/// own style applies. `true` on exit status 0.
-fn run_rustfmt(repo_root: &Path, files: &[PathBuf]) -> bool {
-    Command::new("rustfmt")
+/// Run `rustfmt` over one edition's worth of files, saying why on a failure.
+///
+/// The edition is passed rather than left to rustfmt. Invoked directly it takes
+/// the edition from a `rustfmt.toml` in scope, and assumes 2015 where no config
+/// up the tree declares one, which is a parse error on anything newer. Passing
+/// it is what makes the answer the same either way, since the flag overrides the
+/// config.
+///
+/// So the repository this runs in decides whether it was ever broken, and the
+/// one it ships from is not the one that reports it: a `rustfmt.toml` declaring
+/// `style_edition` and not `edition` reads as configured and answers nothing to
+/// this question, which is the shape a consumer was found in.
+///
+/// `cargo fmt` reads the edition off the manifest; this does not go through
+/// cargo, so it reads it off the manifest itself.
+///
+/// stderr is captured rather than discarded, and its first line becomes the
+/// reason. A fixer that fails silently is one nobody fixes: the message was
+/// "rustfmt failed" for as long as it took to notice, and what it had been
+/// saying the whole time named the edition.
+fn run_rustfmt(repo_root: &Path, files: &[PathBuf], edition: Option<&str>) -> Result<(), String> {
+    let mut cmd = Command::new("rustfmt");
+    if let Some(edition) = edition {
+        cmd.arg("--edition").arg(edition);
+    }
+    let out = cmd
         .args(files)
         .current_dir(repo_root)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let why = String::from_utf8_lossy(&out.stderr);
+    Err(why
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("no diagnostic")
+        .trim()
+        .to_string())
+}
+
+/// The staged files grouped by the edition of the package each sits in.
+///
+/// `None` is the group for a file no manifest claims, which keeps rustfmt's own
+/// default rather than inventing one. A repository is usually one edition, so
+/// this is usually one group and one invocation.
+fn by_edition(
+    files: &[PathBuf],
+    repo_root: &Path,
+    has_manifest: impl Fn(&Path) -> bool,
+) -> Vec<(Option<String>, Vec<PathBuf>)> {
+    let mut groups: BTreeMap<Option<String>, Vec<PathBuf>> = BTreeMap::new();
+    for file in files {
+        let abs = repo_root.join(file);
+        let edition = package_dir_of(&abs, repo_root, &has_manifest)
+            .and_then(|dir| edition_of(&dir, repo_root));
+        groups.entry(edition).or_default().push(file.clone());
+    }
+    groups.into_iter().collect()
+}
+
+/// The edition a package declares, following `edition.workspace = true` up to
+/// the workspace root that answers it.
+///
+/// Read with a string search rather than a TOML parse, because the answer is
+/// wanted for a `rustfmt` flag and a manifest that does not parse is a problem
+/// the build reports far more clearly than this would.
+fn edition_of(package_dir: &Path, repo_root: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(package_dir.join("Cargo.toml")).ok()?;
+    if let Some(edition) = quoted_after(&text, "edition") {
+        return Some(edition);
+    }
+    // `edition.workspace = true`, or `edition = { workspace = true }`. Either
+    // way the answer is the workspace root's, which is the nearest ancestor
+    // manifest carrying a `[workspace.package]`.
+    if !text.contains("edition") {
+        return None;
+    }
+    let mut dir = package_dir.parent()?;
+    loop {
+        if let Ok(text) = std::fs::read_to_string(dir.join("Cargo.toml"))
+            && text.contains("[workspace.package]")
+            && let Some(edition) = quoted_after(&text, "edition")
+        {
+            return Some(edition);
+        }
+        if dir == repo_root {
+            return None;
+        }
+        dir = dir.parent()?;
+    }
+}
+
+/// The quoted value of `<key> = "..."`, ignoring a commented-out line.
+fn quoted_after(text: &str, key: &str) -> Option<String> {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix(key) else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('"') else {
+            continue;
+        };
+        let end = rest.find('"')?;
+        return Some(rest[.. end].to_string());
+    }
+    None
 }
 
 /// `git checkout -- <files>` to restore working-tree files to their staged/HEAD
@@ -380,5 +500,179 @@ mod tests {
         let post = set(&["staged.rs"]);
         let staged = set(&["staged.rs"]);
         assert!(spurious_files(&post, &staged, &BTreeSet::new()).is_empty());
+    }
+
+    /// A manifest states its edition and it is read out.
+    #[test]
+    fn an_edition_is_read_off_the_manifest() {
+        let dir = tmp("edition_plain");
+        write(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname = \"x\"\nedition = \"2024\"\n",
+        );
+        assert_eq!(edition_of(&dir, &dir), Some("2024".to_string()));
+    }
+
+    /// A member inheriting the edition gets the workspace's answer.
+    ///
+    /// The shape every crate in this workspace has, so a lookup that stopped at
+    /// the member would find nothing and fall back to 2015 for all of them,
+    /// which is the failure this whole change is about.
+    #[test]
+    fn an_inherited_edition_comes_from_the_workspace_root() {
+        let root = tmp("edition_inherited");
+        write(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"m\"]\n\n[workspace.package]\nedition = \"2021\"\n",
+        );
+        let member = root.join("m");
+        std::fs::create_dir_all(&member).unwrap();
+        write(
+            &member,
+            "Cargo.toml",
+            "[package]\nname = \"m\"\nedition.workspace = true\n",
+        );
+        assert_eq!(edition_of(&member, &root), Some("2021".to_string()));
+    }
+
+    /// A manifest that says nothing about an edition gets no answer, rather
+    /// than a guess.
+    ///
+    /// The negative control. Without it the two arms above would pass for an
+    /// `edition_of` that returned a constant.
+    #[test]
+    fn a_manifest_with_no_edition_answers_nothing() {
+        let dir = tmp("edition_absent");
+        write(&dir, "Cargo.toml", "[package]\nname = \"x\"\n");
+        assert_eq!(edition_of(&dir, &dir), None);
+    }
+
+    /// A commented-out edition is not one.
+    #[test]
+    fn a_commented_edition_is_not_read() {
+        let dir = tmp("edition_commented");
+        write(
+            &dir,
+            "Cargo.toml",
+            "[package]\nname = \"x\"\n# edition = \"2015\"\nedition = \"2024\"\n",
+        );
+        assert_eq!(edition_of(&dir, &dir), Some("2024".to_string()));
+    }
+
+    /// Files from two packages are two invocations, one per edition.
+    #[test]
+    fn files_group_by_the_edition_of_the_package_they_sit_in() {
+        let root = tmp("edition_groups");
+        for (member, edition) in [("old", "2018"), ("new", "2024")] {
+            let dir = root.join(member);
+            std::fs::create_dir_all(dir.join("src")).unwrap();
+            write(
+                &dir,
+                "Cargo.toml",
+                &format!("[package]\nname = \"{member}\"\nedition = \"{edition}\"\n"),
+            );
+        }
+        write(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"old\", \"new\"]\n",
+        );
+        let files = vec![PathBuf::from("old/src/lib.rs"), PathBuf::from("new/src/lib.rs")];
+        let groups = by_edition(&files, &root, |p| p.is_file());
+        assert_eq!(groups, vec![
+            (Some("2018".to_string()), vec![PathBuf::from(
+                "old/src/lib.rs"
+            )]),
+            (Some("2024".to_string()), vec![PathBuf::from(
+                "new/src/lib.rs"
+            )]),
+        ]);
+    }
+
+    /// Source rustfmt refuses is reported with what rustfmt said.
+    ///
+    /// The reason is the whole point of the change: the message was "rustfmt
+    /// failed" for as long as it took anybody to notice, while the diagnostic
+    /// underneath it named the edition every time.
+    #[test]
+    fn a_refusal_carries_the_reason() {
+        let dir = tmp("rustfmt_refuses");
+        // A let chain, which is 2024 and only 2024.
+        write(
+            &dir,
+            "a.rs",
+            "fn f(x: Option<u8>) { if let Some(n) = x && n > 0 { } }\n",
+        );
+        let files = vec![PathBuf::from("a.rs")];
+
+        let Err(why) = run_rustfmt(&dir, &files, Some("2015")) else {
+            panic!("rustfmt accepted a let chain at edition 2015");
+        };
+        assert!(
+            why.contains("2024"),
+            "the reason does not name the edition: {why}"
+        );
+
+        // The control, and it is what makes the arm above mean something: the
+        // same file at the right edition is formatted rather than refused.
+        assert_eq!(run_rustfmt(&dir, &files, Some("2024")), Ok(()));
+    }
+
+    /// A `rustfmt.toml` in scope answers the edition, and the flag still wins.
+    ///
+    /// The half that decides whether a repository was ever broken by this, and
+    /// the one that says why passing the edition is not merely belt and braces:
+    /// a config declaring the edition already works, a config declaring only
+    /// `style_edition` does not, and the flag makes both behave alike.
+    #[test]
+    fn a_config_answers_the_edition_and_the_flag_overrides_it() {
+        let dir = tmp("rustfmt_config");
+        write(
+            &dir,
+            "a.rs",
+            "fn f(x: Option<u8>) { if let Some(n) = x && n > 0 { } }\n",
+        );
+        let files = vec![PathBuf::from("a.rs")];
+
+        // Only the style edition, which is what a consumer was found declaring.
+        // It reads as configured and answers nothing about the language.
+        write(&dir, "rustfmt.toml", "style_edition = \"2024\"\n");
+        assert!(
+            run_rustfmt(&dir, &files, None).is_err(),
+            "a config declaring only `style_edition` left the language at 2015"
+        );
+
+        // The language edition, which does answer it.
+        write(&dir, "rustfmt.toml", "edition = \"2024\"\n");
+        assert_eq!(
+            run_rustfmt(&dir, &files, None),
+            Ok(()),
+            "a config declaring `edition` needs no flag"
+        );
+
+        // And the flag beats the config in the direction that refuses, which is
+        // what says it is the flag deciding rather than the config agreeing.
+        assert!(
+            run_rustfmt(&dir, &files, Some("2015")).is_err(),
+            "the flag did not override a config that would have accepted it"
+        );
+    }
+
+    /// A directory of this test's own, removed and remade so a rerun starts
+    /// clean. Under the crate's target directory rather than the system
+    /// temporary one, so nothing outside the build tree is written.
+    fn tmp(name: &str) -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target/tmp/autofix")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(dir: &Path, name: &str, text: &str) {
+        std::fs::write(dir.join(name), text).unwrap();
     }
 }
