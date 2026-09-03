@@ -55,15 +55,24 @@ impl Lint for TheMockToolchainMatchesTheRoot {
     fn default_severity(&self) -> Severity {
         Severity::HARD_ERROR
     }
+
+    /// Not a source lint, so `--doc-only` does not skip it.
+    ///
+    /// The default is `true` and it is wrong here: this reads two TOML files
+    /// and no Rust at all, so skipping it on a doc commit skips it on most
+    /// commits. The four sibling repo lints all declare `false` for the same
+    /// reason.
+    fn source_only(&self) -> bool {
+        false
+    }
 }
 
 /// A value as `rust-toolchain.toml` spells one.
 ///
 /// Two shapes and no third, because the file's schema has no others: `channel`
 /// and `profile` are strings, `components` and `targets` are arrays of strings.
-/// Anything the scan cannot read as one of the two is skipped rather than
-/// guessed at, so a file using a shape this does not know is not reported as
-/// disagreeing with itself.
+/// A value of any other type is dropped rather than guessed at, so a file using
+/// a shape this does not compare is not reported as disagreeing with itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Value {
     Str(String),
@@ -72,73 +81,48 @@ enum Value {
 
 /// The `[toolchain]` table, as `(key, value)` in declaration order.
 ///
-/// A line scan rather than a TOML parser, and deliberately: the pack is a
-/// cdylib every consumer loads, this file's schema is four keys on one table,
-/// and a dependency bought for it would be carried by every repository that
-/// never has one. What the scan does not handle is stated in its tests, and an
-/// unreadable value is skipped rather than misread.
-fn toolchain_table(text: &str) -> Vec<(String, Value)> {
-    let mut out = Vec::new();
-    let mut inside = false;
-    for raw in text.lines() {
-        let line = strip_comment(raw).trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('[') {
-            inside = line == "[toolchain]";
-            continue;
-        }
-        if !inside {
-            continue;
-        }
-        let Some((key, rest)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let rest = rest.trim();
-        if key.is_empty() {
-            continue;
-        }
-        if let Some(v) = read_value(rest) {
-            out.push((key.to_string(), v));
-        }
-    }
-    out
-}
-
-/// The line with any trailing comment removed, respecting quotes.
+/// A real parse, because a hand scanner is wrong here in the direction that
+/// matters. The first version of this file read one line at a time and got four
+/// ordinary shapes wrong: a multi-line array, a literal-string value, and
+/// `[ toolchain ]` with spaces. Three of the four produced a false complaint,
+/// which is noise; the fourth was silent and was the bad one. A multi-line array
+/// in the ROOT file read as an absent key, so every component in it went
+/// uncompared and a copy declaring none of them passed. That is the same silent
+/// divergence this lint exists to catch, reproduced inside the lint.
 ///
-/// A `#` inside a quoted value is part of the value. Nothing in this file's
-/// schema is likely to carry one, and a scan that assumed so would drop half a
-/// value silently, which is the shape of defect this whole lint is about.
-fn strip_comment(line: &str) -> &str {
-    let bytes = line.as_bytes();
-    let mut quoted = false;
-    for (i, b) in bytes.iter().enumerate() {
-        match b {
-            b'"' => quoted = !quoted,
-            b'#' if !quoted => return &line[..i],
-            _ => {},
-        }
-    }
-    line
+/// `toml` parse-only is already in this workspace's lockfile through
+/// `mockspace-manifest`, so the pack's cdylib gains no new transitive tree.
+///
+/// An unparseable file yields no keys. That is deliberate and it is the safe
+/// direction on both sides: an unreadable copy claims nothing, and an
+/// unreadable root demands nothing. A malformed toolchain file is rustup's
+/// complaint to make, and making it here too would report one fault twice.
+fn toolchain_table(text: &str) -> Option<Vec<(String, Value)>> {
+    let doc = text.parse::<toml::Table>().ok()?;
+    let Some(toml::Value::Table(t)) = doc.get("toolchain") else {
+        return Some(Vec::new());
+    };
+    Some(
+        t.iter()
+            .filter_map(|(k, v)| Some((k.clone(), read_value(v)?)))
+            .collect(),
+    )
 }
 
-/// One value, or nothing where the scan cannot read it.
-fn read_value(rest: &str) -> Option<Value> {
-    if let Some(inner) = rest.strip_prefix('[') {
-        let inner = inner.strip_suffix(']')?;
-        let items: Vec<String> = inner
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.trim_matches('"').to_string())
-            .collect();
-        return Some(Value::Arr(items));
+/// One value, or nothing for a type this does not compare.
+fn read_value(v: &toml::Value) -> Option<Value> {
+    match v {
+        toml::Value::String(s) => Some(Value::Str(s.clone())),
+        toml::Value::Array(items) => {
+            Some(Value::Arr(
+                items
+                    .iter()
+                    .filter_map(|i| i.as_str().map(str::to_string))
+                    .collect(),
+            ))
+        },
+        _ => None,
     }
-    let s = rest.strip_prefix('"')?.strip_suffix('"')?;
-    Some(Value::Str(s.to_string()))
 }
 
 /// Whether the copy carries the marker that silences this.
@@ -157,9 +141,17 @@ pub fn disagreements(root: &str, copy: &str) -> Vec<String> {
     if allowed(copy) {
         return Vec::new();
     }
-    let mine = toolchain_table(copy);
+    // Either file failing to parse ends this, and the direction is the same on
+    // both sides: an unreadable copy declares nothing that can be compared, and
+    // an unreadable root demands nothing that can be. Complaining here would
+    // name the wrong fault, since a copy that does declare `channel` would be
+    // reported as not declaring it. rustup refuses a malformed toolchain file
+    // on its own account and that is the complaint the reader needs.
+    let (Some(mine), Some(theirs)) = (toolchain_table(copy), toolchain_table(root)) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
-    for (key, want) in toolchain_table(root) {
+    for (key, want) in theirs {
         let Some((_, got)) = mine.iter().find(|(k, _)| *k == key) else {
             out.push(format!(
                 "`{key}` is declared at the repository root and not here, so the root's value \
@@ -169,7 +161,9 @@ pub fn disagreements(root: &str, copy: &str) -> Vec<String> {
         };
         match (&want, got) {
             (Value::Str(w), Value::Str(g)) if w != g => {
-                out.push(format!("`{key}` is `{g}` here and `{w}` at the repository root"));
+                out.push(format!(
+                    "`{key}` is `{g}` here and `{w}` at the repository root"
+                ));
             },
             (Value::Arr(w), Value::Arr(g)) => {
                 let missing: Vec<&String> = w.iter().filter(|i| !g.contains(i)).collect();
@@ -197,10 +191,11 @@ pub fn disagreements(root: &str, copy: &str) -> Vec<String> {
 ///
 /// Both spellings, because rustup accepts the extensionless one and a repository
 /// reaching for it would otherwise be reported as pinning nothing.
-fn toolchain_file(dir: &Path) -> Option<String> {
+fn toolchain_file(dir: &Path) -> Option<(std::path::PathBuf, String)> {
     for name in ["rust-toolchain.toml", "rust-toolchain"] {
-        if let Ok(text) = std::fs::read_to_string(dir.join(name)) {
-            return Some(text);
+        let path = dir.join(name);
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            return Some((path, text));
         }
     }
     None
@@ -208,17 +203,25 @@ fn toolchain_file(dir: &Path) -> Option<String> {
 
 impl RepoLint for TheMockToolchainMatchesTheRoot {
     fn check_repo(&self, ctx: &RepoContext) -> Vec<LintError> {
-        let Some(copy) = toolchain_file(ctx.mock_dir) else {
+        let Some((copy_path, copy)) = toolchain_file(ctx.mock_dir) else {
             return Vec::new();
         };
-        let Some(root) = toolchain_file(ctx.repo_root) else {
+        let Some((_, root)) = toolchain_file(ctx.repo_root) else {
             return Vec::new();
         };
+        // The offending path, not `"unknown"`. The siblings use that as a
+        // fallback for when they cannot work out which file they are talking
+        // about; this lint is about exactly one file and knows its name.
+        let named = copy_path
+            .strip_prefix(ctx.repo_root)
+            .unwrap_or(&copy_path)
+            .display()
+            .to_string();
         disagreements(&root, &copy)
             .into_iter()
             .map(|d| {
                 LintError::error(
-                    "unknown".to_string(),
+                    named.clone(),
                     0,
                     "the-mock-toolchain-matches-the-root",
                     format!(
@@ -268,7 +271,11 @@ mod tests {
         let copy = "[toolchain]\nchannel = \"nightly-2026-05-28\"\n";
         let d = disagreements(ROOT, copy);
         assert_eq!(d.len(), 1, "{d:?}");
-        assert!(d[0].contains("`components` is declared at the repository root"), "{}", d[0]);
+        assert!(
+            d[0].contains("`components` is declared at the repository root"),
+            "{}",
+            d[0]
+        );
     }
 
     #[test]
@@ -277,8 +284,16 @@ mod tests {
                     \"clippy\"]\n";
         let d = disagreements(ROOT, copy);
         assert_eq!(d.len(), 1, "{d:?}");
-        assert!(d[0].contains("`rust-src`"), "the missing one is named: {}", d[0]);
-        assert!(!d[0].contains("`rustfmt`"), "the present ones are not: {}", d[0]);
+        assert!(
+            d[0].contains("`rust-src`"),
+            "the missing one is named: {}",
+            d[0]
+        );
+        assert!(
+            !d[0].contains("`rustfmt`"),
+            "the present ones are not: {}",
+            d[0]
+        );
     }
 
     #[test]
@@ -310,7 +325,11 @@ mod tests {
         // What stops the arm above from establishing that the lint is inert on
         // a channel-only copy for some reason other than the marker.
         let copy = "[toolchain]\nchannel = \"nightly\"\n";
-        assert_eq!(disagreements(ROOT, copy).len(), 2, "channel differs and components is absent");
+        assert_eq!(
+            disagreements(ROOT, copy).len(),
+            2,
+            "channel differs and components is absent"
+        );
     }
 
     #[test]
@@ -350,14 +369,14 @@ mod tests {
         let registry = crate::RegistryView::default();
         let no_crates = std::collections::BTreeSet::new();
         let ctx = RepoContext {
-            mock_dir: &mock,
-            repo_root: repo,
-            all_crates: &no_crates,
-            src_dirs: &[],
-            invocation: None,
+            mock_dir:    &mock,
+            repo_root:   repo,
+            all_crates:  &no_crates,
+            src_dirs:    &[],
+            invocation:  None,
             canon_paths: &[],
             open_panels: &[],
-            registry: &registry,
+            registry:    &registry,
         };
         TheMockToolchainMatchesTheRoot.check_repo(&ctx)
     }
@@ -368,7 +387,11 @@ mod tests {
                     \"rust-src\"]\n";
         let errs = run(Some(ROOT), Some(copy));
         assert_eq!(errs.len(), 1, "{errs:?}");
-        assert!(errs[0].message.contains("`channel` is `nightly` here"), "{}", errs[0].message);
+        assert!(
+            errs[0].message.contains("`channel` is `nightly` here"),
+            "{}",
+            errs[0].message
+        );
     }
 
     #[test]
@@ -386,11 +409,88 @@ mod tests {
         assert!(run(None, Some(copy)).is_empty());
     }
 
+    // The four shapes the hand scanner got wrong. Three of them produced a
+    // false complaint, which is noise. The second is the one that matters: it
+    // was silent, and silent in the direction the lint exists to catch.
+
+    #[test]
+    fn a_multi_line_array_in_the_copy_is_read() {
+        let copy = "[toolchain]\nchannel = \"nightly-2026-05-28\"\ncomponents = [\n  \
+                    \"rustfmt\",\n  \"clippy\",\n  \"rust-src\",\n]\n";
+        assert_eq!(
+            disagreements(ROOT, copy),
+            Vec::<String>::new(),
+            "the same components, written over several lines"
+        );
+    }
+
+    #[test]
+    fn a_multi_line_array_in_the_root_is_still_demanded() {
+        // The silent one. Dropping the root's key means nothing is compared, so
+        // a copy declaring none of its components passes and the lint reports a
+        // repository as agreeing with itself.
+        let root = "[toolchain]\nchannel = \"nightly-2026-05-28\"\ncomponents = [\n  \
+                    \"rustfmt\",\n  \"clippy\",\n  \"rust-src\",\n]\n";
+        let copy = "[toolchain]\nchannel = \"nightly-2026-05-28\"\n";
+        let d = disagreements(root, copy);
+        assert_eq!(
+            d.len(),
+            1,
+            "the root declares components and the copy does not: {d:?}"
+        );
+        assert!(d[0].contains("`components`"), "{}", d[0]);
+    }
+
+    #[test]
+    fn literal_strings_are_the_same_values_as_basic_ones() {
+        let copy = "[toolchain]\nchannel = 'nightly-2026-05-28'\ncomponents = ['rustfmt', \
+                    'clippy', 'rust-src']\n";
+        assert_eq!(disagreements(ROOT, copy), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_spaced_table_header_is_the_same_table() {
+        let copy = "[ toolchain ]\nchannel = \"nightly-2026-05-28\"\ncomponents = [\"rustfmt\", \
+                    \"clippy\", \"rust-src\"]\n";
+        assert_eq!(disagreements(ROOT, copy), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_unparseable_file_claims_nothing_and_demands_nothing() {
+        // Both directions, because the safe answer differs per side and this is
+        // the one place the parse can fail. rustup complains about a malformed
+        // toolchain file already; saying it again here reports one fault twice.
+        let broken = "[toolchain\nchannel = \"nightly\"\n";
+        assert_eq!(
+            disagreements(ROOT, broken),
+            Vec::<String>::new(),
+            "unreadable copy"
+        );
+        assert_eq!(
+            disagreements(broken, ROOT),
+            Vec::<String>::new(),
+            "unreadable root"
+        );
+    }
+
+    #[test]
+    fn a_value_of_a_type_this_does_not_compare_is_dropped() {
+        // `profile` is a string and `components` an array; anything else is not
+        // in the schema. A file carrying one is not reported as disagreeing
+        // with itself over a key nothing here knows how to compare.
+        let root = "[toolchain]\nchannel = \"nightly-2026-05-28\"\ncomponents = [\"rustfmt\", \
+                    \"clippy\", \"rust-src\"]\nsomething = 3\n";
+        assert_eq!(disagreements(root, ROOT), Vec::<String>::new());
+    }
+
     #[test]
     fn a_hash_inside_a_quoted_value_stays_in_it() {
-        // Nothing in this schema is likely to carry one, and a scan that cut the
-        // value there would drop half of it silently.
+        // Nothing in this schema is likely to carry one, and the line scan this
+        // replaced cut the value there and dropped half of it silently.
         let table = toolchain_table("[toolchain]\nchannel = \"a#b\"\n");
-        assert_eq!(table, vec![("channel".to_string(), Value::Str("a#b".to_string()))]);
+        assert_eq!(
+            table,
+            Some(vec![("channel".to_string(), Value::Str("a#b".to_string()))])
+        );
     }
 }

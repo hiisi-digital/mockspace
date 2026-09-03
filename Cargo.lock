@@ -244,6 +244,7 @@ name = "mockspace-lint-rules"
 version = "0.0.0"
 dependencies = [
  "tempfile",
+ "toml",
  "tree-sitter",
  "tree-sitter-rust",
 ]
