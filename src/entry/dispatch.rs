@@ -60,6 +60,31 @@ fn tool_is_shadowed_by_a_builtin(subcmd: &str, pack: &LintPack) -> bool {
     super::tool::builtin_collision(subcmd) && pack.tools.iter().any(|t| t.name() == subcmd)
 }
 
+/// Every tool name `mock <name>` can reach: the directories under
+/// `<mock>/tools/`, plus whatever the loaded pack registered.
+///
+/// The directory listing alone was the whole answer once, and it stopped being
+/// one when a lint pack gained the ability to ship tools. A pack tool has no
+/// directory in the consumer, by design, since not needing one is the reason a
+/// pack ships it. So it registered, `mock tools` listed it off the pack, and
+/// `mock <name>` reported it as not a subcommand: advertised and unreachable,
+/// and the only consumer where it appeared to work was one that still had its
+/// own copy of the same name, which is exactly the copy adopting a pack
+/// deletes.
+///
+/// **The cheapness the directory listing bought is kept.** The point of
+/// answering from the filesystem was that a typo must not compile a cdylib to
+/// discover it was a typo, and that still holds: the pack here is one the
+/// caller already loaded, so consulting it builds nothing. Where no pack was
+/// loaded it is empty and this is the directory listing it always was.
+fn dispatchable_tool_names(mock_dir: &Path, pack: &LintPack) -> Vec<String> {
+    let mut names = bootstrap::tool_names(mock_dir);
+    names.extend(pack.tools.iter().map(|t| t.name().to_string()));
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 /// The value-taking globals the tool consumes before any subcommand sees
 /// them. Their values must never be read as a subcommand name, and must never
 /// be forwarded to one.
@@ -492,6 +517,28 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 );
                 return ExitCode::SUCCESS;
             },
+            "lints" => {
+                let listings = crate::lint_catalogue::enumerate(pack, &cfg.lint_overrides);
+                let absent =
+                    crate::lint_catalogue::configured_but_absent(pack, &cfg.lint_overrides);
+                let dupes = crate::lint_catalogue::duplicates(pack);
+                if !dupes.is_empty() {
+                    eprintln!(
+                        "mock: {} lint name(s) registered more than once: {}",
+                        dupes.len(),
+                        dupes.join(", ")
+                    );
+                    eprintln!(
+                        "  both run, and one `[lints.<name>]` table governs both, so the listing \
+                         below understates what is checking you."
+                    );
+                }
+                print!(
+                    "{}",
+                    crate::lint_catalogue::render_table(&listings, &absent)
+                );
+                return ExitCode::SUCCESS;
+            },
             "query" => {
                 // The argument after the subcommand, not a fixed position:
                 // `--dir` and friends may precede it.
@@ -565,10 +612,12 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             },
             other => {
                 // A tool is a subcommand this binary does not know at compile
-                // time. Its name is its directory under `<mock>/tools/`, so the
-                // check is a directory listing rather than a build: a typo must
+                // time. Its name is its directory under `<mock>/tools/`, or it
+                // is one the loaded pack registered and has no directory here
+                // at all. Neither costs a build to answer, which is the
+                // property the directory listing was protecting: a typo must
                 // not compile a cdylib to discover it was a typo.
-                if bootstrap::tool_names(&cfg.mock_dir)
+                if dispatchable_tool_names(&cfg.mock_dir, pack)
                     .iter()
                     .any(|n| n == other)
                 {
@@ -587,9 +636,12 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 // An unrecognised first positional is a mistyped subcommand,
                 // not a reason to silently run the default full regeneration
                 // (slow, and not what was asked). Report and exit non-zero.
+                // The same set the test above used, so the "did you mean" and
+                // the listing can never name a different population than the
+                // one that would have dispatched.
                 return super::help::unknown_subcommand(
                     other,
-                    &bootstrap::tool_names(&cfg.mock_dir),
+                    &dispatchable_tool_names(&cfg.mock_dir, pack),
                 );
             },
         }
@@ -1429,6 +1481,83 @@ mod tests {
         // `mock/tools/check/` is silently unreachable forever.
         let pack = pack_with(&["check"]);
         assert!(tool_is_shadowed_by_a_builtin("check", &pack));
+    }
+
+    /// A `<mock>` holding one tool directory, named, with nothing built.
+    fn mock_with_tool_dir(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let mock = tmp.path().join("mock");
+        let c = mock.join("tools").join(name);
+        std::fs::create_dir_all(c.join("src")).unwrap();
+        std::fs::write(
+            c.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.0.0\"\n"),
+        )
+        .unwrap();
+        (tmp, mock)
+    }
+
+    #[test]
+    fn a_pack_tool_with_no_directory_of_its_own_is_still_reachable() {
+        // The defect this closes, and it is the whole point of a pack shipping
+        // a tool: the consumer has no directory for it, by design, because not
+        // needing one is why the pack ships it.
+        //
+        // Before this, the name resolved off the filesystem alone, so
+        // `mock tools` listed the tool off the pack and `mock <name>` said it
+        // was not a subcommand. The one consumer where it appeared to work was
+        // one that still had its own copy of the same name, which is exactly
+        // the copy adopting a pack deletes, so the check passed in the only
+        // arrangement that made it meaningless.
+        let tmp = tempfile::tempdir().unwrap();
+        let mock = tmp.path().join("mock");
+        std::fs::create_dir_all(&mock).unwrap();
+        let pack = pack_with(&["coverage"]);
+        assert!(
+            dispatchable_tool_names(&mock, &pack).contains(&"coverage".to_string()),
+            "a pack tool is reachable with no `<mock>/tools/` at all"
+        );
+    }
+
+    #[test]
+    fn control_a_directory_tool_with_no_pack_entry_is_still_reachable() {
+        // The half that already worked, pinned so widening the set cannot drop
+        // it. Without this arm an implementation reading only the pack would
+        // satisfy the arm above and break every repository-local tool.
+        let (_t, mock) = mock_with_tool_dir("rounding-vocabulary");
+        let empty = LintPack::default();
+        assert_eq!(
+            dispatchable_tool_names(&mock, &empty),
+            vec!["rounding-vocabulary".to_string()]
+        );
+    }
+
+    #[test]
+    fn control_neither_source_invents_a_name() {
+        // The vacuity control. An implementation returning some fixed list, or
+        // one that never returned empty, would pass both arms above.
+        let tmp = tempfile::tempdir().unwrap();
+        let empty = LintPack::default();
+        assert_eq!(
+            dispatchable_tool_names(tmp.path(), &empty),
+            Vec::<String>::new(),
+            "no directories and no pack means no tool names"
+        );
+    }
+
+    #[test]
+    fn a_name_both_sources_carry_is_listed_once() {
+        // The transitional state every adoption passes through: the pack ships
+        // it and the consumer has not deleted its copy yet. That collision is
+        // refused elsewhere, loudly, by name. What this pins is that the name
+        // list a reader is shown does not print it twice, since a duplicate
+        // there reads as two different tools rather than as one conflict.
+        let (_t, mock) = mock_with_tool_dir("coverage");
+        let pack = pack_with(&["coverage"]);
+        assert_eq!(
+            dispatchable_tool_names(&mock, &pack),
+            vec!["coverage".to_string()]
+        );
     }
 
     #[test]

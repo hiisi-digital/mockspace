@@ -122,8 +122,9 @@ Those are the transitions. The subcommands that are not transitions:
 | `cargo mock clean` | Remove generated output |
 | `cargo mock activate` / `deactivate` | Point `core.hooksPath` at the gate, or hand it back |
 | `cargo mock tools` | Every subcommand and project tool, with usage |
+| `cargo mock lints` | Every lint that runs here, builtin and pack alike, the severity this project gave it, and where the two sides disagree |
 
-**`cargo mock tools` is the list that cannot go stale**, since it reads what the binary actually ships and includes the project's own tools under `mock/tools/`, which this table cannot know about. Prefer it over this table wherever the two might disagree.
+**`cargo mock tools` and `cargo mock lints` are the lists that cannot go stale**, since they read what the binary actually ships and what the engine and the loaded pack actually register between them, none of which this table can know about. Prefer them over this table wherever the two might disagree.
 
 ## `cargo mock` pipeline
 
@@ -179,7 +180,7 @@ install_git_hooks = "replace"
 install_cargo_config = "merge-append"
 install_agent_files = "replace"
 
-auto_fmt = true                       # cargo fmt staged workspace roots pre-commit
+auto_fmt = true                       # rustfmt the staged files pre-commit
 auto_clippy_fix = true                # cargo clippy --fix staged workspace roots pre-commit
 deny_check = true                     # cargo deny check on push (needs a deny.toml)
 
@@ -198,10 +199,14 @@ Install modes (applied when generated content overwrites existing files):
 Before a commit is linted, mockspace can run the repo's own formatter and clippy
 fixer, re-staging the results so the commit lands already-fixed:
 
-- `auto_fmt` (default `true`): runs `cargo fmt` in each package the staged changes
-  touch. Uses the repo's own `rustfmt.toml` (rustfmt resolves it by walking the
-  directory tree upward, so one config at the repo root also governs a nested `mock/`
-  workspace).
+- `auto_fmt` (default `true`): runs `rustfmt` over the staged `.rs` files. Uses the
+  repo's own `rustfmt.toml` (rustfmt resolves it by walking the directory tree
+  upward, so one config at the repo root also governs a nested `mock/` workspace),
+  and the edition each file's own package declares. That last part is passed
+  rather than left to rustfmt: it reads the edition from a `rustfmt.toml` in scope
+  and assumes 2015 where none up the tree declares one, which refuses anything
+  newer. A config declaring only `style_edition` is one of those. Passing the
+  edition overrides the config, so the answer is the same either way.
 - `auto_clippy_fix` (default `true`): runs `cargo clippy --fix` in the same packages,
   respecting the clippy lints the entrypoint crates declare.
 

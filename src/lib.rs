@@ -32,6 +32,7 @@ pub mod dylib_check;
 mod entry;
 pub mod graph;
 pub mod lint;
+pub mod lint_catalogue;
 pub mod model;
 pub mod panel;
 pub mod parse;

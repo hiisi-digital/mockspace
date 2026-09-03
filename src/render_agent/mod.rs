@@ -16,6 +16,35 @@ use crate::config::Config;
 use crate::model::*;
 use crate::render_design;
 
+/// Builtin rules that changed name, as `(was, is)`.
+///
+/// A row stays here for as long as a consumer might still be carrying the old
+/// file, which is to say indefinitely: a repository that has not regenerated
+/// since the rename is exactly the one that needs the cleanup, and nothing says
+/// when the last of those has caught up.
+///
+/// **This is a stopgap and does not close the class.** A hand-kept table is a
+/// thing somebody has to remember at the next rename, which is how the orphan
+/// it cleans up came to exist. And renaming is only one way a builtin rule
+/// stops being written: switching one off leaves its file on disk exactly the
+/// same way, and this table says nothing about that.
+///
+/// The general fix is a sweep keyed on the generated marker that
+/// `render_design::write_generated` already puts in the content, which would
+/// cover every route rather than the one enumerated here. It is not done, and
+/// the reason is only that a content-keyed sweep over a directory holding
+/// consumer-authored rules wants its own careful pass rather than riding along
+/// with a rename.
+///
+/// `catalogues` was `tool-catalogue` while it listed only tools. It lists the
+/// lints too now, which is why the name no longer says tools, and the rename is
+/// what leaves the old file behind.
+// FIXME: hand-kept rename table, and it covers renames only; a builtin switched
+// off leaves its file behind the same way. The replacement is a sweep keyed on
+// the generated marker `render_design::write_generated` already writes, which
+// needs its own pass because the directory also holds consumer-authored rules.
+const RENAMED_BUILTIN_RULES: &[(&str, &str)] = &[("tool-catalogue", "catalogues")];
+
 mod helpers;
 pub(crate) use helpers::*;
 mod builtins;
@@ -131,6 +160,30 @@ pub fn generate_agent_rules(
     let copilot_instructions_dir = repo_root.join(".github").join("instructions");
     let _ = fs::create_dir_all(&claude_rules_dir);
     let _ = fs::create_dir_all(&copilot_instructions_dir);
+
+    // Clean up a builtin rule that was renamed. The pipeline is additive and
+    // writes by name, so a rename leaves the old file where it was, and nothing
+    // updates it or removes it: a consumer that generated before the rename
+    // ends up with two rules both claiming to be the catalogue, one live and one
+    // frozen at whatever the last run produced. Both load at session start.
+    //
+    // By name rather than by sweep. `sweep_orphan_generated_files` wants a
+    // prefix that marks a file as generated, and a builtin rule has none, so a
+    // sweep here would take a consumer's own rule with it.
+    for (old, new) in RENAMED_BUILTIN_RULES {
+        if builtins.rules.iter().all(|r| r.name != *new) {
+            continue;
+        }
+        for stale in [
+            claude_rules_dir.join(format!("{old}.md")),
+            copilot_instructions_dir.join(format!("{old}.instructions.md")),
+        ] {
+            if stale.is_file() {
+                let _ = fs::remove_file(&stale);
+                eprintln!("  removed superseded {}", stale.display());
+            }
+        }
+    }
 
     for builtin_rule in &builtins.rules {
         // Skip if consumer has a template with the same name
