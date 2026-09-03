@@ -96,6 +96,7 @@ cargo mock lock                  # transition: DOC -> DRAFT, or IMPL -> CLOSED
 cargo mock close                 # archive a CLOSED round
 cargo mock test                  # cargo test across every tree mockspace owns
 cargo mock tools                 # every subcommand and project tool, with usage
+cargo mock lints                 # every lint, its severity here, and where the two disagree
 mock locate                      # where this repo keeps its mockspace, shell-assignable
 ```
 
@@ -133,7 +134,9 @@ Each lint declares a severity per gate. The same lint can be `info` at commit, `
 
 A lint runs at a gate and answers a question nobody asked. Some checks cannot: they need a question from the person running them, or they answer with a ranking rather than a verdict. Those are **tools**, invoked as `mock <name>`.
 
-A tool is a crate under `mock/tools/<name>/`, and the directory name is the subcommand. It is compiled into the same library the consumer lints are, so a tool may declare its own dependencies and may ship a lint alongside itself.
+A tool is usually a crate under `mock/tools/<name>/`, and there the directory name is the subcommand. It does not have to live in the repository it serves: a lint pack declared in `[lint-crates]` may carry tools too, and one check wanted by several projects belongs in the pack rather than copied into each. Either way it is compiled into the same library the consumer lints are, so a tool may declare its own dependencies and may ship a lint alongside itself.
+
+Two of them registering the same name is refused rather than resolved, since `mock <name>` would otherwise run whichever loaded first. That is worth knowing before pulling a pack in: a tool the pack now ships and the local copy it replaces both register, and the refusal covers every tool in the repository rather than the colliding one.
 
 ```rust
 // mock/tools/phrase-search/src/lib.rs

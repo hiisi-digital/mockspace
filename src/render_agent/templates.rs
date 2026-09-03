@@ -598,16 +598,24 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
     // answer the same way, and an immediate answer beats a mandatory extra
     // command for the common case where nothing has changed since the last
     // `cargo mock`.
-    if cfg.agent.tool_catalogue {
+    if cfg.agent.catalogues {
         let snapshot = crate::tool_catalogue::render_table(&crate::tool_catalogue::enumerate(pack));
+        let lints = crate::lint_catalogue::render_table(
+            &crate::lint_catalogue::enumerate(pack, &cfg.lint_overrides),
+            &crate::lint_catalogue::configured_but_absent(pack, &cfg.lint_overrides),
+        );
         rules.push(BuiltinRule {
-            name: "tool-catalogue".to_string(),
+            name: "catalogues".to_string(),
             apply_to: vec!["**".to_string()],
             body: format!(
-                "## Tool catalogue\n\n{}\n\n{}\n\n```\n{}```\n",
-                "Never hand-write, from memory, a list of the subcommands or project tools this mockspace exposes. Run `mock tools` for the summary below, or `mock tools --long` for full usage and declared arguments.",
-                "The listing below is a snapshot taken at the last `cargo mock` run. It goes stale the moment a tool is added, renamed, or removed without a fresh run; that is exactly why the live command is named above rather than only this list. Prefer `mock tools` over this snapshot whenever the two might disagree.",
-                snapshot
+                "## What is available here, and what is checking you\n\n{}\n\n{}\n\n{}\n\n```\n{}```\n\n{}\n\n{}\n\n```\n{}```\n",
+                "Two commands answer this and neither answer is guessable. `mock tools` lists every subcommand and every project tool, with `mock tools --long` for declared arguments and full help. `mock lints` lists every lint with the severity that actually governs it. Never hand-write either list from memory, and never conclude from a directory listing that a repository has no tools.",
+                "**A tool does not have to live in this repository.** Tools arrive through `lint-crates` in `mockspace.toml` exactly as lints do, on the same cdylib, so a project whose `<mock>/tools/` is empty can still have several, and looking in that directory is the search that finds nothing and reports it as an absence. The command reads the loaded pack, which is the only place both populations are actually known.",
+                "The listing below is a snapshot taken at the last `cargo mock` run. It goes stale the moment a tool is added, renamed, or removed without a fresh run, which is why the live command is named above rather than only this list. Prefer `mock tools` over this snapshot whenever the two might disagree.",
+                snapshot,
+                "**Before writing a check, run both.** The common failure is not disagreeing with what exists, it is not knowing it does: a plan whose first step is building a mechanism is the tell, and the mechanism is usually already here. Where a check belongs is a separate question with a fixed answer, and `mock/lints/` and `mock/tools/` are the only two homes it has.",
+                "For lints the same snapshot argument applies, with one thing worth reading rather than skimming: the right-hand column says whether a severity was chosen here or inherited from the pack's default. A lint this project never named still runs, at a default nobody here picked, and a severity configured for a name no lint answers to governs nothing while reading exactly like a live decision. Both are reported below and neither is automatically a fault.",
+                lints
             ),
         });
     }
