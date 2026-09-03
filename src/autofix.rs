@@ -13,9 +13,11 @@
 //! - `auto_fmt` runs `rustfmt` directly on the staged `.rs` files (those that
 //!   still exist; a staged deletion is skipped). rustfmt resolves `rustfmt.toml`
 //!   by walking the directory tree upward, so a repo-root config governs `mock/`
-//!   sources too. It does not resolve the edition that way: invoked directly it
-//!   assumes 2015, so the edition is read off each file's own package manifest
-//!   and passed, and the files are grouped by it.
+//!   sources too. The edition comes from that config as well, and assumes 2015
+//!   where no config up the tree declares one, so it is read off each file's own
+//!   package manifest and passed instead, with the files grouped by it. Passing
+//!   it overrides the config, which is what makes the answer the same in a repo
+//!   that declares one and a repo that does not.
 //! - `auto_clippy_fix` is crate-level (clippy cannot target single files), so it
 //!   runs `cargo clippy --fix` in each changed package, then **reverts** any file
 //!   clippy touched that is not part of the commit and was not already dirty.
@@ -215,15 +217,21 @@ fn run_cargo(root: &Path, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// Run `rustfmt` on the given repo-relative files. rustfmt discovers
-/// `rustfmt.toml` (edition included) by walking up from each file, so the repo's
-/// own style applies. `true` on exit status 0.
 /// Run `rustfmt` over one edition's worth of files, saying why on a failure.
 ///
-/// The edition is passed rather than left to rustfmt, which assumes 2015 when
-/// invoked directly and refuses anything newer with a parse error. `cargo fmt`
-/// reads it off the manifest; this does not go through cargo, so it reads it
-/// off the manifest itself.
+/// The edition is passed rather than left to rustfmt. Invoked directly it takes
+/// the edition from a `rustfmt.toml` in scope, and assumes 2015 where no config
+/// up the tree declares one, which is a parse error on anything newer. Passing
+/// it is what makes the answer the same either way, since the flag overrides the
+/// config.
+///
+/// So the repository this runs in decides whether it was ever broken, and the
+/// one it ships from is not the one that reports it: a `rustfmt.toml` declaring
+/// `style_edition` and not `edition` reads as configured and answers nothing to
+/// this question, which is the shape a consumer was found in.
+///
+/// `cargo fmt` reads the edition off the manifest; this does not go through
+/// cargo, so it reads it off the manifest itself.
 ///
 /// stderr is captured rather than discarded, and its first line becomes the
 /// reason. A fixer that fails silently is one nobody fixes: the message was
@@ -610,6 +618,46 @@ mod tests {
         // The control, and it is what makes the arm above mean something: the
         // same file at the right edition is formatted rather than refused.
         assert_eq!(run_rustfmt(&dir, &files, Some("2024")), Ok(()));
+    }
+
+    /// A `rustfmt.toml` in scope answers the edition, and the flag still wins.
+    ///
+    /// The half that decides whether a repository was ever broken by this, and
+    /// the one that says why passing the edition is not merely belt and braces:
+    /// a config declaring the edition already works, a config declaring only
+    /// `style_edition` does not, and the flag makes both behave alike.
+    #[test]
+    fn a_config_answers_the_edition_and_the_flag_overrides_it() {
+        let dir = tmp("rustfmt_config");
+        write(
+            &dir,
+            "a.rs",
+            "fn f(x: Option<u8>) { if let Some(n) = x && n > 0 { } }\n",
+        );
+        let files = vec![PathBuf::from("a.rs")];
+
+        // Only the style edition, which is what a consumer was found declaring.
+        // It reads as configured and answers nothing about the language.
+        write(&dir, "rustfmt.toml", "style_edition = \"2024\"\n");
+        assert!(
+            run_rustfmt(&dir, &files, None).is_err(),
+            "a config declaring only `style_edition` left the language at 2015"
+        );
+
+        // The language edition, which does answer it.
+        write(&dir, "rustfmt.toml", "edition = \"2024\"\n");
+        assert_eq!(
+            run_rustfmt(&dir, &files, None),
+            Ok(()),
+            "a config declaring `edition` needs no flag"
+        );
+
+        // And the flag beats the config in the direction that refuses, which is
+        // what says it is the flag deciding rather than the config agreeing.
+        assert!(
+            run_rustfmt(&dir, &files, Some("2015")).is_err(),
+            "the flag did not override a config that would have accepted it"
+        );
     }
 
     /// A directory of this test's own, removed and remade so a rerun starts

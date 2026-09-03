@@ -201,8 +201,11 @@ fixer, re-staging the results so the commit lands already-fixed:
 - `auto_fmt` (default `true`): runs `rustfmt` over the staged `.rs` files. Uses the
   repo's own `rustfmt.toml` (rustfmt resolves it by walking the directory tree
   upward, so one config at the repo root also governs a nested `mock/` workspace),
-  and the edition each file's own package declares, since rustfmt invoked directly
-  assumes 2015 and refuses anything newer.
+  and the edition each file's own package declares. That last part is passed
+  rather than left to rustfmt: it reads the edition from a `rustfmt.toml` in scope
+  and assumes 2015 where none up the tree declares one, which refuses anything
+  newer. A config declaring only `style_edition` is one of those. Passing the
+  edition overrides the config, so the answer is the same either way.
 - `auto_clippy_fix` (default `true`): runs `cargo clippy --fix` in the same packages,
   respecting the clippy lints the entrypoint crates declare.
 
