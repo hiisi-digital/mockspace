@@ -220,9 +220,9 @@ const COMMANDS: &[Cmd] = &[
         name:    "activate",
         summary: "point core.hooksPath at the mockspace gate",
         args:    &[],
-        help:    "Sets core.hooksPath at the generated mockspace hooks. Existing \
-                  personal hooks under .git/hooks/ still run first; the generated \
-                  hooks source them before doing anything else.",
+        help:    "Sets core.hooksPath at the generated mockspace hooks. Whatever the \
+                  repository keeps under .git/hooks/ still runs, after the gate has \
+                  passed, with the same arguments and stdin.",
     },
     Cmd {
         name:    "deactivate",

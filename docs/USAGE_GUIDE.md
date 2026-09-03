@@ -13,7 +13,7 @@ cargo install --git https://github.com/hiisi-digital/mockspace.git cargo-mock
 Then run it from the repo root. On any normal invocation the engine:
 
 1. Writes the generated validator under `mock/target/hooks/`.
-2. Ensures the durable hooks in the user config home, which delegate to that validator and source the user's own `.git/hooks/*` first.
+2. Ensures the durable hooks in the user config home, which delegate to that validator; the repository's own `.git/hooks/*` run after it, on a pass.
 3. Points `core.hooksPath` at them.
 
 It is idempotent and cheap on the common path. There is no `build.rs` bootstrap, no cargo alias in `.cargo/config.toml`, and no generated proxy crate; a repo still calling `bootstrap_from_buildscript` from a build script gets a hard error naming the migration steps.
@@ -24,7 +24,7 @@ Activate the hooks once per clone:
 cargo mock activate
 ```
 
-This sets `git config core.hooksPath` to the generated hooks dir. The generated hooks always source the user's existing `.git/hooks/<name>` first, so any pre-existing personal hooks keep running. Deactivate with `cargo mock deactivate`; git then falls back to the user's hooks unchanged.
+This sets `git config core.hooksPath` to the generated hooks dir. The generated hooks always run the repository's own `.git/hooks/<name>` once their validation has passed, with the same arguments and the same stdin, so a hook another tool installed there keeps running and its refusal still counts; nothing runs past a refusal of mockspace's own. Deactivate with `cargo mock deactivate`; git then falls back to the repository's hooks unchanged.
 
 ## Directory layout
 
