@@ -236,11 +236,3 @@ with the tier breakeven `k*`) are all complete and tested. Remaining items are
 reporter refinements (floor-aware normalise, digest cross-validation) tracked in
 `TODO.md`. The carrier interpreter-composition matrix that produced this crate is
 crate's first intended consumer and its regression test.
-
-## A note on coding agents
-
-We do not recommend using coding agents with this codebase. If you still choose to:
-be aware of the environmental and social cost of large-scale model inference and
-minimise it; only use an agent if you understand the architecture yourself; the
-repository's agent instructions help but do not remove the need to correct the
-agent frequently. Do this work yourself unless you know what you are doing and why.
