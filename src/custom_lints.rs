@@ -897,16 +897,27 @@ mod tests {
 
     #[test]
     fn no_url_yields_the_same_spelling_twice() {
-        // Two identical `[patch."X"]` tables is `error: duplicate key`, raised
-        // at manifest parse before anything resolves, so every `cargo mock` in
-        // that repository stops. It cannot happen with the pair above, and the
-        // obvious next form somebody reaches for, dropping `.git`, collides
-        // with a url that never carried the suffix.
+        // What this pins is that the dedup is still there, and not that a
+        // colliding third form would be caught. With the dedup present a
+        // collision is absorbed rather than reported, so adding a `.git`-less
+        // spelling keeps this green; removing the dedup turns it red, naming
+        // `https://github.com/o/r`. Established by mutation, both ways round.
         //
-        // Over the shapes a real dependency line carries, plus the degenerate
-        // ones, because a duplicate is a manifest that will not parse and the
-        // cost of finding out at a consumer's commit is a repository nobody can
-        // commit in.
+        // Absorbing is the right answer rather than a shortcut. Patch keys are
+        // a set, so one table is the correct output for two rules naming one
+        // source, and refusing at run time would turn a harmless redundancy
+        // into a hard failure in a consumer's repository at commit time, which
+        // is the cost this whole change exists to remove. The loudness belongs
+        // here, at development time, and here is where it is.
+        //
+        // The dedup is also what makes the list below acceptable. Nine urls is
+        // a sample over an unbounded space, and sampling a law is the shape the
+        // test gate rejects; it is harmless only because an unsampled collision
+        // cannot reach a consumer.
+        //
+        // What a collision would cost without it: two identical `[patch."X"]`
+        // tables is `error: duplicate key`, raised at manifest parse before
+        // anything resolves, so every `cargo mock` in that repository stops.
         for url in [
             "https://github.com/hiisi-digital/mockspace.git",
             "ssh://git@github.com/hiisi-digital/mockspace.git",

@@ -131,6 +131,57 @@ fn a_manifest_with_two_patch_tables_is_accepted_and_the_unused_one_is_inert() {
 
 #[test]
 #[ignore = "runs cargo; run with --ignored"]
+fn cargo_does_reach_an_unreachable_host_when_something_names_it() {
+    // What makes the case above non-vacuous, and without this it is not.
+    //
+    // That case asserts cargo never mentions the unreachable host, on the
+    // reasoning that a patch table for a source nothing resolves to is inert.
+    // The assertion is worth nothing unless cargo would have mentioned the host
+    // had it reached for it, and the case cannot establish that about itself.
+    // Its sibling negative control fires at TOML parse, which happens before
+    // resolution, so it proves only that the tables are read.
+    //
+    // So this is the same manifest with the host moved from a patch table into
+    // a dependency, where cargo must reach for it. It fails and names the host,
+    // which is what the other case asserts the absence of.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/lib.rs"), "pub fn nothing() {}\n").unwrap();
+
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\n\n\
+         [package]\nname = \"reachable-probe\"\nversion = \"0.0.0\"\n\
+         edition = \"2024\"\npublish = false\n\n\
+         [dependencies]\n\
+         nothing-real = { git = \"https://example.invalid/mockspace.git\" }\n",
+    )
+    .unwrap();
+
+    let out = std::process::Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version=1")
+        .arg("--offline")
+        .current_dir(root)
+        .output()
+        .expect("cargo runs");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "cargo resolved a dependency on a host that does not exist, so the \
+         inertness case above is asserting the absence of something that would \
+         never have appeared"
+    );
+    assert!(
+        err.contains("example.invalid"),
+        "cargo failed without naming the host, so the other case's third \
+         assertion cannot discriminate: {err}"
+    );
+}
+
+#[test]
+#[ignore = "runs cargo; run with --ignored"]
 fn two_tables_naming_one_source_is_refused_which_is_why_they_are_deduped() {
     // The negative control for the case above, and the reason `spellings_of`
     // deduplicates rather than trusting its own arithmetic. Two `[patch]`
