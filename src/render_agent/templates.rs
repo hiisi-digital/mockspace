@@ -167,13 +167,37 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
     // two lines from a config that says so, and every agent session loaded
     // it.
     let declared_canon: Vec<String> = cfg.canon_paths.clone();
-    // The directory convention still applies where nothing else is
-    // declared, which is the common case and the default this ships.
-    let canon_is_the_reserved_directory = declared_canon.is_empty()
+    // Beyond the two builtins, because `with_builtins` prepends `vocab` and
+    // `reference` to every project, so `!is_empty()` is true everywhere and a
+    // predicate built on it decides nothing while reading as if it did.
+    let declares_registry = cfg
+        .registry_namespaces
+        .iter()
+        .any(|n| n.key != "vocab" && n.key != "reference");
+    // The directory convention still applies where the project has a canon and
+    // has not said it lives somewhere narrower, which is the common case and
+    // the default this ships.
+    let canon_is_the_reserved_directory = (declared_canon.is_empty() && declares_registry)
         || declared_canon
             .iter()
             .any(|p| p.contains("/canon/") || p.trim_end_matches('/').ends_with("/canon"));
-    let canon_location = if declared_canon.is_empty() {
+    // A project declaring neither `canon_paths` nor a registry namespace has
+    // not said where its canon is, and naming `<mock>/registry/` at it invents
+    // a second address after the first one was wrong. Measured across the
+    // consumers on hand: four declare no `canon_paths` and have neither
+    // directory, so four repositories' every agent session loaded an address
+    // that resolves to nothing.
+    //
+    // The honest answer is to say so. An agent told the project has not
+    // declared its canon goes and asks; one told it lives at a path that does
+    // not exist goes and looks, finds nothing, and concludes the repository is
+    // broken.
+    let canon_location = if declared_canon.is_empty() && !declares_registry {
+        "nowhere this project has declared: it names no `canon_paths` and no registry namespace, \
+         so there is no canon here to reason from and the question of where it should live is \
+         open"
+            .to_string()
+    } else if declared_canon.is_empty() {
         format!("`{mock_rel}/registry/`, this project having named no narrower `canon_paths`")
     } else {
         let named = declared_canon
@@ -202,14 +226,18 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
 
     let mut rules = vec![
         BuiltinRule {
-            name: "reference-syntax".to_string(),
-            apply_to: vec!["**/*.md".to_string(), "**/*.md.tmpl".to_string(), "**/*.toml".to_string()],
-            body: format!(
+            name:     "reference-syntax".to_string(),
+            apply_to: vec![
+                "**/*.md".to_string(),
+                "**/*.md.tmpl".to_string(),
+                "**/*.toml".to_string(),
+            ],
+            body:     format!(
                 "## Reference syntax\n\nWrite a reference as `{{{{ root::selector }}}}` in any `*.md.tmpl`, and in any registry field declared to hold one. It resolves when documents are generated, and it is checked: a reference that points nowhere is reported rather than rendered as something that looks fine.\n\n**The braces are required.** They make a reference something you state rather than something the renderer guesses from a pattern, so prose about code is never rewritten by accident. References inside code fences are left alone.\n\n**A citation is `root::path::anchor`, and the anchor should be a heading rather than a line number.** A line number fails silently: an edit above it shifts the target, the citation still resolves, and it now points at different content. A heading fails loudly when renamed, which is a report rather than a lie.\n\n**`{{{{ <ns> }}}}` renders a namespace's whole table inline**, and `{{{{ <ns>::<slug>::<field> }}}}` renders one field, which is how a document states a value once and every mention of it stays current instead of drifting into a copy.\n\n**Rows are identified by a snake_case slug, never a number.** A number carries no meaning and so has to be managed: never reused, never renumbered, never reordered, since any of those silently repoints every reference to it.\n\n### Roots in this project\n\n{roots_doc}\n### Registry namespaces in this project\n\n{ns_doc}\nFires when writing a reference, a citation, or a registry field that holds one.\n\n**Use the `reference-syntax` skill** for fields that hold a row, the three functions that ask about a thing rather than render it, and the postfix chains that narrow a result.\n"
             ),
         },
         BuiltinRule {
-            name: "generated-agent-rules".to_string(),
+            name:     "generated-agent-rules".to_string(),
             apply_to: vec![
                 ".claude/**".to_string(),
                 ".github/copilot-instructions.md".to_string(),
@@ -217,45 +245,51 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 ".github/skills/**".to_string(),
                 ".github/hooks/**".to_string(),
             ],
-            body: substitute_builtin_vars(
+            body:     substitute_builtin_vars(
                 r#"STOP. Do NOT edit files in `.claude/` or `.github/copilot-instructions.md`, `.github/instructions/`, `.github/skills/`, `.github/hooks/`. These are AUTO-GENERATED by `cargo mock`. Edit the source templates in `{mock_dir}/agent/` instead, then run `cargo mock` to regenerate."#,
-                &mock_rel, project_name, crate_prefix,
+                &mock_rel,
+                project_name,
+                crate_prefix,
             ),
         },
         BuiltinRule {
-            name: "generated-docs".to_string(),
+            name:     "generated-docs".to_string(),
             apply_to: vec![
                 "docs/*.md".to_string(),
                 "docs/*.dot".to_string(),
                 "docs/*.png".to_string(),
                 "docs/*.svg".to_string(),
             ],
-            body: substitute_builtin_vars(
+            body:     substitute_builtin_vars(
                 concat!(
                     "STOP. Do NOT edit any file directly under `docs/`. These are AUTO-GENERATED by `cargo mock`. ",
                     "Edit the source templates in `{mock_dir}/` (root DESIGN.md.tmpl, WORKFLOW.md.tmpl, PRINCIPLES.md.tmpl) ",
                     "or per-crate templates (crates/*/DESIGN.md.tmpl, crates/*/README.md.tmpl), then run `cargo mock` to regenerate.",
                 ),
-                &mock_rel, project_name, crate_prefix,
+                &mock_rel,
+                project_name,
+                crate_prefix,
             ),
         },
         BuiltinRule {
-            name: "generated".to_string(),
+            name:     "generated".to_string(),
             apply_to: vec![
                 "CLAUDE.md".to_string(),
                 ".claude/rules/*.md".to_string(),
                 ".github/copilot-instructions.md".to_string(),
                 ".github/instructions/*.md".to_string(),
             ],
-            body: substitute_builtin_vars(
+            body:     substitute_builtin_vars(
                 "These files are AUTO-GENERATED from templates in `{mock_dir}/agent/`. Do not edit directly. Run `cargo mock` to regenerate from source templates.",
-                &mock_rel, project_name, crate_prefix,
+                &mock_rel,
+                project_name,
+                crate_prefix,
             ),
         },
         BuiltinRule {
-            name: "mock-workspace".to_string(),
+            name:     "mock-workspace".to_string(),
             apply_to: vec![format!("{mock_rel}/**")],
-            body: substitute_builtin_vars(
+            body:     substitute_builtin_vars(
                 concat!(
                     "## Mock workspace rules\n",
                     "\n",
@@ -283,16 +317,15 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     "\n",
                     "**Use the `mockup-workflow` skill** for what each gate boundary means and why, and for the validation pipeline each run walks.\n",
                 ),
-                &mock_rel, project_name, crate_prefix,
+                &mock_rel,
+                project_name,
+                crate_prefix,
             ),
         },
         BuiltinRule {
-            name: "bench-and-sketch-discipline".to_string(),
-            apply_to: vec![
-                format!("{mock_rel}/benches/**"),
-                format!("{mock_rel}/research/**"),
-            ],
-            body: substitute_builtin_vars(
+            name:     "bench-and-sketch-discipline".to_string(),
+            apply_to: vec![format!("{mock_rel}/benches/**"), format!("{mock_rel}/research/**")],
+            body:     substitute_builtin_vars(
                 concat!(
                     "## Benches live in the bench framework, never in sketches\n",
                     "\n",
@@ -321,11 +354,13 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     "measurement; each carries the conventions, the deliverable and the failure modes for ",
                     "its side, and why the framework beats a hand-rolled loop.\n",
                 ),
-                &mock_rel, project_name, crate_prefix,
+                &mock_rel,
+                project_name,
+                crate_prefix,
             ),
         },
         BuiltinRule {
-            name: "canon-design-code-chain".to_string(),
+            name:     "canon-design-code-chain".to_string(),
             apply_to: vec![
                 format!("{mock_rel}/*.md.tmpl"),
                 format!("{mock_rel}/crates/**/*.md.tmpl"),
@@ -340,7 +375,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 declared_canon.clone()
             })
             .collect(),
-            body: {
+            body:     {
                 let body = substitute_builtin_vars(
                 concat!(
                     "## The canon, design, code chain\n",
@@ -1032,7 +1067,17 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                 project_name,
                 crate_prefix,
             )
-            .replace("{canon_location}", &canon_location),
+            // Two tokens and they are not interchangeable. `{canon_location}`
+            // is a sentence saying where the canon is; `{canon_view_dir}` is a
+            // path. Substituting the first into the second's slot produced
+            // "`<the declared canon>` is the reading surface, not the
+            // authority", which tells every consumer its own canon does not
+            // bind, twelve lines under the sentence saying it does.
+            .replace("{canon_location}", &canon_location)
+            // No backticks here: the template already wraps the token, and the
+            // nested pair is what broke the markdown when a backticked value
+            // was substituted into a backticked slot.
+            .replace("{canon_view_dir}", &format!("{mock_rel}/canon/")),
             files: vec![],
         },
         // The half of the reference syntax a session needs only once it is
@@ -1170,9 +1215,15 @@ mod canon_location_is_derived {
                     .join(", ")
             )
         };
+        // A declared namespace, so the fixture is a project that HAS a canon.
+        // Without it every arm here would be testing the case where the project
+        // has declared none, which is a different question and has its own arm.
         std::fs::write(
             mock.join("mockspace.toml"),
-            format!("project_name = \"probe\"\n{declared}"),
+            format!(
+                "project_name = \"probe\"\n{declared}\n[[registry.namespace]]\nkey = \
+                 \"ruling\"\ndescription = \"a thing op has stated\"\n"
+            ),
         )
         .unwrap();
         let cfg = crate::config::Config::from_dir(&mock);
@@ -1242,6 +1293,51 @@ mod canon_location_is_derived {
             "the cut must remove something: {} against {}",
             r.body.len(),
             full.len()
+        );
+    }
+
+    /// A project with no canon at all is told so, rather than sent to a path.
+    ///
+    /// `canon_paths` empty was read as "the default directory", so a project
+    /// that has declared no canon anywhere got a rule naming `<mock>/registry/`
+    /// as where its canon lives and `<mock>/canon/` as where it is read.
+    /// Measured against the remote `dev` of every consumer: four of them
+    /// declare neither and have neither directory, so every agent session in
+    /// four repositories loaded two addresses that resolve to nothing.
+    ///
+    /// The builtins are why the predicate is not `is_empty`: `with_builtins`
+    /// prepends `vocab` and `reference` to every project, so a check on the
+    /// list being non-empty is true everywhere and decides nothing.
+    #[test]
+    fn a_project_declaring_no_canon_is_sent_nowhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mock = tmp.path().join("mock");
+        std::fs::create_dir_all(&mock).unwrap();
+        std::fs::write(mock.join("mockspace.toml"), "project_name = \"probe\"\n").unwrap();
+        let cfg = crate::config::Config::from_dir(&mock);
+        assert!(
+            cfg.canon_paths.is_empty(),
+            "control: the fixture declares no canon paths"
+        );
+        assert!(
+            !cfg.registry_namespaces.is_empty(),
+            "control: the builtins are there, which is why `is_empty` is the wrong test"
+        );
+
+        let r = generate_builtin_templates(&cfg, &LintPack::default())
+            .rules
+            .into_iter()
+            .find(|r| r.name == "canon-design-code-chain")
+            .expect("the rule is always minted");
+        assert!(
+            r.body.contains("nowhere this project has declared"),
+            "a project with no canon is told it has none: {}",
+            r.body
+        );
+        assert!(
+            !r.body.contains("is the reading surface"),
+            "and is not sent to a reading surface it does not have: {}",
+            r.body
         );
     }
 
@@ -1329,6 +1425,29 @@ mod canon_location_is_derived {
         assert!(
             !skill.body.contains("{canon_location}"),
             "including the canon location: {}",
+            skill.body
+        );
+
+        // Substituted is not the same as true, and asserting only the first is
+        // what let the skill ship a sentence saying the declared canon is not
+        // the authority. `{canon_location}` is a sentence ("`x`, which this
+        // project declares as its canon"); the view slot wants a path, and the
+        // one put in it was the sentence.
+        assert!(
+            !skill.body.contains("{canon_view_dir}"),
+            "the view path is substituted too: {}",
+            skill.body
+        );
+        assert!(
+            skill.body.contains("/canon/` is the reading surface"),
+            "the reading surface is a path, not the canon's own location: {}",
+            skill.body
+        );
+        assert!(
+            !skill
+                .body
+                .contains("which this project declares as its canon is the reading surface"),
+            "the canon location must not land in the view slot: {}",
             skill.body
         );
     }

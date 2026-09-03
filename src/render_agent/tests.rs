@@ -258,8 +258,19 @@ fn agent_gate_hook_self_heals_then_blocks() {
 
 #[test]
 fn canon_design_code_chain_is_a_generated_builtin() {
+    // A project that HAS a canon, which is what the rest of this test is about.
+    // Built from an empty directory it was a project declaring none, and the
+    // rule then told it its canon lived at a path it does not have.
     let tmp = tempfile::tempdir().expect("tempdir");
-    let cfg = Config::from_dir(&tmp.path().join("mock"));
+    let mock = tmp.path().join("mock");
+    std::fs::create_dir_all(&mock).expect("mock dir");
+    std::fs::write(
+        mock.join("mockspace.toml"),
+        "project_name = \"probe\"\n\n[[registry.namespace]]\nkey = \"ruling\"\ndescription = \
+         \"a thing op has stated\"\n",
+    )
+    .expect("config");
+    let cfg = Config::from_dir(&mock);
     let builtins = generate_builtin_templates(&cfg, &LintPack::default());
     let rule = builtins
         .rules
@@ -337,11 +348,7 @@ fn canon_design_code_chain_is_a_generated_builtin() {
         rule.body
             .contains("every design that declares it is nuked first")
     );
-    assert!(
-        skill
-            .body
-            .contains("Not every design in the project, only")
-    );
+    assert!(skill.body.contains("Not every design in the project, only"));
     assert!(
         skill
             .body

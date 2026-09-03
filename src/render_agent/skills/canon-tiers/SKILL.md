@@ -19,7 +19,7 @@ a slug that names nothing, and rendered into twenty documents that cannot drift
 from each other. A paragraph can do none of that, and the drift is silent every
 time.
 
-`{canon_location}` is the reading surface, not the authority. It holds `.md.tmpl`
+`{canon_view_dir}` is the reading surface, not the authority. It holds `.md.tmpl`
 documents that pull the canon in with `{{ <ns> }}` for a whole namespace or
 `{{ <ns>::<slug>::<field> }}` for one field, so the canon reads as a document
 and prints as a PDF without anybody transcribing it. **Those documents
