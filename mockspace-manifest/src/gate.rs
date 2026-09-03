@@ -165,9 +165,14 @@ cfgrel="${cfg#"$root"/}"
 /// The shell tail every pass through a hook ends in: the repository's own
 /// `.git/hooks/<name>`, when it exists and is executable, with the same
 /// arguments, `stdin_replay` piped in ahead of it, and its exit status as the
-/// script's. Nothing there is an exit 0. The hooks directory is the git dir's,
-/// asked for by `--git-dir` rather than `--git-path hooks`, since the second
-/// honours `core.hooksPath` and would answer with the durable directory itself.
+/// script's. Nothing there is an exit 0. The hooks directory is the common
+/// git directory's, asked for by `--git-common-dir`: `--git-path hooks`
+/// honours `core.hooksPath` and would answer with the durable directory
+/// itself, and `--git-dir` in a linked worktree answers with the worktree's
+/// own `.git/worktrees/<name>`, which has no `hooks/` and would read as no
+/// hook at all in exactly the seats this workspace works from. A git that
+/// cannot say where its directory is fails the hook closed, with the reason
+/// on stderr, since a gate that cannot find the repository has not passed.
 #[must_use]
 pub fn chain_tail(name: &str, stdin_replay: &str) -> String {
     format!(
@@ -175,7 +180,10 @@ pub fn chain_tail(name: &str, stdin_replay: &str) -> String {
 # installed under .git/hooks, which git does not read while core.hooksPath
 # points elsewhere. Same arguments, same stdin, its exit status.
 ms_chain() {{
-    gitdir=$(git -C "$root" rev-parse --git-dir 2>/dev/null) || exit 0
+    gitdir=$(git -C "$root" rev-parse --git-common-dir) || {{
+        echo "mockspace gate: cannot find the repository's git directory" >&2
+        exit 1
+    }}
     case "$gitdir" in /*) ;; *) gitdir="$root/$gitdir" ;; esac
     own="$gitdir/hooks/{name}"
     [ -x "$own" ] || exit 0
@@ -445,9 +453,20 @@ mod tests {
                 h[block ..].find("ms_chain").is_none(),
                 "{name}: a block never chains"
             );
-            // the git dir, never the hooks path, which would point back here
-            assert!(h.contains("rev-parse --git-dir"), "{name}");
+            // the common git dir: never the hooks path, which would point back
+            // here, and never the worktree's own git dir, which has no hooks
+            assert!(h.contains("rev-parse --git-common-dir"), "{name}");
             assert!(!h.contains("--git-path hooks"), "{name}");
+            assert!(!h.contains("rev-parse --git-dir"), "{name}");
+            // and a git that cannot answer fails the hook closed, out loud
+            assert!(
+                h.contains("cannot find the repository's git directory"),
+                "{name}"
+            );
+            assert!(
+                !h.contains("--git-common-dir 2>/dev/null"),
+                "{name}: stderr is kept"
+            );
         }
     }
 

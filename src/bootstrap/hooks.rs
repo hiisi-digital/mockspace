@@ -81,8 +81,9 @@ pub(crate) fn gen_hook(name: &str, mock_rel: &str, user_hook: &Path) -> String {
 /// rather than falling back to a second policy that can disagree with the first.
 pub(crate) fn message_commit_msg_body() -> String {
     r##"MSG_FILE="$1"
-[ -z "$MSG_FILE" ] && exit 0
-[ -f "$MSG_FILE" ] || exit 0
+# no message to check is a pass, and a pass still runs the repository's own hook
+[ -z "$MSG_FILE" ] && ms_chain "$@"
+[ -f "$MSG_FILE" ] || ms_chain "$@"
 
 launcher=""
 if command -v mock >/dev/null 2>&1; then launcher="mock"
@@ -833,6 +834,65 @@ mod byline_hook_tests {
         );
         assert_eq!(code, 1, "the block stands");
         assert!(log.is_none(), "nothing runs past a refusal");
+    }
+
+    #[test]
+    fn durable_chains_from_a_linked_worktree_to_the_clones_own_hook() {
+        // Every agent here works from a worktree, whose own git dir has no
+        // hooks; the clone's does, and that is where the chain has to look.
+        let (clone, sha) = repo_with_commit("fix: whatever");
+        plant_own_hook(&clone, "pre-push", 42);
+        let wt = scratch("wt");
+        let _ = std::fs::remove_dir(&wt);
+        let out = Command::new("git")
+            .args(["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "side"])
+            .current_dir(&clone)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let code = run_script(
+            &mockspace_manifest::gate::durable_hook("pre-push", HOOK_VERSION),
+            &[],
+            &refs_line(&sha),
+            Some(&wt),
+            Some(&launcher_free_path()),
+        );
+        assert_eq!(code, 42, "the clone's own hook ran from the worktree");
+        // the hook runs with the worktree as its working directory, so its
+        // log lands there: what is shared is the hook, not the tree
+        assert!(own_log(&wt).is_some_and(|l| l.contains("refs/heads/main")));
+        assert!(own_log(&clone).is_none());
+        let _ = std::fs::remove_dir_all(&wt);
+        let _ = std::fs::remove_dir_all(&clone);
+    }
+
+    #[test]
+    fn the_generated_commit_msg_chains_on_its_two_early_passes() {
+        // no message file, or a path that is not one: passes that used to be
+        // bare exits, and the own hook runs on them too
+        let (repo, _) = repo_with_commit("fix: whatever");
+        let own = plant_own_hook(&repo, "commit-msg", 42);
+        let hook = gen_commit_msg(&own);
+        assert_eq!(
+            run_script(&hook, &[], "", Some(&repo), Some(&launcher_free_path())),
+            42
+        );
+        let missing = repo.join("no-such-file");
+        assert_eq!(
+            run_script(
+                &hook,
+                &[&missing],
+                "",
+                Some(&repo),
+                Some(&launcher_free_path())
+            ),
+            42
+        );
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     #[test]

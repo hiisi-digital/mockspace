@@ -148,18 +148,77 @@ fn hooks_path_target(mock_dir: &Path) -> PathBuf {
     }
 }
 
-/// Resolve the actual .git directory (handles worktrees).
-fn resolve_git_dir(repo_root: &Path) -> PathBuf {
+/// The common git directory: `.git` in a clone, and in a linked worktree the
+/// clone's `.git` that the worktree's own `.git/worktrees/<name>` points back
+/// at through its `commondir` file. The hooks the generated scripts chain to
+/// live there, since git reads a worktree's hooks from the common directory,
+/// and the worktree's own has none.
+pub(crate) fn resolve_git_dir(repo_root: &Path) -> PathBuf {
     let git_path = repo_root.join(".git");
     if git_path.is_file() {
         // Worktree: .git file contains "gitdir: <path>"
         if let Ok(content) = fs::read_to_string(&git_path) {
             if let Some(gitdir) = content.trim().strip_prefix("gitdir: ") {
-                return PathBuf::from(gitdir.trim());
+                let gitdir = PathBuf::from(gitdir.trim());
+                // and that directory names the common one, relative to itself
+                if let Ok(common) = fs::read_to_string(gitdir.join("commondir")) {
+                    let common = gitdir.join(common.trim());
+                    return common.canonicalize().unwrap_or(common);
+                }
+                return gitdir;
             }
         }
     }
     git_path
+}
+
+#[cfg(test)]
+mod git_dir_tests {
+    use super::*;
+
+    fn run(cwd: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn a_linked_worktree_resolves_to_the_clones_git_dir_where_the_hooks_are() {
+        let clone = tempfile::tempdir().unwrap();
+        run(clone.path(), &["init", "-q", "-b", "main"]);
+        fs::write(clone.path().join("f"), "x").unwrap();
+        run(clone.path(), &["add", "f"]);
+        run(clone.path(), &["commit", "-qm", "one"]);
+        let wt = tempfile::tempdir().unwrap();
+        run(clone.path(), &[
+            "worktree",
+            "add",
+            "-q",
+            wt.path().to_str().unwrap(),
+            "-b",
+            "side",
+        ]);
+        let expect = clone.path().canonicalize().unwrap().join(".git");
+        assert_eq!(resolve_git_dir(clone.path()), clone.path().join(".git"));
+        let from_wt = resolve_git_dir(wt.path());
+        assert_eq!(from_wt, expect, "the worktree's hooks are the clone's");
+        assert!(
+            !from_wt.to_string_lossy().contains("worktrees"),
+            "{}",
+            from_wt.display()
+        );
+    }
 }
 
 fn content_fingerprint(content: &str) -> u64 {
