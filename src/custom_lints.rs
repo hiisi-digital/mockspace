@@ -193,10 +193,45 @@ fn patch_section(lint_rules_dep: &str, cargo_home: &Path) -> Option<String> {
     let url = extract_between(lint_rules_dep, "git = \"", "\"")?;
     let rev = extract_between(lint_rules_dep, "rev = \"", "\"")?;
     let path = find_lint_rules_checkout(cargo_home, &url, &rev)?;
-    Some(format!(
-        "\n[patch.\"{url}\"]\nmockspace-lint-rules = {{ path = \"{}\" }}\n",
-        path.display()
-    ))
+    let mut out = String::new();
+    for spelling in spellings_of(&url) {
+        out.push_str(&format!(
+            "\n[patch.\"{spelling}\"]\nmockspace-lint-rules = {{ path = \"{}\" }}\n",
+            path.display()
+        ));
+    }
+    Some(out)
+}
+
+/// Every url a pack might have written for the same repository.
+///
+/// Cargo keys a source on the url string, so `https://github.com/o/r.git` and
+/// `ssh://git@github.com/o/r.git` are two sources holding two copies of one
+/// crate, and a patch on one covers neither the other nor anything that named
+/// it. That is the exact failure the patch above exists to prevent, arriving
+/// through the one door it did not cover.
+///
+/// It is not hypothetical and it is not rare: the engine names its own
+/// lint-rules by whichever spelling its manifest carries, and a `[lint-crates]`
+/// pack in somebody else's repository names it by whichever spelling that
+/// author wrote. Both are correct and they do not have to agree.
+///
+/// So the patch is emitted for both, which costs a table cargo ignores when
+/// nothing names that source and is what makes the unification hold when
+/// something does.
+///
+/// Only these two forms, and no attempt to normalise beyond them: a url this
+/// does not recognise is passed through unchanged, so a self-hosted forge or a
+/// scheme nobody here uses behaves exactly as it did before.
+fn spellings_of(url: &str) -> Vec<String> {
+    let (https, ssh) = if let Some(rest) = url.strip_prefix("https://") {
+        (url.to_string(), format!("ssh://git@{rest}"))
+    } else if let Some(rest) = url.strip_prefix("ssh://git@") {
+        (format!("https://{rest}"), url.to_string())
+    } else {
+        return vec![url.to_string()];
+    };
+    vec![https, ssh]
 }
 
 /// Locate cargo's checkout of `lint-rules` at `rev` for the git repo `url`,
@@ -768,6 +803,72 @@ mod tests {
             "mockspace-lint-rules = {{ path = \"{}\" }}",
             lr.display()
         )));
+    }
+
+    #[test]
+    fn patch_section_covers_both_spellings_of_one_repository() {
+        // The defect this is the fix for, and it is worth stating as a case
+        // rather than trusting the helper below: cargo keys a source on the url
+        // string, so a pack naming the repository by ssh while the engine names
+        // it by https resolves to two copies of `mockspace-lint-rules`, whose
+        // `LintPack` types do not unify. The cdylib then fails to build and
+        // every lint under it stops running.
+        //
+        // Observed in `huurre`, which tracks the engine by branch and so rolled
+        // onto a revision emitting the https form, while `mockspace-extra-lints`
+        // and one of its own tools name the ssh form. The error named
+        // `mockspace_lint_rules` twice and neither url once.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let lr = home.join("git/checkouts/mockspace-deadbeef/b57007c/lint-rules");
+        std::fs::create_dir_all(&lr).unwrap();
+
+        let https = "{ package = \"mockspace-lint-rules\", git = \
+                      \"https://github.com/hiisi-digital/mockspace.git\", rev = \"b57007c900\" }";
+        let patch = patch_section(https, home).unwrap();
+        assert!(
+            patch.contains("[patch.\"https://github.com/hiisi-digital/mockspace.git\"]"),
+            "the spelling the engine wrote is not patched: {patch}"
+        );
+        assert!(
+            patch.contains("[patch.\"ssh://git@github.com/hiisi-digital/mockspace.git\"]"),
+            "a pack naming the same repository by ssh is not covered: {patch}"
+        );
+
+        // And the same in the other direction, since which spelling the engine
+        // carries is not this function's to assume.
+        let ssh = "{ package = \"mockspace-lint-rules\", git = \
+                    \"ssh://git@github.com/hiisi-digital/mockspace.git\", rev = \"b57007c900\" }";
+        let patch = patch_section(ssh, home).unwrap();
+        assert!(patch.contains("[patch.\"https://github.com/hiisi-digital/mockspace.git\"]"));
+        assert!(patch.contains("[patch.\"ssh://git@github.com/hiisi-digital/mockspace.git\"]"));
+    }
+
+    #[test]
+    fn a_url_in_neither_form_is_passed_through_unchanged() {
+        // The boundary. A self-hosted forge, a `git://` url, a scheme nobody
+        // here uses: one table, the url as written, exactly as before this
+        // change. Guessing a second spelling for a host whose conventions are
+        // unknown would emit a patch for a source that does not exist, and a
+        // patch nothing matches is a manifest that no longer explains itself.
+        assert_eq!(spellings_of("git://example.invalid/m.git").len(), 1);
+        assert_eq!(spellings_of("ssh://x/mockspace.git").len(), 1);
+        assert_eq!(
+            spellings_of("file:///home/somebody/mockspace"),
+            vec!["file:///home/somebody/mockspace".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_two_spellings_round_trip_to_each_other() {
+        // The law the pair rests on, over the form every repository here
+        // actually writes. Without it a one-sided mapping would pass both cases
+        // above while producing a second spelling that names a different
+        // repository.
+        let https = "https://github.com/hiisi-digital/mockspace.git";
+        let ssh = "ssh://git@github.com/hiisi-digital/mockspace.git";
+        assert_eq!(spellings_of(https), vec![https.to_string(), ssh.to_string()]);
+        assert_eq!(spellings_of(ssh), vec![https.to_string(), ssh.to_string()]);
     }
 
     #[test]
