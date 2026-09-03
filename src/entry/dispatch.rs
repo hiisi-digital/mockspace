@@ -761,7 +761,12 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // internally below, and that derivation is the engine's own, not a claim a
     // caller made about what is staged.
     if doc_only {
-        if let Some(r) = escape_hatch::verify_doc_only(&cfg.repo_root, &mock_rel_for_hatch) {
+        // The same layout the phase gates read, so the flag's claim is checked
+        // against what they call source rather than against every `.rs` under
+        // the mock tree.
+        let layout = mockspace_lint_rules::src_layout::SrcLayout::new(&cfg.mock_dir, &cfg.src_dirs);
+        if let Some(r) = escape_hatch::verify_doc_only(&cfg.repo_root, &mock_rel_for_hatch, &layout)
+        {
             eprintln!("BLOCKED: {}", r.explain());
             return ExitCode::FAILURE;
         }
@@ -1526,10 +1531,9 @@ mod tests {
         // satisfy the arm above and break every repository-local tool.
         let (_t, mock) = mock_with_tool_dir("rounding-vocabulary");
         let empty = LintPack::default();
-        assert_eq!(
-            dispatchable_tool_names(&mock, &empty),
-            vec!["rounding-vocabulary".to_string()]
-        );
+        assert_eq!(dispatchable_tool_names(&mock, &empty), vec![
+            "rounding-vocabulary".to_string()
+        ]);
     }
 
     #[test]
@@ -1554,10 +1558,9 @@ mod tests {
         // there reads as two different tools rather than as one conflict.
         let (_t, mock) = mock_with_tool_dir("coverage");
         let pack = pack_with(&["coverage"]);
-        assert_eq!(
-            dispatchable_tool_names(&mock, &pack),
-            vec!["coverage".to_string()]
-        );
+        assert_eq!(dispatchable_tool_names(&mock, &pack), vec![
+            "coverage".to_string()
+        ]);
     }
 
     #[test]
