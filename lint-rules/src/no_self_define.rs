@@ -69,6 +69,12 @@ impl Lint for NoSelfDefine {
         crate::Severity::OFF
     }
 
+    /// The marker is this lint's input, not an allow: it has to carry an
+    /// explanation of fifty words or more, and a bare one is a finding.
+    fn markers_decide(&self) -> bool {
+        false
+    }
+
     fn name(&self) -> &'static str {
         LINT_NAME
     }

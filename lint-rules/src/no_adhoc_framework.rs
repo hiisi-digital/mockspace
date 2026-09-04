@@ -29,6 +29,12 @@ impl Lint for NoAdhocFramework {
         crate::Severity::OFF
     }
 
+    /// The marker is this lint's input, not an allow: it has to carry an
+    /// explanation, and a bare one is a finding.
+    fn markers_decide(&self) -> bool {
+        false
+    }
+
     fn name(&self) -> &'static str {
         "no-adhoc-framework"
     }

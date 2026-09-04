@@ -43,25 +43,42 @@ pub fn allowed_at(source: &str, row: usize, rule_name: &str) -> bool {
         let l = l.trim_start();
         l.starts_with("//") && !l.starts_with("///") && !l.starts_with("//!")
     };
-    // A line that neither ends a statement nor opens or closes a block is a
-    // continuation of the item above it: a parameter of a wrapped signature,
-    // a where clause, a generic list. The walk passes over those to reach the
-    // item's own line, so a marker above `pub fn f(` covers `x: &str,` three
-    // lines down. A blank line, an attribute or a doc comment is not a
-    // continuation.
-    let continuation = |l: &str| {
-        let t = l.trim();
-        !t.is_empty()
-            && !t.starts_with('#')
-            && !t.starts_with("//")
-            && !t.ends_with(';')
-            && !t.ends_with('{')
-            && !t.ends_with('}')
-    };
-    let signature_start = lines[.. row]
-        .iter()
-        .rposition(|l| !continuation(l))
-        .map_or(0, |i| i + 1);
+    // The line may sit inside a bracket a line above opened and has not yet
+    // closed: a parameter of a wrapped signature, an element of a wrapped
+    // list. The walk climbs to the line holding that unmatched opener, which
+    // is the item's own line, so a marker above `pub fn f(` covers `x: &str,`
+    // three lines down. A line with balanced brackets above it is its own
+    // item: a struct field, a match arm or a chained call gets no reach from
+    // a marker over its neighbour, and a blank line, an attribute, a comment
+    // or a finished statement ends the climb.
+    let mut signature_start = row;
+    let mut open: isize = 0;
+    let mut k = row;
+    while k > 0 {
+        k -= 1;
+        let t = lines[k].trim();
+        if t.is_empty() || t.starts_with('#') || t.starts_with("//") {
+            break;
+        }
+        // scanned backwards, a closer opens and an opener closes
+        for c in t.chars().rev() {
+            match c {
+                ')' | ']' => open += 1,
+                '(' | '[' => open -= 1,
+                _ => {},
+            }
+            if open < 0 {
+                break;
+            }
+        }
+        if open < 0 {
+            signature_start = k;
+            break;
+        }
+        if t.ends_with(';') || t.ends_with('{') || t.ends_with('}') {
+            break;
+        }
+    }
     let above = lines[.. signature_start]
         .iter()
         .rev()
@@ -187,6 +204,34 @@ mod tests {
         // nor does a blank line carry the reach
         let src = "// lint:allow(x)\n\nfn f(a: &str) {}\n";
         assert!(!allowed_at(src, 2, "x"));
+    }
+
+    #[test]
+    fn a_marker_over_one_neighbour_does_not_reach_the_next() {
+        // the three shapes a review found the first walk reaching past: a
+        // struct field, a match arm and a chained call, each a line with
+        // balanced brackets above the finding
+        let fields =
+            "pub struct S {\n    // lint:allow(x)\n    a: &str,\n    b: &str,\n    c: &str,\n}\n";
+        assert!(allowed_at(fields, 2, "x"), "the field under the marker");
+        assert!(!allowed_at(fields, 3, "x"), "the next field");
+        assert!(!allowed_at(fields, 4, "x"), "the one after");
+
+        let arms =
+            "match v {\n    // lint:allow(x)\n    A(x) => 1,\n    B(y) => 2,\n    C(z) => 3,\n}\n";
+        assert!(allowed_at(arms, 2, "x"));
+        assert!(!allowed_at(arms, 3, "x"));
+        assert!(!allowed_at(arms, 4, "x"));
+
+        let chain = "// lint:allow(x)\nlet v = thing\n    .map(f)\n    .filter(g)\n    .count();\n";
+        assert!(allowed_at(chain, 1, "x"), "the statement's own line");
+        assert!(!allowed_at(chain, 2, "x"), "a chained call on its own line");
+        assert!(!allowed_at(chain, 3, "x"));
+
+        // and a wrapped list literal, which is the reach that is wanted
+        let list = "// lint:allow(x)\nconst L: &[&str] = &[\n    \"a\",\n    \"b\",\n];\n";
+        assert!(allowed_at(list, 2, "x"));
+        assert!(allowed_at(list, 3, "x"));
     }
 
     fn finding(line: usize, path: Option<&str>) -> LintError {
