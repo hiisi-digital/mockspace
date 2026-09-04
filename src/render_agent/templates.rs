@@ -1503,8 +1503,18 @@ mod canon_location_is_derived {
         // canon and the skill said its rows are the whole of it, which is a
         // claim that it has some.
         for (canon_paths, keeps_the_surface, declares_a_canon, shape) in [
-            (vec!["mock/registry/*.toml".to_string()], false, true, "a registry canon"),
-            (vec!["mock/canon/**".to_string()], true, true, "the reserved directory"),
+            (
+                vec!["mock/registry/*.toml".to_string()],
+                false,
+                true,
+                "a registry canon",
+            ),
+            (
+                vec!["mock/canon/**".to_string()],
+                true,
+                true,
+                "the reserved directory",
+            ),
             (Vec::new(), false, false, "nothing declared"),
         ] {
             let cfg = cfg_for(canon_paths);

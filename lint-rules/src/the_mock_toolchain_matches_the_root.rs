@@ -393,10 +393,10 @@ mod tests {
     /// two files off the wrong ends of the context reports a repository as
     /// agreeing with itself and passes every arm above.
     fn run(root: Option<&str>, copy: Option<&str>) -> Vec<LintError> {
-        run_named(
-            &[("rust-toolchain.toml", root)],
-            &[("rust-toolchain.toml", copy)],
-        )
+        run_named(&[("rust-toolchain.toml", root)], &[(
+            "rust-toolchain.toml",
+            copy,
+        )])
     }
 
     /// The same wiring with the filenames given, because the spelling is the
@@ -593,10 +593,10 @@ mod tests {
     #[test]
     fn the_extensionless_spelling_is_read_off_the_disk() {
         let copy = "nightly\n";
-        let errs = run_named(
-            &[("rust-toolchain", Some(ROOT))],
-            &[("rust-toolchain", Some(copy))],
-        );
+        let errs = run_named(&[("rust-toolchain", Some(ROOT))], &[(
+            "rust-toolchain",
+            Some(copy),
+        )]);
         // Two, because a legacy file carries a channel and can carry nothing
         // else, so the root's `components` is missing from it as well.
         assert_eq!(errs.len(), 2, "{errs:?}");
@@ -621,13 +621,10 @@ mod tests {
     /// is what makes it pass.
     #[test]
     fn rustup_prefers_the_extensionless_file() {
-        let errs = run_named(
-            &[("rust-toolchain.toml", Some(ROOT))],
-            &[
-                ("rust-toolchain.toml", Some(ROOT)),
-                ("rust-toolchain", Some("nightly\n")),
-            ],
-        );
+        let errs = run_named(&[("rust-toolchain.toml", Some(ROOT))], &[
+            ("rust-toolchain.toml", Some(ROOT)),
+            ("rust-toolchain", Some("nightly\n")),
+        ]);
         assert_eq!(
             errs.len(),
             2,

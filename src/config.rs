@@ -11,7 +11,15 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use mockspace_lint_rules::{Level, LintConfig, PathFilter, PathFilters, Severity, parse_severity};
+use mockspace_lint_rules::{
+    CrateFilters,
+    Level,
+    LintConfig,
+    PathFilter,
+    PathFilters,
+    Severity,
+    parse_severity,
+};
 use serde::Deserialize;
 use serde::de::IntoDeserializer;
 
@@ -638,22 +646,28 @@ enum LintEntry {
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct LintTableConfig {
-    commit:   Option<String>,
-    build:    Option<String>,
-    push:     Option<String>,
-    severity: Option<String>,
-    findings: Option<BTreeMap<String, String>>,
+    commit:        Option<String>,
+    build:         Option<String>,
+    push:          Option<String>,
+    severity:      Option<String>,
+    findings:      Option<BTreeMap<String, String>>,
     /// Path globs this lint may be shown, and ones it may not. Named explicitly rather than
     /// left to the flattened `params` map, because both are arrays and everything that map
     /// holds is a string.
-    include:  Option<Vec<String>>,
-    exclude:  Option<Vec<String>>,
-    rule:     Option<BTreeMap<String, BTreeMap<String, StringOrOther>>>,
+    include:       Option<Vec<String>>,
+    exclude:       Option<Vec<String>>,
+    // Which crates the lint binds, as globs over the crate name. `crates`
+    // admits, `exempt_crates` removes, and a lint naming neither binds every
+    // crate. The names match the scope block the engine rewrite reads, so a
+    // configuration written for one is read by the other.
+    crates:        Option<Vec<String>>,
+    exempt_crates: Option<Vec<String>>,
+    rule:          Option<BTreeMap<String, BTreeMap<String, StringOrOther>>>,
     /// Inline array of tables format:
     /// `rules = [{ scope = "...", forbidden = "...", reason = "..." }]`
-    rules:    Option<Vec<InlineRule>>,
+    rules:         Option<Vec<InlineRule>>,
     #[serde(flatten)]
-    params:   BTreeMap<String, StringOrOther>,
+    params:        BTreeMap<String, StringOrOther>,
 }
 
 /// A single forbidden-imports rule in inline array format.
@@ -1084,6 +1098,7 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
     let mut findings: HashMap<String, HashMap<String, Severity>> = HashMap::new();
     let mut params: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut paths = PathFilters::new();
+    let mut crates = CrateFilters::new();
 
     for (lint_name, item) in lints_table.iter() {
         let lint_name = lint_name.to_string();
@@ -1171,6 +1186,18 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
                     });
                 }
 
+                if table.crates.is_some() || table.exempt_crates.is_some() {
+                    let expand = |v: Vec<String>| -> Vec<String> {
+                        v.into_iter()
+                            .map(|s| s.replace("{prefix}", crate_prefix))
+                            .collect()
+                    };
+                    crates.insert(lint_name.clone(), PathFilter {
+                        include: expand(table.crates.unwrap_or_default()),
+                        exclude: expand(table.exempt_crates.unwrap_or_default()),
+                    });
+                }
+
                 // Named rule sub-tables: [lints.lint-name.rule.rule-name]
                 if let Some(rule_map) = table.rule {
                     let param_entry = params.entry(lint_name.clone()).or_default();
@@ -1217,6 +1244,7 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
         findings,
         params,
         paths,
+        crates,
     }
 }
 
@@ -1267,6 +1295,47 @@ mod a_renamed_key_is_not_dropped_in_silence {
     #[test]
     fn a_config_that_does_not_use_the_old_key_is_not_complained_at() {
         assert!(renamed_agent_key(false).is_none());
+    }
+
+    #[test]
+    fn crates_and_exempt_crates_under_a_lint_become_its_crate_filter() {
+        let toml = r#"
+[lints.no-std]
+commit = "error"
+crates = ["{prefix}-dirs", "{prefix}-config"]
+exempt_crates = ["{prefix}"]
+
+[lints.no-alloc]
+commit = "error"
+exempt_crates = ["widget"]
+
+[lints.file-size]
+commit = "error"
+"#;
+        let cfg = parse_lints_from_document(toml, "widget");
+
+        assert!(cfg.binds_crate("no-std", "widget-dirs"));
+        assert!(cfg.binds_crate("no-std", "widget-config"));
+        assert!(
+            !cfg.binds_crate("no-std", "widget"),
+            "the launcher is exempt"
+        );
+        assert!(
+            !cfg.binds_crate("no-std", "unrelated"),
+            "a `crates` list admits only what it names"
+        );
+
+        assert!(!cfg.binds_crate("no-alloc", "widget"));
+        assert!(
+            cfg.binds_crate("no-alloc", "widget-dirs"),
+            "an exemption alone admits everything else"
+        );
+
+        // the control: a lint naming neither key binds every crate, and is not
+        // in the map at all
+        assert!(!cfg.crates.contains_key("file-size"));
+        assert!(cfg.binds_crate("file-size", "widget"));
+        assert!(cfg.binds_crate("never-mentioned", "widget"));
     }
 
     /// The old key is captured rather than passing as an unknown field.

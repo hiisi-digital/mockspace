@@ -34,7 +34,10 @@
 //! not consult this module: `check_repo_with_extra` hands the lint a `RepoContext` and no file
 //! list, because a repo lint walks the worktree itself. So `include` and `exclude` under a repo
 //! lint's name are silently inert, and naming that here is the least this can do until the
-//! filter reaches them. Tracked by the ignored test in `path_filter_reach_tests` below.
+//! filter reaches them. Tracked by the ignored test
+//! `a_repo_lint_excluded_from_everything_does_not_run` in the crate root. The same holds
+//! of `crates` and `exempt_crates`, which reach crate lints and cross-crate lints and not
+//! repo lints, tracked by `a_repo_lint_bound_to_another_crate_does_not_run` beside it.
 //!
 //! # The syntax, and what it does not have
 //!
@@ -98,6 +101,14 @@ impl PathFilter {
 
 /// Path filters per lint name, as parsed from `[lints.<name>]`.
 pub type PathFilters = HashMap<String, PathFilter>;
+
+/// Crate-name filters per lint name, as parsed from `crates` and
+/// `exempt_crates` under `[lints.<name>]`. The same shape as a path filter,
+/// matched against the crate's name rather than a file's path, which is what
+/// lets a crate-scoped lint bind two crates of a workspace and leave a third
+/// alone: a path filter cannot, since a crate lint's paths are relative to the
+/// crate and every crate has a `src/lib.rs`.
+pub type CrateFilters = HashMap<String, PathFilter>;
 
 /// A platform path as the patterns see it: `/` separators, no leading `./`.
 fn normalise(path: &Path) -> String {

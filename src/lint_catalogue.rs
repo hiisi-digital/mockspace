@@ -197,14 +197,15 @@ pub fn enumerate(pack: &LintPack, config: &LintConfig) -> Vec<Listing> {
 
 /// Whether the project named this lint anywhere in its configuration.
 ///
-/// The same four sections `run_with_overrides` reads, in the same order. Spelled
-/// once here so a fifth section added to [`LintConfig`] is one edit rather than
+/// The same five sections `run_with_overrides` reads, in the same order. Spelled
+/// once here so a sixth section added to [`LintConfig`] is one edit rather than
 /// two places that agree until they do not.
 fn named_in_config(name: &str, config: &LintConfig) -> bool {
     config.base.contains_key(name)
         || config.findings.contains_key(name)
         || config.params.contains_key(name)
         || config.paths.contains_key(name)
+        || config.crates.contains_key(name)
 }
 
 fn one(name: &str, kind: Kind, default: Severity, config: &LintConfig) -> Listing {
@@ -260,6 +261,7 @@ pub fn configured_but_absent(pack: &LintPack, config: &LintConfig) -> Vec<String
         .chain(config.findings.keys())
         .chain(config.params.keys())
         .chain(config.paths.keys())
+        .chain(config.crates.keys())
         .filter(|k| !present.contains_key(*k))
         .cloned()
         .collect();
