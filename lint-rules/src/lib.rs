@@ -83,6 +83,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 pub use path_filter::{CrateFilters, PathFilter, PathFilters, glob_match};
+pub mod allow;
+pub use allow::{allowed_at, honour_allows};
 pub use tool::{
     ArgSpec,
     NotALint,
@@ -1238,6 +1240,20 @@ pub trait Lint {
         true
     }
 
+    /// Whether a `lint:allow(<name>)` marker on a finding's line, or beside
+    /// its item, is enough to drop the finding. The runner honours markers on
+    /// every lint's behalf, so a lint written without knowing they exist still
+    /// respects them. Default `true`.
+    ///
+    /// Override to `false` where the marker is not an allow but an input the
+    /// lint reads for itself: one that demands an explanation of a certain
+    /// length and refuses a bare marker as a finding of its own. There the
+    /// runner dropping the finding would switch the lint's gate off with the
+    /// exact comment the lint exists to refuse.
+    fn markers_decide(&self) -> bool {
+        true
+    }
+
     /// The default severity for this lint's violations, when no config
     /// override is present.
     ///
@@ -1866,10 +1882,38 @@ pub fn check_crate_with_extra(
         }
         let filter = overrides.and_then(|cfg| cfg.filter_for(lint.name()));
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            check_every_file(lint, ctx, &parsed, filter)
+            let found = check_every_file(lint, ctx, &parsed, filter);
+            if !lint.markers_decide() {
+                return found;
+            }
+            honour_allows(found, lint.name(), |err| {
+                source_in(ctx, lint, err.path.as_deref())
+            })
         });
     }
     errors
+}
+
+/// The text a finding's line is in: the named file among the crate's sources,
+/// or, for a lint that judges one file at a time, the crate root where the
+/// finding names no file, since that is the file it was about.
+///
+/// A crate-scoped lint's finding with no path is about the crate and not
+/// about the root: `file-size` names the file in its message and reports
+/// line 1. Reading that as line 1 of `src/lib.rs` would let one marker on the
+/// copyright banner silence the lint for every file, so such a finding has
+/// no source here and stands.
+fn source_in<'c>(ctx: &'c LintContext<'c>, lint: &dyn Lint, path: Option<&str>) -> Option<&'c str> {
+    match path {
+        None if lint.per_file() => Some(ctx.source),
+        None => None,
+        Some(p) => {
+            ctx.all_sources
+                .iter()
+                .find(|s| s.rel_path.to_string_lossy() == p)
+                .map(|s| s.text.as_str())
+        },
+    }
 }
 
 /// Run all cross-crate lints, returning violations.
@@ -2006,7 +2050,16 @@ pub fn check_workspace_with_extra(
             continue;
         }
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            lint.check_all(&bound)
+            let found = lint.check_all(&bound);
+            if !lint.markers_decide() {
+                return found;
+            }
+            honour_allows(found, lint.name(), |err| {
+                bound
+                    .iter()
+                    .find(|(name, _)| *name == err.crate_name)
+                    .and_then(|(_, c)| source_in(c, lint, err.path.as_deref()))
+            })
         });
     }
     errors
@@ -3273,6 +3326,152 @@ mod declared_default_severity_tests {
             .into_iter()
             .filter(|e| e.lint_name == name)
             .count()
+    }
+
+    /// A lint that fires on line 2 of `src/lib.rs` and line 2 of
+    /// `src/other.rs`, the second by path, and says whether markers decide.
+    struct FiresOnTwo {
+        markers_decide: bool,
+        per_file:       bool,
+    }
+
+    impl Lint for FiresOnTwo {
+        fn name(&self) -> &'static str {
+            "fires-on-two"
+        }
+
+        fn per_file(&self) -> bool {
+            self.per_file
+        }
+
+        fn markers_decide(&self) -> bool {
+            self.markers_decide
+        }
+    }
+
+    impl CrateLint for FiresOnTwo {
+        fn check(&self, ctx: &LintContext) -> Vec<LintError> {
+            let mut root =
+                LintError::error(ctx.crate_name.to_string(), 2, "fires-on-two", "root".into());
+            root.path = None;
+            let mut other = LintError::error(
+                ctx.crate_name.to_string(),
+                2,
+                "fires-on-two",
+                "other".into(),
+            );
+            other.path = Some("src/other.rs".to_string());
+            vec![root, other]
+        }
+    }
+
+    /// A crate whose root allows the lint on line 2 and whose other file does
+    /// not, so the two findings want opposite answers from the runner.
+    fn two_files() -> Vec<CrateSourceFile> {
+        vec![
+            CrateSourceFile {
+                rel_path: "src/lib.rs".into(),
+                text:     "// lint:allow(fires-on-two) reason: r\nfn a() {}\n".into(),
+            },
+            CrateSourceFile {
+                rel_path: "src/other.rs".into(),
+                text:     "fn b() {}\nfn c() {}\n".into(),
+            },
+        ]
+    }
+
+    fn messages(errors: Vec<LintError>) -> Vec<String> {
+        errors
+            .into_iter()
+            .filter(|e| e.lint_name == "fires-on-two")
+            .map(|e| e.message)
+            .collect()
+    }
+
+    #[test]
+    fn the_runner_honours_a_marker_through_the_crate_dispatch() {
+        // the wire between the parser and the dispatch, which is the part a
+        // test of `honour_allows` alone never crosses
+        let files = two_files();
+        let mut base = ctx();
+        base.source = &files[0].text;
+        base.all_sources = &files;
+
+        let lint = FiresOnTwo {
+            markers_decide: true,
+            per_file:       false,
+        };
+        let kept = messages(check_crate_with_extra(&base, false, None, &[Box::new(
+            lint,
+        )]));
+        assert_eq!(
+            kept,
+            ["root", "other"],
+            "a crate-scoped finding with no path is about the crate and stands, and the other file \
+             carries no marker"
+        );
+
+        let lint = FiresOnTwo {
+            markers_decide: true,
+            per_file:       true,
+        };
+        let kept = messages(check_crate_with_extra(&base, false, None, &[Box::new(
+            lint,
+        )]));
+        // A per-file lint runs once per file, and the dispatcher stamps a
+        // finding from the other file's pass with that file's path. So the
+        // pathless finding from the root's pass is about the root and is
+        // allowed, the same finding from the other file's pass is about the
+        // other file and stands, and both `other` findings stand.
+        assert_eq!(kept, ["other", "root", "other"]);
+
+        // the control, and the opt-out: a lint that reads its markers itself
+        // keeps every finding, the root's pass included
+        let lint = FiresOnTwo {
+            markers_decide: false,
+            per_file:       true,
+        };
+        let kept = messages(check_crate_with_extra(&base, false, None, &[Box::new(
+            lint,
+        )]));
+        assert_eq!(kept, ["root", "other", "root", "other"]);
+    }
+
+    #[test]
+    fn the_runner_honours_a_marker_through_the_workspace_dispatch() {
+        struct Across;
+        impl Lint for Across {
+            fn name(&self) -> &'static str {
+                "fires-on-two"
+            }
+        }
+        impl WorkspaceLint for Across {
+            fn check_all(&self, crates: &[(&str, &LintContext)]) -> Vec<LintError> {
+                crates
+                    .iter()
+                    .flat_map(|(name, _)| {
+                        let mut a =
+                            LintError::error(name.to_string(), 2, "fires-on-two", "root".into());
+                        a.path = None;
+                        let mut b =
+                            LintError::error(name.to_string(), 2, "fires-on-two", "other".into());
+                        b.path = Some("src/other.rs".to_string());
+                        [a, b]
+                    })
+                    .collect()
+            }
+        }
+        let files = two_files();
+        let mut base = ctx();
+        base.source = &files[0].text;
+        base.all_sources = &files;
+        let kept = messages(check_workspace_with_extra(
+            &[("test-crate", &base)],
+            false,
+            None,
+            &[Box::new(Across)],
+        ));
+        assert_eq!(kept, ["other"]);
     }
 
     fn fired_across(lint: AlwaysFiresAcross, overrides: Option<&LintConfig>) -> usize {
