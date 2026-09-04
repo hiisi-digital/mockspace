@@ -21,12 +21,15 @@
 use crate::{LintError, line_lint_allowed};
 
 /// Whether the finding on line `row`, zero-based, is allowed: by a marker on
-/// that line, by one on the plain `//` comment lines directly above it, or,
-/// where the line opens a block, by one on the plain comment lines directly
-/// below it. The last is the exact shape rustfmt leaves: a marker written
-/// after a signature's `{` lands as the body's first line. A doc comment, an
-/// attribute or code ends either walk, so a marker cannot reach past the
-/// item it sits beside.
+/// that line, by one on the plain `//` comment lines directly above the item
+/// the line belongs to, or, where the line opens a block, by one on the plain
+/// comment lines directly below it. The last is the exact shape rustfmt
+/// leaves: a marker written after a signature's `{` lands as the body's
+/// first line. The item's own line is reached by passing over the wrapped
+/// lines of its signature, so one marker above `pub fn` covers every
+/// parameter of it. A doc comment, an attribute, a blank line or a finished
+/// statement ends either walk, so a marker cannot reach past the item it
+/// sits beside.
 #[must_use]
 pub fn allowed_at(source: &str, row: usize, rule_name: &str) -> bool {
     let lines: Vec<&str> = source.lines().collect();
@@ -40,7 +43,29 @@ pub fn allowed_at(source: &str, row: usize, rule_name: &str) -> bool {
         let l = l.trim_start();
         l.starts_with("//") && !l.starts_with("///") && !l.starts_with("//!")
     };
-    let above = lines[.. row].iter().rev().take_while(|l| plain_comment(l));
+    // A line that neither ends a statement nor opens or closes a block is a
+    // continuation of the item above it: a parameter of a wrapped signature,
+    // a where clause, a generic list. The walk passes over those to reach the
+    // item's own line, so a marker above `pub fn f(` covers `x: &str,` three
+    // lines down. A blank line, an attribute or a doc comment is not a
+    // continuation.
+    let continuation = |l: &str| {
+        let t = l.trim();
+        !t.is_empty()
+            && !t.starts_with('#')
+            && !t.starts_with("//")
+            && !t.ends_with(';')
+            && !t.ends_with('{')
+            && !t.ends_with('}')
+    };
+    let signature_start = lines[.. row]
+        .iter()
+        .rposition(|l| !continuation(l))
+        .map_or(0, |i| i + 1);
+    let above = lines[.. signature_start]
+        .iter()
+        .rev()
+        .take_while(|l| plain_comment(l));
     if above.into_iter().any(|l| line_lint_allowed(l, rule_name)) {
         return true;
     }
@@ -142,6 +167,26 @@ mod tests {
             0,
             "x"
         ));
+    }
+
+    #[test]
+    fn a_marker_above_an_item_covers_its_wrapped_signature() {
+        let src = "/// doc\n// lint:allow(x) reason: r\npub fn f<'a>(\n    a: &'a str,\n    b: &'a str,\n) -> &'a str {\n    a\n}\n";
+        assert!(allowed_at(src, 2, "x"), "the item's own line");
+        assert!(allowed_at(src, 3, "x"), "a parameter line");
+        assert!(allowed_at(src, 4, "x"), "the last parameter line");
+        assert!(
+            allowed_at(src, 5, "x"),
+            "the return type line, which opens the block"
+        );
+        assert!(!allowed_at(src, 6, "x"), "the body is not the signature");
+        // a statement above is not a continuation, so a marker over it does
+        // not leak downward past it
+        let src = "// lint:allow(x)\nlet a = 1;\nlet b: &str = \"\";\n";
+        assert!(!allowed_at(src, 2, "x"));
+        // nor does a blank line carry the reach
+        let src = "// lint:allow(x)\n\nfn f(a: &str) {}\n";
+        assert!(!allowed_at(src, 2, "x"));
     }
 
     fn finding(line: usize, path: Option<&str>) -> LintError {
