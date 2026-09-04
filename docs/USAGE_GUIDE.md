@@ -268,6 +268,8 @@ Globs over the crate name, with the same syntax as the path patterns and `{prefi
 
 The two keys reach per-package lints, which are skipped for a crate they do not bind, and cross-package lints, which are handed only the crates they bind and are skipped when that is none. **They are read and then ignored for repository lints**, the same carve-out as the path keys, and for the same reason.
 
+One line at a time, `// lint:allow(<name>) reason: <why>` keeps a finding of that lint from that line. The runner honours it for every per-package and cross-package lint, whether or not the lint knows markers exist: on the line itself, on the plain `//` comment lines directly above it, or, where the line opens a block, on the plain comment lines directly below it, which is where rustfmt puts a marker written after a signature's `{`. A doc comment, an attribute or code ends the reach, so a marker allows the item it sits beside and nothing further. The comma form `lint:allow(a, b)` names several lints at once.
+
 Levels: `off`, `info`, `warn`, `error`. The four built-in design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`) are always on and non-negotiable.
 
 The v2 source-level directive vocabulary (`lint:allow`, `lint:scope-add`, `lint:defer`, `lint:file-disable`, `lint:prop`) and the `[primitive-introductions]` retirement are covered in [`MIGRATION-v1-to-v2-lints.md`](MIGRATION-v1-to-v2-lints.md). Consumers picking up the v2 engine should read it once per repo.

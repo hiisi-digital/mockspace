@@ -83,6 +83,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 pub use path_filter::{CrateFilters, PathFilter, PathFilters, glob_match};
+pub mod allow;
+pub use allow::{allowed_at, honour_allows};
 pub use tool::{
     ArgSpec,
     NotALint,
@@ -1866,10 +1868,28 @@ pub fn check_crate_with_extra(
         }
         let filter = overrides.and_then(|cfg| cfg.filter_for(lint.name()));
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            check_every_file(lint, ctx, &parsed, filter)
+            honour_allows(
+                check_every_file(lint, ctx, &parsed, filter),
+                lint.name(),
+                |err| source_in(ctx, err.path.as_deref()),
+            )
         });
     }
     errors
+}
+
+/// The text a finding's line is in: the named file among the crate's sources,
+/// or the crate root where the finding names no file.
+fn source_in<'c>(ctx: &'c LintContext<'c>, path: Option<&str>) -> Option<&'c str> {
+    match path {
+        None => Some(ctx.source),
+        Some(p) => {
+            ctx.all_sources
+                .iter()
+                .find(|s| s.rel_path.to_string_lossy() == p)
+                .map(|s| s.text.as_str())
+        },
+    }
 }
 
 /// Run all cross-crate lints, returning violations.
@@ -2006,7 +2026,12 @@ pub fn check_workspace_with_extra(
             continue;
         }
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            lint.check_all(&bound)
+            honour_allows(lint.check_all(&bound), lint.name(), |err| {
+                bound
+                    .iter()
+                    .find(|(name, _)| *name == err.crate_name)
+                    .and_then(|(_, c)| source_in(c, err.path.as_deref()))
+            })
         });
     }
     errors
