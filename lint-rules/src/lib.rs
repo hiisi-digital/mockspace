@@ -82,7 +82,7 @@ mod undocumented_type;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-pub use path_filter::{PathFilter, PathFilters, glob_match};
+pub use path_filter::{CrateFilters, PathFilter, PathFilters, glob_match};
 pub use tool::{
     ArgSpec,
     NotALint,
@@ -924,6 +924,14 @@ pub struct LintConfig {
     /// The runner applies these before calling a lint, so no lint implements path scoping
     /// and one written without knowing this exists still respects it. See [`path_filter`].
     pub paths:    PathFilters,
+    /// Which crates each lint binds: lint_name -> filter over the crate name, from
+    /// `crates` and `exempt_crates` under `[lints.<name>]`.
+    ///
+    /// Applied by the runner before a crate lint is called, the way `paths` is, so a lint
+    /// written without knowing this exists still respects it. A path filter cannot do this
+    /// job: a crate lint's paths are relative to its crate, and every crate has a
+    /// `src/lib.rs`. A lint with no entry binds every crate.
+    pub crates:   CrateFilters,
 }
 
 impl LintConfig {
@@ -935,6 +943,7 @@ impl LintConfig {
             findings: HashMap::new(),
             params:   HashMap::new(),
             paths:    PathFilters::new(),
+            crates:   CrateFilters::new(),
         }
     }
 
@@ -945,6 +954,7 @@ impl LintConfig {
             && self.findings.is_empty()
             && self.params.is_empty()
             && self.paths.is_empty()
+            && self.crates.is_empty()
     }
 
     /// The path filter for one lint, when it has one that would change anything. An empty
@@ -953,6 +963,16 @@ impl LintConfig {
     #[must_use]
     pub fn filter_for(&self, lint_name: &str) -> Option<&PathFilter> {
         self.paths.get(lint_name).filter(|f| !f.is_empty())
+    }
+
+    /// Whether one lint binds a crate of this name. Every crate, unless the lint has a
+    /// crate filter that says otherwise.
+    #[must_use]
+    pub fn binds_crate(&self, lint_name: &str, crate_name: &str) -> bool {
+        self.crates
+            .get(lint_name)
+            .filter(|f| !f.is_empty())
+            .is_none_or(|f| f.allows_str(crate_name))
     }
 
     /// Hand one lint the parameters configured under its name, if any.
@@ -979,6 +999,7 @@ impl LintConfig {
             findings: HashMap::new(),
             params: HashMap::new(),
             paths: PathFilters::new(),
+            crates: CrateFilters::new(),
         }
     }
 }
@@ -1836,6 +1857,13 @@ pub fn check_crate_with_extra(
         .map(Box::as_ref)
         .chain(extra_lints.iter().map(Box::as_ref))
     {
+        // A lint bound to other crates is not run here at all, rather than run and
+        // silenced: the crate is outside what the configuration says the lint is
+        // about, and a finding from it would be a claim about a crate the lint was
+        // told nothing of.
+        if overrides.is_some_and(|cfg| !cfg.binds_crate(lint.name(), ctx.crate_name)) {
+            continue;
+        }
         let filter = overrides.and_then(|cfg| cfg.filter_for(lint.name()));
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
             check_every_file(lint, ctx, &parsed, filter)
@@ -1913,6 +1941,7 @@ fn run_with_overrides(
             || cfg.findings.contains_key(lint.name())
             || cfg.params.contains_key(lint.name())
             || cfg.paths.contains_key(lint.name())
+            || cfg.crates.contains_key(lint.name())
     });
     if !named_in_config && lint.default_severity().is_off() {
         return;
@@ -3200,6 +3229,7 @@ mod declared_default_severity_tests {
             findings: HashMap::new(),
             params: HashMap::new(),
             paths: PathFilters::new(),
+            crates: CrateFilters::new(),
         }
     }
 
@@ -3221,6 +3251,76 @@ mod declared_default_severity_tests {
             .into_iter()
             .filter(|e| e.lint_name == name)
             .count()
+    }
+
+    fn config_binding(name: &str, include: &[&str], exclude: &[&str]) -> LintConfig {
+        let mut cfg = LintConfig::empty();
+        cfg.crates.insert(name.to_string(), PathFilter {
+            include: include.iter().map(|s| (*s).to_string()).collect(),
+            exclude: exclude.iter().map(|s| (*s).to_string()).collect(),
+        });
+        cfg
+    }
+
+    #[test]
+    fn a_crate_lint_bound_to_other_crates_is_not_run_on_this_one() {
+        // The hole this closes: a crate lint from a pack walks every crate of a
+        // workspace, and a path filter cannot tell them apart, since each has a
+        // `src/lib.rs`. The context here is the crate `test-crate`.
+        let unbound = fired(AlwaysFires("bound", Severity::HARD_ERROR), None);
+        assert_eq!(
+            unbound, 1,
+            "the control: with no filter the lint fires here"
+        );
+
+        let elsewhere = config_binding("bound", &["other-crate"], &[]);
+        assert_eq!(
+            fired(AlwaysFires("bound", Severity::HARD_ERROR), Some(&elsewhere)),
+            0,
+            "a lint whose `crates` names another crate does not run on this one"
+        );
+
+        let here = config_binding("bound", &["test-*"], &[]);
+        assert_eq!(
+            fired(AlwaysFires("bound", Severity::HARD_ERROR), Some(&here)),
+            1,
+            "a glob that admits this crate leaves the lint running"
+        );
+
+        let exempt = config_binding("bound", &[], &["test-crate"]);
+        assert_eq!(
+            fired(AlwaysFires("bound", Severity::HARD_ERROR), Some(&exempt)),
+            0,
+            "`exempt_crates` removes this crate with no `crates` list at all"
+        );
+
+        let both = config_binding("bound", &["*"], &["test-crate"]);
+        assert_eq!(
+            fired(AlwaysFires("bound", Severity::HARD_ERROR), Some(&both)),
+            0,
+            "an exemption beats an admission"
+        );
+
+        let other_lint = config_binding("some-other-lint", &["other-crate"], &[]);
+        assert_eq!(
+            fired(
+                AlwaysFires("bound", Severity::HARD_ERROR),
+                Some(&other_lint)
+            ),
+            1,
+            "a filter on another lint's name binds nothing here"
+        );
+    }
+
+    #[test]
+    fn a_crate_filter_alone_counts_as_naming_the_lint() {
+        // A lint declaring OFF stays off until a project names it. Naming it only
+        // by a crate filter is naming it, the same as a path filter would be.
+        let named = config_binding("declares-off", &["test-*"], &[]);
+        assert_eq!(
+            fired(AlwaysFires("declares-off", Severity::OFF), Some(&named)),
+            1
+        );
     }
 
     #[test]
@@ -3291,6 +3391,7 @@ mod declared_default_severity_tests {
             findings,
             params: HashMap::new(),
             paths: PathFilters::new(),
+            crates: CrateFilters::new(),
         };
         assert_eq!(
             fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)),
@@ -3313,6 +3414,7 @@ mod declared_default_severity_tests {
             findings: HashMap::new(),
             params,
             paths: PathFilters::new(),
+            crates: CrateFilters::new(),
         };
         assert_eq!(
             fired(AlwaysFires("declares-off", Severity::OFF), Some(&cfg)),

@@ -99,6 +99,14 @@ impl PathFilter {
 /// Path filters per lint name, as parsed from `[lints.<name>]`.
 pub type PathFilters = HashMap<String, PathFilter>;
 
+/// Crate-name filters per lint name, as parsed from `crates` and
+/// `exempt_crates` under `[lints.<name>]`. The same shape as a path filter,
+/// matched against the crate's name rather than a file's path, which is what
+/// lets a crate-scoped lint bind two crates of a workspace and leave a third
+/// alone: a path filter cannot, since a crate lint's paths are relative to the
+/// crate and every crate has a `src/lib.rs`.
+pub type CrateFilters = HashMap<String, PathFilter>;
+
 /// A platform path as the patterns see it: `/` separators, no leading `./`.
 fn normalise(path: &Path) -> String {
     let s = path.to_string_lossy().replace('\\', "/");

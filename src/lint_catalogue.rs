@@ -205,6 +205,7 @@ fn named_in_config(name: &str, config: &LintConfig) -> bool {
         || config.findings.contains_key(name)
         || config.params.contains_key(name)
         || config.paths.contains_key(name)
+        || config.crates.contains_key(name)
 }
 
 fn one(name: &str, kind: Kind, default: Severity, config: &LintConfig) -> Listing {
@@ -260,6 +261,7 @@ pub fn configured_but_absent(pack: &LintPack, config: &LintConfig) -> Vec<String
         .chain(config.findings.keys())
         .chain(config.params.keys())
         .chain(config.paths.keys())
+        .chain(config.crates.keys())
         .filter(|k| !present.contains_key(*k))
         .cloned()
         .collect();
