@@ -266,6 +266,8 @@ exempt_crates = ["{prefix}"]
 
 Globs over the crate name, with the same syntax as the path patterns and `{prefix}` standing for the project's crate prefix. `crates` admits, `exempt_crates` removes and wins, and a lint naming neither binds every crate. A path filter cannot do this job, since a package lint's paths are relative to its crate and every crate has a `src/lib.rs`; this is what lets a workspace hold a `no_std` crate beside a `std` one and bind the no-std lints to the first alone. As with the path keys, naming a lint here is enough to ask for it.
 
+The two keys reach per-package lints, which are skipped for a crate they do not bind, and cross-package lints, which are handed only the crates they bind and are skipped when that is none. **They are read and then ignored for repository lints**, the same carve-out as the path keys, and for the same reason.
+
 Levels: `off`, `info`, `warn`, `error`. The four built-in design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`) are always on and non-negotiable.
 
 The v2 source-level directive vocabulary (`lint:allow`, `lint:scope-add`, `lint:defer`, `lint:file-disable`, `lint:prop`) and the `[primitive-introductions]` retirement are covered in [`MIGRATION-v1-to-v2-lints.md`](MIGRATION-v1-to-v2-lints.md). Consumers picking up the v2 engine should read it once per repo.

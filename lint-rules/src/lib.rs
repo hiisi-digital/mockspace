@@ -1993,8 +1993,20 @@ pub fn check_workspace_with_extra(
         .map(Box::as_ref)
         .chain(extra_lints.iter().map(Box::as_ref))
     {
+        // A cross-crate lint sees the crates its filter admits and no others,
+        // the same narrowing a crate lint gets one function up. Bound to
+        // nothing here, it does not run: a cross-crate check over an empty set
+        // is a pass it never established.
+        let bound: Vec<(&str, &LintContext)> = crates
+            .iter()
+            .filter(|(name, _)| overrides.is_none_or(|cfg| cfg.binds_crate(lint.name(), name)))
+            .copied()
+            .collect();
+        if bound.is_empty() && !crates.is_empty() {
+            continue;
+        }
         run_with_overrides(lint, doc_only, overrides, &mut errors, || {
-            lint.check_all(crates)
+            lint.check_all(&bound)
         });
     }
     errors
@@ -2696,6 +2708,25 @@ mod repo_lint_tests {
         assert!(run_one(Box::new(OffByDefault), Some(&cfg)).is_empty());
     }
 
+    /// Catalogued, the same gap one key over. `crates` and `exempt_crates` under
+    /// a repo lint's name parse, count as naming the lint, and are then consulted
+    /// by nobody, because a repo lint walks the worktree itself and is handed no
+    /// crate list to narrow. Worse than inert: a repo lint that declares OFF is
+    /// switched on by the filter that was meant to bind it elsewhere. The
+    /// assertion is what it should do; un-ignore it when the filter reaches repo
+    /// lints.
+    #[test]
+    #[ignore = "catalogue: crates/exempt_crates under a repo lint's name are inert, \
+                since the repo dispatch consults no crate filter"]
+    fn a_repo_lint_bound_to_another_crate_does_not_run() {
+        let mut cfg = LintConfig::empty();
+        cfg.crates.insert("off-by-default".to_string(), PathFilter {
+            include: vec!["some-other-crate".to_string()],
+            exclude: Vec::new(),
+        });
+        assert!(run_one(Box::new(OffByDefault), Some(&cfg)).is_empty());
+    }
+
     #[test]
     fn every_lint_is_the_project_s_to_configure() {
         // Including the round gates. The defaults are opinionated and a project
@@ -3309,6 +3340,36 @@ mod declared_default_severity_tests {
             ),
             1,
             "a filter on another lint's name binds nothing here"
+        );
+    }
+
+    #[test]
+    fn a_cross_crate_lint_sees_only_the_crates_it_is_bound_to() {
+        let control = fired_across(AlwaysFiresAcross("bound", Severity::HARD_ERROR), None);
+        assert_eq!(
+            control, 1,
+            "the control: unfiltered, the lint runs over the one crate"
+        );
+
+        let elsewhere = config_binding("bound", &["other-crate"], &[]);
+        assert_eq!(
+            fired_across(
+                AlwaysFiresAcross("bound", Severity::HARD_ERROR),
+                Some(&elsewhere)
+            ),
+            0,
+            "bound to a crate that is not in the workspace, the lint has nothing to see and does \
+             not run"
+        );
+
+        let here = config_binding("bound", &["test-*"], &[]);
+        assert_eq!(
+            fired_across(
+                AlwaysFiresAcross("bound", Severity::HARD_ERROR),
+                Some(&here)
+            ),
+            1,
+            "bound to this crate, it runs over it"
         );
     }
 

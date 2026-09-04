@@ -197,8 +197,8 @@ pub fn enumerate(pack: &LintPack, config: &LintConfig) -> Vec<Listing> {
 
 /// Whether the project named this lint anywhere in its configuration.
 ///
-/// The same four sections `run_with_overrides` reads, in the same order. Spelled
-/// once here so a fifth section added to [`LintConfig`] is one edit rather than
+/// The same five sections `run_with_overrides` reads, in the same order. Spelled
+/// once here so a sixth section added to [`LintConfig`] is one edit rather than
 /// two places that agree until they do not.
 fn named_in_config(name: &str, config: &LintConfig) -> bool {
     config.base.contains_key(name)
