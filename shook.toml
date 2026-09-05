@@ -1,0 +1,23 @@
+# What mockspace's own repository wants run at a git event, for
+# `git shook install` to register.
+#
+# Two things worth saying plainly. mockspace has never gated itself: there is no
+# `mockspace.toml` in this tree, by design, and no hook has ever been installed
+# here, so this is a new gate rather than a translation of one that existed.
+# And nothing here runs until somebody runs `git shook install` in their own
+# clone, which is the whole point of the arrangement, so the file is inert until
+# it is asked for.
+#
+# What mockspace installs into a consumer is a different thing and is not this:
+# `cargo mock check --gate commit` and `--gate push`, written by the bootstrap in
+# `mock/crates/mockspace-rs/src/bootstrap.rs`. Those belong to the repository
+# that adopted mockspace, and a consumer declaring them gets them beside whatever
+# else it runs rather than instead of it.
+
+name = "mockspace"
+
+[hooks.pre-commit]
+run = ["cargo", "fmt", "--check"]
+
+[hooks.pre-push]
+run = ["cargo", "test", "--workspace"]
