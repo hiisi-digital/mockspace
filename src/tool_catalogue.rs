@@ -365,11 +365,15 @@ mod tests {
         // builtin's, because a builtin is dispatched by hand rather than
         // through the tool contract.
         //
-        // `panel` is the one builtin that currently declares a required
-        // argument (`verb`), and its own dispatch (`crate::entry::panel::run`)
-        // enforces it directly: `mock panel` with no verb refuses, pinned by
-        // `a_missing_verb_is_refused` in that module. So the claim is true,
-        // just enforced per-builtin rather than by one shared mechanism.
+        // Two builtins declare a required argument, and each enforces it
+        // in its own dispatch rather than through one shared mechanism.
+        // `panel` declares `verb`, and `crate::entry::panel::run` refuses
+        // `mock panel` with none, pinned by `a_missing_verb_is_refused` in
+        // that module. `ask` declares `question`, and
+        // `crate::corpus::AskArgs::parse` refuses an empty one before the
+        // index is touched, pinned by
+        // `the_question_is_the_words_and_the_flags_are_refused_by_name` in
+        // that module. So the claim is true for both.
         //
         // This test is the tripwire for the next one: if a future builtin
         // declares a required argument, it is named here and its own
@@ -382,7 +386,7 @@ mod tests {
             .collect();
         assert_eq!(
             with_required,
-            vec!["panel"],
+            vec!["ask", "panel"],
             "a builtin started (or stopped) declaring a required argument; update this              list and confirm its own dispatch enforces (or no longer needs to enforce) it"
         );
     }

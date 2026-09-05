@@ -140,6 +140,26 @@ const COMMANDS: &[Cmd] = &[
                   absent one queries nothing.",
     },
     Cmd {
+        name:    "ask",
+        summary: "put a question in words to this project's corpus",
+        args:    &[ArgSpec {
+            name:        "question",
+            required:    true,
+            description: "the question, as many words as it takes, unquoted",
+        }],
+        help:    "Searches the index over the mock dir, lexical and dense \
+                  fused, and quotes every passage that clears the threshold \
+                  under the file and lines it came from, or says nothing did \
+                  and shows the near misses. The index is built by the bare \
+                  `cargo mock` run for a project that carries a `[corpus]` \
+                  table in mockspace.toml, and a project without one has no \
+                  index and nothing to ask. This is for the question that \
+                  does not know its key: a row the registry holds is queried \
+                  by `mock query`. The answer is extractive, the passages \
+                  themselves and never a paraphrase, since this engine \
+                  carries no generator.",
+    },
+    Cmd {
         name:    "bench",
         summary: "run the bench harness",
         args:    &[],

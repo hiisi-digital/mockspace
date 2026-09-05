@@ -69,6 +69,15 @@ serde = { version = "1", features = ["derive"] }
 # back alphabetised, which loses the file's shape while preserving all of
 # its contents.
 serde_json = { version = "1", features = ["preserve_order"] }
+# The corpus: one index per repository over its mock dir, built on every run
+# for a project that opts in through `[corpus]`, and what `mock ask` reads.
+# The repository is private, so the dependency is spelled over ssh, which is
+# what this package may carry since it does not publish; the launcher builds
+# it. Without the default features, since a mock dir holds markdown, toml and
+# source and neither pdf nor html. `model2vec` is `potion-base-8M`, the static
+# embedder with no runtime under it, which is the one every consumer's build
+# can afford.
+muisti = { git = "ssh://git@github.com/orgrinrt/muisti.git", branch = "dev", default-features = false, features = ["model2vec"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -253,6 +253,26 @@ pub struct Config {
     /// until a consolidation is recorded. See `crate::panel` for the whole
     /// mechanism this gates.
     pub panel_consolidate_every: u32,
+
+    /// The corpus this project opted into, or none. `[corpus]` in
+    /// `mockspace.toml` is the opt-in, and its presence is what makes
+    /// `cargo mock` build an index over the mock dir on every run and
+    /// `mock ask` answer over it. Absent means no index directory at all,
+    /// which is what makes the opt-in mean something.
+    pub corpus: Option<CorpusConfig>,
+}
+
+/// What `[corpus]` declares. Every key is optional; the table being there
+/// is the decision.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorpusConfig {
+    /// The fused score a hit has to reach for `mock ask` to quote it, in
+    /// the unit interval. The crate's own default when absent.
+    pub threshold: Option<f32>,
+    /// Globs over the path relative to the mock dir. With any include, only
+    /// what one matches is indexed; an exclude wins over an include.
+    pub include:   Vec<String>,
+    pub exclude:   Vec<String>,
 }
 
 /// Everything `mock/agent/config.toml` declares.
@@ -551,6 +571,16 @@ struct RawRegistry {
     namespace: Vec<crate::registry::RegistryNamespace>,
 }
 
+/// `[corpus]`, as written. See `CorpusConfig`.
+#[derive(Deserialize, Default)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[serde(default)]
+struct RawCorpus {
+    threshold: Option<f32>,
+    include:   Vec<String>,
+    exclude:   Vec<String>,
+}
+
 #[derive(Deserialize, Default)]
 #[cfg_attr(test, derive(serde::Serialize))]
 #[serde(default)]
@@ -631,6 +661,10 @@ struct RawConfig {
     /// Documents a reader should start with. See `Config::primary_docs`.
     #[serde(default)]
     primary_docs: Vec<String>,
+
+    /// The corpus opt-in. See `Config::corpus`.
+    #[serde(default)]
+    corpus: Option<RawCorpus>,
     // Lints section is handled separately via toml_edit document API
     // because it contains heterogeneous values (strings and tables).
 }
@@ -936,6 +970,13 @@ impl Config {
             panel_consolidate_every: raw
                 .panel_consolidate_every
                 .unwrap_or(crate::panel::DEFAULT_CONSOLIDATE_EVERY),
+            corpus: raw.corpus.map(|c| {
+                CorpusConfig {
+                    threshold: c.threshold,
+                    include:   c.include,
+                    exclude:   c.exclude,
+                }
+            }),
         }
     }
 

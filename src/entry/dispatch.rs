@@ -550,6 +550,26 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     .unwrap_or("");
                 return registry::cmd_query(&cfg, expr);
             },
+            "ask" => {
+                let ask = match crate::corpus::AskArgs::parse(&subcommand_args(&args, "ask")) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        eprintln!("ask: {e}");
+                        return ExitCode::FAILURE;
+                    },
+                };
+                let mut out = String::new();
+                return match crate::corpus::ask(&cfg, &ask.question, &mut out) {
+                    Ok(()) => {
+                        print!("{out}");
+                        ExitCode::SUCCESS
+                    },
+                    Err(e) => {
+                        eprintln!("ask: {e}");
+                        ExitCode::FAILURE
+                    },
+                };
+            },
             "check" => {
                 return cmd_check(&cfg);
             },
@@ -1288,6 +1308,27 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     eprintln!("--- generating agent rules ---");
     let agent_count = render_agent::generate_agent_rules(&crates, &cfg, &registry, pack);
     eprintln!("  generated {agent_count} agent files");
+
+    // --- The corpus index, for a project that opted in ---
+    // Last, so a document this run generated is in the index it leaves
+    // behind. A failure here is reported and does not fail the run: the
+    // index is a surface a question reads and nothing gates on it, and the
+    // commonest failure is a machine that cannot reach the model hub right
+    // now, which is not a finding about the project.
+    if cfg.corpus.is_some() {
+        eprintln!("--- indexing the corpus ---");
+        let mut out = String::new();
+        match crate::corpus::build(&cfg, &mut out) {
+            Ok(built) => {
+                eprint!("{out}");
+                eprintln!("  {built} in {}", crate::corpus::index_path(&cfg.mock_dir).display());
+            },
+            Err(e) => {
+                eprint!("{out}");
+                eprintln!("  the index was not built: {e}");
+            },
+        }
+    }
 
     if registry_errors > 0 {
         eprintln!(

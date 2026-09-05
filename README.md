@@ -97,6 +97,7 @@ cargo mock close                 # archive a CLOSED round
 cargo mock test                  # cargo test across every tree mockspace owns
 cargo mock tools                 # every subcommand and project tool, with usage
 cargo mock lints                 # every lint, its severity here, and where the two disagree
+cargo mock ask <question...>     # the passages of this project's own writing that answer, quoted
 mock locate                      # where this repo keeps its mockspace, shell-assignable
 ```
 

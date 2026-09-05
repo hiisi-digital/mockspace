@@ -267,6 +267,7 @@ pub(crate) const ROOT_KEYS: &[&str] = &[
     "ref",
     "ordered_docs",
     "primary_docs",
+    "corpus",
     "lints",
     // `lint-crates` is the same exception as `lints` and was missed for the same
     // reason: `src/bootstrap/lints.rs::parse_lint_crates` reads it out of the

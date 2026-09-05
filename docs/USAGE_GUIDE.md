@@ -123,6 +123,7 @@ Those are the transitions. The subcommands that are not transitions:
 | `cargo mock activate` / `deactivate` | Point `core.hooksPath` at the gate, or hand it back |
 | `cargo mock tools` | Every subcommand and project tool, with usage |
 | `cargo mock lints` | Every lint that runs here, builtin and pack alike, the severity this project gave it, and where the two sides disagree |
+| `cargo mock ask <question...>` | The passages of this project's own writing that answer a question in words, quoted under their file and lines, for a project that carries a `[corpus]` table |
 
 **`cargo mock tools` and `cargo mock lints` are the lists that cannot go stale**, since they read what the binary actually ships and what the engine and the loaded pack actually register between them, none of which this table can know about. Prefer them over this table wherever the two might disagree.
 
@@ -137,6 +138,7 @@ Running `cargo mock` with no subcommand:
 5. Runs dylib ABI checks for crates listed under `module_crates`.
 6. Regenerates everything in `docs/` from templates and parsed crate data.
 7. Regenerates agent integration files if `mock/agent/` is populated.
+8. Builds the corpus index under `mock/.muisti/` if `mockspace.toml` carries a `[corpus]` table, incrementally, so the documents this run generated and the round it closed are in the index it leaves behind. A failure here, a machine that cannot reach the model hub being the usual one, is reported and does not fail the run.
 
 Common flags:
 
@@ -158,6 +160,8 @@ The generated `pre-commit` hook runs `cargo mock` scoped to changed crates with 
 This table (and the one above it) is not the exhaustive command reference; run `mock tools` for that, or `mock tools --long` for full usage and declared arguments per command. It never goes stale the way a hand-written list does, because it is computed from the same declarations the engine dispatches against.
 
 ## Panels
+
+`mock ask <question...>` puts a question in words to an index over the mock dir: the rounds, the research, the registries, the templates and the source, lexical and dense retrieval fused, with every passage that clears the threshold quoted under the file and lines it came from, or a refusal with the near misses under it. It is for the question that does not know its key, where `mock query` is for the row that has one. The index lives at `<mock>/.muisti/`, ignores itself, and is rebuilt by every bare `cargo mock` run for a project whose `mockspace.toml` carries a `[corpus]` table; a project without one has no index directory at all. The embedder is `potion-base-8M`, fetched once into `~/.cache/muisti` and shared with anything else built on the same crate, and the answer is extractive: the passages themselves and never a paraphrase, since the engine carries no generator. A project that opts in also ships a generated agent rule saying to ask before grepping.
 
 `mock panel {seat,consolidate,status}` mints panel seats against a formalised inventory at `<mock>/panel/<slug>.toml`, capped at 99 seats with an enforced consolidation cadence (`panel_consolidate_every` below, default 10). `mock check` refuses a change touching a configured `canon_paths` glob while any panel is open. See `mock tools --long` for the full contract (usage, declared arguments, and the longer help body), and `mock/agent/config.toml`'s `agent_panel_discipline` to ship the generated rule describing the discipline to an agent.
 
@@ -186,6 +190,11 @@ deny_check = true                     # cargo deny check on push (needs a deny.t
 
 canon_paths = ["mock/canon/**"]       # what `mock check` protects from an open panel
 panel_consolidate_every = 10          # seats a panel mints before a consolidation is due
+
+[corpus]                              # the table is the opt-in; every key under it is optional
+threshold = 0.75                      # the fused score a passage reaches before `mock ask` quotes it
+include = []                          # globs over the mock dir; with any, only what one matches is indexed
+exclude = []                          # globs that win over the includes
 ```
 
 Install modes (applied when generated content overwrites existing files):

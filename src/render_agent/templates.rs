@@ -543,6 +543,38 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
         });
     }
 
+    // From `[corpus]` in `mockspace.toml` rather than the agent config: the
+    // rule describes a surface, and a project that has no index has nothing
+    // for the rule to point at, so the opt-in that makes the index is the one
+    // that ships the rule. See `crate::corpus`.
+    if cfg.corpus.is_some() {
+        let where_it_is = format!(
+            "This project keeps an index over `{mock_rel}/`, built by every bare `cargo mock` run and \
+             kept under `{mock_rel}/{}`, which is generated and never committed. `mock ask \
+             <question...>` puts a question in words to it, lexical and dense retrieval fused, and \
+             quotes every passage that clears the threshold under the file and lines it came from, or \
+             says nothing did and shows the near misses.",
+            crate::corpus::DIR
+        );
+        rules.push(BuiltinRule {
+            name: "ask-the-corpus".to_string(),
+            apply_to: vec!["**".to_string()],
+            body: format!(
+                "## Ask the corpus before searching it by hand\n\n{}\n\n{}\n\n{}\n",
+                where_it_is,
+                "**It is for the question that does not know its key.** A row the registry holds is \
+                 queried by `mock query`; a design decision, a round that argued something, a research \
+                 note that measured it, is asked for in the words it would have been written in. Run \
+                 it before grepping the rounds and before concluding a thing was never discussed: a \
+                 grep finds a phrase, and this finds the passage.",
+                "The answer is the passages themselves, never a paraphrase, so a quotation from it is \
+                 checkable against the file it names. A question the index cannot answer is refused with \
+                 the near misses rather than answered badly; a refusal says the corpus is silent, not \
+                 that the question is settled. The index is as fresh as the last `cargo mock` run.",
+            ),
+        });
+    }
+
     // Off by default, from `mock/agent/config.toml`. Describes how a panel
     // (several personas working one question) mints and consolidates seats
     // against a formalised inventory, and states the one discipline the
