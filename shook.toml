@@ -8,11 +8,15 @@
 # clone, which is the whole point of the arrangement, so the file is inert until
 # it is asked for.
 #
-# What mockspace installs into a consumer is a different thing and is not this:
-# `cargo mock check --gate commit` and `--gate push`, written by the bootstrap in
-# `mock/crates/mockspace-rs/src/bootstrap.rs`. Those belong to the repository
-# that adopted mockspace, and a consumer declaring them gets them beside whatever
-# else it runs rather than instead of it.
+# What mockspace installs into a consumer is a different thing and is not this.
+# In v1, which is what every consumer runs, the generated hooks call
+# `cargo mock --lint-only --commit --scope <crates>` at commit and
+# `--lint-only --strict --scope <crates>` at push, both written by
+# `src/bootstrap/hooks.rs`. v2 spells the same job `cargo mock check --gate
+# commit` and `--gate push`, in `mock/crates/mockspace-rs/src/bootstrap.rs`, and
+# nobody runs that yet. Either way they belong to the repository that adopted
+# mockspace, and a consumer declaring them gets them beside whatever else it
+# runs rather than instead of it.
 
 name = "mockspace"
 
