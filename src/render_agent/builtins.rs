@@ -69,10 +69,80 @@ INPUT_ALL=$(echo "$__INPUT" | jq -r '.tool_input | tostring' 2>/dev/null || echo
 # FILE_PATH and COMMAND are empty, which is every MCP tool, and those are the
 # tools this hook exists to cover. Scope on the process cwd instead, which is
 # where an MCP tool operates, falling back to the command's mention of the repo.
+#
+# A command that names a repository has said which repository it is about, and
+# that beats the cwd. `git -C <path>` and `--git-dir <path>` both name one, and
+# addressing every repo by absolute path is the convention here, so a shell
+# sitting in one repo commits in another routinely. On the cwd alone this
+# repo's gate claimed those commits, and having claimed one it linted the whole
+# serialised tool input as though it were the subject, so a long command was
+# denied for a length it never had.
+#
+# Every comparison below is made against the root both as written and as the
+# filesystem resolves it. A root under a symlink is the ordinary case rather
+# than the exotic one: on macOS `/var` links to `/private/var`, so a shell that
+# has to take its cwd from the kernel reports the second spelling while the
+# root was generated as the first, and a check comparing one of the two clears
+# a path that is this repository.
+#
+# `pwd -P` throughout, because plain `pwd` is logical: `cd /var/x && pwd` hands
+# back `/var/x` unresolved, so resolving a path by cd-ing to it and asking is a
+# no-op without the flag, which is a fix that looks correct and does nothing.
+_root_resolved=$(cd "$__HOOK_REPO_ROOT" 2>/dev/null && pwd -P) || _root_resolved=""
+[ -n "$_root_resolved" ] || _root_resolved="$__HOOK_REPO_ROOT"
+
+_is_this_repo() {{
+    case "$1" in
+        "$__HOOK_REPO_ROOT"|"$__HOOK_REPO_ROOT"/*) return 0 ;;
+        "$_root_resolved"|"$_root_resolved"/*) return 0 ;;
+    esac
+    return 1
+}}
+
+_names_this_repo=0
+_names_other_repo=0
+_bare_git_message=0
+if [ -n "$COMMAND" ]; then
+    # A git message verb with no repository in front of it runs wherever the
+    # shell is, so an explicit path elsewhere in the same command says nothing
+    # about this one and the cwd is still the answer for it.
+    if echo "$COMMAND" | grep -qE '\bgit[[:space:]]+(commit|tag|notes|merge|revert|cherry-pick|am)\b'; then
+        _bare_git_message=1
+    fi
+    for _p in $(printf '%s\n' "$COMMAND" \
+        | grep -oE -- '(-C|--git-dir)[= ]+[^ "'"'"']+' \
+        | sed -E 's/^(-C|--git-dir)[= ]+//'); do
+        case "$_p" in
+            -*) continue ;;
+        esac
+        # A relative `-C` resolves against the cwd. One that resolves to
+        # nothing is compared as written, which is right for an absolute path
+        # and declines to guess for anything else, since `-C` also belongs to
+        # `grep`, `make` and `tar`.
+        _abs=$(cd "$_p" 2>/dev/null && pwd -P) || _abs=""
+        [ -n "$_abs" ] || _abs="$_p"
+        if _is_this_repo "$_abs" || _is_this_repo "$_p"; then
+            _names_this_repo=1
+        else
+            case "$_abs" in
+                /*) _names_other_repo=1 ;;
+            esac
+        fi
+    done
+fi
+
+# Every git command here names a repository and none of them is this one.
+if [ "$_names_this_repo" != "1" ] && [ "$_names_other_repo" = "1" ] \
+   && [ "$_bare_git_message" != "1" ]; then
+    allow
+fi
+
 _in_scope=1
-case "$(pwd)" in
-    "$__HOOK_REPO_ROOT"|"$__HOOK_REPO_ROOT"/*) _in_scope=0 ;;
-esac
+if [ "$_names_this_repo" = "1" ]; then
+    _in_scope=0
+elif _is_this_repo "$(pwd -P)" || _is_this_repo "$(pwd)"; then
+    _in_scope=0
+fi
 if [ "$_in_scope" != "0" ] && [ -n "$COMMAND" ]; then
     if echo "$COMMAND" | grep -qF "$__HOOK_REPO_ROOT"; then _in_scope=0; fi
 fi
