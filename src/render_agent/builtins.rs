@@ -350,7 +350,25 @@ fi
 if echo "$REL_PATH" | grep -qE '^[^/]+\.md\.tmpl$'; then
     allow
 fi
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+# The repository this hook is about is the one it was generated for, and asking
+# git from the process cwd answers about whichever repository the shell happens
+# to be standing in.
+#
+# That is not an exotic case. Addressing a member repository by absolute path is
+# the convention, so a session sitting at a workspace root and editing a file
+# inside a member by its full path is ordinary, and there the cwd's repository
+# is the workspace, which has no design rounds in it at all. Every query below
+# then returns nothing, the phase reads TOPIC, and the edit is refused with a
+# message naming a phase the round is not in, which is a true statement about
+# the wrong repository and reads as a true statement about the right one.
+#
+# `_scope_or_allow` has already established that the file is inside this hook's
+# own repository, so that repository is what the rest of this is about. The cwd
+# stays the fallback for the case where the generated root has moved.
+REPO_ROOT=$(git -C "$__HOOK_REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ -z "$REPO_ROOT" ]]; then
+    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+fi
 if [[ -z "$REPO_ROOT" ]]; then
     allow
 fi
