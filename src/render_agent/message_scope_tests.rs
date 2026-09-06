@@ -17,6 +17,15 @@
 //! stay distinguishable on a machine that has no `mock` installed: out of scope
 //! is silence, in scope is a refusal, and which refusal it is does not matter
 //! to anything here.
+//!
+//! What these arms catch as a set is worth stating, because their names read
+//! wider than their coverage. Run against the code before the fix, only the two
+//! resting on the resolved-path half fail; the arm named for the headline
+//! defect passes there, because the unresolved symlink was allowing everything
+//! from that directory anyway and the right answer arrived for the wrong
+//! reason. The control that actually carries the repository half is the one in
+//! the commit that introduced it: disable the branch and exactly that arm
+//! fails.
 
 use std::process::Command;
 
@@ -207,9 +216,30 @@ fn the_symlinked_root_is_recognised_as_this_repo() {
 }
 
 #[test]
+fn a_forge_body_is_not_excused_by_a_path_some_other_program_was_given() {
+    // `-C` is not git's alone, and a forge body is not about a worktree at all,
+    // so "this call names another repository" must not reach a `gh pr create`.
+    // Placing that test beside the scope check rather than after the domain is
+    // known let a `tar -C /tmp` in the same command line wave a bad title
+    // through, which is a hole where there had been a gate.
+    let (mine, _other) = two_repos("forge");
+    let gate = gate_for(&mine);
+    let cmd = "tar -C /tmp -xf x.tar && gh pr create --title 'Bad Title.' --body ''";
+    let out = run_from(&mine, &gate, &bash_payload(cmd));
+    assert!(
+        claimed(&out),
+        "a forge body went unchecked because something else was given a path: {out}"
+    );
+}
+
+#[test]
 fn a_command_touching_no_repository_at_all_is_left_alone() {
-    // The negative control for the whole file. Without it every arm above
-    // passes on a gate that allows unconditionally.
+    // The negative control for the whole file, and what it controls for is
+    // narrower than it first reads: four of the arms above assert the gate
+    // claims a call, so a gate that allowed unconditionally would fail those
+    // rather than pass them. What this one catches is the opposite drift, a
+    // gate that claims everything, which would make every `claimed` arm pass
+    // for a reason that has nothing to do with what it is named for.
     let (mine, _other) = two_repos("nothing");
     let gate = gate_for(&mine);
     let out = run_from(&mine, &gate, &bash_payload("echo hello"));

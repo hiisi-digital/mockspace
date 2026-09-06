@@ -117,8 +117,14 @@ if [ -n "$COMMAND" ]; then
         esac
         # A relative `-C` resolves against the cwd. One that resolves to
         # nothing is compared as written, which is right for an absolute path
-        # and declines to guess for anything else, since `-C` also belongs to
-        # `grep`, `make` and `tar`.
+        # and declines to guess for anything else.
+        #
+        # `-C` is not git's alone: `grep`, `make` and `tar` all take one, and a
+        # value that names a real directory is indistinguishable from git's
+        # here. `grep -C 3` falls out because a number resolves to nothing;
+        # `make -C /some/dir` does not, and is read as a repository this hook is
+        # not about. What stops that mattering is the unqualified-git test
+        # above, so the two are load-bearing together rather than separately.
         _abs=$(cd "$_p" 2>/dev/null && pwd -P) || _abs=""
         [ -n "$_abs" ] || _abs="$_p"
         if _is_this_repo "$_abs" || _is_this_repo "$_p"; then
@@ -129,12 +135,6 @@ if [ -n "$COMMAND" ]; then
             esac
         fi
     done
-fi
-
-# Every git command here names a repository and none of them is this one.
-if [ "$_names_this_repo" != "1" ] && [ "$_names_other_repo" = "1" ] \
-   && [ "$_bare_git_message" != "1" ]; then
-    allow
 fi
 
 _in_scope=1
@@ -186,6 +186,22 @@ fi
 
 # Nothing that authors a durable message: not this hook's concern.
 [ -z "$DOMAIN" ] && allow
+
+# Now that the domain is known, the repository a command names can decide it.
+#
+# This test sits here rather than beside the scope check above, and the position
+# is the whole of what makes it safe. `-C` belongs to `tar`, `make` and others,
+# so a command carrying one and a `gh pr create` beside it would otherwise be
+# waved through as though it were a commit into another repository, and the
+# forge body would go unchecked. A commit message is the only domain where the
+# question "which repository is this about" is even meaningful: a pull request
+# body is about the forge rather than about a worktree.
+if [ "$DOMAIN" = "commit-message" ] \
+   && [ "$_names_this_repo" != "1" ] \
+   && [ "$_names_other_repo" = "1" ] \
+   && [ "$_bare_git_message" != "1" ]; then
+    allow
+fi
 
 # ---------------------------------------------------------------------------
 # Gather the text to inspect
