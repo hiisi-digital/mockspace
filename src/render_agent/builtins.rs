@@ -362,10 +362,24 @@ fi
 # message naming a phase the round is not in, which is a true statement about
 # the wrong repository and reads as a true statement about the right one.
 #
-# `_scope_or_allow` has already established that the file is inside this hook's
-# own repository, so that repository is what the rest of this is about. The cwd
-# stays the fallback for the case where the generated root has moved.
-REPO_ROOT=$(git -C "$__HOOK_REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "")
+# The target is asked first, because the target is what the phase governs.
+#
+# The hook's own root is not enough on its own, and believing it was is how the
+# first version of this widened the gate. `_scope_or_allow` proves the file is
+# inside this repository only when `FILE_PATH` is set; on the command branch it
+# accepts a command that merely mentions the root, or any cwd under it. So a
+# command like `grep -r <thisrepo> && sed -i <otherrepo>/mock/crates/x/lib.rs`
+# passes the scope check here and writes there, and pinning the root to this
+# hook's own would read the phase out of a repository the write does not touch.
+# The old cwd version happened to refuse that one; a root pinned to the hook
+# would allow it, which is a gate that got wider rather than more correct.
+#
+# So: the target's own repository, then the hook's, then the cwd. Each is a
+# narrower claim than the one after it about which repository the write is in.
+REPO_ROOT=$(git -C "$(dirname "$TARGET")" rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ -z "$REPO_ROOT" ]]; then
+    REPO_ROOT=$(git -C "$__HOOK_REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "")
+fi
 if [[ -z "$REPO_ROOT" ]]; then
     REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
 fi

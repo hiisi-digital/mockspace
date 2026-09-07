@@ -17,9 +17,18 @@
 //! repository nobody asked about, worded as a true statement about the one they
 //! did, and the way out is a `cd` nobody can guess from the message.
 //!
-//! The arms below build two repositories side by side, one carrying a round in
-//! a known phase and one carrying nothing, and run the guard from the second
-//! against a file in the first.
+//! The arms below build two repositories side by side and run the guard from
+//! one against a target in the other.
+//!
+//! What each is worth against the code before the fix is worth stating, since
+//! the names read wider than that. Only two of them fail there: the one named
+//! for the defect, and the command arm. `the_same_edit_is_refused_when_the_
+//! round_really_is_in_topic` passes on both, because the old guard found TOPIC
+//! in the wrong repository and the new one finds it in the right one, so it
+//! controls that the gate still denies something rather than that this is not a
+//! bypass. The arm that carries that is the command one, where the phases are
+//! opposite in the two repositories and only a guard reading the target's can
+//! answer correctly.
 
 use std::process::Command;
 
@@ -180,6 +189,67 @@ fn standing_inside_the_repository_still_works() {
     assert!(
         !refused(&out),
         "an edit from inside the repo was refused: {out}"
+    );
+}
+
+/// A Bash command that writes, which is the other way the guard is reached and
+/// the one that carries no `file_path`.
+fn bash_payload(command: &str) -> String {
+    serde_json::json!({
+        "session_id": "t",
+        "transcript_path": "/tmp/t",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": { "command": command, "description": "d" }
+    })
+    .to_string()
+}
+
+#[test]
+fn a_command_writing_into_another_repository_is_judged_by_that_repositorys_phase() {
+    // The arm the first version of this fix did not have, and the branch where
+    // it widened the gate.
+    //
+    // On the command branch the scope check proves nothing about which
+    // repository the write lands in: it accepts a command that merely mentions
+    // this hook's root. So a command that mentions this repository and writes
+    // into another one passes the scope check, and a root pinned to this hook
+    // would read a phase out of a repository the write does not touch. Here
+    // this hook's own round is in DOC, where a design template is writable, and
+    // the repository actually being written to is in TOPIC, where it is not.
+    let mine = repo_with_rounds("cmd-doc", &["202609062251_changelist.doc.md"]);
+    let other = repo_with_rounds("cmd-topic", &["202609062237_topic.a-thing.md"]);
+    let guard = guard_for(&mine);
+    let cmd = format!(
+        "grep -r foo {} && sed -i '' s/a/b/ {}/mock/crates/x/DESIGN.md.tmpl",
+        mine.display(),
+        other.display()
+    );
+    let out = run_from(&mine, &guard, &bash_payload(&cmd));
+    assert!(
+        refused(&out),
+        "a write into a repository whose round is in TOPIC was allowed: {out}"
+    );
+    assert!(
+        out.contains("TOPIC"),
+        "and it should name the phase of the repository being written to: {out}"
+    );
+}
+
+#[test]
+fn a_command_writing_into_this_repository_is_judged_by_this_ones() {
+    // The other half. The same shape, with the phases the other way round, so
+    // neither arm can pass by the guard simply preferring one repository.
+    let mine = repo_with_rounds("cmd-mine-doc", &["202609062251_changelist.doc.md"]);
+    let guard = guard_for(&mine);
+    let cmd = format!(
+        "sed -i '' s/a/b/ {}/mock/crates/x/DESIGN.md.tmpl",
+        mine.display()
+    );
+    let out = run_from(&mine, &guard, &bash_payload(&cmd));
+    assert!(
+        !refused(&out),
+        "a design template was refused on a round in DOC: {out}"
     );
 }
 
