@@ -152,7 +152,13 @@ fn write_cdylib_crate(
     // build, UB if it linked). The `[patch]` collapses them to one. It points at
     // a path (cargo's own checkout of lint-rules at that rev) rather than the git
     // source, because cargo rejects a patch pointing back at the same source.
-    if let Some(patch) = patch_section(lint_rules_dep, &cargo_home()) {
+    let home = cargo_home();
+    let mut patch = patch_section(lint_rules_dep, &home);
+    if patch.is_none() && is_git_rev_dep(lint_rules_dep) {
+        ensure_lint_rules_checkout(gen_dir, lint_rules_dep);
+        patch = patch_section(lint_rules_dep, &home);
+    }
+    if let Some(patch) = patch {
         manifest.push_str(&patch);
     } else if !packs.is_empty() && extract_between(lint_rules_dep, "git = \"", "\"").is_none() {
         // The dep has no git url at all (a path/registry override, e.g. the
@@ -248,6 +254,73 @@ fn spellings_of(url: &str) -> Vec<String> {
         out.push(ssh);
     }
     out
+}
+
+/// The throwaway package the fetch runs against: lint-rules and nothing else.
+///
+/// A workspace of its own, so it does not join the generated crate's, and a lib
+/// target, so cargo has a package rather than a manifest it refuses to read.
+fn fetch_manifest(lint_rules_dep: &str) -> String {
+    format!(
+        "[workspace]\n\n\
+         [package]\nname = \"lint-rules-fetch\"\nversion = \"0.0.0\"\n\
+         edition = \"2024\"\npublish = false\n\n\
+         [lib]\npath = \"lib.rs\"\n\n\
+         [dependencies]\nmockspace = {lint_rules_dep}\n"
+    )
+}
+
+/// Whether the dependency names a git repository at a fixed revision, which is
+/// the only shape [`patch_section`] can build anything from.
+/// The url has to carry a scheme, since cargo refuses a relative one and the
+/// fetch would spend a process to be told so.
+fn is_git_rev_dep(dep: &str) -> bool {
+    extract_between(dep, "git = \"", "\"").is_some_and(|u| u.contains("://"))
+        && extract_between(dep, "rev = \"", "\"").is_some()
+}
+
+/// Make cargo extract its checkout of `lint-rules` at the engine's revision, so
+/// [`patch_section`] has something to point at.
+///
+/// The patch is built from a path into cargo's checkout, and on a cold cache
+/// that checkout does not exist at the moment the manifest is written: cargo
+/// extracts it while building this crate, which is afterwards. So the first run
+/// in a repository emitted no patch at all, resolved a second copy of
+/// `mockspace-lint-rules` for every pack or tool naming it by another spelling,
+/// and failed with `E0308` between `LintPack` and `LintPack` at one file and
+/// one line, with nothing in the output naming a url. The next run, the
+/// checkout now present, worked.
+///
+/// That is the worst shape a defect takes, because it repairs itself and the
+/// repair looks like the thing having been flaky. Observed in `muisti`, where
+/// four tools were rewritten to a different url spelling on the strength of it.
+///
+/// What is fetched is a throwaway package depending on lint-rules and nothing
+/// else, rather than the generated crate, since that one is not written yet and
+/// its manifest is what this is being computed for. Failure is silent on
+/// purpose: the caller asks [`patch_section`] again either way, so a fetch that
+/// could not run costs the patch and nothing more, which is where it was.
+fn ensure_lint_rules_checkout(gen_dir: &Path, lint_rules_dep: &str) {
+    let dir = gen_dir.join(".fetch");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if std::fs::write(dir.join("lib.rs"), "").is_err() {
+        return;
+    }
+    if write_if_changed(&dir.join("Cargo.toml"), &fetch_manifest(lint_rules_dep)).is_err() {
+        return;
+    }
+    // stderr is inherited: this is where cargo says it is updating a git
+    // repository, which is the only thing on screen explaining a cold run's
+    // pause. stdout carries nothing worth reading here.
+    let _ = Command::new("cargo")
+        .arg("fetch")
+        .arg("--manifest-path")
+        .arg(dir.join("Cargo.toml"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status();
 }
 
 /// Locate cargo's checkout of `lint-rules` at `rev` for the git repo `url`,
@@ -939,6 +1012,42 @@ mod tests {
                 "{url:?} yields a repeated patch key: {out:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_git_rev_dep_is_the_only_shape_worth_fetching_for() {
+        // The guard on the retry. A dep with no rev, or none at all, has
+        // nothing a patch could point at, so fetching for it buys a cargo
+        // invocation per run and no patch either way.
+        assert!(is_git_rev_dep(
+            "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", rev = \"abc\" }"
+        ));
+        assert!(!is_git_rev_dep(
+            "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", branch = \"dev\" }"
+        ));
+        assert!(!is_git_rev_dep("{ path = \"../lint-rules\" }"));
+        assert!(!is_git_rev_dep("\"1.2.3\""));
+        // A url with no scheme is one cargo refuses, so fetching against it
+        // spends a process to be told so and leaves the error on screen.
+        assert!(!is_git_rev_dep(
+            "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"abc\" }"
+        ));
+    }
+
+    #[test]
+    fn the_fetch_package_names_the_engine_dependency_and_nothing_else() {
+        // What the retry fetches. It has to parse as a package on its own, or
+        // the fetch that materialises the checkout cannot run at all and the
+        // patch stays missing the same silent way it did before.
+        let dep = "{ package = \"mockspace-lint-rules\", git = \"ssh://x/m.git\", rev = \"abc\" }";
+        let m = fetch_manifest(dep);
+        assert!(m.trim_start().starts_with("[workspace]"));
+        assert!(m.contains("[lib]\npath = \"lib.rs\""));
+        assert!(m.contains(&format!("mockspace = {dep}")));
+        // One dependency and no other, so the fetch cannot drag in a pack or a
+        // tool, and cannot fail on one that does not resolve.
+        let deps = m.split("[dependencies]\n").nth(1).unwrap();
+        assert_eq!(deps.lines().filter(|l| !l.trim().is_empty()).count(), 1);
     }
 
     #[test]
