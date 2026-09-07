@@ -163,6 +163,13 @@ fn explain_lint_load_failure(cfg: &Config, err: &impl std::fmt::Display) -> Stri
         "    - a local lint in this repo's lints directory still on an older\n\
          \x20     trait shape than the engine expects.\n",
     );
+    s.push_str(
+        "    - `E0308` between `LintPack` and `LintPack` at one line, which is\n\
+         \x20     two copies of `mockspace-lint-rules` in one graph rather than\n\
+         \x20     anything in the source it names. Running again is the fix: the\n\
+         \x20     patch that collapses them is built from cargo's checkout of\n\
+         \x20     lint-rules, and this run is what extracted it.\n",
+    );
     s
 }
 
