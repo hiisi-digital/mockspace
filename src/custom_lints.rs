@@ -155,7 +155,7 @@ fn write_cdylib_crate(
     let home = cargo_home();
     let mut patch = patch_section(lint_rules_dep, &home);
     if patch.is_none() && is_git_rev_dep(lint_rules_dep) {
-        ensure_lint_rules_checkout(gen_dir, lint_rules_dep);
+        ensure_lint_rules_checkout(gen_dir, lint_rules_dep, &home);
         patch = patch_section(lint_rules_dep, &home);
     }
     if let Some(patch) = patch {
@@ -300,7 +300,7 @@ fn is_git_rev_dep(dep: &str) -> bool {
 /// its manifest is what this is being computed for. Failure is silent on
 /// purpose: the caller asks [`patch_section`] again either way, so a fetch that
 /// could not run costs the patch and nothing more, which is where it was.
-fn ensure_lint_rules_checkout(gen_dir: &Path, lint_rules_dep: &str) {
+fn ensure_lint_rules_checkout(gen_dir: &Path, lint_rules_dep: &str, cargo_home: &Path) {
     let dir = gen_dir.join(".fetch");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
@@ -314,10 +314,15 @@ fn ensure_lint_rules_checkout(gen_dir: &Path, lint_rules_dep: &str) {
     // stderr is inherited: this is where cargo says it is updating a git
     // repository, which is the only thing on screen explaining a cold run's
     // pause. stdout carries nothing worth reading here.
+    //
+    // `CARGO_HOME` is passed rather than inherited, so the fetch writes its
+    // checkout under the same root [`patch_section`] then reads. Inheriting it
+    // agrees with that root in every real run and in none that plants one.
     let _ = Command::new("cargo")
         .arg("fetch")
         .arg("--manifest-path")
         .arg(dir.join("Cargo.toml"))
+        .env("CARGO_HOME", cargo_home)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .status();
@@ -1048,6 +1053,89 @@ mod tests {
         // tool, and cannot fail on one that does not resolve.
         let deps = m.split("[dependencies]\n").nth(1).unwrap();
         assert_eq!(deps.lines().filter(|l| !l.trim().is_empty()).count(), 1);
+    }
+
+    /// A cold cargo home has no checkout, so the patch is missing; the fetch
+    /// materialises one and the same call then answers.
+    ///
+    /// This is the whole of the defect: the manifest is written before the
+    /// generated crate is built, so on the first run in any repo the directory
+    /// [`find_lint_rules_checkout`] reads does not exist yet, `patch_section`
+    /// returns `None`, and nothing is emitted or said. The build then fails on
+    /// `E0308` between two `LintPack`s and the next run works, which reads as
+    /// flakiness rather than as an ordering bug.
+    ///
+    /// The `None` before the fetch is the case that has to fail, and it is the
+    /// state every cold machine is in. A `file://` url keeps it off the
+    /// network, and `CARGO_HOME` is planted so the fetch and the read agree on
+    /// a root this test owns.
+    #[test]
+    fn a_cold_cargo_home_gets_its_checkout_from_the_fetch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("engine");
+        let home = tmp.path().join("cargo-home");
+        let gen_dir = tmp.path().join("gen");
+        std::fs::create_dir_all(repo.join("lint-rules/src")).unwrap();
+        std::fs::create_dir_all(&gen_dir).unwrap();
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"lint-rules\"]\nresolver = \"3\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("lint-rules/Cargo.toml"),
+            "[package]\nname = \"mockspace-lint-rules\"\nversion = \"0.0.0\"\n\
+             edition = \"2024\"\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("lint-rules/src/lib.rs"), "").unwrap();
+
+        let git = |args: &[&str]| {
+            let ok = Command::new("git")
+                .args(["-C", repo.to_str().unwrap()])
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            assert!(ok, "git {args:?} failed");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "e", "--no-verify"]);
+        let rev = String::from_utf8(
+            Command::new("git")
+                .args(["-C", repo.to_str().unwrap(), "rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let dep = format!(
+            "{{ package = \"mockspace-lint-rules\", git = \"file://{}\", rev = \"{}\" }}",
+            repo.display(),
+            rev.trim()
+        );
+
+        // The failing case, and the state of every machine that has not built
+        // this repo before.
+        assert!(
+            patch_section(&dep, &home).is_none(),
+            "a cargo home with no checkout must yield no patch"
+        );
+
+        ensure_lint_rules_checkout(&gen_dir, &dep, &home);
+
+        let patch = patch_section(&dep, &home)
+            .expect("the fetch must leave a checkout the patch can point at");
+        // It points into the planted home rather than the machine's own, which
+        // is what says the fetch honoured the `CARGO_HOME` it was passed.
+        assert!(
+            patch.contains(&home.join("git/checkouts").display().to_string()),
+            "patch points outside the planted cargo home: {patch}"
+        );
+        assert!(patch.contains("mockspace-lint-rules = { path ="));
     }
 
     #[test]
