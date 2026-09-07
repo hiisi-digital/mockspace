@@ -350,7 +350,39 @@ fi
 if echo "$REL_PATH" | grep -qE '^[^/]+\.md\.tmpl$'; then
     allow
 fi
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+# The repository this hook is about is the one it was generated for, and asking
+# git from the process cwd answers about whichever repository the shell happens
+# to be standing in.
+#
+# That is not an exotic case. Addressing a member repository by absolute path is
+# the convention, so a session sitting at a workspace root and editing a file
+# inside a member by its full path is ordinary, and there the cwd's repository
+# is the workspace, which has no design rounds in it at all. Every query below
+# then returns nothing, the phase reads TOPIC, and the edit is refused with a
+# message naming a phase the round is not in, which is a true statement about
+# the wrong repository and reads as a true statement about the right one.
+#
+# The target is asked first, because the target is what the phase governs.
+#
+# The hook's own root is not enough on its own, and believing it was is how the
+# first version of this widened the gate. `_scope_or_allow` proves the file is
+# inside this repository only when `FILE_PATH` is set; on the command branch it
+# accepts a command that merely mentions the root, or any cwd under it. So a
+# command like `grep -r <thisrepo> && sed -i <otherrepo>/mock/crates/x/lib.rs`
+# passes the scope check here and writes there, and pinning the root to this
+# hook's own would read the phase out of a repository the write does not touch.
+# The old cwd version happened to refuse that one; a root pinned to the hook
+# would allow it, which is a gate that got wider rather than more correct.
+#
+# So: the target's own repository, then the hook's, then the cwd. Each is a
+# narrower claim than the one after it about which repository the write is in.
+REPO_ROOT=$(git -C "$(dirname "$TARGET")" rev-parse --show-toplevel 2>/dev/null || echo "")
+if [[ -z "$REPO_ROOT" ]]; then
+    REPO_ROOT=$(git -C "$__HOOK_REPO_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "")
+fi
+if [[ -z "$REPO_ROOT" ]]; then
+    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+fi
 if [[ -z "$REPO_ROOT" ]]; then
     allow
 fi
