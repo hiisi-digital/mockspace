@@ -715,7 +715,7 @@ impl Config {
     pub fn from_dir(mock_dir: &Path) -> Self {
         let mock_dir = mock_dir.to_path_buf();
 
-        let repo_root = find_repo_root(&mock_dir).unwrap_or_else(|| mock_dir.clone());
+        let repo_root = find_project_root(&mock_dir).unwrap_or_else(|| mock_dir.clone());
         let docs_dir = repo_root.join("docs");
 
         // The config sits either in the mock dir (in place, the historical
@@ -734,7 +734,26 @@ impl Config {
         };
         let toml_content = fs::read_to_string(&toml_path).unwrap_or_default();
 
-        let raw: RawConfig = toml_edit::de::from_str(&toml_content).unwrap_or_default();
+        // Not `unwrap_or_default`. A config that is present and does not parse
+        // is a config the run never read, and taking the defaults for it means
+        // every key the author wrote silently governs nothing: no namespaces,
+        // no declared roots, no lint configuration, and a green run over all of
+        // it. An absent config is the different case and stays free, since a
+        // project that keeps none is ordinary.
+        let raw: RawConfig = match toml_edit::de::from_str(&toml_content) {
+            Ok(raw) => raw,
+            Err(e) => {
+                assert!(
+                    toml_content.trim().is_empty(),
+                    "mockspace.toml at {} does not parse, so nothing in it was \
+                     read: {e}\n  Every key it declares would default instead, \
+                     which is a run that reports success over a configuration it \
+                     never opened.",
+                    toml_path.display(),
+                );
+                RawConfig::default()
+            },
+        };
 
         let project_name = raw.project_name.unwrap_or_else(|| "project".into());
         let crate_prefix = raw.crate_prefix.unwrap_or_else(|| project_name.clone());
@@ -1252,10 +1271,36 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
 // Utilities
 // ---------------------------------------------------------------------------
 
-fn find_repo_root(start: &Path) -> Option<PathBuf> {
+/// The project root: where the config sits and what `docs/` hangs off.
+///
+/// `.git` first, because in a clone that is the root by definition and it is
+/// the marker every other part of the tool already agrees on. `mockspace.toml`
+/// second, because **a tree with no `.git` is ordinary**: an export, a tarball,
+/// a vendored copy, an rsync that excluded the admin directory, a build
+/// container handed the sources and not the history.
+///
+/// Without the second marker such a tree finds no root, falls back to the mock
+/// dir, looks for the config inside it, does not find it there either, and
+/// reads the empty string. Every key then takes its default and nothing is
+/// said. Measured on one repo: a clone answers `46 rows across 1 namespaces`,
+/// and a copy of the same tree with `.git` excluded answers `0 rows across 0
+/// namespaces`, naming the two namespaces the engine supplies itself.
+///
+/// The order is what keeps this additive: a tree that has `.git` resolves
+/// exactly as it did before, so the second marker is reached only where the
+/// answer used to be the mock dir.
+fn find_project_root(start: &Path) -> Option<PathBuf> {
+    // Two passes over the ancestry rather than one checking both markers at
+    // each level, so a `.git` further up still wins over a `mockspace.toml`
+    // nearer. That is what makes the change additive: the second pass runs
+    // only where the first returned nothing at all.
+    find_upward(start, ".git").or_else(|| find_upward(start, "mockspace.toml"))
+}
+
+fn find_upward(start: &Path, marker: &str) -> Option<PathBuf> {
     let mut dir = start;
     loop {
-        if dir.join(".git").exists() {
+        if dir.join(marker).exists() {
             return Some(dir.to_path_buf());
         }
         dir = dir.parent()?;

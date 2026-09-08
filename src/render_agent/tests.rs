@@ -928,7 +928,13 @@ fn catalogues_rule_embeds_a_live_snapshot_not_a_fixed_string() {
 /// Found on disk in two repositories here.
 #[test]
 fn a_renamed_builtin_rule_takes_its_old_file_with_it() {
-    let root = skill_fixture(None);
+    let mock = skill_fixture(None);
+    // The generated surfaces sit at the project root, beside `mockspace.toml`,
+    // which the fixture writes one level above the mock dir. This used to read
+    // the mock dir for both, and passed only because a fixture with no `.git`
+    // resolved its own root to the mock dir; a real clone has never put
+    // `.claude/` there.
+    let root = mock.parent().expect("the fixture's mock dir has a parent");
     let claude = root.join(".claude").join("rules");
     let copilot = root.join(".github").join("instructions");
     std::fs::create_dir_all(&claude).unwrap();
@@ -944,7 +950,7 @@ fn a_renamed_builtin_rule_takes_its_old_file_with_it() {
     let theirs = claude.join("a-rule-the-consumer-wrote.md");
     std::fs::write(&theirs, "not generated, not ours to delete").unwrap();
 
-    let cfg = crate::config::Config::from_dir(&root);
+    let cfg = crate::config::Config::from_dir(&mock);
     let registry = crate::registry::Registry::default();
     generate_agent_rules(
         &CrateMap::default(),
