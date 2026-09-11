@@ -175,6 +175,13 @@ pub const FINDING_KINDS: &[&str] = &[
     "unknown-field-type",
     "namespace-shadows-type",
     "row-reference-to-a-value-namespace",
+    // The three produced by `namespace_root_collisions`, which is called from
+    // the same place as `validate` and whose kinds were absent from this list
+    // with nothing reporting that. The comment below used to say two were
+    // missing; `duplicate-namespace-key` is the third and was added with them.
+    "namespace-root-collision",
+    "namespace-reserved-name",
+    "duplicate-namespace-key",
     // Not produced by `validate`. Reported by the caller when the schema check
     // could not run at all, and listed here so the set of kinds stays in one
     // place. A run that could not check is not a run that passed.
@@ -187,9 +194,7 @@ pub const FINDING_KINDS: &[&str] = &[
     // directly, which is why the map went unconsulted for this whole list.
     // `unknown-config-key` is now the one exception (severity is read at that
     // call site under the lint name `registry-config-keys`). Every other kind
-    // here still has no consumer, and two kinds produced by
-    // `namespace_root_collisions` are absent from this list entirely with
-    // nothing noticing.
+    // here still has no consumer.
     "schema-unavailable",
     // Produced by `config_unknown_keys`, over the config file rather than the
     // row data, which no generated schema covers.
@@ -198,10 +203,10 @@ pub const FINDING_KINDS: &[&str] = &[
 
 /// Keys a `[[registry.namespace]]` table may carry. Mirrors `RegistryNamespace`.
 ///
-/// Hand-kept, and constrained rather than trusted: `finding_kinds_are_producible`
-/// and `namespace_keys_match_the_struct` in the tests below fail when this drifts
-/// from the struct it mirrors. A list nobody checks is a comment with a type, and
-/// this file already carries one that says so about itself.
+/// Hand-kept, and constrained rather than trusted: `namespace_keys_match_the_struct`
+/// in `validate_tests.rs` reads the struct's serde keys out of `model.rs` and fails
+/// when the two disagree. `FIELD_KEYS` and `FINDING_KINDS` are held the same way,
+/// the kinds in both directions.
 const NAMESPACE_KEYS: &[&str] =
     &["key", "title", "description", "value_field", "render", "group_by", "field"];
 
@@ -577,11 +582,52 @@ pub fn unresolved_in_generated(text: &str) -> Vec<String> {
 /// disambiguates, but a project should not have to reach for it, so the
 /// collision is a configuration error rather than a precedence rule nobody can
 /// remember.
+///
+/// It also refuses one key declared twice, which is the same kind of defect one
+/// step earlier: a name that resolves to two different things depending on
+/// which code path is asking. The function is named for the collision it was
+/// written for and now covers both, since both are checks over the declared
+/// namespaces and there is nowhere else they would go.
 pub fn namespace_root_collisions(
     namespaces: &[RegistryNamespace],
     roots: &std::collections::BTreeMap<String, String>,
 ) -> Vec<RegistryFinding> {
     let mut out = Vec::new();
+
+    // Two declarations under one key, which nothing refused and which the
+    // engine itself does not resolve consistently.
+    //
+    // A key is global over the whole of `<mock>/registry/`: `load_registry`
+    // builds one set of known keys and walks the tree against it, and a row is
+    // addressed `<namespace>::<slug>` with no part of its path in the address.
+    // So a second declaration does not partition anything. It supplies a
+    // second schema for one name, and every row of both is read against
+    // whichever of the two a given code path happens to pick.
+    //
+    // The paths disagree, which is what makes this worse than either answer
+    // alone. `resolve.rs` and the `query` subcommand collect the declarations
+    // into a `BTreeMap` keyed by name, so the **last** wins there. The
+    // diagnostic that lists a namespace's columns uses `iter().find`, so the
+    // **first** wins there. A project with a duplicate gets rendered documents
+    // built against one schema and an error message describing the other.
+    //
+    // Refused rather than reported, because there is no reading of a duplicate
+    // that a project could have wanted: the rows of the shadowed one are being
+    // validated against a schema nobody wrote for them, silently.
+    let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for ns in namespaces {
+        if !seen.insert(ns.key.as_str()) {
+            out.push(RegistryFinding {
+                kind: "duplicate-namespace-key",
+                message: format!(
+                    "`{}` is declared more than once. A registry key is global over the whole of the registry directory rather than scoped to a file, so the second declaration does not partition anything: it gives one name two schemas, and the rows of one are read against the other. Rename one of them.",
+                    ns.key
+                ),
+                source: None,
+            });
+        }
+    }
+
     for ns in namespaces {
         if roots.contains_key(&ns.key) {
             out.push(RegistryFinding {
@@ -610,3 +656,7 @@ pub fn namespace_root_collisions(
     }
     out
 }
+
+#[cfg(test)]
+#[path = "validate_tests.rs"]
+mod tests;

@@ -117,6 +117,40 @@ fn a_duplicate_slug_fails_the_command() {
     );
 }
 
+/// A namespace key declared twice fails the command, and says which finding.
+///
+/// The exit status alone does not pin this: two schemas under one key can fail
+/// the schema check on their own account, so an exit of 1 is equally consistent
+/// with the duplicate going unreported. The kind in the output tells the two
+/// apart. `a_clean_registry_does_not` is the control, over the same fixture with
+/// the key declared once.
+#[test]
+fn a_namespace_key_declared_twice_fails_the_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root, false);
+    let config = root.join("mock/mockspace.toml");
+    let once = fs::read_to_string(&config).unwrap();
+    write(
+        &config,
+        &format!("{once}\n[[registry.namespace]]\nkey = \"spike\"\ntitle = \"Spikes again\"\n"),
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_mockspace"))
+        .current_dir(root.join("mock"))
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("duplicate-namespace-key"),
+        "the run failed, and not for the duplicate key, so the duplicate went unreported:\n{text}"
+    );
+}
+
 /// Whether `taplo` resolves on this host.
 ///
 /// The clean arm needs it. Without it the schema check cannot run, which is

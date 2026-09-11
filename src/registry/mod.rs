@@ -1089,6 +1089,84 @@ mod tests {
     }
 
     #[test]
+    fn one_key_declared_twice_is_reported() {
+        // A key is global over the registry directory, so a second declaration
+        // does not partition anything: it gives one name two schemas, and the
+        // rows of one are read against the other with nothing saying so.
+        let roots = std::collections::BTreeMap::new();
+        let found = namespace_root_collisions(&[ns("query", None), ns("query", None)], &roots);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].kind, "duplicate-namespace-key", "{found:?}");
+        assert!(found[0].message.contains('`'), "{found:?}");
+        assert!(found[0].message.contains("query"), "{found:?}");
+    }
+
+    #[test]
+    fn a_roster_of_distinct_keys_is_silent() {
+        // The control on the arm above. Without it the report there is also
+        // what a check that fires on every roster would produce, and the two
+        // are indistinguishable from one assertion.
+        let roots = std::collections::BTreeMap::new();
+        let found = namespace_root_collisions(
+            &[ns("query", None), ns("capture", None), ns("ruling", None)],
+            &roots,
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_key_declared_three_times_is_reported_twice() {
+        // Once per shadowing declaration rather than once per name, so the
+        // count says how many schemas are in play. A single finding for a
+        // triple would read as one stray duplicate.
+        let roots = std::collections::BTreeMap::new();
+        let found =
+            namespace_root_collisions(&[ns("q", None), ns("q", None), ns("q", None)], &roots);
+        assert_eq!(found.len(), 2, "{found:?}");
+    }
+
+    #[test]
+    fn a_duplicate_and_a_root_collision_are_both_reported() {
+        // Two independent defects on one roster, so neither check swallows the
+        // other's finding: the duplicate pass runs over every declaration
+        // before the collision pass starts.
+        let roots = [("law".to_string(), "docs/law".to_string())]
+            .into_iter()
+            .collect();
+        let found = namespace_root_collisions(&[ns("law", None), ns("law", None)], &roots);
+        let kinds: Vec<&str> = found.iter().map(|f| f.kind).collect();
+        assert!(kinds.contains(&"duplicate-namespace-key"), "{found:?}");
+        assert!(kinds.contains(&"namespace-root-collision"), "{found:?}");
+    }
+
+    /// Every kind the function can produce is in `FINDING_KINDS`.
+    ///
+    /// Two of its three were absent from that list with nothing reporting it,
+    /// which the list's own comment recorded and nothing checked. This is the
+    /// check, and it is over what the function actually emits rather than over
+    /// a second list somebody maintains.
+    #[test]
+    fn every_kind_this_function_emits_is_registered() {
+        let roots = [("law".to_string(), "docs/law".to_string())]
+            .into_iter()
+            .collect();
+        let found =
+            namespace_root_collisions(&[ns("law", None), ns("law", None), ns("reg", None)], &roots);
+        let kinds: std::collections::BTreeSet<&str> = found.iter().map(|f| f.kind).collect();
+        assert_eq!(
+            kinds.len(),
+            3,
+            "the roster did not produce all three: {found:?}"
+        );
+        for kind in kinds {
+            assert!(
+                super::validate::FINDING_KINDS.contains(&kind),
+                "`{kind}` is emitted and is not in FINDING_KINDS"
+            );
+        }
+    }
+
+    #[test]
     fn a_schema_check_that_examined_nothing_is_not_a_pass() {
         // The failure this catches was real and it was mine: a literal path
         // where a glob was needed matched one entry, excluded it, checked zero
