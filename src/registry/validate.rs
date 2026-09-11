@@ -203,10 +203,10 @@ pub const FINDING_KINDS: &[&str] = &[
 
 /// Keys a `[[registry.namespace]]` table may carry. Mirrors `RegistryNamespace`.
 ///
-/// Hand-kept, and constrained rather than trusted: `finding_kinds_are_producible`
-/// and `namespace_keys_match_the_struct` in the tests below fail when this drifts
-/// from the struct it mirrors. A list nobody checks is a comment with a type, and
-/// this file already carries one that says so about itself.
+/// Hand-kept, and constrained rather than trusted: `namespace_keys_match_the_struct`
+/// in `validate_tests.rs` reads the struct's serde keys out of `model.rs` and fails
+/// when the two disagree. `FIELD_KEYS` and `FINDING_KINDS` are held the same way,
+/// the kinds in both directions.
 const NAMESPACE_KEYS: &[&str] =
     &["key", "title", "description", "value_field", "render", "group_by", "field"];
 
@@ -656,3 +656,7 @@ pub fn namespace_root_collisions(
     }
     out
 }
+
+#[cfg(test)]
+#[path = "validate_tests.rs"]
+mod tests;
