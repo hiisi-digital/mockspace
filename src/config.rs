@@ -1305,6 +1305,48 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
     find_upward(start, ".git").or_else(|| find_upward(start, "mockspace.toml"))
 }
 
+/// Whether git reads `root` as the top of a repository of its own.
+///
+/// A `.git` git does not recognise, an empty directory or a stray file, answers
+/// every `--local` read with the same fatal status a malformed value gets, so
+/// without asking first a root with no clone behind it would be refused as a
+/// clone holding a bad setting. And where such a root sits inside another
+/// repository, git answers for that one instead, which is the surrounding
+/// repository this reader is not supposed to ask; so the top git names has to
+/// be `root` itself.
+///
+/// Only "not a repository" is read as no clone. Any other refusal, a `.git`
+/// file pointing nowhere or a clone git will not read for its ownership, is a
+/// clone whose setting cannot be read, and that panics like a malformed value
+/// does rather than letting the switch quietly do nothing. The message is
+/// matched with the locale pinned, since git translates it.
+fn git_answers_for(root: &Path) -> bool {
+    let Ok(out) = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .env("LC_ALL", "C")
+        .current_dir(root)
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if stderr.contains("not a git repository") {
+            return false;
+        }
+        panic!(
+            "git cannot read the clone at {}: {}",
+            root.display(),
+            stderr.trim()
+        );
+    }
+    let top = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    match (top.canonicalize(), root.canonicalize()) {
+        (Ok(top), Ok(root)) => top == root,
+        _ => false,
+    }
+}
+
 /// What this clone says about one of the commit fixers, read from `git config`
 /// under `mockspace.<key>`, or nothing where it says nothing.
 ///
@@ -1325,7 +1367,7 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 /// file rather than a directory and reads its clone's config, so it gets the
 /// clone's answer.
 fn clone_says(repo_root: &Path, key: &str) -> Option<bool> {
-    if !repo_root.join(".git").exists() {
+    if !repo_root.join(".git").exists() || !git_answers_for(repo_root) {
         return None;
     }
     let name = format!("mockspace.{key}");
@@ -1505,6 +1547,10 @@ commit = "error"
         );
     }
 }
+
+#[cfg(test)]
+#[path = "config_clone_says_tests.rs"]
+mod clone_says_tests;
 
 #[cfg(test)]
 mod key_lists_cannot_rot {

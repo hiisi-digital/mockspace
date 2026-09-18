@@ -15,6 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use mockspace_lint_rules as changelist_seal;
 use mockspace_lint_rules::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist, Phase};
 
 use crate::config::Config;
@@ -32,6 +33,20 @@ mod tests;
 /// Options parsed from CLI flags for design round subcommands.
 pub struct SubcmdOpts {
     pub auto_commit: bool,
+}
+
+/// Refuse to lock a changelist that is a bare title.
+///
+/// Here as well as in the `changelist-seal` lint because `--auto-commit` commits
+/// the lock without running a hook, so the lint would only ever see the lock
+/// once it is history, where it no longer reads it.
+fn refuse_an_empty_lock(dr: &Path, cl: &ParsedChangelist) -> Option<ExitCode> {
+    if !changelist_seal::says_nothing(&dr.join(&cl.filename)) {
+        return None;
+    }
+    eprintln!("error: {} holds nothing but a bare title", cl.filename);
+    eprintln!("  a lock freezes what a changelist says; write it, then lock");
+    Some(ExitCode::FAILURE)
 }
 
 pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
@@ -53,6 +68,9 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     return ExitCode::FAILURE;
                 },
             };
+            if let Some(code) = refuse_an_empty_lock(&dr, &cl) {
+                return code;
+            }
             match rename_cl(&dr, &cl, ClStatus::Locked) {
                 Ok(r) => {
                     eprintln!("locked doc changelist: {} → {}", cl.filename, r.new_name);
@@ -82,6 +100,9 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                     return ExitCode::FAILURE;
                 },
             };
+            if let Some(code) = refuse_an_empty_lock(&dr, &cl) {
+                return code;
+            }
             match rename_cl(&dr, &cl, ClStatus::Locked) {
                 Ok(r) => {
                     eprintln!("locked src changelist: {} → {}", cl.filename, r.new_name);
@@ -326,6 +347,17 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
         );
         eprintln!("  both doc and src changelists must be locked");
         eprintln!("  for an abandoned round, use `cargo mock archive` instead");
+        return ExitCode::FAILURE;
+    }
+
+    // Before anything moves: `--auto-commit` commits the close without a hook,
+    // so the `changelist-seal` lint would first see this round as history.
+    let findings = changelist_seal::active_round_findings(&dr);
+    if !findings.is_empty() {
+        eprintln!("error: the round is not sealed, so it is not closed");
+        for finding in &findings {
+            eprintln!("  {finding}");
+        }
         return ExitCode::FAILURE;
     }
 

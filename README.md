@@ -128,7 +128,7 @@ Three sources contribute rules:
 
 A check that cannot run at a gate is a tool instead, and tools have a section of their own below.
 
-Each lint declares a severity per gate. The same lint can be `info` at commit, `warn` at build, and `error` at push. The four design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`) are always on and non-negotiable.
+Each lint declares a severity per gate. The same lint can be `info` at commit, `warn` at build, and `error` at push. The five design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`, `changelist-seal`) are on at `error` by default, and a project turns one down only by saying so in its own config.
 
 ## Tools
 
