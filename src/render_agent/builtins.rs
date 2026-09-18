@@ -428,14 +428,26 @@ topic_edit_only_adds() {{
         Write)
             printf '%s' "$__INPUT" | jq -e --arg held "$held" \
                 '.tool_input.content // "" | startswith($held)' >/dev/null 2>&1 ;;
-        Edit)
-            printf '%s' "$__INPUT" | jq -e \
-                '.tool_input as $t | ($t.old_string // "") != "" and (($t.new_string // "") | startswith($t.old_string))' \
-                >/dev/null 2>&1 ;;
-        MultiEdit)
-            printf '%s' "$__INPUT" | jq -e \
-                '(.tool_input.edits // []) as $e | ($e | length) > 0 and all($e[]; (.old_string // "") != "" and ((.new_string // "") | startswith(.old_string)))' \
-                >/dev/null 2>&1 ;;
+        Edit|MultiEdit)
+            # The edits are played over the file as it stands, the way the
+            # tool plays them, and what comes out has to start with what the
+            # commit holds. An anchor the tool would refuse as ambiguous is
+            # refused here too, so the two cannot disagree about where it lands.
+            [[ -f "$REPO_ROOT/$1" ]] || return 1
+            printf '%s' "$__INPUT" | jq -e --arg held "$held" --rawfile cur "$REPO_ROOT/$1" '
+                (if .tool_name == "Edit" then [.tool_input] else (.tool_input.edits // []) end) as $e
+                | if ($e | length) == 0 then false else
+                    (reduce $e[] as $x ({{s: $cur, ok: true}};
+                        ($x.old_string // "") as $o
+                        | ($x.new_string // "") as $n
+                        | if $o == "" then .ok = false else
+                            ((.s | split($o) | length) - 1) as $k
+                            | if $k == 1 or ($k > 0 and ($x.replace_all // false))
+                              then .s = (.s | split($o) | join($n))
+                              else .ok = false end
+                          end))
+                    | .ok and (.s | startswith($held))
+                  end' >/dev/null 2>&1 ;;
         *) return 1 ;;
     esac
 }}

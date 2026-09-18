@@ -372,6 +372,36 @@ fn a_committed_topic_refuses_every_shape_of_rewrite() {
             ]}),
         ),
         ("rw-multi-none", "MultiEdit", serde_json::json!({ "edits": [] })),
+        // An insertion keeps its anchor and still lands inside what the commit
+        // holds, which is a rewrite whatever the anchor looks like.
+        (
+            "rw-insert",
+            "Edit",
+            serde_json::json!({ "old_string": "# a", "new_string": "# a nothing of" }),
+        ),
+        (
+            "rw-replace-all",
+            "Edit",
+            serde_json::json!({
+                "old_string": "file",
+                "new_string": "file and more",
+                "replace_all": true,
+            }),
+        ),
+        (
+            "rw-multi-insert",
+            "MultiEdit",
+            serde_json::json!({ "edits": [
+                { "old_string": "round", "new_string": "round, reworded," },
+            ]}),
+        ),
+        // An anchor the file does not hold is an edit the tool refuses; the
+        // guard refuses it rather than guessing where it would have gone.
+        (
+            "rw-absent-anchor",
+            "Edit",
+            serde_json::json!({ "old_string": "not in the file", "new_string": "not in the file, more" }),
+        ),
     ];
     // Every case is run before anything is asserted, so a guard that lets
     // several through names all of them rather than the first.
@@ -384,6 +414,37 @@ fn a_committed_topic_refuses_every_shape_of_rewrite() {
         .map(|(tag, ..)| tag)
         .collect();
     assert!(through.is_empty(), "rewrites that went through: {through:?}");
+}
+
+#[test]
+fn a_section_appended_since_the_commit_can_be_edited_and_nothing_above_it() {
+    // The file on disk has grown a section the commit does not hold yet.
+    // Editing inside that section is the discussion going on, and is let by;
+    // the same edit reaching back into the committed text is not.
+    let repo = repo_with_rounds("since-commit", &["202609182341_topic.a-thing.md"]);
+    let path = repo.join(TOPIC);
+    std::fs::write(&path, format!("{HELD}\n## The second pass\n\ndraft\n")).unwrap();
+    let guard = guard_for(&repo);
+    let edit = |old: &str, new: &str, all: bool| {
+        let input = serde_json::json!({
+            "file_path": path.display().to_string(),
+            "old_string": old,
+            "new_string": new,
+            "replace_all": all,
+        });
+        run_from(&repo, &guard, &payload("Edit", input))
+    };
+    let within = edit("draft\n", "the argument, written out\n", false);
+    assert!(!refused(&within), "an edit inside the new section was refused: {within}");
+    // `round` sits in the committed line only; `a` sits in both, so replacing
+    // every one reaches back.
+    for (old, new, all) in [("round", "ROUND", false), ("a", "A", true)] {
+        let out = edit(old, new, all);
+        assert!(
+            refused(&out) && out.contains("committed and FROZEN"),
+            "{old:?} -> {new:?} rewrote the committed text: {out}"
+        );
+    }
 }
 
 #[test]
