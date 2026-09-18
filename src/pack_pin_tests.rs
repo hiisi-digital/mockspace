@@ -537,11 +537,14 @@ fn asking_a_remote_that_hangs_comes_back_within_the_deadline() {
 }
 
 #[test]
-fn the_listing_asks_for_the_full_ref_and_never_a_credential() {
+fn the_listing_asks_for_the_full_ref_with_prompting_turned_off() {
     for sources in [Sources::silent(), Sources::of(Some("ssh -i key"), None, None)] {
         let git = ls_remote_command("u", "dev", &sources, ASK_DEADLINE);
         let args: Vec<_> = git.get_args().collect();
-        assert_eq!(args, ["ls-remote", "u", "refs/heads/dev"]);
+        assert_eq!(
+            args,
+            ["-c", "credential.interactive=never", "ls-remote", "u", "refs/heads/dev"]
+        );
         let envs: Vec<_> = git.get_envs().collect();
         assert!(envs.contains(&("GIT_TERMINAL_PROMPT".as_ref(), Some("0".as_ref()))), "{envs:?}");
     }
@@ -667,7 +670,13 @@ const CHILD: &str = "MOCKSPACE_PACK_PIN_THIS_PROCESS";
 fn this_process_in(dir: &Path, env: &[(&str, &str)], name: &str) -> String {
     let mut child = Command::new(std::env::current_exe().unwrap());
     child
-        .args(["--exact", "pack_pin::tests::this_process_reports_itself", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "pack_pin::tests::this_process_reports_itself",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .current_dir(dir)
         .env(CHILD, "1")
         .env_remove("GIT_SSH_COMMAND")
@@ -693,10 +702,9 @@ fn sources_in(dir: &Path, env: &[(&str, &str)]) -> [String; 3] {
 }
 
 #[test]
+#[ignore = "run as a child by this_process_in, which reads what it prints"]
 fn this_process_reports_itself() {
-    if std::env::var_os(CHILD).is_none() {
-        return;
-    }
+    assert!(std::env::var_os(CHILD).is_some(), "run only as a child, by `this_process_in`");
     let p = ThisProcess;
     // The harness prints the test's name with no newline before its output.
     println!();

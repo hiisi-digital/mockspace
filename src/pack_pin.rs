@@ -25,11 +25,13 @@
 //!
 //! This runs inside the commit gate, so asking the remote has one deadline,
 //! [`ASK_DEADLINE`], over reading how ssh is configured, the answer and the
-//! output all together, and git never prompts. Nor does ssh, unless the clone
-//! or the environment has said how ssh is run, in which case that is left
+//! output all together. git's own terminal prompt is off, and a credential
+//! helper is told not to open a window, which Git Credential Manager honours
+//! and a helper that ignores it does not. ssh runs in batch mode, unless the
+//! clone or the environment has said how ssh is run, in which case that is left
 //! alone: it may ask on the terminal. The deadline holds over git and not over
-//! the ssh it started, so the answer is given up on in time while a prompt can
-//! still be on the terminal after the run has moved on. A network dropping
+//! the ssh or the helper it started, so the answer is given up on in time while
+//! a prompt or a window can still be up after the run has moved on. A network dropping
 //! packets or a key wanting its passphrase is a remote that did not answer,
 //! and the fallbacks above take it from there.
 //!
@@ -225,9 +227,10 @@ impl SshSources for ThisProcess {
     }
 }
 
-/// `git ls-remote` for the full ref of `branch`, which never prompts for a
-/// credential, and puts ssh in batch mode only where none of `sources` says how
-/// ssh is to run, so a key or agent somebody chose there is kept.
+/// `git ls-remote` for the full ref of `branch`, with git's own terminal prompt
+/// off and a credential helper told not to open a window, and ssh in batch mode
+/// only where none of `sources` says how ssh is to run, so a key or agent
+/// somebody chose there is kept. A stored credential is still used.
 ///
 /// The full ref, since a bare name also matches a tag of the same name and
 /// which one answers first is the remote's listing order. The sources are read
@@ -240,7 +243,7 @@ pub(crate) fn ls_remote_command(
     deadline: Duration,
 ) -> Command {
     let mut git = Command::new("git");
-    git.args(["ls-remote", url, &format!("refs/heads/{branch}")])
+    git.args(["-c", "credential.interactive=never", "ls-remote", url, &format!("refs/heads/{branch}")])
         .env("GIT_TERMINAL_PROMPT", "0");
     let unconfigured = sources.ssh_command().is_none()
         && sources.ssh().is_none()

@@ -83,10 +83,12 @@ saying how old that tip is. The remote gets five seconds to answer, reading how
 ssh is configured included, since this runs inside the commit hook. A remote
 that stays out of reach is asked again on every run once the hour is up, so
 each branch-pinned pack can cost those five seconds, one after another. git
-never asks for a credential and ssh runs in batch mode, unless the clone or the
-environment already says how ssh runs, in which case that is left alone. Then
-ssh may ask for a passphrase, and the run gives up on the answer after the five
-seconds while the prompt can stay on the terminal. A pack pinned by `git` alone,
+does not prompt on the terminal, a credential helper is told not to open a
+window, which Git Credential Manager honours and a helper that ignores it does
+not, and ssh runs in batch mode, unless the clone or the environment already
+says how ssh runs, in which case that is left alone. Then ssh may ask for a
+passphrase, and the run gives up on the answer after the five seconds while the
+prompt, or a helper's window, can stay up. A pack pinned by `git` alone,
 with no `branch`, follows the remote's default branch through cargo and stays
 at what the lockfile holds. Pin it by `rev` or `tag` if it should stay where it
 is.
