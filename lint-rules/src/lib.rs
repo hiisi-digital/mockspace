@@ -48,6 +48,9 @@ mod changelist_immutability;
 mod changelist_lock;
 pub(crate) mod changelist_required;
 mod changelist_seal;
+/// What `lock` asks before sealing a doc changelist: the design templates the
+/// gate would still let through uncommitted.
+pub use changelist_doc_gate::pending_doc_templates;
 /// What `lock` and `close` ask before moving anything, since a hook-less
 /// commit never reaches the `changelist-seal` lint while it can still refuse.
 pub use changelist_seal::{active_round_findings, says_nothing};

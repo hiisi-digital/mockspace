@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use mockspace_lint_rules as changelist_seal;
+use mockspace_lint_rules as lint_rules;
 use mockspace_lint_rules::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist, Phase};
 
 use crate::config::Config;
@@ -41,11 +41,28 @@ pub struct SubcmdOpts {
 /// the lock without running a hook, so the lint would only ever see the lock
 /// once it is history, where it no longer reads it.
 fn refuse_an_empty_lock(dr: &Path, cl: &ParsedChangelist) -> Option<ExitCode> {
-    if !changelist_seal::says_nothing(&dr.join(&cl.filename)) {
+    if !lint_rules::says_nothing(&dr.join(&cl.filename)) {
         return None;
     }
     eprintln!("error: {} holds nothing but a bare title", cl.filename);
     eprintln!("  a lock freezes what a changelist says; write it, then lock");
+    Some(ExitCode::FAILURE)
+}
+
+/// Refuse to end the DOC window while a doc template it covers is not
+/// committed. Past the lock `changelist-doc-gate` refuses every one of them,
+/// so they would be stranded: reverted, or carried through a deprecation and a
+/// second doc changelist, for want of one commit made first.
+fn refuse_uncommitted_templates(cfg: &Config) -> Option<ExitCode> {
+    let pending = lint_rules::pending_doc_templates(&cfg.mock_dir, &cfg.src_dirs);
+    if pending.is_empty() {
+        return None;
+    }
+    eprintln!("error: doc templates are not committed, and the lock ends the window they can be");
+    for (file, how) in &pending {
+        eprintln!("  {file} ({how})");
+    }
+    eprintln!("  commit them, then lock");
     Some(ExitCode::FAILURE)
 }
 
@@ -69,6 +86,9 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                 },
             };
             if let Some(code) = refuse_an_empty_lock(&dr, &cl) {
+                return code;
+            }
+            if let Some(code) = refuse_uncommitted_templates(cfg) {
                 return code;
             }
             match rename_cl(&dr, &cl, ClStatus::Locked) {
@@ -352,7 +372,7 @@ pub fn cmd_close(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
 
     // Before anything moves: `--auto-commit` commits the close without a hook,
     // so the `changelist-seal` lint would first see this round as history.
-    let findings = changelist_seal::active_round_findings(&dr);
+    let findings = lint_rules::active_round_findings(&dr);
     if !findings.is_empty() {
         eprintln!("error: the round is not sealed, so it is not closed");
         for finding in &findings {
