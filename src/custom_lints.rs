@@ -130,7 +130,11 @@ fn write_cdylib_crate(
          [lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\n\
          mockspace = {lint_rules_dep}\n"
     );
+    // A pack pinned by branch is written at the branch's tip, or cargo would
+    // hold it at whatever the tip was on the first build. `pack_pin` says why.
+    let pins = gen_dir.join(".pack-pins");
     for (name, spec) in packs {
+        let spec = crate::pack_pin::spec_for_cargo(name, spec, &pins, &crate::pack_pin::ls_remote_head);
         manifest.push_str(&format!("{name} = {spec}\n"));
     }
     // Tool crates are path dependencies, discovered by directory rather than

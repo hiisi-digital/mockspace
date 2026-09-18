@@ -34,6 +34,7 @@ pub mod graph;
 pub mod lint;
 pub mod lint_catalogue;
 pub mod model;
+mod pack_pin;
 pub mod panel;
 pub mod parse;
 pub mod pdf;
