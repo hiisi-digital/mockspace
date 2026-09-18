@@ -400,10 +400,10 @@ fn the_hash_naming_a_cache_file_is_fnv1a_and_does_not_move() {
 
 #[test]
 fn a_note_is_said_only_where_the_run_fell_back_and_says_what_it_fell_back_to() {
-    assert_eq!(fallback_note("p", &Pinned::Untouched), None);
-    assert_eq!(fallback_note("p", &Pinned::Current { rev: A.into() }), None);
+    assert_eq!(fallback_note("lint pack `p`", &Pinned::Untouched), None);
+    assert_eq!(fallback_note("lint pack `p`", &Pinned::Current { rev: A.into() }), None);
     let stale = fallback_note(
-        "p",
+        "lint pack `p`",
         &Pinned::Stale {
             rev: A.into(),
             age: Duration::from_secs(90 * 60 + 59),
@@ -411,11 +411,12 @@ fn a_note_is_said_only_where_the_run_fell_back_and_says_what_it_fell_back_to() {
         },
     )
     .unwrap();
-    for part in ["`p`", "(offline)", A, "resolved 90 minutes ago"] {
+    for part in ["lint pack `p`", "(offline)", A, "resolved 90 minutes ago"] {
         assert!(stale.contains(part), "{part} missing from {stale}");
     }
-    let unresolved = fallback_note("p", &Pinned::Unresolved { why: "offline".into() }).unwrap();
-    for part in ["`p`", "(offline)", "never resolved here", "whatever the lockfile holds"] {
+    let unresolved =
+        fallback_note("lint pack `p`", &Pinned::Unresolved { why: "offline".into() }).unwrap();
+    for part in ["lint pack `p`", "(offline)", "never resolved here", "whatever the lockfile holds"] {
         assert!(unresolved.contains(part), "{part} missing from {unresolved}");
     }
 }

@@ -166,17 +166,20 @@ pub(crate) fn spec_for_cargo(
 }
 
 /// What the run says when it had to fall back, and nothing when it did not.
+///
+/// `name` is said as given, so it carries what kind of dependency it is:
+/// a lint pack, or the mockspace a generated bench driver builds against.
 pub(crate) fn fallback_note(name: &str, pinned: &Pinned) -> Option<String> {
     match pinned {
         Pinned::Untouched | Pinned::Current { .. } => None,
         Pinned::Stale { rev, age, why } => Some(format!(
-            "mock: lint pack `{name}`: the branch tip could not be read ({why}), so the \
-             pack is built at {rev}, resolved {} minutes ago",
+            "mock: {name}: the branch tip could not be read ({why}), so it is built \
+             at {rev}, resolved {} minutes ago",
             age.as_secs() / 60
         )),
         Pinned::Unresolved { why } => Some(format!(
-            "mock: lint pack `{name}`: the branch tip could not be read ({why}) and was \
-             never resolved here, so the pack is built at whatever the lockfile holds"
+            "mock: {name}: the branch tip could not be read ({why}) and was never \
+             resolved here, so it is built at whatever the lockfile holds"
         )),
     }
 }

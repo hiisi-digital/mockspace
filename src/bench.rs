@@ -358,7 +358,11 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     // everything real in it.
     if !bench_dir.join("Cargo.toml").is_file() {
         if let Ok(plan) = bench_gen::plan(&bench_dir) {
-            let dep = bench_gen::mockspace_dep(&plan.manifest);
+            let dep = bench_gen::pinned_dep(
+                &bench_gen::mockspace_dep(&plan.manifest),
+                &cfg.mock_dir,
+                &crate::pack_pin::ls_remote_head,
+            );
             for arm in &plan.arms {
                 if arm.has_manifest {
                     continue; // already on disk; the walk above found it
@@ -1056,7 +1060,11 @@ fn run_generated(
             return ExitCode::FAILURE;
         },
     };
-    let dep = bench_gen::mockspace_dep(&plan.manifest);
+    let dep = bench_gen::pinned_dep(
+        &bench_gen::mockspace_dep(&plan.manifest),
+        &cfg.mock_dir,
+        &crate::pack_pin::ls_remote_head,
+    );
     let profile = profile_args_for(plan.manifest.build.as_ref());
 
     if !report_only {
