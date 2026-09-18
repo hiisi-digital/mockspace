@@ -32,6 +32,9 @@
 //! clippy on code that does not compile yet) is logged and skipped, never
 //! blocking the commit. The lint gate that runs afterwards is the real bar.
 //!
+//! A clone turns either off for itself with `git config mockspace.autoFmt
+//! false` or `git config mockspace.autoClippyFix false`, which beats the file.
+//!
 //! Opt out per-repo via `mockspace.toml`: `auto_fmt = false` /
 //! `auto_clippy_fix = false` (both default true).
 

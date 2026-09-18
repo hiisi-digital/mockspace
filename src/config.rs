@@ -150,10 +150,12 @@ pub struct Config {
 
     /// Run `cargo fmt` on the staged workspace roots before a commit is linted,
     /// re-staging the result. Uses the repo's own `rustfmt.toml`. Default true.
+    /// The clone's own `git config mockspace.autoFmt` beats the file.
     pub auto_fmt:        bool,
     /// Run `cargo clippy --fix` on the staged workspace roots before a commit is
     /// linted, re-staging the result. Uses the repo's own clippy config (the
     /// entrypoint `#![warn(clippy::…)]` attributes). Best-effort. Default true.
+    /// The clone's own `git config mockspace.autoClippyFix` beats the file.
     pub auto_clippy_fix: bool,
     /// Run `cargo deny check` on push against the repo's `deny.toml` (advisories,
     /// license compatibility, bans, sources). Blocks on a violation; skipped when
@@ -876,6 +878,12 @@ impl Config {
                 registry_roots_raw.insert(name.clone(), root.path.clone());
             }
         }
+        let auto_fmt = clone_says(&repo_root, "autoFmt")
+            .or(raw.auto_fmt)
+            .unwrap_or(true);
+        let auto_clippy_fix = clone_says(&repo_root, "autoClippyFix")
+            .or(raw.auto_clippy_fix)
+            .unwrap_or(true);
         Config {
             mock_dir,
             crates_dir,
@@ -936,8 +944,8 @@ impl Config {
             install_git_hooks,
             install_cargo_config,
             install_agent_files,
-            auto_fmt: raw.auto_fmt.unwrap_or(true),
-            auto_clippy_fix: raw.auto_clippy_fix.unwrap_or(true),
+            auto_fmt,
+            auto_clippy_fix,
             deny_check: raw.deny_check.unwrap_or(true),
             agent,
             lint_overrides,
@@ -1295,6 +1303,46 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
     // nearer. That is what makes the change additive: the second pass runs
     // only where the first returned nothing at all.
     find_upward(start, ".git").or_else(|| find_upward(start, "mockspace.toml"))
+}
+
+/// What this clone says about one of the commit fixers, read from `git config`
+/// under `mockspace.<key>`, or nothing where it says nothing.
+///
+/// `mockspace.toml` is the project's and travels with every clone of it. This
+/// setting is the clone's own, so a machine that should not compile the project
+/// at commit time can turn the fixer off for itself without the project
+/// carrying which machine that is. Where both are set, the clone's wins.
+///
+/// Read only where the root is a git tree. A root found by `mockspace.toml`
+/// alone has no clone to ask, and asking git from there would read whatever
+/// repository happens to sit around it. A value git cannot read as a boolean
+/// is refused rather than passed over, since a switch that silently does
+/// nothing is the thing a person set it to prevent.
+fn clone_says(repo_root: &Path, key: &str) -> Option<bool> {
+    if !repo_root.join(".git").exists() {
+        return None;
+    }
+    let name = format!("mockspace.{key}");
+    let out = std::process::Command::new("git")
+        .args(["config", "--type=bool", "--get", &name])
+        .current_dir(repo_root)
+        .output()
+        .ok()?;
+    // 1 is git's answer for a key that is not set.
+    if out.status.code() == Some(1) {
+        return None;
+    }
+    if !out.status.success() {
+        panic!(
+            "`{name}` in this clone's git config does not parse as a boolean: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    match String::from_utf8_lossy(&out.stdout).trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        other => panic!("`{name}` in this clone's git config reads as `{other}`, not a boolean"),
+    }
 }
 
 fn find_upward(start: &Path, marker: &str) -> Option<PathBuf> {
