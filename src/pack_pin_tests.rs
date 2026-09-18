@@ -422,6 +422,12 @@ fn a_command_writing_more_than_a_pipe_holds_is_not_stalled() {
 }
 
 #[test]
+fn a_command_reading_stdin_reads_end_of_file_rather_than_waiting() {
+    let out = run_within(sh("cat; echo done"), Duration::from_secs(5), "x").unwrap();
+    assert_eq!(out.stdout, b"done\n");
+}
+
+#[test]
 fn a_command_that_cannot_be_started_is_an_error_not_a_hang() {
     let why = run_within(
         std::process::Command::new("/nonexistent/binary"),
