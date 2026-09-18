@@ -423,8 +423,80 @@ fn a_command_writing_more_than_a_pipe_holds_is_not_stalled() {
 
 #[test]
 fn a_command_reading_stdin_reads_end_of_file_rather_than_waiting() {
-    let out = run_within(sh("cat; echo done"), Duration::from_secs(5), "x").unwrap();
+    // The caller hands over a stdin that never closes, which is what a hook
+    // with its own open stdin would pass down. Without the null the child
+    // reads that pipe and never finishes, whatever the test runner's own
+    // stdin happens to be.
+    let (reader, _writer) = std::io::pipe().unwrap();
+    let mut cmd = sh("cat; echo done");
+    cmd.stdin(reader);
+    let out = run_within(cmd, Duration::from_secs(5), "x").unwrap();
     assert_eq!(out.stdout, b"done\n");
+}
+
+#[test]
+fn a_child_that_leaves_its_output_held_open_is_still_bounded() {
+    let started = Instant::now();
+    let got = run_within(sh("sleep 4 & echo hi"), Duration::from_millis(500), "leaver");
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    let why = got.unwrap_err();
+    assert!(why.contains("leaver did not answer within"), "{why}");
+}
+
+#[test]
+fn a_child_whose_output_closes_in_time_is_read_whole_after_it_exits() {
+    // The control for the case above: a background writer that finishes inside
+    // the deadline is waited for rather than cut off.
+    let out = run_within(sh("(sleep 0.2; echo late) & echo early"), Duration::from_secs(5), "x").unwrap();
+    assert_eq!(out.stdout, b"early\nlate\n");
+}
+
+#[test]
+fn asking_a_remote_that_hangs_comes_back_within_the_deadline() {
+    let url = "ssh://git@example.invalid/nothing";
+    let mut git = ls_remote_command(url, "dev", false);
+    git.env("GIT_SSH_COMMAND", "sh -c 'sleep 30' --");
+    let started = Instant::now();
+    let got = remote_head(git, url, "dev", Duration::from_millis(500));
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    let why = got.unwrap_err();
+    assert!(why.contains("did not answer within"), "{why}");
+}
+
+#[test]
+fn the_listing_asks_for_the_full_ref_and_never_a_credential() {
+    let git = ls_remote_command("u", "dev", false);
+    let args: Vec<_> = git.get_args().collect();
+    assert_eq!(args, ["ls-remote", "u", "refs/heads/dev"]);
+    let envs: Vec<_> = git.get_envs().collect();
+    assert!(envs.contains(&("GIT_TERMINAL_PROMPT".as_ref(), Some("0".as_ref()))), "{envs:?}");
+}
+
+#[test]
+fn ssh_is_put_in_batch_mode_only_when_asked() {
+    let ssh_env = |batch| {
+        ls_remote_command("u", "dev", batch)
+            .get_envs()
+            .find(|(k, _)| *k == "GIT_SSH_COMMAND")
+            .and_then(|(_, v)| v.map(|v| v.to_os_string()))
+    };
+    assert_eq!(ssh_env(true), Some("ssh -o BatchMode=yes".into()));
+    assert_eq!(ssh_env(false), None);
+}
+
+#[test]
+fn ssh_is_unconfigured_only_when_nothing_says_how_it_runs() {
+    use std::ffi::OsStr;
+    let set = Some(OsStr::new("ssh -i key"));
+    let core = Some("ssh -i key");
+    assert!(ssh_is_unconfigured(None, None, None));
+    assert!(!ssh_is_unconfigured(set, None, None));
+    assert!(!ssh_is_unconfigured(None, set, None));
+    assert!(!ssh_is_unconfigured(None, None, core));
+    assert!(!ssh_is_unconfigured(set, set, None));
+    assert!(!ssh_is_unconfigured(set, None, core));
+    assert!(!ssh_is_unconfigured(None, set, core));
+    assert!(!ssh_is_unconfigured(set, set, core));
 }
 
 #[test]

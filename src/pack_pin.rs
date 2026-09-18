@@ -24,9 +24,11 @@
 //! the run says that too.
 //!
 //! This runs inside the commit gate, so asking the remote has a deadline,
-//! [`ASK_DEADLINE`], and never prompts: a network dropping packets or an ssh
-//! key wanting its passphrase is a remote that did not answer, and the
-//! fallbacks above take it from there.
+//! [`ASK_DEADLINE`], over the answer and the output both, and git never
+//! prompts. Nor does ssh, unless the clone has said itself how ssh is run, in
+//! which case that is left alone and the deadline still holds: a network
+//! dropping packets or a key wanting its passphrase is a remote that did not
+//! answer, and the fallbacks above take it from there.
 //!
 //! renki resolves the launcher's own branch pins the same way, with the same
 //! hour and the same cache file shape. The engine does not depend on renki,
@@ -167,21 +169,35 @@ pub(crate) fn fallback_note(name: &str, pinned: &Pinned) -> Option<String> {
 }
 
 /// The tip of `branch` on `url`, by `git ls-remote`, within [`ASK_DEADLINE`].
+pub(crate) fn ls_remote_head(url: &str, branch: &str) -> Result<String, String> {
+    let batch = ssh_is_unconfigured(
+        std::env::var_os("GIT_SSH_COMMAND").as_deref(),
+        std::env::var_os("GIT_SSH").as_deref(),
+        core_ssh_command().as_deref(),
+    );
+    remote_head(ls_remote_command(url, branch, batch), url, branch, ASK_DEADLINE)
+}
+
+/// `git ls-remote` for the full ref of `branch`, which never prompts for a
+/// credential, and never lets ssh prompt either where `batch` says nothing
+/// else has been told how to run it.
 ///
 /// The full ref, since a bare name also matches a tag of the same name and
 /// which one answers first is the remote's listing order.
-pub(crate) fn ls_remote_head(url: &str, branch: &str) -> Result<String, String> {
-    let refspec = format!("refs/heads/{branch}");
+pub(crate) fn ls_remote_command(url: &str, branch: &str, batch: bool) -> Command {
     let mut git = Command::new("git");
-    git.args(["ls-remote", url, &refspec])
+    git.args(["ls-remote", url, &format!("refs/heads/{branch}")])
         .env("GIT_TERMINAL_PROMPT", "0");
-    // BatchMode stops ssh asking for a passphrase or a host key, and is only
-    // set where the clone has not already said how ssh is to be run.
-    if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+    if batch {
         git.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     }
-    let what = format!("git ls-remote {url} {refspec}");
-    let out = run_within(git, ASK_DEADLINE, &what)?;
+    git
+}
+
+/// Run a listing `git` and read the tip of `branch` out of it, within `deadline`.
+pub(crate) fn remote_head(git: Command, url: &str, branch: &str, deadline: Duration) -> Result<String, String> {
+    let what = format!("git ls-remote {url} refs/heads/{branch}");
+    let out = run_within(git, deadline, &what)?;
     if !out.status.success() {
         return Err(format!(
             "{what} failed: {}",
@@ -190,6 +206,27 @@ pub(crate) fn ls_remote_head(url: &str, branch: &str) -> Result<String, String> 
     }
     tip_from_listing(&String::from_utf8_lossy(&out.stdout))
         .ok_or_else(|| format!("{url} has no branch `{branch}`"))
+}
+
+/// Whether ssh may be put in batch mode, which stops it asking for a
+/// passphrase or a host key. Only where nothing has said how ssh is to be run:
+/// `GIT_SSH_COMMAND` outranks both `GIT_SSH` and `core.sshCommand`, so setting
+/// it over either would throw away the key or agent somebody chose there.
+pub(crate) const fn ssh_is_unconfigured(
+    ssh_command: Option<&std::ffi::OsStr>,
+    ssh: Option<&std::ffi::OsStr>,
+    core_ssh_command: Option<&str>,
+) -> bool {
+    ssh_command.is_none() && ssh.is_none() && core_ssh_command.is_none()
+}
+
+/// `core.sshCommand` as git would read it here, if anything sets it.
+fn core_ssh_command() -> Option<String> {
+    let mut git = Command::new("git");
+    git.args(["config", "--get", "core.sshCommand"]);
+    let out = run_within(git, ASK_DEADLINE, "git config --get core.sshCommand").ok()?;
+    let value = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !value.is_empty()).then_some(value)
 }
 
 /// The object name on the first line of an `ls-remote` listing, if it is one:
@@ -203,49 +240,59 @@ fn is_object_name(rev: &str) -> bool {
     matches!(rev.len(), 40 | 64) && rev.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Run `cmd` to completion, or kill it once `deadline` has passed.
+/// Run `cmd` to completion, or give up on it once `deadline` has passed.
 ///
 /// Both pipes are drained on their own threads, so a child writing more than a
 /// pipe holds cannot stall on a parent that is only waiting for it to exit.
+/// The deadline covers the output as well as the exit: something the child
+/// left running, an ssh control master say, can hold a pipe open long after
+/// the child itself is gone, and waiting on that is waiting on nothing.
+///
+/// Only the child is killed. What it started is left to finish on its own,
+/// because the standard library has no way to signal a process group.
 pub(crate) fn run_within(mut cmd: Command, deadline: Duration, what: &str) -> Result<Output, String> {
+    let started = Instant::now();
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("could not run {what}: {e}"))?;
-    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+    let late = || format!("{what} did not answer within {} seconds", deadline.as_secs_f32());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let drain = |which: usize, pipe: Option<Box<dyn Read + Send>>| {
+        let tx = tx.clone();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             if let Some(mut p) = pipe {
                 let _ = p.read_to_end(&mut buf);
             }
-            buf
-        })
+            let _ = tx.send((which, buf));
+        });
     };
-    let stdout = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let stderr = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let started = Instant::now();
+    drain(0, child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    drain(1, child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!(
-                    "{what} did not answer within {} seconds",
-                    deadline.as_secs_f32()
-                ));
+                return Err(late());
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(e) => return Err(format!("could not wait for {what}: {e}")),
         }
     };
-    Ok(Output {
-        status,
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
-    })
+    let mut streams: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
+    for _ in 0..2 {
+        let (which, buf) = rx
+            .recv_timeout(deadline.saturating_sub(started.elapsed()))
+            .map_err(|_| late())?;
+        streams[which] = buf;
+    }
+    let [stdout, stderr] = streams;
+    Ok(Output { status, stdout, stderr })
 }
 
 fn inline_table(spec: &str) -> Option<InlineTable> {
