@@ -209,7 +209,11 @@ fn ls_remote_reads_the_tip_of_the_named_branch_and_follows_it() {
     git(repo, &["init", "-q", "-b", "dev"]);
     git(repo, &["commit", "-q", "--allow-empty", "-m", "one"]);
     let first = git(repo, &["rev-parse", "HEAD"]);
-    // A tag named exactly like the branch, on an older commit, must not answer.
+    // A tag named exactly like the branch, on an older commit. It does not make
+    // this arm fail when the refspec is bare, because `ls-remote <url> dev` lists
+    // `refs/heads/dev` ahead of `refs/tags/dev` and the first line wins either
+    // way. What catches a bare refspec is the `release` arm of the next test,
+    // where only a tag carries the name.
     git(repo, &["tag", "-m", "t", "dev", "HEAD"]);
     git(repo, &["commit", "-q", "--allow-empty", "-m", "two"]);
     let url = format!("file://{}", repo.display());
