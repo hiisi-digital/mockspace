@@ -294,7 +294,7 @@ One line at a time, `// lint:allow(<name>) reason: <why>` keeps a finding of tha
 
 Two things a marker does not reach. A finding about the crate as a whole, such as `file-size` naming a file in its message, has no line a marker could sit on and stands; the way to change that is the lint's own configuration. And a lint that reads the marker itself as an input, such as `no-self-define`, which demands an explanation of a certain length beside it, decides on its own terms: a bare marker there is a finding, not an allow.
 
-Levels: `off`, `info`, `warn`, `error`. The four built-in design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`) are always on and non-negotiable.
+Levels: `off`, `info`, `warn`, `error`. The five built-in design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`, `changelist-seal`) are on at `error` by default, and a project turns one down only by saying so in its own config. `changelist-seal` refuses a locked changelist holding nothing but its title, an unlocked changelist beside a locked one of its kind, and a close that carries either into a round directory; closed rounds already committed are not read.
 
 The v2 source-level directive vocabulary (`lint:allow`, `lint:scope-add`, `lint:defer`, `lint:file-disable`, `lint:prop`) and the `[primitive-introductions]` retirement are covered in [`MIGRATION-v1-to-v2-lints.md`](MIGRATION-v1-to-v2-lints.md). Consumers picking up the v2 engine should read it once per repo.
 

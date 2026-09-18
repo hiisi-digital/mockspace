@@ -47,6 +47,7 @@ pub mod changelist_helpers;
 mod changelist_immutability;
 mod changelist_lock;
 pub(crate) mod changelist_required;
+mod changelist_seal;
 mod deprecation_comparison;
 mod design_doc_source_mismatch;
 mod export_count;
@@ -1802,6 +1803,7 @@ pub fn all_repo_lints() -> Vec<Box<dyn RepoLint>> {
         Box::new(canon_not_while_panel_open::CanonNotWhilePanelOpen),
         Box::new(changelist_required::ChangelistRequired),
         Box::new(changelist_immutability::ChangelistImmutability),
+        Box::new(changelist_seal::ChangelistSeal),
         Box::new(the_mock_toolchain_matches_the_root::TheMockToolchainMatchesTheRoot),
     ]
 }
@@ -2793,6 +2795,7 @@ mod repo_lint_tests {
             "changelist-doc-gate",
             "changelist-lock",
             "changelist-immutability",
+            "changelist-seal",
             "an-ordinary-lint",
         ] {
             let mut cfg = LintConfig::empty();
@@ -2921,6 +2924,7 @@ mod repo_lint_tests {
             "changelist-lock",
             "changelist-required",
             "changelist-immutability",
+            "changelist-seal",
         ] {
             assert!(
                 names.contains(&expected),
