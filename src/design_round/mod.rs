@@ -15,8 +15,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+use mockspace_lint_rules as changelist_seal;
 use mockspace_lint_rules::changelist_helpers::{self, ClKind, ClStatus, ParsedChangelist, Phase};
-use mockspace_lint_rules::changelist_seal;
 
 use crate::config::Config;
 

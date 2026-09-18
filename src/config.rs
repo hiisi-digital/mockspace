@@ -1314,16 +1314,31 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 /// repository, git answers for that one instead, which is the surrounding
 /// repository this reader is not supposed to ask; so the top git names has to
 /// be `root` itself.
+///
+/// Only "not a repository" is read as no clone. Any other refusal, a `.git`
+/// file pointing nowhere or a clone git will not read for its ownership, is a
+/// clone whose setting cannot be read, and that panics like a malformed value
+/// does rather than letting the switch quietly do nothing. The message is
+/// matched with the locale pinned, since git translates it.
 fn git_answers_for(root: &Path) -> bool {
     let Ok(out) = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
+        .env("LC_ALL", "C")
         .current_dir(root)
         .output()
     else {
         return false;
     };
     if !out.status.success() {
-        return false;
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if stderr.contains("not a git repository") {
+            return false;
+        }
+        panic!(
+            "git cannot read the clone at {}: {}",
+            root.display(),
+            stderr.trim()
+        );
     }
     let top = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
     match (top.canonicalize(), root.canonicalize()) {

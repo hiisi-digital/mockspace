@@ -296,4 +296,29 @@ mod seal {
         assert_eq!(code, ExitCode::FAILURE);
         assert_eq!(listed(dir.path()), before);
     }
+
+    /// homma's shape itself: the text unlocked beside a lock of its kind.
+    /// Refused whichever check reaches it first, the phase or the seal, and
+    /// what matters is that nothing moves.
+    #[test]
+    fn close_refuses_the_homma_shape_and_moves_nothing() {
+        let dir = mock(&[
+            (
+                "202609181236_changelist.doc.lock.md",
+                "# doc changelist\n\nNone.\n",
+            ),
+            (
+                "202609181236_changelist.src.md",
+                "# src changelist: x\n\n## CHANGE: y\n",
+            ),
+            (
+                "202609181237_changelist.src.lock.md",
+                "# src changelist\n\n",
+            ),
+        ]);
+        let before = listed(dir.path());
+        let code = cmd_close(&Config::from_dir(dir.path()), &OPTS);
+        assert_eq!(code, ExitCode::FAILURE);
+        assert_eq!(listed(dir.path()), before);
+    }
 }

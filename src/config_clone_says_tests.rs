@@ -49,23 +49,24 @@ fn a_root_without_a_git_marker_has_no_clone_to_ask() {
     assert_eq!(clone_says(dir.path(), "autoFmt"), None);
 }
 
-/// The fixture shape the nuke tests use: a `.git` git does not recognise. It
-/// used to be read as a clone whose setting would not parse, and panicked.
+/// The fixture shape the nuke tests use: an empty `.git` directory, which git
+/// does not read as a repository. It used to be read as a clone whose setting
+/// would not parse, and panicked.
 #[test]
-fn a_git_marker_git_does_not_recognise_has_no_clone_to_ask() {
-    for marker_is_dir in [true, false] {
-        let dir = tempfile::tempdir().unwrap();
-        if marker_is_dir {
-            std::fs::create_dir(dir.path().join(".git")).unwrap();
-        } else {
-            std::fs::write(dir.path().join(".git"), "not a gitdir line\n").unwrap();
-        }
-        assert_eq!(
-            clone_says(dir.path(), "autoFmt"),
-            None,
-            "dir: {marker_is_dir}"
-        );
-    }
+fn an_empty_git_directory_has_no_clone_to_ask() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    assert_eq!(clone_says(dir.path(), "autoFmt"), None);
+}
+
+/// A `.git` file that names no gitdir is a clone git refuses to read, not the
+/// absence of one, so its setting is unreadable and that is loud.
+#[test]
+#[should_panic(expected = "git cannot read the clone")]
+fn a_broken_git_file_is_refused_rather_than_read_as_no_clone() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".git"), "not a gitdir line\n").unwrap();
+    let _ = clone_says(dir.path(), "autoFmt");
 }
 
 /// A root whose `.git` git does not recognise, sitting inside a clone that
