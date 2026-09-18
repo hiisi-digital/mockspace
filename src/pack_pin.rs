@@ -23,12 +23,13 @@
 //! goes to cargo unchanged, which is what happened before this existed, and
 //! the run says that too.
 //!
-//! This runs inside the commit gate, so asking the remote has a deadline,
-//! [`ASK_DEADLINE`], over the answer and the output both, and git never
-//! prompts. Nor does ssh, unless the clone has said itself how ssh is run, in
-//! which case that is left alone and the deadline still holds: a network
-//! dropping packets or a key wanting its passphrase is a remote that did not
-//! answer, and the fallbacks above take it from there.
+//! This runs inside the commit gate, so asking the remote has one deadline,
+//! [`ASK_DEADLINE`], over reading how ssh is configured, the answer and the
+//! output all together, and git never prompts. Nor does ssh, unless the clone
+//! or the environment has said how ssh is run, in which case that is left
+//! alone: it may ask on the terminal, and the deadline still holds over it. A
+//! network dropping packets or a key wanting its passphrase is a remote that
+//! did not answer, and the fallbacks above take it from there.
 //!
 //! renki resolves the launcher's own branch pins the same way, with the same
 //! hour and the same cache file shape. The engine does not depend on renki,
@@ -170,25 +171,71 @@ pub(crate) fn fallback_note(name: &str, pinned: &Pinned) -> Option<String> {
 
 /// The tip of `branch` on `url`, by `git ls-remote`, within [`ASK_DEADLINE`].
 pub(crate) fn ls_remote_head(url: &str, branch: &str) -> Result<String, String> {
-    let batch = ssh_is_unconfigured(
-        std::env::var_os("GIT_SSH_COMMAND").as_deref(),
-        std::env::var_os("GIT_SSH").as_deref(),
-        core_ssh_command().as_deref(),
-    );
-    remote_head(ls_remote_command(url, branch, batch), url, branch, ASK_DEADLINE)
+    ls_remote_head_from(&ThisProcess, url, branch, ASK_DEADLINE)
+}
+
+/// The tip of `branch` on `url`, with one `deadline` covering both the read of
+/// how ssh is configured and the listing, so the whole ask is bounded by it
+/// rather than each half.
+pub(crate) fn ls_remote_head_from(
+    sources: &impl SshSources,
+    url: &str,
+    branch: &str,
+    deadline: Duration,
+) -> Result<String, String> {
+    let started = Instant::now();
+    let git = ls_remote_command(url, branch, sources, deadline);
+    remote_head(git, url, branch, deadline.saturating_sub(started.elapsed()))
+}
+
+/// The three places git reads how to run ssh, highest ranked first.
+/// `GIT_SSH_COMMAND` outranks both `GIT_SSH` and `core.sshCommand`, which is
+/// why it is only ever set where none of the three says anything.
+pub(crate) trait SshSources {
+    fn ssh_command(&self) -> Option<std::ffi::OsString>;
+    fn ssh(&self) -> Option<std::ffi::OsString>;
+    fn core_ssh_command(&self, deadline: Duration) -> Option<String>;
+}
+
+/// This process's environment and the git configuration of the directory it
+/// runs in, which is what the listing's git reads too.
+struct ThisProcess;
+
+impl SshSources for ThisProcess {
+    fn ssh_command(&self) -> Option<std::ffi::OsString> {
+        std::env::var_os("GIT_SSH_COMMAND")
+    }
+
+    fn ssh(&self) -> Option<std::ffi::OsString> {
+        std::env::var_os("GIT_SSH")
+    }
+
+    fn core_ssh_command(&self, deadline: Duration) -> Option<String> {
+        configured_value(core_ssh_command_query(), deadline)
+    }
 }
 
 /// `git ls-remote` for the full ref of `branch`, which never prompts for a
-/// credential, and never lets ssh prompt either where `batch` says nothing
-/// else has been told how to run it.
+/// credential, and puts ssh in batch mode only where none of `sources` says how
+/// ssh is to run, so a key or agent somebody chose there is kept.
 ///
 /// The full ref, since a bare name also matches a tag of the same name and
-/// which one answers first is the remote's listing order.
-pub(crate) fn ls_remote_command(url: &str, branch: &str, batch: bool) -> Command {
+/// which one answers first is the remote's listing order. The sources are read
+/// in rank order and stop at the first that answers, so the configuration is
+/// only asked when the environment says nothing.
+pub(crate) fn ls_remote_command(
+    url: &str,
+    branch: &str,
+    sources: &impl SshSources,
+    deadline: Duration,
+) -> Command {
     let mut git = Command::new("git");
     git.args(["ls-remote", url, &format!("refs/heads/{branch}")])
         .env("GIT_TERMINAL_PROMPT", "0");
-    if batch {
+    let unconfigured = sources.ssh_command().is_none()
+        && sources.ssh().is_none()
+        && sources.core_ssh_command(deadline).is_none();
+    if unconfigured {
         git.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     }
     git
@@ -208,23 +255,17 @@ pub(crate) fn remote_head(git: Command, url: &str, branch: &str, deadline: Durat
         .ok_or_else(|| format!("{url} has no branch `{branch}`"))
 }
 
-/// Whether ssh may be put in batch mode, which stops it asking for a
-/// passphrase or a host key. Only where nothing has said how ssh is to be run:
-/// `GIT_SSH_COMMAND` outranks both `GIT_SSH` and `core.sshCommand`, so setting
-/// it over either would throw away the key or agent somebody chose there.
-pub(crate) const fn ssh_is_unconfigured(
-    ssh_command: Option<&std::ffi::OsStr>,
-    ssh: Option<&std::ffi::OsStr>,
-    core_ssh_command: Option<&str>,
-) -> bool {
-    ssh_command.is_none() && ssh.is_none() && core_ssh_command.is_none()
-}
-
-/// `core.sshCommand` as git would read it here, if anything sets it.
-fn core_ssh_command() -> Option<String> {
+/// The query for `core.sshCommand` as git would read it here.
+pub(crate) fn core_ssh_command_query() -> Command {
     let mut git = Command::new("git");
     git.args(["config", "--get", "core.sshCommand"]);
-    let out = run_within(git, ASK_DEADLINE, "git config --get core.sshCommand").ok()?;
+    git
+}
+
+/// What a `git config --get` query answers within `deadline`, where it
+/// answers with a value. Unset, failed and too slow all read as nothing set.
+pub(crate) fn configured_value(query: Command, deadline: Duration) -> Option<String> {
+    let out = run_within(query, deadline, "git config --get").ok()?;
     let value = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (out.status.success() && !value.is_empty()).then_some(value)
 }

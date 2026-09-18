@@ -451,10 +451,52 @@ fn a_child_whose_output_closes_in_time_is_read_whole_after_it_exits() {
     assert_eq!(out.stdout, b"early\nlate\n");
 }
 
+/// Git's three ssh settings as a test states them, counting how often the
+/// configuration was asked and taking `core_takes` to answer it.
+struct Sources {
+    ssh_command: Option<&'static str>,
+    ssh:         Option<&'static str>,
+    core:        Option<&'static str>,
+    core_takes:  Duration,
+    core_asked:  Cell<u32>,
+}
+
+impl Sources {
+    fn of(ssh_command: Option<&'static str>, ssh: Option<&'static str>, core: Option<&'static str>) -> Self {
+        Self { ssh_command, ssh, core, core_takes: Duration::ZERO, core_asked: Cell::new(0) }
+    }
+
+    fn silent() -> Self {
+        Self::of(None, None, None)
+    }
+}
+
+impl SshSources for Sources {
+    fn ssh_command(&self) -> Option<std::ffi::OsString> {
+        self.ssh_command.map(Into::into)
+    }
+
+    fn ssh(&self) -> Option<std::ffi::OsString> {
+        self.ssh.map(Into::into)
+    }
+
+    fn core_ssh_command(&self, _: Duration) -> Option<String> {
+        self.core_asked.set(self.core_asked.get() + 1);
+        std::thread::sleep(self.core_takes);
+        self.core.map(Into::into)
+    }
+}
+
+fn ssh_env(git: &Command) -> Option<std::ffi::OsString> {
+    git.get_envs()
+        .find(|(k, _)| *k == "GIT_SSH_COMMAND")
+        .and_then(|(_, v)| v.map(|v| v.to_os_string()))
+}
+
 #[test]
 fn asking_a_remote_that_hangs_comes_back_within_the_deadline() {
     let url = "ssh://git@example.invalid/nothing";
-    let mut git = ls_remote_command(url, "dev", false);
+    let mut git = ls_remote_command(url, "dev", &Sources::silent(), ASK_DEADLINE);
     git.env("GIT_SSH_COMMAND", "sh -c 'sleep 30' --");
     let started = Instant::now();
     let got = remote_head(git, url, "dev", Duration::from_millis(500));
@@ -465,38 +507,97 @@ fn asking_a_remote_that_hangs_comes_back_within_the_deadline() {
 
 #[test]
 fn the_listing_asks_for_the_full_ref_and_never_a_credential() {
-    let git = ls_remote_command("u", "dev", false);
-    let args: Vec<_> = git.get_args().collect();
-    assert_eq!(args, ["ls-remote", "u", "refs/heads/dev"]);
-    let envs: Vec<_> = git.get_envs().collect();
-    assert!(envs.contains(&("GIT_TERMINAL_PROMPT".as_ref(), Some("0".as_ref()))), "{envs:?}");
+    for sources in [Sources::silent(), Sources::of(Some("ssh -i key"), None, None)] {
+        let git = ls_remote_command("u", "dev", &sources, ASK_DEADLINE);
+        let args: Vec<_> = git.get_args().collect();
+        assert_eq!(args, ["ls-remote", "u", "refs/heads/dev"]);
+        let envs: Vec<_> = git.get_envs().collect();
+        assert!(envs.contains(&("GIT_TERMINAL_PROMPT".as_ref(), Some("0".as_ref()))), "{envs:?}");
+    }
 }
 
 #[test]
-fn ssh_is_put_in_batch_mode_only_when_asked() {
-    let ssh_env = |batch| {
-        ls_remote_command("u", "dev", batch)
-            .get_envs()
-            .find(|(k, _)| *k == "GIT_SSH_COMMAND")
-            .and_then(|(_, v)| v.map(|v| v.to_os_string()))
+fn ssh_is_put_in_batch_mode_only_when_none_of_the_three_says_how_it_runs() {
+    let set = Some("ssh -i key");
+    for ssh_command in [None, set] {
+        for ssh in [None, set] {
+            for core in [None, set] {
+                let sources = Sources::of(ssh_command, ssh, core);
+                let got = ssh_env(&ls_remote_command("u", "dev", &sources, ASK_DEADLINE));
+                let silent = ssh_command.is_none() && ssh.is_none() && core.is_none();
+                let want = silent.then(|| "ssh -o BatchMode=yes".into());
+                assert_eq!(got, want, "GIT_SSH_COMMAND={ssh_command:?} GIT_SSH={ssh:?} core={core:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_configuration_is_asked_only_when_the_environment_says_nothing() {
+    let asked = |sources: Sources| {
+        ls_remote_command("u", "dev", &sources, ASK_DEADLINE);
+        sources.core_asked.get()
     };
-    assert_eq!(ssh_env(true), Some("ssh -o BatchMode=yes".into()));
-    assert_eq!(ssh_env(false), None);
+    assert_eq!(asked(Sources::silent()), 1);
+    assert_eq!(asked(Sources::of(None, None, Some("ssh -i key"))), 1);
+    assert_eq!(asked(Sources::of(Some("ssh -i key"), None, None)), 0);
+    assert_eq!(asked(Sources::of(None, Some("ssh"), None)), 0);
 }
 
 #[test]
-fn ssh_is_unconfigured_only_when_nothing_says_how_it_runs() {
-    use std::ffi::OsStr;
-    let set = Some(OsStr::new("ssh -i key"));
-    let core = Some("ssh -i key");
-    assert!(ssh_is_unconfigured(None, None, None));
-    assert!(!ssh_is_unconfigured(set, None, None));
-    assert!(!ssh_is_unconfigured(None, set, None));
-    assert!(!ssh_is_unconfigured(None, None, core));
-    assert!(!ssh_is_unconfigured(set, set, None));
-    assert!(!ssh_is_unconfigured(set, None, core));
-    assert!(!ssh_is_unconfigured(None, set, core));
-    assert!(!ssh_is_unconfigured(set, set, core));
+fn one_deadline_covers_the_configuration_and_the_listing_both() {
+    // The configuration takes the whole deadline, so the listing is left
+    // none of it and is given up on at once. Given the full deadline again
+    // instead, git would run to its own answer: a failure about the path.
+    let deadline = Duration::from_millis(600);
+    let sources = Sources { core_takes: deadline, ..Sources::silent() };
+    let started = Instant::now();
+    let why = ls_remote_head_from(&sources, "file:///nonexistent/pack.git", "dev", deadline).unwrap_err();
+    assert!(why.contains("did not answer within 0 seconds"), "{why}");
+    assert!(started.elapsed() < deadline + Duration::from_millis(400), "{:?}", started.elapsed());
+}
+
+#[test]
+fn the_configuration_is_read_as_git_would_read_it_here() {
+    let git = core_ssh_command_query();
+    assert_eq!(git.get_program(), "git");
+    let args: Vec<_> = git.get_args().collect();
+    assert_eq!(args, ["config", "--get", "core.sshCommand"]);
+}
+
+#[test]
+fn a_configured_value_is_what_the_repository_sets_and_nothing_otherwise() {
+    let dir = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let mut c = Command::new("git");
+        c.args(args)
+            .current_dir(dir.path())
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        c
+    };
+    assert!(git(&["init", "-q"]).status().unwrap().success());
+    let query = || {
+        let mut q = core_ssh_command_query();
+        q.current_dir(dir.path())
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        q
+    };
+    assert_eq!(configured_value(query(), ASK_DEADLINE), None);
+    assert!(git(&["config", "core.sshCommand", "ssh -i key"]).status().unwrap().success());
+    assert_eq!(configured_value(query(), ASK_DEADLINE), Some("ssh -i key".into()));
+    assert!(git(&["config", "core.sshCommand", ""]).status().unwrap().success());
+    assert_eq!(configured_value(query(), ASK_DEADLINE), None);
+}
+
+#[test]
+fn a_configuration_too_slow_to_answer_reads_as_nothing_set() {
+    let started = Instant::now();
+    assert_eq!(configured_value(sh("sleep 30; echo late"), Duration::from_millis(300)), None);
+    assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+    assert_eq!(configured_value(sh("echo 'ssh -i key'"), ASK_DEADLINE), Some("ssh -i key".into()));
+    assert_eq!(configured_value(sh("echo 'ssh -i key'; exit 1"), ASK_DEADLINE), None);
 }
 
 #[test]
