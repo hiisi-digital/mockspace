@@ -93,6 +93,7 @@ pub fn load(
         &tools,
         lint_rules_dep,
         cfg,
+        &crate::pack_pin::ls_remote_head,
     )?;
     let dylib = build_cdylib(&gen_dir, &gen_crate_name(&cfg.mock_dir))?;
 
@@ -106,8 +107,12 @@ pub fn load(
 
 /// Write the generated cdylib crate (`Cargo.toml` + `src/lib.rs`). Idempotent:
 /// rewrites only when content changes, so cargo's freshness check skips a
-/// rebuild when nothing moved.
-fn write_cdylib_crate(
+/// rebuild when nothing moved. `resolve` reads a branch pin's tip off its
+/// remote, and is a parameter so the manifest can be written without one.
+// Eight, since the resolver is the one thing the tests have to replace; every
+// other argument is a separate input to the manifest, not a group of one.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn write_cdylib_crate(
     gen_dir: &Path,
     lints_dir: &Path,
     lint_files: &[String],
@@ -115,6 +120,7 @@ fn write_cdylib_crate(
     tools: &[ToolCrate],
     lint_rules_dep: &str,
     cfg: &Config,
+    resolve: &dyn Fn(&str, &str) -> Result<String, String>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(gen_dir.join("src"))
         .map_err(|e| format!("could not create {}: {e}", gen_dir.display()))?;
@@ -134,7 +140,7 @@ fn write_cdylib_crate(
     // hold it at whatever the tip was on the first build. `pack_pin` says why.
     let pins = gen_dir.join(".pack-pins");
     for (name, spec) in packs {
-        let spec = crate::pack_pin::spec_for_cargo(name, spec, &pins, &crate::pack_pin::ls_remote_head);
+        let spec = crate::pack_pin::spec_for_cargo(name, spec, &pins, resolve);
         manifest.push_str(&format!("{name} = {spec}\n"));
     }
     // Tool crates are path dependencies, discovered by directory rather than
@@ -822,6 +828,7 @@ mod tests {
             std::slice::from_ref(&t),
             "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"r\" }",
             &cfg,
+            &|_: &str, _: &str| -> Result<String, String> { unreachable!("no branch pack here") },
         )
         .unwrap();
         let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();
@@ -876,6 +883,7 @@ mod tests {
             &[],
             dep,
             &cfg,
+            &|_: &str, _: &str| -> Result<String, String> { unreachable!("no branch pack here") },
         )
         .unwrap();
         let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();

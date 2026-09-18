@@ -79,7 +79,9 @@ you would rather nothing moved at all.
 A lint pack in `[lint-crates]` pinned by `branch` follows that branch the same
 way, resolved against the remote at most once an hour, and built at the last
 tip it saw when the remote cannot be reached, with a warning saying how old
-that tip is. Pin it by `rev` or `tag` if it should stay where it is.
+that tip is. The remote gets five seconds to answer and is never allowed to
+prompt, since this runs inside the commit hook. Pin it by `rev` or `tag` if it
+should stay where it is.
 
 The launcher builds the pinned engine once into a shared per-version cache and
 execs it, so every repo on the same pin shares one build and the working
