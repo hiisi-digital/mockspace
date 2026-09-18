@@ -267,3 +267,52 @@ fn a_file_in_neither_repository_is_none_of_this_guards_business() {
         "the guard claimed a file outside its own repository: {out}"
     );
 }
+
+const TOPIC: &str = "mock/design_rounds/202609182341_topic.a-thing.md";
+
+#[test]
+fn a_topic_staged_and_not_yet_committed_can_still_be_written() {
+    // The defect. A topic is staged as soon as it exists, because phase
+    // detection reads the index, and the freeze read the same index: the file
+    // was refused as committed while it held one heading and no commit had it.
+    let repo = repo_with_rounds("staged", &[]);
+    std::fs::write(repo.join(TOPIC), "# a-thing\n").unwrap();
+    git(&repo, &["add", "--", TOPIC]);
+    let guard = guard_for(&repo);
+    let out = run_from(&repo, &guard, &write_payload(&repo.join(TOPIC)));
+    assert!(
+        !refused(&out),
+        "a topic no commit holds was refused as frozen: {out}"
+    );
+}
+
+#[test]
+fn a_topic_a_commit_holds_is_frozen() {
+    // The control: reading HEAD must still refuse the file once it is in one,
+    // or the fix turned the freeze off rather than pointed it at commits.
+    let repo = repo_with_rounds("frozen", &["202609182341_topic.a-thing.md"]);
+    let guard = guard_for(&repo);
+    let out = run_from(&repo, &guard, &write_payload(&repo.join(TOPIC)));
+    assert!(refused(&out), "a committed topic was writable: {out}");
+    assert!(
+        out.contains("committed and FROZEN"),
+        "the refusal should be the freeze: {out}"
+    );
+}
+
+#[test]
+fn a_topic_in_a_repository_with_no_commit_yet_can_be_written() {
+    // No HEAD at all, where asking a commit for the file errors rather than
+    // answering empty; the error is read as not committed, which is true.
+    let d = scratch("unborn");
+    git(&d, &["init", "-q", "-b", "main"]);
+    std::fs::create_dir_all(d.join("mock/design_rounds")).unwrap();
+    std::fs::write(d.join(TOPIC), "# a-thing\n").unwrap();
+    git(&d, &["add", "--", TOPIC]);
+    let guard = guard_for(&d);
+    let out = run_from(&d, &guard, &write_payload(&d.join(TOPIC)));
+    assert!(
+        !refused(&out),
+        "a topic in a repository with no commits was refused: {out}"
+    );
+}

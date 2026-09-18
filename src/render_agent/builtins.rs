@@ -459,7 +459,10 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
             if [[ "$PHASE" == "IMPL" ]]; then allow; fi
             deny "BLOCKED: cannot edit source changelist '${{BASENAME}}' -- not in IMPL phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
         fi
-        if ! $IS_CHANGELIST; then
+        # Committed means in HEAD, not in the index: a topic is staged the
+        # moment it is written so phase detection sees it, and freezing it
+        # there refuses the first real edit to a file that holds one heading.
+        if ! $IS_CHANGELIST && [[ -n "$(git -C "$REPO_ROOT" ls-tree --name-only HEAD -- "$FULL_GIT_PATH" 2>/dev/null)" ]]; then
             deny "BLOCKED: topic '${{BASENAME}}' is committed and FROZEN.\\n\\nCurrent phase: ${{PHASE}}"
         fi
     fi
