@@ -1305,6 +1305,33 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
     find_upward(start, ".git").or_else(|| find_upward(start, "mockspace.toml"))
 }
 
+/// Whether git reads `root` as the top of a repository of its own.
+///
+/// A `.git` git does not recognise, an empty directory or a stray file, answers
+/// every `--local` read with the same fatal status a malformed value gets, so
+/// without asking first a root with no clone behind it would be refused as a
+/// clone holding a bad setting. And where such a root sits inside another
+/// repository, git answers for that one instead, which is the surrounding
+/// repository this reader is not supposed to ask; so the top git names has to
+/// be `root` itself.
+fn git_answers_for(root: &Path) -> bool {
+    let Ok(out) = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(root)
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let top = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    match (top.canonicalize(), root.canonicalize()) {
+        (Ok(top), Ok(root)) => top == root,
+        _ => false,
+    }
+}
+
 /// What this clone says about one of the commit fixers, read from `git config`
 /// under `mockspace.<key>`, or nothing where it says nothing.
 ///
@@ -1325,7 +1352,7 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 /// file rather than a directory and reads its clone's config, so it gets the
 /// clone's answer.
 fn clone_says(repo_root: &Path, key: &str) -> Option<bool> {
-    if !repo_root.join(".git").exists() {
+    if !repo_root.join(".git").exists() || !git_answers_for(repo_root) {
         return None;
     }
     let name = format!("mockspace.{key}");
@@ -1505,6 +1532,10 @@ commit = "error"
         );
     }
 }
+
+#[cfg(test)]
+#[path = "config_clone_says_tests.rs"]
+mod clone_says_tests;
 
 #[cfg(test)]
 mod key_lists_cannot_rot {
