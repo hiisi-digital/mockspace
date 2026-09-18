@@ -188,9 +188,16 @@ fall through to the root. A `[sweep.*]` override outranks both.
 
 `bench.toml` per bench: `title`, `workload`, `arms`, `points`, `master_seed`, `may_differ`,
 `required`, `threaded`, declared roles (`baseline`, `floor`, `delta`), and a per-bench `timing`
-override of `passes`, `runs_per_pass`, `batch_size`, `harness_runs` and `cooldowns_ms`. Points may
-carry their own arm subset. The legacy spellings (`variants`, `sizes`, a `normalise` table) stay
-accepted; the canonical ones are these.
+override of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`,
+`validation_seeds` and `determinism_check_seeds`. Points may carry their own arm subset. The legacy
+spellings (`variants`, `sizes`, a `normalise` table) stay accepted; the canonical ones are these.
+
+The two seed counts govern validation, which runs every arm over `validation_seeds` seeds before
+anything is timed and reruns the first `determinism_check_seeds` of them to check the arm answers
+the same twice; the defaults are `HarnessTuning::default()`'s. An arm whose one call is expensive, a
+training run or a model load, lowers them rather than skipping validation. Zero is refused, as is a
+determinism count above the validation count, and an undeclared determinism count follows a lowered
+validation count down.
 
 Set `may_differ = false` and `required = true` unless there is a stated reason otherwise: identical
 output across arms is the premise that makes the comparison mean anything.

@@ -348,11 +348,13 @@ pub struct SizeSection {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimingOverride {
-    pub passes:        Option<usize>,
-    pub runs_per_pass: Option<usize>,
-    pub batch_size:    Option<usize>,
-    pub harness_runs:  Option<usize>,
-    pub cooldowns_ms:  Option<Vec<u64>>,
+    pub passes:                  Option<usize>,
+    pub runs_per_pass:           Option<usize>,
+    pub batch_size:              Option<usize>,
+    pub harness_runs:            Option<usize>,
+    pub cooldowns_ms:            Option<Vec<u64>>,
+    pub validation_seeds:        Option<usize>,
+    pub determinism_check_seeds: Option<usize>,
 }
 
 /// Deserialize `master_seed` from a TOML integer or a string
@@ -484,21 +486,32 @@ pub fn resolve_variant_path(entry: &str, mock_benches_dir: &Path) -> PathBuf {
 pub struct TimingSection {
     /// Outer pass count per harness run.
     #[serde(default = "default_passes")]
-    pub passes:        usize,
+    pub passes:                  usize,
     /// Inner runs per pass.
     #[serde(default = "default_runs")]
-    pub runs_per_pass: usize,
+    pub runs_per_pass:           usize,
     /// Calls per emitted [`crate::Sample`].
     #[serde(default = "default_batch")]
-    pub batch_size:    usize,
+    pub batch_size:              usize,
     /// Outer harness runs (the whole pipeline repeated for stability).
     #[serde(default = "default_harness_runs")]
-    pub harness_runs:  usize,
+    pub harness_runs:            usize,
     /// Cooldown durations injected between cohorts, in milliseconds.
     /// Each cooldown becomes a separate cohort in the cache; analysis
     /// uses the spread to detect thermal drift.
     #[serde(default = "default_cooldowns")]
-    pub cooldowns_ms:  Vec<u64>,
+    pub cooldowns_ms:            Vec<u64>,
+    /// Seeds every arm is validated over before timing. An arm whose
+    /// single call is a training run cannot afford a hundred of them,
+    /// so a bench lowers this rather than the harness skipping it.
+    #[serde(default = "default_validation_seeds")]
+    pub validation_seeds:        usize,
+    /// How many of the validation seeds are run twice to check the arm
+    /// is deterministic. At most `validation_seeds`. Absent at every
+    /// level, it is the harness default capped at `validation_seeds`,
+    /// so a bench lowering the one does not have to restate the other.
+    #[serde(default)]
+    pub determinism_check_seeds: Option<usize>,
 }
 
 fn default_passes() -> usize {
@@ -516,17 +529,68 @@ fn default_harness_runs() -> usize {
 fn default_cooldowns() -> Vec<u64> {
     vec![0, 100, 600]
 }
+fn default_validation_seeds() -> usize {
+    HarnessTuning::default().validation_seeds
+}
 
 impl Default for TimingSection {
     fn default() -> Self {
         TimingSection {
-            passes:        default_passes(),
-            runs_per_pass: default_runs(),
-            batch_size:    default_batch(),
-            harness_runs:  default_harness_runs(),
-            cooldowns_ms:  default_cooldowns(),
+            passes:                  default_passes(),
+            runs_per_pass:           default_runs(),
+            batch_size:              default_batch(),
+            harness_runs:            default_harness_runs(),
+            cooldowns_ms:            default_cooldowns(),
+            validation_seeds:        default_validation_seeds(),
+            determinism_check_seeds: None,
         }
     }
+}
+
+/// The seed counts a bench resolved to, refused where the validation
+/// pass would check nothing or would silently check fewer seeds for
+/// determinism than the bench asked for. An undeclared determinism
+/// count is the default capped at the validation count, which is a
+/// default adapting rather than a declared value being overridden.
+fn resolve_seeds(
+    bench_name: &str,
+    validation_seeds: usize,
+    determinism_check_seeds: Option<usize>,
+) -> Result<HarnessTuning, BenchError> {
+    let determinism_check_seeds = determinism_check_seeds.unwrap_or_else(|| {
+        HarnessTuning::default()
+            .determinism_check_seeds
+            .min(validation_seeds)
+    });
+    let refuse = |why: String| {
+        Err(BenchError::InvalidConfig {
+            reason: format!("bench `{bench_name}`: {why}"),
+        })
+    };
+    if validation_seeds == 0 {
+        return refuse(
+            "validation_seeds = 0 validates nothing; an arm that must not be run \
+             repeatedly lowers it to 1"
+                .to_string(),
+        );
+    }
+    if determinism_check_seeds == 0 {
+        return refuse(
+            "determinism_check_seeds = 0 never checks the arm is deterministic".to_string(),
+        );
+    }
+    if determinism_check_seeds > validation_seeds {
+        return refuse(format!(
+            "determinism_check_seeds = {determinism_check_seeds} exceeds validation_seeds = \
+             {validation_seeds}; only the validated seeds are rechecked, so the larger count \
+             would never be applied"
+        ));
+    }
+    Ok(HarnessTuning {
+        validation_seeds,
+        determinism_check_seeds,
+        ..HarnessTuning::default()
+    })
 }
 
 impl BenchManifest {
@@ -775,6 +839,13 @@ impl BenchManifest {
             .get(bench_name)
             .cloned()
             .unwrap_or_else(|| (bench_name.to_string(), bench_name.to_string()));
+        let tuning = resolve_seeds(
+            bench_name,
+            ov.and_then(|t| t.validation_seeds)
+                .unwrap_or(self.timing.validation_seeds),
+            ov.and_then(|t| t.determinism_check_seeds)
+                .or(self.timing.determinism_check_seeds),
+        )?;
         Ok(BenchConfig {
             bench_name: bench_name.to_string(),
             bench,
@@ -803,7 +874,7 @@ impl BenchManifest {
             threaded: section.threaded,
             batch_k: 1,
             max_call_us: None,
-            tuning: HarnessTuning::default(),
+            tuning,
             normalise_baseline: nz_baseline,
             normalise_mode: nz_mode,
             normalise_floor: nz_floor,
@@ -929,9 +1000,9 @@ pub struct HarnessTuning {
 impl Default for HarnessTuning {
     fn default() -> Self {
         HarnessTuning {
-            validation_seeds:        100,
-            determinism_check_seeds: 10,
-            quality_seeds:           1000,
+            validation_seeds:        crate::validation::DEFAULT_VALIDATION_SEEDS,
+            determinism_check_seeds: crate::validation::DEFAULT_DETERMINISM_CHECK_SEEDS,
+            quality_seeds:           crate::quality::DEFAULT_QUALITY_SEEDS,
             bootstrap_iterations:    10_000,
         }
     }
@@ -1121,6 +1192,110 @@ mod tests {
         assert_eq!(c.runs_per_pass, 7, "override wins");
         assert_eq!(c.harness_runs, 1, "override wins");
         assert_eq!(c.passes, 3, "global fills the gap");
+    }
+
+    fn seeds(global: &str, per_bench: &str) -> Result<HarnessTuning, BenchError> {
+        let text = format!(
+            "[bench.b]\ntitle = \"B\"\nworkload = \"default\"\nvariants = [\"a\"]\n\
+             sizes = [64]\n\n[bench.b.timing]\n{per_bench}\n\n[timing]\n{global}\n"
+        );
+        manifest(&text)
+            .for_size("b", 0, Path::new("/root"))
+            .map(|c| c.tuning)
+    }
+
+    #[test]
+    fn undeclared_seed_counts_are_the_harness_defaults() {
+        let t = seeds("", "").unwrap();
+        let d = HarnessTuning::default();
+        assert_eq!(t.validation_seeds, d.validation_seeds);
+        assert_eq!(t.determinism_check_seeds, d.determinism_check_seeds);
+        assert_eq!(t.quality_seeds, d.quality_seeds);
+        assert_eq!(t.bootstrap_iterations, d.bootstrap_iterations);
+        assert_eq!((t.validation_seeds, t.determinism_check_seeds), (100, 10));
+    }
+
+    #[test]
+    fn global_seed_counts_reach_the_tuning() {
+        let t = seeds("validation_seeds = 7\ndeterminism_check_seeds = 3", "").unwrap();
+        assert_eq!((t.validation_seeds, t.determinism_check_seeds), (7, 3));
+    }
+
+    #[test]
+    fn a_per_bench_seed_count_wins_and_the_other_falls_through() {
+        let t = seeds(
+            "validation_seeds = 40\ndeterminism_check_seeds = 4",
+            "validation_seeds = 5",
+        )
+        .unwrap();
+        assert_eq!(t.validation_seeds, 5, "the bench's own count wins");
+        assert_eq!(t.determinism_check_seeds, 4, "undeclared: the global's");
+        let t = seeds("validation_seeds = 40", "determinism_check_seeds = 2").unwrap();
+        assert_eq!((t.validation_seeds, t.determinism_check_seeds), (40, 2));
+    }
+
+    #[test]
+    fn one_seed_each_is_the_floor_and_is_accepted() {
+        let t = seeds("", "validation_seeds = 1\ndeterminism_check_seeds = 1").unwrap();
+        assert_eq!((t.validation_seeds, t.determinism_check_seeds), (1, 1));
+    }
+
+    #[test]
+    fn zero_validation_seeds_is_refused() {
+        for (global, per_bench) in [("validation_seeds = 0", ""), ("", "validation_seeds = 0")] {
+            let err = seeds(global, per_bench).unwrap_err().to_string();
+            assert!(err.contains("validation_seeds = 0"), "{err}");
+            assert!(err.contains("bench `b`"), "{err}");
+        }
+    }
+
+    #[test]
+    fn zero_determinism_check_seeds_is_refused() {
+        for (global, per_bench) in
+            [("determinism_check_seeds = 0", ""), ("", "determinism_check_seeds = 0")]
+        {
+            let err = seeds(global, per_bench).unwrap_err().to_string();
+            assert!(err.contains("determinism_check_seeds = 0"), "{err}");
+            assert!(err.contains("bench `b`"), "{err}");
+        }
+    }
+
+    #[test]
+    fn more_determinism_seeds_than_validation_seeds_is_refused() {
+        // The validation pass rechecks a prefix of its own seeds, so a larger
+        // determinism count would be clamped without a word.
+        let err = seeds("", "validation_seeds = 3\ndeterminism_check_seeds = 4")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("exceeds validation_seeds = 3"), "{err}");
+        // The refusal reads the resolved pair, not either level alone: a
+        // global determinism count over a bench lowering validation below it
+        // is the same contradiction.
+        let err = seeds("determinism_check_seeds = 8", "validation_seeds = 5")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("determinism_check_seeds = 8 exceeds"), "{err}");
+        // Equal is not more.
+        assert!(seeds("", "validation_seeds = 4\ndeterminism_check_seeds = 4").is_ok());
+    }
+
+    #[test]
+    fn an_undeclared_determinism_count_is_capped_at_the_validation_count() {
+        let t = seeds("", "validation_seeds = 1").unwrap();
+        assert_eq!((t.validation_seeds, t.determinism_check_seeds), (1, 1));
+        let t = seeds("validation_seeds = 5", "").unwrap();
+        assert_eq!((t.validation_seeds, t.determinism_check_seeds), (5, 5));
+        // Above the default the default stands rather than growing with it.
+        let t = seeds("", "validation_seeds = 30").unwrap();
+        assert_eq!((t.validation_seeds, t.determinism_check_seeds), (30, 10));
+    }
+
+    #[test]
+    fn a_misspelled_seed_key_is_refused_rather_than_ignored() {
+        let text = "[bench.b]\ntitle = \"B\"\nworkload = \"default\"\nvariants = [\"a\"]\n\
+                    sizes = [64]\n\n[bench.b.timing]\nvalidation_seed = 1\n";
+        assert!(toml::from_str::<BenchManifest>(text).is_err());
+        assert!(toml::from_str::<BenchManifest>("[timing]\nquality_seeds = 1\n").is_err());
     }
 
     #[test]
