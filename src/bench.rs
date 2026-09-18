@@ -28,6 +28,7 @@ use mockspace_bench_harness::config::BuildSection;
 use mockspace_bench_harness::tree as bench_tree;
 
 use crate::bench_gen;
+use crate::bench_rev;
 use crate::config::Config;
 
 /// Splits one subcommand's argv into positional names and flags to
@@ -1058,25 +1059,32 @@ fn run_generated(
     };
     let dep = bench_gen::mockspace_dep(&plan.manifest);
     let profile = profile_args_for(plan.manifest.build.as_ref());
+    // Which benches the filter selects; a request may name a sweep
+    // (`bench/sweep`), which builds its bench's arms.
+    let wanted = bench_rev::wanted(names);
+    // One commit of the framework for every crate the run links, taken from
+    // the locks of the arms it builds. `bench_rev` says why.
+    let arm_locks = bench_rev::arm_locks(&plan.arms, wanted.as_deref());
+    let pins = bench_gen::driver_gen_dir(&cfg.mock_dir).join(".pack-pins");
+    let run_rev =
+        match bench_rev::run_rev(&arm_locks, &dep, &pins, &crate::pack_pin::ls_remote_head) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            },
+        };
+    let align = |dir: &Path| -> Result<(), String> {
+        match &run_rev {
+            Some(rev) => bench_rev::align(dir, rev, &bench_rev::cargo_update),
+            None => Ok(()),
+        }
+    };
 
     if !report_only {
-        // Which benches the filter selects; a request may name a
-        // sweep (`bench/sweep`), which builds its bench's arms.
-        let wanted: Option<Vec<String>> = if names.is_empty() {
-            None
-        } else {
-            Some(
-                names
-                    .iter()
-                    .map(|n| n.split('/').next().unwrap_or(n).to_string())
-                    .collect(),
-            )
-        };
         for arm in &plan.arms {
-            if let Some(w) = &wanted {
-                if !w.contains(&arm.bench) {
-                    continue;
-                }
+            if !bench_rev::selects(wanted.as_deref(), arm) {
+                continue;
             }
             let target = bench_dir.join(bench_tree::arm_target_dir(&arm.bench, &arm.arm));
             let what = format!("arm {}/arms/{}", arm.bench, arm.arm);
@@ -1101,6 +1109,10 @@ fn run_generated(
                 }
                 gen_dir.join("Cargo.toml")
             };
+            if let Err(e) = align(manifest_path.parent().unwrap_or(&arm.dir)) {
+                eprintln!("error: {what}: {e}");
+                return ExitCode::FAILURE;
+            }
             eprintln!("  building {what}...");
             if let Err(e) = cargo_build_at(&manifest_path, &what, &profile, Some(&target)) {
                 eprintln!("error: {e}");
@@ -1161,6 +1173,10 @@ fn run_generated(
         .and_then(|_| bench_gen::write_if_changed(&gen_dir.join("src").join("main.rs"), &main_rs))
     {
         eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = align(&gen_dir) {
+        eprintln!("error: generated bench driver: {e}");
         return ExitCode::FAILURE;
     }
     eprintln!("  building generated bench driver...");

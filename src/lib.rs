@@ -21,6 +21,7 @@ pub mod autofix;
 pub mod bench;
 pub mod bench_docs;
 pub mod bench_gen;
+mod bench_rev;
 pub mod bootstrap;
 pub mod build_dir;
 pub mod config;

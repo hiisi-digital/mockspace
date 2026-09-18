@@ -140,7 +140,8 @@ pub(crate) fn write_cdylib_crate(
     // hold it at whatever the tip was on the first build. `pack_pin` says why.
     let pins = gen_dir.join(".pack-pins");
     for (name, spec) in packs {
-        let spec = crate::pack_pin::spec_for_cargo(name, spec, &pins, resolve);
+        let said = format!("lint pack `{name}`");
+        let spec = crate::pack_pin::spec_for_cargo(&said, spec, &pins, resolve);
         manifest.push_str(&format!("{name} = {spec}\n"));
     }
     // Tool crates are path dependencies, discovered by directory rather than
