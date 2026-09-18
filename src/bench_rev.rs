@@ -17,8 +17,8 @@
 //!
 //! The run is settled on one commit and every generated lockfile is moved to
 //! it. Which commit is the consumer's to say, through the lockfiles it commits
-//! beside its arms; arms that disagree are refused, since a run cannot link
-//! both. Where no arm holds a lock, the branch's tip is taken, through the
+//! beside its arms, and only the arms the run builds have a say; two of those
+//! that disagree are refused, since a run cannot link both. Where no arm holds a lock, the branch's tip is taken, through the
 //! same resolution the lint packs use. The manifests keep the branch as
 //! written, so a support crate declaring the same branch resolves out of the
 //! same source rather than out of a second one that only differs in spelling.
@@ -26,6 +26,8 @@
 use std::path::Path;
 use std::process::Command;
 use std::time::SystemTime;
+
+use mockspace_bench_harness::tree::ArmSource;
 
 use crate::pack_pin::{self, Pinned};
 
@@ -50,6 +52,37 @@ pub(crate) fn locked_rev(lock: &str) -> Option<String> {
 /// The commit the lockfile beside `manifest_dir` holds, if it holds one.
 pub(crate) fn locked_rev_at(manifest_dir: &Path) -> Option<String> {
     locked_rev(&std::fs::read_to_string(manifest_dir.join("Cargo.lock")).ok()?)
+}
+
+/// The benches a run's names select, or `None` for every bench. A name may be
+/// a sweep, `bench/sweep`, which selects its bench.
+pub(crate) fn wanted(names: &[&str]) -> Option<Vec<String>> {
+    (!names.is_empty()).then(|| {
+        names
+            .iter()
+            .map(|n| n.split('/').next().unwrap_or(n).to_string())
+            .collect()
+    })
+}
+
+/// Whether a run selecting `wanted` builds `arm`.
+pub(crate) fn selects(wanted: Option<&[String]>, arm: &ArmSource) -> bool {
+    wanted.is_none_or(|w| w.contains(&arm.bench))
+}
+
+/// The locks a run settles on: those of the arms it builds and no others.
+///
+/// A bench the run does not select has no say in which commit it links, so a
+/// consumer whose benches were measured at different commits can still run
+/// any one of them, and only a run over two that disagree is refused.
+pub(crate) fn arm_locks(
+    arms: &[ArmSource],
+    wanted: Option<&[String]>,
+) -> Vec<(String, Option<String>)> {
+    arms.iter()
+        .filter(|a| a.has_manifest && selects(wanted, a))
+        .map(|a| (format!("{}/{}", a.bench, a.arm), locked_rev_at(&a.dir)))
+        .collect()
 }
 
 /// The commit a run is built at, or `None` where there is nothing to align:

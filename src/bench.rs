@@ -1059,14 +1059,12 @@ fn run_generated(
     };
     let dep = bench_gen::mockspace_dep(&plan.manifest);
     let profile = profile_args_for(plan.manifest.build.as_ref());
+    // Which benches the filter selects; a request may name a sweep
+    // (`bench/sweep`), which builds its bench's arms.
+    let wanted = bench_rev::wanted(names);
     // One commit of the framework for every crate the run links, taken from
-    // the arms' own locks. `bench_rev` says why.
-    let arm_locks: Vec<(String, Option<String>)> = plan
-        .arms
-        .iter()
-        .filter(|a| a.has_manifest)
-        .map(|a| (format!("{}/{}", a.bench, a.arm), bench_rev::locked_rev_at(&a.dir)))
-        .collect();
+    // the locks of the arms it builds. `bench_rev` says why.
+    let arm_locks = bench_rev::arm_locks(&plan.arms, wanted.as_deref());
     let pins = bench_gen::driver_gen_dir(&cfg.mock_dir).join(".pack-pins");
     let run_rev =
         match bench_rev::run_rev(&arm_locks, &dep, &pins, &crate::pack_pin::ls_remote_head) {
@@ -1084,23 +1082,9 @@ fn run_generated(
     };
 
     if !report_only {
-        // Which benches the filter selects; a request may name a
-        // sweep (`bench/sweep`), which builds its bench's arms.
-        let wanted: Option<Vec<String>> = if names.is_empty() {
-            None
-        } else {
-            Some(
-                names
-                    .iter()
-                    .map(|n| n.split('/').next().unwrap_or(n).to_string())
-                    .collect(),
-            )
-        };
         for arm in &plan.arms {
-            if let Some(w) = &wanted {
-                if !w.contains(&arm.bench) {
-                    continue;
-                }
+            if !bench_rev::selects(wanted.as_deref(), arm) {
+                continue;
             }
             let target = bench_dir.join(bench_tree::arm_target_dir(&arm.bench, &arm.arm));
             let what = format!("arm {}/arms/{}", arm.bench, arm.arm);

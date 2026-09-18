@@ -73,6 +73,59 @@ fn arms_locked_at_two_commits_are_refused_naming_each() {
     assert!(!err.contains("h/z"), "an arm with no lock took no side: {err}");
 }
 
+/// Arms on disk, each with a lock at the commit given, or with no manifest of
+/// its own where the commit is `None`.
+fn on_disk(root: &Path, arms: &[(&str, &str, Option<&str>)]) -> Vec<ArmSource> {
+    arms.iter()
+        .map(|(bench, arm, rev)| {
+            let dir = root.join(bench).join("arms").join(arm);
+            std::fs::create_dir_all(&dir).unwrap();
+            if let Some(rev) = rev {
+                let source = format!("git+https://github.com/hiisi-digital/mockspace?branch=dev#{rev}");
+                std::fs::write(dir.join("Cargo.lock"), lock_with(&source)).unwrap();
+            }
+            ArmSource {
+                bench:        (*bench).into(),
+                arm:          (*arm).into(),
+                dir,
+                has_manifest: rev.is_some(),
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_run_settles_on_the_locks_of_the_benches_it_selects_and_no_others() {
+    // Two benches measured at two commits, which is how a consumer's tree
+    // stands whenever one bench is newer than another. Running either alone
+    // settles on its own commit; only a run over both is refused.
+    let root = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let all = on_disk(root.path(), &[
+        ("old", "a", Some(A)),
+        ("old", "b", Some(A)),
+        ("new", "a", Some(B)),
+        ("new", "generated", None),
+    ]);
+    let settle = |names: &[&str]| {
+        let wanted = wanted(names);
+        run_rev(&arm_locks(&all, wanted.as_deref()), DEV, cache.path(), &never)
+    };
+    assert_eq!(settle(&["old"]), Ok(Some(A.into())));
+    assert_eq!(settle(&["new"]), Ok(Some(B.into())));
+    assert_eq!(settle(&["new/sweep"]), Ok(Some(B.into())), "a sweep selects its bench");
+    for names in [&[][..], &["old", "new"][..]] {
+        let err = settle(names).unwrap_err();
+        assert!(err.contains("old/a at") && err.contains("new/a at"), "{names:?}: {err}");
+    }
+    // An arm with no manifest of its own has no lock to give, and a name no
+    // bench answers to selects nothing.
+    let locked: Vec<String> =
+        arm_locks(&all, wanted(&["new"]).as_deref()).into_iter().map(|(a, _)| a).collect();
+    assert_eq!(locked, ["new/a"]);
+    assert!(arm_locks(&all, wanted(&["none"]).as_deref()).is_empty());
+}
+
 #[test]
 fn with_no_arm_locked_the_tip_is_taken_and_kept() {
     let cache = tempfile::tempdir().unwrap();
