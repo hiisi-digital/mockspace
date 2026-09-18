@@ -416,6 +416,41 @@ else
 fi
 DIRTY_DOCS=$(git -C "$REPO_ROOT" diff --name-only 2>/dev/null \
     | grep -E "^${{MOCK_ROOT}}/crates/.*\.(md\.tmpl|md)$" | head -1) || true
+# Whether this edit to a committed file only adds to it. A Write has to begin
+# with the whole committed text; an Edit, and every edit of a MultiEdit, has to
+# keep its old string at the start of its new one, which inserts after it and
+# removes nothing. Anything else, a command included, is a rewrite.
+topic_edit_only_adds() {{
+    local held
+    held=$(git -C "$REPO_ROOT" show "HEAD:$1" 2>/dev/null; printf x)
+    held=${{held%x}}
+    case "$(printf '%s' "$__INPUT" | jq -r '.tool_name // ""' 2>/dev/null)" in
+        Write)
+            printf '%s' "$__INPUT" | jq -e --arg held "$held" \
+                '.tool_input.content // "" | startswith($held)' >/dev/null 2>&1 ;;
+        Edit|MultiEdit)
+            # The edits are played over the file as it stands, the way the
+            # tool plays them, and what comes out has to start with what the
+            # commit holds. An anchor the tool would refuse as ambiguous is
+            # refused here too, so the two cannot disagree about where it lands.
+            [[ -f "$REPO_ROOT/$1" ]] || return 1
+            printf '%s' "$__INPUT" | jq -e --arg held "$held" --rawfile cur "$REPO_ROOT/$1" '
+                (if .tool_name == "Edit" then [.tool_input] else (.tool_input.edits // []) end) as $e
+                | if ($e | length) == 0 then false else
+                    (reduce $e[] as $x ({{s: $cur, ok: true}};
+                        ($x.old_string // "") as $o
+                        | ($x.new_string // "") as $n
+                        | if $o == "" then .ok = false else
+                            ((.s | split($o) | length) - 1) as $k
+                            | if $k == 1 or ($k > 0 and ($x.replace_all // false))
+                              then .s = (.s | split($o) | join($n))
+                              else .ok = false end
+                          end))
+                    | .ok and (.s | startswith($held))
+                  end' >/dev/null 2>&1 ;;
+        *) return 1 ;;
+    esac
+}}
 # --- Design round files ---
 if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
     FULL_GIT_PATH="${{MOCK_ROOT}}/${{REL_PATH}}"
@@ -459,8 +494,16 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
             if [[ "$PHASE" == "IMPL" ]]; then allow; fi
             deny "BLOCKED: cannot edit source changelist '${{BASENAME}}' -- not in IMPL phase.\\n\\nPhase: ${{PHASE}}.\\nLint: changelist-immutability (HARD_ERROR)"
         fi
-        if ! $IS_CHANGELIST; then
-            deny "BLOCKED: topic '${{BASENAME}}' is committed and FROZEN.\\n\\nCurrent phase: ${{PHASE}}"
+        # Committed means in HEAD, not in the index: a topic is staged the
+        # moment it is written so phase detection sees it, and freezing it
+        # there refuses the first real edit to a file that holds one heading.
+        # And frozen against rewriting, not against accretion: a topic grows by
+        # sections appended as the discussion comes back to it, so an edit that
+        # keeps every committed byte where it was goes on to the phase check.
+        if ! $IS_CHANGELIST && [[ -n "$(git -C "$REPO_ROOT" ls-tree --name-only HEAD -- "$FULL_GIT_PATH" 2>/dev/null)" ]]; then
+            if ! topic_edit_only_adds "$FULL_GIT_PATH"; then
+                deny "BLOCKED: topic '${{BASENAME}}' is committed and FROZEN.\\n\\nWhat a commit holds is not rewritten; append below it instead.\\n\\nCurrent phase: ${{PHASE}}"
+            fi
         fi
     fi
     if ! $IS_CHANGELIST; then
