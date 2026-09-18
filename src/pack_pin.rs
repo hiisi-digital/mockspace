@@ -46,6 +46,10 @@
 //! renki resolves the launcher's own branch pins the same way, with the same
 //! hour and the same cache file shape. The engine does not depend on renki,
 //! so it carries its own.
+//!
+//! A bench run asks [`pin`] too, for the framework's tip where none of its
+//! arms has locked one, and moves lockfiles to the answer rather than
+//! rewriting a spec; `crate::bench_rev` says why a spec is the wrong place.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};

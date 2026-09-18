@@ -28,6 +28,7 @@ use mockspace_bench_harness::config::BuildSection;
 use mockspace_bench_harness::tree as bench_tree;
 
 use crate::bench_gen;
+use crate::bench_rev;
 use crate::config::Config;
 
 /// Splits one subcommand's argv into positional names and flags to
@@ -358,11 +359,7 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     // everything real in it.
     if !bench_dir.join("Cargo.toml").is_file() {
         if let Ok(plan) = bench_gen::plan(&bench_dir) {
-            let dep = bench_gen::pinned_dep(
-                &bench_gen::mockspace_dep(&plan.manifest),
-                &cfg.mock_dir,
-                &crate::pack_pin::ls_remote_head,
-            );
+            let dep = bench_gen::mockspace_dep(&plan.manifest);
             for arm in &plan.arms {
                 if arm.has_manifest {
                     continue; // already on disk; the walk above found it
@@ -1060,12 +1057,31 @@ fn run_generated(
             return ExitCode::FAILURE;
         },
     };
-    let dep = bench_gen::pinned_dep(
-        &bench_gen::mockspace_dep(&plan.manifest),
-        &cfg.mock_dir,
-        &crate::pack_pin::ls_remote_head,
-    );
+    let dep = bench_gen::mockspace_dep(&plan.manifest);
     let profile = profile_args_for(plan.manifest.build.as_ref());
+    // One commit of the framework for every crate the run links, taken from
+    // the arms' own locks. `bench_rev` says why.
+    let arm_locks: Vec<(String, Option<String>)> = plan
+        .arms
+        .iter()
+        .filter(|a| a.has_manifest)
+        .map(|a| (format!("{}/{}", a.bench, a.arm), bench_rev::locked_rev_at(&a.dir)))
+        .collect();
+    let pins = bench_gen::driver_gen_dir(&cfg.mock_dir).join(".pack-pins");
+    let run_rev =
+        match bench_rev::run_rev(&arm_locks, &dep, &pins, &crate::pack_pin::ls_remote_head) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            },
+        };
+    let align = |dir: &Path| -> Result<(), String> {
+        match &run_rev {
+            Some(rev) => bench_rev::align(dir, rev, &bench_rev::cargo_update),
+            None => Ok(()),
+        }
+    };
 
     if !report_only {
         // Which benches the filter selects; a request may name a
@@ -1109,6 +1125,10 @@ fn run_generated(
                 }
                 gen_dir.join("Cargo.toml")
             };
+            if let Err(e) = align(manifest_path.parent().unwrap_or(&arm.dir)) {
+                eprintln!("error: {what}: {e}");
+                return ExitCode::FAILURE;
+            }
             eprintln!("  building {what}...");
             if let Err(e) = cargo_build_at(&manifest_path, &what, &profile, Some(&target)) {
                 eprintln!("error: {e}");
@@ -1169,6 +1189,10 @@ fn run_generated(
         .and_then(|_| bench_gen::write_if_changed(&gen_dir.join("src").join("main.rs"), &main_rs))
     {
         eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = align(&gen_dir) {
+        eprintln!("error: generated bench driver: {e}");
         return ExitCode::FAILURE;
     }
     eprintln!("  building generated bench driver...");
