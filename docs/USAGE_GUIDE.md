@@ -245,8 +245,15 @@ It gates advisories (RustSec), license compatibility across the whole transitive
 dependency graph, dependency bans, and source registries, and blocks the push on a
 violation.
 
-It is skipped (never blocking) when there is no `deny.toml` or cargo-deny is not
-installed (`cargo install cargo-deny`). Set `deny_check = false` to opt out.
+It is skipped (never blocking) in four cases: there is no `deny.toml`; cargo-deny is
+not installed (`cargo install cargo-deny`); a workspace root's path carries a whole
+`research` path component, since that is a spike tree such as a panel's probe or a
+feasibility sketch, and nothing it depends on reaches a consumer; or a workspace
+root's `cargo metadata` resolves to no packages at all, the shape a repository has
+when every crate carries its own `[workspace]`. A non-spike root whose package graph
+cannot be read at all is the one case that still blocks rather than skips, since a
+broken manifest says nothing about whether it is clean. Set `deny_check = false` to
+opt out.
 
 ### Lints
 
