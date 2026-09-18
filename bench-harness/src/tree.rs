@@ -1320,6 +1320,29 @@ mod invariants {
     }
 
     #[test]
+    fn a_sweep_seed_count_wins_over_the_members_for_the_same_key() {
+        // merge_timing's argument order, for the two seed keys: the member and
+        // the sweep both declare each, so swapping the order moves both reads.
+        let t = Tree::new("seed-counts-same-key");
+        t.write("bench.toml", "[timing]\nvalidation_seeds = 90\n");
+        t.write(
+            "m/bench.toml",
+            "title = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
+             \n[timing]\nvalidation_seeds = 20\ndeterminism_check_seeds = 5\n\n\
+             [sweep.s]\npoints = [1]\n\n\
+             [sweep.s.timing]\nvalidation_seeds = 3\ndeterminism_check_seeds = 2\n",
+        );
+        t.mkdir("m/arms/fnv/src");
+        let tree = load(&t.root).unwrap();
+        let s = tree.manifest.for_size("m/s", 0, &t.root).unwrap().tuning;
+        assert_eq!(s.validation_seeds, 3, "the sweep's, over the member's 20");
+        assert_eq!(
+            s.determinism_check_seeds, 2,
+            "the sweep's, over the member's 5"
+        );
+    }
+
+    #[test]
     fn exclude_applies_to_a_literal_member_by_refusing_the_contradiction() {
         let t = Tree::new("exclude-literal");
         t.write(

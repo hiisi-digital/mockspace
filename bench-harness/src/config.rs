@@ -1000,9 +1000,9 @@ pub struct HarnessTuning {
 impl Default for HarnessTuning {
     fn default() -> Self {
         HarnessTuning {
-            validation_seeds:        100,
-            determinism_check_seeds: 10,
-            quality_seeds:           1000,
+            validation_seeds:        crate::validation::DEFAULT_VALIDATION_SEEDS,
+            determinism_check_seeds: crate::validation::DEFAULT_DETERMINISM_CHECK_SEEDS,
+            quality_seeds:           crate::quality::DEFAULT_QUALITY_SEEDS,
             bootstrap_iterations:    10_000,
         }
     }
@@ -1251,10 +1251,13 @@ mod tests {
 
     #[test]
     fn zero_determinism_check_seeds_is_refused() {
-        let err = seeds("", "determinism_check_seeds = 0")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("determinism_check_seeds = 0"), "{err}");
+        for (global, per_bench) in
+            [("determinism_check_seeds = 0", ""), ("", "determinism_check_seeds = 0")]
+        {
+            let err = seeds(global, per_bench).unwrap_err().to_string();
+            assert!(err.contains("determinism_check_seeds = 0"), "{err}");
+            assert!(err.contains("bench `b`"), "{err}");
+        }
     }
 
     #[test]
