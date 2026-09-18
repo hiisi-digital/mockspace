@@ -76,6 +76,23 @@ tag instead. `mockspace_branch = "dev"` follows development and moves under you
 by design, and `mockspace_rev` holds an exact commit, which is what you want if
 you would rather nothing moved at all.
 
+A lint pack in `[lint-crates]` pinned by `branch` follows that branch the same
+way, resolved against the remote once an hour while the remote answers, and
+built at the last tip it saw when the remote cannot be reached, with a warning
+saying how old that tip is. The remote gets five seconds to answer, reading how
+ssh is configured included, since this runs inside the commit hook. A remote
+that stays out of reach is asked again on every run once the hour is up, so
+each branch-pinned pack can cost those five seconds, one after another. git
+does not prompt on the terminal, a credential helper is told not to open a
+window, which Git Credential Manager honours and a helper that ignores it does
+not, and ssh runs in batch mode, unless the clone or the environment already
+says how ssh runs, in which case that is left alone. Then ssh may ask for a
+passphrase, and the run gives up on the answer after the five seconds while the
+prompt, or a helper's window, can stay up. A pack pinned by `git` alone,
+with no `branch`, follows the remote's default branch through cargo and stays
+at what the lockfile holds. Pin it by `rev` or `tag` if it should stay where it
+is.
+
 The launcher builds the pinned engine once into a shared per-version cache and
 execs it, so every repo on the same pin shares one build and the working
 directory never matters.
