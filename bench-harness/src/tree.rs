@@ -617,11 +617,13 @@ fn merge_timing(
         (Some(t), None) | (None, Some(t)) => Some(t.clone()),
         (Some(a), Some(b)) => {
             Some(TimingOverride {
-                passes:        a.passes.or(b.passes),
-                runs_per_pass: a.runs_per_pass.or(b.runs_per_pass),
-                batch_size:    a.batch_size.or(b.batch_size),
-                harness_runs:  a.harness_runs.or(b.harness_runs),
-                cooldowns_ms:  a.cooldowns_ms.clone().or_else(|| b.cooldowns_ms.clone()),
+                passes:                  a.passes.or(b.passes),
+                runs_per_pass:           a.runs_per_pass.or(b.runs_per_pass),
+                batch_size:              a.batch_size.or(b.batch_size),
+                harness_runs:            a.harness_runs.or(b.harness_runs),
+                cooldowns_ms:            a.cooldowns_ms.clone().or_else(|| b.cooldowns_ms.clone()),
+                validation_seeds:        a.validation_seeds.or(b.validation_seeds),
+                determinism_check_seeds: a.determinism_check_seeds.or(b.determinism_check_seeds),
             })
         },
     }
@@ -1289,6 +1291,32 @@ mod invariants {
         let tree = load(&t.root).unwrap();
         let cell = tree.manifest.for_size("m/s", 0, &t.root).unwrap();
         assert_eq!(cell.passes, 2, "the sweep's override outranks the member's");
+    }
+
+    #[test]
+    fn seed_counts_compose_root_member_and_sweep_knob_by_knob() {
+        let t = Tree::new("seed-counts");
+        t.write(
+            "bench.toml",
+            "[timing]\nvalidation_seeds = 50\ndeterminism_check_seeds = 6\n",
+        );
+        t.write(
+            "m/bench.toml",
+            "title = \"M\"\nworkload = \"realistic\"\narms = [\"fnv\"]\n\
+             \n[timing]\nvalidation_seeds = 20\n\n[sweep.s]\npoints = [1]\n\n\
+             [sweep.s.timing]\ndeterminism_check_seeds = 2\n\n[sweep.u]\npoints = [1]\n",
+        );
+        t.mkdir("m/arms/fnv/src");
+        let tree = load(&t.root).unwrap();
+        let s = tree.manifest.for_size("m/s", 0, &t.root).unwrap().tuning;
+        assert_eq!(
+            s.validation_seeds, 20,
+            "the member's, under a sweep that is silent on it"
+        );
+        assert_eq!(s.determinism_check_seeds, 2, "the sweep's own");
+        let u = tree.manifest.for_size("m/u", 0, &t.root).unwrap().tuning;
+        assert_eq!(u.validation_seeds, 20, "the member's");
+        assert_eq!(u.determinism_check_seeds, 6, "undeclared below: the root's");
     }
 
     #[test]

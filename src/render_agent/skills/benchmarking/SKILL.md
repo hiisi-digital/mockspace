@@ -188,8 +188,14 @@ fall through to the root. A `[sweep.*]` override outranks both.
 
 `bench.toml` per bench: `title`, `workload`, `arms`, `points`, `master_seed`, `may_differ`,
 `required`, `threaded`, declared roles (`baseline`, `floor`, `delta`), and a per-bench `timing`
-override of `passes`, `runs_per_pass`, `batch_size`, `harness_runs` and `cooldowns_ms`. Points may
-carry their own arm subset. The legacy spellings (`variants`, `sizes`, a `normalise` table) stay
+override of `passes`, `runs_per_pass`, `batch_size`, `harness_runs`, `cooldowns_ms`,
+`validation_seeds` and `determinism_check_seeds`. Points may carry their own arm subset.
+
+The two seed counts govern validation, which runs every arm over `validation_seeds` seeds (100)
+before anything is timed and reruns the first `determinism_check_seeds` of them (10) to check the
+arm answers the same twice. An arm whose one call is expensive, a training run or a model load,
+lowers them rather than skipping validation. Zero is refused, as is a determinism count above the
+validation count; an undeclared determinism count follows a lowered validation count down. The legacy spellings (`variants`, `sizes`, a `normalise` table) stay
 accepted; the canonical ones are these.
 
 Set `may_differ = false` and `required = true` unless there is a stated reason otherwise: identical
