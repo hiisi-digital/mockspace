@@ -214,6 +214,21 @@ The fixers are scoped to the packages a commit actually touches (each staged fil
 nearest `Cargo.toml`), not the whole workspace, so the cost stays proportional to the
 change: `cargo clippy --fix` only compiles the changed packages.
 
+Both keys are the project's and every clone reads them. A single clone can turn
+either fixer off for itself, on a machine that should not compile the project at
+commit time, and that setting stays in the clone's own git config rather than in
+the repository:
+
+```bash
+git config mockspace.autoClippyFix false
+git config mockspace.autoFmt false
+```
+
+Where the clone and `mockspace.toml` both say something, the clone wins. Only the
+clone's own config is read, so the same key in `~/.gitconfig` or the system file
+does nothing, and a worktree reads the clone it hangs off. A value git cannot read
+as a boolean is refused at load rather than ignored.
+
 Both are best-effort: a fixer that fails (unparseable source, code that does not yet
 compile) is skipped and never blocks the commit. Files staged partially (`git add -p`)
 are left untouched so a re-stage never sweeps in withheld edits. A fixer may still
