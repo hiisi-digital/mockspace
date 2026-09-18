@@ -224,8 +224,10 @@ git config mockspace.autoClippyFix false
 git config mockspace.autoFmt false
 ```
 
-Where the clone and `mockspace.toml` both say something, the clone wins. A value
-git cannot read as a boolean is refused at load rather than ignored.
+Where the clone and `mockspace.toml` both say something, the clone wins. Only the
+clone's own config is read, so the same key in `~/.gitconfig` or the system file
+does nothing, and a worktree reads the clone it hangs off. A value git cannot read
+as a boolean is refused at load rather than ignored.
 
 Both are best-effort: a fixer that fails (unparseable source, code that does not yet
 compile) is skipped and never blocks the commit. Files staged partially (`git add -p`)

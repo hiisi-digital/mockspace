@@ -33,8 +33,14 @@ fn clone(extra: &str) -> (tempfile::TempDir, PathBuf) {
     (tmp, root)
 }
 
+/// git with the machine's own config out of reach, so what these arms set is
+/// the only thing there is to read, and the identity a commit needs is given
+/// here rather than borrowed from whoever runs the suite.
 fn git(root: &Path, args: &[&str]) {
     let ok = Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["-c", "user.name=probe", "-c", "user.email=probe@invalid"])
         .args(args)
         .current_dir(root)
         .status()
@@ -116,6 +122,26 @@ fn a_value_that_is_not_a_boolean_is_refused() {
     let (_tmp, root) = clone("");
     git(&root, &["config", "mockspace.autoClippyFix", "maybe"]);
     let _ = load(&root);
+}
+
+/// A worktree's `.git` is a file naming its clone, and the worktree reads the
+/// clone's config, so a clone that turned clippy off has it off in every
+/// worktree hanging off it.
+#[test]
+fn a_worktree_takes_its_clones_answer() {
+    let (_tmp, root) = clone("");
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "chore: plant"]);
+    git(&root, &["config", "mockspace.autoClippyFix", "false"]);
+    let wt = root.join("wt");
+    git(&root, &["worktree", "add", "-q", "wt"]);
+    assert!(
+        wt.join(".git").is_file(),
+        "the worktree's `.git` is a directory, so this is not the worktree case"
+    );
+    let cfg = load(&wt);
+    assert!(!cfg.auto_clippy_fix, "the clone said false");
+    assert!(cfg.auto_fmt, "nothing was said about fmt");
 }
 
 /// A tree found by its `mockspace.toml` rather than by `.git` has no clone to

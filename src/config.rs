@@ -1318,13 +1318,19 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 /// repository happens to sit around it. A value git cannot read as a boolean
 /// is refused rather than passed over, since a switch that silently does
 /// nothing is the thing a person set it to prevent.
+///
+/// `--local`, so the global and system files are not read. A setting in
+/// `~/.gitconfig` would reach every clone on the machine, which is the
+/// project-wide answer this switch exists to not be. A worktree has a `.git`
+/// file rather than a directory and reads its clone's config, so it gets the
+/// clone's answer.
 fn clone_says(repo_root: &Path, key: &str) -> Option<bool> {
     if !repo_root.join(".git").exists() {
         return None;
     }
     let name = format!("mockspace.{key}");
     let out = std::process::Command::new("git")
-        .args(["config", "--type=bool", "--get", &name])
+        .args(["config", "--local", "--type=bool", "--get", &name])
         .current_dir(repo_root)
         .output()
         .ok()?;
