@@ -27,9 +27,19 @@
 //! [`ASK_DEADLINE`], over reading how ssh is configured, the answer and the
 //! output all together, and git never prompts. Nor does ssh, unless the clone
 //! or the environment has said how ssh is run, in which case that is left
-//! alone: it may ask on the terminal, and the deadline still holds over it. A
-//! network dropping packets or a key wanting its passphrase is a remote that
-//! did not answer, and the fallbacks above take it from there.
+//! alone: it may ask on the terminal. The deadline holds over git and not over
+//! the ssh it started, so the answer is given up on in time while a prompt can
+//! still be on the terminal after the run has moved on. A network dropping
+//! packets or a key wanting its passphrase is a remote that did not answer,
+//! and the fallbacks above take it from there.
+//!
+//! A failed ask is not kept. Once the hour is up and the remote stays out of
+//! reach, every run asks again and waits out the deadline once per pack,
+//! one pack after another.
+//!
+//! A spec naming a repository and no `branch`, `rev` or `tag` follows the
+//! remote's default branch, and this does not resolve it: it goes to cargo
+//! unchanged and stays at whatever the lockfile holds.
 //!
 //! renki resolves the launcher's own branch pins the same way, with the same
 //! hour and the same cache file shape. The engine does not depend on renki,
@@ -290,7 +300,9 @@ fn is_object_name(rev: &str) -> bool {
 /// the child itself is gone, and waiting on that is waiting on nothing.
 ///
 /// Only the child is killed. What it started is left to finish on its own,
-/// because the standard library has no way to signal a process group.
+/// because the standard library has no way to signal a process group, and a
+/// drain still reading a pipe that is held open is left running too, ending
+/// when whatever holds the pipe lets go of it.
 pub(crate) fn run_within(mut cmd: Command, deadline: Duration, what: &str) -> Result<Output, String> {
     let started = Instant::now();
     let mut child = cmd

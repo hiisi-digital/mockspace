@@ -33,7 +33,6 @@ fn a_spec_fixed_by_rev_tag_version_or_path_is_not_a_branch_pin() {
         r#"{ git = "u", tag = "v1" }"#,
         r#"{ git = "u", branch = "dev", rev = "abc" }"#,
         r#"{ git = "u", branch = "dev", tag = "v1" }"#,
-        r#"{ git = "u" }"#,
         r#"{ branch = "dev" }"#,
         r#"{ path = "../pack" }"#,
         r#""0.1""#,
@@ -144,6 +143,38 @@ fn a_failed_resolution_does_not_overwrite_what_was_kept() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn a_failed_ask_is_not_kept_so_every_run_past_the_hour_asks_again() {
+    let dir = tempfile::tempdir().unwrap();
+    pin(DEV, dir.path(), at(1000), &|_: &str, _: &str| Ok(A.to_string()));
+    let later = at(1000 + TIP_TTL.as_secs() + 1);
+    let asked = Cell::new(0);
+    let fail = |_: &str, _: &str| {
+        asked.set(asked.get() + 1);
+        Err::<String, String>("offline".into())
+    };
+    for run in 1..=3 {
+        pin(DEV, dir.path(), later, &fail);
+        assert_eq!(asked.get(), run);
+    }
+    // With nothing ever kept, the same holds inside the hour too.
+    let empty = tempfile::tempdir().unwrap();
+    asked.set(0);
+    for run in 1..=3 {
+        pin(DEV, empty.path(), at(1000), &fail);
+        assert_eq!(asked.get(), run);
+    }
+}
+
+#[test]
+fn a_spec_following_the_default_branch_is_not_resolved_and_goes_to_cargo_as_written() {
+    let spec = r#"{ git = "u" }"#;
+    assert_eq!(branch_pin(spec), None);
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(pin(spec, dir.path(), at(1000), &never), Pinned::Untouched);
+    assert_eq!(spec_for_cargo("p", spec, dir.path(), &never), spec);
 }
 
 #[test]
@@ -609,4 +640,98 @@ fn a_command_that_cannot_be_started_is_an_error_not_a_hang() {
     )
     .unwrap_err();
     assert!(why.contains("could not run ghost"), "{why}");
+}
+
+#[test]
+fn an_ssh_the_listing_started_outlives_the_deadline_it_was_given_up_on_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let mark = dir.path().join("ssh-finished");
+    let url = "ssh://git@example.invalid/nothing";
+    let mut git = ls_remote_command(url, "dev", &Sources::of(Some("chosen"), None, None), ASK_DEADLINE);
+    git.env("GIT_SSH_COMMAND", format!("sh -c 'sleep 2; touch {}' --", mark.display()));
+    let why = remote_head(git, url, "dev", Duration::from_millis(500)).unwrap_err();
+    assert!(why.contains("did not answer within"), "{why}");
+    assert!(!mark.exists(), "ssh finished before the deadline, so this shows nothing");
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(mark.exists(), "the ssh git started was stopped with it");
+}
+
+// --- this process, read from a child of the test binary --------------------------
+
+/// Set in the child, which then prints what `ThisProcess` reads and nothing else.
+const CHILD: &str = "MOCKSPACE_PACK_PIN_THIS_PROCESS";
+
+/// One line `name` of what `ThisProcess` reads when the test binary runs
+/// again in `dir`, with `env` set and every other ssh setting and global
+/// configuration cleared.
+fn this_process_in(dir: &Path, env: &[(&str, &str)], name: &str) -> String {
+    let mut child = Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "pack_pin::tests::this_process_reports_itself", "--nocapture", "--test-threads=1"])
+        .current_dir(dir)
+        .env(CHILD, "1")
+        .env_remove("GIT_SSH_COMMAND")
+        .env_remove("GIT_SSH")
+        .env_remove("GIT_DIR")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    for (k, v) in env {
+        child.env(k, v);
+    }
+    let out = child.output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout
+        .lines()
+        .find_map(|l| l.strip_prefix(&format!("{name}=")))
+        .unwrap_or_else(|| panic!("the child printed no {name}: {stdout}"))
+        .to_string()
+}
+
+fn sources_in(dir: &Path, env: &[(&str, &str)]) -> [String; 3] {
+    ["ssh_command", "ssh", "core"].map(|name| this_process_in(dir, env, name))
+}
+
+#[test]
+fn this_process_reports_itself() {
+    if std::env::var_os(CHILD).is_none() {
+        return;
+    }
+    let p = ThisProcess;
+    // The harness prints the test's name with no newline before its output.
+    println!();
+    println!("ssh_command={:?}", p.ssh_command());
+    println!("ssh={:?}", p.ssh());
+    println!("core={:?}", p.core_ssh_command(ASK_DEADLINE));
+    println!(
+        "batch={:?}",
+        ssh_env(&ls_remote_command("u", "dev", &p, ASK_DEADLINE))
+    );
+}
+
+#[test]
+fn this_process_reads_both_variables_and_the_clone_it_runs_in() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q"]);
+    assert_eq!(sources_in(dir.path(), &[]), ["None".to_string(), "None".into(), "None".into()]);
+    assert_eq!(
+        sources_in(dir.path(), &[("GIT_SSH_COMMAND", "ssh -i one"), ("GIT_SSH", "/bin/two")]),
+        [r#"Some("ssh -i one")"#.to_string(), r#"Some("/bin/two")"#.into(), "None".into()]
+    );
+    git(dir.path(), &["config", "core.sshCommand", "ssh -i three"]);
+    assert_eq!(
+        sources_in(dir.path(), &[]),
+        ["None".to_string(), "None".into(), r#"Some("ssh -i three")"#.into()]
+    );
+}
+
+#[test]
+fn this_process_puts_ssh_in_batch_mode_only_in_a_clone_that_says_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q"]);
+    let batch = |env: &[(&str, &str)]| this_process_in(dir.path(), env, "batch");
+    assert_eq!(batch(&[]), r#"Some("ssh -o BatchMode=yes")"#);
+    assert_eq!(batch(&[("GIT_SSH", "/bin/two")]), "None");
+    git(dir.path(), &["config", "core.sshCommand", "ssh -i three"]);
+    assert_eq!(batch(&[]), "None");
 }
