@@ -216,3 +216,84 @@ mod tests {
         );
     }
 }
+
+/// `lock` and `close` refusing an unsealed round themselves, which is the only
+/// guard a hook-less `--auto-commit` passes through.
+#[cfg(test)]
+mod seal {
+    use std::path::Path;
+    use std::process::ExitCode;
+
+    use crate::config::Config;
+    use crate::design_round::*;
+
+    const OPTS: SubcmdOpts = SubcmdOpts {
+        auto_commit: false,
+    };
+
+    fn mock(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("design_rounds")).unwrap();
+        for (name, text) in files {
+            std::fs::write(dir.path().join("design_rounds").join(name), text).unwrap();
+        }
+        dir
+    }
+
+    fn listed(mock: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(mock.join("design_rounds"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn lock_refuses_a_bare_title_in_either_window_and_moves_nothing() {
+        let cases: [&[(&str, &str)]; 2] =
+            [&[("202609181543_changelist.doc.md", "# doc changelist\n\n")], &[
+                (
+                    "202609181543_changelist.doc.lock.md",
+                    "# doc changelist\n\nNone.\n",
+                ),
+                ("202609181544_changelist.src.md", "# src changelist\n\n"),
+            ]];
+        for files in cases {
+            let dir = mock(files);
+            let before = listed(dir.path());
+            let code = cmd_lock(&Config::from_dir(dir.path()), &OPTS);
+            assert_eq!(code, ExitCode::FAILURE, "{files:?}");
+            assert_eq!(listed(dir.path()), before, "{files:?}");
+        }
+    }
+
+    #[test]
+    fn lock_locks_a_changelist_that_says_something() {
+        let dir = mock(&[("202609181543_changelist.doc.md", "# doc changelist: none\n")]);
+        let code = cmd_lock(&Config::from_dir(dir.path()), &OPTS);
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(listed(dir.path()), ["202609181543_changelist.doc.lock.md"]);
+    }
+
+    #[test]
+    fn close_refuses_an_empty_lock_and_moves_nothing() {
+        // CLOSED by phase, with the src lock a bare template: the state an
+        // auto-committed close would otherwise carry into history unread.
+        let dir = mock(&[
+            (
+                "202609181236_changelist.doc.lock.md",
+                "# doc changelist\n\nNone.\n",
+            ),
+            (
+                "202609181237_changelist.src.lock.md",
+                "# src changelist\n\n",
+            ),
+        ]);
+        let before = listed(dir.path());
+        let code = cmd_close(&Config::from_dir(dir.path()), &OPTS);
+        assert_eq!(code, ExitCode::FAILURE);
+        assert_eq!(listed(dir.path()), before);
+    }
+}
