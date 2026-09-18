@@ -19,6 +19,8 @@
 //!
 //! Severity: Error (blocks commit, push, and build).
 
+use std::path::{Path, PathBuf};
+
 use crate::changelist_helpers::{self, Phase};
 use crate::src_layout::{self, SrcLayout};
 use crate::{Lint, LintError, RepoContext, RepoLint, Severity};
@@ -59,8 +61,7 @@ impl RepoLint for ChangelistDocGate {
             return Vec::new();
         }
 
-        let violating_files =
-            src_layout::changed_files(workspace_root, &layout, |f| is_doc_template(&layout, f));
+        let violating_files = pending_doc_templates(workspace_root, ctx.src_dirs);
 
         violating_files
             .into_iter()
@@ -105,6 +106,18 @@ impl RepoLint for ChangelistDocGate {
             })
             .collect()
     }
+}
+
+/// Every doc template that differs from `HEAD`, staged, unstaged or untracked,
+/// with which of the three it is.
+///
+/// These are what the gate refuses once the phase leaves DOC. `cargo mock
+/// lock` asks for them before locking a doc changelist, because the lock is
+/// what ends the window they can still be committed in: after it, each one is
+/// either reverted or carried through a deprecation.
+pub fn pending_doc_templates(mock_dir: &Path, src_dirs: &[PathBuf]) -> Vec<(String, String)> {
+    let layout = SrcLayout::new(mock_dir, src_dirs);
+    src_layout::changed_files(mock_dir, &layout, |f| is_doc_template(&layout, f))
 }
 
 /// A doc template is a `.md.tmpl` or `.md` file under a source directory, with

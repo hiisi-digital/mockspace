@@ -50,6 +50,7 @@ pub(crate) mod changelist_required;
 mod changelist_seal;
 /// What `lock` and `close` ask before moving anything, since a hook-less
 /// commit never reaches the `changelist-seal` lint while it can still refuse.
+pub use changelist_doc_gate::pending_doc_templates;
 pub use changelist_seal::{active_round_findings, says_nothing};
 mod deprecation_comparison;
 mod design_doc_source_mismatch;

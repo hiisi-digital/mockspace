@@ -297,6 +297,115 @@ mod seal {
         assert_eq!(listed(dir.path()), before);
     }
 
+    // --- a doc lock and the templates it freezes ------------------------------
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?} failed in {}", dir.display());
+    }
+
+    const DOC_CL: &str = "202609190100_changelist.doc.md";
+
+    /// A repository in DOC, with a doc changelist that says something and one
+    /// crate template, everything committed. Returns the repo and its mock dir.
+    fn repo_in_doc() -> (tempfile::TempDir, std::path::PathBuf) {
+        let repo = tempfile::tempdir().unwrap();
+        let mock = repo.path().join("mock");
+        std::fs::create_dir_all(mock.join("design_rounds")).unwrap();
+        std::fs::create_dir_all(mock.join("crates/x")).unwrap();
+        std::fs::write(mock.join("design_rounds").join(DOC_CL), "# doc changelist: x\n").unwrap();
+        std::fs::write(mock.join("crates/x/DESIGN.md.tmpl"), "# x\n").unwrap();
+        std::fs::write(mock.join("crates/x/SHAME.md.tmpl"), "# shame\n").unwrap();
+        std::fs::write(mock.join("README.md.tmpl"), "# readme\n").unwrap();
+        git(repo.path(), &["init", "-q", "-b", "dev"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        git(repo.path(), &["config", "user.email", "t@example.com"]);
+        git(repo.path(), &["config", "commit.gpgsign", "false"]);
+        git(repo.path(), &["add", "-A"]);
+        git(repo.path(), &["commit", "-q", "--no-verify", "-m", "chore: a round"]);
+        (repo, mock)
+    }
+
+    fn lock_in(mock: &Path) -> (ExitCode, Vec<String>, Vec<String>) {
+        let before = listed(mock);
+        let code = cmd_lock(&Config::from_dir(mock), &OPTS);
+        (code, before, listed(mock))
+    }
+
+    #[test]
+    fn a_doc_lock_goes_through_when_every_template_is_committed() {
+        // The control. Without it every refusal below passes on a lock that
+        // refuses whatever it is handed.
+        let (_repo, mock) = repo_in_doc();
+        let (code, _, after) = lock_in(&mock);
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(after, ["202609190100_changelist.doc.lock.md"]);
+    }
+
+    #[test]
+    fn a_doc_lock_is_refused_over_a_template_edited_and_not_committed() {
+        let (_repo, mock) = repo_in_doc();
+        std::fs::write(mock.join("crates/x/DESIGN.md.tmpl"), "# x, edited\n").unwrap();
+        let (code, before, after) = lock_in(&mock);
+        assert_eq!(code, ExitCode::FAILURE);
+        assert_eq!(after, before, "a refused lock moved a file");
+    }
+
+    #[test]
+    fn a_doc_lock_is_refused_over_a_template_staged_and_not_committed() {
+        let (repo, mock) = repo_in_doc();
+        std::fs::write(mock.join("crates/x/DESIGN.md.tmpl"), "# x, staged\n").unwrap();
+        git(repo.path(), &["add", "mock/crates/x/DESIGN.md.tmpl"]);
+        let (code, before, after) = lock_in(&mock);
+        assert_eq!(code, ExitCode::FAILURE);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn a_doc_lock_is_refused_over_a_new_template_nobody_added() {
+        let (_repo, mock) = repo_in_doc();
+        std::fs::write(mock.join("crates/x/DEEPDIVE_new.md.tmpl"), "# new\n").unwrap();
+        let (code, before, after) = lock_in(&mock);
+        assert_eq!(code, ExitCode::FAILURE);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn what_the_doc_gate_leaves_open_does_not_hold_the_lock() {
+        // SHAME is writable in every phase, and a template outside the source
+        // directories is not gated at all, so neither can be stranded.
+        let (_repo, mock) = repo_in_doc();
+        std::fs::write(mock.join("crates/x/SHAME.md.tmpl"), "# shame, edited\n").unwrap();
+        std::fs::write(mock.join("README.md.tmpl"), "# readme, edited\n").unwrap();
+        let (code, _, after) = lock_in(&mock);
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(after, ["202609190100_changelist.doc.lock.md"]);
+    }
+
+    #[test]
+    fn a_src_lock_does_not_ask_about_templates() {
+        // A dirty template in IMPL is the doc gate's to refuse at commit; the
+        // src lock ends a different window and is not where it is caught.
+        let (repo, mock) = repo_in_doc();
+        let dr = mock.join("design_rounds");
+        std::fs::rename(dr.join(DOC_CL), dr.join("202609190100_changelist.doc.lock.md")).unwrap();
+        std::fs::write(dr.join("202609190101_changelist.src.md"), "# src changelist: x\n")
+            .unwrap();
+        git(repo.path(), &["add", "-A"]);
+        git(repo.path(), &["commit", "-q", "--no-verify", "-m", "chore: into impl"]);
+        std::fs::write(mock.join("crates/x/DESIGN.md.tmpl"), "# x, edited\n").unwrap();
+        let (code, _, after) = lock_in(&mock);
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(after.contains(&"202609190101_changelist.src.lock.md".to_string()), "{after:?}");
+    }
+
     /// homma's shape itself: the text unlocked beside a lock of its kind.
     /// Refused whichever check reaches it first, the phase or the seal, and
     /// what matters is that nothing moves.

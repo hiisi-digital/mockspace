@@ -49,6 +49,23 @@ fn refuse_an_empty_lock(dr: &Path, cl: &ParsedChangelist) -> Option<ExitCode> {
     Some(ExitCode::FAILURE)
 }
 
+/// Refuse to end the DOC window while a doc template it covers is not
+/// committed. Past the lock `changelist-doc-gate` refuses every one of them,
+/// so they would be stranded: reverted, or carried through a deprecation and a
+/// second doc changelist, for want of one commit made first.
+fn refuse_uncommitted_templates(cfg: &Config) -> Option<ExitCode> {
+    let pending = changelist_seal::pending_doc_templates(&cfg.mock_dir, &cfg.src_dirs);
+    if pending.is_empty() {
+        return None;
+    }
+    eprintln!("error: doc templates are not committed, and the lock ends the window they can be");
+    for (file, how) in &pending {
+        eprintln!("  {file} ({how})");
+    }
+    eprintln!("  commit them, then lock");
+    Some(ExitCode::FAILURE)
+}
+
 pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
     let dr = design_rounds_dir(cfg);
     let phase = changelist_helpers::current_phase(&dr);
@@ -69,6 +86,9 @@ pub fn cmd_lock(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
                 },
             };
             if let Some(code) = refuse_an_empty_lock(&dr, &cl) {
+                return code;
+            }
+            if let Some(code) = refuse_uncommitted_templates(cfg) {
                 return code;
             }
             match rename_cl(&dr, &cl, ClStatus::Locked) {
