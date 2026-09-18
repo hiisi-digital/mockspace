@@ -12,8 +12,10 @@
 //! transitive dependencies across the whole graph, not only the root workspace's.
 //!
 //! Blocks the push when cargo-deny reports a violation. Skipped (never blocking)
-//! when no `deny.toml` exists or cargo-deny is not installed. Opt out with
-//! `deny_check = false` in `mockspace.toml`.
+//! when no `deny.toml` exists, cargo-deny is not installed, or the root sits in
+//! a spike tree (`mock/research/**`, `sketches/**`), whatever `cargo metadata`
+//! or `cargo deny` itself say about it. Opt out with `deny_check = false` in
+//! `mockspace.toml`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -45,6 +47,7 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
 
     for root in workspace_roots(repo_root) {
         let where_ = rel(repo_root, &root);
+        let spike = is_a_spike_tree(&under(repo_root, &root));
         // A workspace with no packages has no dependency graph, so cargo-deny
         // exits non-zero on `cargo metadata` before it looks at a single
         // licence. Reading that as a violation blocks a push over a repository
@@ -56,7 +59,7 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
                 ));
                 continue;
             },
-            PackageGraph::Unreadable if is_a_spike_tree(&under(repo_root, &root)) => {
+            PackageGraph::Unreadable if spike => {
                 // A probe or a sketch is a spike: it exists to check one thing,
                 // it takes shortcuts everywhere, and nothing it depends on
                 // reaches a consumer. Several here carry a `[workspace]` with
@@ -74,6 +77,17 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
                 ));
             },
             PackageGraph::Present => {},
+        }
+        // `cargo metadata --no-deps` can succeed (a readable graph) on a spike
+        // whose git dependency no longer resolves, since `--no-deps` never
+        // walks the dependency it would have failed on. `cargo deny check`
+        // does the full resolution and fails there instead, which is the same
+        // audit-trail state the `Unreadable` arm above exempts, arriving by a
+        // different door. So the spike exemption is checked again here, ahead
+        // of the run, rather than only where the graph came back unreadable.
+        if spike {
+            actions.push(format!("deny_check: skipped, {where_} is a spike tree"));
+            continue;
         }
         if run_deny(&root, &config) {
             actions.push(format!("deny_check: cargo deny check passed ({where_})"));
@@ -93,11 +107,11 @@ pub fn check(repo_root: &Path, enabled: bool) -> Result<Vec<String>, String> {
 /// reserves for spikes: `mock/research/**` for a panel's probes and `sketches/`
 /// for a feasibility check.
 ///
-/// A first-party crate that genuinely lives at one of those names and whose
-/// metadata is unreadable would be skipped rather than blocked. That is the
-/// wrong answer in principle and a tolerable one in practice, because the
-/// action line names the root it skipped and why, so the skip is readable
-/// rather than silent.
+/// A first-party crate that genuinely lives at one of those names would be
+/// skipped rather than blocked, whatever `cargo metadata` or `cargo deny`
+/// itself say about it. That is the wrong answer in principle and a tolerable
+/// one in practice, because the action line names the root it skipped and why,
+/// so the skip is readable rather than silent.
 ///
 /// Takes a path rather than the rendered message string, so what counts as a
 /// component is the platform's answer and not whichever separator `display`
@@ -511,5 +525,87 @@ mod tests {
         );
         write(&tmp.path().join("one/src/lib.rs"), "");
         assert!(matches!(package_graph(tmp.path()), PackageGraph::Present));
+    }
+
+    #[test]
+    fn a_spike_tree_with_a_readable_graph_that_fails_deny_is_still_skipped() {
+        // The reported defect: `cargo metadata --no-deps` can come back
+        // Present (readable) on a spike whose git dependency no longer
+        // resolves, because `--no-deps` never walks the dependency it would
+        // have failed on. `cargo deny check` does the full resolution and
+        // fails there instead, on the same tree the `Unreadable` arm already
+        // exempts. This drives it through `Present` with a deny.toml that
+        // denies every licence, which fails `cargo deny check` on any real
+        // crate without needing network access to reproduce an unresolvable
+        // git dependency.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(&root.join("deny.toml"), "[licenses]\nallow = []\n");
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = []\n",
+        );
+        write(
+            &root.join("mock/research/p1/Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"one\"]\n",
+        );
+        write(
+            &root.join("mock/research/p1/one/Cargo.toml"),
+            "[package]\nname = \"one\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        );
+        write(&root.join("mock/research/p1/one/src/lib.rs"), "");
+
+        if !cargo_deny_installed() {
+            eprintln!("cargo-deny absent: the loop is unreachable, arm not exercised");
+            return;
+        }
+
+        // The graph really is readable, which is what makes this the case the
+        // `Unreadable`-only exemption misses.
+        assert!(matches!(
+            package_graph(&root.join("mock/research/p1")),
+            PackageGraph::Present
+        ));
+
+        let actions = check(root, true)
+            .expect("a spike tree with a readable but deny-failing graph must not block");
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.contains("mock/research/p1") && a.contains("spike tree")),
+            "did not skip the spike tree once its graph read as present: {actions:?}"
+        );
+    }
+
+    #[test]
+    fn a_non_spike_root_with_a_readable_graph_that_fails_deny_still_blocks() {
+        // The control for the test above. Without it, a version that skips
+        // every readable-but-failing root (not only spike trees) would pass
+        // the positive case too.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(&root.join("deny.toml"), "[licenses]\nallow = []\n");
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"one\"]\n",
+        );
+        write(
+            &root.join("one/Cargo.toml"),
+            "[package]\nname = \"one\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        );
+        write(&root.join("one/src/lib.rs"), "");
+
+        if !cargo_deny_installed() {
+            eprintln!("cargo-deny absent: the loop is unreachable, arm not exercised");
+            return;
+        }
+
+        assert!(matches!(package_graph(root), PackageGraph::Present));
+        let err = check(root, true)
+            .expect_err("a non-spike root failing cargo deny check has to block the push");
+        assert!(
+            err.contains("cargo deny check failed"),
+            "blocked, but named the wrong reason: {err}"
+        );
     }
 }
