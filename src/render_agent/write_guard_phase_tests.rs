@@ -300,6 +300,102 @@ fn a_topic_a_commit_holds_is_frozen() {
     );
 }
 
+fn payload(tool: &str, input: serde_json::Value) -> String {
+    serde_json::json!({
+        "session_id": "t",
+        "transcript_path": "/tmp/t",
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool,
+        "tool_input": input,
+    })
+    .to_string()
+}
+
+/// What `repo_with_rounds` commits into every round file.
+const HELD: &str = "# a round file\n";
+
+/// Run one edit of the committed topic and say whether the guard let it by.
+fn edit_committed_topic(tag: &str, tool: &str, input: serde_json::Value) -> String {
+    let repo = repo_with_rounds(tag, &["202609182341_topic.a-thing.md"]);
+    let guard = guard_for(&repo);
+    let mut input = input;
+    input["file_path"] = serde_json::Value::from(repo.join(TOPIC).display().to_string());
+    run_from(&repo, &guard, &payload(tool, input))
+}
+
+#[test]
+fn a_committed_topic_takes_a_section_appended_by_a_write() {
+    // Frozen against rewriting, not against accretion: the discussion comes
+    // back to a topic and adds a section below what is there.
+    let out = edit_committed_topic(
+        "append-write",
+        "Write",
+        serde_json::json!({ "content": format!("{HELD}\n## The second pass\n") }),
+    );
+    assert!(!refused(&out), "an append was refused as a rewrite: {out}");
+}
+
+#[test]
+fn a_committed_topic_takes_an_edit_that_keeps_its_anchor() {
+    let out = edit_committed_topic(
+        "append-edit",
+        "Edit",
+        serde_json::json!({
+            "old_string": HELD,
+            "new_string": format!("{HELD}\n## The second pass\n"),
+        }),
+    );
+    assert!(!refused(&out), "an insertion was refused as a rewrite: {out}");
+}
+
+#[test]
+fn a_committed_topic_refuses_every_shape_of_rewrite() {
+    let cases = [
+        ("rw-write", "Write", serde_json::json!({ "content": "# a round file, reworded\n" })),
+        ("rw-trunc", "Write", serde_json::json!({ "content": "" })),
+        (
+            "rw-edit",
+            "Edit",
+            serde_json::json!({ "old_string": HELD, "new_string": "# reworded\n" }),
+        ),
+        (
+            "rw-empty-anchor",
+            "Edit",
+            serde_json::json!({ "old_string": "", "new_string": "anything" }),
+        ),
+        (
+            "rw-multi",
+            "MultiEdit",
+            serde_json::json!({ "edits": [
+                { "old_string": HELD, "new_string": format!("{HELD}more\n") },
+                { "old_string": "round", "new_string": "ROUND" },
+            ]}),
+        ),
+        ("rw-multi-none", "MultiEdit", serde_json::json!({ "edits": [] })),
+    ];
+    // Every case is run before anything is asserted, so a guard that lets
+    // several through names all of them rather than the first.
+    let through: Vec<&str> = cases
+        .into_iter()
+        .filter(|(tag, tool, input)| {
+            let out = edit_committed_topic(tag, tool, input.clone());
+            !(refused(&out) && out.contains("committed and FROZEN"))
+        })
+        .map(|(tag, ..)| tag)
+        .collect();
+    assert!(through.is_empty(), "rewrites that went through: {through:?}");
+}
+
+#[test]
+fn a_command_writing_a_committed_topic_is_still_refused() {
+    // A command carries no text to compare, so it cannot show it only adds.
+    let repo = repo_with_rounds("append-cmd", &["202609182341_topic.a-thing.md"]);
+    let guard = guard_for(&repo);
+    let cmd = format!("tee -a {}", repo.join(TOPIC).display());
+    let out = run_from(&repo, &guard, &bash_payload(&cmd));
+    assert!(refused(&out), "a command wrote a committed topic: {out}");
+}
+
 #[test]
 fn a_topic_in_a_repository_with_no_commit_yet_can_be_written() {
     // No HEAD at all, where asking a commit for the file errors rather than

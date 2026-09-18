@@ -416,6 +416,29 @@ else
 fi
 DIRTY_DOCS=$(git -C "$REPO_ROOT" diff --name-only 2>/dev/null \
     | grep -E "^${{MOCK_ROOT}}/crates/.*\.(md\.tmpl|md)$" | head -1) || true
+# Whether this edit to a committed file only adds to it. A Write has to begin
+# with the whole committed text; an Edit, and every edit of a MultiEdit, has to
+# keep its old string at the start of its new one, which inserts after it and
+# removes nothing. Anything else, a command included, is a rewrite.
+topic_edit_only_adds() {{
+    local held
+    held=$(git -C "$REPO_ROOT" show "HEAD:$1" 2>/dev/null; printf x)
+    held=${{held%x}}
+    case "$(printf '%s' "$__INPUT" | jq -r '.tool_name // ""' 2>/dev/null)" in
+        Write)
+            printf '%s' "$__INPUT" | jq -e --arg held "$held" \
+                '.tool_input.content // "" | startswith($held)' >/dev/null 2>&1 ;;
+        Edit)
+            printf '%s' "$__INPUT" | jq -e \
+                '.tool_input as $t | ($t.old_string // "") != "" and (($t.new_string // "") | startswith($t.old_string))' \
+                >/dev/null 2>&1 ;;
+        MultiEdit)
+            printf '%s' "$__INPUT" | jq -e \
+                '(.tool_input.edits // []) as $e | ($e | length) > 0 and all($e[]; (.old_string // "") != "" and ((.new_string // "") | startswith(.old_string)))' \
+                >/dev/null 2>&1 ;;
+        *) return 1 ;;
+    esac
+}}
 # --- Design round files ---
 if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
     FULL_GIT_PATH="${{MOCK_ROOT}}/${{REL_PATH}}"
@@ -462,8 +485,13 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
         # Committed means in HEAD, not in the index: a topic is staged the
         # moment it is written so phase detection sees it, and freezing it
         # there refuses the first real edit to a file that holds one heading.
+        # And frozen against rewriting, not against accretion: a topic grows by
+        # sections appended as the discussion comes back to it, so an edit that
+        # keeps every committed byte where it was goes on to the phase check.
         if ! $IS_CHANGELIST && [[ -n "$(git -C "$REPO_ROOT" ls-tree --name-only HEAD -- "$FULL_GIT_PATH" 2>/dev/null)" ]]; then
-            deny "BLOCKED: topic '${{BASENAME}}' is committed and FROZEN.\\n\\nCurrent phase: ${{PHASE}}"
+            if ! topic_edit_only_adds "$FULL_GIT_PATH"; then
+                deny "BLOCKED: topic '${{BASENAME}}' is committed and FROZEN.\\n\\nWhat a commit holds is not rewritten; append below it instead.\\n\\nCurrent phase: ${{PHASE}}"
+            fi
         fi
     fi
     if ! $IS_CHANGELIST; then
