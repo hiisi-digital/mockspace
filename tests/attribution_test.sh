@@ -122,6 +122,26 @@ it_reads_a_byline_behind_whitespace_or_a_run_of_hashes() {
 }
 
 #[test]
+it_does_not_read_a_byline_behind_a_quote_or_a_list_marker() {
+    # Whitespace and `#` is the whole of what comes off, and it is not the whole of
+    # what defeats an anchor. Each prefix here hides a byline from this net, and
+    # measured on git 2.55.0 `git commit -F` stores all of them in a commit body
+    # verbatim while git's own trailer parser reports none.
+    #
+    # The arm asserts the boundary rather than the repair, because the repair belongs
+    # to the caller. This net reads markdown as well as commit messages, where `>`
+    # opens a quotation and `-` opens a list, so refusing those here would refuse
+    # ordinary prose in a readme, and a false refusal costs a rehoused repository. A
+    # consumer whose surface is only a commit message takes them off before it calls,
+    # and the clause-dev `commit-msg` hook does exactly that.
+    local b='Co-authored-by: Somebody <nobody@example.invalid>'
+    local line
+    for line in "> $b" ">> $b" "// $b" "/* $b" "- $b" "| $b" "* $b" ".$b" "> - $b"; do
+        assert_fails attribution_is_attribution_trailer "$line"
+    done
+}
+
+#[test]
 it_does_not_read_a_quoted_or_headed_mention_as_a_trailer() {
     # The other half of the trade. A quotation is safe because the convention
     # here is to backtick the forbidden string, and a leading backtick is not

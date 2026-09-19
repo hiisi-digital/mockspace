@@ -154,9 +154,17 @@ attribution_selfcheck() {
 # `# # Co-Authored-By: ...` in the body verbatim while git's own trailer parser
 # returns nothing for it, so a byline spelled that way passes the parser the
 # callers use for commit trailers and passed this net as well. What comes off is
-# the whole class rather than the spellings somebody thought of, since the two
-# previous repairs of this shape in the commit-msg hook each named a spelling
-# and the next spelling got through.
+# every arrangement of those two rather than the spellings somebody thought of,
+# since the two previous repairs of this shape in the commit-msg hook each named
+# a spelling and the next spelling got through.
+#
+# Whitespace and `#` is the whole of the set here, and it is not the whole of
+# what defeats an anchor: `>`, `//`, `-`, `|`, `*` and a leading dot each hide a
+# byline from this net as well, and git stores all of them verbatim. A consumer
+# whose surface is a commit message can take those off before it calls, and the
+# workspace hook does. This net does not, because it reads markdown too, where
+# `>` opens a quotation and `-` opens a list, and a false refusal here costs
+# somebody a rehoused repository rather than one reword.
 #
 # A quotation stays safe, because the convention here is to backtick the
 # forbidden string and a leading backtick is not stripped. A heading spelling
