@@ -23,5 +23,9 @@ name = "mockspace"
 [hooks.pre-commit]
 run = ["cargo", "fmt", "--check"]
 
+# Both suites, through a script, because `run` is one argument list and goes
+# through no shell. `cargo test --workspace` alone was running half the
+# repository: the nutshell side under `tests/*.sh` is `./test` and nothing was
+# calling it, so an arm added there guarded a class no gate would re-run.
 [hooks.pre-push]
-run = ["cargo", "test", "--workspace"]
+run = ["bash", "scripts/pre-push.sh"]

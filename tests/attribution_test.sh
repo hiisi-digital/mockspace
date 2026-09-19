@@ -132,13 +132,42 @@ it_does_not_read_a_byline_behind_a_quote_or_a_list_marker() {
     # to the caller. This net reads markdown as well as commit messages, where `>`
     # opens a quotation and `-` opens a list, so refusing those here would refuse
     # ordinary prose in a readme, and a false refusal costs a rehoused repository. A
-    # consumer whose surface is only a commit message takes them off before it calls,
-    # and the clause-dev `commit-msg` hook does exactly that.
+    # caller whose surface is only a commit message can take them off before it calls;
+    # nothing here does it for one, and the earlier version of this comment said a
+    # consumer already did, which was a claim about somebody else's tree and was wrong
+    # about the one it named.
     local b='Co-authored-by: Somebody <nobody@example.invalid>'
     local line
     for line in "> $b" ">> $b" "// $b" "/* $b" "- $b" "| $b" "* $b" ".$b" "> - $b"; do
         assert_fails attribution_is_attribution_trailer "$line"
     done
+}
+
+#[test]
+it_reads_an_indented_author_line_as_a_trailer() {
+    # What the strip costs, pinned so that nobody has to rediscover it. `author` and
+    # `committer` sit in the key pattern as bare words, a git author field having no
+    # `-by` shape, so with the anchor gone an indented one reads as a trailer: a
+    # markdown code block indented by four spaces, a YAML document, a struct literal
+    # in a diff. `attribution_strip_quoted` knows a fence and an inline backtick and
+    # not an indented block, and the trailer path does not call it anyway.
+    #
+    # The unindented spelling matched before this net was widened, so what is new is
+    # the indentation and nothing else, which is why the arm carries both. Measured
+    # over both repositories' whole histories when it landed, the widening matched no
+    # line that was not already matched, so this is a shape rather than a report.
+    #
+    # It is a pin on today's answer. An arm saying a thing happens is not an
+    # argument that it should, and the day somebody narrows those two keys this goes
+    # red and is the place to argue it.
+    assert_ok attribution_is_attribution_trailer '    author: Jane Roe'
+    assert_ok attribution_is_attribution_trailer 'author: Jane Roe'
+    assert_ok attribution_is_attribution_trailer '    committer: Jane Roe'
+    # And the neighbours that stay out, so the arm says where the edge is rather than
+    # only that there is one. A plural key is not the key, and an assignment is not a
+    # colon.
+    assert_fails attribution_is_attribution_trailer '    Authors: Jane and Bob'
+    assert_fails attribution_is_attribution_trailer '    author = "Jane"'
 }
 
 #[test]
@@ -162,6 +191,12 @@ it_reports_a_byline_a_message_hid_behind_a_hash() {
     # The surface claim rather than the predicate: a whole message carrying the
     # commented spelling is a finding, which is what a caller scanning a tag or
     # a pull request body actually asks.
+    #
+    # The whole record, both lines of it, rather than the word `trailer` somewhere
+    # in the output. A scan naming the wrong line, or naming three, satisfies
+    # `assert_contains` just as well, and what a caller prints to somebody is the
+    # excerpt rather than the kind. The advert line is here because the address in
+    # the fixture is one, which is what a real byline of this shape carries.
     local msg out
     msg='feat: a thing
 
@@ -169,7 +204,9 @@ A body that explains the thing.
 
 # # Co-authored-by: Claude <noreply@anthropic.com>'
     out="$(attribution_scan_message "$msg" '')"
-    assert_contains "$out" 'trailer'
+    assert_eq "$out" \
+"trailer	# # Co-authored-by: Claude <noreply@anthropic.com>
+advert	# # Co-authored-by: Claude <noreply@anthropic.com>"
 }
 
 #[test]
@@ -189,7 +226,9 @@ A body that goes on afterwards, so the byline is nowhere near the end.
 
 Closes #1.'
     out="$(attribution_scan_message "$msg" '')"
-    assert_contains "$out" 'trailer'
+    assert_eq "$out" \
+"trailer	Co-authored-by: Claude <noreply@anthropic.com>
+advert	Co-authored-by: Claude <noreply@anthropic.com>"
 }
 
 # --- policy is the caller's, and absent policy refuses -----------------------

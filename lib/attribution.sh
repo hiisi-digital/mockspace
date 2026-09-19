@@ -160,11 +160,24 @@ attribution_selfcheck() {
 #
 # Whitespace and `#` is the whole of the set here, and it is not the whole of
 # what defeats an anchor: `>`, `//`, `-`, `|`, `*` and a leading dot each hide a
-# byline from this net as well, and git stores all of them verbatim. A consumer
-# whose surface is a commit message can take those off before it calls, and the
-# workspace hook does. This net does not, because it reads markdown too, where
-# `>` opens a quotation and `-` opens a list, and a false refusal here costs
-# somebody a rehoused repository rather than one reword.
+# byline from this net as well, and git stores all of them verbatim. Those stay
+# in, because this net reads markdown as well as commit messages, where `>` opens
+# a quotation and `-` opens a list, and a false refusal here costs somebody a
+# rehoused repository rather than one reword. A caller whose surface is only a
+# commit message can take them off before it calls, and a caller that wants that
+# has to do it: nothing in here does it for one, and a caller that passes a line
+# through untouched gets the narrow set above and no more.
+#
+# What the strip costs, and it is not nothing. `author` and `committer` are in
+# the key pattern as bare words, since a git author field has no `-by` shape, so
+# with the anchor gone an indented `author: Jane` reads as a trailer. That is a
+# markdown code block indented by four spaces, or a YAML document, or a struct
+# literal in a diff. `attribution_strip_quoted` knows a fence and an inline
+# backtick and does not know an indented block, and the trailer path never calls
+# it. Measured over both repositories' whole histories at the time it landed, the
+# widening matched nothing new, so this is a shape to know about rather than a
+# reported one. `it_reads_an_indented_author_line_as_a_trailer` is where it is
+# written down, and it is a pin on today's answer rather than an endorsement.
 #
 # A quotation stays safe, because the convention here is to backtick the
 # forbidden string and a leading backtick is not stripped. A heading spelling
