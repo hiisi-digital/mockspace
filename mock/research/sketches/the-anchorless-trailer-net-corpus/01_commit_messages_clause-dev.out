@@ -1,0 +1,10 @@
+control held: the marked byline is newly matched, the subject is not
+
+repo:     /Users/orgrinrt/Dev/clause-work/kenno
+commits:  3493
+lines:    33130
+anchored: 187
+widened:  187
+newly:    0
+
+the widening newly matches nothing in this corpus

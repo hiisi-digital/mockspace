@@ -1,0 +1,10 @@
+control held: the marked byline is newly matched, the subject is not
+
+repo:     /Users/orgrinrt/Dev/clause-work/kenno/.worktrees/ms-attribution
+commits:  531
+lines:    18478
+anchored: 0
+widened:  0
+newly:    0
+
+the widening newly matches nothing in this corpus

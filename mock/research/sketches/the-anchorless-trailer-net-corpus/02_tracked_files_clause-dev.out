@@ -1,0 +1,9 @@
+control held: the marked byline is newly matched, the subject is not
+
+repo:     /Users/orgrinrt/Dev/clause-work/kenno
+ref:      HEAD (77449c40)
+anchored: 1
+widened:  1
+newly:    0
+
+the widening newly matches nothing in this tree

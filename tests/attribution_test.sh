@@ -101,6 +101,136 @@ it_requires_a_value_after_the_colon() {
     assert_fails attribution_is_attribution_trailer 'Co-authored-by:   '
 }
 
+#[test]
+it_reads_a_byline_behind_whitespace_or_a_run_of_hashes() {
+    # The anchor was the hole, and one leading space was enough to get through
+    # it. The `#` spellings matter more: measured on git 2.55.0, `git commit -F`
+    # stores `# # Co-Authored-By: ...` in the body verbatim while git's own
+    # trailer parser returns nothing for it, so a byline written that way passed
+    # the parser the callers use for commit trailers and passed this net too.
+    #
+    # The fixtures are generated from the alphabet of spaces, tabs and hashes
+    # rather than hand-picked, because the two previous repairs of this shape in
+    # the commit-msg hook each named the spellings somebody had thought of and
+    # the next spelling got through both.
+    local b='Co-authored-by: Somebody <nobody@example.invalid>'
+    local line
+    for line in "$b" " $b" "  $b" "	$b" "#$b" "##$b" "###$b" "# $b" "#	$b" \
+                "  # $b" "# # $b" "# #$b" "	#  #	$b" "### # ###$b" " # # # $b"; do
+        assert_ok attribution_is_attribution_trailer "$line"
+    done
+}
+
+#[test]
+it_does_not_read_a_byline_behind_a_quote_or_a_list_marker() {
+    # Whitespace and `#` is the whole of what comes off, and it is not the whole of
+    # what defeats an anchor. Each prefix here hides a byline from this net, and
+    # measured on git 2.55.0 `git commit -F` stores all of them in a commit body
+    # verbatim while git's own trailer parser reports none.
+    #
+    # The arm asserts the boundary rather than the repair, because the repair belongs
+    # to the caller. This net reads markdown as well as commit messages, where `>`
+    # opens a quotation and `-` opens a list, so refusing those here would refuse
+    # ordinary prose in a readme, and a false refusal costs a rehoused repository. A
+    # caller whose surface is only a commit message can take them off before it calls;
+    # nothing here does it for one, and the earlier version of this comment said a
+    # consumer already did, which was a claim about somebody else's tree and was wrong
+    # about the one it named.
+    local b='Co-authored-by: Somebody <nobody@example.invalid>'
+    local line
+    for line in "> $b" ">> $b" "// $b" "/* $b" "- $b" "| $b" "* $b" ".$b" "> - $b"; do
+        assert_fails attribution_is_attribution_trailer "$line"
+    done
+}
+
+#[test]
+it_reads_an_indented_author_line_as_a_trailer() {
+    # What the strip costs, pinned so that nobody has to rediscover it. `author` and
+    # `committer` sit in the key pattern as bare words, a git author field having no
+    # `-by` shape, so with the anchor gone an indented one reads as a trailer: a
+    # markdown code block indented by four spaces, a YAML document, a struct literal
+    # in a diff. `attribution_strip_quoted` knows a fence and an inline backtick and
+    # not an indented block, and the trailer path does not call it anyway.
+    #
+    # The unindented spelling matched before this net was widened, so what is new is
+    # the indentation and nothing else, which is why the arm carries both. Measured
+    # over both repositories' whole histories when it landed, the widening matched no
+    # line that was not already matched, so this is a shape rather than a report.
+    #
+    # It is a pin on today's answer. An arm saying a thing happens is not an
+    # argument that it should, and the day somebody narrows those two keys this goes
+    # red and is the place to argue it.
+    assert_ok attribution_is_attribution_trailer '    author: Jane Roe'
+    assert_ok attribution_is_attribution_trailer 'author: Jane Roe'
+    assert_ok attribution_is_attribution_trailer '    committer: Jane Roe'
+    # And the neighbours that stay out, so the arm says where the edge is rather than
+    # only that there is one. A plural key is not the key, and an assignment is not a
+    # colon.
+    assert_fails attribution_is_attribution_trailer '    Authors: Jane and Bob'
+    assert_fails attribution_is_attribution_trailer '    author = "Jane"'
+}
+
+#[test]
+it_does_not_read_a_quoted_or_headed_mention_as_a_trailer() {
+    # The other half of the trade. A quotation is safe because the convention
+    # here is to backtick the forbidden string, and a leading backtick is not
+    # stripped; a heading that merely names the key carries no value after a
+    # colon, so it fails on the same requirement prose has always failed on.
+    assert_fails attribution_is_attribution_trailer \
+        '`Co-authored-by: Somebody <nobody@example.invalid>`'
+    assert_fails attribution_is_attribution_trailer \
+        '# what a co-authored-by line is for'
+    assert_fails attribution_is_attribution_trailer '## Co-authored-by'
+    assert_fails attribution_is_attribution_trailer '# # Co-authored-by:'
+    assert_fails attribution_is_attribution_trailer '####'
+    assert_fails attribution_is_attribution_trailer '   '
+}
+
+#[test]
+it_reports_a_byline_a_message_hid_behind_a_hash() {
+    # The surface claim rather than the predicate: a whole message carrying the
+    # commented spelling is a finding, which is what a caller scanning a tag or
+    # a pull request body actually asks.
+    #
+    # The whole record, both lines of it, rather than the word `trailer` somewhere
+    # in the output. A scan naming the wrong line, or naming three, satisfies
+    # `assert_contains` just as well, and what a caller prints to somebody is the
+    # excerpt rather than the kind. The advert line is here because the address in
+    # the fixture is one, which is what a real byline of this shape carries.
+    local msg out
+    msg='feat: a thing
+
+A body that explains the thing.
+
+# # Co-authored-by: Claude <noreply@anthropic.com>'
+    out="$(attribution_scan_message "$msg" '')"
+    assert_eq "$out" \
+"trailer	# # Co-authored-by: Claude <noreply@anthropic.com>
+advert	# # Co-authored-by: Claude <noreply@anthropic.com>"
+}
+
+#[test]
+it_reports_a_byline_that_is_not_in_the_final_block() {
+    # The header over `attribution_scan_message` claimed for a long time that the
+    # trailer net read the message's final block, and the code has never done
+    # that. Which behaviour is right is not a matter of taste here: a byline
+    # somebody hid in the middle of a body is exactly what a scan of a tag or a
+    # pull request body is asked about, and a final-block reader answers clean on
+    # it. So the arm pins the whole-text scan, and the header now says so.
+    local msg out
+    msg='feat: a thing
+
+Co-authored-by: Claude <noreply@anthropic.com>
+
+A body that goes on afterwards, so the byline is nowhere near the end.
+
+Closes #1.'
+    out="$(attribution_scan_message "$msg" '')"
+    assert_eq "$out" \
+"trailer	Co-authored-by: Claude <noreply@anthropic.com>
+advert	Co-authored-by: Claude <noreply@anthropic.com>"
+}
+
 # --- policy is the caller's, and absent policy refuses -----------------------
 
 #[test]
