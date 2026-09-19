@@ -172,6 +172,26 @@ A body that explains the thing.
     assert_contains "$out" 'trailer'
 }
 
+#[test]
+it_reports_a_byline_that_is_not_in_the_final_block() {
+    # The header over `attribution_scan_message` claimed for a long time that the
+    # trailer net read the message's final block, and the code has never done
+    # that. Which behaviour is right is not a matter of taste here: a byline
+    # somebody hid in the middle of a body is exactly what a scan of a tag or a
+    # pull request body is asked about, and a final-block reader answers clean on
+    # it. So the arm pins the whole-text scan, and the header now says so.
+    local msg out
+    msg='feat: a thing
+
+Co-authored-by: Claude <noreply@anthropic.com>
+
+A body that goes on afterwards, so the byline is nowhere near the end.
+
+Closes #1.'
+    out="$(attribution_scan_message "$msg" '')"
+    assert_contains "$out" 'trailer'
+}
+
 # --- policy is the caller's, and absent policy refuses -----------------------
 
 #[test]

@@ -279,9 +279,13 @@ attribution_allows() {
 # Every finding in one commit message or pull-request body, one per line, as
 # `kind<TAB>excerpt`. Kinds are `trailer` and `advert`.
 #
-# The trailer net runs over the message's final block, which is where a trailer
-# lives; the advert net runs over the whole text, since an advert is a suffix
-# somebody's tooling appended and may sit anywhere.
+# Both nets run over the whole text. This said the trailer net read the
+# message's final block, which it has never done, and nothing was pinning the
+# behaviour either way: `it_reports_a_byline_that_is_not_in_the_final_block` is
+# what pins it now. A trailer does belong in the final block and a caller with a
+# real trailer parser should use one, but a byline somebody put in the middle of
+# a body is the case this is asked about, and a final-block scan answers clean
+# on it.
 #
 # Usage: while IFS=$'\t' read -r kind hit; do ...; done < <(attribution_scan_message "$b")
 #[pub]
