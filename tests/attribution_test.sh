@@ -101,6 +101,57 @@ it_requires_a_value_after_the_colon() {
     assert_fails attribution_is_attribution_trailer 'Co-authored-by:   '
 }
 
+#[test]
+it_reads_a_byline_behind_whitespace_or_a_run_of_hashes() {
+    # The anchor was the hole, and one leading space was enough to get through
+    # it. The `#` spellings matter more: measured on git 2.55.0, `git commit -F`
+    # stores `# # Co-Authored-By: ...` in the body verbatim while git's own
+    # trailer parser returns nothing for it, so a byline written that way passed
+    # the parser the callers use for commit trailers and passed this net too.
+    #
+    # The fixtures are generated from the alphabet of spaces, tabs and hashes
+    # rather than hand-picked, because the two previous repairs of this shape in
+    # the commit-msg hook each named the spellings somebody had thought of and
+    # the next spelling got through both.
+    local b='Co-authored-by: Somebody <nobody@example.invalid>'
+    local line
+    for line in "$b" " $b" "  $b" "	$b" "#$b" "##$b" "###$b" "# $b" "#	$b" \
+                "  # $b" "# # $b" "# #$b" "	#  #	$b" "### # ###$b" " # # # $b"; do
+        assert_ok attribution_is_attribution_trailer "$line"
+    done
+}
+
+#[test]
+it_does_not_read_a_quoted_or_headed_mention_as_a_trailer() {
+    # The other half of the trade. A quotation is safe because the convention
+    # here is to backtick the forbidden string, and a leading backtick is not
+    # stripped; a heading that merely names the key carries no value after a
+    # colon, so it fails on the same requirement prose has always failed on.
+    assert_fails attribution_is_attribution_trailer \
+        '`Co-authored-by: Somebody <nobody@example.invalid>`'
+    assert_fails attribution_is_attribution_trailer \
+        '# what a co-authored-by line is for'
+    assert_fails attribution_is_attribution_trailer '## Co-authored-by'
+    assert_fails attribution_is_attribution_trailer '# # Co-authored-by:'
+    assert_fails attribution_is_attribution_trailer '####'
+    assert_fails attribution_is_attribution_trailer '   '
+}
+
+#[test]
+it_reports_a_byline_a_message_hid_behind_a_hash() {
+    # The surface claim rather than the predicate: a whole message carrying the
+    # commented spelling is a finding, which is what a caller scanning a tag or
+    # a pull request body actually asks.
+    local msg out
+    msg='feat: a thing
+
+A body that explains the thing.
+
+# # Co-authored-by: Claude <noreply@anthropic.com>'
+    out="$(attribution_scan_message "$msg" '')"
+    assert_contains "$out" 'trailer'
+}
+
 # --- policy is the caller's, and absent policy refuses -----------------------
 
 #[test]

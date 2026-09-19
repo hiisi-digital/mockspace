@@ -147,10 +147,28 @@ attribution_selfcheck() {
 # This is the net that keeps working when a new tool ships, so a caller wanting
 # one check should want this one.
 #
+# Whitespace and hashes come off the front first, in any order and any number,
+# because the anchor was the hole. A byline behind one leading space failed the
+# match and the scan reported nothing, and so did every spelling with a `#` in
+# front of it. Measured on git 2.55.0: `git commit -F` stores
+# `# # Co-Authored-By: ...` in the body verbatim while git's own trailer parser
+# returns nothing for it, so a byline spelled that way passes the parser the
+# callers use for commit trailers and passed this net as well. What comes off is
+# the whole class rather than the spellings somebody thought of, since the two
+# previous repairs of this shape in the commit-msg hook each named a spelling
+# and the next spelling got through.
+#
+# A quotation stays safe, because the convention here is to backtick the
+# forbidden string and a leading backtick is not stripped. A heading spelling
+# out a live key with a real value and no backticks does read as a trailer, and
+# that is the trade: the cheaper repair is to backtick it.
+#
 # Usage: attribution_is_attribution_trailer "$line" && ...
 #[pub]
 attribution_is_attribution_trailer() {
-    printf '%s' "${1:-}" | grep -qiE "^(${ATTRIBUTION_TRAILER_KEY_RE}):[[:space:]]*[^[:space:]]"
+    local line="${1:-}"
+    line="${line#"${line%%[![:space:]#]*}"}"
+    printf '%s' "$line" | grep -qiE "^(${ATTRIBUTION_TRAILER_KEY_RE}):[[:space:]]*[^[:space:]]"
 }
 
 # attribution_names_agent <line>
