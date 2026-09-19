@@ -174,9 +174,20 @@ attribution_selfcheck() {
 # markdown code block indented by four spaces, or a YAML document, or a struct
 # literal in a diff. `attribution_strip_quoted` knows a fence and an inline
 # backtick and does not know an indented block, and the trailer path never calls
-# it. Measured over both repositories' whole histories at the time it landed, the
-# widening matched nothing new, so this is a shape to know about rather than a
-# reported one. `it_reads_an_indented_author_line_as_a_trailer` is where it is
+# it.
+#
+# What that costs is measured rather than argued, by the two scripts under
+# `mock/research/sketches/the-anchorless-trailer-net-corpus/`, and the answer
+# depends on which corpus is asked. Over commit messages, every commit reachable
+# from every ref in this repository and in the clause-dev workspace repository,
+# the widening newly matches nothing. Over tracked file content it newly matches
+# three lines here, two of them a struct literal in
+# `mock/crates/mockspace-core/src/io/ref_write.rs` whose fields are named
+# `author` and `committer`. So the shape is real and somebody can go and read
+# it, and nothing refuses over it today because the trailer path is called on
+# commit messages and on markdown rather than on rust. Run the scripts rather
+# than trusting the counts in this paragraph, which were true when they were
+# taken. `it_reads_an_indented_author_line_as_a_trailer` is where the shape is
 # written down, and it is a pin on today's answer rather than an endorsement.
 #
 # A quotation stays safe, because the convention here is to backtick the

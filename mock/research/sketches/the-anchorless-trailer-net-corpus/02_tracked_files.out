@@ -1,0 +1,15 @@
+control held: the marked byline is newly matched, the subject is not
+
+repo:     /Users/orgrinrt/Dev/clause-work/kenno/.worktrees/ms-attribution
+ref:      HEAD (5b09587)
+anchored: 3
+widened:  6
+newly:    3
+
+what the widening newly matches, with the line it matched:
+  mock/crates/mockspace-core/src/io/ref_write.rs:147
+                author:        signature.clone(),
+  mock/crates/mockspace-core/src/io/ref_write.rs:148
+                committer:     signature,
+  tests/attribution_test.sh:205
+    # # Co-authored-by: Claude <noreply@anthropic.com>'
