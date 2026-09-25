@@ -35,6 +35,7 @@ pub mod hooks;
 mod index;
 mod seed;
 mod worker;
+mod worker_args;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

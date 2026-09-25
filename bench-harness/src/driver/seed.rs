@@ -22,14 +22,11 @@ pub(super) fn parse_seed(s: &str) -> Result<u64, String> {
     parsed.map_err(|e| format!("`{s}` is not a seed, decimal or 0x hex: {e}"))
 }
 
-/// A comma-separated list of seeds, every one of which has to parse, and at
-/// least one of which has to be there.
+/// A comma-separated list of seeds, every one of which has to parse. `split`
+/// yields at least one token, so an empty list is an empty seed and refused
+/// as one.
 pub(super) fn parse_seeds(s: &str) -> Result<Vec<u64>, String> {
-    let seeds = s.split(',').map(parse_seed).collect::<Result<Vec<_>, _>>()?;
-    if seeds.is_empty() {
-        return Err("no seeds were given".to_string());
-    }
-    Ok(seeds)
+    s.split(',').map(parse_seed).collect()
 }
 
 #[cfg(test)]
