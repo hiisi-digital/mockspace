@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::BenchConfig;
 use crate::core::counter::{self, Rng};
-use crate::core::{AbiHashFn, BenchEntryFn, BenchNameFn, abi_hash};
+use crate::core::{AbiHashFn, BenchEntryFn, BenchNameFn, OutputSizeFn, abi_hash};
 use crate::env::{EnvMeta, collect_env_meta};
 use crate::error::BenchError;
 use crate::sample::{BenchResult, Sample};
@@ -123,20 +123,18 @@ fn meta_json_path(csv_path: &str) -> String {
 /// against a compatible `mockspace-bench-core` ABI; the function
 /// double-checks via the `bench_abi_hash` symbol but the dlopen
 /// itself runs initialisers and is unsafe by definition.
-unsafe fn load_variant(dylib_path: &str) -> Result<(String, BenchEntryFn), String> {
+unsafe fn load_variant(
+    dylib_path: &str,
+    n: usize,
+    output_size: usize,
+) -> Result<(String, BenchEntryFn), String> {
+    // SAFETY: the caller's contract above; loading runs the variant's
+    // initialisers and nothing else.
     let lib = unsafe { libloading::Library::new(dylib_path) }
         .map_err(|e| format!("dlopen failed: {e}"))?;
-
-    let hash_fn: libloading::Symbol<AbiHashFn> = unsafe { lib.get(b"bench_abi_hash") }
-        .map_err(|e| format!("missing bench_abi_hash symbol: {e}"))?;
-    let found = hash_fn();
-    let expected = abi_hash();
-    if found != expected {
-        return Err(format!(
-            "ABI hash mismatch: variant has {found:#x}, harness expects {expected:#x}. \
-             Rebuild the variant against the current mockspace-bench-core."
-        ));
-    }
+    // SAFETY: `lib` was just loaded, and the checks call only the hash and
+    // size exports at the types `bench-core` declares for them.
+    unsafe { check_variant(&lib, n, output_size) }?;
 
     let entry: libloading::Symbol<BenchEntryFn> = unsafe { lib.get(b"bench_entry") }
         .map_err(|e| format!("missing bench_entry symbol: {e}"))?;
@@ -150,6 +148,104 @@ unsafe fn load_variant(dylib_path: &str) -> Result<(String, BenchEntryFn), Strin
     // remainder of the worker's lifetime.
     std::mem::forget(lib);
     Ok((name, entry_fn))
+}
+
+/// Load a variant in this process, run the checks a worker runs before calling
+/// it, and unload it again. `bench_entry` is never called.
+///
+/// The driver runs this over every variant before a cell does anything else,
+/// so a refusal arrives with its reason and fails that cell alone. Left to the
+/// worker, a refused variant produces no samples and its reason goes only to
+/// the worker's stderr.
+///
+/// The hash is checked before the size, so a variant built against another
+/// `mockspace-bench-core` is told that rather than that an export is missing.
+pub fn preflight_variant(
+    dylib_path: &str,
+    n: usize,
+    output_size: usize,
+) -> Result<(), String> {
+    // SAFETY: loading a variant runs its initialisers, which every path that
+    // times one does as well; the checks call only the size and hash exports.
+    let lib = unsafe { libloading::Library::new(dylib_path) }
+        .map_err(|e| format!("dlopen failed: {e}"))?;
+    // SAFETY: `lib` was just loaded, and the checks call only the hash and
+    // size exports at the types `bench-core` declares for them.
+    unsafe { check_variant(&lib, n, output_size) }
+}
+
+/// The ABI hash and the output size, in that order, which is what the worker
+/// and the preflight both refuse on.
+///
+/// # Safety
+///
+/// `lib` must be a loaded variant; its hash and size exports are called.
+unsafe fn check_variant(lib: &libloading::Library, n: usize, output_size: usize) -> Result<(), String> {
+    // SAFETY: the symbol is read at `AbiHashFn`, the type every variant
+    // exports it at; a variant exporting it otherwise is outside the ABI the
+    // hash below is there to confirm.
+    let hash_fn: libloading::Symbol<AbiHashFn> = unsafe { lib.get(b"bench_abi_hash") }
+        .map_err(|e| format!("missing bench_abi_hash symbol: {e}"))?;
+    let found = hash_fn();
+    let expected = abi_hash();
+    if found != expected {
+        return Err(format!(
+            "ABI hash mismatch: variant has {found:#x}, harness expects {expected:#x}. \
+             Rebuild the variant against the current mockspace-bench-core."
+        ));
+    }
+    // SAFETY: the caller's contract; `lib` is a loaded variant.
+    unsafe { check_output_size(lib, n, output_size) }
+}
+
+/// Refuse a loaded variant that writes other than `expected` bytes of output
+/// at size `n`.
+///
+/// The output buffer is sized from the routine the driver resolved for the
+/// bench, and the variant writes its own routine's `Output` into it. A bench
+/// resolved to a routine that is not its own, most often one missing from the
+/// tree's `routine_for` table and falling back to the byte routine, would
+/// otherwise write past the end of the buffer on every call, which reads as a
+/// crash somewhere later rather than as the mistake it is.
+///
+/// # Safety
+///
+/// `lib` must be a loaded variant; `bench_output_size` is called, and runs
+/// the variant's code.
+pub(crate) unsafe fn check_output_size(
+    lib: &libloading::Library,
+    n: usize,
+    expected: usize,
+) -> Result<(), String> {
+    // SAFETY: the symbol is read at `OutputSizeFn`, the type `bench-core`
+    // declares it at and `#[bench_variant]` emits it at; the hash the callers
+    // check first confirms the variant was built against that declaration.
+    let size_fn: libloading::Symbol<OutputSizeFn> = unsafe { lib.get(b"bench_output_size") }
+        .map_err(|e| {
+            format!(
+                "missing bench_output_size symbol: {e}. A variant written with \
+                 #[bench_variant] gets it by rebuilding against the current \
+                 mockspace-bench-macro; a hand-written one exports \
+                 `extern \"C\" fn bench_output_size(n: usize) -> usize` itself, answering \
+                 the bytes bench_entry writes at n."
+            )
+        })?;
+    let found = size_fn(n);
+    if found == expected {
+        return Ok(());
+    }
+    if found == 0 {
+        return Err(format!(
+            "the variant declares no size {n}: its bench_output_size answers 0 there, which \
+             #[bench_variant] does for a size missing from its `sizes` list"
+        ));
+    }
+    Err(format!(
+        "the variant writes {found} bytes of output at n={n}, and the routine this bench \
+         resolved to allocates {expected}. A bench whose routine is not the generated byte \
+         routine needs an entry in the tree's `routine_for` table; otherwise `[dispatch] out` \
+         sets the byte routine's size."
+    ))
 }
 
 /// Run as a worker subprocess. Loads one dylib, runs ONE mode, prints
@@ -243,7 +339,7 @@ pub fn run_worker(
     // alongside other early-exit cases. Returning `None` from the
     // closure short-circuits the rest of the worker body.
     let (name, entry) = unsafe {
-        match load_variant(dylib_path) {
+        match load_variant(dylib_path, n, routine.bridge.output_size) {
             Ok(pair) => pair,
             Err(reason) => {
                 eprintln!("  WORKER LOAD FAIL: {} :: {}", dylib_path, reason);
@@ -846,7 +942,7 @@ pub fn run_worker_validate(
         counter::pin_to_perf_cores();
     }
     let (_name, entry) = unsafe {
-        match load_variant(dylib_path) {
+        match load_variant(dylib_path, n, routine.bridge.output_size) {
             Ok(pair) => pair,
             Err(reason) => {
                 // Zero VOUT lines already read as a skip in the

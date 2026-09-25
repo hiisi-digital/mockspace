@@ -77,29 +77,29 @@ impl Routine for ContentHash {
 }
 ```
 
-Then write one variant per implementation:
+Then write one variant per implementation, each its own cdylib, with
+`#[bench_variant]` from `mockspace-bench-macro`:
 
 ```rust
 use mockspace_bench_core::{FfiBenchCall, timed};
+use mockspace_bench_macro::bench_variant;
 
-#[no_mangle]
-pub unsafe extern "C" fn bench_entry(
-    input_ptr: *const u8,
-    output_ptr: *mut u8,
-    _n: usize,
-) -> FfiBenchCall {
-    let input = &*(input_ptr as *const [u8; 64]);
-    let output = &mut *(output_ptr as *mut u64);
+#[bench_variant("fnv", sizes = [64])]
+fn fnv<const N: usize>(input: &[u8; N], output: &mut u64) -> FfiBenchCall {
     timed! {
         run { *output = your_hash_impl(input); }
     }
 }
 ```
 
-The harness (v2) loads each variant dylib, runs them on identical
-inputs, validates, scores, and writes CSV plus `findings.md`. Until v2,
-consumers can write variants and run them via `cargo bench` or a
-hand-rolled harness; the Routine surface is forward-compatible.
+The macro writes the four exports the harness loads: `bench_entry`,
+`bench_name`, `bench_abi_hash` and `bench_output_size`. A variant
+written by hand exports the same four, and `bench_output_size(n)`
+answers the bytes `bench_entry` writes at `n`, 0 where it has no such
+size. `mockspace-bench-harness` loads each variant in its own process,
+refuses one built against another `bench-core` or writing another
+size than the routine's output, runs the rest on identical inputs,
+validates, scores, and writes CSV plus the findings report.
 
 ## Origin
 

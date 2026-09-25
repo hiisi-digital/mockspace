@@ -54,8 +54,8 @@
 //! a string literal is the typed form; an identifier is the routine
 //! form.
 //!
-//! Both forms generate `bench_entry`, `bench_name`, `bench_abi_hash`
-//! extern "C" exports plus an N-dispatch table built from the
+//! Both forms generate `bench_entry`, `bench_name`, `bench_abi_hash` and
+//! `bench_output_size` extern "C" exports plus an N-dispatch table built from the
 //! `sizes = [...]` list. The function's own `where` clauses are
 //! propagated unchanged. The function must have exactly one const
 //! generic parameter (the dispatched size).
@@ -262,24 +262,30 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     };
 
-    let dispatch_arms: Vec<_> = match &args.algo {
+    // Each size gets two arms from one spelling of the output type: the one
+    // `bench_entry` writes through, and the one `bench_output_size` measures,
+    // so the size the harness is told is the size the entry writes.
+    let (dispatch_arms, size_arms): (Vec<_>, Vec<_>) = match &args.algo {
         // Routine form: <Algo<N> as Routine>::Input/Output
         Some(algo) => args
             .sizes
             .iter()
             .map(|n| {
                 let n_lit = syn::LitInt::new(&n.to_string(), proc_macro2::Span::call_site());
-                quote! {
-                    #n_lit => {
-                        let input = &*(input_ptr
-                            as *const <#algo<#n_lit> as ::mockspace_bench_core::Routine>::Input);
-                        let output = &mut *(output_ptr
-                            as *mut <#algo<#n_lit> as ::mockspace_bench_core::Routine>::Output);
-                        #fn_name::<#n_lit>(input, output)
-                    }
-                }
+                let output_ty = quote! { <#algo<#n_lit> as ::mockspace_bench_core::Routine>::Output };
+                (
+                    quote! {
+                        #n_lit => {
+                            let input = &*(input_ptr
+                                as *const <#algo<#n_lit> as ::mockspace_bench_core::Routine>::Input);
+                            let output = &mut *(output_ptr as *mut #output_ty);
+                            #fn_name::<#n_lit>(input, output)
+                        }
+                    },
+                    quote! { #n_lit => ::core::mem::size_of::<#output_ty>(), },
+                )
             })
-            .collect(),
+            .unzip(),
         // Typed form: read input/output types from the fn signature.
         None => {
             let (input_ty, output_ty) = match extract_typed_form_types(&func) {
@@ -291,23 +297,32 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
                 .map(|n| {
                     let n_lit = syn::LitInt::new(&n.to_string(), proc_macro2::Span::call_site());
                     let n_ident = const_param_ident;
-                    quote! {
-                        #n_lit => {
-                            // Shadow the function's const generic at
-                            // dispatch time so type expressions like
-                            // `[u8; N]` resolve to `[u8; #n_lit]`.
-                            // The allow handles const-generic idents
-                            // that aren't SCREAMING_CASE (any name
-                            // the user picked for their const param).
-                            #[allow(non_upper_case_globals)]
-                            const #n_ident: usize = #n_lit;
-                            let input = &*(input_ptr as *const #input_ty);
-                            let output = &mut *(output_ptr as *mut #output_ty);
-                            #fn_name::<#n_lit>(input, output)
-                        }
-                    }
+                    (
+                        quote! {
+                            #n_lit => {
+                                // Shadow the function's const generic at
+                                // dispatch time so type expressions like
+                                // `[u8; N]` resolve to `[u8; #n_lit]`.
+                                // The allow handles const-generic idents
+                                // that aren't SCREAMING_CASE (any name
+                                // the user picked for their const param).
+                                #[allow(non_upper_case_globals)]
+                                const #n_ident: usize = #n_lit;
+                                let input = &*(input_ptr as *const #input_ty);
+                                let output = &mut *(output_ptr as *mut #output_ty);
+                                #fn_name::<#n_lit>(input, output)
+                            }
+                        },
+                        quote! {
+                            #n_lit => {
+                                #[allow(non_upper_case_globals)]
+                                const #n_ident: usize = #n_lit;
+                                ::core::mem::size_of::<#output_ty>()
+                            }
+                        },
+                    )
                 })
-                .collect()
+                .unzip()
         },
     };
 
@@ -347,6 +362,14 @@ pub fn bench_variant(attr: TokenStream, item: TokenStream) -> TokenStream {
         #[unsafe(no_mangle)]
         pub extern "C" fn bench_abi_hash() -> u64 {
             ::mockspace_bench_core::abi_hash()
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn bench_output_size(n: usize) -> usize {
+            match n {
+                #(#size_arms)*
+                _ => 0,
+            }
         }
     };
 

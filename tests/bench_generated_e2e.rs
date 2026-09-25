@@ -53,6 +53,11 @@ pub extern "C" fn bench_name() -> *const u8 {
 pub extern "C" fn bench_abi_hash() -> u64 {
     abi_hash()
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bench_output_size(_n: usize) -> usize {
+    OUTPUT_SIZE
+}
 "#;
 
 /// The hooks library: `after_cell` first asserts the cell's samples
@@ -134,7 +139,7 @@ master_seed = 7
                 .join("plusone")
                 .join("src")
                 .join("lib.rs"),
-            ARM_LIB,
+            &ARM_LIB.replace("OUTPUT_SIZE", "8"),
         );
     }
     write(&bench_dir.join("src").join("lib.rs"), HOOKS_LIB);
@@ -204,6 +209,219 @@ master_seed = 7
             .join("Cargo.toml")
             .exists(),
         "the generated arm manifest stays out of the consumer's tree"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// An arm writing more than the routine it resolved to allocates is refused
+/// before it runs, and only that arm: a bench beside it in the same tree, and
+/// a fitting arm in the same bench, still run and are promoted. The arms are
+/// the same code apart from the size they declare and their name, so the
+/// refusal can only be that size. Without it the wide arm would write past the
+/// harness's buffer on every call, which is how a bench left out of a tree's
+/// routine table crashed its worker at exit with the heap corrupted.
+#[test]
+fn an_arm_declaring_another_output_size_than_its_routine_is_refused() {
+    let repo = env!("CARGO_MANIFEST_DIR");
+    let root = std::env::temp_dir().join(format!("mockspace-bench-size-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    let mock_dir = root.join("mock");
+    let bench_dir = mock_dir.join("benches");
+
+    write(
+        &bench_dir.join("bench.toml"),
+        &format!(
+            r#"
+[build]
+mockspace = '{{ path = "{repo}" }}'
+opt-level = 0
+lto = "off"
+codegen-units = 16
+
+[timing]
+passes = 1
+runs_per_pass = 20
+batch_size = 5
+harness_runs = 1
+cooldowns_ms = [0]
+"#
+        ),
+    );
+    // The byte routine is eight bytes here, `[dispatch] out` being unset.
+    for (bench, declared) in [("fits", "8"), ("wide", "32")] {
+        write(
+            &bench_dir.join(bench).join("bench.toml"),
+            r#"
+title = "Plus one"
+workload = "default"
+arms = ["plusone"]
+points = [64]
+master_seed = 7
+"#,
+        );
+        write(
+            &bench_dir
+                .join(bench)
+                .join("arms")
+                .join("plusone")
+                .join("src")
+                .join("lib.rs"),
+            &ARM_LIB.replace("OUTPUT_SIZE", declared),
+        );
+    }
+    // Three more ways to be refused, one bench each: a size the arm does not
+    // declare, no size export at all, and a stale hash with no size export,
+    // where the hash has to be what is reported.
+    let unexported = ARM_LIB.replace(
+        "#[unsafe(no_mangle)]\npub extern \"C\" fn bench_output_size(_n: usize) -> usize {\n    OUTPUT_SIZE\n}\n",
+        "",
+    );
+    assert!(!unexported.contains("bench_output_size"), "the export was taken out");
+    let stale = unexported.replace("    abi_hash()\n", "    abi_hash() ^ 1\n");
+    assert_ne!(stale, unexported, "the hash was changed");
+    for (bench, lib) in [
+        ("undeclared", ARM_LIB.replace("OUTPUT_SIZE", "0")),
+        ("unexported", unexported.clone()),
+        ("stale", stale),
+    ] {
+        write(
+            &bench_dir.join(bench).join("bench.toml"),
+            r#"
+title = "Plus one"
+workload = "default"
+arms = ["plusone"]
+points = [64]
+master_seed = 7
+"#,
+        );
+        write(
+            &bench_dir
+                .join(bench)
+                .join("arms")
+                .join("plusone")
+                .join("src")
+                .join("lib.rs"),
+            &lib,
+        );
+    }
+    // One bench holding both: the fitting arm and a wide one under its own name.
+    write(
+        &bench_dir.join("mixed").join("bench.toml"),
+        r#"
+title = "Plus one"
+workload = "default"
+arms = ["plusone", "wideone"]
+points = [64]
+master_seed = 7
+"#,
+    );
+    for (arm, declared) in [("plusone", "8"), ("wideone", "32")] {
+        write(
+            &bench_dir
+                .join("mixed")
+                .join("arms")
+                .join(arm)
+                .join("src")
+                .join("lib.rs"),
+            &ARM_LIB
+                .replace("OUTPUT_SIZE", declared)
+                .replace("b\"plusone", &format!("b\"{arm}")),
+        );
+    }
+
+    let cfg = mockspace::config::Config::from_dir(&mock_dir);
+    let code = mockspace::bench::cmd(&cfg, &["run"]);
+    assert_eq!(
+        format!("{code:?}"),
+        format!("{:?}", std::process::ExitCode::FAILURE),
+        "a refused arm must fail the run"
+    );
+    for bench in ["fits", "mixed"] {
+        assert!(
+            bench_dir
+                .join("results")
+                .join(bench)
+                .join(format!("{bench}_n64.csv"))
+                .is_file(),
+            "{bench}: the arm that fits its routine still runs and is promoted"
+        );
+    }
+    assert!(
+        bench_dir.join("history").join("fits").is_dir(),
+        "the fitting bench reaches the ledger"
+    );
+    let mixed = std::fs::read_to_string(
+        bench_dir
+            .join("results")
+            .join("mixed")
+            .join("mixed_n64.csv"),
+    )
+    .unwrap();
+    assert!(mixed.contains("plusone"), "the fitting arm was measured: {mixed}");
+    assert!(
+        !mixed.contains("wideone"),
+        "the refused arm left no sample beside it: {mixed}"
+    );
+    for bench in ["undeclared", "unexported", "stale"] {
+        assert!(
+            !bench_dir.join("results").join(bench).join(format!("{bench}_n64.csv")).exists(),
+            "{bench}: a refused arm is not measured"
+        );
+    }
+
+    // Each refusal says why, which the run only prints. The arms are built by
+    // now, so ask the preflight the driver ran, at the byte routine's 8 bytes.
+    let arm = |bench: &str, arm: &str| {
+        bench_dir
+            .join("target")
+            .join("mock-arms")
+            .join(bench)
+            .join(arm)
+            .join("release")
+            .join(format!(
+                "{}{arm}{}",
+                std::env::consts::DLL_PREFIX,
+                std::env::consts::DLL_SUFFIX
+            ))
+            .display()
+            .to_string()
+    };
+    let refusal = |bench: &str, name: &str| {
+        mockspace_bench_harness::harness::preflight_variant(&arm(bench, name), 64, 8)
+            .expect_err(&format!("{bench}/{name} must be refused"))
+    };
+    assert!(
+        mockspace_bench_harness::harness::preflight_variant(&arm("fits", "plusone"), 64, 8)
+            .is_ok(),
+        "the control: the fitting arm passes the same preflight"
+    );
+    let wide = refusal("wide", "plusone");
+    assert!(wide.contains("writes 32 bytes") && wide.contains("allocates 8"), "{wide}");
+    let undeclared = refusal("undeclared", "plusone");
+    assert!(undeclared.contains("declares no size 64"), "{undeclared}");
+    let unexported = refusal("unexported", "plusone");
+    assert!(
+        unexported.contains("missing bench_output_size") && unexported.contains("hand-written"),
+        "{unexported}"
+    );
+    let stale = refusal("stale", "plusone");
+    assert!(stale.contains("ABI hash mismatch"), "{stale}");
+    assert!(
+        !stale.contains("bench_output_size"),
+        "the hash is checked before the size export: {stale}"
+    );
+    assert!(
+        !bench_dir
+            .join("results")
+            .join("wide")
+            .join("wide_n64.csv")
+            .exists(),
+        "the bench whose arm declares 32 bytes against an 8-byte routine is refused"
+    );
+    assert!(
+        !bench_dir.join("history").join("wide").exists(),
+        "and nothing of it reaches the ledger"
     );
 
     std::fs::remove_dir_all(&root).ok();

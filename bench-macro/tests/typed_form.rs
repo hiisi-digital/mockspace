@@ -36,6 +36,23 @@ fn macro_generates_abi_hash_export() {
 }
 
 #[test]
+fn macro_exports_the_output_size_of_each_declared_size() {
+    // The harness sizes the output buffer from the routine and refuses a
+    // variant whose own output is another size, so this must be the size the
+    // entry writes through at each `N`.
+    assert_eq!(bench_output_size(8), core::mem::size_of::<[u8; 8]>());
+    assert_eq!(bench_output_size(16), 16);
+    assert_eq!(bench_output_size(32), 32);
+}
+
+#[test]
+fn an_undeclared_size_has_no_output_size() {
+    for n in [0, 7, 9, 24, 64, usize::MAX] {
+        assert_eq!(bench_output_size(n), 0, "n={n} is not in sizes = [8, 16, 32]");
+    }
+}
+
+#[test]
 fn dispatch_at_supported_size_copies_input_to_output() {
     let input: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
     let mut output: [u8; 8] = [0; 8];

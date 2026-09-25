@@ -7,8 +7,11 @@ Proc macro for the mockspace bench harness.
 `#[bench_variant(Algo, "name", sizes = [64, 128, 256])]` decorates a
 generic function and emits the `extern "C"` exports the harness loads
 from each variant cdylib (`bench_entry`, `bench_name`,
-`bench_abi_hash`) plus an N-dispatch table built from the `sizes`
-list.
+`bench_abi_hash`, `bench_output_size`) plus an N-dispatch table built
+from the `sizes` list. `bench_output_size(n)` answers the size of the
+output the entry writes at `n`, and 0 for a size not in the list; the
+harness refuses a variant whose answer differs from the output buffer
+of the routine it resolved, before calling it.
 
 Generalised port of `polka-dots/mock/benches/bench-macro/`. The
 polka-dots version hardcoded `include!("../../supported_n.rs")` to

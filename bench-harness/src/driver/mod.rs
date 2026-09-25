@@ -138,6 +138,12 @@ pub(super) fn resolve_routine(
     if let Some(found) = spec.hooks.routine_for.and_then(|h| h(config)) {
         return Ok(found);
     }
+    // FIXME: a bench missing from `routine_for` whose own routine's `Output`
+    // happens to be the byte routine's size falls through here silently and is
+    // validated and scored as bytes; the preflight's size check catches only
+    // a size that differs. Closing it needs the variant to name its routine
+    // (an exported routine identity beside `bench_output_size`), which the
+    // design does not yet say.
     match (spec.byte_dispatch.dispatch)(config.n, config.may_differ) {
         Some(bridge) => {
             Ok(RoutineSpec {
@@ -414,6 +420,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
     let mut deferred_history: Vec<(PathBuf, String, Vec<HistoryEntry>)> = Vec::new();
     let mut required_failure = false;
     let mut hook_failure = false;
+    let mut refused_failure = false;
     let total = configs.len();
     let started = Instant::now();
 
@@ -481,6 +488,33 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 | 1;
             config.master_seed = random;
             eprintln!("  master seed: {random:#x} (replay with --seed {random:#x})");
+        }
+
+        // ── preflight: every variant loads and fits its routine ──
+        // Before validation, which needs two variants and so never sees a
+        // bench of one, and before any worker, which would run a refused
+        // variant into an empty sample set. A refusal fails the run and
+        // takes out only its own variant; the rest of the cell, and every
+        // other cell, still runs and is promoted.
+        {
+            let (n, output_size) = (config.n, routine.bridge.output_size);
+            config.variant_paths.retain(|path| {
+                match harness::preflight_variant(&path.display().to_string(), n, output_size) {
+                    Ok(()) => true,
+                    Err(reason) => {
+                        eprintln!("  REFUSED: {} :: {reason}", path.display());
+                        refused_failure = true;
+                        false
+                    },
+                }
+            });
+            if config.variant_paths.is_empty() {
+                eprintln!(
+                    "  SKIPPED: every variant of `{}` n={} was refused; nothing to measure",
+                    config.bench_name, config.n
+                );
+                continue;
+            }
         }
 
         // ── pre-run validation (feeds `required`) ──
@@ -715,14 +749,19 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
     let wall = started.elapsed().as_secs_f64();
     eprintln!("\ntotal: {wall:.1}s");
 
-    final_exit(required_failure, hook_failure)
+    final_exit(refused_failure, required_failure, hook_failure)
 }
 
-/// Fold the two failure classes into the process exit. A `required`
-/// validation drop and an `after_cell` `Fail` verdict each fail the
-/// run; both are reported after promotion so the staged results and
-/// the ledger reflect what actually ran.
-fn final_exit(required_failure: bool, hook_failure: bool) -> ExitCode {
+/// Fold the three failure classes into the process exit. A variant
+/// refused at preflight, a `required` validation drop and an
+/// `after_cell` `Fail` verdict each fail the run; all three are
+/// reported after promotion so the staged results and the ledger
+/// reflect what actually ran.
+fn final_exit(refused_failure: bool, required_failure: bool, hook_failure: bool) -> ExitCode {
+    if refused_failure {
+        eprintln!("FAILED: a variant was refused before it ran; its reason is above");
+        return ExitCode::FAILURE;
+    }
     if required_failure {
         eprintln!("FAILED: a `required = true` bench dropped variants in validation");
         return ExitCode::FAILURE;
@@ -904,10 +943,11 @@ mod tests {
     #[test]
     fn each_failure_class_fails_the_exit_alone() {
         let f = failure();
-        assert_eq!(format!("{:?}", final_exit(true, false)), f);
-        assert_eq!(format!("{:?}", final_exit(false, true)), f);
+        assert_eq!(format!("{:?}", final_exit(true, false, false)), f);
+        assert_eq!(format!("{:?}", final_exit(false, true, false)), f);
+        assert_eq!(format!("{:?}", final_exit(false, false, true)), f);
         assert_eq!(
-            format!("{:?}", final_exit(false, false)),
+            format!("{:?}", final_exit(false, false, false)),
             format!("{:?}", ExitCode::SUCCESS)
         );
     }
