@@ -179,7 +179,7 @@ attribution_selfcheck() {
 # What that costs is measured rather than argued, by the two scripts under
 # `mock/research/sketches/the-anchorless-trailer-net-corpus/`, and the answer
 # depends on which corpus is asked. Over commit messages, every commit reachable
-# from every ref in this repository and in the clause-dev workspace repository,
+# from every ref in this repository and in one private workspace repository,
 # the widening newly matches nothing. Over tracked file content it newly matches
 # three lines here, two of them a struct literal in
 # `mock/crates/mockspace-core/src/io/ref_write.rs` whose fields are named
