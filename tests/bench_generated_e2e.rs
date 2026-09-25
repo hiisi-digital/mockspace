@@ -53,6 +53,11 @@ pub extern "C" fn bench_name() -> *const u8 {
 pub extern "C" fn bench_abi_hash() -> u64 {
     abi_hash()
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bench_output_size(_n: usize) -> usize {
+    OUTPUT_SIZE
+}
 "#;
 
 /// The hooks library: `after_cell` first asserts the cell's samples
@@ -134,7 +139,7 @@ master_seed = 7
                 .join("plusone")
                 .join("src")
                 .join("lib.rs"),
-            ARM_LIB,
+            &ARM_LIB.replace("OUTPUT_SIZE", "8"),
         );
     }
     write(&bench_dir.join("src").join("lib.rs"), HOOKS_LIB);
@@ -204,6 +209,93 @@ master_seed = 7
             .join("Cargo.toml")
             .exists(),
         "the generated arm manifest stays out of the consumer's tree"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// A bench whose arm writes more than the routine it resolved to allocates is
+/// refused before it runs, and a bench beside it in the same tree still runs.
+/// The two arms are the same code apart from the size they declare, so the
+/// refusal can only be that size. Without it the wide arm would write past the
+/// harness's buffer on every call, which is how a bench left out of a tree's
+/// routine table crashed its worker at exit with the heap corrupted.
+#[test]
+fn an_arm_declaring_another_output_size_than_its_routine_is_refused() {
+    let repo = env!("CARGO_MANIFEST_DIR");
+    let root = std::env::temp_dir().join(format!("mockspace-bench-size-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    let mock_dir = root.join("mock");
+    let bench_dir = mock_dir.join("benches");
+
+    write(
+        &bench_dir.join("bench.toml"),
+        &format!(
+            r#"
+[build]
+mockspace = '{{ path = "{repo}" }}'
+opt-level = 0
+lto = "off"
+codegen-units = 16
+
+[timing]
+passes = 1
+runs_per_pass = 20
+batch_size = 5
+harness_runs = 1
+cooldowns_ms = [0]
+"#
+        ),
+    );
+    // The byte routine is eight bytes here, `[dispatch] out` being unset.
+    for (bench, declared) in [("fits", "8"), ("wide", "32")] {
+        write(
+            &bench_dir.join(bench).join("bench.toml"),
+            r#"
+title = "Plus one"
+workload = "default"
+arms = ["plusone"]
+points = [64]
+master_seed = 7
+"#,
+        );
+        write(
+            &bench_dir
+                .join(bench)
+                .join("arms")
+                .join("plusone")
+                .join("src")
+                .join("lib.rs"),
+            &ARM_LIB.replace("OUTPUT_SIZE", declared),
+        );
+    }
+
+    let cfg = mockspace::config::Config::from_dir(&mock_dir);
+    let code = mockspace::bench::cmd(&cfg, &["run"]);
+    assert_eq!(
+        format!("{code:?}"),
+        format!("{:?}", std::process::ExitCode::FAILURE),
+        "a refused bench must fail the run"
+    );
+    assert!(
+        bench_dir
+            .join("results")
+            .join("fits")
+            .join("fits_n64.csv")
+            .is_file(),
+        "the bench whose arm fits its routine still runs"
+    );
+    assert!(
+        !bench_dir
+            .join("results")
+            .join("wide")
+            .join("wide_n64.csv")
+            .exists(),
+        "the bench whose arm declares 32 bytes against an 8-byte routine is refused"
+    );
+    assert!(
+        !bench_dir.join("history").join("wide").exists(),
+        "and nothing of it reaches the ledger"
     );
 
     std::fs::remove_dir_all(&root).ok();

@@ -84,6 +84,12 @@ pub fn measure(
                     found,
                 });
             }
+            crate::harness::check_output_size(&lib, n, output_size).map_err(|reason| {
+                BenchError::DylibLoadFailed {
+                    path: path.into(),
+                    reason,
+                }
+            })?;
 
             let entry: libloading::Symbol<BenchEntryFn> = lib.get(b"bench_entry").map_err(|e| {
                 BenchError::DylibLoadFailed {

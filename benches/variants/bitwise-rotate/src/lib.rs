@@ -41,3 +41,10 @@ pub extern "C" fn bench_name() -> *const u8 {
 pub extern "C" fn bench_abi_hash() -> u64 {
     abi_hash()
 }
+
+/// The bytes `bench_entry` writes through its output pointer, which the
+/// harness checks against the routine's output buffer before calling it.
+#[unsafe(no_mangle)]
+pub extern "C" fn bench_output_size(_n: usize) -> usize {
+    core::mem::size_of::<u64>()
+}

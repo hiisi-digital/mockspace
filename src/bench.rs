@@ -1647,6 +1647,14 @@ pub extern "C" fn bench_name() -> *const u8 {
 pub extern "C" fn bench_abi_hash() -> u64 {
     abi_hash()
 }
+
+/// The bytes `bench_entry` writes at size `n`. The harness refuses the arm
+/// when this is not the size of the routine's output, so change it with the
+/// output type.
+#[unsafe(no_mangle)]
+pub extern "C" fn bench_output_size(_n: usize) -> usize {
+    core::mem::size_of::<u64>()
+}
 "#;
 
 /// The legacy flat-tree variant manifest, for `add` in trees that

@@ -461,6 +461,16 @@ pub type BenchNameFn = extern "C" fn() -> *const u8;
 /// ABI hash for version checking on dylib load.
 pub type AbiHashFn = extern "C" fn() -> u64;
 
+/// How many bytes a variant writes through `bench_entry`'s output pointer at
+/// size `n`, or 0 for a size it does not declare.
+///
+/// The harness allocates the output buffer from the routine it resolved for
+/// the bench, and the variant writes its own routine's `Output`. Nothing else
+/// ties the two together, so a bench resolved to the wrong routine writes past
+/// the end of the buffer; the harness compares this against the routine's size
+/// on load and refuses the variant instead.
+pub type OutputSizeFn = extern "C" fn(n: usize) -> usize;
+
 /// Compute the ABI hash at compile time. FNV-1a over the FfiBenchCall
 /// layout. Variants compile-in this hash at build time; on load, the
 /// harness checks the hash to detect ABI drift.

@@ -309,8 +309,8 @@ pub fn validate(
     let mut rng = Rng::new(VALIDATION_ROOT_SEED);
     let seeds: Vec<u64> = (0 .. validation_seeds).map(|_| rng.next()).collect();
 
-    // ABI-hash and name checks only: the library is dropped right
-    // after, and `bench_entry` is never called in this process.
+    // ABI-hash, output-size and name checks only: the library is dropped
+    // right after, and `bench_entry` is never called in this process.
     let mut names: Vec<String> = Vec::new();
 
     for path in variant_paths {
@@ -338,6 +338,15 @@ pub fn validate(
                     found,
                 });
             }
+            // Here as well as in the worker, so a bench on the wrong routine
+            // is refused with its reason before any worker writes past a
+            // buffer and dies of it.
+            crate::harness::check_output_size(&lib, n, output_size).map_err(|reason| {
+                BenchError::DylibLoadFailed {
+                    path: path.into(),
+                    reason,
+                }
+            })?;
 
             let name_fn: libloading::Symbol<BenchNameFn> = lib.get(b"bench_name").map_err(|e| {
                 BenchError::DylibLoadFailed {

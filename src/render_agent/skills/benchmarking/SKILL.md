@@ -10,8 +10,12 @@ measuring something other than the thing under test.
 ## The three layers
 
 **`mockspace-bench-core`** is what a variant links: `FfiBenchCall`, the `timed!` macro, `abi_hash`,
-and `byte_routine_dispatch!`. A variant cdylib exports `bench_entry`, `bench_name` and
-`bench_abi_hash`, and the driver finds them by dlsym.
+and `byte_routine_dispatch!`. A variant cdylib exports `bench_entry`, `bench_name`,
+`bench_abi_hash` and `bench_output_size`, and the driver finds them by dlsym. **A variant whose
+`bench_output_size(n)` differs from the output buffer of the routine the bench resolved is refused
+before it runs**: a bench missing from the `routine_for` table falls through to the byte routine at
+`[dispatch] out` bytes, and an arm writing a wider output would otherwise corrupt the heap and be
+validated against the wrong routine.
 
 **`mockspace-bench-harness`** is the transport. Cdylib-per-variant isolation, the subprocess driver,
 the workload programs, validation, analysis, history, and the multi-axis spec-to-variant-crate codegen
