@@ -425,7 +425,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
     let total = configs.len();
     let started = Instant::now();
 
-    for (idx, config) in configs.iter().enumerate() {
+    for (idx, config) in configs.iter_mut().enumerate() {
         let elapsed = started.elapsed().as_secs_f64();
         let eta = if idx > 0 {
             let per = elapsed / idx as f64;
