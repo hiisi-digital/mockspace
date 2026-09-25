@@ -130,18 +130,7 @@ unsafe fn load_variant(
 ) -> Result<(String, BenchEntryFn), String> {
     let lib = unsafe { libloading::Library::new(dylib_path) }
         .map_err(|e| format!("dlopen failed: {e}"))?;
-    unsafe { check_output_size(&lib, n, output_size) }?;
-
-    let hash_fn: libloading::Symbol<AbiHashFn> = unsafe { lib.get(b"bench_abi_hash") }
-        .map_err(|e| format!("missing bench_abi_hash symbol: {e}"))?;
-    let found = hash_fn();
-    let expected = abi_hash();
-    if found != expected {
-        return Err(format!(
-            "ABI hash mismatch: variant has {found:#x}, harness expects {expected:#x}. \
-             Rebuild the variant against the current mockspace-bench-core."
-        ));
-    }
+    unsafe { check_variant(&lib, n, output_size) }?;
 
     let entry: libloading::Symbol<BenchEntryFn> = unsafe { lib.get(b"bench_entry") }
         .map_err(|e| format!("missing bench_entry symbol: {e}"))?;
@@ -155,6 +144,45 @@ unsafe fn load_variant(
     // remainder of the worker's lifetime.
     std::mem::forget(lib);
     Ok((name, entry_fn))
+}
+
+/// Load a variant in this process, run the checks a worker runs before calling
+/// it, and unload it again. `bench_entry` is never called.
+///
+/// The driver runs this over every variant before a cell does anything else,
+/// so a refusal arrives with its reason and fails that cell alone. Left to the
+/// worker, a refused variant produces no samples and its reason goes only to
+/// the worker's stderr.
+pub(crate) fn preflight_variant(
+    dylib_path: &str,
+    n: usize,
+    output_size: usize,
+) -> Result<(), String> {
+    // SAFETY: loading a variant runs its initialisers, which every path that
+    // times one does as well; the checks call only the size and hash exports.
+    let lib = unsafe { libloading::Library::new(dylib_path) }
+        .map_err(|e| format!("dlopen failed: {e}"))?;
+    unsafe { check_variant(&lib, n, output_size) }
+}
+
+/// The ABI hash and the output size, in that order, which is what the worker
+/// and the preflight both refuse on.
+///
+/// # Safety
+///
+/// `lib` must be a loaded variant; its hash and size exports are called.
+unsafe fn check_variant(lib: &libloading::Library, n: usize, output_size: usize) -> Result<(), String> {
+    let hash_fn: libloading::Symbol<AbiHashFn> = unsafe { lib.get(b"bench_abi_hash") }
+        .map_err(|e| format!("missing bench_abi_hash symbol: {e}"))?;
+    let found = hash_fn();
+    let expected = abi_hash();
+    if found != expected {
+        return Err(format!(
+            "ABI hash mismatch: variant has {found:#x}, harness expects {expected:#x}. \
+             Rebuild the variant against the current mockspace-bench-core."
+        ));
+    }
+    unsafe { check_output_size(lib, n, output_size) }
 }
 
 /// Refuse a loaded variant that writes other than `expected` bytes of output

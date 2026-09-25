@@ -214,9 +214,10 @@ master_seed = 7
     std::fs::remove_dir_all(&root).ok();
 }
 
-/// A bench whose arm writes more than the routine it resolved to allocates is
-/// refused before it runs, and a bench beside it in the same tree still runs.
-/// The two arms are the same code apart from the size they declare, so the
+/// An arm writing more than the routine it resolved to allocates is refused
+/// before it runs, and only that arm: a bench beside it in the same tree, and
+/// a fitting arm in the same bench, still run and are promoted. The arms are
+/// the same code apart from the size they declare and their name, so the
 /// refusal can only be that size. Without it the wide arm would write past the
 /// harness's buffer on every call, which is how a bench left out of a tree's
 /// routine table crashed its worker at exit with the heap corrupted.
@@ -269,21 +270,63 @@ master_seed = 7
             &ARM_LIB.replace("OUTPUT_SIZE", declared),
         );
     }
+    // One bench holding both: the fitting arm and a wide one under its own name.
+    write(
+        &bench_dir.join("mixed").join("bench.toml"),
+        r#"
+title = "Plus one"
+workload = "default"
+arms = ["plusone", "wideone"]
+points = [64]
+master_seed = 7
+"#,
+    );
+    for (arm, declared) in [("plusone", "8"), ("wideone", "32")] {
+        write(
+            &bench_dir
+                .join("mixed")
+                .join("arms")
+                .join(arm)
+                .join("src")
+                .join("lib.rs"),
+            &ARM_LIB
+                .replace("OUTPUT_SIZE", declared)
+                .replace("b\"plusone", &format!("b\"{arm}")),
+        );
+    }
 
     let cfg = mockspace::config::Config::from_dir(&mock_dir);
     let code = mockspace::bench::cmd(&cfg, &["run"]);
     assert_eq!(
         format!("{code:?}"),
         format!("{:?}", std::process::ExitCode::FAILURE),
-        "a refused bench must fail the run"
+        "a refused arm must fail the run"
     );
+    for bench in ["fits", "mixed"] {
+        assert!(
+            bench_dir
+                .join("results")
+                .join(bench)
+                .join(format!("{bench}_n64.csv"))
+                .is_file(),
+            "{bench}: the arm that fits its routine still runs and is promoted"
+        );
+    }
     assert!(
+        bench_dir.join("history").join("fits").is_dir(),
+        "the fitting bench reaches the ledger"
+    );
+    let mixed = std::fs::read_to_string(
         bench_dir
             .join("results")
-            .join("fits")
-            .join("fits_n64.csv")
-            .is_file(),
-        "the bench whose arm fits its routine still runs"
+            .join("mixed")
+            .join("mixed_n64.csv"),
+    )
+    .unwrap();
+    assert!(mixed.contains("plusone"), "the fitting arm was measured: {mixed}");
+    assert!(
+        !mixed.contains("wideone"),
+        "the refused arm left no sample beside it: {mixed}"
     );
     assert!(
         !bench_dir
