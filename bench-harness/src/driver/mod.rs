@@ -33,6 +33,7 @@
 
 pub mod hooks;
 mod index;
+mod samples;
 mod seed;
 mod worker;
 mod worker_args;
@@ -480,6 +481,8 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
 
         // ── master-seed resolution (replayable) ──
         let mut config = config.clone();
+        // Before validation, the workers and the deadline, which all read it.
+        config.max_call_us = samples::call_bound(config.max_call_us, routine.bridge.max_call_us, config.n);
         if config.master_seed == 0 {
             let random = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -588,23 +591,38 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
         // describes neither of them, which is the worst shape a wrong number
         // can take. The manifest cannot catch this: the name lives in the
         // dylib, not in the path.
+        // A worker that failed or was killed leaves no samples and so no name
+        // either, which reads exactly like a collision; no samples at all is
+        // only ever that, and fewer names with some samples is either.
         {
-            let mut labels: Vec<&str> = result.samples.iter().map(|s| s.variant.as_str()).collect();
-            labels.sort_unstable();
-            labels.dedup();
-            if labels.len() < config.variant_paths.len() {
-                eprintln!(
-                    "error: bench `{}` n={} ran {} variants whose samples carry only \
-                     {} distinct names ({}); two of them export the same `bench_name`, \
-                     so their samples merged and the reported median would describe \
-                     neither. Give each variant its own name.",
-                    config.bench_name,
-                    config.n,
-                    config.variant_paths.len(),
-                    labels.len(),
-                    labels.join(", "),
-                );
-                return ExitCode::FAILURE;
+            let labels: Vec<&str> = result.samples.iter().map(|s| s.variant.as_str()).collect();
+            match samples::names(&labels, config.variant_paths.len()) {
+                samples::Names::Whole => {},
+                samples::Names::NoneLeft => {
+                    eprintln!(
+                        "error: bench `{}` n={} ran {} variants and none left a sample: \
+                         every worker failed or was killed, as the lines above say.",
+                        config.bench_name,
+                        config.n,
+                        config.variant_paths.len(),
+                    );
+                    return ExitCode::FAILURE;
+                },
+                samples::Names::Fewer {
+                    names,
+                } => {
+                    eprintln!(
+                        "error: bench `{}` n={} ran {} variants whose samples carry only \
+                         {names} distinct names: a worker above failed or was killed, or \
+                         two variants export the same `bench_name`, so their samples \
+                         merged and the reported median would describe neither. Give each \
+                         variant its own name.",
+                        config.bench_name,
+                        config.n,
+                        config.variant_paths.len(),
+                    );
+                    return ExitCode::FAILURE;
+                },
             }
         }
         if let Err(e) = harness::write_csv(&result, &csv_path) {
