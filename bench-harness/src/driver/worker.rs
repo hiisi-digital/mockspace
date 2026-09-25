@@ -88,9 +88,17 @@ pub(super) fn drive_worker(spec: &DriverSpec, cli: &Cli) -> ExitCode {
     let workload = (spec.build_workload)(&workload_name, n);
 
     if mode == "validate" {
-        let seeds: Vec<u64> = get("--seeds")
-            .map(|s| s.split(',').filter_map(|t| t.parse().ok()).collect())
-            .unwrap_or_default();
+        let seeds = match get("--seeds").as_deref().map(super::seed::parse_seeds) {
+            Some(Ok(seeds)) => seeds,
+            Some(Err(e)) => {
+                eprintln!("error: worker `--seeds`: {e}");
+                return ExitCode::FAILURE;
+            },
+            None => {
+                eprintln!("error: a validate worker wants `--seeds`, and without one it checks nothing");
+                return ExitCode::FAILURE;
+            },
+        };
         harness::run_worker_validate(&routine, &dylib_path, &seeds, n, threaded);
         return ExitCode::SUCCESS;
     }
