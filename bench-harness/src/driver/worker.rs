@@ -10,6 +10,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use super::worker_args::{WorkerArgs, worker_args};
 use super::{Cli, DriverSpec, resolve_routine};
 use crate::config::BenchConfig;
 use crate::harness;
@@ -18,31 +19,26 @@ use crate::harness;
 /// passed, rebuild the routine and workload from the manifest, and
 /// run the worker loop.
 pub(super) fn drive_worker(spec: &DriverSpec, cli: &Cli) -> ExitCode {
-    let args = &cli.raw;
-    let get = |flag: &str| -> Option<String> {
-        args.iter()
-            .position(|a| a == flag)
-            .and_then(|pos| args.get(pos + 1).cloned())
-    };
-    let dylib_path = match get("--worker") {
-        Some(p) => p,
-        None => {
-            eprintln!("error: --worker requires a dylib path");
+    let WorkerArgs {
+        dylib_path,
+        bench_name,
+        seed,
+        cooldown_ms,
+        mode,
+        runs,
+        batch,
+        n,
+        batch_k,
+        max_call_us,
+        threaded,
+        seeds,
+    } = match worker_args(&cli.raw) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("error: worker: {e}");
             return ExitCode::FAILURE;
         },
     };
-    let bench_name = get("--bench-name").unwrap_or_default();
-    let seed: u64 = get("--seed").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let cooldown_ms: u64 = get("--cooldown").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let mode = get("--mode").unwrap_or_else(|| "warm".into());
-    let runs: usize = get("--runs").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let batch: usize = get("--batch").and_then(|s| s.parse().ok()).unwrap_or(1);
-    let n: usize = get("--n").and_then(|s| s.parse().ok()).unwrap_or(64);
-    let batch_k: usize = get("--batch-k").and_then(|s| s.parse().ok()).unwrap_or(1);
-    let max_call_us: Option<u64> = get("--max-call-us")
-        .and_then(|s| s.parse().ok())
-        .filter(|&v| v != 0);
-    let threaded = args.iter().any(|a| a == "--threaded");
 
     // Rebuild the routine + workload the same way the orchestrator
     // did: the worker inherits the orchestrator's cwd, so the
@@ -87,10 +83,7 @@ pub(super) fn drive_worker(spec: &DriverSpec, cli: &Cli) -> ExitCode {
     };
     let workload = (spec.build_workload)(&workload_name, n);
 
-    if mode == "validate" {
-        let seeds: Vec<u64> = get("--seeds")
-            .map(|s| s.split(',').filter_map(|t| t.parse().ok()).collect())
-            .unwrap_or_default();
+    if let Some(seeds) = seeds {
         harness::run_worker_validate(&routine, &dylib_path, &seeds, n, threaded);
         return ExitCode::SUCCESS;
     }

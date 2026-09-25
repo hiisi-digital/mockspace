@@ -33,7 +33,9 @@
 
 pub mod hooks;
 mod index;
+mod seed;
 mod worker;
+mod worker_args;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -95,7 +97,7 @@ pub(super) struct Cli {
     pub(super) raw:           Vec<String>,
 }
 
-fn parse_cli(args: &[String]) -> Cli {
+fn parse_cli(args: &[String]) -> Result<Cli, String> {
     let mut only = Vec::new();
     let mut seed_override = None;
     let mut i = 1;
@@ -108,33 +110,24 @@ fn parse_cli(args: &[String]) -> Cli {
                 }
             },
             "--seed" => {
-                if let Some(v) = args.get(i + 1) {
-                    seed_override = parse_seed(v);
-                    i += 1;
-                }
+                let v = args.get(i + 1).ok_or("`--seed` wants a value")?;
+                seed_override = Some(seed::parse_seed(v)?);
+                i += 1;
             },
             a if !a.starts_with("--") => only.push(a.to_string()),
             _ => {},
         }
         i += 1;
     }
-    Cli {
+    Ok(Cli {
         worker: args.iter().any(|a| a == "--worker"),
         report_only: args.iter().any(|a| a == "--report-only"),
         only,
         seed_override,
         raw: args.to_vec(),
-    }
+    })
 }
 
-fn parse_seed(s: &str) -> Option<u64> {
-    let t = s.replace('_', "");
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        t.parse::<u64>().ok()
-    }
-}
 
 /// Resolve the routine for one config: the `routine_for` hook first,
 /// then the declared byte dispatch.
@@ -282,7 +275,13 @@ pub fn drive(registry: &DriverRegistry) -> ExitCode {
 /// [`Hooks`] docs for the hook ordering contract.
 pub fn drive_spec(spec: &DriverSpec) -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    let cli = parse_cli(&args);
+    let cli = match parse_cli(&args) {
+        Ok(cli) => cli,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        },
+    };
 
     if cli.worker {
         return drive_worker(spec, &cli);
