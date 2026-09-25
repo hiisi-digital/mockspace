@@ -175,9 +175,24 @@ fi
 
 # Shell commands. Checked after tool names so an MCP tool that also carries a
 # command string is classified by what it is rather than by what it wraps.
+#
+# A forge command is a message only where its verb writes one. `gh pr view`,
+# `list`, `diff` and `checks` write nothing, and taking every `gh pr` as a body
+# refused plain reads whenever the engine could not run from where the shell
+# stood. `gh api` writes whatever its fields say, a pull request's title and
+# body included, so any field makes it a message unless the method is `GET`.
+_FORGE_WRITE='\bgh[[:space:]]+(pr[[:space:]]+(create|edit|comment|review|merge|close)|issue[[:space:]]+(create|edit|comment|close)|release[[:space:]]+(create|edit)|gist[[:space:]]+(create|edit))\b'
+_GLAB_WRITE='\bglab[[:space:]]+(mr[[:space:]]+(create|update|note|merge|close)|issue[[:space:]]+(create|update|note|close)|release[[:space:]]+(create|update))\b'
+_forge_api_write() {{
+    echo "$COMMAND" | grep -qE '\bgh[[:space:]]+api\b' || return 1
+    echo "$COMMAND" | grep -qE -- '(^|[[:space:]])(-f|-F|--field|--raw-field|--input)([[:space:]=]|$)' || return 1
+    echo "$COMMAND" | grep -qE -- '(-X|--method)[[:space:]=]*GET\b' && return 1
+    return 0
+}}
 if [ -z "$DOMAIN" ] && [ -n "$COMMAND" ]; then
-    if echo "$COMMAND" | grep -qE '\bgh[[:space:]]+(pr|issue|release|gist)\b' \
-       || echo "$COMMAND" | grep -qE '\bglab[[:space:]]+(mr|issue|release)\b'; then
+    if echo "$COMMAND" | grep -qE "$_FORGE_WRITE" \
+       || echo "$COMMAND" | grep -qE "$_GLAB_WRITE" \
+       || _forge_api_write; then
         DOMAIN="pull-request-body"
     elif echo "$COMMAND" | grep -qE '\bgit[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(commit|tag|notes|merge|revert|cherry-pick|am)\b'; then
         DOMAIN="commit-message"
@@ -276,7 +291,13 @@ if [ -z "$launcher" ]; then
     deny "the message gate cannot run: no mockspace launcher on PATH. Policy is configured in {mock_rel}/agent/config.toml and enforced by the engine, so guessing a weaker rule here would contradict it. Install with: cargo install cargo-mock"
 fi
 
-_OUT=$(printf '%s\n' "$SUBMIT" \
+# From this repository's root, never from wherever the shell stands. The engine
+# finds its policy and its pin by walking up from its cwd, so a call scoped here
+# by the path it names and issued from another tree read that tree's config, or
+# a workspace holding several repositories, and was refused for it.
+[ -d "$__HOOK_REPO_ROOT" ] \
+    || deny "the message gate cannot run: its repository $__HOOK_REPO_ROOT is not there. Regenerate the hooks with cargo mock from where the repository now is."
+_OUT=$(cd "$__HOOK_REPO_ROOT" 2>/dev/null && printf '%s\n' "$SUBMIT" \
     | "$launcher" check-message --domain "$DOMAIN" --gate commit \
         --command "$COMMAND" --tool "$TOOL_NAME" 2>&1)
 _RC=$?

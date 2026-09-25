@@ -62,6 +62,8 @@ pub(crate) use bookend::*;
 #[cfg(test)]
 mod hook_output_tests;
 #[cfg(test)]
+mod message_domain_tests;
+#[cfg(test)]
 mod message_scope_tests;
 #[cfg(test)]
 mod tests;

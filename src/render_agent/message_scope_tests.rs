@@ -31,7 +31,7 @@ use std::process::Command;
 
 use super::*;
 
-fn scratch(tag: &str) -> std::path::PathBuf {
+pub(super) fn scratch(tag: &str) -> std::path::PathBuf {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let d = std::env::temp_dir().join(format!(
         "ms_msgscope_{tag}_{}_{}",
@@ -51,14 +51,14 @@ fn cfg_at(repo_root: &std::path::Path) -> Config {
 }
 
 /// The gate as the writer renders it for one repository.
-fn gate_for(repo_root: &std::path::Path) -> String {
+pub(super) fn gate_for(repo_root: &std::path::Path) -> String {
     let cfg = cfg_at(repo_root);
     builtin_check_message(&cfg)
         .replace("{{HOOK_HELPERS}}", crate::render_agent::CLAUDE_HOOK_HELPERS)
         .replace("{{REPO_ROOT}}", &repo_root.display().to_string())
 }
 
-fn bash_payload(command: &str) -> String {
+pub(super) fn bash_payload(command: &str) -> String {
     serde_json::json!({
         "session_id": "t",
         "transcript_path": "/tmp/t",
@@ -108,7 +108,7 @@ fn claimed(out: &str) -> bool {
 
 /// Two repositories side by side, which is what the workspace actually looks
 /// like and what the single-root fixtures could not express.
-fn two_repos(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+pub(super) fn two_repos(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let base = scratch(tag);
     let mine = base.join("mine");
     let other = base.join("other");
