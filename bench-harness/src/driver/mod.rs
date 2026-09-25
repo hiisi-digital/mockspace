@@ -830,6 +830,9 @@ pub(crate) fn median_for_tests(vals: &mut [f64]) -> f64 {
 }
 
 #[cfg(test)]
+mod routine_tests;
+
+#[cfg(test)]
 mod tests {
     use std::path::Path;
     use std::sync::Mutex;
