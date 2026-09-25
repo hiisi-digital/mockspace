@@ -15,7 +15,11 @@ and `byte_routine_dispatch!`. A variant cdylib exports `bench_entry`, `bench_nam
 `bench_output_size(n)` differs from the output buffer of the routine the bench resolved is refused
 before it runs**: a bench missing from the `routine_for` table falls through to the byte routine at
 `[dispatch] out` bytes, and an arm writing a wider output would otherwise corrupt the heap and be
-validated against the wrong routine.
+validated against the wrong routine. An arm written with `#[bench_variant]` gets the export by
+rebuilding; **a hand-written arm, including every one `bench add` scaffolded before the export
+existed, has to add `extern "C" fn bench_output_size(n: usize) -> usize` itself**, or it is refused.
+The check sees only a size that differs: a bench missing from `routine_for` whose own output is the
+byte routine's size still falls through to bytes unnoticed.
 
 **`mockspace-bench-harness`** is the transport. Cdylib-per-variant isolation, the subprocess driver,
 the workload programs, validation, analysis, history, and the multi-axis spec-to-variant-crate codegen

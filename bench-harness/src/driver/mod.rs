@@ -138,6 +138,12 @@ pub(super) fn resolve_routine(
     if let Some(found) = spec.hooks.routine_for.and_then(|h| h(config)) {
         return Ok(found);
     }
+    // FIXME: a bench missing from `routine_for` whose own routine's `Output`
+    // happens to be the byte routine's size falls through here silently and is
+    // validated and scored as bytes; the preflight's size check catches only
+    // a size that differs. Closing it needs the variant to name its routine
+    // (an exported routine identity beside `bench_output_size`), which the
+    // design does not yet say.
     match (spec.byte_dispatch.dispatch)(config.n, config.may_differ) {
         Some(bridge) => {
             Ok(RoutineSpec {

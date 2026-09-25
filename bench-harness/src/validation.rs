@@ -338,9 +338,11 @@ pub fn validate(
                     found,
                 });
             }
-            // Here as well as in the worker, so a bench on the wrong routine
-            // is refused with its reason before any worker writes past a
-            // buffer and dies of it.
+            // The driver's preflight has already dropped a variant this
+            // refuses, so from the driver it cannot fire. It stays for any
+            // other caller of `validate`, which gets no preflight, and a
+            // variant on the wrong routine is still refused with its reason
+            // before a worker writes past a buffer.
             crate::harness::check_output_size(&lib, n, output_size).map_err(|reason| {
                 BenchError::DylibLoadFailed {
                     path: path.into(),

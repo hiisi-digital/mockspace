@@ -270,6 +270,41 @@ master_seed = 7
             &ARM_LIB.replace("OUTPUT_SIZE", declared),
         );
     }
+    // Three more ways to be refused, one bench each: a size the arm does not
+    // declare, no size export at all, and a stale hash with no size export,
+    // where the hash has to be what is reported.
+    let unexported = ARM_LIB.replace(
+        "#[unsafe(no_mangle)]\npub extern \"C\" fn bench_output_size(_n: usize) -> usize {\n    OUTPUT_SIZE\n}\n",
+        "",
+    );
+    assert!(!unexported.contains("bench_output_size"), "the export was taken out");
+    let stale = unexported.replace("    abi_hash()\n", "    abi_hash() ^ 1\n");
+    assert_ne!(stale, unexported, "the hash was changed");
+    for (bench, lib) in [
+        ("undeclared", ARM_LIB.replace("OUTPUT_SIZE", "0")),
+        ("unexported", unexported.clone()),
+        ("stale", stale),
+    ] {
+        write(
+            &bench_dir.join(bench).join("bench.toml"),
+            r#"
+title = "Plus one"
+workload = "default"
+arms = ["plusone"]
+points = [64]
+master_seed = 7
+"#,
+        );
+        write(
+            &bench_dir
+                .join(bench)
+                .join("arms")
+                .join("plusone")
+                .join("src")
+                .join("lib.rs"),
+            &lib,
+        );
+    }
     // One bench holding both: the fitting arm and a wide one under its own name.
     write(
         &bench_dir.join("mixed").join("bench.toml"),
@@ -327,6 +362,54 @@ master_seed = 7
     assert!(
         !mixed.contains("wideone"),
         "the refused arm left no sample beside it: {mixed}"
+    );
+    for bench in ["undeclared", "unexported", "stale"] {
+        assert!(
+            !bench_dir.join("results").join(bench).join(format!("{bench}_n64.csv")).exists(),
+            "{bench}: a refused arm is not measured"
+        );
+    }
+
+    // Each refusal says why, which the run only prints. The arms are built by
+    // now, so ask the preflight the driver ran, at the byte routine's 8 bytes.
+    let arm = |bench: &str, arm: &str| {
+        bench_dir
+            .join("target")
+            .join("mock-arms")
+            .join(bench)
+            .join(arm)
+            .join("release")
+            .join(format!(
+                "{}{arm}{}",
+                std::env::consts::DLL_PREFIX,
+                std::env::consts::DLL_SUFFIX
+            ))
+            .display()
+            .to_string()
+    };
+    let refusal = |bench: &str, name: &str| {
+        mockspace_bench_harness::harness::preflight_variant(&arm(bench, name), 64, 8)
+            .expect_err(&format!("{bench}/{name} must be refused"))
+    };
+    assert!(
+        mockspace_bench_harness::harness::preflight_variant(&arm("fits", "plusone"), 64, 8)
+            .is_ok(),
+        "the control: the fitting arm passes the same preflight"
+    );
+    let wide = refusal("wide", "plusone");
+    assert!(wide.contains("writes 32 bytes") && wide.contains("allocates 8"), "{wide}");
+    let undeclared = refusal("undeclared", "plusone");
+    assert!(undeclared.contains("declares no size 64"), "{undeclared}");
+    let unexported = refusal("unexported", "plusone");
+    assert!(
+        unexported.contains("missing bench_output_size") && unexported.contains("hand-written"),
+        "{unexported}"
+    );
+    let stale = refusal("stale", "plusone");
+    assert!(stale.contains("ABI hash mismatch"), "{stale}");
+    assert!(
+        !stale.contains("bench_output_size"),
+        "the hash is checked before the size export: {stale}"
     );
     assert!(
         !bench_dir
