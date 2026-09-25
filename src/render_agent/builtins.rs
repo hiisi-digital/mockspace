@@ -181,13 +181,26 @@ fi
 # refused plain reads whenever the engine could not run from where the shell
 # stood. `gh api` writes whatever its fields say, a pull request's title and
 # body included, so any field makes it a message unless the method is `GET`.
-_FORGE_WRITE='\bgh[[:space:]]+(pr[[:space:]]+(create|edit|comment|review|merge|close)|issue[[:space:]]+(create|edit|comment|close)|release[[:space:]]+(create|edit)|gist[[:space:]]+(create|edit))\b'
-_GLAB_WRITE='\bglab[[:space:]]+(mr[[:space:]]+(create|update|note|merge|close)|issue[[:space:]]+(create|update|note|close)|release[[:space:]]+(create|update))\b'
+# Flags may stand between the program and its verb, `gh -R o/r pr create`, each
+# with or without a value.
+_FLAGS='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
+_FORGE_WRITE='\bgh'"$_FLAGS"'[[:space:]]+(pr[[:space:]]+(create|edit|comment|review|merge|close)|issue[[:space:]]+(create|edit|comment|close)|release[[:space:]]+(create|edit)|gist[[:space:]]+(create|edit))\b'
+_GLAB_WRITE='\bglab'"$_FLAGS"'[[:space:]]+(mr[[:space:]]+(create|update|note|merge|close)|issue[[:space:]]+(create|update|note|close)|release[[:space:]]+(create|update))\b'
+# One command of a chain at a time, so a `GET` in one cannot excuse a write in
+# the next. The method is case-blind, as `gh` takes it.
 _forge_api_write() {{
-    echo "$COMMAND" | grep -qE '\bgh[[:space:]]+api\b' || return 1
-    echo "$COMMAND" | grep -qE -- '(^|[[:space:]])(-f|-F|--field|--raw-field|--input)([[:space:]=]|$)' || return 1
-    echo "$COMMAND" | grep -qE -- '(-X|--method)[[:space:]=]*GET\b' && return 1
-    return 0
+    local cmds seg
+    cmds=${{COMMAND//&&/$'\n'}}
+    cmds=${{cmds//||/$'\n'}}
+    cmds=${{cmds//;/$'\n'}}
+    cmds=${{cmds//|/$'\n'}}
+    while IFS= read -r seg; do
+        printf '%s' "$seg" | grep -qE '\bgh'"$_FLAGS"'[[:space:]]+api\b' || continue
+        printf '%s' "$seg" | grep -qE -- '(^|[[:space:]])(-f|-F|--field|--raw-field|--input)([[:space:]=]|$)' || continue
+        printf '%s' "$seg" | grep -qiE -- '(-X|--method)[[:space:]=]*GET\b' && continue
+        return 0
+    done <<< "$cmds"
+    return 1
 }}
 if [ -z "$DOMAIN" ] && [ -n "$COMMAND" ]; then
     if echo "$COMMAND" | grep -qE "$_FORGE_WRITE" \
