@@ -136,7 +136,13 @@ pub(super) fn resolve_routine(
     spec: &DriverSpec,
     config: &BenchConfig,
 ) -> Result<RoutineSpec, BenchError> {
-    if let Some(found) = spec.hooks.routine_for.and_then(|h| h(config)) {
+    if let Some(mut found) = spec.hooks.routine_for.and_then(|h| h(config)) {
+        // A handed routine carries the flag as its own trait method, which
+        // defaults to false, so without this a bench whose manifest says its
+        // arms may differ is compared byte for byte anyway. Either saying so
+        // is enough: the manifest widens a routine that did not, and never
+        // narrows one that did.
+        found.bridge.outputs_may_differ |= config.may_differ;
         return Ok(found);
     }
     // FIXME: a bench missing from `routine_for` whose own routine's `Output`
