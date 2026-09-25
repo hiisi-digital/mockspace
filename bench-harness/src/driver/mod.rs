@@ -140,9 +140,14 @@ pub(super) fn resolve_routine(
         // A handed routine carries the flag as its own trait method, which
         // defaults to false, so without this a bench whose manifest says its
         // arms may differ is compared byte for byte anyway. Either saying so
-        // is enough: the manifest widens a routine that did not, and never
-        // narrows one that did.
-        found.bridge.outputs_may_differ |= config.may_differ;
+        // is enough: the manifest widens a routine that said nothing, and
+        // never narrows one that did. A routine declaring
+        // `max_relative_error` has already said how far its arms may differ,
+        // which is narrower than the manifest's yes and closer to the arms,
+        // so its tolerance comparison stays and the manifest does not reach
+        // it.
+        let said_how_far = found.bridge.max_relative_error.is_some();
+        found.bridge.outputs_may_differ |= config.may_differ && !said_how_far;
         return Ok(found);
     }
     // FIXME: a bench missing from `routine_for` whose own routine's `Output`
