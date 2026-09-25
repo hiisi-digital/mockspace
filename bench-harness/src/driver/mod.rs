@@ -425,7 +425,7 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
     let total = configs.len();
     let started = Instant::now();
 
-    for (idx, config) in configs.iter_mut().enumerate() {
+    for (idx, config) in configs.iter().enumerate() {
         let elapsed = started.elapsed().as_secs_f64();
         let eta = if idx > 0 {
             let per = elapsed / idx as f64;
@@ -450,7 +450,6 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
                 return ExitCode::FAILURE;
             },
         };
-        config.max_call_us = samples::call_bound(config.max_call_us, routine.bridge.max_call_us, config.n);
         let workload = (spec.build_workload)(&config.workload, config.n);
         let out_root = stage_root.as_deref().unwrap_or(results_root.as_path());
         let (dir, csv_path, findings_path) = output_paths(config, out_root);
@@ -482,6 +481,8 @@ fn drive_parsed(spec: &DriverSpec, root: &Path, cli: &Cli) -> ExitCode {
 
         // ── master-seed resolution (replayable) ──
         let mut config = config.clone();
+        // Before validation, the workers and the deadline, which all read it.
+        config.max_call_us = samples::call_bound(config.max_call_us, routine.bridge.max_call_us, config.n);
         if config.master_seed == 0 {
             let random = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
