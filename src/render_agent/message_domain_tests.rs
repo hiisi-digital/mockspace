@@ -72,7 +72,7 @@ fn engine_ran_in(out: &str) -> Option<String> {
 
 const READS: &[&str] = &[
     "gh pr view 11",
-    "gh pr view 11 -R orgrinrt/clause-dev --json state,title -q .state",
+    "gh pr view 11 -R o/r --json state,title -q .state",
     "gh pr list --state all",
     "gh pr diff 3",
     "gh pr checks 3",
