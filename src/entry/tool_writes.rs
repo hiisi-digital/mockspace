@@ -21,13 +21,23 @@
 //! written. That catches a clean file made dirty, a dirty file changed again, a
 //! new file, a deletion, and a dirty file put back to what `HEAD` holds.
 //!
-//! It does not see three things, and they are stated rather than implied:
+//! It does not see these, and they are stated rather than implied:
 //!
 //! - a path git ignores, since status never names it, so a maker writing into
 //!   `target/` or another ignored tree is not held to its declaration there;
-//! - a write that leaves the bytes exactly as they were, which is no change;
-//! - a tree with no git at all, where [`snapshot`] returns `None` and the
-//!   caller says the writes went unaudited.
+//! - anything under `.git/`, which status never names either, so a maker could
+//!   rewrite hooks or config unseen; a declared write under `.git` is refused
+//!   for that reason, which closes the grant and not the blind spot;
+//! - a write outside the worktree, to a home directory, a temp directory or
+//!   another repository, since only this worktree is asked about;
+//! - a permission-only change to a file that was already dirty, since the
+//!   fingerprint is of content, and a mode change to a clean file is seen only
+//!   because status names the file afterwards;
+//! - a write that leaves the bytes exactly as they were, which is no change.
+//!
+//! Where git cannot answer at all, there is no snapshot, and the engine
+//! refuses to run a maker rather than run it unheld; an after-snapshot that
+//! fails makes the run inconclusive, through [`after_run`].
 //!
 //! Anything else writing to the same worktree during the run is attributed to
 //! the maker, since the observation cannot tell writers apart.
@@ -77,6 +87,23 @@ pub(crate) fn snapshot(repo_root: &Path) -> Option<Snapshot> {
         map.insert(key, fingerprint(&abs));
     }
     Some(Snapshot(map))
+}
+
+/// What a run wrote, given the snapshot taken before it and the one after.
+///
+/// An after-snapshot of `None` is an error rather than an empty list: the run
+/// happened and its tree could not be read back, so "wrote nothing" would be
+/// a claim the engine never established. The caller reports it inconclusive.
+pub(crate) fn after_run(before: &Snapshot, after: Option<Snapshot>) -> Result<Vec<String>, String> {
+    match after {
+        Some(a) => Ok(written(before, &a)),
+        None => {
+            Err(
+                "git could not report the tree after the run, so what it wrote is unknown"
+                    .to_string(),
+            )
+        },
+    }
 }
 
 /// Every path that differs between two snapshots, sorted.
@@ -229,6 +256,34 @@ mod tests {
     fn a_tree_without_git_has_no_snapshot() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(snapshot(tmp.path()), None);
+    }
+
+    #[test]
+    fn an_after_snapshot_that_failed_is_inconclusive() {
+        // The case that must fail: a run whose tree could not be read back
+        // afterwards must not read as one that wrote nothing.
+        let tmp = repo();
+        let before = snapshot(tmp.path()).unwrap();
+        let got = after_run(&before, None);
+        assert!(got.is_err(), "{got:?}");
+        // and the control: a readable tree after the run is an answer
+        let after = snapshot(tmp.path());
+        assert_eq!(after_run(&before, after), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn a_repo_root_below_the_top_level_sees_paths_above_it_as_leaving() {
+        // Paths are rebased onto `repo_root`, and one above it keeps a `../`
+        // per level, which no declaration can match because a declared
+        // pattern with `..` is refused.
+        let tmp = repo();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("sub")).unwrap();
+        let before = snapshot(&root.join("sub")).unwrap();
+        fs::write(root.join("sub/in.md"), "inside\n").unwrap();
+        fs::write(root.join("above.md"), "above\n").unwrap();
+        let after = snapshot(&root.join("sub")).unwrap();
+        assert_eq!(written(&before, &after), vec!["../above.md", "in.md"]);
     }
 
     #[test]

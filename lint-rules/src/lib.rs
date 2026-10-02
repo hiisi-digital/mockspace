@@ -102,8 +102,8 @@ pub use tool::{
     ToolReport,
     contract_faults,
     duplicate_tool_names,
+    maker_faults,
     missing_required,
-    undeclared_writes,
     usage_line,
 };
 use tree_sitter::Tree;

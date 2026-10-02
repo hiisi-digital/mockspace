@@ -7,7 +7,7 @@
 //! cdylib, run by the engine binary in a real git worktree, with what it wrote
 //! observed and held to what it declared.
 //!
-//! The unit tests beside `undeclared_writes` and `tool_writes` pin the audit
+//! The unit tests beside `maker_faults` and `tool_writes` pin the audit
 //! and the observation apart. This is the only test that has the engine take
 //! the snapshot around a real run and turn a stray write into an exit code, so
 //! deleting that wiring in `entry::tool::run` fails here and nowhere else.
@@ -24,10 +24,11 @@ fn dep_spec() -> String {
     format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}")
 }
 
-/// One crate registering three tools: an honest maker that strays when asked
-/// to, a maker declaring nothing, and nothing else, so one build serves every
-/// arm.
-const TOOLS: &str = r#"use mockspace::tool::{Purpose, Tool, ToolContext, ToolReport};
+/// One crate registering every arm: an honest maker that strays when asked
+/// to, a maker declaring nothing, a check wearing a maker's declaration, and
+/// a check whose `no-failing-case` is false, so one build serves them all.
+const TOOLS: &str = r#"use mockspace::LintError;
+use mockspace::tool::{NotALint, Outcome, Purpose, Tool, ToolContext, ToolReport};
 
 pub struct Gen;
 impl Tool for Gen {
@@ -55,8 +56,38 @@ impl Tool for Bare {
     }
 }
 
+pub struct Dodge;
+impl Tool for Dodge {
+    fn name(&self) -> &'static str { "dodge" }
+    fn description(&self) -> &'static str { "a check wearing a maker's declaration" }
+    fn purpose(&self) -> Purpose { Purpose::Make { writes: &["never/written.md"] } }
+    fn run(&self, _: &ToolContext<'_>) -> ToolReport {
+        ToolReport {
+            outcome: Outcome::Findings(vec![LintError::error(
+                "x".to_string(), 1, "dodge", "a failing case".to_string(),
+            )]),
+            output: String::new(),
+        }
+    }
+}
+
+pub struct Liar;
+impl Tool for Liar {
+    fn name(&self) -> &'static str { "liar" }
+    fn description(&self) -> &'static str { "declares no failing case and fails one" }
+    fn purpose(&self) -> Purpose { Purpose::Check(NotALint::NoFailingCase) }
+    fn run(&self, _: &ToolContext<'_>) -> ToolReport {
+        ToolReport {
+            outcome: Outcome::Findings(vec![LintError::error(
+                "x".to_string(), 1, "liar", "a failing case".to_string(),
+            )]),
+            output: String::new(),
+        }
+    }
+}
+
 mockspace::lint_pack! {
-    tools: [Gen, Bare],
+    tools: [Gen, Bare, Dodge, Liar],
 }
 "#;
 
@@ -77,6 +108,24 @@ fn git(root: &Path, args: &[&str]) {
 
 /// A committed repository with the tool crate under `mock/tools/gen/`.
 fn fixture(root: &Path) -> std::path::PathBuf {
+    let mock = files(root);
+    git(root, &["init", "-q"]);
+    git(root, &["config", "user.email", "t@t"]);
+    git(root, &["config", "user.name", "t"]);
+    git(root, &["add", "."]);
+    git(root, &["commit", "-q", "-m", "init"]);
+    mock
+}
+
+/// The same project with a `.git` directory git cannot read, so the root is
+/// found and `git status` fails.
+fn fixture_without_git(root: &Path) -> std::path::PathBuf {
+    let mock = files(root);
+    fs::create_dir_all(root.join(".git")).unwrap();
+    mock
+}
+
+fn files(root: &Path) -> std::path::PathBuf {
     let mock = root.join("mock");
     let dir = mock.join("tools").join("gen");
     fs::create_dir_all(dir.join("src")).unwrap();
@@ -97,11 +146,6 @@ fn fixture(root: &Path) -> std::path::PathBuf {
     )
     .unwrap();
     fs::write(root.join(".gitignore"), "target/\nCargo.lock\n").unwrap();
-    git(root, &["init", "-q"]);
-    git(root, &["config", "user.email", "t@t"]);
-    git(root, &["config", "user.name", "t"]);
-    git(root, &["add", "."]);
-    git(root, &["commit", "-q", "-m", "init"]);
     mock
 }
 
@@ -114,6 +158,9 @@ fn engine(mock: &Path, args: &[&str]) -> Output {
         // See `tool_not_found_messages.rs`: an inherited shared target dir
         // sends the cdylib somewhere the engine does not look.
         .env_remove("CARGO_TARGET_DIR")
+        // Discovery stops at the fixture, so a repository above the temp
+        // directory can never answer for it.
+        .env("GIT_CEILING_DIRECTORIES", mock.parent().and_then(Path::parent).unwrap_or(mock))
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
@@ -191,4 +238,50 @@ fn help_for_a_maker_says_what_it_writes() {
         .find(|l| l.contains("mock gen"))
         .unwrap_or("");
     assert!(line.contains(" make "), "{stdout}");
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --ignored"]
+fn a_maker_that_blocks_having_written_nothing_has_broken_its_contract() {
+    // The loophole: `Make` over a path never written, plus blocking findings,
+    // is a check with a failing case and no `NotALint` reason.
+    let tmp = tempfile::tempdir().unwrap();
+    let mock = fixture(tmp.path());
+    let out = engine(&mock, &["dodge"]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("wrote nothing"), "{err}");
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --ignored"]
+fn a_false_no_failing_case_exits_as_a_broken_contract() {
+    // Exit 2, the same as an undeclared write, rather than the 1 its finding
+    // alone would give: the tool broke its contract, which is a different
+    // statement from a corpus finding.
+    let tmp = tempfile::tempdir().unwrap();
+    let mock = fixture(tmp.path());
+    let out = engine(&mock, &["liar"]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("has a failing case"), "{err}");
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --ignored"]
+fn a_maker_is_refused_where_its_writes_cannot_be_observed() {
+    // Fail closed: a maker nobody can hold to its declaration does not run.
+    let tmp = tempfile::tempdir().unwrap();
+    let mock = fixture_without_git(tmp.path());
+    let out = engine(&mock, &["gen"]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(
+        !tmp.path().join("gen/page.md").exists(),
+        "the maker must not have run:\n{err}"
+    );
+    assert!(
+        err.contains("Not run"),
+        "refused for the observation, not for something else:\n{err}"
+    );
 }

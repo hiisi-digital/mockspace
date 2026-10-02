@@ -26,9 +26,12 @@
 //! of it does not arise. Such a tool declares [`Purpose::Make`] with the paths
 //! it writes instead of a [`NotALint`] reason, and is held to those paths: the
 //! engine observes what changed across the run and reports anything outside
-//! the declaration as a contract fault. A maker declaring nothing it writes is
-//! refused, so the kind cannot be borrowed as a way for a check to leave the
-//! gate. [`purpose`] carries the declaration and its audit.
+//! the declaration as a contract fault. Two rules keep the kind from being
+//! borrowed as a way for a check to leave the gate: a maker declaring nothing
+//! it writes is refused before it runs, and a maker whose run blocks a gate
+//! having written nothing is a contract fault after it, since a make that
+//! fails before writing returns `Inconclusive`. [`purpose`] carries the
+//! declaration and its audit.
 //!
 //! # The failure this is shaped against
 //!
@@ -51,7 +54,7 @@ use std::path::{Path, PathBuf};
 use crate::{Level, LintError, LintMode};
 
 pub mod purpose;
-pub use purpose::{NotALint, Purpose, contract_faults, undeclared_writes};
+pub use purpose::{NotALint, Purpose, contract_faults, maker_faults};
 
 // ---------------------------------------------------------------------------
 // The outcome
