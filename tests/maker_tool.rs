@@ -38,6 +38,14 @@ impl Tool for Gen {
     fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
         std::fs::create_dir_all(ctx.repo_root.join("gen")).unwrap();
         std::fs::write(ctx.repo_root.join("gen/page.md"), "made\n").unwrap();
+        if ctx.args.first() == Some(&"block") {
+            return ToolReport {
+                outcome: Outcome::Findings(vec![LintError::error(
+                    "src/lib.rs".to_string(), 1, "gen", "coverage under 80".to_string(),
+                )]),
+                output: String::new(),
+            };
+        }
         if ctx.args.first() == Some(&"stray") {
             std::fs::write(ctx.repo_root.join("stray.md"), "not declared\n").unwrap();
         }
@@ -250,7 +258,7 @@ fn a_maker_that_blocks_having_written_nothing_has_broken_its_contract() {
     let out = engine(&mock, &["dodge"]);
     let err = text(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{err}");
-    assert!(err.contains("wrote nothing"), "{err}");
+    assert!(err.contains("never block"), "{err}");
 }
 
 #[test]
@@ -284,4 +292,18 @@ fn a_maker_is_refused_where_its_writes_cannot_be_observed() {
         err.contains("Not run"),
         "refused for the observation, not for something else:\n{err}"
     );
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --ignored"]
+fn a_maker_that_wrote_its_declared_file_and_blocks_has_broken_its_contract() {
+    // A threshold check hiding as a maker: it writes the one path it declared
+    // and blocks on something else. A maker's findings never block.
+    let tmp = tempfile::tempdir().unwrap();
+    let mock = fixture(tmp.path());
+    let out = engine(&mock, &["gen", "block"]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("gen/page.md"), "it did write:\n{err}");
+    assert!(err.contains("never block"), "{err}");
 }

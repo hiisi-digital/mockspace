@@ -13,12 +13,14 @@
 //! touch.
 //!
 //! A maker is not a third reason for a check to escape the gate. It answers a
-//! different question, "what does running this produce", and a check that
-//! writes nothing cannot claim to be one. Two rules hold that, and neither is
-//! enough alone: a maker declaring no writes is refused before it runs, and a
-//! maker whose run returns a blocking finding having written nothing is a
-//! contract fault after it ([`maker_faults`]). Without the second, `Make` over
-//! a path the tool never touches would be a way out of [`NotALint`].
+//! different question, "what does running this produce", and it has no way to
+//! express a gating judgement: its findings report what it produced, at
+//! warning or info, and a finding at error at any gate is a contract fault
+//! ([`maker_faults`]). A make that fails returns [`Outcome::Inconclusive`],
+//! saying what failed on which input, and the run exits nonzero as an
+//! inconclusive run does. Gating stays with checks and lints. What a maker
+//! produced is visible only through its declared paths, which `mock tools
+//! --long` shows, and the list the engine prints of what it wrote.
 
 use super::{Outcome, Tool, ToolReport};
 use crate::{LintMode, glob_match_anchored};
@@ -159,15 +161,17 @@ pub enum Purpose {
     /// relative to the repository root in the [`crate::path_filter`] syntax,
     /// **anchored**: `CHANGELOG.md` means the one at the root and not every
     /// file of that name, which is where this differs from a lint's path
-    /// filter. A make that wrote and then failed returns
-    /// [`Outcome::Findings`]; a make that failed before it could write, its
-    /// own inputs or controls broken, returns [`Outcome::Inconclusive`] and
-    /// blocks as any tool's does. A blocking finding from a run that wrote
-    /// nothing is a contract fault, by [`maker_faults`].
+    /// filter.
+    ///
+    /// Its findings never block. They report what it produced, at warning or
+    /// info, and one at error at any gate is a contract fault. A make that
+    /// fails returns [`Outcome::Inconclusive`], its reason saying what failed
+    /// and on which input, so a maker has no way to express a gating judgement
+    /// and gating stays with checks and lints. Enforced by [`maker_faults`].
     Make {
         /// What it may write, relative to the repository root. Never empty, and
-        /// never a pattern that is only wildcards, leaves the tree or reaches
-        /// into `.git`: all are refused by
+        /// never a pattern that is only wildcards, leaves the tree or has a
+        /// literal `.git` segment: all are refused by
         /// [`contract_faults`] before the tool runs.
         writes: &'static [&'static str],
     },
@@ -209,7 +213,7 @@ impl Purpose {
 ///
 /// - an empty pattern;
 /// - one that leaves the repository, absolute or with a `..` segment;
-/// - one with a `.git` segment, since the engine's observation is `git
+/// - one with a literal `.git` segment, since the engine's observation is `git
 ///   status`, which never names a path under `.git/`, so a declared write
 ///   there is one nothing could hold the tool to, and a maker rewriting hooks
 ///   or config is not something to grant by declaration;
@@ -228,7 +232,7 @@ fn refused_pattern(pattern: &str) -> Option<&'static str> {
         return Some("leaves the repository root");
     }
     if segs.contains(&".git") {
-        return Some("reaches into `.git`, which the observation cannot see");
+        return Some("has a literal `.git` segment, which the observation cannot see");
     }
     if segs.iter().all(|s| s.chars().all(|c| c == '*' || c == '?')) {
         return Some("is only wildcards");
@@ -367,15 +371,12 @@ fn undeclared_writes(tool: &dyn Tool, written: &[String]) -> Vec<String> {
 /// about writing:
 ///
 /// - a write outside what it declared, one fault per path;
-/// - a run that returned a finding blocking a gate and wrote nothing at all.
-///   That run is a check with a failing case wearing a maker's declaration,
-///   and without this fault `Make` over a path the tool never touches would be
-///   a way to skip giving a [`NotALint`] reason. A make that wrote and then
-///   failed is a failed make, and its findings stand as findings. A make that
-///   failed before it could write returns [`Outcome::Inconclusive`], which is
-///   a statement about its inputs rather than about the tree, and is not
-///   counted here for the reason [`contract_faults`] gives for
-///   `no-failing-case`.
+/// - any finding whose level is error at any gate. A maker's findings report
+///   what it produced, at warning or info, and never block: a make that fails
+///   returns [`Outcome::Inconclusive`], saying what failed on which input. So
+///   a maker has no way to express a gating judgement, and a threshold check
+///   cannot hide in one by writing a file it declared and then blocking on
+///   something else. Gating stays with checks and lints.
 ///
 /// `written` is repository-relative, `/`-separated, and is what the engine saw
 /// change across the run, not what the tool says it did.
@@ -388,16 +389,19 @@ pub fn maker_faults(tool: &dyn Tool, report: &ToolReport, written: &[String]) ->
         return Vec::new();
     };
     let mut out = undeclared_writes(tool, written);
-    let inconclusive = matches!(report.outcome, Outcome::Inconclusive { .. });
     let blocking = [LintMode::Commit, LintMode::Build, LintMode::Push]
         .into_iter()
         .any(|m| report.outcome.blocks(m));
-    if blocking && !inconclusive && written.is_empty() {
+    // `Inconclusive` blocks too, and is excluded: it is how a failed make is
+    // reported, a statement about the maker's inputs rather than a judgement
+    // about the tree.
+    let inconclusive = matches!(report.outcome, Outcome::Inconclusive { .. });
+    if blocking && !inconclusive {
         out.push(format!(
-            "tool `{}` is a maker, returned a finding that blocks a gate, and wrote \
-             nothing. A make that fails before it writes is inconclusive; one that \
-             blocks without making anything is a check, which says why it is not a \
-             lint.",
+            "tool `{}` is a maker and returned a finding at error. A maker's findings \
+             never block: they report what it produced, at warning or info, and a make \
+             that failed returns `Inconclusive` saying what failed on which input. A \
+             gating judgement belongs to a check or a lint.",
             tool.name()
         ));
     }

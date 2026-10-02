@@ -52,7 +52,7 @@ impl Tool for MakesEverything {
     }
 }
 
-/// An honest maker, which also fails a make and says so with a finding.
+/// An honest maker, which reports what it produced with an advisory finding.
 struct Changelog;
 impl Tool for Changelog {
     fn name(&self) -> &'static str {
@@ -71,7 +71,7 @@ impl Tool for Changelog {
 
     fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
         ToolReport {
-            outcome: Outcome::Findings(vec![LintError::error(
+            outcome: Outcome::Findings(vec![LintError::warning(
                 "CHANGELOG.md".to_string(),
                 1,
                 "changelog",
@@ -136,9 +136,9 @@ fn a_declared_write_that_constrains_nothing_is_refused() {
         ("/etc/passwd", "leaves the repository root"),
         ("../sibling/out.md", "leaves the repository root"),
         ("docs/../../out.md", "leaves the repository root"),
-        (".git/hooks/pre-commit", "reaches into `.git`"),
-        ("**/.git/config", "reaches into `.git`"),
-        ("vendor/.git/**", "reaches into `.git`"),
+        (".git/hooks/pre-commit", "has a literal `.git` segment"),
+        ("**/.git/config", "has a literal `.git` segment"),
+        ("vendor/.git/**", "has a literal `.git` segment"),
     ] {
         let decl: &'static [&'static str] = Box::leak(Box::new([pattern]));
         let found = contract_faults(&MakesEverything(decl), None);
@@ -170,6 +170,19 @@ fn a_declared_write_naming_part_of_the_tree_is_accepted() {
     }
 }
 
+/// A run whose finding is at error, which a maker may never return.
+fn blocking_run() -> ToolReport {
+    ToolReport {
+        outcome: Outcome::Findings(vec![LintError::error(
+            "src/lib.rs".to_string(),
+            1,
+            "changelog",
+            "coverage under 80".to_string(),
+        )]),
+        output:  String::new(),
+    }
+}
+
 fn changelog_run() -> ToolReport {
     let (c, d) = (BTreeSet::new(), Vec::new());
     let ctx = ToolContext {
@@ -186,26 +199,43 @@ fn changelog_run() -> ToolReport {
 
 #[test]
 fn a_maker_that_blocks_and_wrote_nothing_has_broken_its_contract() {
-    // The case that must fail. Without it a check can declare `Make` over a
-    // path it never touches and return blocking findings, which is a check
-    // with a failing case and no `NotALint` reason: the gate dodged.
-    let r = changelog_run();
+    // A check declaring `Make` over a path it never touches and returning
+    // blocking findings is a check with a failing case and no `NotALint`
+    // reason. Subsumed by the rule below, and kept because it still holds.
+    let r = blocking_run();
     assert!(r.outcome.blocks(LintMode::Commit), "the run blocks");
     let found = maker_faults(&Changelog, &r, &[]);
     assert_eq!(found.len(), 1, "expected one fault, got {found:?}");
-    assert!(found[0].contains("wrote nothing"), "{found:?}");
+    assert!(found[0].contains("never block"), "{found:?}");
 }
 
 #[test]
-fn a_failed_make_that_wrote_is_findings_and_not_a_contract_fault() {
-    // The other side: a make that wrote and then failed is a failed make,
-    // reported as the findings it is, and neither audit calls it a lie.
+fn a_maker_that_wrote_and_blocks_has_broken_its_contract() {
+    // The case that must fail: a threshold check hiding as a maker writes the
+    // one file it declared and then blocks on something else entirely. A
+    // maker cannot express a gating judgement, so any finding at error at
+    // any gate is a fault, whatever it wrote.
+    let r = blocking_run();
+    let found = maker_faults(&Changelog, &r, &written(&["CHANGELOG.md"]));
+    assert_eq!(found.len(), 1, "expected one fault, got {found:?}");
+    assert!(found[0].contains("never block"), "{found:?}");
+}
+
+#[test]
+fn a_makers_advisory_findings_report_and_are_not_faults() {
+    // The control: a maker reports what it produced at warning or info, and
+    // that is neither a contract fault nor a block, wrote or not.
     let r = changelog_run();
+    assert!(
+        !r.outcome.blocks(LintMode::Push),
+        "a warning blocks nothing"
+    );
     assert_eq!(contract_faults(&Changelog, Some(&r)), Vec::<String>::new());
     assert_eq!(
         maker_faults(&Changelog, &r, &written(&["CHANGELOG.md"])),
         Vec::<String>::new()
     );
+    assert_eq!(maker_faults(&Changelog, &r, &[]), Vec::<String>::new());
 }
 
 #[test]

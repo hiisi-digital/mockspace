@@ -26,9 +26,9 @@
 //! A tool declaring [`Purpose::Make`] has the worktree observed before and
 //! after its run, by [`super::tool_writes`], and every path it changed is
 //! printed and held to what it declared. A write outside the declaration, or
-//! a blocking run that wrote nothing, is a contract fault, and so is a false
-//! `no-failing-case`. Every contract fault exits 2, whatever the tool's own
-//! outcome said, because a tool that broke its declaration has said something
+//! any finding at error from a maker, whose findings never block, is a
+//! contract fault, and so is a false `no-failing-case`. Every contract fault
+//! exits 2, whatever the tool's own outcome said, because a tool that broke its declaration has said something
 //! different from a corpus finding and the exit code is what a script reads.
 //!
 //! The observation fails closed. Where git cannot report the tree before the
@@ -233,9 +233,14 @@ pub(crate) fn run(
     // itself does is attributed to the tool. Fail closed: a maker whose writes
     // cannot be observed is not run, since running it would leave a tree
     // nobody held to the declaration.
-    let maker = matches!(tool.purpose(), Purpose::Make { .. });
+    let (maker, declared): (bool, &[&str]) = match tool.purpose() {
+        Purpose::Make {
+            writes,
+        } => (true, writes),
+        Purpose::Check(_) => (false, &[]),
+    };
     let before = if maker {
-        match super::tool_writes::snapshot(&cfg.repo_root) {
+        match super::tool_writes::snapshot(&cfg.repo_root, declared) {
             Some(b) => Some(b),
             None => {
                 eprintln!(
@@ -249,7 +254,11 @@ pub(crate) fn run(
         None
     };
     let report = tool.run(&ctx);
-    let after = if maker { super::tool_writes::snapshot(&cfg.repo_root) } else { None };
+    let after = if maker {
+        super::tool_writes::snapshot(&cfg.repo_root, declared)
+    } else {
+        None
+    };
 
     if !report.output.is_empty() {
         print!("{}", report.output);
