@@ -218,44 +218,21 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         }
     }
 
-    // Determine mock directory:
-    // 1. --dir <path> explicit override
-    // 2. Search upward from cwd for mockspace.toml
-    // 3. Fall back to cwd
-    let mock_dir = if let Some(pos) = args.iter().position(|a| a == "--dir") {
-        match args.get(pos + 1) {
-            Some(p) => resolve_mock_dir(p),
-            None => {
-                eprintln!("error: --dir requires a path argument");
-                return ExitCode::FAILURE;
-            },
-        }
-    } else {
-        match find_mockspace_root() {
-            Some(dir) => dir,
-            None => {
-                // No config, so the only question left is whether this looks
-                // like a mock directory at all. `design_rounds/` answers it:
-                // mockspace creates that directory and nothing else does, so a
-                // directory holding one is a mock directory whatever language
-                // the project is written in.
-                //
-                // This used to ask whether `crates/` was there, which is one
-                // language's convention standing in for the question. It said
-                // yes to any rust project that had never adopted mockspace, and
-                // no to every project that had adopted it and written its source
-                // somewhere else.
-                let cwd = std::env::current_dir().unwrap();
-                if cwd.join("design_rounds").is_dir() {
-                    cwd
-                } else {
-                    eprintln!(
-                        "error: no mockspace.toml found. Run from a mockspace directory or use --dir <path>"
-                    );
-                    return ExitCode::FAILURE;
-                }
-            },
-        }
+    // Determine mock directory, the one way help asks the same question: see
+    // `discover_mock_dir` for the order and why the last arm is `design_rounds/`.
+    let cwd = std::env::current_dir().unwrap();
+    let mock_dir = match discover_mock_dir(&args, &cwd) {
+        Ok(dir) => dir,
+        Err(NoProject::DirWithoutValue) => {
+            eprintln!("error: --dir requires a path argument");
+            return ExitCode::FAILURE;
+        },
+        Err(NoProject::NotFound) => {
+            eprintln!(
+                "error: no mockspace.toml found. Run from a mockspace directory or use --dir <path>"
+            );
+            return ExitCode::FAILURE;
+        },
     };
 
     let cfg = Config::from_dir(&mock_dir);

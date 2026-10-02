@@ -51,17 +51,15 @@ pub(crate) fn target(args: &[String]) -> Option<&str> {
     }
 }
 
-/// Whether discovery would find a project, the same three ways the dispatcher
-/// looks: `--dir`, a `mockspace.toml` upward from here, or a `design_rounds/`
-/// in the working directory.
+/// Whether discovery would find a project, asked through the same
+/// [`super::resolve::discover_mock_dir`] the dispatcher uses, so the two
+/// cannot disagree.
 ///
 /// Asked before letting `mock help <name>` through to discovery, so that the
 /// request outside any project prints the general help rather than failing on
 /// a missing `mockspace.toml`.
 pub(crate) fn project_reachable(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--dir")
-        || super::resolve::find_mockspace_root().is_some()
-        || std::env::current_dir().is_ok_and(|d| d.join("design_rounds").is_dir())
+    std::env::current_dir().is_ok_and(|cwd| super::resolve::discover_mock_dir(args, &cwd).is_ok())
 }
 
 /// Whether `name` is a builtin, which `mock help` can describe with no project.
@@ -135,6 +133,15 @@ mod tests {
         assert_eq!(target(&args(&["mock", "help"])), None);
         assert_eq!(target(&args(&["mock", "--help"])), None);
         assert_eq!(target(&args(&["mock", "greet", "help"])), None);
+    }
+
+    #[test]
+    fn a_dir_flag_without_a_value_is_no_project() {
+        // The case that must fail while help and the dispatcher discover a
+        // project separately: the dispatcher refuses `--dir` with no path,
+        // and help counted the bare flag as a project and let the request
+        // through to that refusal.
+        assert!(!project_reachable(&args(&["mock", "help", "x", "--dir"])));
     }
 
     #[test]
