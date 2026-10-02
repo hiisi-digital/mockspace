@@ -50,25 +50,28 @@ writes, so the question a gate asks does not arise and it gives no reason.
 anchored: `CHANGELOG.md` is the one at the root, not every file of that name.
 
 *Enforced before it runs*: at least one pattern, none empty, none leaving the
-repository, none reaching into `.git`, none made only of wildcards (`*`, `?`,
-`**` in any arrangement; `**/?*` admits everything as surely as `**`).
+repository, none with a literal `.git` segment, none made only of wildcards
+(`*`, `?`, `**` in any arrangement; `**/?*` admits everything as surely as
+`**`).
 
 *Enforced while it runs*: the engine compares the worktree before and after,
 prints every changed path, and fails the run, exit 2, on a write outside the
 declaration.
 
-**A maker whose run blocks a gate having written nothing is a contract fault,
-exit 2.** That rule and the refusal of an empty declaration together stop
-`Make` being a way for a check to leave the gate without a reason; the refusal
-alone does not, since a check could declare a path it never touches. A make
-that fails before it can write returns `Inconclusive`; one that wrote and then
-failed returns findings.
+**A maker has no way to express a gating judgement.** Its findings report what
+it produced, at warning or info; a finding at error at any gate is a contract
+fault, exit 2. A make that fails returns `Inconclusive`, its reason saying what
+failed and on which input, and exits nonzero as any inconclusive run does.
+Gating stays with checks and lints. What a maker produced is visible only
+through the paths it declared, shown by `cargo mock tools --long`, and the list
+of what it wrote that the engine prints after each run.
 
 **It fails closed.** Where git cannot report the tree, the maker is not run;
 where it cannot after the run, the run is inconclusive. It sees what
-`git status` sees, so it does not check ignored paths such as `target/`,
-anything under `.git/`, writes outside the worktree, or a permission-only
-change to a file already modified.
+`git status` sees: ignored paths are asked about only inside the declaration,
+so a gitignored output it declared is seen, while an ignored write outside the
+declaration is not; nor is anything under `.git/`, a write outside the
+worktree, or a permission-only change to a file already modified.
 
 Declared per repository under `<mock>/tools/<name>/`, one directory each, or
 shipped by a lint pack, and listed with their kind by `cargo mock tools`.
@@ -92,7 +95,8 @@ identifier twice exited zero, exactly as a sound one did.
 verdict over an empty population is vacuous, and that count is the only thing
 distinguishing it from a real pass. For a maker it is a make that succeeded.
 
-`Findings` is what it found, or for a maker why the make failed.
+`Findings` is what it found. A maker's are advisory, warning or info, and a
+maker's failed make is `Inconclusive` instead.
 
 `Inconclusive` is the run whose own controls failed. Without it a broken check
 must either report empty, claiming a pass it never established, or invent a
@@ -109,9 +113,9 @@ is a statement about the instrument rather than about the corpus.
 5. **None of these?** It is a lint whose refusal you have not decided on yet.
    Decide it.
 
-**A maker that also judges what it wrote is two things**: the make, and a lint
-over its output, so the output is held at the gate whether or not anyone
-reran the maker.
+**A maker that also judges what it wrote is two things**, since its own findings
+cannot block: the make, and a lint over its output, so the output is held at
+the gate whether or not anyone reran the maker.
 
 **A directory of checks that are neither is a suite of lints that run only when
 somebody remembers, plus a handful of reports nobody can find.**
