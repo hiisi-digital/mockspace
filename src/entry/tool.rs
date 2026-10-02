@@ -25,10 +25,15 @@
 //!
 //! A tool declaring [`Purpose::Make`] has the worktree observed before and
 //! after its run, by [`super::tool_writes`], and every path it changed is
-//! printed and held to what it declared. A write outside the declaration is a
-//! contract fault and fails the run, whatever the tool's own outcome said,
-//! because a maker that wrote somewhere it did not declare has left the tree in
-//! a state nobody asked for and the exit code is what a script reads.
+//! printed and held to what it declared. A write outside the declaration, or
+//! a blocking run that wrote nothing, is a contract fault, and so is a false
+//! `no-failing-case`. Every contract fault exits 2, whatever the tool's own
+//! outcome said, because a tool that broke its declaration has said something
+//! different from a corpus finding and the exit code is what a script reads.
+//!
+//! The observation fails closed. Where git cannot report the tree before the
+//! run, a maker is refused rather than run unheld; where it cannot report it
+//! after, the run is inconclusive.
 
 use std::io::IsTerminal;
 
@@ -38,8 +43,8 @@ use mockspace_lint_rules::tool::{
     ToolContext,
     contract_faults,
     duplicate_tool_names,
+    maker_faults,
     missing_required,
-    undeclared_writes,
     usage_line,
 };
 
@@ -225,9 +230,24 @@ pub(crate) fn run(
     };
 
     // Taken immediately around the run and nowhere else, so nothing the engine
-    // itself does is attributed to the tool.
+    // itself does is attributed to the tool. Fail closed: a maker whose writes
+    // cannot be observed is not run, since running it would leave a tree
+    // nobody held to the declaration.
     let maker = matches!(tool.purpose(), Purpose::Make { .. });
-    let before = if maker { super::tool_writes::snapshot(&cfg.repo_root) } else { None };
+    let before = if maker {
+        match super::tool_writes::snapshot(&cfg.repo_root) {
+            Some(b) => Some(b),
+            None => {
+                eprintln!(
+                    "mock: `{name}` is a maker, and git cannot report this tree, so what it \
+                     writes could not be observed or held to what it declares. Not run."
+                );
+                return ExitCode::from(2);
+            },
+        }
+    } else {
+        None
+    };
     let report = tool.run(&ctx);
     let after = if maker { super::tool_writes::snapshot(&cfg.repo_root) } else { None };
 
@@ -242,28 +262,28 @@ pub(crate) fn run(
     // blocking finding has contradicted itself, and the finding it produced is
     // reported alongside rather than instead: both facts are true and the
     // reader needs both.
+    let mut broke_contract = false;
+    let mut unobserved = false;
     for f in contract_faults(tool.as_ref(), Some(&report)) {
         eprintln!("mock: {f}");
+        broke_contract = true;
     }
 
-    // A maker is held to what it declared it writes, over what was observed.
-    let mut wrote_undeclared = false;
-    if maker {
-        match (&before, &after) {
-            (Some(b), Some(a)) => {
-                let wrote = super::tool_writes::written(b, a);
+    // A maker is held to what it declared it writes, over what was observed,
+    // and to having written something if its run blocks.
+    if let Some(b) = &before {
+        match super::tool_writes::after_run(b, after) {
+            Ok(wrote) => {
                 eprint!("{}", wrote_message(name, &wrote));
-                let faults = undeclared_writes(tool.as_ref(), &wrote);
-                for f in &faults {
+                for f in maker_faults(tool.as_ref(), &report, &wrote) {
                     eprintln!("mock: {f}");
+                    broke_contract = true;
                 }
-                wrote_undeclared = !faults.is_empty();
             },
-            _ => {
-                eprintln!(
-                    "mock: `{name}` is a maker, and git cannot answer for this tree, so what \
-                     it wrote was not observed and not held to what it declares."
-                );
+            Err(why) => {
+                eprintln!("{name}: INCONCLUSIVE, so the run says nothing about the tree.");
+                eprintln!("  {why}");
+                unobserved = true;
             },
         }
     }
@@ -319,7 +339,13 @@ pub(crate) fn run(
 
     // The same code a refused declaration exits with: the tool broke its
     // contract, which is a different statement from a corpus finding.
-    if wrote_undeclared { ExitCode::from(2) } else { code }
+    if broke_contract {
+        ExitCode::from(2)
+    } else if unobserved {
+        ExitCode::FAILURE
+    } else {
+        code
+    }
 }
 
 /// What a maker is reported to have written, one path a line.

@@ -204,13 +204,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     //
     // `mock help <name>` is the one shape let through: a builtin is described
     // here, with no project, and a project tool is described once the pack is
-    // loaded below, since its declaration lives there.
+    // loaded below, since its declaration lives there. Outside a project there
+    // is no pack to describe it from, so the general help answers instead, as
+    // it did before the name could be asked about.
     if args.iter().skip(1).any(|a| help::is_help_request(a)) {
         match super::help_for::target(&args) {
             Some(name) if super::help_for::is_builtin(name) => {
                 return super::help_for::print_builtin(name);
             },
-            Some(_) => {},
+            Some(_) if super::help_for::project_reachable(&args) => {},
+            Some(_) => return help::print_help(),
             None => return help::print_help(),
         }
     }

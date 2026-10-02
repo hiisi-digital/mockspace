@@ -14,9 +14,11 @@
 //!
 //! A maker is not a third reason for a check to escape the gate. It answers a
 //! different question, "what does running this produce", and a check that
-//! writes nothing cannot claim to be one: a maker declaring no writes is
-//! refused, so the declaration cannot be borrowed as a way out of
-//! [`NotALint`].
+//! writes nothing cannot claim to be one. Two rules hold that, and neither is
+//! enough alone: a maker declaring no writes is refused before it runs, and a
+//! maker whose run returns a blocking finding having written nothing is a
+//! contract fault after it ([`maker_faults`]). Without the second, `Make` over
+//! a path the tool never touches would be a way out of [`NotALint`].
 
 use super::{Outcome, Tool, ToolReport};
 use crate::{LintMode, glob_match_anchored};
@@ -157,12 +159,15 @@ pub enum Purpose {
     /// relative to the repository root in the [`crate::path_filter`] syntax,
     /// **anchored**: `CHANGELOG.md` means the one at the root and not every
     /// file of that name, which is where this differs from a lint's path
-    /// filter. A failed make returns [`Outcome::Findings`], and a make whose
-    /// own inputs or controls failed returns [`Outcome::Inconclusive`] and
-    /// blocks as any tool's does.
+    /// filter. A make that wrote and then failed returns
+    /// [`Outcome::Findings`]; a make that failed before it could write, its
+    /// own inputs or controls broken, returns [`Outcome::Inconclusive`] and
+    /// blocks as any tool's does. A blocking finding from a run that wrote
+    /// nothing is a contract fault, by [`maker_faults`].
     Make {
         /// What it may write, relative to the repository root. Never empty, and
-        /// never a pattern that admits the whole tree: both are refused by
+        /// never a pattern that is only wildcards, leaves the tree or reaches
+        /// into `.git`: all are refused by
         /// [`contract_faults`] before the tool runs.
         writes: &'static [&'static str],
     },
@@ -200,23 +205,33 @@ impl Purpose {
 
 /// Why a declared write pattern is refused, or `None` when it is usable.
 ///
-/// Three shapes are refused, each because it constrains nothing: an empty
-/// pattern, one that leaves the repository (absolute, or with a `..` segment),
-/// and one made only of wildcards with a `**` among them, which admits every
-/// path in the tree. Declaring `**` would satisfy "declares what it writes"
-/// while saying nothing at all, which is the same hole as an open
-/// [`NotALint`].
+/// Four shapes are refused:
+///
+/// - an empty pattern;
+/// - one that leaves the repository, absolute or with a `..` segment;
+/// - one with a `.git` segment, since the engine's observation is `git
+///   status`, which never names a path under `.git/`, so a declared write
+///   there is one nothing could hold the tool to, and a maker rewriting hooks
+///   or config is not something to grant by declaration;
+/// - one whose every segment is only wildcards, `*`, `?` or `**` in any
+///   arrangement. Such a pattern names no part of the tree and constrains a
+///   write by its depth at most: `**/?*` admits every path as surely as `**`
+///   does. Declaring one would satisfy "declares what it writes" while saying
+///   nothing, which is the same hole as an open [`NotALint`].
 fn refused_pattern(pattern: &str) -> Option<&'static str> {
     let p = pattern.strip_prefix("./").unwrap_or(pattern);
     if p.is_empty() {
         return Some("is empty");
     }
-    if p.starts_with('/') || p.split('/').any(|s| s == "..") {
+    let segs: Vec<&str> = p.split('/').collect();
+    if p.starts_with('/') || segs.contains(&"..") {
         return Some("leaves the repository root");
     }
-    let segs: Vec<&str> = p.split('/').collect();
-    if segs.contains(&"**") && segs.iter().all(|s| s.chars().all(|c| c == '*')) {
-        return Some("admits every path in the tree");
+    if segs.contains(&".git") {
+        return Some("reaches into `.git`, which the observation cannot see");
+    }
+    if segs.iter().all(|s| s.chars().all(|c| c == '*' || c == '?')) {
+        return Some("is only wildcards");
     }
     None
 }
@@ -243,7 +258,8 @@ fn refused_pattern(pattern: &str) -> Option<&'static str> {
 ///
 /// [`Purpose::Make`] is checked here only for the shape of its declaration:
 /// at least one pattern, and none that constrains nothing. What it actually
-/// wrote is checked against that declaration by [`undeclared_writes`], over
+/// wrote, and whether a blocking run wrote anything, is checked by
+/// [`maker_faults`], over
 /// paths the engine observed rather than paths the tool reported, because a
 /// report would be the thing under audit and the evidence for it at once.
 ///
@@ -320,7 +336,7 @@ pub fn contract_faults(tool: &dyn Tool, report: Option<&ToolReport>) -> Vec<Stri
 /// nothing to compare them against, and an empty result for a check is the
 /// absence of a declaration rather than a pass.
 #[must_use]
-pub fn undeclared_writes(tool: &dyn Tool, written: &[String]) -> Vec<String> {
+fn undeclared_writes(tool: &dyn Tool, written: &[String]) -> Vec<String> {
     let Purpose::Make {
         writes,
     } = tool.purpose()
@@ -342,4 +358,48 @@ pub fn undeclared_writes(tool: &dyn Tool, written: &[String]) -> Vec<String> {
             )
         })
         .collect()
+}
+
+/// Every way a maker's run contradicts its declaration, over what the engine
+/// observed it write.
+///
+/// Two faults, and a check gets neither, since its declaration says nothing
+/// about writing:
+///
+/// - a write outside what it declared, one fault per path;
+/// - a run that returned a finding blocking a gate and wrote nothing at all.
+///   That run is a check with a failing case wearing a maker's declaration,
+///   and without this fault `Make` over a path the tool never touches would be
+///   a way to skip giving a [`NotALint`] reason. A make that wrote and then
+///   failed is a failed make, and its findings stand as findings. A make that
+///   failed before it could write returns [`Outcome::Inconclusive`], which is
+///   a statement about its inputs rather than about the tree, and is not
+///   counted here for the reason [`contract_faults`] gives for
+///   `no-failing-case`.
+///
+/// `written` is repository-relative, `/`-separated, and is what the engine saw
+/// change across the run, not what the tool says it did.
+#[must_use]
+pub fn maker_faults(tool: &dyn Tool, report: &ToolReport, written: &[String]) -> Vec<String> {
+    let Purpose::Make {
+        ..
+    } = tool.purpose()
+    else {
+        return Vec::new();
+    };
+    let mut out = undeclared_writes(tool, written);
+    let inconclusive = matches!(report.outcome, Outcome::Inconclusive { .. });
+    let blocking = [LintMode::Commit, LintMode::Build, LintMode::Push]
+        .into_iter()
+        .any(|m| report.outcome.blocks(m));
+    if blocking && !inconclusive && written.is_empty() {
+        out.push(format!(
+            "tool `{}` is a maker, returned a finding that blocks a gate, and wrote \
+             nothing. A make that fails before it writes is inconclusive; one that \
+             blocks without making anything is a check, which says why it is not a \
+             lint.",
+            tool.name()
+        ));
+    }
+    out
 }
