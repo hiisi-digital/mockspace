@@ -143,28 +143,28 @@ Three sources contribute rules:
 - **Consumer lints** in `mock/lints/<name>.rs`. Each file exports a Rust function returning a lint trait object. The engine discovers them and compiles them, together with any imported packs, into one lint library it loads at run time.
 - **Config-driven rules** under `[lints.<rule-name>]` in the same `mockspace.toml`. The `forbidden-imports` rule covers the common case of "this scope must not import these paths".
 
-A check that cannot run at a gate is a tool instead, and tools have a section of their own below.
+A check that cannot run at a gate is a tool instead, and so is anything that writes files rather than judging them; tools have a section of their own below.
 
 Each lint declares a severity per gate. The same lint can be `info` at commit, `warn` at build, and `error` at push. The five design-round lints (`changelist-required`, `changelist-doc-gate`, `changelist-lock`, `changelist-immutability`, `changelist-seal`) are on at `error` by default, and a project turns one down only by saying so in its own config.
 
 ## Tools
 
-A lint runs at a gate and answers a question nobody asked. Some checks cannot: they need a question from the person running them, or they answer with a ranking rather than a verdict. Those are **tools**, invoked as `mock <name>`.
+A tool is what a project runs by name, as `mock <name>`, and it is one of two kinds. A check that cannot be a lint is the first: a lint runs at a gate and answers a question nobody asked, and some checks cannot do that, because they need a question from the person running them or they answer with a ranking rather than a verdict. A maker is the second, a generator, a scaffolder or an exporter whose product is the files it writes rather than a verdict about the tree, so the question a gate would ask of it does not come up at all.
 
-A tool is usually a crate under `mock/tools/<name>/`, and there the directory name is the subcommand. It does not have to live in the repository it serves: a lint pack declared in `[lint-crates]` may carry tools too, and one check wanted by several projects belongs in the pack rather than copied into each. Either way it is compiled into the same library the consumer lints are, so a tool may declare its own dependencies and may ship a lint alongside itself.
+A tool is usually a crate under `mock/tools/<name>/`, and there the directory name is the subcommand. It does not have to live in the repository it serves: a lint pack declared in `[lint-crates]` may carry tools too, and one tool wanted by several projects belongs in the pack rather than copied into each. Either way it is compiled into the same library the consumer lints are, so a tool may declare its own dependencies and may ship a lint alongside itself.
 
 Two of them registering the same name is refused rather than resolved, since `mock <name>` would otherwise run whichever loaded first. That is worth knowing before pulling a pack in: a tool the pack now ships and the local copy it replaces both register, and the refusal covers every tool in the repository rather than the colliding one.
 
 ```rust
 // mock/tools/phrase-search/src/lib.rs
-use mockspace::tool::{ArgSpec, NotALint, Tool, ToolContext, ToolReport};
+use mockspace::tool::{ArgSpec, NotALint, Purpose, Tool, ToolContext, ToolReport};
 
 pub struct PhraseSearch;
 
 impl Tool for PhraseSearch {
     fn name(&self) -> &'static str { "phrase-search" }
     fn description(&self) -> &'static str { "find a phrase across wrapped lines" }
-    fn not_a_lint(&self) -> NotALint { NotALint::TakesAQuestion }
+    fn purpose(&self) -> Purpose { Purpose::Check(NotALint::TakesAQuestion) }
     fn args(&self) -> &[ArgSpec] {
         &[ArgSpec { name: "phrase", required: true, description: "what to look for" }]
     }
@@ -176,14 +176,41 @@ impl Tool for PhraseSearch {
 mockspace::lint_pack! { tools: [PhraseSearch] }
 ```
 
-`not_a_lint` has no default and takes one of two values, because the question it asks is the one that keeps the gate populated:
+`purpose` has no default, because it is the declaration that keeps the gate populated, and a check cannot be written without saying why it is not a lint. The reason takes one of two values:
 
 - `TakesAQuestion`, when a required argument comes from the person. A gate has nobody to ask.
 - `NoFailingCase`, when the answer is the output and no threshold separates pass from fail.
 
-Neither is a matter of taste and both are checked. A tool claiming to take a question and declaring no required argument is refused; one claiming no failing case and returning a finding that blocks a gate is reported. **Being slow, or needing git history, are not reasons.** A repo lint is handed the repository root and may run git itself, so a check with those properties is a lint.
+Neither is a matter of taste and both are checked. A tool claiming to take a question and declaring no required argument is refused; one claiming no failing case and returning a finding that blocks a gate fails the run with exit 2, the code every broken contract exits with. Being slow, or needing git history, are not reasons: a repo lint is handed the repository root and may run git itself, so a check with those properties is a lint.
 
-A tool returns one of three outcomes rather than a list of findings. `Clean` carries what it examined, because a clean verdict over nothing is not a pass. `Findings` carries `LintError`s, the same type a lint produces, so a tool that turns out to be gateable becomes a lint without rewriting them. `Inconclusive` says the run establishes nothing, and it fails: a check that silently did not run is worse than no check, since both print the same green.
+A maker declares what it writes instead of a reason, as patterns relative to the repository root:
+
+```rust
+fn purpose(&self) -> Purpose { Purpose::Make { writes: &["docs/generated/**", "CHANGELOG.md"], roots: &[] } }
+```
+
+The patterns are anchored, so `CHANGELOG.md` is the one at the root and not every file of that name. A maker declaring nothing is refused before it runs, and so is a pattern that is empty, leaves the tree, has a `.git` segment in any letter case, has a `[` or `]` (which git reads as a class and the audit reads literally), or is made only of wildcards, since `**/?*` holds a tool to nothing just as `**` does. While a maker runs, the engine compares the worktree before and after, prints every path that changed, and fails the run with exit 2 on a write outside the declaration.
+
+A maker whose output location is chosen on the command line names the argument at the start of a pattern, and declares a fixed root the argument has to fall under:
+
+```rust
+fn purpose(&self) -> Purpose {
+    Purpose::Make {
+        writes: &["{output}.rs", "{output}/**"],
+        roots:  &[ArgRoot { arg: "output", under: "src/icons/*" }],
+    }
+}
+```
+
+The engine reads the argument from the actual command line before the run and puts it into the pattern, so `mock bake src/icons/ui` may write `src/icons/ui.rs` and anything under `src/icons/ui/`, and is failed for a write anywhere else it is observed. A value that is absolute, has a `..` or `.git` segment, carries a glob character or does not match its root is refused with exit 2 before the tool runs, and so is one whose path in the tree, up to the first wildcard of any pattern it starts, passes through a symlink, wherever the link points, since writes through it would land where they are not observed. A symlink already committed further down, inside `src/icons/ui/`, is not checked, and a write through it is not seen. A pattern naming an argument the tool does not declare, an argument with no root, a root nothing names, and a root that would be refused as a write are each refused before anything runs. An optional argument that was not given admits nothing.
+
+A maker has no way to express a gating judgement. Its findings report what it produced, at warning or info, and a finding at error at any gate fails the run with exit 2 as a broken contract. A make that fails returns `Inconclusive`, its reason saying what failed and on which input, and exits nonzero as any inconclusive run does. Gating stays with checks and lints. What a maker produced is visible only through the paths it declared, which `mock tools --long` shows with the root of every argument they name, and the list of what it wrote that the engine prints after each run.
+
+The comparison sees what `git status` sees. Ignored paths are asked about only inside the declaration, so a maker whose output is gitignored is seen writing it, while an ignored write outside the declaration is not checked; neither is anything under `.git/`, a write outside the worktree, including one through a symlink the declaration did not lead to, or a permission-only change to a file that was already modified. Where git cannot report the tree, a maker is not run at all, and where it cannot report it after the run, the run is inconclusive.
+
+A tool returns one of three outcomes rather than a list of findings. `Clean` carries what it examined, because a clean verdict over nothing is not a pass, and for a maker it is a make that succeeded; a make that failed is `Inconclusive`. `Findings` carries `LintError`s, the same type a lint produces, so a check that turns out to be gateable becomes a lint without rewriting them, and a maker reports what it produced the same way, at warning or info. `Inconclusive` says the run establishes nothing, and it fails: a check that silently did not run is worse than no check, since both print the same green.
+
+`mock tools` lists every tool with its kind, and `mock tools --long` or `mock help <name>` adds what each one is held to.
 
 ## Generated documentation
 

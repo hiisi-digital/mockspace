@@ -1,7 +1,8 @@
-# Lints and tools, and which a check is
+# Lints and tools, and which a given one is
 
-**A check is a lint or it is a tool. There is no third kind, and inventing one
-is how a gate stops gating.**
+**A check is a lint or it is a tool. There is no third kind of check, and
+inventing one is how a gate stops gating.** A tool that writes files instead of
+judging them is a maker, which is a tool of its own kind rather than a check.
 
 ## The default is a lint
 
@@ -15,7 +16,12 @@ bad state being committed at all, which no report can do.
 Declared per repository under `[lints.<name>]`, with a gate severity and
 optional per-scope overrides.
 
-## A tool is what a lint structurally cannot be, and there are exactly two
+## A tool declares what it is for, with no default
+
+`purpose` is either `Check(reason)` or `Make { writes, roots }`, and a tool cannot
+compile without one.
+
+## A check tool is what a lint structurally cannot be, and there are exactly two
 
 **`takes-a-question`.** It needs a question from the person running it, and a
 gate has nobody to ask. A configured default does not rescue it: a search pinned
@@ -29,19 +35,65 @@ somebody still has to make. Gating on one means inventing a threshold nobody
 justified, and an invented threshold is worse than no gate, because people
 defend numbers.
 
-*Enforced*: a run may not return a finding that blocks a gate.
+*Enforced*: a run may not return a finding that blocks a gate; one that does
+exits 2, as a broken contract.
 
 **Anything that looks like a third reason is either a cost concern or a gap in
 the lint contract, and the honest fix is to grow the lint contract.**
 
-Declared per repository under `<mock>/tools/<name>/`, one directory each, listed
-by `cargo mock tools`.
+## A maker writes files, and is held to the paths it names
+
+A generator, a scaffolder, a renderer, an exporter: its product is what it
+writes, so the question a gate asks does not arise and it gives no reason.
+
+**It declares what it writes**, as patterns relative to the repository root,
+anchored: `CHANGELOG.md` is the one at the root, not every file of that name.
+Where the output location is an argument, a pattern starts with it, `{output}.rs`
+or `{output}/**`, and `roots` names the fixed root its value must fall under,
+`ArgRoot { arg: "output", under: "src/icons/*" }`.
+
+*Enforced before it runs*: at least one pattern, none empty, none leaving the
+repository, none with a `.git` segment in any letter case, none with `[` or `]` (git reads
+a class where the audit reads the characters), none made only of wildcards
+(`*`, `?`, `**` in any arrangement; `**/?*` admits everything as surely as
+`**`). A pattern names an argument only at its start, once; the argument
+must be declared in `args()` and have one root, every root must be named by a
+write, and a root is held to the rules a write is.
+
+*Enforced while it runs*: each argument a write names is read from the command
+line and put into the pattern, and a value that is absolute, has a `..` or
+`.git` segment, carries a glob character or misses its root is refused, exit 2,
+before the tool runs, and so is one whose path in the tree, up to the first
+wildcard, passes through any symlink, since writes through it land unobserved. Then the engine compares the worktree before and after,
+prints every changed path, and fails the run, exit 2, on a write outside the
+resolved declaration.
+
+**A maker has no way to express a gating judgement.** Its findings report what
+it produced, at warning or info; a finding at error at any gate is a contract
+fault, exit 2. A make that fails returns `Inconclusive`, its reason saying what
+failed and on which input, and exits nonzero as any inconclusive run does.
+Gating stays with checks and lints. What a maker produced is visible only
+through the paths it declared, shown with each argument's root by `cargo mock
+tools --long`, and the list
+of what it wrote that the engine prints after each run.
+
+**It fails closed.** Where git cannot report the tree, the maker is not run;
+where it cannot after the run, the run is inconclusive. It sees what
+`git status` sees: ignored paths are asked about only inside the declaration,
+so a gitignored output it declared is seen, while an ignored write outside the
+declaration is not; nor is anything under `.git/`, a write outside the
+worktree, a write through a symlink already committed below an argument's
+value, or a permission-only change to a file already modified.
+
+Declared per repository under `<mock>/tools/<name>/`, one directory each, or
+shipped by a lint pack, and listed with their kind by `cargo mock tools`.
+`cargo mock help <name>` prints one in full.
 
 ## A tool's findings are the same type a lint produces
 
-Severity configuration then works unchanged, rendering is shared, and a tool
-that turns out to be gateable becomes a lint without rewriting a line of its
-findings.
+Severity configuration then works unchanged, rendering is shared, and a check
+tool that turns out to be gateable becomes a lint without rewriting a line of
+its findings.
 
 **A third finding type is how a gate stops gating.** Before this contract
 existed, something needed findings from a check that was not a lint, had no
@@ -53,23 +105,30 @@ identifier twice exited zero, exactly as a sound one did.
 
 `Clean` carries the count it examined. **Required, not decoration**: a clean
 verdict over an empty population is vacuous, and that count is the only thing
-distinguishing it from a real pass.
+distinguishing it from a real pass. For a maker it is a make that succeeded.
 
-`Findings` is what it found.
+`Findings` is what it found. A maker's are advisory, warning or info, and a
+maker's failed make is `Inconclusive` instead.
 
 `Inconclusive` is the run whose own controls failed. Without it a broken check
 must either report empty, claiming a pass it never established, or invent a
 finding, lying about what it checked. It blocks every gate by design, and that
 is a statement about the instrument rather than about the corpus.
 
-## Deciding, for a check you are about to write
+## Deciding, for something you are about to write
 
-1. **Does it need an argument from a person?** Tool, `takes-a-question`.
-2. **Is there a state it should refuse?** Lint. Write the severity.
-3. **Is the output an inventory or a ranking with no pass line?** Tool,
+1. **Does running it produce files?** Tool, `Make`, with what it writes,
+   and the root of any argument a written path starts with.
+2. **Does it need an argument from a person?** Tool, `takes-a-question`.
+3. **Is there a state it should refuse?** Lint. Write the severity.
+4. **Is the output an inventory or a ranking with no pass line?** Tool,
    `no-failing-case`.
-4. **None of these?** It is a lint whose refusal you have not decided on yet.
+5. **None of these?** It is a lint whose refusal you have not decided on yet.
    Decide it.
+
+**A maker that also judges what it wrote is two things**, since its own findings
+cannot block: the make, and a lint over its output, so the output is held at
+the gate whether or not anyone reran the maker.
 
 **A directory of checks that are neither is a suite of lints that run only when
 somebody remembers, plus a handful of reports nobody can find.**

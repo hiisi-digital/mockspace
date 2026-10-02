@@ -135,6 +135,21 @@ pub fn glob_match(pattern: &str, path: &str) -> bool {
     match_segments(&pat, &seg)
 }
 
+/// Whether `pattern` matches `path` from the root, with no lift.
+///
+/// [`glob_match`] reads a bare `CHANGELOG.md` as `**/CHANGELOG.md`, which is right for a
+/// filter somebody writes to exclude a kind of file wherever it sits, and wrong for a
+/// declaration of exactly which files a tool writes: there the bare name means the one at
+/// the root, and lifting it would quietly admit every file of that name in the tree. So a
+/// maker's declared writes are matched with this, and a pattern means what it spells.
+#[must_use]
+pub fn glob_match_anchored(pattern: &str, path: &str) -> bool {
+    let pattern = pattern.strip_prefix("./").unwrap_or(pattern);
+    let pat: Vec<&str> = pattern.split('/').collect();
+    let seg: Vec<&str> = path.split('/').collect();
+    match_segments(&pat, &seg)
+}
+
 fn match_segments(pat: &[&str], path: &[&str]) -> bool {
     match pat.split_first() {
         None => path.is_empty(),
@@ -198,6 +213,21 @@ mod tests {
         // must not pick up a nested `a/src/lib.rs`
         assert!(glob_match("src/lib.rs", "src/lib.rs"));
         assert!(!glob_match("src/lib.rs", "a/src/lib.rs"));
+    }
+
+    #[test]
+    fn an_anchored_bare_name_matches_only_at_the_root() {
+        // the case that must fail against `glob_match`, which lifts a bare name to any depth
+        assert!(glob_match_anchored("CHANGELOG.md", "CHANGELOG.md"));
+        assert!(!glob_match_anchored(
+            "CHANGELOG.md",
+            "crates/a/CHANGELOG.md"
+        ));
+        assert!(glob_match("CHANGELOG.md", "crates/a/CHANGELOG.md"));
+        // and otherwise it is the same language
+        assert!(glob_match_anchored("docs/gen/**", "docs/gen/a/b.md"));
+        assert!(!glob_match_anchored("docs/gen/**", "docs/other.md"));
+        assert!(glob_match_anchored("./docs/*.md", "docs/a.md"));
     }
 
     #[test]

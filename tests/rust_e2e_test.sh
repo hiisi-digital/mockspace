@@ -42,3 +42,10 @@ it_runs_the_ignored_generation_idempotence_suite() {
 it_runs_the_ignored_shared_target_dir_suite() {
     assert_ok cargo test -p mockspace --test cdylib_found_under_a_shared_target_dir -- --ignored
 }
+
+# The maker arm of the tool contract, held to its declared writes by the
+# engine binary over a real build and a real worktree.
+#[test]
+it_runs_the_ignored_maker_tool_suite() {
+    assert_ok cargo test -p mockspace --test maker_tool -- --ignored
+}

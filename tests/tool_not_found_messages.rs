@@ -144,12 +144,12 @@ fn write_crate(tools: &Path, dir: &str, registers: &str, item: &str) {
     .unwrap();
 }
 
-const A_TOOL: &str = r#"use mockspace::tool::{NotALint, Tool, ToolContext, ToolReport};
+const A_TOOL: &str = r#"use mockspace::tool::{NotALint, Purpose, Tool, ToolContext, ToolReport};
 pub struct T;
 impl Tool for T {
     fn name(&self) -> &'static str { "somethingelse" }
     fn description(&self) -> &'static str { "a probe tool" }
-    fn not_a_lint(&self) -> NotALint { NotALint::NoFailingCase }
+    fn purpose(&self) -> Purpose { Purpose::Check(NotALint::NoFailingCase) }
     fn run(&self, _: &ToolContext<'_>) -> ToolReport { ToolReport::reported("", 0) }
 }"#;
 

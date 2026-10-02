@@ -47,7 +47,7 @@ fn write_tool(tools: &Path, dir: &str, pkg: &str, declares: &str, body: &str) {
     fs::write(
         root.join("src").join("lib.rs"),
         format!(
-            r#"use mockspace::tool::{{ArgSpec, NotALint, Outcome, Tool, ToolContext, ToolReport}};
+            r#"use mockspace::tool::{{ArgSpec, NotALint, Outcome, Purpose, Tool, ToolContext, ToolReport}};
 
 pub struct T;
 
@@ -80,7 +80,7 @@ fn load(mock: &Path) -> mockspace::custom_lints::LoadedLints {
         .expect("a project with a tool has something to load")
 }
 
-const REPORTS: &str = r#"fn not_a_lint(&self) -> NotALint { NotALint::NoFailingCase }
+const REPORTS: &str = r#"fn purpose(&self) -> Purpose { Purpose::Check(NotALint::NoFailingCase) }
     fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
         ToolReport::reported(format!("args={}", ctx.args.len()), 7)
     }"#;
@@ -113,7 +113,10 @@ fn a_tool_crate_loads_and_dispatches_across_the_cdylib() {
     let tool = &loaded.pack.tools[0];
     assert_eq!(tool.name(), "greet");
     assert_eq!(tool.description(), "a probe tool");
-    assert_eq!(tool.not_a_lint(), mockspace::tool::NotALint::NoFailingCase);
+    assert_eq!(
+        tool.purpose(),
+        mockspace::tool::Purpose::Check(mockspace::tool::NotALint::NoFailingCase)
+    );
 
     // And it runs, with the context the engine builds.
     let crates = std::collections::BTreeSet::new();
@@ -270,14 +273,14 @@ fn a_tool_and_a_lint_can_ship_in_one_crate() {
     .unwrap();
     fs::write(
         root.join("src").join("lib.rs"),
-        r#"use mockspace::tool::{NotALint, Tool, ToolContext, ToolReport};
+        r#"use mockspace::tool::{NotALint, Purpose, Tool, ToolContext, ToolReport};
 use mockspace::{CrateLint, Lint, LintContext, LintError};
 
 pub struct T;
 impl Tool for T {
     fn name(&self) -> &'static str { "both" }
     fn description(&self) -> &'static str { "a tool" }
-    fn not_a_lint(&self) -> NotALint { NotALint::NoFailingCase }
+    fn purpose(&self) -> Purpose { Purpose::Check(NotALint::NoFailingCase) }
     fn run(&self, _c: &ToolContext<'_>) -> ToolReport { ToolReport::reported("", 1) }
 }
 

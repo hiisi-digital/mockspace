@@ -838,8 +838,10 @@ impl mockspace_lint_rules::tool::Tool for StubTool {
         "find a phrase across hard-wrapped lines"
     }
 
-    fn not_a_lint(&self) -> mockspace_lint_rules::tool::NotALint {
-        mockspace_lint_rules::tool::NotALint::TakesAQuestion
+    fn purpose(&self) -> mockspace_lint_rules::tool::Purpose {
+        mockspace_lint_rules::tool::Purpose::Check(
+            mockspace_lint_rules::tool::NotALint::TakesAQuestion,
+        )
     }
 
     fn args(&self) -> &[mockspace_lint_rules::tool::ArgSpec] {
