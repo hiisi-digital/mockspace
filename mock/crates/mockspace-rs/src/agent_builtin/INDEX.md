@@ -15,7 +15,7 @@ refresh; the source is inside the mockspace crate.
 | `suppressions.md` | The five directives, where each attaches, what none of them can do |
 | `commands.md` | How mockspace is invoked, and why the subcommand list is read rather than written |
 | `identity.md` | Slugs, task ids, ref paths, hashes, and identifier against content |
-| `lints-and-tools.md` | The two kinds of check, which a given one is, the contract each is held to |
+| `lints-and-tools.md` | Lints, check tools and maker tools: which a given one is, the contract each is held to |
 
 ## Not here
 
