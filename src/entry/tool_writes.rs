@@ -35,6 +35,11 @@
 //!   blind spot;
 //! - a write outside the worktree, to a home directory, a temp directory or
 //!   another repository, since only this worktree is asked about;
+//! - a write through a symlink, which lands wherever the link points and is
+//!   seen, at most, as the link itself; a symlink on the literal path of a
+//!   write rooted at an argument is refused before the run by
+//!   `symlinked_writes`, which closes the case an argument chose and not one
+//!   committed below its value or under a fixed pattern;
 //! - a permission-only change to a file that was already dirty, since the
 //!   fingerprint is of content, and a mode change to a clean file is seen only
 //!   because status names the file afterwards;

@@ -299,3 +299,47 @@ fn the_purpose_renders_each_argument_with_its_root() {
          with `output` under `src/icons/*` and `extra` under `src/extra/**/*`"
     );
 }
+
+#[test]
+fn a_git_segment_is_refused_in_any_case() {
+    // The case that must fail: on a case-insensitive filesystem `.GIT` is
+    // the repository's `.git`, so a check on the exact spelling grants it.
+    for (writes, why) in [
+        (&[".GIT/hooks/*"][..], "has a literal `.git` segment"),
+        (&["vendor/.Git/config"][..], "has a literal `.git` segment"),
+        (&["{output}/.GIT/x"][..], "has a literal `.git` segment"),
+    ] {
+        let mut all = vec!["{output}.rs"];
+        all.extend_from_slice(writes);
+        let writes: &'static [&'static str] = Box::leak(all.into_boxed_slice());
+        let found = faults_of(writes, BAKE.roots);
+        let found: Vec<&String> = found.iter().filter(|f| !f.contains("extra")).collect();
+        assert_eq!(found.len(), 1, "{writes:?}: {found:?}");
+        assert!(found[0].contains(why), "{writes:?}: {found:?}");
+    }
+    for value in ["src/icons/.GIT", "src/icons/.Git"] {
+        let got = resolve_writes(&BAKE, &["svg", value]);
+        let Err(refused) = got else {
+            panic!("`{value}` must be refused, got {got:?}");
+        };
+        assert!(
+            refused[0].contains("has a literal `.git` segment"),
+            "{refused:?}"
+        );
+    }
+}
+
+#[test]
+fn a_bracket_in_a_fixed_pattern_is_refused() {
+    // Git's glob pathspec reads `[ab]` as a class and the audit's matcher
+    // reads it literally, so the ignored outputs observed and the writes
+    // admitted would be two different sets.
+    for pattern in ["gen/[ab].rs", "gen/a]b.rs", "{output}/[x]"] {
+        let writes: &'static [&'static str] =
+            Box::leak(vec!["{output}.rs", pattern].into_boxed_slice());
+        let found = faults_of(writes, BAKE.roots);
+        let found: Vec<&String> = found.iter().filter(|f| !f.contains("extra")).collect();
+        assert_eq!(found.len(), 1, "`{pattern}`: {found:?}");
+        assert!(found[0].contains("`[` or `]`"), "`{pattern}`: {found:?}");
+    }
+}

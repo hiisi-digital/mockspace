@@ -105,6 +105,7 @@ pub use tool::{
     maker_faults,
     ArgRoot,
     resolve_writes,
+    symlinked_writes,
     missing_required,
     usage_line,
 };

@@ -30,7 +30,11 @@
 //! - **The value is a plain repository-relative path.** Absolute, `..`, a
 //!   `.git` segment, an empty segment or any glob character is refused, the
 //!   last because a value of `*` substituted into the pattern would widen it
-//!   to whatever the wildcard reaches.
+//!   to whatever the wildcard reaches. And the path it names in the tree may
+//!   not pass through a symlink, which only the filesystem can say
+//!   ([`symlinked_writes`]).
+
+use std::path::Path;
 
 use super::{ArgSpec, Tool, positional_args};
 use crate::glob_match_anchored;
@@ -49,14 +53,19 @@ pub struct ArgRoot {
 /// Why a fixed pattern, a declared write or a root, is refused, or `None`
 /// when it is usable.
 ///
-/// Four shapes are refused:
+/// Five shapes are refused:
 ///
 /// - an empty pattern;
 /// - one that leaves the repository, absolute or with a `..` segment;
 /// - one with a literal `.git` segment, since the engine's observation is `git
 ///   status`, which never names a path under `.git/`, so a declared write
 ///   there is one nothing could hold the tool to, and a maker rewriting hooks
-///   or config is not something to grant by declaration;
+///   or config is not something to grant by declaration. Compared without
+///   regard to ASCII case, since on a case-insensitive filesystem `.GIT` is
+///   the same directory;
+/// - one with `[` or `]`, which git's glob pathspec, used to ask about
+///   ignored outputs, reads as a character class while the audit's matcher
+///   reads the characters, so the two would disagree on what is declared;
 /// - one whose every segment is only wildcards, `*`, `?` or `**` in any
 ///   arrangement. Such a pattern names no part of the tree and constrains a
 ///   write by its depth at most: `**/?*` admits every path as surely as `**`
@@ -74,8 +83,14 @@ pub(super) fn refused_pattern(pattern: &str) -> Option<&'static str> {
     if p.starts_with('/') || segs.contains(&"..") {
         return Some("leaves the repository root");
     }
-    if segs.contains(&".git") {
+    if segs.iter().any(|s| s.eq_ignore_ascii_case(".git")) {
         return Some("has a literal `.git` segment, which the observation cannot see");
+    }
+    if p.contains(['[', ']']) {
+        return Some(
+            "has a `[` or `]`, which git's glob pathspec reads as a class and the audit \
+             reads literally, so the two would disagree on what it names",
+        );
     }
     if segs.iter().all(|s| s.chars().all(|c| c == '*' || c == '?')) {
         return Some("is only wildcards");
@@ -215,7 +230,7 @@ fn refused_value<'v>(value: &'v str, under: &str) -> Result<&'v str, String> {
     if v.starts_with('/') || segs.contains(&"..") {
         return Err("leaves the repository root".to_string());
     }
-    if segs.contains(&".git") {
+    if segs.iter().any(|s| s.eq_ignore_ascii_case(".git")) {
         return Err("has a literal `.git` segment".to_string());
     }
     if segs.contains(&"") || segs.contains(&".") {
@@ -246,6 +261,12 @@ fn refused_value<'v>(value: &'v str, under: &str) -> Result<&'v str, String> {
 /// One message per argument value that is not a plain repository-relative
 /// path under its declared root.
 pub fn resolve_writes(tool: &dyn Tool, args: &[&str]) -> Result<Vec<String>, Vec<String>> {
+    resolve(tool, args).map(|w| w.into_iter().map(|(p, _)| p).collect())
+}
+
+/// [`resolve_writes`], with each resolved pattern marked by whether it is
+/// rooted at an argument.
+fn resolve(tool: &dyn Tool, args: &[&str]) -> Result<Vec<(String, bool)>, Vec<String>> {
     let super::Purpose::Make {
         writes,
         roots,
@@ -289,7 +310,7 @@ pub fn resolve_writes(tool: &dyn Tool, args: &[&str]) -> Result<Vec<String>, Vec
     let mut out = Vec::new();
     for w in writes {
         match rooting(w) {
-            Ok(Rooting::Fixed) => out.push((*w).to_string()),
+            Ok(Rooting::Fixed) => out.push(((*w).to_string(), false)),
             Ok(Rooting::At {
                 arg,
                 tail,
@@ -299,7 +320,7 @@ pub fn resolve_writes(tool: &dyn Tool, args: &[&str]) -> Result<Vec<String>, Vec
                 // refuses before this is reached: nothing may be written
                 // under it.
                 if let Some((_, Some(v))) = values.iter().find(|(a, _)| *a == arg) {
-                    out.push(format!("{v}{tail}"));
+                    out.push((format!("{v}{tail}"), true));
                 }
             },
             // Refused at registration; resolving it to nothing admits nothing.
@@ -307,4 +328,59 @@ pub fn resolve_writes(tool: &dyn Tool, args: &[&str]) -> Result<Vec<String>, Vec
         }
     }
     Ok(out)
+}
+
+/// Every argument-rooted write on this command line that would pass through
+/// a symlink already in the tree, one refusal per symlink.
+///
+/// The string checks in [`resolve_writes`] cannot see that `src/icons/ui` is a
+/// committed link to a directory outside the worktree, and every write under
+/// it would then land where the observation never looks. So the literal part
+/// of each resolved pattern, up to its first wildcard, is walked from
+/// `repo_root` down, and **any** existing component that is a symlink is
+/// refused, wherever it points: a link inside the tree hides its writes from
+/// the audit too, since git reports the link and not what was written through
+/// it, and "refuse every link" needs no canonicalising to be sound. The walk
+/// stops at the first component that does not exist yet, since nothing below
+/// it can be a link.
+///
+/// Fixed patterns are not walked, and neither is anything below a wildcard:
+/// a link already committed under `{output}/` is a blind spot of the
+/// observation, named in `tool_writes.rs`, rather than something an argument
+/// chose.
+#[must_use]
+pub fn symlinked_writes(tool: &dyn Tool, args: &[&str], repo_root: &Path) -> Vec<String> {
+    let Ok(resolved) = resolve(tool, args) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    for (pattern, rooted) in resolved {
+        if !rooted {
+            continue;
+        }
+        let literal: Vec<&str> = pattern
+            .split('/')
+            .take_while(|s| !s.contains(['*', '?']))
+            .collect();
+        for i in 1 ..= literal.len() {
+            let rel = literal[.. i].join("/");
+            match std::fs::symlink_metadata(repo_root.join(&rel)) {
+                Err(_) => break,
+                Ok(m) if m.file_type().is_symlink() => {
+                    let msg = format!(
+                        "tool `{}` would write through `{rel}`, which is a symlink, so its \
+                         writes would land wherever the link points rather than where they \
+                         are observed.",
+                        tool.name()
+                    );
+                    if !out.contains(&msg) {
+                        out.push(msg);
+                    }
+                    break;
+                },
+                Ok(_) => {},
+            }
+        }
+    }
+    out
 }
