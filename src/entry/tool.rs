@@ -25,7 +25,10 @@
 //!
 //! A tool declaring [`Purpose::Make`] has the worktree observed before and
 //! after its run, by [`super::tool_writes`], and every path it changed is
-//! printed and held to what it declared. A write outside the declaration, or
+//! printed and held to what it declared. A declared write rooted at an
+//! argument is resolved from the command line first, and a value outside its
+//! declared root is refused with exit 2 before the tool is entered. A write
+//! outside the resolved declaration, or
 //! any finding at error from a maker, whose findings never block, is a
 //! contract fault, and so is a false `no-failing-case`. Every contract fault
 //! exits 2, whatever the tool's own outcome said, because a tool that broke its declaration has said something
@@ -45,6 +48,7 @@ use mockspace_lint_rules::tool::{
     duplicate_tool_names,
     maker_faults,
     missing_required,
+    resolve_writes,
     usage_line,
 };
 
@@ -233,14 +237,23 @@ pub(crate) fn run(
     // itself does is attributed to the tool. Fail closed: a maker whose writes
     // cannot be observed is not run, since running it would leave a tree
     // nobody held to the declaration.
-    let (maker, declared): (bool, &[&str]) = match tool.purpose() {
-        Purpose::Make {
-            writes,
-        } => (true, writes),
-        Purpose::Check(_) => (false, &[]),
+    let maker = matches!(tool.purpose(), Purpose::Make { .. });
+    // What a maker may write on this command line: its writes rooted at an
+    // argument resolved from `args`. A value leaving its declared root is
+    // refused here, before the tool is entered, rather than found afterwards.
+    let resolved = match resolve_writes(tool.as_ref(), args) {
+        Ok(r) => r,
+        Err(refused) => {
+            for f in &refused {
+                eprintln!("mock: {f}");
+            }
+            eprintln!("  `{name}` was not run.");
+            return ExitCode::from(2);
+        },
     };
+    let declared: Vec<&str> = resolved.iter().map(String::as_str).collect();
     let before = if maker {
-        match super::tool_writes::snapshot(&cfg.repo_root, declared) {
+        match super::tool_writes::snapshot(&cfg.repo_root, &declared) {
             Some(b) => Some(b),
             None => {
                 eprintln!(
@@ -255,7 +268,7 @@ pub(crate) fn run(
     };
     let report = tool.run(&ctx);
     let after = if maker {
-        super::tool_writes::snapshot(&cfg.repo_root, declared)
+        super::tool_writes::snapshot(&cfg.repo_root, &declared)
     } else {
         None
     };
@@ -284,7 +297,7 @@ pub(crate) fn run(
         match super::tool_writes::after_run(b, after) {
             Ok(wrote) => {
                 eprint!("{}", wrote_message(name, &wrote));
-                for f in maker_faults(tool.as_ref(), &report, &wrote) {
+                for f in maker_faults(tool.as_ref(), &report, args, &wrote) {
                     eprintln!("mock: {f}");
                     broke_contract = true;
                 }

@@ -28,13 +28,13 @@ fn dep_spec() -> String {
 /// to, a maker declaring nothing, a check wearing a maker's declaration, and
 /// a check whose `no-failing-case` is false, so one build serves them all.
 const TOOLS: &str = r#"use mockspace::LintError;
-use mockspace::tool::{NotALint, Outcome, Purpose, Tool, ToolContext, ToolReport};
+use mockspace::tool::{ArgRoot, ArgSpec, NotALint, Outcome, Purpose, Tool, ToolContext, ToolReport};
 
 pub struct Gen;
 impl Tool for Gen {
     fn name(&self) -> &'static str { "gen" }
     fn description(&self) -> &'static str { "write the generated page" }
-    fn purpose(&self) -> Purpose { Purpose::Make { writes: &["gen/**"] } }
+    fn purpose(&self) -> Purpose { Purpose::Make { writes: &["gen/**"], roots: &[] } }
     fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
         std::fs::create_dir_all(ctx.repo_root.join("gen")).unwrap();
         std::fs::write(ctx.repo_root.join("gen/page.md"), "made\n").unwrap();
@@ -57,7 +57,7 @@ pub struct Bare;
 impl Tool for Bare {
     fn name(&self) -> &'static str { "bare" }
     fn description(&self) -> &'static str { "a maker that names nothing" }
-    fn purpose(&self) -> Purpose { Purpose::Make { writes: &[] } }
+    fn purpose(&self) -> Purpose { Purpose::Make { writes: &[], roots: &[] } }
     fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
         std::fs::write(ctx.repo_root.join("bare-ran.md"), "it ran\n").unwrap();
         ToolReport::reported("", 1)
@@ -68,7 +68,7 @@ pub struct Dodge;
 impl Tool for Dodge {
     fn name(&self) -> &'static str { "dodge" }
     fn description(&self) -> &'static str { "a check wearing a maker's declaration" }
-    fn purpose(&self) -> Purpose { Purpose::Make { writes: &["never/written.md"] } }
+    fn purpose(&self) -> Purpose { Purpose::Make { writes: &["never/written.md"], roots: &[] } }
     fn run(&self, _: &ToolContext<'_>) -> ToolReport {
         ToolReport {
             outcome: Outcome::Findings(vec![LintError::error(
@@ -94,8 +94,36 @@ impl Tool for Liar {
     }
 }
 
+pub struct Bake;
+impl Tool for Bake {
+    fn name(&self) -> &'static str { "bake" }
+    fn description(&self) -> &'static str { "write a module where the argument says" }
+    fn purpose(&self) -> Purpose {
+        Purpose::Make {
+            writes: &["{output}.rs", "{output}/**"],
+            roots: &[ArgRoot { arg: "output", under: "gen/*" }],
+        }
+    }
+    fn args(&self) -> &[ArgSpec] {
+        &[
+            ArgSpec { name: "output", required: true, description: "the module stem" },
+            ArgSpec { name: "mode", required: false, description: "`stray` to write a sibling" },
+        ]
+    }
+    fn run(&self, ctx: &ToolContext<'_>) -> ToolReport {
+        let out = ctx.repo_root.join(ctx.args[0]);
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.with_extension("rs"), "made\n").unwrap();
+        std::fs::write(out.join("a.md"), "made\n").unwrap();
+        if ctx.args.get(1) == Some(&"stray") {
+            std::fs::write(ctx.repo_root.join("gen/other.rs"), "not asked for\n").unwrap();
+        }
+        ToolReport::reported("", 1)
+    }
+}
+
 mockspace::lint_pack! {
-    tools: [Gen, Bare, Dodge, Liar],
+    tools: [Gen, Bare, Dodge, Liar, Bake],
 }
 "#;
 
@@ -306,4 +334,39 @@ fn a_maker_that_wrote_its_declared_file_and_blocks_has_broken_its_contract() {
     assert_eq!(out.status.code(), Some(2), "{err}");
     assert!(err.contains("gen/page.md"), "it did write:\n{err}");
     assert!(err.contains("never block"), "{err}");
+}
+
+#[test]
+#[ignore = "runs cargo build; run with --ignored"]
+fn a_maker_writing_where_its_argument_says_is_held_to_the_resolved_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mock = fixture(tmp.path());
+
+    // Help shows the pattern and the root it is bounded by.
+    let out = engine(&mock, &["help", "bake"]);
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains("writes `{output}.rs`, `{output}/**`, with `output` under `gen/*`"),
+        "{stdout}"
+    );
+
+    // Under the root: both writes are inside the resolved patterns.
+    let out = engine(&mock, &["bake", "gen/icons"]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("gen/icons.rs") && err.contains("gen/icons/a.md"), "{err}");
+
+    // A sibling under the same root was not asked for on this command line.
+    let out = engine(&mock, &["bake", "gen/ui", "stray"]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("wrote `gen/other.rs`, which is outside"), "{err}");
+
+    // Outside the root: refused before the run, so nothing is written.
+    let out = engine(&mock, &["bake", "src/icons"]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("is not under `gen/*`"), "{err}");
+    assert!(err.contains("was not run"), "{err}");
+    assert!(!tmp.path().join("src/icons.rs").exists(), "the maker must not have run");
 }

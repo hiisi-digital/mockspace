@@ -26,7 +26,10 @@
 //! of it does not arise. Such a tool declares [`Purpose::Make`] with the paths
 //! it writes instead of a [`NotALint`] reason, and is held to those paths: the
 //! engine observes what changed across the run and reports anything outside
-//! the declaration as a contract fault. A maker has no way to express a
+//! the declaration as a contract fault. A declared path may start with one of
+//! the tool's arguments, for a maker whose output location is chosen on the
+//! command line, and that argument then has a fixed root its value must fall
+//! under; [`writes`] resolves and checks it. A maker has no way to express a
 //! gating judgement: its findings report what it produced, at warning or
 //! info, and a finding at error at any gate is a contract fault. A make that
 //! fails returns `Inconclusive`, saying what failed on which input. Gating
@@ -54,7 +57,9 @@ use std::path::{Path, PathBuf};
 use crate::{Level, LintError, LintMode};
 
 pub mod purpose;
+pub mod writes;
 pub use purpose::{NotALint, Purpose, contract_faults, maker_faults};
+pub use writes::{ArgRoot, resolve_writes};
 
 // ---------------------------------------------------------------------------
 // The outcome
@@ -268,7 +273,8 @@ pub trait Tool {
     /// more. Requiring it costs one line and asks the question at the moment
     /// the author is best placed to answer it. A check cannot be declared
     /// without its [`NotALint`] reason, since [`Purpose::Check`] carries one.
-    /// A maker declares the paths it writes, and its findings never block:
+    /// A maker declares the paths it writes, with a root for any argument a
+    /// path starts with, and its findings never block:
     /// one at error at any gate is a contract fault, and a make that fails
     /// returns [`Outcome::Inconclusive`]. See [`Purpose::Make`].
     fn purpose(&self) -> Purpose;
@@ -373,8 +379,26 @@ pub fn usage_line(tool: &dyn Tool) -> String {
 /// not.
 #[must_use]
 pub fn missing_required<'t>(tool: &'t dyn Tool, args: &[&str]) -> Vec<&'t ArgSpec> {
+    let supplied = positional_args(tool, args).len();
+    tool.args()
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| a.required && *i >= supplied)
+        .map(|(_, a)| a)
+        .collect()
+}
+
+/// The positional words of `args`, in order, read the way
+/// [`missing_required`] reads them: the nth is the value of the nth declared
+/// argument. A bare flag is skipped, and so is a [`Tool::value_flags`] flag
+/// with the token after it.
+///
+/// One definition for both, so the argument a maker's writes are resolved
+/// against is the one the arity check counted as supplied.
+#[must_use]
+pub fn positional_args<'a>(tool: &dyn Tool, args: &[&'a str]) -> Vec<&'a str> {
     let value_flags = tool.value_flags();
-    let mut supplied = 0usize;
+    let mut out = Vec::new();
     let mut skip_next = false;
     for a in args {
         if skip_next {
@@ -388,14 +412,9 @@ pub fn missing_required<'t>(tool: &'t dyn Tool, args: &[&str]) -> Vec<&'t ArgSpe
         if a.starts_with('-') {
             continue;
         }
-        supplied += 1;
+        out.push(*a);
     }
-    tool.args()
-        .iter()
-        .enumerate()
-        .filter(|(i, a)| a.required && *i >= supplied)
-        .map(|(_, a)| a)
-        .collect()
+    out
 }
 
 /// Every tool name registered more than once, sorted.
@@ -421,3 +440,5 @@ pub fn duplicate_tool_names(tools: &[Box<dyn Tool>]) -> Vec<String> {
 mod purpose_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod writes_tests;

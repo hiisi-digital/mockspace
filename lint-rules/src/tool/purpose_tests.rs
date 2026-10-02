@@ -22,6 +22,7 @@ impl Tool for MakesNothing {
     fn purpose(&self) -> Purpose {
         Purpose::Make {
             writes: &[],
+            roots:  &[],
         }
     }
 
@@ -44,6 +45,7 @@ impl Tool for MakesEverything {
     fn purpose(&self) -> Purpose {
         Purpose::Make {
             writes: self.0,
+            roots:  &[],
         }
     }
 
@@ -66,6 +68,7 @@ impl Tool for Changelog {
     fn purpose(&self) -> Purpose {
         Purpose::Make {
             writes: &["CHANGELOG.md", "docs/gen/**"],
+            roots:  &[],
         }
     }
 
@@ -204,7 +207,7 @@ fn a_maker_that_blocks_and_wrote_nothing_has_broken_its_contract() {
     // reason. Subsumed by the rule below, and kept because it still holds.
     let r = blocking_run();
     assert!(r.outcome.blocks(LintMode::Commit), "the run blocks");
-    let found = maker_faults(&Changelog, &r, &[]);
+    let found = maker_faults(&Changelog, &r, &[], &[]);
     assert_eq!(found.len(), 1, "expected one fault, got {found:?}");
     assert!(found[0].contains("never block"), "{found:?}");
 }
@@ -216,7 +219,7 @@ fn a_maker_that_wrote_and_blocks_has_broken_its_contract() {
     // maker cannot express a gating judgement, so any finding at error at
     // any gate is a fault, whatever it wrote.
     let r = blocking_run();
-    let found = maker_faults(&Changelog, &r, &written(&["CHANGELOG.md"]));
+    let found = maker_faults(&Changelog, &r, &[], &written(&["CHANGELOG.md"]));
     assert_eq!(found.len(), 1, "expected one fault, got {found:?}");
     assert!(found[0].contains("never block"), "{found:?}");
 }
@@ -232,17 +235,17 @@ fn a_makers_advisory_findings_report_and_are_not_faults() {
     );
     assert_eq!(contract_faults(&Changelog, Some(&r)), Vec::<String>::new());
     assert_eq!(
-        maker_faults(&Changelog, &r, &written(&["CHANGELOG.md"])),
+        maker_faults(&Changelog, &r, &[], &written(&["CHANGELOG.md"])),
         Vec::<String>::new()
     );
-    assert_eq!(maker_faults(&Changelog, &r, &[]), Vec::<String>::new());
+    assert_eq!(maker_faults(&Changelog, &r, &[], &[]), Vec::<String>::new());
 }
 
 #[test]
 fn a_make_that_failed_before_writing_is_inconclusive_and_not_a_fault() {
     // Inconclusive is how a make says it could not get as far as writing.
     let r = ToolReport::inconclusive("the commit log could not be read");
-    assert_eq!(maker_faults(&Changelog, &r, &[]), Vec::<String>::new());
+    assert_eq!(maker_faults(&Changelog, &r, &[], &[]), Vec::<String>::new());
 }
 
 #[test]
@@ -250,6 +253,7 @@ fn a_write_outside_the_declaration_is_a_fault() {
     let found = maker_faults(
         &Changelog,
         &changelog_run(),
+        &[],
         &written(&["CHANGELOG.md", "docs/gen/a/b.md", "src/lib.rs"]),
     );
     assert_eq!(found.len(), 1, "only `src/lib.rs` is undeclared: {found:?}");
@@ -268,6 +272,7 @@ fn a_bare_declared_name_does_not_reach_a_nested_file_of_that_name() {
     let found = maker_faults(
         &Changelog,
         &changelog_run(),
+        &[],
         &written(&["crates/a/CHANGELOG.md"]),
     );
     assert_eq!(found.len(), 1, "{found:?}");
@@ -279,12 +284,13 @@ fn writes_inside_the_declaration_are_not_faults() {
         maker_faults(
             &Changelog,
             &changelog_run(),
+            &[],
             &written(&["CHANGELOG.md", "docs/gen/x.md"])
         ),
         Vec::<String>::new()
     );
     assert_eq!(
-        maker_faults(&Changelog, &ToolReport::reported("", 1), &[]),
+        maker_faults(&Changelog, &ToolReport::reported("", 1), &[], &[]),
         Vec::<String>::new()
     );
 }
@@ -294,7 +300,7 @@ fn a_check_is_not_audited_for_writes() {
     // Its declaration says nothing about writes, so there is nothing to hold
     // them to. Pinned so that turning this on is a deliberate change.
     assert_eq!(
-        maker_faults(&Inventory, &changelog_run(), &written(&["src/lib.rs"])),
+        maker_faults(&Inventory, &changelog_run(), &[], &written(&["src/lib.rs"])),
         Vec::<String>::new()
     );
 }

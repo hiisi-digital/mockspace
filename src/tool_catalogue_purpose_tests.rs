@@ -6,7 +6,7 @@
 //! What a project tool is for, as `mock tools`, `mock tools --long` and
 //! `mock help <tool>` render it.
 
-use mockspace_lint_rules::tool::{NotALint, Purpose, Tool, ToolContext, ToolReport};
+use mockspace_lint_rules::tool::{ArgRoot, NotALint, Purpose, Tool, ToolContext, ToolReport};
 
 use super::*;
 
@@ -23,6 +23,7 @@ impl Tool for Gen {
     fn purpose(&self) -> Purpose {
         Purpose::Make {
             writes: &["docs/gen/**", "CHANGELOG.md"],
+            roots:  &[],
         }
     }
 
@@ -112,4 +113,56 @@ fn the_long_listing_carries_the_same_block_as_help() {
         "`--long` and `help` must agree:\n{long}"
     );
     assert!(long.contains(&one("ask")));
+}
+
+struct Bake;
+impl Tool for Bake {
+    fn name(&self) -> &'static str {
+        "bake"
+    }
+
+    fn description(&self) -> &'static str {
+        "bake icons into a module"
+    }
+
+    fn purpose(&self) -> Purpose {
+        Purpose::Make {
+            writes: &["{output}.rs", "{output}/**"],
+            roots:  &[ArgRoot {
+                arg:   "output",
+                under: "src/icons/*",
+            }],
+        }
+    }
+
+    fn args(&self) -> &[ArgSpec] {
+        &[ArgSpec {
+            name:        "output",
+            required:    true,
+            description: "the module to write",
+        }]
+    }
+
+    fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
+        ToolReport::reported("", 1)
+    }
+}
+
+#[test]
+fn a_write_rooted_at_an_argument_renders_with_its_root() {
+    // `mock help bake` and `mock tools --long` print this block. The pattern
+    // alone says where the write starts; without the root it says nothing
+    // about where the argument may point.
+    let l = enumerate(&LintPack {
+        tools: vec![Box::new(Bake)],
+        ..LintPack::default()
+    });
+    let help = render_one(l.iter().find(|l| l.name == "bake").unwrap());
+    assert!(
+        help.contains(
+            "purpose: make, writes `{output}.rs`, `{output}/**`, with `output` under `src/icons/*`"
+        ),
+        "{help}"
+    );
+    assert!(render_long(&l).contains(&help));
 }

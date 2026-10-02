@@ -65,7 +65,8 @@ pub(crate) struct Snapshot(BTreeMap<String, Option<u64>>);
 /// rebased; a path above `repo_root` keeps its top-level spelling with a `../`
 /// prefix per level, which no declaration can match, so it is reported.
 ///
-/// `declared` is a maker's declared writes. Ignored paths inside them are
+/// `declared` is a maker's declared writes, with any argument they start with
+/// already resolved from the command line. Ignored paths inside them are
 /// observed too, through a second `git status --ignored` restricted to those
 /// patterns as glob pathspecs, so a maker whose output is gitignored is seen
 /// writing it, and an ignored tree outside the declaration is never walked.
