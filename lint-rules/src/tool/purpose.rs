@@ -20,8 +20,11 @@
 //! saying what failed on which input, and the run exits nonzero as an
 //! inconclusive run does. Gating stays with checks and lints. What a maker
 //! produced is visible only through its declared paths, which `mock tools
-//! --long` shows, and the list the engine prints of what it wrote.
+//! --long` shows with the root of every argument a path starts with, and the
+//! list the engine prints of what it wrote. The paths and roots themselves,
+//! and their resolution against a command line, are [`super::writes`].
 
+use super::writes::{ArgRoot, declaration_faults, resolve_writes};
 use super::{Outcome, Tool, ToolReport};
 use crate::{LintMode, glob_match_anchored};
 
@@ -173,7 +176,18 @@ pub enum Purpose {
         /// never a pattern that is only wildcards, leaves the tree or has a
         /// literal `.git` segment: all are refused by
         /// [`contract_faults`] before the tool runs.
+        ///
+        /// A pattern may start with a declared argument in braces, `{output}.rs`
+        /// or `{output}/**`, for a maker whose output location is chosen on
+        /// the command line. The argument is then resolved from the actual
+        /// command line before the run, see [`super::resolve_writes`].
         writes: &'static [&'static str],
+        /// For each argument a write names, the fixed root its value must fall
+        /// under. Empty for a maker whose writes are all fixed. An argument
+        /// named by a write with no root here, a root for an argument the tool
+        /// does not declare, and a root nothing names are each refused at
+        /// registration.
+        roots:  &'static [ArgRoot],
     },
 }
 
@@ -196,48 +210,26 @@ impl Purpose {
             Self::Check(r) => format!("check, {}", r.as_token()),
             Self::Make {
                 writes,
+                ..
             } if writes.is_empty() => "make, declares nothing it writes".to_string(),
             Self::Make {
                 writes,
+                roots,
             } => {
                 let list: Vec<String> = writes.iter().map(|w| format!("`{w}`")).collect();
-                format!("make, writes {}", list.join(", "))
+                let mut s = format!("make, writes {}", list.join(", "));
+                if !roots.is_empty() {
+                    let bounds: Vec<String> = roots
+                        .iter()
+                        .map(|r| format!("`{}` under `{}`", r.arg, r.under))
+                        .collect();
+                    s.push_str(", with ");
+                    s.push_str(&bounds.join(" and "));
+                }
+                s
             },
         }
     }
-}
-
-/// Why a declared write pattern is refused, or `None` when it is usable.
-///
-/// Four shapes are refused:
-///
-/// - an empty pattern;
-/// - one that leaves the repository, absolute or with a `..` segment;
-/// - one with a literal `.git` segment, since the engine's observation is `git
-///   status`, which never names a path under `.git/`, so a declared write
-///   there is one nothing could hold the tool to, and a maker rewriting hooks
-///   or config is not something to grant by declaration;
-/// - one whose every segment is only wildcards, `*`, `?` or `**` in any
-///   arrangement. Such a pattern names no part of the tree and constrains a
-///   write by its depth at most: `**/?*` admits every path as surely as `**`
-///   does. Declaring one would satisfy "declares what it writes" while saying
-///   nothing, which is the same hole as an open [`NotALint`].
-fn refused_pattern(pattern: &str) -> Option<&'static str> {
-    let p = pattern.strip_prefix("./").unwrap_or(pattern);
-    if p.is_empty() {
-        return Some("is empty");
-    }
-    let segs: Vec<&str> = p.split('/').collect();
-    if p.starts_with('/') || segs.contains(&"..") {
-        return Some("leaves the repository root");
-    }
-    if segs.contains(&".git") {
-        return Some("has a literal `.git` segment, which the observation cannot see");
-    }
-    if segs.iter().all(|s| s.chars().all(|c| c == '*' || c == '?')) {
-        return Some("is only wildcards");
-    }
-    None
 }
 
 /// Every way a tool contradicts its own [`Tool::purpose`] declaration.
@@ -261,7 +253,9 @@ fn refused_pattern(pattern: &str) -> Option<&'static str> {
 /// contract does not attempt.
 ///
 /// [`Purpose::Make`] is checked here only for the shape of its declaration:
-/// at least one pattern, and none that constrains nothing. What it actually
+/// at least one pattern, none that constrains nothing, and every argument a
+/// pattern starts with declared and given a root. The argument values are
+/// checked against those roots by [`super::resolve_writes`], before the run. What it actually
 /// wrote, and whether a blocking run wrote anything, is checked by
 /// [`maker_faults`], over
 /// paths the engine observed rather than paths the tool reported, because a
@@ -307,6 +301,7 @@ pub fn contract_faults(tool: &dyn Tool, report: Option<&ToolReport>) -> Vec<Stri
         },
         Purpose::Make {
             writes,
+            ..
         } => {
             if writes.is_empty() {
                 out.push(format!(
@@ -317,48 +312,35 @@ pub fn contract_faults(tool: &dyn Tool, report: Option<&ToolReport>) -> Vec<Stri
                     tool.name()
                 ));
             }
-            for w in writes {
-                if let Some(why) = refused_pattern(w) {
-                    out.push(format!(
-                        "tool `{}` declares it writes `{w}`, which {why}. A declared write \
-                         has to name part of the repository, or it constrains nothing.",
-                        tool.name()
-                    ));
-                }
-            }
+            out.extend(declaration_faults(tool));
         },
     }
 
     out
 }
 
-/// Every observed write outside what a maker declared, as one fault per path.
+/// Every observed write outside what a maker may write on this command line,
+/// as one fault per path.
 ///
-/// `written` is repository-relative, `/`-separated, and is what the engine saw
-/// change across the run, not what the tool says it did. A check that writes
-/// is not audited here: its declaration says nothing about writes, so there is
-/// nothing to compare them against, and an empty result for a check is the
-/// absence of a declaration rather than a pass.
+/// `resolved` is the maker's declaration with its arguments substituted, from
+/// [`super::resolve_writes`]. `written` is repository-relative, `/`-separated,
+/// and is what the engine saw change across the run, not what the tool says
+/// it did.
 #[must_use]
-fn undeclared_writes(tool: &dyn Tool, written: &[String]) -> Vec<String> {
-    let Purpose::Make {
-        writes,
-    } = tool.purpose()
-    else {
-        return Vec::new();
+fn undeclared_writes(tool: &dyn Tool, resolved: &[String], written: &[String]) -> Vec<String> {
+    let list: Vec<String> = resolved.iter().map(|w| format!("`{w}`")).collect();
+    let list = if list.is_empty() {
+        "nothing, on this command line".to_string()
+    } else {
+        list.join(", ")
     };
     written
         .iter()
-        .filter(|p| !writes.iter().any(|w| glob_match_anchored(w, p)))
+        .filter(|p| !resolved.iter().any(|w| glob_match_anchored(w, p)))
         .map(|p| {
             format!(
-                "tool `{}` wrote `{p}`, which is outside what it declares it writes ({}).",
+                "tool `{}` wrote `{p}`, which is outside what it declares it writes ({list}).",
                 tool.name(),
-                Purpose::Make {
-                    writes,
-                }
-                .describe()
-                .trim_start_matches("make, writes ")
             )
         })
         .collect()
@@ -378,17 +360,28 @@ fn undeclared_writes(tool: &dyn Tool, written: &[String]) -> Vec<String> {
 ///   cannot hide in one by writing a file it declared and then blocking on
 ///   something else. Gating stays with checks and lints.
 ///
+/// `args` is the command line the maker ran with, which the writes it
+/// declared rooted at an argument are resolved against; a value outside its
+/// root is a fault here too, though the engine refuses that before the run.
 /// `written` is repository-relative, `/`-separated, and is what the engine saw
 /// change across the run, not what the tool says it did.
 #[must_use]
-pub fn maker_faults(tool: &dyn Tool, report: &ToolReport, written: &[String]) -> Vec<String> {
+pub fn maker_faults(
+    tool: &dyn Tool,
+    report: &ToolReport,
+    args: &[&str],
+    written: &[String],
+) -> Vec<String> {
     let Purpose::Make {
         ..
     } = tool.purpose()
     else {
         return Vec::new();
     };
-    let mut out = undeclared_writes(tool, written);
+    let mut out = match resolve_writes(tool, args) {
+        Ok(resolved) => undeclared_writes(tool, &resolved, written),
+        Err(refused) => refused,
+    };
     let blocking = [LintMode::Commit, LintMode::Build, LintMode::Push]
         .into_iter()
         .any(|m| report.outcome.blocks(m));

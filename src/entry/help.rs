@@ -240,7 +240,8 @@ const COMMANDS: &[Cmd] = &[
                   one-line summary, and each tool with its kind: a check that \
                   cannot be a lint, or a maker that writes files. --long also \
                   prints what each tool is held to (its reason, or the paths it \
-                  writes), its declared \
+                  writes and the root of each argument a path starts \
+                  with), its declared \
                   arguments and its longer help text where it has one. This is \
                   the live answer: it is computed at the moment it is asked, \
                   from the same declared shape every tool and every builtin \

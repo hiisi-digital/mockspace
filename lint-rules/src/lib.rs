@@ -103,6 +103,8 @@ pub use tool::{
     contract_faults,
     duplicate_tool_names,
     maker_faults,
+    ArgRoot,
+    resolve_writes,
     missing_required,
     usage_line,
 };
