@@ -5,8 +5,9 @@ Invoked as `cargo mock <subcommand>` from the repository root.
 ## Never write the list of subcommands from memory
 
 ```bash
-cargo mock tools           # every subcommand and every project tool, one line each
-cargo mock tools --long    # usage and declared arguments
+cargo mock tools           # every subcommand and project tool, one line each, tools with their kind
+cargo mock tools --long    # usage, a tool's purpose line, declared arguments, help
+cargo mock help <name>     # one of those entries, for one command
 ```
 
 **That command is the surface.** It reads the same table the dispatcher does, so
@@ -65,5 +66,8 @@ configured attribution and style policy.
 says. Check before telling somebody to run it.
 
 **A project's own tools appear in that listing too**, under their own heading,
-and they are declared per repository rather than shipped by mockspace.
+and they are declared per repository rather than shipped by mockspace. Each
+is a `check` or a `make`, and its `purpose:` line in `--long` or `help <name>`
+says what it is held to: the reason a check is not a lint, or the paths a maker
+writes.
 `lints-and-tools.md` says what belongs in one.

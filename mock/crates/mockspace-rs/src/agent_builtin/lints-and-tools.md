@@ -35,7 +35,8 @@ somebody still has to make. Gating on one means inventing a threshold nobody
 justified, and an invented threshold is worse than no gate, because people
 defend numbers.
 
-*Enforced*: a run may not return a finding that blocks a gate.
+*Enforced*: a run may not return a finding that blocks a gate; one that does
+exits 2, as a broken contract.
 
 **Anything that looks like a third reason is either a cost concern or a gap in
 the lint contract, and the honest fix is to grow the lint contract.**
@@ -49,17 +50,25 @@ writes, so the question a gate asks does not arise and it gives no reason.
 anchored: `CHANGELOG.md` is the one at the root, not every file of that name.
 
 *Enforced before it runs*: at least one pattern, none empty, none leaving the
-repository, none that admits the whole tree. **A maker declaring nothing is
-refused**, which is what stops `Make` being a way for a check to leave the gate
-without a reason.
+repository, none reaching into `.git`, none made only of wildcards (`*`, `?`,
+`**` in any arrangement; `**/?*` admits everything as surely as `**`).
 
 *Enforced while it runs*: the engine compares the worktree before and after,
 prints every changed path, and fails the run, exit 2, on a write outside the
-declaration. It sees what `git status` sees, so ignored paths such as `target/`
-are not checked, and a tree without git runs unchecked and says so.
+declaration.
 
-A failed make returns findings; a make whose own inputs failed is
-`Inconclusive`, and blocks.
+**A maker whose run blocks a gate having written nothing is a contract fault,
+exit 2.** That rule and the refusal of an empty declaration together stop
+`Make` being a way for a check to leave the gate without a reason; the refusal
+alone does not, since a check could declare a path it never touches. A make
+that fails before it can write returns `Inconclusive`; one that wrote and then
+failed returns findings.
+
+**It fails closed.** Where git cannot report the tree, the maker is not run;
+where it cannot after the run, the run is inconclusive. It sees what
+`git status` sees, so it does not check ignored paths such as `target/`,
+anything under `.git/`, writes outside the worktree, or a permission-only
+change to a file already modified.
 
 Declared per repository under `<mock>/tools/<name>/`, one directory each, or
 shipped by a lint pack, and listed with their kind by `cargo mock tools`.
