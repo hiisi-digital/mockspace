@@ -88,7 +88,7 @@ fn dispatchable_tool_names(mock_dir: &Path, pack: &LintPack) -> Vec<String> {
 /// The value-taking globals the tool consumes before any subcommand sees
 /// them. Their values must never be read as a subcommand name, and must never
 /// be forwarded to one.
-const VALUE_GLOBALS: [&str; 3] = ["--dir", "--scope", "--mockspace-lint-rules-dep"];
+pub(super) const VALUE_GLOBALS: [&str; 3] = ["--dir", "--scope", "--mockspace-lint-rules-dep"];
 
 /// Every argument that follows `subcmd`, **flags included**.
 ///
@@ -201,8 +201,18 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // this check, without breaking `mock --help` working outside a project at
     // all, which is what this ordering exists for. Left as the one case the
     // relocated collision check does not reach.
+    //
+    // `mock help <name>` is the one shape let through: a builtin is described
+    // here, with no project, and a project tool is described once the pack is
+    // loaded below, since its declaration lives there.
     if args.iter().skip(1).any(|a| help::is_help_request(a)) {
-        return help::print_help();
+        match super::help_for::target(&args) {
+            Some(name) if super::help_for::is_builtin(name) => {
+                return super::help_for::print_builtin(name);
+            },
+            Some(_) => {},
+            None => return help::print_help(),
+        }
     }
 
     // Determine mock directory:
@@ -335,6 +345,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         }
         result
     };
+
+    // The second half of `mock help <name>`, for a name that is not a builtin:
+    // the early help check let it through so the pack could be loaded.
+    if let Some(name) = super::help_for::target(&args) {
+        return super::help_for::print_tool(
+            pack,
+            name,
+            &dispatchable_tool_names(&cfg.mock_dir, pack),
+        );
+    }
 
     if let Some(&subcmd) = positional_args.first() {
         if tool_is_shadowed_by_a_builtin(subcmd, pack) {
@@ -1466,8 +1486,10 @@ mod tests {
             "a probe tool"
         }
 
-        fn not_a_lint(&self) -> mockspace_lint_rules::tool::NotALint {
-            mockspace_lint_rules::tool::NotALint::NoFailingCase
+        fn purpose(&self) -> mockspace_lint_rules::tool::Purpose {
+            mockspace_lint_rules::tool::Purpose::Check(
+                mockspace_lint_rules::tool::NotALint::NoFailingCase,
+            )
         }
 
         fn run(
