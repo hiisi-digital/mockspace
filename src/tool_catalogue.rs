@@ -44,7 +44,7 @@
 //! drift a claim of totality is supposed to name rather than imply.
 
 use mockspace_lint_rules::LintPack;
-use mockspace_lint_rules::tool::{ArgSpec, duplicate_tool_names, usage_from, usage_line};
+use mockspace_lint_rules::tool::{ArgSpec, Purpose, duplicate_tool_names, usage_from, usage_line};
 
 /// Which population a [`Listing`] came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +73,9 @@ pub struct Listing {
     pub args:    Vec<ArgSpec>,
     pub help:    String,
     pub source:  Source,
+    /// What a project tool is for. `None` for a builtin, which is neither a
+    /// check nor a maker in the tool contract's sense: it is the engine.
+    pub purpose: Option<Purpose>,
 }
 
 /// Every builtin subcommand, then every project tool.
@@ -108,6 +111,7 @@ pub fn enumerate(pack: &LintPack) -> Vec<Listing> {
                 args:    c.args.to_vec(),
                 help:    c.help.to_string(),
                 source:  Source::Builtin,
+                purpose: None,
             }
         })
         .collect();
@@ -120,6 +124,7 @@ pub fn enumerate(pack: &LintPack) -> Vec<Listing> {
             args:    t.args().to_vec(),
             help:    t.help().to_string(),
             source:  Source::Project,
+            purpose: Some(t.purpose()),
         });
     }
 
@@ -135,6 +140,10 @@ pub fn duplicates(pack: &LintPack) -> Vec<String> {
 }
 
 /// The short table `mock tools` prints by default: one line per entry.
+///
+/// A project tool's line carries its kind, `check` or `make`, between its
+/// usage and its summary, since the two kinds are held to different things and
+/// a reader choosing one to run wants to know which it is before reading why.
 #[must_use]
 pub fn render_table(listings: &[Listing]) -> String {
     let mut s = String::new();
@@ -155,12 +164,50 @@ fn render_group(out: &mut String, heading: &str, listings: &[Listing], source: S
     let width = group.iter().map(|l| l.usage.len()).max().unwrap_or(0);
     for l in group {
         use std::fmt::Write as _;
-        let _ = writeln!(out, "    {:<width$}  {}", l.usage, l.summary, width = width);
+        match l.purpose {
+            Some(p) => {
+                let _ = writeln!(
+                    out,
+                    "    {:<width$}  {:<5}  {}",
+                    l.usage,
+                    p.kind(),
+                    l.summary,
+                    width = width
+                );
+            },
+            None => {
+                let _ = writeln!(out, "    {:<width$}  {}", l.usage, l.summary, width = width);
+            },
+        }
     }
 }
 
-/// The full listing `mock tools --long` prints: usage, summary, declared
-/// arguments, and the long help body, one block per entry.
+/// One entry in full: usage, summary, what a project tool is for, declared
+/// arguments, and the long help body.
+///
+/// What `mock help <name>` prints, and one block of [`render_long`], so the two
+/// cannot describe the same command differently.
+#[must_use]
+pub fn render_one(l: &Listing) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::new();
+    let _ = writeln!(s, "  {}", l.usage);
+    let _ = writeln!(s, "      {}", l.summary);
+    if let Some(p) = l.purpose {
+        let _ = writeln!(s, "      purpose: {}", p.describe());
+    }
+    for a in &l.args {
+        let mark = if a.required { "required" } else { "optional" };
+        let _ = writeln!(s, "      {:<12} ({mark}) {}", a.name, a.description);
+    }
+    if !l.help.is_empty() {
+        let _ = writeln!(s, "      {}", l.help);
+    }
+    s
+}
+
+/// The full listing `mock tools --long` prints, one [`render_one`] block per
+/// entry.
 #[must_use]
 pub fn render_long(listings: &[Listing]) -> String {
     let mut s = String::new();
@@ -177,16 +224,7 @@ pub fn render_long(listings: &[Listing]) -> String {
             continue;
         }
         for l in entries {
-            use std::fmt::Write as _;
-            let _ = writeln!(s, "  {}", l.usage);
-            let _ = writeln!(s, "      {}", l.summary);
-            for a in &l.args {
-                let mark = if a.required { "required" } else { "optional" };
-                let _ = writeln!(s, "      {:<12} ({mark}) {}", a.name, a.description);
-            }
-            if !l.help.is_empty() {
-                let _ = writeln!(s, "      {}", l.help);
-            }
+            s.push_str(&render_one(l));
             s.push('\n');
         }
     }
@@ -195,7 +233,7 @@ pub fn render_long(listings: &[Listing]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use mockspace_lint_rules::tool::{NotALint, Tool, ToolContext, ToolReport};
+    use mockspace_lint_rules::tool::{NotALint, Purpose, Tool, ToolContext, ToolReport};
 
     use super::*;
 
@@ -209,8 +247,8 @@ mod tests {
             "say hello to a name"
         }
 
-        fn not_a_lint(&self) -> NotALint {
-            NotALint::TakesAQuestion
+        fn purpose(&self) -> Purpose {
+            Purpose::Check(NotALint::TakesAQuestion)
         }
 
         fn args(&self) -> &[ArgSpec] {
@@ -240,8 +278,8 @@ mod tests {
             "does nothing observable"
         }
 
-        fn not_a_lint(&self) -> NotALint {
-            NotALint::NoFailingCase
+        fn purpose(&self) -> Purpose {
+            Purpose::Check(NotALint::NoFailingCase)
         }
 
         fn run(&self, _ctx: &ToolContext<'_>) -> ToolReport {
@@ -320,8 +358,8 @@ mod tests {
                 "one"
             }
 
-            fn not_a_lint(&self) -> NotALint {
-                NotALint::NoFailingCase
+            fn purpose(&self) -> Purpose {
+                Purpose::Check(NotALint::NoFailingCase)
             }
 
             fn run(&self, _c: &ToolContext<'_>) -> ToolReport {
@@ -338,8 +376,8 @@ mod tests {
                 "two"
             }
 
-            fn not_a_lint(&self) -> NotALint {
-                NotALint::NoFailingCase
+            fn purpose(&self) -> Purpose {
+                Purpose::Check(NotALint::NoFailingCase)
             }
 
             fn run(&self, _c: &ToolContext<'_>) -> ToolReport {
@@ -436,3 +474,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "tool_catalogue_purpose_tests.rs"]
+mod purpose_tests;

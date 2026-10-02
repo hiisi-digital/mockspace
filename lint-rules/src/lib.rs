@@ -89,19 +89,21 @@ mod undocumented_type;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-pub use path_filter::{CrateFilters, PathFilter, PathFilters, glob_match};
+pub use path_filter::{CrateFilters, PathFilter, PathFilters, glob_match, glob_match_anchored};
 pub mod allow;
 pub use allow::{allowed_at, honour_allows};
 pub use tool::{
     ArgSpec,
     NotALint,
     Outcome,
+    Purpose,
     Tool,
     ToolContext,
     ToolReport,
     contract_faults,
     duplicate_tool_names,
     missing_required,
+    undeclared_writes,
     usage_line,
 };
 use tree_sitter::Tree;
@@ -1536,7 +1538,8 @@ pub struct LintPack {
     pub repo_lints:      Vec<Box<dyn RepoLint>>,
     /// Lints handed an authored message.
     pub message_lints:   Vec<Box<dyn MessageLint>>,
-    /// Tools: checks invoked as `mock <name>` because they cannot be lints.
+    /// Tools: what a project runs as `mock <name>`, a check that cannot be a
+    /// lint or a maker that writes files.
     ///
     /// Not lints, and carried here anyway, because they arrive through the same
     /// cdylib and the boundary passes one value. Splitting them into a second

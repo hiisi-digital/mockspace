@@ -57,12 +57,12 @@ fn fixture(root: &Path) -> std::path::PathBuf {
     .unwrap();
     fs::write(
         dir.join("src").join("lib.rs"),
-        r#"use mockspace::tool::{NotALint, Tool, ToolContext, ToolReport};
+        r#"use mockspace::tool::{NotALint, Purpose, Tool, ToolContext, ToolReport};
 pub struct T;
 impl Tool for T {
     fn name(&self) -> &'static str { "greet" }
     fn description(&self) -> &'static str { "a probe tool" }
-    fn not_a_lint(&self) -> NotALint { NotALint::NoFailingCase }
+    fn purpose(&self) -> Purpose { Purpose::Check(NotALint::NoFailingCase) }
     fn run(&self, _: &ToolContext<'_>) -> ToolReport {
         ToolReport::reported("the tool that actually ran", 1)
     }

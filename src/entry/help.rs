@@ -233,11 +233,14 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name:    "tools",
-        summary: "list every subcommand and project tool, with usage",
+        summary: "list every subcommand and project tool, with usage and kind",
         args:    &[],
         help:    "Enumerates every builtin subcommand and every project tool \
                   declared under <mock>/tools/, each with its usage line and \
-                  one-line summary. --long also prints each one's declared \
+                  one-line summary, and each tool with its kind: a check that \
+                  cannot be a lint, or a maker that writes files. --long also \
+                  prints what each tool is held to (its reason, or the paths it \
+                  writes), its declared \
                   arguments and its longer help text where it has one. This is \
                   the live answer: it is computed at the moment it is asked, \
                   from the same declared shape every tool and every builtin \
@@ -263,9 +266,17 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name:    "help",
-        summary: "show this message",
-        args:    &[],
-        help:    "",
+        summary: "show this message, or one command in full",
+        args:    &[ArgSpec {
+            name:        "name",
+            required:    false,
+            description: "a subcommand or project tool to describe in full",
+        }],
+        help:    "With a name, prints that command's entry as `mock tools --long` \
+                  does: usage, summary, what a project tool is for, declared \
+                  arguments and longer help. A builtin is answered without a \
+                  project; a project tool needs its pack, so run that through \
+                  `cargo mock help <name>`.",
     },
 ];
 
