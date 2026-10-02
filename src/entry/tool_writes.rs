@@ -19,15 +19,20 @@
 //! fingerprinted by its content before the run and again after, and a path
 //! whose fingerprint differs, or that is in one set and not the other, was
 //! written. That catches a clean file made dirty, a dirty file changed again, a
-//! new file, a deletion, and a dirty file put back to what `HEAD` holds.
+//! new file, a deletion, and a dirty file put back to what `HEAD` holds. A
+//! second `git status --ignored`, restricted to the maker's declared patterns,
+//! adds the ignored paths inside the declaration, so a maker whose output is
+//! gitignored is seen writing it.
 //!
 //! It does not see these, and they are stated rather than implied:
 //!
-//! - a path git ignores, since status never names it, so a maker writing into
-//!   `target/` or another ignored tree is not held to its declaration there;
-//! - anything under `.git/`, which status never names either, so a maker could
-//!   rewrite hooks or config unseen; a declared write under `.git` is refused
-//!   for that reason, which closes the grant and not the blind spot;
+//! - an ignored path outside the declaration, since only the declared patterns
+//!   are asked about with `--ignored`, so a maker writing into `target/` while
+//!   declaring something else is not seen doing it;
+//! - anything under `.git/`, which status never names, so a maker could
+//!   rewrite hooks or config unseen; a declared pattern with a literal `.git`
+//!   segment is refused for that reason, which closes the grant and not the
+//!   blind spot;
 //! - a write outside the worktree, to a home directory, a temp directory or
 //!   another repository, since only this worktree is asked about;
 //! - a permission-only change to a file that was already dirty, since the
@@ -59,7 +64,12 @@ pub(crate) struct Snapshot(BTreeMap<String, Option<u64>>);
 /// to its own top level, so where `repo_root` sits below that, they are
 /// rebased; a path above `repo_root` keeps its top-level spelling with a `../`
 /// prefix per level, which no declaration can match, so it is reported.
-pub(crate) fn snapshot(repo_root: &Path) -> Option<Snapshot> {
+///
+/// `declared` is a maker's declared writes. Ignored paths inside them are
+/// observed too, through a second `git status --ignored` restricted to those
+/// patterns as glob pathspecs, so a maker whose output is gitignored is seen
+/// writing it, and an ignored tree outside the declaration is never walked.
+pub(crate) fn snapshot(repo_root: &Path, declared: &[&str]) -> Option<Snapshot> {
     let top = git(repo_root, &["rev-parse", "--show-toplevel"])?;
     let top = Path::new(top.trim_end_matches('\n')).to_path_buf();
     let raw = git(repo_root, &[
@@ -71,8 +81,18 @@ pub(crate) fn snapshot(repo_root: &Path) -> Option<Snapshot> {
     let root = repo_root.canonicalize().ok()?;
     let top = top.canonicalize().ok()?;
 
+    let mut rels = porcelain_paths(&raw);
+    if !declared.is_empty() {
+        let specs: Vec<String> = declared.iter().map(|d| format!(":(glob){d}")).collect();
+        let mut args =
+            vec!["status", "--porcelain=v1", "-z", "--ignored", "--untracked-files=all", "--"];
+        args.extend(specs.iter().map(String::as_str));
+        let ignored = git(repo_root, &args)?;
+        rels.extend(ignored_paths(&ignored));
+    }
+
     let mut map = BTreeMap::new();
-    for rel in porcelain_paths(&raw) {
+    for rel in rels {
         let abs = top.join(&rel);
         let key = match abs.strip_prefix(&root) {
             Ok(p) => p.to_string_lossy().replace('\\', "/"),
@@ -87,6 +107,15 @@ pub(crate) fn snapshot(repo_root: &Path) -> Option<Snapshot> {
         map.insert(key, fingerprint(&abs));
     }
     Some(Snapshot(map))
+}
+
+/// The ignored paths, `!!` records, in `git status --ignored -z` output.
+fn ignored_paths(raw: &str) -> Vec<String> {
+    raw.split('\0')
+        .filter_map(|rec| rec.strip_prefix("!! "))
+        .filter(|p| !p.ends_with('/'))
+        .map(str::to_string)
+        .collect()
 }
 
 /// What a run wrote, given the snapshot taken before it and the one after.
@@ -216,7 +245,7 @@ mod tests {
         let tmp = repo();
         let root = tmp.path();
         fs::write(root.join("untouched-new.md"), "here before\n").unwrap();
-        let before = snapshot(root).expect("a git tree answers");
+        let before = snapshot(root, &[]).expect("a git tree answers");
 
         fs::write(root.join("tracked.md"), "changed\n").unwrap(); // clean to dirty
         fs::write(root.join("dirty.md"), "three\n").unwrap(); // dirty, changed again
@@ -225,7 +254,7 @@ mod tests {
         fs::create_dir_all(root.join("ignored")).unwrap();
         fs::write(root.join("ignored/x"), "unseen\n").unwrap(); // ignored, unseen
 
-        let after = snapshot(root).unwrap();
+        let after = snapshot(root, &[]).unwrap();
         assert_eq!(
             written(&before, &after),
             vec!["dirty.md", "gen/new.md", "tracked.md"],
@@ -237,25 +266,50 @@ mod tests {
     fn a_deletion_and_a_revert_to_head_are_writes() {
         let tmp = repo();
         let root = tmp.path();
-        let before = snapshot(root).unwrap();
+        let before = snapshot(root, &[]).unwrap();
         fs::remove_file(root.join("tracked.md")).unwrap();
         fs::write(root.join("dirty.md"), "one\n").unwrap(); // back to HEAD
-        let after = snapshot(root).unwrap();
+        let after = snapshot(root, &[]).unwrap();
         assert_eq!(written(&before, &after), vec!["dirty.md", "tracked.md"]);
+    }
+
+    #[test]
+    fn a_declared_ignored_output_counts_as_written() {
+        // The case that must fail: a maker whose only output is gitignored,
+        // a build artifact or a report, must be seen writing it, or it reads
+        // as having written nothing. Ignored paths are asked about only
+        // inside the declaration, so an ignored tree is not walked whole.
+        let tmp = repo();
+        let root = tmp.path();
+        let declared = ["ignored/**"];
+        let before = snapshot(root, &declared).unwrap();
+        fs::create_dir_all(root.join("ignored")).unwrap();
+        fs::write(root.join("ignored/report.json"), "{}\n").unwrap();
+        fs::write(root.join("ignored/other.bin"), "x\n").unwrap();
+        let after = snapshot(root, &declared).unwrap();
+        assert_eq!(written(&before, &after), vec![
+            "ignored/other.bin",
+            "ignored/report.json"
+        ]);
+        // and undeclared, an ignored write stays unseen, as before
+        let before = snapshot(root, &[]).unwrap();
+        fs::write(root.join("ignored/report.json"), "{\"changed\": 1}\n").unwrap();
+        let after = snapshot(root, &[]).unwrap();
+        assert!(written(&before, &after).is_empty());
     }
 
     #[test]
     fn a_run_that_writes_nothing_writes_nothing() {
         let tmp = repo();
-        let before = snapshot(tmp.path()).unwrap();
-        let after = snapshot(tmp.path()).unwrap();
+        let before = snapshot(tmp.path(), &[]).unwrap();
+        let after = snapshot(tmp.path(), &[]).unwrap();
         assert!(written(&before, &after).is_empty());
     }
 
     #[test]
     fn a_tree_without_git_has_no_snapshot() {
         let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(snapshot(tmp.path()), None);
+        assert_eq!(snapshot(tmp.path(), &[]), None);
     }
 
     #[test]
@@ -263,11 +317,11 @@ mod tests {
         // The case that must fail: a run whose tree could not be read back
         // afterwards must not read as one that wrote nothing.
         let tmp = repo();
-        let before = snapshot(tmp.path()).unwrap();
+        let before = snapshot(tmp.path(), &[]).unwrap();
         let got = after_run(&before, None);
         assert!(got.is_err(), "{got:?}");
         // and the control: a readable tree after the run is an answer
-        let after = snapshot(tmp.path());
+        let after = snapshot(tmp.path(), &[]);
         assert_eq!(after_run(&before, after), Ok(Vec::new()));
     }
 
@@ -279,10 +333,10 @@ mod tests {
         let tmp = repo();
         let root = tmp.path();
         fs::create_dir_all(root.join("sub")).unwrap();
-        let before = snapshot(&root.join("sub")).unwrap();
+        let before = snapshot(&root.join("sub"), &[]).unwrap();
         fs::write(root.join("sub/in.md"), "inside\n").unwrap();
         fs::write(root.join("above.md"), "above\n").unwrap();
-        let after = snapshot(&root.join("sub")).unwrap();
+        let after = snapshot(&root.join("sub"), &[]).unwrap();
         assert_eq!(written(&before, &after), vec!["../above.md", "in.md"]);
     }
 

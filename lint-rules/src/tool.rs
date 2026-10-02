@@ -26,12 +26,12 @@
 //! of it does not arise. Such a tool declares [`Purpose::Make`] with the paths
 //! it writes instead of a [`NotALint`] reason, and is held to those paths: the
 //! engine observes what changed across the run and reports anything outside
-//! the declaration as a contract fault. Two rules keep the kind from being
-//! borrowed as a way for a check to leave the gate: a maker declaring nothing
-//! it writes is refused before it runs, and a maker whose run blocks a gate
-//! having written nothing is a contract fault after it, since a make that
-//! fails before writing returns `Inconclusive`. [`purpose`] carries the
-//! declaration and its audit.
+//! the declaration as a contract fault. A maker has no way to express a
+//! gating judgement: its findings report what it produced, at warning or
+//! info, and a finding at error at any gate is a contract fault. A make that
+//! fails returns `Inconclusive`, saying what failed on which input. Gating
+//! stays with checks and lints. [`purpose`] carries the declaration and its
+//! audit.
 //!
 //! # The failure this is shaped against
 //!
@@ -45,8 +45,8 @@
 //! [`LintError`], the same type a lint produces.** Severity configuration then
 //! works unchanged, rendering is shared, and a tool that turns out to be
 //! gateable becomes a lint without rewriting a line of its findings. A third
-//! finding type is how a gate stops gating. A maker's failed make is reported
-//! the same way, as findings, rather than in a shape of its own.
+//! finding type is how a gate stops gating. A maker reports what it produced
+//! with the same type, at warning or info, rather than in a shape of its own.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -61,7 +61,8 @@ pub use purpose::{NotALint, Purpose, contract_faults, maker_faults};
 // ---------------------------------------------------------------------------
 
 /// What a tool has to say once it has run. For a maker, `Clean` is a make
-/// that succeeded, and a make that failed is `Findings`.
+/// that succeeded, `Findings` is advisory, and a make that failed is
+/// `Inconclusive`.
 ///
 /// `Vec<LintError>` is two-valued: empty is clean, non-empty is findings. It
 /// has no way to say **"do not trust this run"**, so a check whose own controls
@@ -267,6 +268,9 @@ pub trait Tool {
     /// more. Requiring it costs one line and asks the question at the moment
     /// the author is best placed to answer it. A check cannot be declared
     /// without its [`NotALint`] reason, since [`Purpose::Check`] carries one.
+    /// A maker declares the paths it writes, and its findings never block:
+    /// one at error at any gate is a contract fault, and a make that fails
+    /// returns [`Outcome::Inconclusive`]. See [`Purpose::Make`].
     fn purpose(&self) -> Purpose;
 
     /// Declared arguments, in the order they are expected.
