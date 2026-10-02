@@ -27,7 +27,8 @@
 //! after its run, by [`super::tool_writes`], and every path it changed is
 //! printed and held to what it declared. A declared write rooted at an
 //! argument is resolved from the command line first, and a value outside its
-//! declared root is refused with exit 2 before the tool is entered. A write
+//! declared root, or whose path in the tree passes through a symlink, is
+//! refused with exit 2 before the tool is entered. A write
 //! outside the resolved declaration, or
 //! any finding at error from a maker, whose findings never block, is a
 //! contract fault, and so is a false `no-failing-case`. Every contract fault
@@ -49,6 +50,7 @@ use mockspace_lint_rules::tool::{
     maker_faults,
     missing_required,
     resolve_writes,
+    symlinked_writes,
     usage_line,
 };
 
@@ -251,6 +253,16 @@ pub(crate) fn run(
             return ExitCode::from(2);
         },
     };
+    // The strings passed; the tree may still carry a value out through a
+    // committed symlink, which only the filesystem can say.
+    let linked = symlinked_writes(tool.as_ref(), args, &cfg.repo_root);
+    if !linked.is_empty() {
+        for f in &linked {
+            eprintln!("mock: {f}");
+        }
+        eprintln!("  `{name}` was not run.");
+        return ExitCode::from(2);
+    }
     let declared: Vec<&str> = resolved.iter().map(String::as_str).collect();
     let before = if maker {
         match super::tool_writes::snapshot(&cfg.repo_root, &declared) {

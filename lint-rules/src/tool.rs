@@ -59,7 +59,7 @@ use crate::{Level, LintError, LintMode};
 pub mod purpose;
 pub mod writes;
 pub use purpose::{NotALint, Purpose, contract_faults, maker_faults};
-pub use writes::{ArgRoot, resolve_writes};
+pub use writes::{ArgRoot, resolve_writes, symlinked_writes};
 
 // ---------------------------------------------------------------------------
 // The outcome
@@ -442,3 +442,5 @@ mod purpose_tests;
 mod tests;
 #[cfg(test)]
 mod writes_tests;
+#[cfg(test)]
+mod writes_fs_tests;

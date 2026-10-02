@@ -369,4 +369,15 @@ fn a_maker_writing_where_its_argument_says_is_held_to_the_resolved_root() {
     assert!(err.contains("is not under `gen/*`"), "{err}");
     assert!(err.contains("was not run"), "{err}");
     assert!(!tmp.path().join("src/icons.rs").exists(), "the maker must not have run");
+
+    // A value passing every string check, through a symlink out of the tree:
+    // refused before the run, so nothing lands where nobody observes it.
+    let outside = tmp.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, tmp.path().join("gen/linked")).unwrap();
+    let out = engine(&mock, &["bake", "gen/linked"]);
+    let err = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert!(err.contains("`gen/linked`, which is a symlink"), "{err}");
+    assert!(!outside.join("a.md").exists(), "the maker must not have run:\n{err}");
 }

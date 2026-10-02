@@ -361,7 +361,8 @@ or `{output}/**`, and `roots` names the fixed root its value must fall under,
 `ArgRoot { arg: "output", under: "src/icons/*" }`.
 
 *Enforced before it runs*: at least one pattern, none empty, none leaving the
-repository, none with a literal `.git` segment, none made only of wildcards
+repository, none with a `.git` segment in any letter case, none with `[` or `]` (git reads
+a class where the audit reads the characters), none made only of wildcards
 (`*`, `?`, `**` in any arrangement; `**/?*` admits everything as surely as
 `**`). A pattern names an argument only at its start, once; the argument
 must be declared in `args()` and have one root, every root must be named by a
@@ -370,7 +371,8 @@ write, and a root is held to the rules a write is.
 *Enforced while it runs*: each argument a write names is read from the command
 line and put into the pattern, and a value that is absolute, has a `..` or
 `.git` segment, carries a glob character or misses its root is refused, exit 2,
-before the tool runs. Then the engine compares the worktree before and after,
+before the tool runs, and so is one whose path in the tree, up to the first
+wildcard, passes through any symlink, since writes through it land unobserved. Then the engine compares the worktree before and after,
 prints every changed path, and fails the run, exit 2, on a write outside the
 resolved declaration.
 
@@ -388,7 +390,8 @@ where it cannot after the run, the run is inconclusive. It sees what
 `git status` sees: ignored paths are asked about only inside the declaration,
 so a gitignored output it declared is seen, while an ignored write outside the
 declaration is not; nor is anything under `.git/`, a write outside the
-worktree, or a permission-only change to a file already modified.
+worktree, a write through a symlink already committed below an argument's
+value, or a permission-only change to a file already modified.
 
 Declared per repository under `<mock>/tools/<name>/`, one directory each, or
 shipped by a lint pack, and listed with their kind by `cargo mock tools`.
