@@ -69,5 +69,5 @@ says. Check before telling somebody to run it.
 and they are declared per repository rather than shipped by mockspace. Each
 is a `check` or a `make`, and its `purpose:` line in `--long` or `help <name>`
 says what it is held to: the reason a check is not a lint, or the paths a maker
-writes.
+writes, with the root each argument a path starts with must fall under.
 `lints-and-tools.md` says what belongs in one.

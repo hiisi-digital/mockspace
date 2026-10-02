@@ -186,12 +186,25 @@ Neither is a matter of taste and both are checked. A tool claiming to take a que
 A maker declares what it writes instead of a reason, as patterns relative to the repository root:
 
 ```rust
-fn purpose(&self) -> Purpose { Purpose::Make { writes: &["docs/generated/**", "CHANGELOG.md"] } }
+fn purpose(&self) -> Purpose { Purpose::Make { writes: &["docs/generated/**", "CHANGELOG.md"], roots: &[] } }
 ```
 
 The patterns are anchored, so `CHANGELOG.md` is the one at the root and not every file of that name. A maker declaring nothing is refused before it runs, and so is a pattern that is empty, leaves the tree, has a literal `.git` segment, or is made only of wildcards, since `**/?*` holds a tool to nothing just as `**` does. While a maker runs, the engine compares the worktree before and after, prints every path that changed, and fails the run with exit 2 on a write outside the declaration.
 
-A maker has no way to express a gating judgement. Its findings report what it produced, at warning or info, and a finding at error at any gate fails the run with exit 2 as a broken contract. A make that fails returns `Inconclusive`, its reason saying what failed and on which input, and exits nonzero as any inconclusive run does. Gating stays with checks and lints. What a maker produced is visible only through the paths it declared, which `mock tools --long` shows, and the list of what it wrote that the engine prints after each run.
+A maker whose output location is chosen on the command line names the argument at the start of a pattern, and declares a fixed root the argument has to fall under:
+
+```rust
+fn purpose(&self) -> Purpose {
+    Purpose::Make {
+        writes: &["{output}.rs", "{output}/**"],
+        roots:  &[ArgRoot { arg: "output", under: "src/icons/*" }],
+    }
+}
+```
+
+The engine reads the argument from the actual command line before the run and puts it into the pattern, so `mock bake src/icons/ui` may write `src/icons/ui.rs` and anything under `src/icons/ui/`, and nothing else. A value that is absolute, has a `..` or `.git` segment, carries a glob character or does not match its root is refused with exit 2 before the tool runs. A pattern naming an argument the tool does not declare, an argument with no root, a root nothing names, and a root that would be refused as a write are each refused before anything runs. An optional argument that was not given admits nothing.
+
+A maker has no way to express a gating judgement. Its findings report what it produced, at warning or info, and a finding at error at any gate fails the run with exit 2 as a broken contract. A make that fails returns `Inconclusive`, its reason saying what failed and on which input, and exits nonzero as any inconclusive run does. Gating stays with checks and lints. What a maker produced is visible only through the paths it declared, which `mock tools --long` shows with the root of every argument they name, and the list of what it wrote that the engine prints after each run.
 
 The comparison sees what `git status` sees. Ignored paths are asked about only inside the declaration, so a maker whose output is gitignored is seen writing it, while an ignored write outside the declaration is not checked; neither is anything under `.git/`, a write outside the worktree, or a permission-only change to a file that was already modified. Where git cannot report the tree, a maker is not run at all, and where it cannot report it after the run, the run is inconclusive.
 

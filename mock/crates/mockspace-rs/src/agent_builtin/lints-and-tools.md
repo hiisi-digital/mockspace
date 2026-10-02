@@ -18,7 +18,7 @@ optional per-scope overrides.
 
 ## A tool declares what it is for, with no default
 
-`purpose` is either `Check(reason)` or `Make { writes }`, and a tool cannot
+`purpose` is either `Check(reason)` or `Make { writes, roots }`, and a tool cannot
 compile without one.
 
 ## A check tool is what a lint structurally cannot be, and there are exactly two
@@ -48,22 +48,31 @@ writes, so the question a gate asks does not arise and it gives no reason.
 
 **It declares what it writes**, as patterns relative to the repository root,
 anchored: `CHANGELOG.md` is the one at the root, not every file of that name.
+Where the output location is an argument, a pattern starts with it, `{output}.rs`
+or `{output}/**`, and `roots` names the fixed root its value must fall under,
+`ArgRoot { arg: "output", under: "src/icons/*" }`.
 
 *Enforced before it runs*: at least one pattern, none empty, none leaving the
 repository, none with a literal `.git` segment, none made only of wildcards
 (`*`, `?`, `**` in any arrangement; `**/?*` admits everything as surely as
-`**`).
+`**`). A pattern names an argument only at its start, once; the argument
+must be declared in `args()` and have one root, every root must be named by a
+write, and a root is held to the rules a write is.
 
-*Enforced while it runs*: the engine compares the worktree before and after,
+*Enforced while it runs*: each argument a write names is read from the command
+line and put into the pattern, and a value that is absolute, has a `..` or
+`.git` segment, carries a glob character or misses its root is refused, exit 2,
+before the tool runs. Then the engine compares the worktree before and after,
 prints every changed path, and fails the run, exit 2, on a write outside the
-declaration.
+resolved declaration.
 
 **A maker has no way to express a gating judgement.** Its findings report what
 it produced, at warning or info; a finding at error at any gate is a contract
 fault, exit 2. A make that fails returns `Inconclusive`, its reason saying what
 failed and on which input, and exits nonzero as any inconclusive run does.
 Gating stays with checks and lints. What a maker produced is visible only
-through the paths it declared, shown by `cargo mock tools --long`, and the list
+through the paths it declared, shown with each argument's root by `cargo mock
+tools --long`, and the list
 of what it wrote that the engine prints after each run.
 
 **It fails closed.** Where git cannot report the tree, the maker is not run;
@@ -105,7 +114,8 @@ is a statement about the instrument rather than about the corpus.
 
 ## Deciding, for something you are about to write
 
-1. **Does running it produce files?** Tool, `Make`, with what it writes.
+1. **Does running it produce files?** Tool, `Make`, with what it writes,
+   and the root of any argument a written path starts with.
 2. **Does it need an argument from a person?** Tool, `takes-a-question`.
 3. **Is there a state it should refuse?** Lint. Write the severity.
 4. **Is the output an inventory or a ranking with no pass line?** Tool,
