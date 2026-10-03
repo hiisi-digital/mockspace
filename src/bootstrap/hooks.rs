@@ -153,7 +153,14 @@ while IFS=' ' read -r _bl_ref bl_local _bl_rref bl_remote; do
         # direction for a gate of this kind.
         RANGE_REVS=$(git rev-list "$bl_local" --not --remotes 2>/dev/null || true)
     else
-        RANGE_REVS=$(git rev-list "$bl_remote".."$bl_local" 2>/dev/null || true)
+        # Existing branch: what this push adds to the branch, minus whatever any
+        # remote ref already holds. A branch that merged the trunk would
+        # otherwise re-validate every trunk commit since its last push, and a
+        # published message that fails the policy would block every such push
+        # for good, though published history is not rewritten and nobody
+        # pushing can change it. Both arms validate exactly the commits this
+        # push publishes for the first time.
+        RANGE_REVS=$(git rev-list "$bl_remote".."$bl_local" --not --remotes 2>/dev/null || true)
     fi
     PUSH_REVS="$PUSH_REVS
 $RANGE_REVS"
@@ -1123,6 +1130,110 @@ mod byline_hook_tests {
             bodies.iter().any(|b| b.trim().is_empty()),
             "the empty message must reach the launcher. got: {bodies:?}"
         );
+    }
+
+    /// A launcher stub standing in for the push-tier policy: it refuses any
+    /// batch carrying a record that contains `BADMSG`.
+    fn policy_stub_path() -> (PathBuf, String) {
+        let bin = scratch("policy_bin");
+        let stub = bin.join("mock");
+        std::fs::write(
+            &stub,
+            "#!/usr/bin/env bash\nif cat | tr '\\0' '\\n' | grep -q BADMSG; then exit 1; fi\nexit 0\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut p = std::fs::metadata(&stub).unwrap().permissions();
+            p.set_mode(0o755);
+            std::fs::set_permissions(&stub, p).unwrap();
+        }
+        let path = format!("{}:{}", bin.display(), launcher_free_path());
+        (bin, path)
+    }
+
+    /// A clone with a bare `origin`, trunk `main` carrying a published commit
+    /// whose message the policy rejects, and `feature` already pushed and then
+    /// merged with the trunk. Returns (clone, remote, old feature tip on the
+    /// remote, local feature tip).
+    fn feature_that_merged_a_bad_published_trunk_commit() -> (PathBuf, PathBuf, String, String) {
+        let remote = scratch("remote");
+        let clone = scratch("clone");
+        let env = |c: &mut Command| {
+            c.env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t");
+        };
+        let git_in = |dir: &Path, args: &[&str]| -> String {
+            let mut c = Command::new("git");
+            c.current_dir(dir).args(args);
+            env(&mut c);
+            let out = c.output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git_in(&remote, &["init", "-q", "--bare", "-b", "main"]);
+        git_in(&clone, &["init", "-q", "-b", "main"]);
+        git_in(&clone, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        git_in(&clone, &["commit", "-q", "--allow-empty", "-m", "chore: root"]);
+        git_in(&clone, &["push", "-q", "origin", "main"]);
+        git_in(&clone, &["switch", "-q", "-c", "feature"]);
+        git_in(&clone, &["commit", "-q", "--allow-empty", "-m", "feat: first"]);
+        git_in(&clone, &["push", "-q", "origin", "feature"]);
+        let pushed = git_in(&clone, &["rev-parse", "HEAD"]);
+        git_in(&clone, &["switch", "-q", "main"]);
+        git_in(&clone, &["commit", "-q", "--allow-empty", "-m", "BADMSG trunk"]);
+        git_in(&clone, &["push", "-q", "origin", "main"]);
+        git_in(&clone, &["switch", "-q", "feature"]);
+        git_in(&clone, &["merge", "-q", "--no-ff", "-m", "chore: merge main", "main"]);
+        let tip = git_in(&clone, &["rev-parse", "HEAD"]);
+        (clone, remote, pushed, tip)
+    }
+
+    #[test]
+    fn a_published_trunk_commit_merged_into_a_pushed_branch_is_not_rescanned() {
+        // The trunk commit failing the policy is already on the remote, so no
+        // push can change it. Re-validating it blocked every push of every
+        // branch that merged the trunk. Runs the real body against a real
+        // clone and remote, with a stub launcher applying the policy.
+        let (clone, remote, pushed, tip) = feature_that_merged_a_bad_published_trunk_commit();
+        let (bin, path) = policy_stub_path();
+        let script = format!(
+            "#!/usr/bin/env bash\nset -u\nPREPUSH_STDIN=$(cat)\n{}",
+            message_prepush_scan_body()
+        );
+        let line = format!("refs/heads/feature {tip} refs/heads/feature {pushed}");
+        let code = run_script(&script, &[], &line, Some(&clone), Some(&path));
+        assert_eq!(code, 0, "only the merge commit is new to the remote");
+
+        // the negative: a new unpublished commit with a bad message is still caught
+        let mut c = Command::new("git");
+        c.current_dir(&clone)
+            .args(["commit", "-q", "--allow-empty", "-m", "BADMSG new"])
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t");
+        assert!(c.output().unwrap().status.success());
+        let new_tip = String::from_utf8_lossy(
+            &Command::new("git")
+                .current_dir(&clone)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        let line = format!("refs/heads/feature {new_tip} refs/heads/feature {pushed}");
+        let code = run_script(&script, &[], &line, Some(&clone), Some(&path));
+        assert_eq!(code, 1, "a commit this push publishes for the first time is still validated");
+
+        for d in [&clone, &remote, &bin] {
+            let _ = std::fs::remove_dir_all(d);
+        }
     }
 }
 
