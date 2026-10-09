@@ -63,11 +63,14 @@ pub fn compute(repo_root: &Path, mock_dir: &Path, graph: &Graph) -> Result<Finge
     let mut hashes = FileHashes::new(repo_root);
 
     let mut salt = Sha256::new();
-    for base in [mock_dir, repo_root] {
+    // Named by where they sit relative to the repository, never by absolute
+    // path, so the same tree on another machine has the same fingerprints and
+    // a pass recorded in the tracked history stands there too.
+    for (base, label) in [(mock_dir, "mock"), (repo_root, "root")] {
         for name in WORKSPACE_INPUTS {
             let p = base.join(name);
             if p.is_file() {
-                salt.update(p.to_string_lossy().as_bytes());
+                salt.update(format!("{label}/{name}").as_bytes());
                 salt.update(hashes.of_absolute(&p));
             }
         }
@@ -82,7 +85,8 @@ pub fn compute(repo_root: &Path, mock_dir: &Path, graph: &Graph) -> Result<Finge
             // its own literals are not followed.
             let mut h = Sha256::new();
             for f in walk_outside(&pkg.dir) {
-                h.update(f.to_string_lossy().as_bytes());
+                let rel = f.strip_prefix(&pkg.dir).unwrap_or(&f);
+                h.update(rel.to_string_lossy().as_bytes());
                 h.update([0]);
                 h.update(hashes.of_absolute(&f));
             }

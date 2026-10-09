@@ -203,9 +203,13 @@ const COMMANDS: &[Cmd] = &[
                   test that has passed before, running only new ones and ones \
                   that failed last time, and leaves the members it deferred \
                   for owing them. -p and --workspace choose members as in \
-                  cargo; with -p only the members tree runs. The record \
-                  lives under <mock>/target/mockspace-test-state/, kept per \
-                  set of other arguments, so `--features x` has its own.\n\n\
+                  cargo; with -p only the members tree runs. The record is \
+                  tracked, <mock>/test-history/<flavour>/<member>.json, \
+                  committed with the work so a fresh clone starts warm; \
+                  `--features x` has its own flavour. `[test] commit` gates a \
+                  commit as a lint level does: warn runs --cheap, error also \
+                  blocks, off and info run nothing. Doc tests do not run \
+                  under nextest; --plain reaches them.\n\n\
                   Everything else after `test` is forwarded to each cargo \
                   invocation, so `mock test --release` and `mock test -- \
                   --nocapture` both work. A filter after `--` or an -E runs, \

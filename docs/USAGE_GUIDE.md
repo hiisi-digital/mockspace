@@ -276,16 +276,24 @@ and selects which to run rather than running them all:
 `--full` runs every member asked for, `--no-cache` runs the cached heavy tests too, and
 `--cheap` defers every heavy test that has passed before (a new one, or one that failed
 last time, still runs). `--full --no-cache` is the whole suite, for the end of a piece of
-work and after merging the trunk; `--plain` is `cargo test` as before. The record lives
-under `<mock>/target/mockspace-test-state/`, kept per set of other arguments, so a
-`--features` run keeps its own, and a `cargo clean` or a fresh clone runs everything once.
+work and after merging the trunk; `--plain` is `cargo test` as before. Doc tests do not
+run under nextest, a known gap: `--plain` is the way to them for now.
+
+The record is tracked: `<mock>/test-history/<flavour>/<member>.json`, committed with the
+work that produced it, so a fresh clone or a new container starts from the last green
+run rather than from nothing. The fingerprints are digests of contents and
+repository-relative paths, so a pass recorded on one machine stands on another. Only
+tests near or over the heavy threshold are kept, and a file is rewritten only when what
+it says changed, so a rerun of a settled suite leaves the tree clean. A `--features` run
+keeps its own flavour directory. Where two branches both moved a member, either side of
+the conflict is fine to take: the merged tree runs that member once and settles it.
 
 ```toml
 [test]
 heavy_after_secs = 10    # a test this slow or slower is heavy
 heavy_threads = 1        # how many heavy tests run at once
 timeout_secs = 900       # a test still running after this long fails
-on_commit = "off"        # "cheap" or "changed" runs `mock test` before a commit is linted
+commit = "off"           # a lint level: warn runs `mock test --cheap` on commit, error also blocks
 ```
 
 ### Lints

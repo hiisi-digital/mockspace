@@ -57,6 +57,14 @@ mutate src/suite/graph.rs 's/if !members.contains\(id\) && !p\["source"\].is_nul
     "a vendored path package is passed over"
 mutate src/suite/fingerprint.rs 's/let skip = name == "target" \|\| /let skip = /' \
     "build output outside the repository is an input"
+mutate src/suite/fingerprint.rs 's/salt.update\(format!\("\{label\}\/\{name\}"\).as_bytes\(\)\);/salt.update(p.to_string_lossy().as_bytes());/' \
+    "the fingerprint carries absolute paths"
+mutate src/suite/history.rs 's/if std::fs::read_to_string\(&path\).is_ok_and\(\|old\| old == text\) \{/if false {/' \
+    "an unchanged record is rewritten"
+mutate src/suite/history.rs 's/&& stem.is_some_and\(\|s\| !members.contains_key\(&s\)\)/\&\& false/' \
+    "a member with nothing left keeps its file"
+mutate src/suite/history.rs 's/            if c.secs < threshold \/ 2.0 \{/            if false {/' \
+    "a quick test is kept"
 mutate src/suite/args.rs 's/            \|\| !self.test_args.is_empty\(\)\n//' \
     "a test filter does not narrow"
 

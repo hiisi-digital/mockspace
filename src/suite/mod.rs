@@ -55,9 +55,12 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
 
     let graph = match graph::Graph::read(&cfg.mock_dir) {
         Ok(g) => g,
+        // Without the graph nothing can be selected, and the tests still have
+        // to run: handed back to `cargo test`, which reports a broken manifest
+        // in its own words.
         Err(e) => {
-            eprintln!("mock test: {e}");
-            return Some(ExitCode::FAILURE);
+            eprintln!("note: {e}; the members run under plain cargo test this time");
+            return None;
         },
     };
     for p in inv.packages.iter().filter(|p| !graph.members.contains(*p)) {
@@ -132,7 +135,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     }
 
     if let Some(fp) = &fp {
-        history.record_cases(&flavour, &cases, &fp.full);
+        history.record_cases(&flavour, &cases, &fp.full, cfg.test.heavy_after_secs);
         let complete = nextest::ran_to_the_end(code) && !inv.narrowed();
         let greens = select::greens(&plan, &cases, complete);
         let f = history.flavour_mut(&flavour);

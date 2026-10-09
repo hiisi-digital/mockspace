@@ -74,16 +74,22 @@ member asked for, cache still on. `--no-cache` runs cached heavy tests too, so
 `--full --no-cache` is the whole suite. `--cheap` also defers every heavy test
 that has passed before in this flavour, running only new ones and ones that
 failed last time, and leaves the members it deferred owing them, so the next
-ordinary run picks them up. `[test] on_commit = "cheap"` runs `mock test
---cheap` before a commit is linted.
+ordinary run picks them up. `[test] commit` gates a commit as a lint level
+does: `warn` runs `mock test --cheap` before the commit is linted and reports a
+failure, `error` also blocks on one, `off` and `info` run nothing.
 
 **What is recorded.** A member is recorded green at its fingerprint only when
 nextest ran to the end (success, or test failures, not a build failure or an
 interrupt) with no filter of the caller's narrowing it, none of its tests
-failed and none of its heavy tests was deferred. Each test's time and result is
-recorded whatever happened. Everything lives in
-`<mock>/target/mockspace-test-state/history.json`; a `cargo clean` or a fresh
-clone runs everything once.
+failed and none of its heavy tests was deferred. The time and result of every
+test near or over the heavy threshold is recorded whatever happened; quicker
+tests are not kept. The record is tracked, one file per member per flavour
+under `<mock>/test-history/`, and committed with the work, on op's word that a
+record lost with every clone meant every helper started from a full run. The
+fingerprints hash contents and repository-relative paths only, so a pass
+recorded in one container stands in the next (`the_same_tree_elsewhere_has_the_same_fingerprints`),
+and a file is rewritten only when what it says changed, so a settled rerun
+leaves the tree clean.
 
 **What it cannot see**, and so where a test can be skipped that should have run:
 a path built at run time from pieces none of which climbs out alone
@@ -128,23 +134,19 @@ heavy test as cached; a `--cheap` pass defers them.
   drawn tests included, since the cache key is the member's fingerprint as
   the brief asks: one line in `kaski-mesh` reruns every drawn test of both
   suites. Between full runs `--cheap` is the way past that.
-- **The first run in a fresh container knows nothing**: no history, so every
-  member runs and no test is in the group yet. Helpers start in fresh
-  containers, so each helper pays one full run. The history is a file under
-  `mock/target/`; keeping it across containers is the question below.
-- **Doc tests do not run under nextest**, which has no doc-test support.
-  `kaski-render` has none; a crate that does keeps them only in `--plain`.
+- **The first run after this lands knows nothing**: no history yet, so every
+  member runs once and no test is in the group. From then on the tracked
+  history carries over to every clone.
+- **Doc tests do not run under nextest**, which has no doc-test support. A known
+  missing feature on op's word; `kaski-render` has none, and `--plain` reaches
+  them where a crate does.
 - **The build is untouched**: `cargo test --no-run` for `kaski-web` took 20
   minutes cold here, and selection only saves the builds of members it skips.
 
-## Questions only op can answer
+## Questions for op, and op's answers
 
-- Should the history survive a container, so a helper's first run is not a
-  full one: a ref pushed beside the branch, an artifact the bootstrap fetches,
-  or nothing?
-- One heavy test at a time or two: the default is one, a stand-in until the
-  `after-change` rows give a drawn test's time alone against two side by side.
-- `[test] on_commit`: kaski's wiring branch sets `cheap`, so a commit runs the
-  members it reaches without their drawn tests. Is a commit hook that can take
-  minutes after a `kaski-mesh` edit what op wants, or should it stay `off`?
-- Should `--full` also run doc tests through `cargo test --doc`?
+- Keep the history across containers? Yes: tracked, committed with the work.
+- Tests on commit? Nothing unless `[test] commit` is at `warn` or `error`, read
+  as a lint level; `info` and below skip.
+- `--full` running doc tests: wanted, kept as a known missing feature for now.
+- One heavy test at a time or two: still open, for the measuring session.

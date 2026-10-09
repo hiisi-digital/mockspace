@@ -6,26 +6,39 @@
 //! What earlier runs established, which is everything the selection and the
 //! cache are inferred from.
 //!
-//! Kept per flavour: the cargo arguments a run was made with, less the ones
-//! choosing packages. A run with `--features editor` compiles other code than
-//! one without, so a member green without the feature says nothing about it
-//! with, and each keeps its own record. Timings are read across flavours when a
-//! flavour has none of its own, since a test's weight does not depend much on a
-//! feature.
+//! **Tracked in the repository**, under `<mock>/test-history/`, and committed
+//! with the work that produced it. A record kept beside the build was lost with
+//! every fresh clone and every new container, so each started with a full run
+//! and the selection saved nothing where the time was actually going. The
+//! fingerprints it keys on are digests of file contents and repository-relative
+//! paths, so a pass recorded on one machine stands on another.
 //!
-//! Lives under the mock directory's `target/`, beside the build it describes,
-//! and is lost with it: a `cargo clean` or a fresh clone runs everything once.
+//! **One file per member per flavour**, `<flavour>/<member>.json`, so two
+//! branches conflict only where both moved the same member, and then either
+//! side is as good as the other: the merged tree has a fingerprint neither
+//! recorded, and the next run settles it.
+//!
+//! **Kept small and still.** Only tests at or over half the heavy threshold are
+//! recorded, since nothing is decided about the others, and a timing is
+//! rewritten only when it crosses the threshold or moves by more than half, so
+//! an unchanged suite rerun does not rewrite the files.
+//!
+//! A flavour is the cargo arguments a run was made with, less the ones choosing
+//! packages. A run with `--features editor` compiles other code than one
+//! without, so each keeps its own record. Timings are read across flavours when
+//! a flavour has none of its own, since a test's weight does not depend much on
+//! a feature.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::junit::{Case, Outcome};
+use super::junit::{Case, Outcome, package_of};
 
 pub const VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct History {
     pub version:  u32,
     pub flavours: BTreeMap<String, Flavour>,
@@ -50,7 +63,7 @@ pub struct Green {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TestRecord {
-    /// How long it took the last time it ran.
+    /// How long it took, to a tenth of a second, as last rewritten.
     pub secs:      f64,
     pub passed:    bool,
     /// Its member's fingerprint when it last passed. A heavy test whose member
@@ -58,40 +71,113 @@ pub struct TestRecord {
     pub passed_at: Option<String>,
 }
 
+/// One member's record in one flavour, as a file holds it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct MemberFile {
+    version: u32,
+    flavour: String,
+    member:  String,
+    green:   Option<Green>,
+    tests:   BTreeMap<String, BTreeMap<String, TestRecord>>,
+}
+
 impl History {
-    pub fn path(mock_dir: &Path) -> PathBuf {
-        mock_dir
-            .join("target")
-            .join("mockspace-test-state")
-            .join("history.json")
+    pub fn dir(mock_dir: &Path) -> PathBuf {
+        mock_dir.join("test-history")
     }
 
-    /// The record, or an empty one when there is none or it is of another
-    /// version. Never an error: a lost history costs one full run and nothing
-    /// else, and refusing to test over it would cost more.
+    /// The record, from every file under the directory. A file that does not
+    /// parse, or is of another version, is passed over: a lost record costs one
+    /// run of that member, and refusing to test over it would cost more.
     pub fn load(mock_dir: &Path) -> History {
-        std::fs::read_to_string(Self::path(mock_dir))
-            .ok()
-            .and_then(|t| serde_json::from_str::<History>(&t).ok())
-            .filter(|h| h.version == VERSION)
-            .unwrap_or_else(|| {
-                History {
-                    version: VERSION,
-                    ..History::default()
+        let mut h = History {
+            version: VERSION,
+            ..History::default()
+        };
+        let Ok(flavours) = std::fs::read_dir(Self::dir(mock_dir)) else {
+            return h;
+        };
+        for fdir in flavours.flatten() {
+            let Ok(files) = std::fs::read_dir(fdir.path()) else {
+                continue;
+            };
+            for file in files.flatten() {
+                let Some(m) = std::fs::read_to_string(file.path())
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<MemberFile>(&t).ok())
+                    .filter(|m| m.version == VERSION)
+                else {
+                    continue;
+                };
+                let f = h.flavour_mut(&m.flavour);
+                if let Some(g) = m.green {
+                    f.green.insert(m.member.clone(), g);
                 }
-            })
+                for (bin, tests) in m.tests {
+                    f.tests.entry(bin).or_default().extend(tests);
+                }
+            }
+        }
+        h
     }
 
-    /// Written whole beside itself and renamed over, so an interrupted write
-    /// leaves the previous record rather than half of one.
+    /// Writes each member's file where its content changed, and only there, so
+    /// a run that settled nothing leaves the tree as it was.
     pub fn save(&self, mock_dir: &Path) -> Result<(), String> {
-        let path = Self::path(mock_dir);
-        let dir = path.parent().expect("history has a parent");
-        crate::build_dir::ensure(dir.to_path_buf());
-        let tmp = dir.join("history.json.tmp");
-        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+        for (flavour, f) in &self.flavours {
+            let mut members: BTreeMap<String, MemberFile> = BTreeMap::new();
+            let blank = |member: &str| {
+                MemberFile {
+                    version: VERSION,
+                    flavour: flavour.clone(),
+                    member: member.to_string(),
+                    ..MemberFile::default()
+                }
+            };
+            for (member, g) in &f.green {
+                members
+                    .entry(member.clone())
+                    .or_insert_with(|| blank(member))
+                    .green = Some(g.clone());
+            }
+            for (bin, tests) in &f.tests {
+                let member = package_of(bin);
+                members
+                    .entry(member.to_string())
+                    .or_insert_with(|| blank(member))
+                    .tests
+                    .insert(bin.clone(), tests.clone());
+            }
+            let dir = Self::dir(mock_dir).join(flavour_dir(flavour));
+            // A member with nothing left to record loses its file, or a green
+            // record a failure took away would load back from it.
+            if let Ok(existing) = std::fs::read_dir(&dir) {
+                for e in existing.flatten() {
+                    let p = e.path();
+                    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned());
+                    if p.extension().is_some_and(|x| x == "json")
+                        && stem.is_some_and(|s| !members.contains_key(&s))
+                    {
+                        std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                    }
+                }
+            }
+            for (member, m) in members {
+                let path = dir.join(format!("{member}.json"));
+                let mut text = serde_json::to_string_pretty(&m).map_err(|e| e.to_string())?;
+                text.push('\n');
+                if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
+                    continue;
+                }
+                std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+                // Beside itself and renamed over, so an interrupted write
+                // leaves the previous record rather than half of one.
+                let tmp = dir.join(format!(".{member}.json.tmp"));
+                std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+                std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
+            }
+        }
+        Ok(())
     }
 
     pub fn flavour(&self, key: &str) -> Option<&Flavour> {
@@ -138,125 +224,64 @@ impl History {
     }
 
     /// Folds one run's results in. `fingerprint` is each member's fingerprint
-    /// for this run.
+    /// for this run; `threshold` is what counts as heavy.
     pub fn record_cases(
         &mut self,
         flavour: &str,
         cases: &[Case],
         fingerprint: &BTreeMap<String, String>,
+        threshold: f64,
     ) {
         let f = self.flavour_mut(flavour);
         for c in cases {
             if c.outcome == Outcome::Skipped {
                 continue;
             }
+            let tests = f.tests.entry(c.binary.clone()).or_default();
+            // Nothing is decided about a quick test, so it is not kept.
+            if c.secs < threshold / 2.0 {
+                tests.remove(&c.name);
+                continue;
+            }
             let passed = c.outcome == Outcome::Pass;
-            let at = fingerprint.get(c.package()).cloned();
-            let entry = f
-                .tests
-                .entry(c.binary.clone())
-                .or_default()
-                .entry(c.name.clone())
-                .or_insert(TestRecord {
-                    secs: c.secs,
-                    passed,
-                    passed_at: None,
-                });
-            entry.secs = c.secs;
-            entry.passed = passed;
-            entry.passed_at = if passed { at } else { None };
+            let secs = match tests.get(&c.name) {
+                Some(old) if steady(old.secs, c.secs, threshold) => old.secs,
+                _ => tenths(c.secs),
+            };
+            tests.insert(c.name.clone(), TestRecord {
+                secs,
+                passed,
+                passed_at: if passed { fingerprint.get(c.package()).cloned() } else { None },
+            });
+        }
+        f.tests.retain(|_, t| !t.is_empty());
+    }
+}
+
+/// Whether a new timing says nothing the old one did not: on the same side of
+/// the threshold and within half again either way.
+fn steady(old: f64, new: f64, threshold: f64) -> bool {
+    (old >= threshold) == (new >= threshold) && new <= old * 1.5 && new >= old / 1.5
+}
+
+fn tenths(secs: f64) -> f64 {
+    (secs * 10.0).round() / 10.0
+}
+
+/// The directory a flavour's files sit in: `default` for none, else its
+/// arguments with everything but letters, digits and dashes made a dash.
+fn flavour_dir(flavour: &str) -> String {
+    let mut out = String::new();
+    for ch in flavour.trim().chars() {
+        let ch = if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' };
+        if !(ch == '-' && (out.is_empty() || out.ends_with('-'))) {
+            out.push(ch);
         }
     }
+    let out = out.trim_end_matches('-').to_string();
+    if out.is_empty() { "default".to_string() } else { out }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn case(bin: &str, name: &str, secs: f64, outcome: Outcome) -> Case {
-        Case {
-            binary: bin.to_string(),
-            name: name.to_string(),
-            secs,
-            outcome,
-        }
-    }
-
-    fn fps() -> BTreeMap<String, String> {
-        BTreeMap::from([("render".to_string(), "fp1".to_string())])
-    }
-
-    #[test]
-    fn a_pass_records_its_fingerprint_and_a_failure_clears_it() {
-        let mut h = History::default();
-        h.record_cases("", &[case("render", "drawn", 40.0, Outcome::Pass)], &fps());
-        let r = &h.flavours[""].tests["render"]["drawn"];
-        assert_eq!(
-            (r.secs, r.passed, r.passed_at.as_deref()),
-            (40.0, true, Some("fp1"))
-        );
-
-        h.record_cases("", &[case("render", "drawn", 41.0, Outcome::Fail)], &fps());
-        let r = &h.flavours[""].tests["render"]["drawn"];
-        assert_eq!(
-            (r.secs, r.passed, r.passed_at.as_deref()),
-            (41.0, false, None)
-        );
-    }
-
-    /// An ignored test did not run, and what it took to not run is no timing.
-    #[test]
-    fn a_skipped_case_leaves_the_record_alone() {
-        let mut h = History::default();
-        h.record_cases("", &[case("render", "drawn", 40.0, Outcome::Pass)], &fps());
-        h.record_cases(
-            "",
-            &[case("render", "drawn", 0.0, Outcome::Skipped)],
-            &fps(),
-        );
-        assert_eq!(h.flavours[""].tests["render"]["drawn"].secs, 40.0);
-    }
-
-    #[test]
-    fn heavy_is_at_or_over_the_threshold_and_borrows_across_flavours() {
-        let mut h = History::default();
-        h.record_cases(
-            "",
-            &[
-                case("render", "drawn", 40.0, Outcome::Pass),
-                case("render", "edge", 10.0, Outcome::Pass),
-                case("render", "quick", 0.01, Outcome::Pass),
-            ],
-            &fps(),
-        );
-        let names = |v: Vec<(String, String)>| v.into_iter().map(|(_, n)| n).collect::<Vec<_>>();
-        assert_eq!(names(h.heavy("", 10.0)), vec!["drawn", "edge"]);
-        // The editor flavour has never run; it borrows the default's timings.
-        assert_eq!(names(h.heavy("--features editor", 10.0)), vec![
-            "drawn", "edge"
-        ]);
-        // Once it has run, its own timing decides, here that `drawn` got quick.
-        h.record_cases(
-            "--features editor",
-            &[case("render", "drawn", 1.0, Outcome::Pass)],
-            &fps(),
-        );
-        assert_eq!(names(h.heavy("--features editor", 10.0)), vec!["edge"]);
-    }
-
-    #[test]
-    fn a_saved_history_loads_back_and_a_foreign_one_loads_empty() {
-        let dir = std::env::temp_dir().join(format!("mockspace-suite-hist-{}", std::process::id()));
-        let mut h = History::load(&dir);
-        assert_eq!(h.version, VERSION);
-        h.record_cases("", &[case("render", "drawn", 40.0, Outcome::Pass)], &fps());
-        h.save(&dir).unwrap();
-        assert_eq!(History::load(&dir), h);
-
-        std::fs::write(History::path(&dir), r#"{"version": 999, "flavours": {}}"#).unwrap();
-        assert!(History::load(&dir).flavours.is_empty());
-        std::fs::write(History::path(&dir), "not json").unwrap();
-        assert!(History::load(&dir).flavours.is_empty());
-        std::fs::remove_dir_all(&dir).ok();
-    }
-}
+#[path = "history_tests.rs"]
+mod tests;

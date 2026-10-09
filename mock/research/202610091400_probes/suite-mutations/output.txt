@@ -1,41 +1,53 @@
 == closure follows dev edges of dependencies
 test suite::graph::tests::a_closure_takes_own_dev_deps_and_only_the_build_graph_beyond ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.52s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 0.79s
 == paths outside a member are not hashed
-test suite::fingerprint::tests::content_a_source_includes_moves_that_member ... FAILED
 test suite::fingerprint::tests::content_a_test_reads_at_run_time_moves_that_member ... FAILED
-test result: FAILED. 48 passed; 2 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.97s
+test suite::fingerprint::tests::content_a_source_includes_moves_that_member ... FAILED
+test result: FAILED. 56 passed; 2 failed; 0 ignored; 0 measured; 737 filtered out; finished in 0.86s
 == escaped literals taken as paths
 test suite::fingerprint::tests::only_literals_that_climb_out_and_name_something_are_paths ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 2.32s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 0.88s
 == a path containing the member is taken
 test suite::fingerprint::tests::a_literal_resolves_against_the_file_then_the_member ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 2.20s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 0.91s
 == cheap defers nothing
 test suite::select::tests::a_cheap_run_defers_known_heavy_tests_and_runs_failing_ones ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.21s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 0.89s
 == a deferring run leaves members green
 test suite::select::tests::a_complete_run_leaves_green_what_passed_and_nothing_deferred ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.25s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 0.86s
 == the cache cannot be turned off
 test suite::select::tests::a_full_run_runs_everyone_and_the_cache_still_holds ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.17s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 0.90s
 == a skipped case reads as a pass
 test suite::junit::tests::every_case_with_its_time_and_outcome ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.62s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.02s
 == a skipped case overwrites the timing
 test suite::history::tests::a_skipped_case_leaves_the_record_alone ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.45s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.05s
 == a build failure counts as ran to the end
 test suite::nextest::tests::only_success_and_test_failures_ran_to_the_end ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.55s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.03s
 == a vendored path package is passed over
 test suite::graph::tests::a_closure_takes_own_dev_deps_and_only_the_build_graph_beyond ... FAILED
 test suite::graph::tests::only_path_dependencies_on_local_packages_are_edges ... FAILED
-test result: FAILED. 48 passed; 2 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.81s
+test result: FAILED. 56 passed; 2 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.03s
 == build output outside the repository is an input
 test suite::fingerprint::tests::a_path_dependency_outside_the_repository_is_read_off_the_disk ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.60s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.25s
+== the fingerprint carries absolute paths
+test suite::fingerprint::tests::the_same_tree_elsewhere_has_the_same_fingerprints ... FAILED
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.34s
+== an unchanged record is rewritten
+test suite::history::tests::saving_what_is_already_there_writes_nothing ... FAILED
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.02s
+== a member with nothing left keeps its file
+test suite::history::tests::a_member_with_nothing_left_loses_its_file ... FAILED
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.29s
+== a quick test is kept
+test suite::history::tests::a_quick_test_is_not_kept_and_one_that_got_quick_drops_out ... FAILED
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.13s
 == a test filter does not narrow
 test suite::args::tests::its_own_flags_are_taken_and_the_rest_passed_through ... FAILED
-test result: FAILED. 49 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.54s
+test result: FAILED. 57 passed; 1 failed; 0 ignored; 0 measured; 737 filtered out; finished in 1.18s

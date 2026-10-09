@@ -338,3 +338,29 @@ fn a_literal_resolves_against_the_file_then_the_member() {
         None
     );
 }
+
+/// The history is tracked and read on other machines, so a fingerprint must
+/// not depend on where the tree sits: the same tree under another path has the
+/// same fingerprints, the package outside the repository included.
+#[test]
+fn the_same_tree_elsewhere_has_the_same_fingerprints() {
+    let here = Repo::new("here");
+    let there = Repo {
+        root: here.root.with_file_name(format!(
+            "{}-moved",
+            here.root.file_name().unwrap().to_string_lossy()
+        )),
+    };
+    for (from, to) in [(&here.root, &there.root), (&here.outside(), &there.outside())] {
+        let ok = Command::new("cp")
+            .arg("-a")
+            .arg(from)
+            .arg(to)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "copy {} to {}", from.display(), to.display());
+    }
+    assert_eq!(here.fp().full, there.fp().full);
+    assert_eq!(here.fp().own, there.fp().own);
+}

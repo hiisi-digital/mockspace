@@ -825,19 +825,24 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             }
         }
 
-        // The tests a commit runs, where `[test] on_commit` asks for any: the
-        // members the staged change reaches, chosen as `mock test` chooses them.
-        // A commit that changes nothing a suite depends on runs nothing.
-        if mode == LintMode::Commit
-            && let Some(test_args) = cfg.test.on_commit.args()
-        {
-            eprintln!("--- mock test {} ---", test_args.join(" "));
-            if super::test::run(&cfg, test_args) != ExitCode::SUCCESS {
+        // The tests a commit runs, gated as a lint is: `[test] commit` at `warn`
+        // or `error` runs the cheap pass over the members the change reaches,
+        // and only `error` blocks on a failure. `off` and `info`, the default
+        // among them, run nothing, so a commit never waits on a suite unless
+        // the repository asked it to.
+        if mode == LintMode::Commit && cfg.test.commit_runs() {
+            eprintln!("--- mock test --cheap ---");
+            if super::test::run(&cfg, &["--cheap"]) != ExitCode::SUCCESS {
+                if cfg.test.commit_blocks() {
+                    eprintln!(
+                        "BLOCKED: the tests failed. `cargo mock test` reruns what failed; \
+                         `[test] commit` in mockspace.toml sets this gate's level."
+                    );
+                    return ExitCode::FAILURE;
+                }
                 eprintln!(
-                    "BLOCKED: the tests failed. `cargo mock test` reruns what failed; \
-                     `[test] on_commit` in mockspace.toml sets what a commit runs."
+                    "warning: the tests failed; `[test] commit = \"warn\"` lets the commit through."
                 );
-                return ExitCode::FAILURE;
             }
         }
     }

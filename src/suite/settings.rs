@@ -9,32 +9,8 @@
 //! what counts as slow and how many slow tests a machine can take at once are
 //! properties of the repository and the machine, not of mockspace.
 
+use mockspace_lint_rules::Level;
 use serde::Deserialize;
-
-/// What a commit runs before it is linted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OnCommit {
-    /// Nothing. The default: a commit hook that starts a suite is a choice a
-    /// repository makes, not one mockspace makes for it.
-    Off,
-    /// `mock test --cheap`: the crates a change reaches, without the heavy tests
-    /// that are not new.
-    Cheap,
-    /// `mock test`: the crates a change reaches, heavy tests included unless
-    /// cached.
-    Changed,
-}
-
-impl OnCommit {
-    /// The `mock test` arguments a commit runs, or nothing.
-    pub fn args(self) -> Option<&'static [&'static str]> {
-        match self {
-            OnCommit::Off => None,
-            OnCommit::Cheap => Some(&["--cheap"]),
-            OnCommit::Changed => Some(&[]),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestSettings {
@@ -45,7 +21,10 @@ pub struct TestSettings {
     pub heavy_threads:    u32,
     /// A test still running after this many seconds is killed and failed.
     pub timeout_secs:     u64,
-    pub on_commit:        OnCommit,
+    /// The commit gate, read as a lint's level is: `off` (the default) and
+    /// `info` run nothing, `warn` runs `mock test --cheap` and reports a
+    /// failure without blocking, `error` runs it and blocks on a failure.
+    pub commit:           Level,
 }
 
 /// Ten seconds: kaski's drawn tests start a Bevy app on a software Vulkan
@@ -61,13 +40,25 @@ pub const DEFAULT_HEAVY_THREADS: u32 = 1;
 /// alone, so a test is killed for hanging rather than for being slow.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
 
+impl TestSettings {
+    /// Whether a commit runs the tests: at `warn` or `error`, never below.
+    pub fn commit_runs(&self) -> bool {
+        self.commit >= Level::Warn
+    }
+
+    /// Whether a failure at the commit blocks it.
+    pub fn commit_blocks(&self) -> bool {
+        self.commit == Level::Error
+    }
+}
+
 impl Default for TestSettings {
     fn default() -> Self {
         Self {
             heavy_after_secs: DEFAULT_HEAVY_AFTER_SECS,
             heavy_threads:    DEFAULT_HEAVY_THREADS,
             timeout_secs:     DEFAULT_TIMEOUT_SECS,
-            on_commit:        OnCommit::Off,
+            commit:           Level::Pass,
         }
     }
 }
@@ -80,7 +71,7 @@ pub(crate) struct RawTest {
     heavy_after_secs: Option<f64>,
     heavy_threads:    Option<u32>,
     timeout_secs:     Option<u64>,
-    on_commit:        Option<String>,
+    commit:           Option<String>,
 }
 
 impl RawTest {
@@ -105,21 +96,19 @@ impl RawTest {
         if timeout_secs == 0 {
             return Err("[test] timeout_secs must be at least 1".to_string());
         }
-        let on_commit = match self.on_commit.as_deref() {
-            None | Some("off") => OnCommit::Off,
-            Some("cheap") => OnCommit::Cheap,
-            Some("changed") => OnCommit::Changed,
-            Some(other) => {
-                return Err(format!(
-                    "[test] on_commit is one of off, cheap, changed; got {other:?}"
-                ));
+        let commit = match self.commit.as_deref() {
+            None => d.commit,
+            Some(s) => {
+                Level::from_str_name(s).ok_or_else(|| {
+                    format!("[test] commit is a lint level, off, info, warn or error; got {s:?}")
+                })?
             },
         };
         Ok(TestSettings {
             heavy_after_secs,
             heavy_threads,
             timeout_secs,
-            on_commit,
+            commit,
         })
     }
 }
@@ -141,13 +130,13 @@ mod tests {
     #[test]
     fn each_key_overrides_its_default_alone() {
         let s = parse(
-            "heavy_after_secs = 2.5\nheavy_threads = 2\ntimeout_secs = 60\non_commit = \"cheap\"\n",
+            "heavy_after_secs = 2.5\nheavy_threads = 2\ntimeout_secs = 60\ncommit = \"warn\"\n",
         )
         .unwrap();
         assert_eq!(s.heavy_after_secs, 2.5);
         assert_eq!(s.heavy_threads, 2);
         assert_eq!(s.timeout_secs, 60);
-        assert_eq!(s.on_commit, OnCommit::Cheap);
+        assert_eq!(s.commit, Level::Warn);
     }
 
     /// An integer is a number of seconds too; a table written `= 10` must not
@@ -166,7 +155,31 @@ mod tests {
         assert!(parse("heavy_after_secs = -1\n").is_err());
         assert!(parse("heavy_threads = 0\n").is_err());
         assert!(parse("timeout_secs = 0\n").is_err());
-        assert!(parse("on_commit = \"always\"\n").is_err());
+        assert!(parse("commit = \"always\"\n").is_err());
+    }
+
+    /// The commit gate reads as a lint's does: only `warn` and `error` run
+    /// anything, and only `error` blocks.
+    #[test]
+    fn only_warn_and_error_run_at_the_commit_and_only_error_blocks() {
+        for (level, runs, blocks) in [
+            ("off", false, false),
+            ("pass", false, false),
+            ("info", false, false),
+            ("warn", true, false),
+            ("error", true, true),
+        ] {
+            let s = parse(&format!("commit = \"{level}\"\n")).unwrap();
+            assert_eq!(
+                (s.commit_runs(), s.commit_blocks()),
+                (runs, blocks),
+                "{level}"
+            );
+        }
+        assert!(
+            !TestSettings::default().commit_runs(),
+            "the default runs nothing"
+        );
     }
 
     /// A misspelt key is a setting that silently does nothing, which is the
