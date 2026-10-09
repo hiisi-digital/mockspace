@@ -1,0 +1,359 @@
+# The conformance table for naming an agent identity.
+#
+# Naming an agent from a commit's author, committer or `Co-Authored-By` is
+# written more than once, and the writings must not drift. This file is what
+# every one of them is held to: the lists the recogniser is built from, and the
+# people and agents it must tell apart. A row changed here fails whichever
+# implementation disagrees, and an implementation changed without a row fails
+# its own suite.
+#
+# Format: `kind<TAB>value`, or `kind<TAB>value<TAB>value` where a row pairs two
+# things. Blank lines and lines opening with `#` are ignored.
+#
+# The recogniser reads what only an agent carries, in this order. The words of a
+# name are its letters and digits, lowercased, split at anything else.
+#
+#   marker     a bot marker, matched anywhere in the name or the mailbox;
+#   mailbox    a mailbox an agent commits from, a glob over the whole mailbox
+#              (`*` stands for any run of characters);
+#   tag        a tag a tool writes into a name. A group in parentheses is read
+#              only for these: a group holding exactly a tag makes the identity
+#              an agent's (`Paul Gauthier (aider)`), and a group holding anything
+#              else is left out of the name and says nothing about it (`Claude
+#              3.5 Sonnet (new)` is read as `Claude 3.5 Sonnet`, `Jane Doe
+#              (OpenAI)` is Jane Doe, and so is `Alex (Droid)` Alex). The set is
+#              closed;
+#   keyed      a name the project has said is an agent whatever its mailbox, and
+#              an identity carrying it. The first value is what the project
+#              sets, matched against the whole name, and the second is the
+#              identity that then reads as an agent's. Without the project
+#              saying so that identity is a person's, which is what the default
+#              lets through;
+#   tool       a tool's own name, which makes an identity an agent's as the start
+#              of a name: optionally behind `head` words, then the tool, then
+#              nothing but `companion` words and versions (`Copilot Chat`,
+#              `Cursor Bugbot`, `Claude Code on the web`, `GPT 4o`). Any other
+#              word after it is a word of somebody's name, so `Copilot Smith` and
+#              `Cline, John` are people. It has to be the start, so a tool's name
+#              inside somebody's is none (`Smith Copilot`). A version is a word
+#              opening with a digit, or `v` and digits;
+#   given      a tool whose name is also somebody's given name. It follows the
+#              same rule for what comes after it (`Claude Code Action`, `Claude
+#              Monet`), and with nothing after it wants a second signal, since a
+#              person can be called that: a `head` word in front (`Google
+#              Gemini`), or a mailbox that is the tool's. The mailbox is the tool's
+#              when its domain is one of the tool's `vendor` domains, matched
+#              whole, or when its local part is the tool's word at a mailbox that
+#              is a machine's: a domain that is `localhost`, one label with no
+#              dot, or one ending in a `machine` suffix. The same local part at
+#              any other domain is a person called that (`Devin
+#              <devin@acme.com>`), and so is GitHub's private address, `Devin
+#              <12345+devin@users.noreply.github.com>`, which every account has;
+#   vendor     a given-name tool and a domain it commits from;
+#   machine    an ending only a private network's domains have, written without
+#              its dot;
+#   head       a vendor word allowed in front of a tool's name;
+#   companion  a word that rides along with a tool: a model, a product, a surface.
+#
+# Below the lists come the verdicts: `person` rows are never an agent, `agent`
+# rows always are, as an author, a committer and the value of a `Co-Authored-By`.
+
+# --- markers -----------------------------------------------------------------
+marker	[bot]
+
+# --- mailboxes ---------------------------------------------------------------
+mailbox	noreply@anthropic.com
+mailbox	noreply@openai.com
+mailbox	copilot@github.com
+mailbox	cursoragent@cursor.com
+mailbox	agent@cursor.com
+mailbox	amp@ampcode.com
+mailbox	grok@x.ai
+mailbox	openhands@all-hands.dev
+mailbox	*-bot@*
+
+# --- tags --------------------------------------------------------------------
+tag	aider
+
+# --- tools -------------------------------------------------------------------
+tool	copilot
+tool	chatgpt
+tool	gpt
+tool	codex
+tool	grok
+tool	xai
+tool	x ai
+tool	windsurf
+tool	codeium
+tool	tabnine
+tool	supermaven
+tool	codewhisperer
+tool	amazon q
+tool	antigravity
+tool	opencode
+tool	openhands
+tool	replit
+tool	ghostwriter
+tool	phind
+tool	deepseek
+tool	qwen
+tool	ollama
+tool	llama
+tool	aider
+tool	cline
+tool	roo code
+tool	roo cline
+tool	lovable
+tool	droid
+tool	sourcegraph
+tool	anysphere
+tool	cognition labs
+tool	jetbrains ai
+tool	blackbox ai
+tool	continue dev
+tool	augment code
+tool	augmentcode
+tool	bolt new
+tool	v0 dev
+tool	factory ai
+tool	swe agent
+tool	ai assistant
+tool	coding agent
+tool	llm agent
+tool	crush bot
+tool	goose bot
+tool	anthropic
+tool	openai
+tool	opus
+tool	sonnet
+tool	haiku
+tool	cursor
+
+# --- tools that are also given names -----------------------------------------
+given	claude
+given	devin
+given	gemini
+given	amp
+given	jules
+given	cody
+given	bard
+given	kiro
+given	junie
+
+# --- the domains a given-name tool commits from ------------------------------
+vendor	claude	anthropic.com
+vendor	claude	claude.com
+vendor	claude	claude.ai
+vendor	devin	cognition.ai
+vendor	devin	devin.ai
+vendor	gemini	google.com
+vendor	amp	ampcode.com
+vendor	jules	jules.google
+vendor	cody	sourcegraph.com
+vendor	bard	google.com
+vendor	kiro	kiro.dev
+vendor	junie	jetbrains.com
+
+# --- the endings of a machine's domain -------------------------------------
+machine	local
+machine	localdomain
+machine	lan
+machine	internal
+machine	home.arpa
+
+# --- head words --------------------------------------------------------------
+head	github
+head	google
+head	anthropic
+head	openai
+head	microsoft
+head	amazon
+head	aws
+
+# --- companion words ---------------------------------------------------------
+companion	code
+companion	agent
+companion	ai
+companion	bot
+companion	assistant
+companion	assist
+companion	cli
+companion	app
+companion	coding
+companion	via
+companion	slack
+companion	web
+companion	desktop
+companion	ide
+companion	extension
+companion	connector
+companion	integration
+companion	autofix
+companion	review
+companion	reviewer
+companion	new
+companion	preview
+companion	beta
+companion	opus
+companion	sonnet
+companion	haiku
+companion	instant
+companion	flash
+companion	turbo
+companion	lite
+companion	thinking
+companion	mini
+companion	chat
+companion	workspace
+companion	bugbot
+companion	action
+companion	sdk
+companion	on
+companion	the
+
+# --- keyed: a person to the default, an agent once the project names the name -
+keyed	claude	claude <root@buildhost.local>
+
+# --- people: never an agent --------------------------------------------------
+person	Devin Smith <devin.smith@example.com>
+person	Hubbard Jones <hubbard@example.com>
+person	Haider Ali <haider@example.com>
+person	Cody Brown <cody@example.com>
+person	Claude Monet <claude.monet@example.org>
+person	Claude Monet <claude@example.org>
+person	Claude Monet
+person	Anders Android <anders@example.com>
+person	Jules Verne <jules@example.com>
+person	Mistral Winds <mistral@example.com>
+person	Ada Lombard <ada@example.com>
+person	O. R. Toimela <ort@hiisi.digital>
+person	Jane Smith <jane@example.com>
+person	Matti Meikalainen <matti@example.fi>
+person	Maria Garcia Lopez <maria@example.es>
+person	Li Wei <li.wei@example.cn>
+person	Some One <12345+someone@users.noreply.github.com>
+person	GitHub <noreply@github.com>
+person	Jane Roe <jane.roe@anthropic.com>
+person	Bob Poe <bob@openai.com>
+person	Jane Smith (she/her) <jane@example.com>
+person	Claude Smith (she/her) <cs@example.com>
+person	Max Claude <max@example.com>
+person	Claude Max <claude.max@example.com>
+person	Claude Max
+person	Claude Pro <claude.pro@example.com>
+person	Agent Smith <smith@example.com>
+person	Bot Lee <bot.lee@example.com>
+person	Ai Nakamura <ai@example.jp>
+person	Code Monkey <cm@example.com>
+person	Dev Container <dev@example.com>
+person	Jane Smith <jane@copilot.example.com>
+person	Jane Doe (OpenAI)
+person	Jane Doe (Anthropic)
+person	Alex (Droid)
+person	Alex (Cline)
+person	Jane ( Doe (she/her)
+person	Claude <c.dupont@example.com>
+person	Claude <c.dupont@notanthropic.com>
+person	Claude <c.dupont@mail.anthropic.com>
+person	Claude <12345+claude@example.com>
+person	Claude <claude@example.org>
+person	Claude <claude@users.noreply.github.com>
+person	Claude <12345+claude@users.noreply.github.com>
+person	Devin <12345+devin@users.noreply.github.com>
+person	Devin <devin@acme.com>
+person	Cody <cody@gmail.com>
+person	Claude Monet <claude@anthropic.com>
+person	Smith Copilot <smith@example.com>
+person	Claude Ide Smith
+person	Devin Ai Nguyen
+person	Claude Marie Via
+person	Claude Monet Lite
+person	Devin Van Web
+person	Cline, John
+person	Cline Smith
+person	Aider Aliyev
+person	Llama Jones
+person	Copilot Smith
+person	Cursor Smith
+person	Sonnet Lee
+person	Anthropic Lee
+person	Devin <d.patel@patel.example>
+person	Gemini <g.rossi@example.com>
+person	Amp <a.berg@example.com>
+person	Jules <j.moreau@example.com>
+person	Cody <c.lindgren@example.com>
+person	Bard <b.sanchez@example.com>
+person	Kiro <k.tanaka@example.com>
+person	Junie <j.virtanen@example.com>
+
+# --- agents: always an agent -------------------------------------------------
+agent	Claude <noreply@anthropic.com>
+agent	Claude <claude@localhost>
+agent	claude <claude@buildbox>
+agent	Claude <claude@ci.local>
+agent	Claude <claude@anthropic.com>
+agent	Claude Code <noreply@anthropic.com>
+agent	Claude Code Action
+agent	Claude Agent SDK
+agent	Claude Code on the web
+agent	Claude Opus 4.1 <noreply@anthropic.com>
+agent	Claude Sonnet 5.5 <claude@example.com>
+agent	Claude Opus 4.5 (1M context) <x@y.z>
+agent	Claude 3.5 Sonnet (new)
+agent	Claude via Slack
+agent	claude-code[bot] <claude-code@users.noreply.github.com>
+agent	Anthropic
+agent	Opus 4.5
+agent	Copilot <198982749+Copilot@users.noreply.github.com>
+agent	Copilot Chat
+agent	Copilot Workspace
+agent	GitHub Copilot <copilot@example.com>
+agent	GitHub Copilot Coding Agent
+agent	copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>
+agent	Codex <codex@example.com>
+agent	ChatGPT <noreply@openai.com>
+agent	GPT-4o <gpt@example.com>
+agent	Gemini <gemini@google.com>
+agent	Gemini CLI <gemini@example.com>
+agent	Gemini Code Assist
+agent	Gemini 2.5 Flash
+agent	Google Gemini
+agent	Cursor Agent <cursoragent@cursor.com>
+agent	Cursor <agent@cursor.com>
+agent	Cursor Bugbot
+agent	Devin <devin@cognition.ai>
+agent	Devin AI <devin@cognition-labs.com>
+agent	aider <aider@aider.chat>
+agent	Paul Gauthier (aider)
+agent	Jane Doe ) (aider)
+agent	SWE-agent <swe@example.com>
+agent	Cline
+agent	Aider
+agent	Cursor <cursor@example.com>
+agent	Sonnet
+agent	Roo Code
+agent	Junie Agent
+agent	Llama
+agent	Lovable
+agent	Droid
+agent	bolt.new
+agent	v0.dev
+agent	factory.ai
+agent	Sourcegraph
+agent	Anysphere
+agent	Cognition Labs
+agent	x.ai
+agent	AI Assistant
+agent	openhands <openhands@all-hands.dev>
+agent	OpenHands
+agent	release-bot <release-bot@example.com>
+agent	dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
+agent	A Name <1234+thing[bot]@users.noreply.github.com>
+agent	google-labs-jules[bot] <jules@google.com>
+agent	Dev Container <noreply@anthropic.com>
+agent	Dev Container <copilot@github.com>
+agent	Jane Smith (aider) <jane@example.com>
+agent	Amp <amp@ampcode.com>
+agent	Amp <noreply@ampcode.com>
+agent	Grok <grok@x.ai>
+agent	Cody Agent <cody@example.com>

@@ -49,3 +49,10 @@ it_runs_the_ignored_shared_target_dir_suite() {
 it_runs_the_ignored_maker_tool_suite() {
     assert_ok cargo test -p mockspace --test maker_tool -- --ignored
 }
+
+# An agent identity on a commit, refused at the commit and at the push through
+# the hooks the engine generates and a real git repository.
+#[test]
+it_runs_the_ignored_commit_identity_suite() {
+    assert_ok cargo test -p mockspace --test a_commit_identity_reaches_the_message_gates -- --ignored
+}

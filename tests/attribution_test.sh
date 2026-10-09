@@ -58,7 +58,43 @@ it_fails_its_selfcheck_when_a_pattern_is_emptied() {
     # The control for the control. A selfcheck that cannot fail is decoration,
     # and this engine exists partly because a check that silently passed was
     # indistinguishable from a check that ran.
-    ATTRIBUTION_IDENTITY_RE=''
+    ATTRIBUTION_AGENT_TOOLS=''
+    assert_fails attribution_selfcheck
+}
+
+#[test]
+it_fails_its_selfcheck_when_any_set_the_identity_net_reads_is_emptied() {
+    # One set at a time, restored after each, since a selfcheck that loads every
+    # set but one is the half-sourced library it exists to catch. The heads and the
+    # companions have no canary of their own, and the check that each
+    # is non-empty is what covers them.
+    local p saved
+    for p in ATTRIBUTION_AGENT_MARKERS ATTRIBUTION_AGENT_MAILBOXES ATTRIBUTION_AGENT_TAGS \
+             ATTRIBUTION_AGENT_TOOLS ATTRIBUTION_AGENT_GIVEN ATTRIBUTION_AGENT_VENDORS \
+             ATTRIBUTION_AGENT_HEADS ATTRIBUTION_AGENT_COMPANIONS; do
+        saved="${!p}"
+        printf -v "$p" '%s' ''
+        assert_fails attribution_selfcheck
+        printf -v "$p" '%s' "$saved"
+        assert_ok attribution_selfcheck
+    done
+}
+
+#[test]
+it_fails_its_selfcheck_when_the_tags_stop_telling_the_cases_apart() {
+    # The canaries, one net at a time. A set that loads and no longer does its
+    # job reads as a clean repository, which is the failure the selfcheck is for.
+    # Too narrow, so a tag is missed, and too wide, so a group that is no tag is
+    # read as one.
+    ATTRIBUTION_AGENT_TAGS='|nothing|'
+    assert_fails attribution_selfcheck
+    ATTRIBUTION_AGENT_TAGS='|aider|openai|'
+    assert_fails attribution_selfcheck
+}
+
+#[test]
+it_fails_its_selfcheck_when_a_given_name_is_read_at_its_vendor_no_more() {
+    ATTRIBUTION_AGENT_VENDORS='|claude example.invalid|'
     assert_fails attribution_selfcheck
 }
 
@@ -245,33 +281,6 @@ it_permits_nothing_when_the_caller_states_no_policy() {
 it_permits_exactly_what_the_caller_names() {
     assert_ok attribution_allows 'Co-authored-by: A Human <a@b.c>' '*<a@b.c>'
     assert_fails attribution_allows 'Co-authored-by: Claude <x@y.z>' '*<a@b.c>'
-}
-
-# --- the vendor net, for surfaces with no shape ------------------------------
-
-#[test]
-it_names_the_vendors_across_families() {
-    local line
-    for line in \
-        'Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>' \
-        'Co-authored-by: Copilot <copilot@github.com>' \
-        'Co-authored-by: ChatGPT <noreply@openai.com>' \
-        'Co-authored-by: Cursor Agent <agent@cursor.com>' \
-        'Co-authored-by: google-labs-jules[bot] <jules@google.com>' \
-        'Co-authored-by: Devin AI <devin@cognition-labs.com>' \
-        'Co-authored-by: aider <aider@aider.chat>' \
-        'Co-authored-by: Amp <amp@ampcode.com>' \
-        'Co-authored-by: Grok <grok@x.ai>' \
-        'Co-authored-by: dependabot[bot] <support@github.com>'
-    do
-        assert_ok attribution_names_agent "$line"
-    done
-}
-
-#[test]
-it_does_not_name_a_human() {
-    assert_fails attribution_names_agent 'Co-authored-by: Jane Doe <jane@example.com>'
-    assert_fails attribution_names_agent 'Reviewed-by: a human being <human@example.com>'
 }
 
 # --- adverts, and the prose they must not eat --------------------------------

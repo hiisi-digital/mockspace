@@ -69,7 +69,12 @@ pub(crate) fn gen_hook(name: &str, mock_rel: &str, user_hook: &Path) -> String {
     }
 }
 
-/// The commit-msg body: hand the message to the configured message lints.
+/// The commit-msg body: hand the message, and who the commit is by, to the
+/// configured message lints.
+///
+/// The author and committer are read from `git var` and passed as `--author`
+/// and `--committer`, so a policy about agent bylines reaches an agent identity
+/// as well, which a message alone never shows.
 ///
 /// Replaces a hardcoded `grep -E` that was baked into two hook layers under a
 /// comment conceding the copies "MUST stay in sync". They could not, and the
@@ -103,7 +108,23 @@ if [ -z "$launcher" ]; then
     exit 1
 fi
 
-"$launcher" check-message --domain commit-message --gate commit --file "$MSG_FILE" || exit 1
+# Who this commit is by, as git will write it into the object. Asked of git and
+# not of the config, because `--author` and the `GIT_AUTHOR_*` and
+# `GIT_COMMITTER_*` variables move it and the config does not know. When git
+# cannot name one the gate is not running, and a gate that stops running without
+# saying so is the failure the missing launcher above already refuses, so this
+# blocks too, with the reason on one line.
+if ! author_ident="$(git var GIT_AUTHOR_IDENT 2>/dev/null)" || [ -z "$author_ident" ]; then
+    echo "BLOCKED: the identity gate cannot run: git could not name the commit's author (git var GIT_AUTHOR_IDENT failed)." >&2
+    exit 1
+fi
+if ! committer_ident="$(git var GIT_COMMITTER_IDENT 2>/dev/null)" || [ -z "$committer_ident" ]; then
+    echo "BLOCKED: the identity gate cannot run: git could not name the commit's committer (git var GIT_COMMITTER_IDENT failed)." >&2
+    exit 1
+fi
+
+"$launcher" check-message --domain commit-message --gate commit --file "$MSG_FILE" \
+    --author "$author_ident" --committer "$committer_ident" || exit 1
 "##
     .to_string()
 }
@@ -113,7 +134,9 @@ fi
 ///
 /// Every message being pushed goes through the same configured lints the
 /// commit-msg gate uses, at the push tier, so a project can warn locally and
-/// block before anything is shared.
+/// block before anything is shared. Each carries its commit's author and
+/// committer with it, so the identity is judged at the push as it is at the
+/// commit.
 ///
 /// Each message is validated on its own. `check-message` parses its input as
 /// one message with a subject line, so a batch of them cannot be concatenated
@@ -180,11 +203,36 @@ if [ -n "$PUSH_REVS" ]; then
     # label before an 0x1f so a rejection names the commit it came from. The
     # framing is exactly what `--batch` parses.
     #
+    # The label is preceded by the commit's author and committer, as the
+    # commit object holds them, each closed by an 0x1e. That is what the lints
+    # judge a commit's identity by, and it is read per commit here because the
+    # identities of a range differ from commit to commit and a push is exactly
+    # where a commit made under a container's default identity turns up.
+    #
+    # The four identity fields come out of git one to a NUL-terminated field,
+    # which a name cannot hold, and go through `ms_frame_records` to be joined
+    # with the two separators. Git accepts an 0x1e or an 0x1f inside a name, and
+    # either would split the record, so both are taken out of the four fields
+    # here. The engine refuses a record whose header still does not parse, so
+    # neither side falls open alone.
+    ms_frame_records() {
+        local an ae cn ce rest strip=$'\x1e\x1f'
+        while IFS= read -r -d '' an && IFS= read -r -d '' ae \
+            && IFS= read -r -d '' cn && IFS= read -r -d '' ce \
+            && IFS= read -r -d '' rest; do
+            an=${an//[$strip]/}
+            ae=${ae//[$strip]/}
+            cn=${cn//[$strip]/}
+            ce=${ce//[$strip]/}
+            printf '%s <%s>\x1e%s <%s>\x1e%s\0' "$an" "$ae" "$cn" "$ce" "$rest"
+        done
+    }
     # `--no-walk=unsorted` keeps the order the revs were fed in; plain
     # `--no-walk` would re-sort by commit date.
     set -o pipefail
     printf '%s\n' "$PUSH_REVS" \
-        | git log --no-walk=unsorted --stdin -z --format='%h %s%x1f%B' \
+        | git log --no-walk=unsorted --stdin -z --format='%an%x00%ae%x00%cn%x00%ce%x00%h %s%x1f%B' \
+        | ms_frame_records \
         | "$launcher" check-message --domain commit-message --gate push --batch || exit 1
     set +o pipefail
 fi

@@ -348,6 +348,13 @@ impl Default for AgentConfig {
 /// (matching bylines are accepted). Glob patterns support `*`, `?`, `[...]` as
 /// in bash `[[ == ]]` pattern matching. Patterns without glob metacharacters
 /// degenerate to literal equality.
+///
+/// The patterns are matched by a lint pack's attribution lint, and mockspace
+/// hands that lint more than the message: the commit's author and committer
+/// arrive with it, at the commit gate and at the push gate. A pack that judges an
+/// agent identity does so under the pattern its mode permits, the way it judges
+/// a `Co-Authored-By` trailer, so a mode permitting no byline permits no agent
+/// identity either.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct AttributionConfig {
     /// Byline policy when the agent mode env var is unset or "assistant".

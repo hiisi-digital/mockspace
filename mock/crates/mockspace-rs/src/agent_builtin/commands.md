@@ -57,9 +57,6 @@ round's current phase, the registry query, the tool listing.
 **Runners** drive something else: the test trees, the bench harness, the
 document rendering.
 
-**Message linting** checks one commit message or forge body against the
-configured attribution and style policy.
-
 ## Two things that are easy to get wrong
 
 **A subcommand that is not in `mock tools` does not exist**, whatever a document

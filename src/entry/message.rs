@@ -23,6 +23,17 @@
 //! one, rather than falling back to a second policy that can disagree with the
 //! first. That is the same treatment every other anomalous state gets: error,
 //! inform, guide.
+//!
+//! # Who made the commit
+//!
+//! A message does not say who its commit is by, and an agent committing under
+//! its own name carries no trailer to find, so commits made under a container's
+//! default identity passed every message check, there being nothing in the
+//! messages to check. The commit gate and the push gate therefore hand the lints
+//! the commit's author and committer as well, read by the `commit-msg` hook from
+//! `git var` and by the `pre-push` hook from each pushed commit, so a policy about
+//! agent bylines reaches an agent identity under the same mode. A forge body has
+//! neither, and its lints are handed none.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -52,15 +63,20 @@ pub(crate) const DOMAIN_TOKENS: &[&str] =
 /// What to lint, and where it came from.
 pub(crate) struct Request<'a> {
     /// Which kind of message this is.
-    pub domain:  MessageDomain,
+    pub domain:    MessageDomain,
     /// The authored text.
-    pub message: String,
+    pub message:   String,
     /// Where the text came from, for error reporting.
-    pub origin:  String,
+    pub origin:    String,
     /// The command being intercepted, when an agent hook is the caller.
-    pub command: Option<&'a str>,
+    pub command:   Option<&'a str>,
     /// The tool being intercepted, when an agent hook is the caller.
-    pub tool:    Option<&'a str>,
+    pub tool:      Option<&'a str>,
+    /// Who authored the commit, as `Name <mailbox>`. Only a commit message has one,
+    /// and a lint is handed it only for that domain.
+    pub author:    Option<&'a str>,
+    /// Who committed it, under the same terms as `author`.
+    pub committer: Option<&'a str>,
 }
 
 /// Lint one message. Returns failure when any finding blocks at `mode`.
@@ -92,14 +108,23 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, mode: LintMode, req: &Request) 
     };
 
     let resolved = agent_mode::resolve_from_env(&signals);
-    let ctx = MessageContext {
-        domain:     req.domain,
-        mode:       resolved,
-        message:    &req.message,
-        origin:     &req.origin,
-        repo_root:  &cfg.repo_root,
-        invocation: message_invocation(req),
+
+    // Only a commit message has an author and a committer. A forge body never
+    // passes through git, so whatever a caller sent along with one names nobody
+    // and is not handed on: the lint sees absent, as it would have without it.
+    let (author_of, committer_of) = match req.domain {
+        MessageDomain::CommitMessage => (req.author, req.committer),
+        _ => (None, None),
     };
+    let ctx = MessageContext::new(
+        req.domain,
+        resolved,
+        &req.message,
+        &req.origin,
+        &cfg.repo_root,
+    )
+    .with_invocation(message_invocation(req))
+    .with_identity(author_of, committer_of);
 
     let findings = mockspace_lint_rules::check_message_with_extra(
         &ctx,
@@ -177,26 +202,174 @@ pub(crate) fn read_message_file(path: &Path) -> Result<String, String> {
         .map_err(|e| format!("could not read the message file {}: {e}", path.display()))
 }
 
-/// Split a `--batch` stream into `(origin, message)` pairs.
+/// An identity as a lint is handed it: `Name <mailbox>`, the way git writes the
+/// author and committer of a commit, without the date and zone that `git var`
+/// appends.
 ///
-/// The stream is NUL-terminated records, each `<origin>\x1f<message>`. A record
-/// with no separator is the whole message, taking `default_origin`.
+/// `None` for an input with nothing in it, so a lint can tell a commit nobody
+/// named from one whose name is blank.
+pub(crate) fn clean_ident(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    // The mailbox closes the identity. Whatever follows the last `>` is the
+    // timestamp and zone `git var` adds, and a name cannot hold a `>` since git
+    // strips it, so the last one is always the mailbox's own.
+    match raw.rfind('>') {
+        Some(end) => Some(raw[..= end].to_string()),
+        None => Some(raw.to_string()),
+    }
+}
+
+/// One message out of a `--batch` stream, with the identity its commit carried
+/// when the stream gave one.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Record {
+    /// What names the message in a report: the commit's short hash and subject.
+    pub origin:    String,
+    /// The authored text.
+    pub message:   String,
+    /// The commit's author, absent when the record carried none.
+    pub author:    Option<String>,
+    /// The commit's committer, absent when the record carried none.
+    pub committer: Option<String>,
+    /// Why the header did not parse, when it did not. A record with a fault is
+    /// refused by the caller and never handed to a lint, since what it held of an
+    /// identity cannot be told from what was cut off.
+    pub fault:     Option<String>,
+}
+
+/// Separates the fields of a record's header, before its first `\x1f`.
+const HEADER_FIELD: char = '\x1e';
+
+/// Split a `--batch` stream into its records.
 ///
-/// **An empty message is a record, not noise.** Under a permissive commit-style
+/// The stream is NUL-terminated records. A record is `<header>\x1f<message>`,
+/// where the header is either the origin alone, or
+/// `<author>\x1e<committer>\x1e<origin>` when the caller knows who made the
+/// commit. A record with no `\x1f` is the whole message, taking `default_origin`.
+///
+/// The identity rides in the header so an engine reading a stream from an older
+/// hook, which sends the origin alone, still gets the message whole, and an older
+/// engine reading a newer hook's stream gets the message whole with a longer
+/// origin than it expected. A header holding no `\x1e` is an origin and one
+/// holding two is an identity header. One is neither, and neither is a pair whose
+/// halves are not each a name and a mailbox: that is a header cut short, or a name
+/// that held the byte, and the record carries a fault for the caller to refuse
+/// instead of guessing at the half that arrived.
+///
+/// An empty message is a record and not noise. Under a permissive commit-style
 /// config `empty-subject` is the only finding the lint can produce, so dropping
 /// empty records here would turn the push gate into a no-op. The only thing
 /// skipped is a completely empty record, which is the tail left by the trailing
 /// separator.
-pub(crate) fn split_batch(text: &str, default_origin: &str) -> Vec<(String, String)> {
+pub(crate) fn split_batch(text: &str, default_origin: &str) -> Vec<Record> {
     text.split('\0')
         .filter(|r| !r.is_empty())
         .map(|r| {
             match r.split_once('\x1f') {
-                Some((o, m)) => (o.to_string(), m.to_string()),
-                None => (default_origin.to_string(), r.to_string()),
+                Some((header, message)) => record_from(header, message),
+                None => {
+                    Record {
+                        origin:    default_origin.to_string(),
+                        message:   r.to_string(),
+                        author:    None,
+                        committer: None,
+                        fault:     None,
+                    }
+                },
             }
         })
         .collect()
+}
+
+/// A record out of its header and message, reading the identity when the header
+/// carries one.
+fn record_from(header: &str, message: &str) -> Record {
+    let whole = |origin: &str, fault: Option<String>| {
+        Record {
+            origin: origin.to_string(),
+            message: message.to_string(),
+            author: None,
+            committer: None,
+            fault,
+        }
+    };
+    if !header.contains(HEADER_FIELD) {
+        return whole(header, None);
+    }
+
+    let mut fields = header.splitn(3, HEADER_FIELD);
+    let (Some(author), Some(committer), Some(origin)) =
+        (fields.next(), fields.next(), fields.next())
+    else {
+        return whole(
+            header,
+            Some("it holds one identity separator where two are expected".to_string()),
+        );
+    };
+    for (who, field) in [("author", author), ("committer", committer)] {
+        let field = field.trim();
+        if !field.is_empty() && !field.ends_with('>') {
+            return whole(
+                header,
+                Some(format!("the {who} `{field}` is not a name and a mailbox")),
+            );
+        }
+    }
+    Record {
+        origin:    origin.to_string(),
+        message:   message.to_string(),
+        author:    clean_ident(author),
+        committer: clean_ident(committer),
+        fault:     None,
+    }
+}
+
+/// Check every record of a `--batch` stream on its own, and return how many there
+/// were and how many were refused.
+///
+/// A record whose header does not parse is refused here, without a lint, so a
+/// stream that lost the identity of a commit fails the push and does not pass it
+/// as though the commit had none.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_batch(
+    cfg: &Config,
+    pack: &LintPack,
+    gate: LintMode,
+    domain: MessageDomain,
+    text: &str,
+    default_origin: &str,
+    command: Option<&str>,
+    tool: Option<&str>,
+) -> (usize, usize) {
+    let mut checked = 0usize;
+    let mut failed = 0usize;
+    for rec in split_batch(text, default_origin) {
+        checked += 1;
+        if let Some(fault) = &rec.fault {
+            eprintln!(
+                "  x [{}]: the record's header does not parse: {fault}",
+                rec.origin
+            );
+            failed += 1;
+            continue;
+        }
+        let req = Request {
+            domain,
+            message: rec.message,
+            origin: rec.origin,
+            command,
+            tool,
+            author: rec.author.as_deref(),
+            committer: rec.committer.as_deref(),
+        };
+        if run(cfg, pack, gate, &req) != ExitCode::SUCCESS {
+            failed += 1;
+        }
+    }
+    (checked, failed)
 }
 
 #[cfg(test)]
@@ -240,11 +413,13 @@ mod tests {
         // Lints opt in via `invocation_wanted`, so handing them `None` when there
         // is nothing to hand is the honest shape.
         let bare = Request {
-            domain:  MessageDomain::CommitMessage,
-            message: "feat: x".into(),
-            origin:  "COMMIT_EDITMSG".into(),
-            command: None,
-            tool:    None,
+            domain:    MessageDomain::CommitMessage,
+            message:   "feat: x".into(),
+            origin:    "COMMIT_EDITMSG".into(),
+            command:   None,
+            tool:      None,
+            author:    None,
+            committer: None,
         };
         assert!(message_invocation(&bare).is_none());
 
@@ -264,9 +439,9 @@ mod tests {
         // whole push gate a no-op on the repo that motivated the batch mode.
         let recs = split_batch("abc123 \x1f\0", "<stdin>");
         assert_eq!(recs.len(), 1, "an empty message is still a record");
-        assert_eq!(recs[0].0, "abc123 ");
+        assert_eq!(recs[0].origin, "abc123 ");
         assert_eq!(
-            recs[0].1, "",
+            recs[0].message, "",
             "the message is empty and must reach the lint"
         );
     }
@@ -276,17 +451,16 @@ mod tests {
         // A 0x1f inside a body is harmless: the label separator is always first.
         let recs = split_batch("h1 subj\x1fbody with \x1f inside\n\0", "<stdin>");
         assert_eq!(recs.len(), 1);
-        assert_eq!(recs[0].0, "h1 subj");
-        assert_eq!(recs[0].1, "body with \x1f inside\n");
+        assert_eq!(recs[0].origin, "h1 subj");
+        assert_eq!(recs[0].message, "body with \x1f inside\n");
     }
 
     #[test]
     fn split_batch_falls_back_to_the_default_origin() {
         let recs = split_batch("no separator here\0", "<stdin>");
-        assert_eq!(recs, vec![(
-            "<stdin>".to_string(),
-            "no separator here".to_string()
-        )]);
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].origin, "<stdin>");
+        assert_eq!(recs[0].message, "no separator here");
     }
 
     #[test]
@@ -300,9 +474,9 @@ mod tests {
             2,
             "the trailing separator leaves no extra record"
         );
-        assert_eq!(recs[0].0, "a1 one");
-        assert_eq!(recs[1].0, "b2 two");
-        assert_eq!(recs[1].1, "fix: two\n\nbody\n");
+        assert_eq!(recs[0].origin, "a1 one");
+        assert_eq!(recs[1].origin, "b2 two");
+        assert_eq!(recs[1].message, "fix: two\n\nbody\n");
     }
 
     #[test]

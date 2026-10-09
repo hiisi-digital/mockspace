@@ -33,14 +33,25 @@
 # the question asked is "is this line attributing the work to somebody" and not
 # "is this line one of the forty vendors I remembered".
 #
-# **Then deny by vendor, for the surfaces that have no shape.** An author field,
-# a committer field and an advert in prose are not trailers and cannot be tested
-# structurally, so those get the enumeration. It goes stale and that is
-# tolerable, because it is the second net rather than the only one.
+# **Then deny by what an agent carries, for the surfaces that have no shape.** An
+# author field and a committer field are not trailers and cannot be tested
+# structurally, so those are read for a mailbox, a marker or a name that is a
+# tool's own, and an advert in prose gets the enumeration of domains and
+# mailboxes. Both go stale and that is tolerable, because they are the second net
+# rather than the only one.
 #
-# The enumeration below is therefore a convenience and never the guarantee. A
-# reader adding a vendor to it is improving the second net; a reader relying on
-# it alone has misread which net does the work.
+# The sets below are therefore a convenience and never the guarantee. A reader
+# adding a tool to one is improving the second net; a reader relying on it alone
+# has misread which net does the work.
+#
+# ## One library, in parts
+#
+# The engine is one sourced library to its callers and is written in parts by
+# concern, loaded here in the order they depend on each other: `shape.sh` for the
+# trailer net, `identity.sh` for what an author, a committer or a co-author
+# carries, `adverts.sh` for the suffixes tools append, and `policy.sh` for the
+# caller's allow pattern and the scan of a whole message. This file holds the
+# self-check, which reaches into all of them.
 #
 # ## Fail closed
 #
@@ -55,51 +66,13 @@ nut_once || return 0
 
 use log
 
-# -----------------------------------------------------------------------------
-# The shape net: which `Key: value` lines attribute work to somebody.
-#
-# `*-by` covers `Co-authored-by`, `Signed-off-by`, `Assisted-by`, `Reviewed-by`
-# and whatever the next one is called. The rest are keys tools have actually
-# shipped.
-#
-# A conventional-commit subject is `Key: value` shaped too, and matching one
-# would condemn a repository for a commit about a feature: `docs: describe how
-# the copilot integration surface is configured` is not a trailer. So the key
-# must be an attribution key rather than merely a word, and the caller should
-# prefer a real trailer parser where it has one.
-# -----------------------------------------------------------------------------
-ATTRIBUTION_TRAILER_KEY_RE='([A-Za-z]+-)*[A-Za-z]+-(by|session|agent|model|tool)|author|committer|generated-with'
-
-# -----------------------------------------------------------------------------
-# The vendor net, for surfaces with no shape to test. Grouped by who ships them
-# rather than alphabetically, so a reader adding one can see whether the family
-# is already covered.
-# -----------------------------------------------------------------------------
-ATTRIBUTION_IDENTITY_RE='(claude|anthropic|copilot|githubcopilot|codex|chatgpt|openai|gpt-[0-9]|cursor|anysphere|gemini|bard|jules|devin|cognition[- ]?labs|aider|windsurf|codeium|cody|sourcegraph|ampcode|amp-?bot|tabnine|supermaven|augment(code)?|codewhisperer|amazon[- ]?q|kiro|replit|ghostwriter|phind|blackbox\.ai|grok|x\.ai|xai|deepseek|qwen|mistral|llama|ollama|junie|jetbrains[- ]?ai|continue\.dev|zed[- ]?industries|v0\.dev|lovable|bolt\.new|factory\.ai|droid|opencode|crush[- ]?bot|goose[- ]?bot|roo[- ]?(code|cline)|cline|antigravity|\[bot\]|-bot@|bot@users\.noreply|ai[- ]assistant|coding[- ]agent|llm[- ]agent)'
-
-# -----------------------------------------------------------------------------
-# Adverts: the tool-promotion suffixes platforms bake into their defaults.
-#
-# Domains, mailboxes and the robot emoji, which have no innocent reading in a
-# commit message. Deliberately not bare English.
-# -----------------------------------------------------------------------------
-ATTRIBUTION_ADVERT_URL_RE='(claude\.com/claude-code|claude\.ai/code|noreply@anthropic\.com|github\.com/features/copilot|copilot@github\.com|noreply@github\.com|openai\.com/(codex|chatgpt)|chatgpt\.com|noreply@openai\.com|cursor\.(com|sh|so)|codeium\.com|windsurf\.com|sourcegraph\.com/cody|ampcode\.com|devin\.ai|cognition\.ai|aider\.chat|gemini\.google\.com|jules\.google|tabnine\.com|supermaven\.com|augmentcode\.com|replit\.com/ai|phind\.com|blackbox\.ai|v0\.dev|lovable\.dev|bolt\.new|factory\.ai|continue\.dev|🤖)'
-
-# The "generated with" family, anchored.
-#
-# An earlier scanner matched these phrases bare, anywhere in a message. It
-# reported a repository as contaminated on the strength of
-#
-#     fix: accept a placeholder written with spaces inside its braces
-#
-# and reported its own rule documentation as a violation of itself. A check
-# whose false positives condemn a repository is worse than no check, because the
-# remedy it triggers is irreversible. So the phrase must be followed, within a
-# short window, by something that is actually a tool: a markdown link, a URL or
-# an angle-bracketed address.
-ATTRIBUTION_ADVERT_PHRASE_RE='(generated|created|written|authored|made|built)[[:space:]]+(with|by)[[:space:]]*:?[[:space:]]*(\[|https?://|<)'
-
-ATTRIBUTION_ADVERT_RE="(${ATTRIBUTION_ADVERT_URL_RE}|${ATTRIBUTION_ADVERT_PHRASE_RE})"
+# The parts sit in a directory of the library's own name, found from this file
+# and not from the working directory or the entry point.
+_ATTRIBUTION_PARTS="$(nut_dir)/attribution"
+source "${_ATTRIBUTION_PARTS}/shape.sh"
+source "${_ATTRIBUTION_PARTS}/identity.sh"
+source "${_ATTRIBUTION_PARTS}/adverts.sh"
+source "${_ATTRIBUTION_PARTS}/policy.sh"
 
 # attribution_selfcheck
 #
@@ -115,7 +88,10 @@ ATTRIBUTION_ADVERT_RE="(${ATTRIBUTION_ADVERT_URL_RE}|${ATTRIBUTION_ADVERT_PHRASE
 #[pub]
 attribution_selfcheck() {
     local p
-    for p in ATTRIBUTION_TRAILER_KEY_RE ATTRIBUTION_IDENTITY_RE \
+    for p in ATTRIBUTION_TRAILER_KEY_RE ATTRIBUTION_AGENT_MARKERS ATTRIBUTION_AGENT_MAILBOXES \
+             ATTRIBUTION_AGENT_TAGS ATTRIBUTION_AGENT_TOOLS ATTRIBUTION_AGENT_GIVEN \
+             ATTRIBUTION_AGENT_VENDORS ATTRIBUTION_AGENT_MACHINES ATTRIBUTION_AGENT_HEADS \
+             ATTRIBUTION_AGENT_COMPANIONS \
              ATTRIBUTION_ADVERT_URL_RE ATTRIBUTION_ADVERT_PHRASE_RE ATTRIBUTION_ADVERT_RE; do
         if [[ -z "${!p:-}" ]]; then
             log_error "attribution: ${p} is empty; refusing to report clean"
@@ -126,8 +102,22 @@ attribution_selfcheck() {
     # that would otherwise read as "this repository is clean".
     attribution_is_attribution_trailer 'Co-authored-by: someone <a@b.c>' || {
         log_error "attribution: the shape net does not recognise a trailer"; return 1; }
-    attribution_names_agent 'Co-authored-by: Claude <a@b.c>' || {
-        log_error "attribution: the vendor net does not recognise a known vendor"; return 1; }
+    attribution_names_agent 'Co-authored-by: Copilot <a@b.c>' || {
+        log_error "attribution: the identity net does not recognise a known tool"; return 1; }
+    attribution_names_agent 'dependabot[bot] <a@b.c>' || {
+        log_error "attribution: the identity net does not recognise a bot marker"; return 1; }
+    attribution_names_agent 'Dev <noreply@anthropic.com>' || {
+        log_error "attribution: the identity net does not recognise an agent mailbox"; return 1; }
+    attribution_names_agent 'Copilot Chat' || {
+        log_error "attribution: the identity net does not recognise a tool followed by a companion"; return 1; }
+    attribution_names_agent 'Jane Doe (aider)' || {
+        log_error "attribution: the identity net does not recognise a tag"; return 1; }
+    attribution_names_agent 'Claude <a@anthropic.com>' || {
+        log_error "attribution: the identity net does not recognise a given name at its vendor"; return 1; }
+    attribution_names_agent 'Claude <claude@localhost>' || {
+        log_error "attribution: the identity net does not recognise a given name by its local part at a machine"; return 1; }
+    attribution_names_agent 'Claude <a@b.c>' 'Claude' || {
+        log_error "attribution: the identity net does not recognise a name the caller passes"; return 1; }
     attribution_has_advert 'see https://claude.ai/code' || {
         log_error "attribution: the advert net does not recognise a known advert"; return 1; }
     # And one that must NOT match, because a net that matches everything also
@@ -136,194 +126,29 @@ attribution_selfcheck() {
         log_error "attribution: the shape net reads a commit subject as a trailer"
         return 1
     fi
-    return 0
-}
-
-# attribution_is_attribution_trailer <line>
-#
-# Whether a line is structurally an attribution: an attribution key, a colon,
-# and a value. Says nothing about who is named or whether it is permitted.
-#
-# This is the net that keeps working when a new tool ships, so a caller wanting
-# one check should want this one.
-#
-# Whitespace and hashes come off the front first, in any order and any number,
-# because the anchor was the hole. A byline behind one leading space failed the
-# match and the scan reported nothing, and so did every spelling with a `#` in
-# front of it. Measured on git 2.55.0: `git commit -F` stores
-# `# # Co-Authored-By: ...` in the body verbatim while git's own trailer parser
-# returns nothing for it, so a byline spelled that way passes the parser the
-# callers use for commit trailers and passed this net as well. What comes off is
-# every arrangement of those two rather than the spellings somebody thought of,
-# since the two previous repairs of this shape in the commit-msg hook each named
-# a spelling and the next spelling got through.
-#
-# Whitespace and `#` is the whole of the set here, and it is not the whole of
-# what defeats an anchor: `>`, `//`, `-`, `|`, `*` and a leading dot each hide a
-# byline from this net as well, and git stores all of them verbatim. Those stay
-# in, because this net reads markdown as well as commit messages, where `>` opens
-# a quotation and `-` opens a list, and a false refusal here costs somebody a
-# rehoused repository rather than one reword. A caller whose surface is only a
-# commit message can take them off before it calls, and a caller that wants that
-# has to do it: nothing in here does it for one, and a caller that passes a line
-# through untouched gets the narrow set above and no more.
-#
-# What the strip costs, and it is not nothing. `author` and `committer` are in
-# the key pattern as bare words, since a git author field has no `-by` shape, so
-# with the anchor gone an indented `author: Jane` reads as a trailer. That is a
-# markdown code block indented by four spaces, or a YAML document, or a struct
-# literal in a diff. `attribution_strip_quoted` knows a fence and an inline
-# backtick and does not know an indented block, and the trailer path never calls
-# it.
-#
-# What that costs is measured rather than argued, by the two scripts under
-# `mock/research/sketches/the-anchorless-trailer-net-corpus/`, and the answer
-# depends on which corpus is asked. Over commit messages, every commit reachable
-# from every ref in this repository and in one private workspace repository,
-# the widening newly matches nothing. Over tracked file content it newly matches
-# three lines here, two of them a struct literal in
-# `mock/crates/mockspace-core/src/io/ref_write.rs` whose fields are named
-# `author` and `committer`. So the shape is real and somebody can go and read
-# it, and nothing refuses over it today because the trailer path is called on
-# commit messages and on markdown rather than on rust. Run the scripts rather
-# than trusting the counts in this paragraph, which were true when they were
-# taken. `it_reads_an_indented_author_line_as_a_trailer` is where the shape is
-# written down, and it is a pin on today's answer rather than an endorsement.
-#
-# A quotation stays safe, because the convention here is to backtick the
-# forbidden string and a leading backtick is not stripped. A heading spelling
-# out a live key with a real value and no backticks does read as a trailer, and
-# that is the trade: the cheaper repair is to backtick it.
-#
-# Usage: attribution_is_attribution_trailer "$line" && ...
-#[pub]
-attribution_is_attribution_trailer() {
-    local line="${1:-}"
-    line="${line#"${line%%[![:space:]#]*}"}"
-    printf '%s' "$line" | grep -qiE "^(${ATTRIBUTION_TRAILER_KEY_RE}):[[:space:]]*[^[:space:]]"
-}
-
-# attribution_names_agent <line>
-#
-# Whether a line names a vendor the enumeration knows. The second net, for
-# author and committer fields, which have no trailer shape to test.
-#
-# Usage: attribution_names_agent "$line" && ...
-#[pub]
-attribution_names_agent() {
-    printf '%s' "${1:-}" | grep -qiE "${ATTRIBUTION_IDENTITY_RE}"
-}
-
-# attribution_strip_quoted
-#
-# Filter. Drops fenced blocks and inline backticks from stdin.
-#
-# This workspace contains rules and documentation that quote forbidden strings
-# in order to forbid them, and a scanner that cannot tell a rule from a
-# violation is a scanner that condemns the rule.
-#
-# A code span may wrap, so the inline strip runs over a paragraph rather than
-# over a line. Prose wraps and a commit body wraps hardest, so the quotation
-# this exists to spare arrives split as often as not, and a line-oriented strip
-# sees an opening backtick with no closing one and leaves the span standing.
-#
-# The paragraph is the bound and it is deliberate. Joining the whole message
-# instead would let one unbalanced backtick swallow everything up to the next
-# one anywhere later, hiding a real suffix behind a stray quote written
-# paragraphs above it. A blank line closes a span whatever the backticks are
-# doing, and a tool's suffix sits in its own paragraph, which is what keeps the
-# repair from buying a hole. Both directions are pinned in the suite.
-#
-# The lines inside a paragraph stay lines. The span strip already crosses a
-# line break on its own, since a paragraph is one record, and joining the
-# lines besides would let the phrase net read "generated by" on one line
-# together with a link starting the next, which is ordinary prose and not a
-# suffix. That direction is pinned too.
-#
-# Usage: printf '%s' "$text" | attribution_strip_quoted
-#[pub]
-attribution_strip_quoted() {
-    sed -e '/^```/,/^```/d' | awk '
-        BEGIN { RS = ""; ORS = "\n\n" }
-        { gsub(/`[^`]*`/, ""); print }
-    '
-}
-
-# attribution_has_advert <text>
-#
-# Whether text carries a tool-promotion advert, ignoring anything quoted.
-#
-# Usage: attribution_has_advert "$body" && ...
-#[pub]
-attribution_has_advert() {
-    printf '%s' "${1:-}" | attribution_strip_quoted | grep -qiE "${ATTRIBUTION_ADVERT_RE}"
-}
-
-# attribution_advert_excerpt <text>
-#
-# The first advert in text with a little context either side, for a report.
-# Empty when there is none.
-#
-# Usage: excerpt=$(attribution_advert_excerpt "$body")
-#[pub]
-attribution_advert_excerpt() {
-    printf '%s' "${1:-}" | attribution_strip_quoted \
-        | grep -oiE ".{0,30}${ATTRIBUTION_ADVERT_RE}.{0,30}" | head -1
-}
-
-# attribution_allows <line> <allow-pattern>
-#
-# Whether the caller's policy permits this attribution line.
-#
-# The pattern is a bash glob, matched against the trailer's value. Empty permits
-# nothing, which is the right default: a policy that has not been stated should
-# refuse rather than allow, so a missing config fails toward refusing a byline.
-#
-# The engine holds no policy and never consults a config. mockspace reads
-# `[attribution]` from its agent config and passes the field; another consumer
-# passes whatever it uses.
-#
-# Usage: attribution_allows "$line" "$pattern" || finding "$line"
-#[pub]
-attribution_allows() {
-    local line="${1:-}" pattern="${2:-}" value
-    [[ -z "$pattern" ]] && return 1
-    value="${line#*:}"
-    # Trimmed here rather than with a library call. One fewer thing that can be
-    # missing, and a missing helper in this engine exits 127, which every
-    # `assert_fails` in a caller's suite would read as a correct refusal.
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-    # shellcheck disable=SC2053
-    [[ "$value" == $pattern ]]
-}
-
-# attribution_scan_message <text> [allow-pattern]
-#
-# Every finding in one commit message or pull-request body, one per line, as
-# `kind<TAB>excerpt`. Kinds are `trailer` and `advert`.
-#
-# Both nets run over the whole text. This said the trailer net read the
-# message's final block, which it has never done, and nothing was pinning the
-# behaviour either way: `it_reports_a_byline_that_is_not_in_the_final_block` is
-# what pins it now. A trailer does belong in the final block and a caller with a
-# real trailer parser should use one, but a byline somebody put in the middle of
-# a body is the case this is asked about, and a final-block scan answers clean
-# on it.
-#
-# Usage: while IFS=$'\t' read -r kind hit; do ...; done < <(attribution_scan_message "$b")
-#[pub]
-attribution_scan_message() {
-    local text="${1:-}" allow="${2:-}" line
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        attribution_is_attribution_trailer "$line" || continue
-        attribution_allows "$line" "$allow" && continue
-        printf 'trailer\t%s\n' "$line"
-    done < <(printf '%s\n' "$text")
-
-    local hit
-    hit="$(attribution_advert_excerpt "$text")"
-    [[ -n "$hit" ]] && printf 'advert\t%s\n' "$hit"
+    if attribution_names_agent 'Claude Monet <monet@example.org>'; then
+        log_error "attribution: the identity net reads a person as an agent"
+        return 1
+    fi
+    if attribution_names_agent 'Claude <a@b.c>'; then
+        log_error "attribution: the identity net reads a given name with no second signal as an agent"
+        return 1
+    fi
+    if attribution_names_agent 'Claude <claude@example.org>'; then
+        log_error "attribution: the identity net reads a person called Claude at an ordinary domain as an agent"
+        return 1
+    fi
+    if attribution_names_agent 'Cline Smith'; then
+        log_error "attribution: the identity net reads a tool followed by a name as an agent"
+        return 1
+    fi
+    if attribution_names_agent 'Jane Doe (OpenAI)'; then
+        log_error "attribution: the identity net reads a group that is no tag as an agent"
+        return 1
+    fi
+    if attribution_names_agent 'Claude Max <a@b.c>' 'Devin'; then
+        log_error "attribution: the identity net reads a name the caller did not pass as an agent"
+        return 1
+    fi
     return 0
 }

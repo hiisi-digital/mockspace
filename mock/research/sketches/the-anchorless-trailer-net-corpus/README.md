@@ -1,6 +1,6 @@
 # What taking the anchor off the trailer net costs, on a real corpus
 
-`attribution_is_attribution_trailer` in `lib/attribution.sh` strips
+`attribution_is_attribution_trailer` in `lib/attribution/shape.sh` strips
 `[[:space:]#]*` off the front of a line before it tests the trailer pattern,
 because the anchor was the hole: a byline behind one leading space or one `#`
 failed the match, and git stores both verbatim. The widening has a price, and
@@ -9,7 +9,7 @@ words, so with the anchor gone an indented `author: Jane` reads as a trailer
 where before it read as nothing.
 
 These two scripts answer what that costs, and the comment in
-`lib/attribution.sh` points at them instead of carrying a number. A count is
+`lib/attribution/shape.sh` points at them instead of carrying a number. A count is
 true when it is measured and drifts on the next merge, so what belongs in a
 header is the instrument rather than its answer.
 

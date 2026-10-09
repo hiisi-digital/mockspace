@@ -28,6 +28,14 @@ use super::*;
 /// passed by `-F` or `--body-file` so a message handed over indirectly is still
 /// inspected. Policy itself lives in the lints; this only decides what to submit
 /// and under which domain.
+///
+/// # What it cannot see
+///
+/// Who a commit will be by. A tool call carries the message, and the author and
+/// committer are settled later by git, from configuration and environment that
+/// this hook does not read, so the lints are handed none here. The `commit-msg`
+/// and `pre-push` git hooks read them from git itself, and they are where an
+/// agent identity is refused.
 pub(crate) fn builtin_check_message(cfg: &Config) -> String {
     let mock_rel = cfg
         .mock_dir
