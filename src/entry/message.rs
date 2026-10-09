@@ -116,16 +116,15 @@ pub(crate) fn run(cfg: &Config, pack: &LintPack, mode: LintMode, req: &Request) 
         MessageDomain::CommitMessage => (req.author, req.committer),
         _ => (None, None),
     };
-    let ctx = MessageContext {
-        domain:     req.domain,
-        mode:       resolved,
-        message:    &req.message,
-        origin:     &req.origin,
-        repo_root:  &cfg.repo_root,
-        invocation: message_invocation(req),
-        author:     author_of,
-        committer:  committer_of,
-    };
+    let ctx = MessageContext::new(
+        req.domain,
+        resolved,
+        &req.message,
+        &req.origin,
+        &cfg.repo_root,
+    )
+    .with_invocation(message_invocation(req))
+    .with_identity(author_of, committer_of);
 
     let findings = mockspace_lint_rules::check_message_with_extra(
         &ctx,
@@ -235,6 +234,10 @@ pub(crate) struct Record {
     pub author:    Option<String>,
     /// The commit's committer, absent when the record carried none.
     pub committer: Option<String>,
+    /// Why the header did not parse, when it did not. A record with a fault is
+    /// refused by the caller and never handed to a lint, since what it held of an
+    /// identity cannot be told from what was cut off.
+    pub fault:     Option<String>,
 }
 
 /// Separates the fields of a record's header, before its first `\x1f`.
@@ -250,8 +253,11 @@ const HEADER_FIELD: char = '\x1e';
 /// The identity rides in the header so an engine reading a stream from an older
 /// hook, which sends the origin alone, still gets the message whole, and an older
 /// engine reading a newer hook's stream gets the message whole with a longer
-/// origin than it expected. Exactly two `\x1e` make an identity header: one is a
-/// subject that happens to hold the byte, and is left an origin.
+/// origin than it expected. A header holding no `\x1e` is an origin and one
+/// holding two is an identity header. One is neither, and neither is a pair whose
+/// halves are not each a name and a mailbox: that is a header cut short, or a name
+/// that held the byte, and the record carries a fault for the caller to refuse
+/// instead of guessing at the half that arrived.
 ///
 /// An empty message is a record and not noise. Under a permissive commit-style
 /// config `empty-subject` is the only finding the lint can produce, so dropping
@@ -270,6 +276,7 @@ pub(crate) fn split_batch(text: &str, default_origin: &str) -> Vec<Record> {
                         message:   r.to_string(),
                         author:    None,
                         committer: None,
+                        fault:     None,
                     }
                 },
             }
@@ -280,25 +287,89 @@ pub(crate) fn split_batch(text: &str, default_origin: &str) -> Vec<Record> {
 /// A record out of its header and message, reading the identity when the header
 /// carries one.
 fn record_from(header: &str, message: &str) -> Record {
-    let mut fields = header.splitn(3, HEADER_FIELD);
-    match (fields.next(), fields.next(), fields.next()) {
-        (Some(author), Some(committer), Some(origin)) => {
-            Record {
-                origin:    origin.to_string(),
-                message:   message.to_string(),
-                author:    clean_ident(author),
-                committer: clean_ident(committer),
-            }
-        },
-        _ => {
-            Record {
-                origin:    header.to_string(),
-                message:   message.to_string(),
-                author:    None,
-                committer: None,
-            }
-        },
+    let whole = |origin: &str, fault: Option<String>| {
+        Record {
+            origin: origin.to_string(),
+            message: message.to_string(),
+            author: None,
+            committer: None,
+            fault,
+        }
+    };
+    if !header.contains(HEADER_FIELD) {
+        return whole(header, None);
     }
+
+    let mut fields = header.splitn(3, HEADER_FIELD);
+    let (Some(author), Some(committer), Some(origin)) =
+        (fields.next(), fields.next(), fields.next())
+    else {
+        return whole(
+            header,
+            Some("it holds one identity separator where two are expected".to_string()),
+        );
+    };
+    for (who, field) in [("author", author), ("committer", committer)] {
+        let field = field.trim();
+        if !field.is_empty() && !field.ends_with('>') {
+            return whole(
+                header,
+                Some(format!("the {who} `{field}` is not a name and a mailbox")),
+            );
+        }
+    }
+    Record {
+        origin:    origin.to_string(),
+        message:   message.to_string(),
+        author:    clean_ident(author),
+        committer: clean_ident(committer),
+        fault:     None,
+    }
+}
+
+/// Check every record of a `--batch` stream on its own, and return how many there
+/// were and how many were refused.
+///
+/// A record whose header does not parse is refused here, without a lint, so a
+/// stream that lost the identity of a commit fails the push and does not pass it
+/// as though the commit had none.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_batch(
+    cfg: &Config,
+    pack: &LintPack,
+    gate: LintMode,
+    domain: MessageDomain,
+    text: &str,
+    default_origin: &str,
+    command: Option<&str>,
+    tool: Option<&str>,
+) -> (usize, usize) {
+    let mut checked = 0usize;
+    let mut failed = 0usize;
+    for rec in split_batch(text, default_origin) {
+        checked += 1;
+        if let Some(fault) = &rec.fault {
+            eprintln!(
+                "  x [{}]: the record's header does not parse: {fault}",
+                rec.origin
+            );
+            failed += 1;
+            continue;
+        }
+        let req = Request {
+            domain,
+            message: rec.message,
+            origin: rec.origin,
+            command,
+            tool,
+            author: rec.author.as_deref(),
+            committer: rec.committer.as_deref(),
+        };
+        if run(cfg, pack, gate, &req) != ExitCode::SUCCESS {
+            failed += 1;
+        }
+    }
+    (checked, failed)
 }
 
 #[cfg(test)]

@@ -54,6 +54,7 @@ pub use changelist_doc_gate::pending_doc_templates;
 /// What `lock` and `close` ask before moving anything, since a hook-less
 /// commit never reaches the `changelist-seal` lint while it can still refuse.
 pub use changelist_seal::{active_round_findings, says_nothing};
+pub mod agent_identity_conformance;
 mod deprecation_comparison;
 mod design_doc_source_mismatch;
 mod export_count;
@@ -61,6 +62,8 @@ mod file_size;
 pub mod fmt_only;
 mod forbidden_imports;
 pub mod merge;
+#[cfg(test)]
+mod message_context_tests;
 mod no_adhoc_error_enum;
 mod no_adhoc_framework;
 mod no_bare_macro_types;
@@ -1449,6 +1452,44 @@ impl AgentMode {
 }
 
 /// Context for a [`MessageLint`].
+///
+/// Built with [`MessageContext::new`] and its builders, and never with a struct
+/// literal outside this crate: the type is `#[non_exhaustive]`, so the next field
+/// added to it breaks no pack that built one the way this asks.
+///
+/// ```compile_fail
+/// use std::path::Path;
+/// use mockspace_lint_rules::{AgentMode, MessageContext, MessageDomain};
+///
+/// // A literal names every field, so it stops compiling the day one is added.
+/// let _ = MessageContext {
+///     domain: MessageDomain::CommitMessage,
+///     mode: AgentMode::Assistant,
+///     message: "feat: x",
+///     origin: "COMMIT_EDITMSG",
+///     repo_root: Path::new("/tmp"),
+///     invocation: None,
+///     author: None,
+///     committer: None,
+/// };
+/// ```
+///
+/// ```
+/// use std::path::Path;
+///
+/// use mockspace_lint_rules::{AgentMode, MessageContext, MessageDomain};
+///
+/// let ctx = MessageContext::new(
+///     MessageDomain::CommitMessage,
+///     AgentMode::Assistant,
+///     "feat: x",
+///     "COMMIT_EDITMSG",
+///     Path::new("/tmp"),
+/// )
+/// .with_identity(Some("Jane Doe <jane@example.com>"), None);
+/// assert_eq!(ctx.author, Some("Jane Doe <jane@example.com>"));
+/// ```
+#[non_exhaustive]
 pub struct MessageContext<'a> {
     /// Which kind of message this is.
     pub domain:     MessageDomain,
@@ -1475,6 +1516,49 @@ pub struct MessageContext<'a> {
     /// amend by another person, and is the forge itself on a merge made in its
     /// web interface.
     pub committer:  Option<&'a str>,
+}
+
+impl<'a> MessageContext<'a> {
+    /// A context for a message of `domain`, with no invocation and no identity.
+    ///
+    /// That is the shape of a forge body, which is why it is what this gives: a
+    /// context is told about a commit with [`with_identity`](Self::with_identity),
+    /// never assumed to be one.
+    #[must_use]
+    pub fn new(
+        domain: MessageDomain,
+        mode: AgentMode,
+        message: &'a str,
+        origin: &'a str,
+        repo_root: &'a Path,
+    ) -> Self {
+        Self {
+            domain,
+            mode,
+            message,
+            origin,
+            repo_root,
+            invocation: None,
+            author: None,
+            committer: None,
+        }
+    }
+
+    /// The invocation that triggered the run, when there was one.
+    #[must_use]
+    pub fn with_invocation(mut self, invocation: Option<Invocation<'a>>) -> Self {
+        self.invocation = invocation;
+        self
+    }
+
+    /// Who authored and who committed the commit this message belongs to, each as
+    /// `Name <mailbox>`.
+    #[must_use]
+    pub fn with_identity(mut self, author: Option<&'a str>, committer: Option<&'a str>) -> Self {
+        self.author = author;
+        self.committer = committer;
+        self
+    }
 }
 
 /// The command or tool call that triggered a lint run.

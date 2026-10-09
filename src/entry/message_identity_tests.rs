@@ -26,7 +26,7 @@ use mockspace_lint_rules::{
     MessageLint,
 };
 
-use super::message::{Request, clean_ident, run, split_batch};
+use super::message::{Request, clean_ident, run, run_batch, split_batch};
 use crate::config::Config;
 
 // --- the identity as git writes it --------------------------------------------------------
@@ -96,14 +96,160 @@ fn a_record_written_before_identities_existed_still_parses_with_none() {
 }
 
 #[test]
-fn a_header_with_a_single_separator_is_an_origin_and_not_an_identity() {
-    // Exactly two separators make an identity header. One is a subject that
-    // happens to contain the byte, and taking it for an identity would hand a
-    // lint half of a commit subject as the author.
+fn a_header_with_one_separator_does_not_parse() {
+    // Exactly two separators make an identity header and none make an origin.
+    // One is neither: it is a header cut short, or a name that held the byte, and
+    // reading it as an origin would hand a lint half of a header as a subject
+    // while the identity it should have judged went missing.
     let recs = split_batch("abc\x1edef\x1fbody\0", "<stdin>");
-    assert_eq!(recs[0].origin, "abc\x1edef");
-    assert_eq!(recs[0].author, None);
-    assert_eq!(recs[0].committer, None);
+    assert!(recs[0].fault.is_some(), "got: {:?}", recs[0]);
+}
+
+#[test]
+fn a_name_holding_the_separator_leaves_a_header_that_does_not_parse() {
+    // The hook strips the byte from every name, so this is what arrives from a
+    // hook that did not, or from anything else writing the framing by hand. The
+    // split lands inside the name, the author is then half a name with no
+    // mailbox, and a record that falls open here is how an identity goes
+    // unjudged.
+    let recs = split_batch("X\x1eY <y@y>\x1eB <b@b>\x1eh s\x1fm\0", "<stdin>");
+    assert_eq!(recs.len(), 1);
+    assert!(recs[0].fault.is_some(), "got: {:?}", recs[0]);
+}
+
+#[test]
+fn an_identity_that_is_not_a_name_and_a_mailbox_does_not_parse() {
+    for header in ["Jane\x1eB <b@b>\x1eh s", "A <a@a>\x1eBob\x1eh s", "Jane Doe\x1eBob Roe\x1eh s"]
+    {
+        let recs = split_batch(&format!("{header}\x1fm\0"), "<stdin>");
+        assert!(recs[0].fault.is_some(), "{header:?} parsed: {:?}", recs[0]);
+    }
+}
+
+#[test]
+fn a_well_formed_header_and_an_older_one_carry_no_fault() {
+    // The controls for the three above: the same parser, a header that is right.
+    let identity = split_batch("A <a@a>\x1eB <b@b>\x1eh s\x1fm\0", "<stdin>");
+    assert_eq!(identity[0].fault, None);
+    let older = split_batch("h s\x1fm\0", "<stdin>");
+    assert_eq!(older[0].fault, None);
+    let none = split_batch("\x1e\x1eh s\x1fm\0", "<stdin>");
+    assert_eq!(
+        none[0].fault, None,
+        "two empty identities are absent, not a fault"
+    );
+}
+
+#[test]
+fn a_record_that_does_not_parse_is_refused_and_never_reaches_a_lint() {
+    // Both halves, so neither falls open alone: the hook strips, and the engine
+    // refuses what still does not parse. The good record beside it is the
+    // control, and has to be judged.
+    let (_tmp, cfg) = config();
+    let seen: Seen = Arc::default();
+    let stream = "Jane Doe <j@e>\x1eJane Doe <j@e>\x1eaaa feat: ok\x1ffeat: ok\n\0\
+                  X\x1eY <y@y>\x1eB <b@b>\x1ebbb feat: bad\x1ffeat: bad\n\0";
+    let (checked, failed) = run_batch(
+        &cfg,
+        &probe_pack(&seen),
+        LintMode::Push,
+        MessageDomain::CommitMessage,
+        stream,
+        "<stdin>",
+        None,
+        None,
+    );
+    assert_eq!((checked, failed), (2, 1));
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        1,
+        "only the good record reached a lint"
+    );
+}
+
+#[test]
+fn an_older_engine_reads_a_newer_hooks_stream_with_the_message_whole() {
+    // The other half of the compatibility claim. `legacy_split_batch` is the
+    // parser the engine had before records carried an identity, verbatim: it
+    // takes everything up to the first 0x1f as the origin and everything after
+    // as the message. Fed what the real hook now sends, it must still get each
+    // commit's message exactly, with only the origin longer than it expected.
+    fn legacy_split_batch(text: &str, default_origin: &str) -> Vec<(String, String)> {
+        text.split('\0')
+            .filter(|r| !r.is_empty())
+            .map(|r| {
+                match r.split_once('\x1f') {
+                    Some((o, m)) => (o.to_string(), m.to_string()),
+                    None => (default_origin.to_string(), r.to_string()),
+                }
+            })
+            .collect()
+    }
+
+    let repo = tempfile::tempdir().unwrap();
+    let dir = repo.path();
+    git_in(dir, &[], &["init", "-q", "-b", "main"]);
+    let person = "Jane Doe <jane@example.com>";
+    commit_as(
+        dir,
+        person,
+        person,
+        "feat: first\n\nwith a body\nover two lines",
+    );
+    commit_as(dir, person, person, "fix: second");
+    let head = git_in(dir, &[], &["rev-parse", "HEAD"]);
+
+    let sent = what_the_push_scan_sends(dir, &head);
+    let text = String::from_utf8_lossy(&sent).into_owned();
+    let old = legacy_split_batch(&text, "<stdin>");
+    assert_eq!(old.len(), 2, "one record per commit. got: {text:?}");
+    let messages: Vec<&str> = old.iter().map(|(_, m)| m.trim_end()).collect();
+    assert!(
+        messages.contains(&"feat: first\n\nwith a body\nover two lines"),
+        "got: {messages:?}"
+    );
+    assert!(messages.contains(&"fix: second"), "got: {messages:?}");
+    // and what the older engine calls the origin carries the identity in front
+    assert!(
+        old.iter().all(|(o, _)| o.contains("jane@example.com")),
+        "got: {old:?}"
+    );
+}
+
+#[test]
+fn a_separator_inside_a_name_is_stripped_by_the_hook_so_the_record_parses() {
+    // Git accepts these bytes in a name. The hook takes both out of the four
+    // fields before framing, so the identity arrives as the name without them
+    // and the record is whole.
+    let repo = tempfile::tempdir().unwrap();
+    let dir = repo.path();
+    git_in(dir, &[], &["init", "-q", "-b", "main"]);
+    git_in(
+        dir,
+        &[
+            ("GIT_AUTHOR_NAME", "Ja\x1ene\x1f Doe"),
+            ("GIT_AUTHOR_EMAIL", "ja\x1fne@example.com"),
+            ("GIT_COMMITTER_NAME", "Bob\x1e Roe"),
+            ("GIT_COMMITTER_EMAIL", "bob@example.com"),
+        ],
+        &["commit", "-q", "--no-verify", "--allow-empty", "-m", "feat: by a strange name"],
+    );
+    let head = git_in(dir, &[], &["rev-parse", "HEAD"]);
+
+    let sent = what_the_push_scan_sends(dir, &head);
+    let text = String::from_utf8_lossy(&sent).into_owned();
+    let recs = split_batch(&text, "<stdin>");
+    assert_eq!(recs.len(), 1, "got: {text:?}");
+    assert_eq!(recs[0].fault, None, "got: {:?}", recs[0]);
+    assert_eq!(
+        recs[0].author.as_deref(),
+        Some("Jane Doe <jane@example.com>")
+    );
+    assert_eq!(
+        recs[0].committer.as_deref(),
+        Some("Bob Roe <bob@example.com>")
+    );
+    assert_eq!(recs[0].message.trim_end(), "feat: by a strange name");
 }
 
 #[test]

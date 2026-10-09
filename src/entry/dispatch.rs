@@ -425,24 +425,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 // a blob's first line becomes the subject and every subject
                 // after the first is read as body text.
                 if args.iter().any(|a| a == "--batch") {
-                    let mut failed = 0usize;
-                    let mut checked = 0usize;
-
-                    for rec in message::split_batch(&text, &origin) {
-                        checked += 1;
-                        let req = message::Request {
-                            domain,
-                            message: rec.message,
-                            origin: rec.origin,
-                            command: command.as_deref(),
-                            tool: tool.as_deref(),
-                            author: rec.author.as_deref(),
-                            committer: rec.committer.as_deref(),
-                        };
-                        if message::run(&cfg, pack, gate, &req) != ExitCode::SUCCESS {
-                            failed += 1;
-                        }
-                    }
+                    let (checked, failed) = message::run_batch(
+                        &cfg,
+                        pack,
+                        gate,
+                        domain,
+                        &text,
+                        &origin,
+                        command.as_deref(),
+                        tool.as_deref(),
+                    );
 
                     if failed > 0 {
                         eprintln!();
