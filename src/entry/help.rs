@@ -173,9 +173,9 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name:    "test",
-        summary: "run the tests of every tree mockspace owns, not only the members",
+        summary: "run the tests of every tree mockspace owns, the members only where something changed",
         args:    &[],
-        help:    "Runs `cargo test` over each tree separately: the mock \
+        help:    "Runs the tests of each tree separately: the mock \
                   workspace's own members, every tool crate under \
                   <mock>/tools/, every bench crate under <mock>/benches/, and \
                   the generated lint crate carrying <mock>/lints/*.rs.\n\n\
@@ -185,9 +185,35 @@ const COMMANDS: &[Cmd] = &[
                   with tests and run none of them while appearing to. A \
                   repository whose `members` list is empty runs nothing at \
                   all.\n\n\
-                  Everything after `test` is forwarded to each cargo \
+                  The members run under cargo-nextest where it is installed, \
+                  and under `cargo test` where it is not or with --plain. \
+                  Under nextest a member runs only when its fingerprint moved \
+                  since its suite last passed: its own files, the paths \
+                  outside it its sources name as `../` literals (content, \
+                  fixtures), the same for every member compiled into its \
+                  tests, and the lockfile, toolchain and cargo configuration. \
+                  A test that took `[test] heavy_after_secs` (10) or longer \
+                  last time is heavy: heavy tests run `[test] heavy_threads` \
+                  (1) at a time, and one that passed at its member's current \
+                  fingerprint is skipped as cached. Every test is killed \
+                  after `[test] timeout_secs` (900). The run ends with the \
+                  slowest tests.\n\n\
+                  --full runs every member asked for. --no-cache runs the \
+                  cached heavy tests too. --cheap also defers every heavy \
+                  test that has passed before, running only new ones and ones \
+                  that failed last time, and leaves the members it deferred \
+                  for owing them. -p and --workspace choose members as in \
+                  cargo; with -p only the members tree runs. The record is \
+                  tracked, <mock>/test-history/<flavour>/<member>.json, \
+                  committed with the work so a fresh clone starts warm; \
+                  `--features x` has its own flavour. `[test] commit` gates a \
+                  commit as a lint level does: warn runs --cheap, error also \
+                  blocks, off and info run nothing. Doc tests do not run \
+                  under nextest; --plain reaches them.\n\n\
+                  Everything else after `test` is forwarded to each cargo \
                   invocation, so `mock test --release` and `mock test -- \
-                  --nocapture` both work.\n\n\
+                  --nocapture` both work. A filter after `--` or an -E runs, \
+                  but leaves nothing recorded as passed whole.\n\n\
                   The lint tree needs the generated crate to exist; `mock \
                   check` generates it. It is reported as absent rather than \
                   generated here, so one path knows how.",

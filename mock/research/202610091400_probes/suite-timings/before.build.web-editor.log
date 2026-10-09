@@ -1,0 +1,4 @@
+   Compiling kaski-web v0.0.0 (/home/user/kaski/mock/crates/kaski-web)
+    Finished `test` profile [optimized + debuginfo] target(s) in 3m 45s
+  Executable unittests src/lib.rs (target/debug/deps/kaski_web-0bc420bc709e9128)
+  Executable unittests src/main.rs (target/debug/deps/kaski_web-7e142849dd4b0f52)

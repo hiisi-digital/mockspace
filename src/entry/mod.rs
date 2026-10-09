@@ -29,7 +29,7 @@ use crate::{
     render_md,
 };
 
-mod cargo_gate;
+pub(crate) mod cargo_gate;
 mod dispatch;
 pub(crate) mod escape_hatch;
 pub(crate) mod help;

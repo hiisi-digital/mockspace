@@ -1,0 +1,76 @@
+#!/usr/bin/env nutshell
+# =============================================================================
+# time-suite - one timed run of a consumer's test command, appended as a row
+# =============================================================================
+# The before and after of `cargo mock test` on kaski are rows of one CSV, each
+# taken by this script so every row was measured the same way:
+#
+#   time-suite <csv> <label> <dir> <command...>
+#
+# runs <command...> in <dir>, its whole output kept beside the CSV as
+# `<label>.log`, and appends
+#
+#   label,kaski_rev,started_utc,wall_s,exit,passed,failed,skipped
+#
+# Wall time is the whole command: build plus run, since a landing waits on both.
+# The totals are read from the command's own output: libtest's `test result:`
+# lines summed, or nextest's `Summary` line, or `cargo mock test`'s own summary,
+# whichever the command printed. A command printing none leaves them empty
+# rather than zero, so a run whose totals could not be read is not mistaken for
+# one that ran nothing.
+#
+# This is wall-clock on a shared 4-core container, not the bench harness: it
+# times a whole suite under whatever else the machine was doing, and is called
+# an ad-hoc timing for that reason. Nothing else was run while a row was taken.
+#
+# Copyright (c) 2026 orgrinrt <ort@hiisi.digital>
+# SPDX-License-Identifier: MPL-2.0
+# =============================================================================
+
+use log
+
+csv="${1:?csv}"; label="${2:?label}"; dir="${3:?dir}"; shift 3
+log="$(dirname "$csv")/$label.log"
+
+[ -f "$csv" ] || printf 'label,kaski_rev,started_utc,wall_s,exit,passed,failed,skipped\n' > "$csv"
+
+rev="$(git -C "$dir" rev-parse --short=8 HEAD 2>/dev/null)"
+[ -n "$(git -C "$dir" status --porcelain --untracked-files=no 2>/dev/null)" ] && rev="$rev+dirty"
+started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+t0="$(date +%s.%N)"
+( cd "$dir" && "$@" ) > "$log" 2>&1
+rc=$?
+t1="$(date +%s.%N)"
+wall="$(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.1f", b - a }')"
+
+# libtest prints one `test result:` line per binary; the doc-test runner too.
+read -r passed failed skipped < <(awk '
+    /^test result:/ {
+        for (i = 1; i <= NF; i++) {
+            if ($(i+1) ~ /^passed/)  p += $i
+            if ($(i+1) ~ /^failed/)  f += $i
+            if ($(i+1) ~ /^ignored/) s += $i
+        }
+        seen = 1
+    }
+    END { if (seen) print p+0, f+0, s+0; else print "", "", "" }' "$log")
+
+# nextest's last line: `Summary [ 12.3s] 42 tests run: 40 passed, 2 failed, 7 skipped`
+if [ -z "$passed" ]; then
+    read -r passed failed skipped < <(awk '
+        /Summary \[/ {
+            p = f = s = 0
+            for (i = 1; i <= NF; i++) {
+                w = $(i+1); gsub(/[,;)]/, "", w)
+                if (w == "passed")  p = $i
+                if (w == "failed")  f = $i
+                if (w == "skipped") s = $i
+            }
+            seen = 1
+        }
+        END { if (seen) print p+0, f+0, s+0; else print "", "", "" }' "$log")
+fi
+
+printf '%s,%s,%s,%s,%s,%s,%s,%s\n' "$label" "$rev" "$started" "$wall" "$rc" "$passed" "$failed" "$skipped" >> "$csv"
+log_info "$label: ${wall}s exit $rc passed=${passed:-?} failed=${failed:-?} skipped=${skipped:-?}"
+exit "$rc"

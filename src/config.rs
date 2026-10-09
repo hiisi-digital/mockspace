@@ -255,6 +255,11 @@ pub struct Config {
     /// until a consolidation is recorded. See `crate::panel` for the whole
     /// mechanism this gates.
     pub panel_consolidate_every: u32,
+
+    /// `[test]`: what `mock test` counts as heavy, how many heavy tests run at
+    /// once, when a test is killed, and what a commit runs. See
+    /// `crate::suite::settings`.
+    pub test: crate::suite::settings::TestSettings,
 }
 
 /// Everything `mock/agent/config.toml` declares.
@@ -612,6 +617,10 @@ struct RawConfig {
     #[serde(default)]
     panel_consolidate_every: Option<u32>,
 
+    /// `[test]`. See `Config::test`.
+    #[serde(default)]
+    test: Option<crate::suite::settings::RawTest>,
+
     /// Registry namespaces: the kinds of thing this project's documents refer
     /// to by identifier. Absent means the project does not use the registry,
     /// which must stay a no-cost default.
@@ -791,6 +800,14 @@ impl Config {
         }
         let crates_dir = src_dirs[0].clone();
 
+        // Refused like a missing `src_dirs` entry: a heavy-test threshold that
+        // cannot mean anything would make every suite look broken.
+        let test = raw
+            .test
+            .unwrap_or_default()
+            .resolve()
+            .unwrap_or_else(|e| panic!("mockspace.toml: {e}"));
+
         let install_git_hooks = raw
             .install_git_hooks
             .and_then(|s| InstallMode::parse(&s))
@@ -963,6 +980,7 @@ impl Config {
             panel_consolidate_every: raw
                 .panel_consolidate_every
                 .unwrap_or(crate::panel::DEFAULT_CONSOLIDATE_EVERY),
+            test,
         }
     }
 
