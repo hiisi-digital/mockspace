@@ -33,14 +33,16 @@
 # the question asked is "is this line attributing the work to somebody" and not
 # "is this line one of the forty vendors I remembered".
 #
-# **Then deny by vendor, for the surfaces that have no shape.** An author field,
-# a committer field and an advert in prose are not trailers and cannot be tested
-# structurally, so those get the enumeration. It goes stale and that is
-# tolerable, because it is the second net rather than the only one.
+# **Then deny by what an agent carries, for the surfaces that have no shape.** An
+# author field and a committer field are not trailers and cannot be tested
+# structurally, so those are read for a mailbox, a marker or a name that is a
+# tool's own, and an advert in prose gets the enumeration of domains and
+# mailboxes. Both go stale and that is tolerable, because they are the second net
+# rather than the only one.
 #
-# The enumeration below is therefore a convenience and never the guarantee. A
-# reader adding a vendor to it is improving the second net; a reader relying on
-# it alone has misread which net does the work.
+# The sets below are therefore a convenience and never the guarantee. A reader
+# adding a tool to one is improving the second net; a reader relying on it alone
+# has misread which net does the work.
 #
 # ## Fail closed
 #
@@ -71,11 +73,39 @@ use log
 ATTRIBUTION_TRAILER_KEY_RE='([A-Za-z]+-)*[A-Za-z]+-(by|session|agent|model|tool)|author|committer|generated-with'
 
 # -----------------------------------------------------------------------------
-# The vendor net, for surfaces with no shape to test. Grouped by who ships them
-# rather than alphabetically, so a reader adding one can see whether the family
-# is already covered.
+# The identity net, for surfaces with no shape to test: an author, a committer,
+# the halves of one a command gives.
+#
+# It recognises what only an agent carries, and never a word inside somebody's
+# name. The first version was an unanchored substring regex over the whole line,
+# and as a blocking check it refused Devin Smith, Hubbard Jones (bard), Haider Ali
+# (aider), Cody Brown, Claude Monet, Anders Android (droid), Jules Verne, Mistral
+# Winds and Ada Lombard on every commit they made, found by probe. What an agent
+# carries is one of three things:
+#
+#   - a mailbox it commits from, matched whole. A vendor's domain is not one, so
+#     a person writing from `anthropic.com` is a person;
+#   - a `[bot]` marker, in the name or the mailbox, which nobody writes into
+#     either by accident;
+#   - a name that is wholly a tool's own, with the words that ride along with one
+#     taken off: `Claude Opus 4.1`, `GitHub Copilot` and `Devin AI` are the tools,
+#     `Claude Monet` and `Devin Smith` are people. A parenthesis at the end of a
+#     name is read inside as well, because aider tags a person's name with
+#     `(aider)`.
+#
+# One edge is left and it is deliberate: somebody whose whole `user.name` is a
+# tool's name reads as the tool. A word that is also a first name (`jules`,
+# `cody`, `bard`, `kiro`) is therefore not in the list at all, since it would be
+# the whole of somebody's name more often than the tool's.
+#
+# Each set is a pipe-delimited string, so a membership test is one pattern match
+# and the engine adds no process to the hook that calls it. The tool names are
+# stored as their core words, spaced, which is what two spellings of one tool's
+# name have in common: `SWE-agent` is `swe`.
 # -----------------------------------------------------------------------------
-ATTRIBUTION_IDENTITY_RE='(claude|anthropic|copilot|githubcopilot|codex|chatgpt|openai|gpt-[0-9]|cursor|anysphere|gemini|bard|jules|devin|cognition[- ]?labs|aider|windsurf|codeium|cody|sourcegraph|ampcode|amp-?bot|tabnine|supermaven|augment(code)?|codewhisperer|amazon[- ]?q|kiro|replit|ghostwriter|phind|blackbox\.ai|grok|x\.ai|xai|deepseek|qwen|mistral|llama|ollama|junie|jetbrains[- ]?ai|continue\.dev|zed[- ]?industries|v0\.dev|lovable|bolt\.new|factory\.ai|droid|opencode|crush[- ]?bot|goose[- ]?bot|roo[- ]?(code|cline)|cline|antigravity|\[bot\]|-bot@|bot@users\.noreply|ai[- ]assistant|coding[- ]agent|llm[- ]agent)'
+ATTRIBUTION_AGENT_TOOLS='|claude|copilot|chatgpt|gpt|codex|gemini|devin|cursor|aider|amp|grok|windsurf|codeium|tabnine|supermaven|codewhisperer|antigravity|opencode|replit|ghostwriter|phind|deepseek|qwen|ollama|swe|'
+ATTRIBUTION_AGENT_COMPANIONS='|code|agent|ai|bot|assistant|cli|app|opus|sonnet|haiku|instant|pro|mini|flash|turbo|max|github|anthropic|openai|google|'
+ATTRIBUTION_AGENT_MAILBOXES='|noreply@anthropic.com|noreply@openai.com|copilot@github.com|cursoragent@cursor.com|agent@cursor.com|'
 
 # -----------------------------------------------------------------------------
 # Adverts: the tool-promotion suffixes platforms bake into their defaults.
@@ -115,7 +145,8 @@ ATTRIBUTION_ADVERT_RE="(${ATTRIBUTION_ADVERT_URL_RE}|${ATTRIBUTION_ADVERT_PHRASE
 #[pub]
 attribution_selfcheck() {
     local p
-    for p in ATTRIBUTION_TRAILER_KEY_RE ATTRIBUTION_IDENTITY_RE \
+    for p in ATTRIBUTION_TRAILER_KEY_RE ATTRIBUTION_AGENT_TOOLS ATTRIBUTION_AGENT_COMPANIONS \
+             ATTRIBUTION_AGENT_MAILBOXES \
              ATTRIBUTION_ADVERT_URL_RE ATTRIBUTION_ADVERT_PHRASE_RE ATTRIBUTION_ADVERT_RE; do
         if [[ -z "${!p:-}" ]]; then
             log_error "attribution: ${p} is empty; refusing to report clean"
@@ -127,13 +158,21 @@ attribution_selfcheck() {
     attribution_is_attribution_trailer 'Co-authored-by: someone <a@b.c>' || {
         log_error "attribution: the shape net does not recognise a trailer"; return 1; }
     attribution_names_agent 'Co-authored-by: Claude <a@b.c>' || {
-        log_error "attribution: the vendor net does not recognise a known vendor"; return 1; }
+        log_error "attribution: the identity net does not recognise a known tool"; return 1; }
+    attribution_names_agent 'dependabot[bot] <a@b.c>' || {
+        log_error "attribution: the identity net does not recognise a bot marker"; return 1; }
+    attribution_names_agent 'Dev <noreply@anthropic.com>' || {
+        log_error "attribution: the identity net does not recognise an agent mailbox"; return 1; }
     attribution_has_advert 'see https://claude.ai/code' || {
         log_error "attribution: the advert net does not recognise a known advert"; return 1; }
     # And one that must NOT match, because a net that matches everything also
     # never reports clean and is just as broken.
     if attribution_is_attribution_trailer 'docs: describe the copilot surface'; then
         log_error "attribution: the shape net reads a commit subject as a trailer"
+        return 1
+    fi
+    if attribution_names_agent 'Claude Monet <monet@example.org>'; then
+        log_error "attribution: the identity net reads a person as an agent"
         return 1
     fi
     return 0
@@ -203,15 +242,85 @@ attribution_is_attribution_trailer() {
     printf '%s' "$line" | grep -qiE "^(${ATTRIBUTION_TRAILER_KEY_RE}):[[:space:]]*[^[:space:]]"
 }
 
-# attribution_names_agent <line>
+# attribution_names_agent <identity>
 #
-# Whether a line names a vendor the enumeration knows. The second net, for
-# author and committer fields, which have no trailer shape to test.
+# Whether an identity is an agent's, by what only an agent carries: a mailbox it
+# commits from, a `[bot]` marker, or a name that is wholly a tool's own. The
+# second net, for author and committer fields, which have no trailer shape to
+# test. The comment on the three sets above says what each means and why a word
+# inside a person's name is none of them.
 #
-# Usage: attribution_names_agent "$line" && ...
+# Takes the forms a caller has one in, so none of them is the caller's to unpick:
+# `Name <mailbox>`, the same with the date and zone `git var` appends, a trailer
+# line (`Co-authored-by: Name <mailbox>`), what a command gives (`--author=...`,
+# `GIT_AUTHOR_NAME=...`, `GIT_AUTHOR_EMAIL=...`), and a bare name or mailbox.
+#
+# Usage: attribution_names_agent "$identity" && ...
 #[pub]
 attribution_names_agent() {
-    printf '%s' "${1:-}" | grep -qiE "${ATTRIBUTION_IDENTITY_RE}"
+    local text="${1:-}" name mailbox core inner
+    # leading whitespace
+    text="${text#"${text%%[![:space:]]*}"}"
+    # what a command wraps an identity in, and a trailer key
+    if [[ "$text" =~ ^(--author[=[:space:]]+|GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)=)(.*)$ ]]; then
+        text="${BASH_REMATCH[4]}"
+    elif [[ "$text" =~ ^[A-Za-z]+(-[A-Za-z]+)*:[[:space:]]*(.*)$ ]]; then
+        text="${BASH_REMATCH[2]}"
+    fi
+    # quotes round the whole of it
+    if [[ "$text" =~ ^[\"\'](.*)[\"\']$ ]]; then
+        text="${BASH_REMATCH[1]}"
+    fi
+
+    local angle='^(.*)[<]([^<>]*)[>].*$'
+    if [[ "$text" =~ $angle ]]; then
+        name="${BASH_REMATCH[1]}"
+        mailbox="${BASH_REMATCH[2]}"
+    elif [[ "$text" == *@* && "$text" != *[[:space:]]* ]]; then
+        name=""
+        mailbox="$text"
+    else
+        name="$text"
+        mailbox=""
+    fi
+    name="${name,,}"
+    mailbox="${mailbox,,}"
+
+    [[ "$name" == *'[bot]'* || "$mailbox" == *'[bot]'* ]] && return 0
+    [[ -n "$mailbox" && "$ATTRIBUTION_AGENT_MAILBOXES" == *"|${mailbox}|"* ]] && return 0
+
+    core="$(_attribution_core_words "$name")"
+    [[ -n "$core" && "$ATTRIBUTION_AGENT_TOOLS" == *"|${core}|"* ]] && return 0
+
+    if [[ "$name" =~ \(([^\(\)]*)\)[[:space:]]*$ ]]; then
+        inner="$(_attribution_core_words "${BASH_REMATCH[1]}")"
+        [[ -n "$inner" && "$ATTRIBUTION_AGENT_TOOLS" == *"|${inner}|"* ]] && return 0
+    fi
+    return 1
+}
+
+# _attribution_core_words <name>
+#
+# What is left of a name once the words that ride along with a tool's name are
+# taken off, spaced, which is what two spellings of one tool's name have in
+# common. A word that opens with a digit is a version. When taking them off would
+# leave nothing the name is kept whole, so `SWE-agent` is `swe` and `Agent` on
+# its own is `agent`, which is nobody's.
+_attribution_core_words() {
+    local text="${1,,}" all=() kept=() w
+    # anything that is not a letter or a digit separates words
+    text="${text//[^[:alnum:]]/ }"
+    read -ra all <<< "$text"
+    for w in ${all[@]+"${all[@]}"}; do
+        [[ "$ATTRIBUTION_AGENT_COMPANIONS" == *"|${w}|"* ]] && continue
+        [[ "$w" == [0-9]* ]] && continue
+        kept+=("$w")
+    done
+    if ((${#kept[@]} > 0)); then
+        printf '%s' "${kept[*]}"
+    else
+        printf '%s' "${all[*]:-}"
+    fi
 }
 
 # attribution_strip_quoted

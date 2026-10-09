@@ -58,7 +58,7 @@ it_fails_its_selfcheck_when_a_pattern_is_emptied() {
     # The control for the control. A selfcheck that cannot fail is decoration,
     # and this engine exists partly because a check that silently passed was
     # indistinguishable from a check that ran.
-    ATTRIBUTION_IDENTITY_RE=''
+    ATTRIBUTION_AGENT_TOOLS=''
     assert_fails attribution_selfcheck
 }
 
@@ -272,6 +272,124 @@ it_names_the_vendors_across_families() {
 it_does_not_name_a_human() {
     assert_fails attribution_names_agent 'Co-authored-by: Jane Doe <jane@example.com>'
     assert_fails attribution_names_agent 'Reviewed-by: a human being <human@example.com>'
+}
+
+# What names an agent is what only an agent carries: a mailbox an agent commits
+# from, a `[bot]` marker, or a name that is wholly a tool's own name with the
+# words that ride along with one. It is never a word inside somebody's name. The
+# first matcher was an unanchored substring regex over the whole line, and as a
+# blocking check it refused every one of these people on every commit they made.
+# Each name below is one it refused, found by probe; the rest are ordinary ones.
+
+#[test]
+it_does_not_name_a_person_whose_name_holds_a_tools_name() {
+    local who
+    for who in \
+        'Devin Smith <devin.smith@example.com>' \
+        'Hubbard Jones <hubbard@example.com>' \
+        'Haider Ali <haider@example.com>' \
+        'Cody Brown <cody@example.com>' \
+        'Claude Monet <claude.monet@example.org>' \
+        'Anders Android <anders@example.com>' \
+        'Jules Verne <jules@example.com>' \
+        'Mistral Winds <mistral@example.com>' \
+        'Ada Lombard <ada@example.com>' \
+        'O. R. Toimela <ort@hiisi.digital>' \
+        'Jane Smith <jane@example.com>' \
+        'Matti Meikalainen <matti@example.fi>' \
+        'Maria Garcia Lopez <maria@example.es>' \
+        'Li Wei <li.wei@example.cn>' \
+        'Some One <12345+someone@users.noreply.github.com>' \
+        'GitHub <noreply@github.com>' \
+        'Jane Smith (she/her) <jane@example.com>'
+    do
+        assert_fails attribution_names_agent "$who"
+    done
+}
+
+#[test]
+it_does_not_name_an_employee_of_a_vendor_writing_from_its_domain() {
+    # The domain is not what only an agent carries. A mailbox is the agent's only
+    # when it is the address a tool commits from, spelled out.
+    assert_fails attribution_names_agent 'Jane Roe <jane.roe@anthropic.com>'
+    assert_fails attribution_names_agent 'Bob Poe <bob@openai.com>'
+    assert_fails attribution_names_agent 'Al Lee <al@cursor.com>'
+}
+
+#[test]
+it_does_not_name_a_person_in_a_trailer_either() {
+    # The same matcher is handed trailer lines, and a co-author who is a person
+    # is not an agent whatever their name holds.
+    assert_fails attribution_names_agent 'Co-authored-by: Devin Smith <devin@example.com>'
+    assert_fails attribution_names_agent 'Co-authored-by: Claude Monet <monet@example.org>'
+    assert_fails attribution_names_agent 'Reviewed-by: Haider Ali <haider@example.com>'
+}
+
+#[test]
+it_names_an_agent_by_what_only_an_agent_carries() {
+    local who
+    for who in \
+        'Claude <noreply@anthropic.com>' \
+        'Claude Code <noreply@anthropic.com>' \
+        'Claude Opus 4.1 <noreply@anthropic.com>' \
+        'Claude Sonnet 5.5 <claude@example.com>' \
+        'claude-code[bot] <claude-code@users.noreply.github.com>' \
+        'Copilot <198982749+Copilot@users.noreply.github.com>' \
+        'GitHub Copilot <copilot@example.com>' \
+        'Codex <codex@example.com>' \
+        'ChatGPT <chatgpt@example.com>' \
+        'GPT-4o <gpt@example.com>' \
+        'Gemini CLI <gemini@example.com>' \
+        'Cursor Agent <cursoragent@cursor.com>' \
+        'Devin AI <devin@cognition-labs.com>' \
+        'aider <aider@aider.chat>' \
+        'SWE-agent <swe@example.com>' \
+        'dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>' \
+        'A Name <1234+thing[bot]@users.noreply.github.com>' \
+        'copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>' \
+        'Dev Container <noreply@anthropic.com>' \
+        'Dev Container <copilot@github.com>' \
+        'Jane Smith (aider) <jane@example.com>'
+    do
+        assert_ok attribution_names_agent "$who"
+    done
+}
+
+#[test]
+it_reads_the_forms_a_caller_hands_an_identity_in() {
+    # A hook hands this the identity git would write, the identity a command
+    # gives, and the halves of one given through the environment, one at a time.
+    assert_ok attribution_names_agent 'Claude <noreply@anthropic.com>'
+    assert_ok attribution_names_agent 'Claude <noreply@anthropic.com> 1791567502 +0000'
+    assert_ok attribution_names_agent '--author="Claude <noreply@anthropic.com>"'
+    assert_ok attribution_names_agent "--author='Claude <noreply@anthropic.com>'"
+    assert_ok attribution_names_agent '--author Claude <noreply@anthropic.com>'
+    assert_ok attribution_names_agent 'GIT_AUTHOR_NAME=Claude'
+    assert_ok attribution_names_agent 'GIT_COMMITTER_NAME="Claude Code"'
+    assert_ok attribution_names_agent 'GIT_AUTHOR_EMAIL=noreply@anthropic.com'
+    assert_ok attribution_names_agent 'noreply@anthropic.com'
+    assert_ok attribution_names_agent 'Claude'
+    assert_fails attribution_names_agent '--author="Jane Smith <jane@example.com>"'
+    assert_fails attribution_names_agent 'GIT_AUTHOR_NAME="Claude Monet"'
+    assert_fails attribution_names_agent 'GIT_AUTHOR_EMAIL=jane@example.com'
+    assert_fails attribution_names_agent 'jane@example.com'
+    assert_fails attribution_names_agent ''
+}
+
+#[test]
+it_judges_a_trailer_by_its_key_and_the_advert_net_leaves_a_name_alone() {
+    # The checks that were asked for after the matcher above was found refusing
+    # people: do the other two nets have the same false positive on a
+    # `Co-Authored-By` naming one? They do not, and these pin why. The trailer
+    # net reads the key and never the name, so it neither refuses nor spares a
+    # person by what they are called, and the advert net holds domains, mailboxes
+    # and the robot emoji, none of which a name is.
+    local who
+    for who in 'Devin Smith' 'Hubbard Jones' 'Haider Ali' 'Cody Brown' 'Claude Monet' \
+               'Anders Android' 'Jules Verne' 'Mistral Winds' 'Ada Lombard'; do
+        assert_ok attribution_is_attribution_trailer "Co-authored-by: ${who} <p@example.com>"
+        assert_fails attribution_has_advert "Co-authored-by: ${who} <p@example.com>"
+    done
 }
 
 # --- adverts, and the prose they must not eat --------------------------------
