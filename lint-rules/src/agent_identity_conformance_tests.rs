@@ -25,6 +25,7 @@ fn every_list_and_both_verdicts_have_rows() {
         ("tools", t.tools.len()),
         ("given", t.given.len()),
         ("vendors", t.vendors.len()),
+        ("machines", t.machines.len()),
         ("heads", t.heads.len()),
         ("companions", t.companions.len()),
         ("keyed", t.keyed.len()),
@@ -77,6 +78,7 @@ fn no_row_is_listed_twice_in_its_own_kind() {
         ("tags", &t.tags),
         ("tools", &t.tools),
         ("given", &t.given),
+        ("machines", &t.machines),
         ("heads", &t.heads),
         ("companions", &t.companions),
         ("people", &t.people),
@@ -160,5 +162,19 @@ fn no_identity_is_both_a_person_and_an_agent() {
             !t.agents.contains(p),
             "`{p}` is listed as a person and as an agent"
         );
+    }
+}
+
+#[test]
+fn a_machine_ending_is_written_without_its_dot() {
+    // The recognisers put the dot back, so a row that carries one would match
+    // `..local` and nothing real, and a row with a space or an `@` is no ending.
+    for m in &table().machines {
+        assert!(
+            !m.starts_with('.') && !m.ends_with('.') && !m.contains(char::is_whitespace),
+            "`{m}` is no bare ending"
+        );
+        assert!(!m.contains('@'), "`{m}` is an address, not an ending");
+        assert_eq!(m, &m.to_lowercase(), "`{m}` is not lowercase");
     }
 }

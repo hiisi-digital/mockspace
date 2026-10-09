@@ -30,27 +30,28 @@
 #              saying so that identity is a person's, which is what the default
 #              lets through;
 #   tool       a tool's own name, which makes an identity an agent's as the start
-#              of a name: optionally behind `head` words, then the tool, then any
-#              words at all (`Copilot Chat`, `Cursor Bugbot`). It has to be the
-#              start, so a tool's name inside somebody's is none (`Smith
-#              Copilot`);
-#   given      a tool whose name is also somebody's given name. As the start of a
-#              name, behind `head` words if any, it is an agent when a
-#              `companion` word is anywhere after it (`Claude Code Action`), when
-#              nothing but versions follow it (`Claude 3.5`), or when nothing
-#              follows it and either a `head` word stands in front (`Google
-#              Gemini`) or the mailbox is the tool's. The mailbox is the tool's
+#              of a name: optionally behind `head` words, then the tool, then
+#              nothing but `companion` words and versions (`Copilot Chat`,
+#              `Cursor Bugbot`, `Claude Code on the web`, `GPT 4o`). Any other
+#              word after it is a word of somebody's name, so `Copilot Smith` and
+#              `Cline, John` are people. It has to be the start, so a tool's name
+#              inside somebody's is none (`Smith Copilot`). A version is a word
+#              opening with a digit, or `v` and digits;
+#   given      a tool whose name is also somebody's given name. It follows the
+#              same rule for what comes after it (`Claude Code Action`, `Claude
+#              Monet`), and with nothing after it wants a second signal, since a
+#              person can be called that: a `head` word in front (`Google
+#              Gemini`), or a mailbox that is the tool's. The mailbox is the tool's
 #              when its domain is one of the tool's `vendor` domains, matched
 #              whole, or when its local part is the tool's word at a mailbox that
 #              is a machine's: a domain that is `localhost`, one label with no
-#              dot, or one ending in `.local`, `.localdomain`, `.lan`, `.internal`
-#              or `.home.arpa`, or a `users.noreply.github.com` mailbox whose
-#              login after `NNN+` is the tool's word. The same local part at any
-#              other domain is a person called that (`Devin <devin@acme.com>`),
-#              and so is the login without its number. Any other word after the
-#              name is a word of somebody's name (`Claude Monet`, `Claude Max`). A
-#              version is a word opening with a digit, or `v` and digits;
+#              dot, or one ending in a `machine` suffix. The same local part at
+#              any other domain is a person called that (`Devin
+#              <devin@acme.com>`), and so is GitHub's private address, `Devin
+#              <12345+devin@users.noreply.github.com>`, which every account has;
 #   vendor     a given-name tool and a domain it commits from;
+#   machine    an ending only a private network's domains have, written without
+#              its dot;
 #   head       a vendor word allowed in front of a tool's name;
 #   companion  a word that rides along with a tool: a model, a product, a surface.
 #
@@ -153,6 +154,13 @@ vendor	bard	google.com
 vendor	kiro	kiro.dev
 vendor	junie	jetbrains.com
 
+# --- the endings of a machine's domain -------------------------------------
+machine	local
+machine	localdomain
+machine	lan
+machine	internal
+machine	home.arpa
+
 # --- head words --------------------------------------------------------------
 head	github
 head	google
@@ -195,6 +203,13 @@ companion	turbo
 companion	lite
 companion	thinking
 companion	mini
+companion	chat
+companion	workspace
+companion	bugbot
+companion	action
+companion	sdk
+companion	on
+companion	the
 
 # --- keyed: a person to the default, an agent once the project names the name -
 keyed	claude	claude <root@buildhost.local>
@@ -243,10 +258,25 @@ person	Claude <c.dupont@mail.anthropic.com>
 person	Claude <12345+claude@example.com>
 person	Claude <claude@example.org>
 person	Claude <claude@users.noreply.github.com>
+person	Claude <12345+claude@users.noreply.github.com>
+person	Devin <12345+devin@users.noreply.github.com>
 person	Devin <devin@acme.com>
 person	Cody <cody@gmail.com>
 person	Claude Monet <claude@anthropic.com>
 person	Smith Copilot <smith@example.com>
+person	Claude Ide Smith
+person	Devin Ai Nguyen
+person	Claude Marie Via
+person	Claude Monet Lite
+person	Devin Van Web
+person	Cline, John
+person	Cline Smith
+person	Aider Aliyev
+person	Llama Jones
+person	Copilot Smith
+person	Cursor Smith
+person	Sonnet Lee
+person	Anthropic Lee
 person	Devin <d.patel@patel.example>
 person	Gemini <g.rossi@example.com>
 person	Amp <a.berg@example.com>
@@ -261,7 +291,6 @@ agent	Claude <noreply@anthropic.com>
 agent	Claude <claude@localhost>
 agent	claude <claude@buildbox>
 agent	Claude <claude@ci.local>
-agent	Claude <12345+claude@users.noreply.github.com>
 agent	Claude <claude@anthropic.com>
 agent	Claude Code <noreply@anthropic.com>
 agent	Claude Code Action
@@ -299,6 +328,9 @@ agent	Paul Gauthier (aider)
 agent	Jane Doe ) (aider)
 agent	SWE-agent <swe@example.com>
 agent	Cline
+agent	Aider
+agent	Cursor <cursor@example.com>
+agent	Sonnet
 agent	Roo Code
 agent	Junie Agent
 agent	Llama

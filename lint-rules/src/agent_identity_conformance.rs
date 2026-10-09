@@ -38,12 +38,15 @@ pub struct AgentIdentityConformance {
     pub mailboxes:  Vec<String>,
     /// Tags a tool writes into a name, read as a group in parentheses.
     pub tags:       Vec<String>,
-    /// Tool names, an agent's as the start of a name.
+    /// Tool names, an agent's as the start of a name when nothing but companions
+    /// and versions follow.
     pub tools:      Vec<String>,
     /// Tool names that are also given names, which need a second signal.
     pub given:      Vec<String>,
     /// A given-name tool and a domain it commits from, one pair per row.
     pub vendors:    Vec<(String, String)>,
+    /// Endings only a private network's domains have, written without the dot.
+    pub machines:   Vec<String>,
     /// Vendor words allowed in front of a tool's name.
     pub heads:      Vec<String>,
     /// Words allowed after a tool's name.
@@ -106,6 +109,7 @@ impl AgentIdentityConformance {
                 "tag" => &mut t.tags,
                 "tool" => &mut t.tools,
                 "given" => &mut t.given,
+                "machine" => &mut t.machines,
                 "head" => &mut t.heads,
                 "companion" => &mut t.companions,
                 "person" => &mut t.people,
