@@ -14,10 +14,9 @@
 //! in its lint pack and is tested there; this test is about whether the
 //! identity gets to a lint at all.
 //!
-//! On 9 October 221 commits on one repository's remote branches carried an
-//! agent as author and committer. Their messages held no trailer and no advert,
-//! so every message check passed them, which is the case the person arms below
-//! are controls for: without them a probe refusing everything would pass too.
+//! An agent identity leaves no trailer and no advert in the message, so a check
+//! that reads only the message passes it. The person arms below are the controls:
+//! without them a probe refusing everything would pass too.
 //!
 //! `#[ignore]` because it runs `cargo build` for the fixture's cdylib, matching
 //! `custom_lint_cdylib.rs`, and `tests/rust_e2e_test.sh` runs it with

@@ -214,33 +214,83 @@ fn an_environment_override_of_the_committer_reaches_the_launcher() {
     );
 }
 
-#[test]
-fn a_hook_run_where_git_names_nobody_passes_no_identity_and_still_calls_the_launcher() {
-    // With `useConfigOnly` and no configured name, `git var` fails. The hook has
-    // `set -e`, so a failure left bare would end the hook before the launcher ran
-    // and the message would go unchecked. It has to degrade to no flag and carry
-    // on, so the message half of the gate still holds.
-    let fx = fixture();
-    git(&fx.repo, &[], &["config", "user.useConfigOnly", "true"]);
+/// Run the hook by hand in the fixture's repository, as git would, and return
+/// what it did.
+fn run_hook(fx: &Fixture, envs: &[(&str, &str)]) -> std::process::Output {
     let msg = fx.repo.join("COMMIT_EDITMSG");
     std::fs::write(&msg, "feat: x\n").unwrap();
-
-    let out = Command::new(fx.repo.join(".git/hooks/commit-msg"))
-        .arg(&msg)
+    let mut c = Command::new(fx.repo.join(".git/hooks/commit-msg"));
+    c.arg(&msg)
         .current_dir(&fx.repo)
-        .env("PATH", path_for(&fx))
+        .env("PATH", path_for(fx))
         .env("HOME", &fx.repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{out:?}");
+        .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    for (k, v) in envs {
+        c.env(k, v);
+    }
+    c.output().unwrap()
+}
 
-    let args = recorded(&fx);
+#[test]
+fn a_hook_that_cannot_name_the_author_blocks_and_says_why() {
+    // With `useConfigOnly` and no configured name, `git var` fails. The identity
+    // gate is then not running, and a gate that silently stops running is the
+    // failure the launcher-missing branch already refuses: the commit is blocked
+    // with the reason on one line, and the launcher is not asked to pass what it
+    // was not given the whole of.
+    let fx = fixture();
+    git(&fx.repo, &[], &["config", "user.useConfigOnly", "true"]);
+
+    let out = run_hook(&fx, &[
+        ("GIT_COMMITTER_NAME", "Jane Doe"),
+        ("GIT_COMMITTER_EMAIL", "jane@example.com"),
+    ]);
+    assert!(!out.status.success(), "must block. {out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("BLOCKED"), "got: {err}");
+    assert!(err.contains("author"), "names the field. got: {err}");
     assert!(
-        args.iter().any(|a| a == "check-message"),
-        "the launcher must still be called. got: {args:?}"
+        err.contains("GIT_AUTHOR_IDENT"),
+        "names the command. got: {err}"
     );
-    assert_eq!(value_of(&args, "--author"), None, "got: {args:?}");
-    assert_eq!(value_of(&args, "--committer"), None, "got: {args:?}");
+    assert!(recorded(&fx).is_empty(), "the launcher is not called");
+}
+
+#[test]
+fn a_hook_that_cannot_name_the_committer_blocks_and_says_why() {
+    let fx = fixture();
+    git(&fx.repo, &[], &["config", "user.useConfigOnly", "true"]);
+
+    let out = run_hook(&fx, &[
+        ("GIT_AUTHOR_NAME", "Jane Doe"),
+        ("GIT_AUTHOR_EMAIL", "jane@example.com"),
+    ]);
+    assert!(!out.status.success(), "must block. {out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("BLOCKED"), "got: {err}");
+    assert!(err.contains("committer"), "names the field. got: {err}");
+    assert!(
+        err.contains("GIT_COMMITTER_IDENT"),
+        "names the command. got: {err}"
+    );
+    assert!(recorded(&fx).is_empty(), "the launcher is not called");
+}
+
+#[test]
+fn a_hook_that_names_both_still_runs_the_launcher_as_before() {
+    // The control for the two above: the same hook, the same repository, with
+    // both identities known, passes, so the blocking is about the failure and
+    // not about the hook refusing everything.
+    let fx = fixture();
+    git(&fx.repo, &[], &["config", "user.useConfigOnly", "true"]);
+
+    let out = run_hook(&fx, &[
+        ("GIT_AUTHOR_NAME", "Jane Doe"),
+        ("GIT_AUTHOR_EMAIL", "jane@example.com"),
+        ("GIT_COMMITTER_NAME", "Jane Doe"),
+        ("GIT_COMMITTER_EMAIL", "jane@example.com"),
+    ]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(recorded(&fx).iter().any(|a| a == "check-message"));
 }
