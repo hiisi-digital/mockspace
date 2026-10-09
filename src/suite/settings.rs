@@ -48,11 +48,11 @@ pub struct TestSettings {
     pub on_commit:        OnCommit,
 }
 
-/// Ten seconds, which separates kaski's drawn tests (a Bevy app on a software
-/// Vulkan device, tens of seconds to minutes each) from everything else in its
-/// suites (milliseconds to a few seconds) by more than an order of magnitude on
-/// either side. A stand-in until a repository with a less clean split says
-/// otherwise; `research/202610091400_suite-selection.md` has the distribution.
+/// Ten seconds: kaski's drawn tests start a Bevy app on a software Vulkan
+/// device and op saw one take about 160 seconds alone, while a test drawing
+/// nothing takes well under a second. A stand-in, since no per-test
+/// distribution has been taken yet; `research/202610091400_suite-selection.md`
+/// says how to take one.
 pub const DEFAULT_HEAVY_AFTER_SECS: f64 = 10.0;
 /// One at a time. A software Vulkan device already spreads one frame over every
 /// core, so a second heavy test beside it mostly contends.

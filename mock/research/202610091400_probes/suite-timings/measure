@@ -1,0 +1,80 @@
+#!/usr/bin/env nutshell
+# =============================================================================
+# measure - kaski's two suites the way landings run them, then under
+#           `cargo mock test`, before and after a one-line change and after none
+# =============================================================================
+#   measure <kaski-root> <mockspace-checkout> <phase>...
+#
+# Each phase appends one row per suite to `timings.csv` beside this script,
+# through `time-suite`, and nothing else runs on the machine while it does.
+# The suites are the ones a landing runs: `kaski-render`, and `kaski-web`
+# without and with its `editor` feature.
+#
+# The one-line change is a comment appended to `kaski-mesh/src/lib.rs`, which
+# both suites depend on: it moves nothing a test can see and everything a build
+# and a fingerprint can, which is the change whose cost is all overhead. A new
+# change replaces the one before it. `before-change` takes its own back out, so
+# the after phases start at the measured commit; `after-change` leaves its in
+# place for `after-full`, which measures the cache at that fingerprint, and
+# `after-cheap` replaces it and takes it out at the end.
+#
+# Phases, in the order they were run:
+#
+#   before-build    `cargo test --no-run`, so the before rows below are runs
+#   before-none     `cargo test -p ...` on a built tree, nothing changed
+#   before-change   the same after the one-line change, rebuild included
+#   after-first     `cargo mock test -p ...` with no history: everything runs
+#                   under nextest, nothing yet known heavy, so no group
+#   after-none      the same again, nothing changed
+#   after-change    after a one-line change: both suites selected, the heavy
+#                   tests now known and held to the group
+#   after-full      `--full` with nothing changed: every test asked for, the
+#                   heavy ones skipped as cached
+#   after-cheap     `--cheap` after a one-line change: the heavy tests deferred
+#
+# Copyright (c) 2026 orgrinrt <ort@hiisi.digital>
+# SPDX-License-Identifier: MPL-2.0
+# =============================================================================
+
+use log
+
+kaski="${1:?kaski root}"; engine="${2:?mockspace checkout}"; shift 2
+here="$(cd "$(dirname "$0")" && pwd)"
+csv="$here/timings.csv"
+mock="$kaski/mock"
+mesh="$mock/crates/kaski-mesh/src/lib.rs"
+
+row() { "$here/time-suite" "$csv" "$@"; }
+
+# One probe line at a time: a new change replaces the last rather than stacking.
+unchange() { if tail -n1 "$mesh" | grep -q '^// probe: '; then sed -i '$d' "$mesh"; fi; }
+change() { unchange; printf '// probe: a one-line change for the suite timings, %s\n' "$1" >> "$mesh"; }
+
+plain() {
+    local phase="$1"; shift
+    row "$phase.render"     "$mock" cargo test -p kaski-render "$@"
+    row "$phase.web"        "$mock" cargo test -p kaski-web "$@"
+    row "$phase.web-editor" "$mock" cargo test -p kaski-web --features editor "$@"
+}
+
+mocked() {
+    local phase="$1"; shift
+    row "$phase.render"     "$kaski" cargo mock --engine "$engine" test -p kaski-render "$@"
+    row "$phase.web"        "$kaski" cargo mock --engine "$engine" test -p kaski-web "$@"
+    row "$phase.web-editor" "$kaski" cargo mock --engine "$engine" test -p kaski-web --features editor "$@"
+}
+
+for phase in "$@"; do
+    log_info "phase $phase"
+    case "$phase" in
+        before-build)  plain before.build --no-run ;;
+        before-none)   plain before.none ;;
+        before-change) change before; plain before.change; unchange ;;
+        after-first)   mocked after.first ;;
+        after-none)    mocked after.none ;;
+        after-change)  change after; mocked after.change ;;
+        after-full)    mocked after.full --full ;;
+        after-cheap)   change cheap; mocked after.cheap --cheap; unchange ;;
+        *) log_error "no phase $phase"; exit 2 ;;
+    esac
+done

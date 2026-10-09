@@ -1,0 +1,240 @@
+ Downloading crates ...
+  Downloaded funty v2.0.0
+  Downloaded bevy_mikktspace v1.0.0
+  Downloaded accesskit_winit v0.33.2
+  Downloaded bevy_sprite_render v0.20.0-rc.2
+  Downloaded cursor-icon v1.2.0
+  Downloaded bevy_text v0.20.0-rc.2
+  Downloaded bevy_picking v0.20.0-rc.2
+  Downloaded bevy_ui_render v0.20.0-rc.2
+  Downloaded bevy_scene_macros v0.20.0-rc.2
+  Downloaded bevy_sprite v0.20.0-rc.2
+  Downloaded inotify-sys v0.1.8
+  Downloaded yazi v0.2.1
+  Downloaded bevy_ui_widgets v0.20.0-rc.2
+  Downloaded glow v0.17.0
+  Downloaded swash v0.2.10
+  Downloaded bevy_pbr v0.20.0-rc.2
+  Downloaded harfrust v0.12.0
+  Downloaded inotify v0.11.5
+  Downloaded sys-locale v0.3.2
+  Downloaded bevy_anti_alias v0.20.0-rc.2
+  Downloaded bevy_audio v0.20.0-rc.2
+  Downloaded dpi v0.1.2
+  Downloaded thiserror v1.0.69
+  Downloaded dyn-eq v0.1.3
+  Downloaded zeno v0.3.3
+  Downloaded vec_map v0.8.2
+  Downloaded taffy v0.14.0
+  Downloaded dyn-hash v1.0.0
+  Downloaded libudev-sys v0.1.4
+  Downloaded parley_data v0.11.1
+  Downloaded bevy_feathers v0.20.0-rc.2
+  Downloaded icu_segmenter v2.3.0
+  Downloaded xkbcommon-dl v0.4.2
+  Downloaded fontique v0.11.1
+  Downloaded bevy_post_process v0.20.0-rc.2
+  Downloaded bitvec v1.1.1
+  Downloaded bevy_world_serialization v0.20.0-rc.2
+  Downloaded icu_locale_fallback_data v2.3.0
+  Downloaded wyz v0.5.1
+  Downloaded bevy_dev_tools v0.20.0-rc.2
+  Downloaded font-types v0.12.5
+  Downloaded khronos-egl v6.0.0
+  Downloaded alsa v0.11.0
+  Downloaded parley v0.11.1
+  Downloaded winit v0.30.13
+  Downloaded enumn v0.1.14
+  Downloaded xkeysym v0.2.1
+  Downloaded gilrs v0.11.2
+  Downloaded bevy_ui v0.20.0-rc.2
+  Downloaded wayland-sys v0.31.11
+  Downloaded radsort v0.1.1
+  Downloaded dasp_sample v0.11.0
+  Downloaded gilrs-core v0.6.8
+  Downloaded dlib v0.5.3
+  Downloaded bevy_gizmos_render v0.20.0-rc.2
+  Downloaded linebender_resource_handle v0.1.1
+  Downloaded radium v0.7.0
+  Downloaded icu_locale_fallback v2.3.0
+  Downloaded parlance v0.1.0
+  Downloaded thiserror-impl v1.0.69
+  Downloaded bevy_animation v0.20.0-rc.2
+  Downloaded bevy_winit v0.20.0-rc.2
+  Downloaded calloop v0.13.0
+  Downloaded bevy_scene v0.20.0-rc.2
+  Downloaded bevy_gilrs v0.20.0-rc.2
+  Downloaded bevy_clipboard v0.20.0-rc.2
+  Downloaded cpal v0.17.3
+  Downloaded linux-raw-sys v0.4.15
+  Downloaded read-fonts v0.41.0
+  Downloaded icu_segmenter_data v2.3.0
+  Downloaded num-integer v0.1.47
+  Downloaded alsa-sys v0.4.0
+  Downloaded num-bigint v0.4.8
+  Downloaded skrifa v0.44.0
+  Downloaded rodio v0.22.2
+  Downloaded rustix v0.38.44
+  Downloaded bevy_animation_macros v0.20.0-rc.2
+  Downloaded num-rational v0.4.2
+  Downloaded proc-macro-crate v3.5.0
+  Downloaded serde_flexitos v0.2.2
+  Downloaded tap v1.0.1
+  Downloaded dyn-clone v1.0.20
+   Compiling syn v3.0.6
+   Compiling hashbrown v0.17.1
+   Compiling log v0.4.34
+   Compiling erased-serde v0.4.10
+   Compiling uuid v1.26.1
+   Compiling indexmap v2.14.2
+   Compiling slotmap v1.1.1
+   Compiling fixedbitset v0.5.7
+   Compiling tracing v0.1.44
+   Compiling stable_deref_trait v1.2.1
+   Compiling writeable v0.6.4
+   Compiling tracing-log v0.2.0
+   Compiling litemap v0.8.3
+   Compiling utf8_iter v1.0.4
+   Compiling icu_locale_fallback_data v2.3.0
+   Compiling icu_properties_data v2.3.0
+   Compiling icu_segmenter_data v2.3.0
+   Compiling icu_normalizer_data v2.3.0
+   Compiling memmap2 v0.9.11
+   Compiling parlance v0.1.0
+   Compiling linebender_resource_handle v0.1.1
+   Compiling zeno v0.3.3
+   Compiling yazi v0.2.1
+   Compiling sys-locale v0.3.2
+   Compiling enumn v0.1.14
+   Compiling radsort v0.1.1
+   Compiling offset-allocator v0.2.0
+   Compiling bevy_scene_macros v0.20.0-rc.2
+   Compiling synstructure v0.14.0
+   Compiling proc-macro-crate v3.5.0
+   Compiling leafwing_input_manager_macros v0.17.0 (/home/user/kaski/mock/vendor/leafwing-input-manager/macros)
+   Compiling dyn-hash v1.0.0
+   Compiling dyn-eq v0.1.3
+   Compiling dyn-clone v1.0.20
+   Compiling serde_derive v1.0.229
+   Compiling bytemuck_derive v1.12.1
+   Compiling thiserror-impl v2.0.21
+   Compiling zerofrom-derive v0.1.8
+   Compiling bytemuck v1.25.2
+   Compiling yoke-derive v0.8.3
+   Compiling thiserror v2.0.21
+   Compiling encase v0.12.1
+   Compiling glam v0.33.12
+   Compiling zerofrom v0.1.8
+   Compiling futures-macro v0.3.34
+   Compiling serde v1.0.229
+   Compiling smallvec v1.16.2
+   Compiling naga-types v30.0.1
+   Compiling wgpu-types v30.0.1
+   Compiling bevy_platform v0.20.0-rc.2
+   Compiling bevy_utils v0.20.0-rc.2
+   Compiling smol_str v0.2.2
+   Compiling bevy_tasks v0.20.0-rc.2
+   Compiling bevy_reflect v0.20.0-rc.2
+   Compiling half v2.7.1
+   Compiling yoke v0.8.3
+   Compiling futures-util v0.3.34
+   Compiling ron v0.12.2
+   Compiling zerovec-derive v0.11.6
+   Compiling displaydoc v0.2.7
+   Compiling hexasphere v19.0.0
+   Compiling image v0.25.10
+   Compiling bevy_ecs v0.20.0-rc.2
+   Compiling bevy_math v0.20.0-rc.2
+   Compiling zerovec v0.11.8
+   Compiling bevy_curve v0.20.0-rc.2
+   Compiling bevy_color v0.20.0-rc.2
+   Compiling tinystr v0.8.4
+   Compiling bevy_shape v0.20.0-rc.2
+   Compiling bevy_app v0.20.0-rc.2
+   Compiling bevy_time v0.20.0-rc.2
+   Compiling bevy_diagnostic v0.20.0-rc.2
+   Compiling bevy_asset v0.20.0-rc.2
+   Compiling bevy_transform v0.20.0-rc.2
+   Compiling bevy_input v0.20.0-rc.2
+   Compiling bevy_mesh v0.20.0-rc.2
+   Compiling bevy_image v0.20.0-rc.2
+   Compiling icu_locale_core v2.3.0
+   Compiling potential_utf v0.1.6
+   Compiling zerotrie v0.2.5
+   Compiling tracing-subscriber v0.3.23
+   Compiling icu_provider v2.3.1
+   Compiling bevy_window v0.20.0-rc.2
+   Compiling bevy_log v0.20.0-rc.2
+   Compiling font-types v0.12.5
+   Compiling read-fonts v0.41.0
+   Compiling bevy_camera v0.20.0-rc.2
+   Compiling icu_collections v2.3.0
+   Compiling naga v30.0.1
+   Compiling parking_lot_core v0.9.12
+   Compiling parking_lot v0.12.5
+   Compiling wgpu-naga-bridge v30.0.1
+   Compiling skrifa v0.44.0
+   Compiling icu_properties v2.3.0
+   Compiling icu_locale_fallback v2.3.0
+   Compiling wgsl-types v0.4.4
+   Compiling gpu-allocator v0.28.0
+   Compiling wgpu-hal v30.0.1
+   Compiling wgsl-parse v0.4.4
+   Compiling icu_segmenter v2.3.0
+   Compiling parley_data v0.11.1
+   Compiling fontique v0.11.1
+   Compiling harfrust v0.12.0
+   Compiling icu_normalizer v2.3.0
+   Compiling kaski-engine-space v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-space)
+   Compiling wesl-macros v0.4.4
+   Compiling parley v0.11.1
+   Compiling wgpu-core-deps-windows-linux-android v30.0.1
+   Compiling swash v0.2.10
+   Compiling wesl v0.4.4
+   Compiling bevy_clipboard v0.20.0-rc.2
+   Compiling bevy_text v0.20.0-rc.2
+   Compiling bevy_shader v0.20.0-rc.2
+   Compiling wgpu-core v30.0.1
+   Compiling kaski-engine-volume v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-volume)
+   Compiling wgpu v30.0.1
+   Compiling bevy_material v0.20.0-rc.2
+   Compiling bevy_sprite v0.20.0-rc.2
+   Compiling bevy_extract v0.20.0-rc.2
+   Compiling bevy_picking v0.20.0-rc.2
+   Compiling accesskit v0.24.1
+   Compiling bevy_input_focus v0.20.0-rc.2
+   Compiling bevy_a11y v0.20.0-rc.2
+   Compiling bevy_render v0.20.0-rc.2
+   Compiling kaski-view-contracts v0.0.0 (/home/user/kaski/mock/crates/kaski-view-contracts)
+   Compiling bevy_light v0.20.0-rc.2
+   Compiling taffy v0.14.0
+   Compiling bevy_ui v0.20.0-rc.2
+   Compiling bevy_core_pipeline v0.20.0-rc.2
+   Compiling bevy_sprite_render v0.20.0-rc.2
+   Compiling bevy_ui_render v0.20.0-rc.2
+   Compiling bevy_ui_widgets v0.20.0-rc.2
+   Compiling bevy_scene v0.20.0-rc.2
+   Compiling bevy_internal v0.20.0-rc.2
+   Compiling kaski-wind v0.0.0 (/home/user/kaski/mock/crates/kaski-wind)
+   Compiling kaski-sprite v0.0.0 (/home/user/kaski/mock/crates/kaski-sprite)
+   Compiling kaski-engine-ledger v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-ledger)
+   Compiling bevy v0.20.0-rc.2
+   Compiling kaski-mesh v0.0.0 (/home/user/kaski/mock/crates/kaski-mesh)
+   Compiling kaski-motion v0.0.0 (/home/user/kaski/mock/crates/kaski-motion)
+   Compiling kaski-engine-frame v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-frame)
+   Compiling kaski-engine-journal v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-journal)
+   Compiling kaski-figure v0.0.0 (/home/user/kaski/mock/crates/kaski-figure)
+   Compiling kaski-engine-culture v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-culture)
+   Compiling kaski-engine-nature v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-nature)
+   Compiling kaski-engine-lattice v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-lattice)
+   Compiling kaski-engine-agency v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-agency)
+   Compiling kaski-engine-advancement v0.0.0 (/home/user/kaski/mock/crates/kaski-engine-advancement)
+   Compiling serde_flexitos v0.2.2
+   Compiling leafwing-input-manager v0.21.0 (/home/user/kaski/mock/vendor/leafwing-input-manager)
+   Compiling kaski-village v0.0.0 (/home/user/kaski/mock/crates/kaski-village)
+   Compiling kaski-render v0.0.0 (/home/user/kaski/mock/crates/kaski-render)
+   Compiling kaski-planet v0.0.0 (/home/user/kaski/mock/crates/kaski-planet)
+   Compiling kaski-web v0.0.0 (/home/user/kaski/mock/crates/kaski-web)
+    Finished `test` profile [optimized + debuginfo] target(s) in 20m 16s
+  Executable unittests src/lib.rs (target/debug/deps/kaski_web-ec2cd0d918764193)
+  Executable unittests src/main.rs (target/debug/deps/kaski_web-1dc1ddd6fcb96c55)
