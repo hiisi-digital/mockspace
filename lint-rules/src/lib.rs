@@ -54,6 +54,9 @@ pub use changelist_doc_gate::pending_doc_templates;
 /// What `lock` and `close` ask before moving anything, since a hook-less
 /// commit never reaches the `changelist-seal` lint while it can still refuse.
 pub use changelist_seal::{active_round_findings, says_nothing};
+/// Test data for the recognisers of an agent identity, hidden from the documentation
+/// because a pack's own tests read it and no lint is promised anything by it.
+#[doc(hidden)]
 pub mod agent_identity_conformance;
 mod deprecation_comparison;
 mod design_doc_source_mismatch;
