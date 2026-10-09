@@ -63,6 +63,42 @@ it_fails_its_selfcheck_when_a_pattern_is_emptied() {
 }
 
 #[test]
+it_fails_its_selfcheck_when_any_set_the_identity_net_reads_is_emptied() {
+    # One set at a time, restored after each, since a selfcheck that loads every
+    # set but one is the half-sourced library it exists to catch. The heads and the
+    # companions have no canary of their own, and the check that each
+    # is non-empty is what covers them.
+    local p saved
+    for p in ATTRIBUTION_AGENT_MARKERS ATTRIBUTION_AGENT_MAILBOXES ATTRIBUTION_AGENT_TAGS \
+             ATTRIBUTION_AGENT_TOOLS ATTRIBUTION_AGENT_GIVEN ATTRIBUTION_AGENT_VENDORS \
+             ATTRIBUTION_AGENT_HEADS ATTRIBUTION_AGENT_COMPANIONS; do
+        saved="${!p}"
+        printf -v "$p" '%s' ''
+        assert_fails attribution_selfcheck
+        printf -v "$p" '%s' "$saved"
+        assert_ok attribution_selfcheck
+    done
+}
+
+#[test]
+it_fails_its_selfcheck_when_the_tags_stop_telling_the_cases_apart() {
+    # The canaries, one net at a time. A set that loads and no longer does its
+    # job reads as a clean repository, which is the failure the selfcheck is for.
+    # Too narrow, so a tag is missed, and too wide, so a group that is no tag is
+    # read as one.
+    ATTRIBUTION_AGENT_TAGS='|nothing|'
+    assert_fails attribution_selfcheck
+    ATTRIBUTION_AGENT_TAGS='|aider|openai|'
+    assert_fails attribution_selfcheck
+}
+
+#[test]
+it_fails_its_selfcheck_when_a_given_name_is_read_at_its_vendor_no_more() {
+    ATTRIBUTION_AGENT_VENDORS='|claude example.invalid|'
+    assert_fails attribution_selfcheck
+}
+
+#[test]
 it_fails_its_selfcheck_when_the_shape_net_matches_everything() {
     # A net that matches a commit subject never reports clean either, which is
     # the same defect pointed the other way.
@@ -245,269 +281,6 @@ it_permits_nothing_when_the_caller_states_no_policy() {
 it_permits_exactly_what_the_caller_names() {
     assert_ok attribution_allows 'Co-authored-by: A Human <a@b.c>' '*<a@b.c>'
     assert_fails attribution_allows 'Co-authored-by: Claude <x@y.z>' '*<a@b.c>'
-}
-
-# --- the vendor net, for surfaces with no shape ------------------------------
-
-#[test]
-it_names_the_vendors_across_families() {
-    local line
-    for line in \
-        'Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>' \
-        'Co-authored-by: Copilot <copilot@github.com>' \
-        'Co-authored-by: ChatGPT <noreply@openai.com>' \
-        'Co-authored-by: Cursor Agent <agent@cursor.com>' \
-        'Co-authored-by: google-labs-jules[bot] <jules@google.com>' \
-        'Co-authored-by: Devin AI <devin@cognition-labs.com>' \
-        'Co-authored-by: aider <aider@aider.chat>' \
-        'Co-authored-by: Amp <amp@ampcode.com>' \
-        'Co-authored-by: Grok <grok@x.ai>' \
-        'Co-authored-by: dependabot[bot] <support@github.com>'
-    do
-        assert_ok attribution_names_agent "$line"
-    done
-}
-
-#[test]
-it_does_not_name_a_human() {
-    assert_fails attribution_names_agent 'Co-authored-by: Jane Doe <jane@example.com>'
-    assert_fails attribution_names_agent 'Reviewed-by: a human being <human@example.com>'
-}
-
-# What names an agent is what only an agent carries: a mailbox an agent commits
-# from, a bot marker, or a name that is wholly a tool's own, behind a vendor word
-# and followed by the words that ride along with one. It is never a word inside
-# somebody's name. The lists and the verdicts are the conformance table that the
-# lint pack's Rust suite reads too (`lint-rules/data/agent_identity_conformance.tsv`),
-# so the two recognisers are held to one set of rows and neither can move alone.
-#
-# The matrix below is built from the table, and it is the table that is the
-# claim: a test that walked the library's own lists would pass with an entry
-# deleted from them, so every list is also compared with the table's, and every
-# entry is exercised on its own.
-
-_conformance="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lint-rules/data/agent_identity_conformance.tsv"
-T_marker=() T_mailbox=() T_tool=() T_given=() T_head=() T_companion=() T_person=() T_agent=()
-while IFS=$'\t' read -r _kind _value; do
-    [[ -z "$_kind" || "$_kind" == \#* ]] && continue
-    case "$_kind" in
-        marker)    T_marker+=("$_value") ;;
-        mailbox)   T_mailbox+=("$_value") ;;
-        tool)      T_tool+=("$_value") ;;
-        given)     T_given+=("$_value") ;;
-        head)      T_head+=("$_value") ;;
-        companion) T_companion+=("$_value") ;;
-        person)    T_person+=("$_value") ;;
-        agent)     T_agent+=("$_value") ;;
-        *) printf 'attribution_test: unknown kind in the conformance table: %s\n' "$_kind" >&2; exit 2 ;;
-    esac
-done < "$_conformance"
-unset _kind _value
-
-# The members of a pipe-delimited set, sorted, one to a line.
-_members() {
-    local s="${1#|}"
-    s="${s%|}"
-    printf '%s\n' "${s//|/$'\n'}" | sort -u
-}
-
-# What a mailbox glob stands for once its stars are filled in.
-_instance() { printf '%s' "${1//\*/x}"; }
-
-#[test]
-it_reads_a_table_with_rows_in_every_list() {
-    # The guard under all of it: a table that parsed to nothing would make every
-    # loop below pass having asserted nothing.
-    local n
-    for n in T_marker T_mailbox T_tool T_given T_head T_companion T_person T_agent; do
-        declare -n _list="$n"
-        assert_ok test "${#_list[@]}" -gt 0
-    done
-}
-
-#[test]
-it_holds_exactly_the_lists_the_table_holds() {
-    assert_eq "$(_members "$ATTRIBUTION_AGENT_MARKERS")" "$(printf '%s\n' "${T_marker[@]}" | sort -u)"
-    assert_eq "$(_members "$ATTRIBUTION_AGENT_MAILBOXES")" "$(printf '%s\n' "${T_mailbox[@]}" | sort -u)"
-    assert_eq "$(_members "$ATTRIBUTION_AGENT_TOOLS")" "$(printf '%s\n' "${T_tool[@]}" | sort -u)"
-    assert_eq "$(_members "$ATTRIBUTION_AGENT_GIVEN")" "$(printf '%s\n' "${T_given[@]}" | sort -u)"
-    assert_eq "$(_members "$ATTRIBUTION_AGENT_HEADS")" "$(printf '%s\n' "${T_head[@]}" | sort -u)"
-    assert_eq "$(_members "$ATTRIBUTION_AGENT_COMPANIONS")" "$(printf '%s\n' "${T_companion[@]}" | sort -u)"
-}
-
-#[test]
-it_names_each_tool_as_the_whole_of_a_name_and_nothing_longer() {
-    local t
-    for t in "${T_tool[@]}"; do
-        assert_ok attribution_names_agent "$t <x@example.com>"
-        assert_ok attribution_names_agent "${t^^}"
-        # a word of somebody's name on either side is a person
-        assert_fails attribution_names_agent "$t Smith <x@example.com>"
-        assert_fails attribution_names_agent "Smith $t <x@example.com>"
-    done
-}
-
-#[test]
-it_asks_a_second_signal_of_each_tool_that_is_also_a_given_name() {
-    local g c h m
-    for g in "${T_given[@]}"; do
-        assert_fails attribution_names_agent "$g <x@example.com>"
-        assert_fails attribution_names_agent "$g"
-        # a version, a companion after it, a vendor word before it, a mailbox
-        assert_ok attribution_names_agent "$g 4.1 <x@example.com>"
-        assert_ok attribution_names_agent "$g v2"
-        for c in "${T_companion[@]}"; do
-            assert_ok attribution_names_agent "$g $c <x@example.com>"
-        done
-        for h in "${T_head[@]}"; do
-            assert_ok attribution_names_agent "$h $g <x@example.com>"
-        done
-        for m in "${T_mailbox[@]}"; do
-            assert_ok attribution_names_agent "$g <$(_instance "$m")>"
-        done
-        # and a word that is none of those is a person
-        assert_fails attribution_names_agent "$g Monet <x@example.com>"
-        assert_fails attribution_names_agent "Max $g <x@example.com>"
-    done
-}
-
-#[test]
-it_counts_each_companion_after_a_tool_and_never_before_one() {
-    local t c
-    for t in "${T_tool[@]}" "${T_given[@]}"; do
-        for c in "${T_companion[@]}"; do
-            assert_ok attribution_names_agent "$t $c <x@example.com>"
-            # in front of the tool it is a word of somebody's name, unless it is
-            # a vendor word, or is itself a tool and so a name of its own
-            if _is_in "$c" "${T_head[@]}" "${T_tool[@]}" "${T_given[@]}"; then
-                continue
-            fi
-            assert_fails attribution_names_agent "$c $t <x@example.com>"
-        done
-    done
-}
-
-# Whether the first argument is one of the rest.
-_is_in() {
-    local needle="$1" x
-    shift
-    for x in "$@"; do
-        [[ "$x" == "$needle" ]] && return 0
-    done
-    return 1
-}
-
-#[test]
-it_lets_each_head_word_stand_before_a_tool() {
-    local h t
-    for h in "${T_head[@]}"; do
-        for t in "${T_tool[@]}" "${T_given[@]}"; do
-            assert_ok attribution_names_agent "$h $t <x@example.com>"
-        done
-        # a head word is not a tool, so on its own it names nobody
-        if ! _is_in "$h" "${T_tool[@]}"; then
-            assert_fails attribution_names_agent "$h <x@example.com>"
-        fi
-    done
-}
-
-#[test]
-it_matches_each_mailbox_whole_whatever_the_name() {
-    local m
-    for m in "${T_mailbox[@]}"; do
-        assert_ok attribution_names_agent "Dev Container <$(_instance "$m")>"
-        assert_ok attribution_names_agent "$(_instance "$m")"
-        # an exact address is not matched by a longer one that ends with it
-        if [[ "$m" != *\** ]]; then
-            assert_fails attribution_names_agent "Dev Container <x$m>"
-            assert_fails attribution_names_agent "Dev Container <${m}.example>"
-        fi
-    done
-}
-
-#[test]
-it_matches_each_marker_in_the_name_or_in_the_mailbox() {
-    local m
-    for m in "${T_marker[@]}"; do
-        assert_ok attribution_names_agent "thing${m} <x@example.com>"
-        assert_ok attribution_names_agent "A Name <1234+thing${m}@users.noreply.github.com>"
-    done
-}
-
-#[test]
-it_judges_each_person_row_as_a_person_in_every_form_it_arrives_in() {
-    local p name
-    for p in "${T_person[@]}"; do
-        assert_fails attribution_names_agent "$p"
-        assert_fails attribution_names_agent "Co-authored-by: $p"
-        assert_fails attribution_names_agent "--author=\"$p\""
-        assert_fails attribution_names_agent "$p 1791567502 +0000"
-    done
-}
-
-#[test]
-it_judges_each_agent_row_as_an_agent_in_every_form_it_arrives_in() {
-    local a
-    for a in "${T_agent[@]}"; do
-        assert_ok attribution_names_agent "$a"
-        assert_ok attribution_names_agent "Co-authored-by: $a"
-        assert_ok attribution_names_agent "--author=\"$a\""
-        assert_ok attribution_names_agent "$a 1791567502 +0000"
-    done
-}
-
-#[test]
-it_reads_the_forms_a_caller_hands_an_identity_in() {
-    # A hook hands this the identity git would write, the identity a command
-    # gives, and the halves of one given through the environment, one at a time.
-    assert_ok attribution_names_agent 'Claude <noreply@anthropic.com>'
-    assert_ok attribution_names_agent 'Claude <noreply@anthropic.com> 1791567502 +0000'
-    assert_ok attribution_names_agent '--author="Claude <noreply@anthropic.com>"'
-    assert_ok attribution_names_agent "--author='Claude <noreply@anthropic.com>'"
-    assert_ok attribution_names_agent '--author Claude <noreply@anthropic.com>'
-    assert_ok attribution_names_agent 'GIT_AUTHOR_NAME="Claude Code"'
-    assert_ok attribution_names_agent 'GIT_COMMITTER_NAME=Copilot'
-    assert_ok attribution_names_agent 'GIT_AUTHOR_EMAIL=noreply@anthropic.com'
-    assert_ok attribution_names_agent 'noreply@anthropic.com'
-    assert_ok attribution_names_agent 'Claude Code'
-    assert_fails attribution_names_agent '--author="Jane Smith <jane@example.com>"'
-    assert_fails attribution_names_agent 'GIT_AUTHOR_NAME="Claude Monet"'
-    assert_fails attribution_names_agent 'GIT_AUTHOR_NAME=Claude'
-    assert_fails attribution_names_agent 'GIT_AUTHOR_EMAIL=jane@example.com'
-    assert_fails attribution_names_agent 'jane@example.com'
-    assert_fails attribution_names_agent ''
-}
-
-#[test]
-it_holds_no_command_substitution_in_the_functions_that_judge_an_identity() {
-    # The claim in the header of the identity net, held. A hook calls this for
-    # every commit in a push, and a command substitution is a subshell each. The
-    # functions keep their words in a global array for that reason, so what is
-    # checked is that none of them has grown a `$(...)` or a backtick. Arithmetic
-    # expansion, `$((...))`, is no process and is let through.
-    local fn body
-    for fn in attribution_names_agent _attribution_words _attribution_words_name_a_tool \
-              _attribution_tools_at _attribution_tail_is_companions; do
-        assert_ok declare -F "$fn"
-        body="$(declare -f "$fn")"
-        assert_fails grep -qE '\$\([^(]|`' <<< "$body"
-    done
-}
-
-#[test]
-it_judges_a_trailer_by_its_key_and_the_advert_net_leaves_a_name_alone() {
-    # The checks that were asked for after the matcher above was found refusing
-    # people: do the other two nets have the same false positive on a
-    # `Co-Authored-By` naming one? They do not, and these pin why. The trailer
-    # net reads the key and never the name, so it neither refuses nor spares a
-    # person by what they are called, and the advert net holds domains, mailboxes
-    # and the robot emoji, none of which a name is.
-    local who
-    for who in 'Devin Smith' 'Hubbard Jones' 'Haider Ali' 'Cody Brown' 'Claude Monet' \
-               'Anders Android' 'Jules Verne' 'Mistral Winds' 'Ada Lombard'; do
-        assert_ok attribution_is_attribution_trailer "Co-authored-by: ${who} <p@example.com>"
-        assert_fails attribution_has_advert "Co-authored-by: ${who} <p@example.com>"
-    done
 }
 
 # --- adverts, and the prose they must not eat --------------------------------

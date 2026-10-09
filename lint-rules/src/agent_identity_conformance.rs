@@ -3,19 +3,19 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! The table that says what an agent identity is, for every implementation of it.
+//! Test data for the recognisers of an agent identity. Not part of the plugin API.
 //!
 //! Naming an agent from a commit's author, committer or `Co-Authored-By` is
-//! written more than once: in shell, where review sweeps read it, and in Rust,
-//! where a lint pack does. Two implementations kept in step by hand drift, and the
-//! drift is silent because each passes its own suite. This table is the one thing
-//! they share: the lists the recogniser is built from, and the people and agents
-//! it has to tell apart, one row each.
+//! written more than once, and two writings kept in step by hand drift, silently,
+//! because each passes its own suite. This table is the one thing they share: the
+//! lists the recogniser is built from, and the people and agents it has to tell
+//! apart, one row each.
 //!
 //! A pack's tests read it through this module, so they run against the table at
-//! the revision of this crate they were built with and there is no second copy
-//! to fall out of date. The shell suite reads the file. The format and the rule
-//! each list stands for are written at the top of
+//! the revision of this crate they were built with and there is no second copy to
+//! fall out of date. The module is hidden from the documentation because it is
+//! data for tests and carries no promise to a pack's lints. The format and the
+//! rule each list stands for are written at the top of
 //! `data/agent_identity_conformance.tsv`.
 //!
 //! ```
@@ -36,14 +36,21 @@ pub struct AgentIdentityConformance {
     pub markers:    Vec<String>,
     /// Mailbox globs an agent commits from, matched against the whole mailbox.
     pub mailboxes:  Vec<String>,
-    /// Tool names, which count as the whole of a name.
+    /// Tags a tool writes into a name, read as a group in parentheses.
+    pub tags:       Vec<String>,
+    /// Tool names, an agent's as the start of a name.
     pub tools:      Vec<String>,
     /// Tool names that are also given names, which need a second signal.
     pub given:      Vec<String>,
+    /// A given-name tool and a domain it commits from, one pair per row.
+    pub vendors:    Vec<(String, String)>,
     /// Vendor words allowed in front of a tool's name.
     pub heads:      Vec<String>,
     /// Words allowed after a tool's name.
     pub companions: Vec<String>,
+    /// A name a project has to name for the identity to read as an agent's, and
+    /// the identity that then does.
+    pub keyed:      Vec<(String, String)>,
     /// Identities that are never an agent.
     pub people:     Vec<String>,
     /// Identities that are always an agent.
@@ -54,7 +61,8 @@ impl AgentIdentityConformance {
     /// Read a table. A line that is not a comment, not blank and not a
     /// `kind<TAB>value` row of a known kind is an error and not skipped, since a
     /// row that silently fails to count makes a suite over the table pass for
-    /// less than it says.
+    /// less than it says. A kind that pairs two things takes both, and a kind
+    /// that holds one takes no second.
     ///
     /// # Errors
     ///
@@ -65,25 +73,46 @@ impl AgentIdentityConformance {
             if line.trim().is_empty() || line.starts_with('#') {
                 continue;
             }
+            let at = n + 1;
             let Some((kind, value)) = line.split_once('\t') else {
-                return Err(format!("line {}: no tab between a kind and a value", n + 1));
+                return Err(format!("line {at}: no tab between a kind and a value"));
             };
-            let value = value.trim().to_string();
+            let value = value.trim();
             if value.is_empty() {
-                return Err(format!("line {}: `{kind}` has no value", n + 1));
+                return Err(format!("line {at}: `{kind}` has no value"));
+            }
+            if matches!(kind, "vendor" | "keyed") {
+                let Some((first, second)) = value.split_once('\t') else {
+                    return Err(format!("line {at}: `{kind}` wants two values"));
+                };
+                let (first, second) = (first.trim(), second.trim());
+                if first.is_empty() || second.is_empty() || second.contains('\t') {
+                    return Err(format!("line {at}: `{kind}` wants two values"));
+                }
+                let pair = (first.to_string(), second.to_string());
+                if kind == "vendor" {
+                    t.vendors.push(pair);
+                } else {
+                    t.keyed.push(pair);
+                }
+                continue;
+            }
+            if value.contains('\t') {
+                return Err(format!("line {at}: `{kind}` takes one value"));
             }
             let list = match kind {
                 "marker" => &mut t.markers,
                 "mailbox" => &mut t.mailboxes,
+                "tag" => &mut t.tags,
                 "tool" => &mut t.tools,
                 "given" => &mut t.given,
                 "head" => &mut t.heads,
                 "companion" => &mut t.companions,
                 "person" => &mut t.people,
                 "agent" => &mut t.agents,
-                other => return Err(format!("line {}: unknown kind `{other}`", n + 1)),
+                other => return Err(format!("line {at}: unknown kind `{other}`")),
             };
-            list.push(value);
+            list.push(value.to_string());
         }
         Ok(t)
     }
