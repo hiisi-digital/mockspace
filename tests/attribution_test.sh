@@ -275,83 +275,184 @@ it_does_not_name_a_human() {
 }
 
 # What names an agent is what only an agent carries: a mailbox an agent commits
-# from, a `[bot]` marker, or a name that is wholly a tool's own name with the
-# words that ride along with one. It is never a word inside somebody's name. The
-# first matcher was an unanchored substring regex over the whole line, and as a
-# blocking check it refused every one of these people on every commit they made.
-# Each name below is one it refused, found by probe; the rest are ordinary ones.
+# from, a bot marker, or a name that is wholly a tool's own, behind a vendor word
+# and followed by the words that ride along with one. It is never a word inside
+# somebody's name. The lists and the verdicts are the conformance table that the
+# lint pack's Rust suite reads too (`lint-rules/data/agent_identity_conformance.tsv`),
+# so the two recognisers are held to one set of rows and neither can move alone.
+#
+# The matrix below is built from the table, and it is the table that is the
+# claim: a test that walked the library's own lists would pass with an entry
+# deleted from them, so every list is also compared with the table's, and every
+# entry is exercised on its own.
+
+_conformance="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lint-rules/data/agent_identity_conformance.tsv"
+T_marker=() T_mailbox=() T_tool=() T_given=() T_head=() T_companion=() T_person=() T_agent=()
+while IFS=$'\t' read -r _kind _value; do
+    [[ -z "$_kind" || "$_kind" == \#* ]] && continue
+    case "$_kind" in
+        marker)    T_marker+=("$_value") ;;
+        mailbox)   T_mailbox+=("$_value") ;;
+        tool)      T_tool+=("$_value") ;;
+        given)     T_given+=("$_value") ;;
+        head)      T_head+=("$_value") ;;
+        companion) T_companion+=("$_value") ;;
+        person)    T_person+=("$_value") ;;
+        agent)     T_agent+=("$_value") ;;
+        *) printf 'attribution_test: unknown kind in the conformance table: %s\n' "$_kind" >&2; exit 2 ;;
+    esac
+done < "$_conformance"
+unset _kind _value
+
+# The members of a pipe-delimited set, sorted, one to a line.
+_members() {
+    local s="${1#|}"
+    s="${s%|}"
+    printf '%s\n' "${s//|/$'\n'}" | sort -u
+}
+
+# What a mailbox glob stands for once its stars are filled in.
+_instance() { printf '%s' "${1//\*/x}"; }
 
 #[test]
-it_does_not_name_a_person_whose_name_holds_a_tools_name() {
-    local who
-    for who in \
-        'Devin Smith <devin.smith@example.com>' \
-        'Hubbard Jones <hubbard@example.com>' \
-        'Haider Ali <haider@example.com>' \
-        'Cody Brown <cody@example.com>' \
-        'Claude Monet <claude.monet@example.org>' \
-        'Anders Android <anders@example.com>' \
-        'Jules Verne <jules@example.com>' \
-        'Mistral Winds <mistral@example.com>' \
-        'Ada Lombard <ada@example.com>' \
-        'O. R. Toimela <ort@hiisi.digital>' \
-        'Jane Smith <jane@example.com>' \
-        'Matti Meikalainen <matti@example.fi>' \
-        'Maria Garcia Lopez <maria@example.es>' \
-        'Li Wei <li.wei@example.cn>' \
-        'Some One <12345+someone@users.noreply.github.com>' \
-        'GitHub <noreply@github.com>' \
-        'Jane Smith (she/her) <jane@example.com>'
-    do
-        assert_fails attribution_names_agent "$who"
+it_reads_a_table_with_rows_in_every_list() {
+    # The guard under all of it: a table that parsed to nothing would make every
+    # loop below pass having asserted nothing.
+    local n
+    for n in T_marker T_mailbox T_tool T_given T_head T_companion T_person T_agent; do
+        declare -n _list="$n"
+        assert_ok test "${#_list[@]}" -gt 0
     done
 }
 
 #[test]
-it_does_not_name_an_employee_of_a_vendor_writing_from_its_domain() {
-    # The domain is not what only an agent carries. A mailbox is the agent's only
-    # when it is the address a tool commits from, spelled out.
-    assert_fails attribution_names_agent 'Jane Roe <jane.roe@anthropic.com>'
-    assert_fails attribution_names_agent 'Bob Poe <bob@openai.com>'
-    assert_fails attribution_names_agent 'Al Lee <al@cursor.com>'
+it_holds_exactly_the_lists_the_table_holds() {
+    assert_eq "$(_members "$ATTRIBUTION_AGENT_MARKERS")" "$(printf '%s\n' "${T_marker[@]}" | sort -u)"
+    assert_eq "$(_members "$ATTRIBUTION_AGENT_MAILBOXES")" "$(printf '%s\n' "${T_mailbox[@]}" | sort -u)"
+    assert_eq "$(_members "$ATTRIBUTION_AGENT_TOOLS")" "$(printf '%s\n' "${T_tool[@]}" | sort -u)"
+    assert_eq "$(_members "$ATTRIBUTION_AGENT_GIVEN")" "$(printf '%s\n' "${T_given[@]}" | sort -u)"
+    assert_eq "$(_members "$ATTRIBUTION_AGENT_HEADS")" "$(printf '%s\n' "${T_head[@]}" | sort -u)"
+    assert_eq "$(_members "$ATTRIBUTION_AGENT_COMPANIONS")" "$(printf '%s\n' "${T_companion[@]}" | sort -u)"
 }
 
 #[test]
-it_does_not_name_a_person_in_a_trailer_either() {
-    # The same matcher is handed trailer lines, and a co-author who is a person
-    # is not an agent whatever their name holds.
-    assert_fails attribution_names_agent 'Co-authored-by: Devin Smith <devin@example.com>'
-    assert_fails attribution_names_agent 'Co-authored-by: Claude Monet <monet@example.org>'
-    assert_fails attribution_names_agent 'Reviewed-by: Haider Ali <haider@example.com>'
+it_names_each_tool_as_the_whole_of_a_name_and_nothing_longer() {
+    local t
+    for t in "${T_tool[@]}"; do
+        assert_ok attribution_names_agent "$t <x@example.com>"
+        assert_ok attribution_names_agent "${t^^}"
+        # a word of somebody's name on either side is a person
+        assert_fails attribution_names_agent "$t Smith <x@example.com>"
+        assert_fails attribution_names_agent "Smith $t <x@example.com>"
+    done
 }
 
 #[test]
-it_names_an_agent_by_what_only_an_agent_carries() {
-    local who
-    for who in \
-        'Claude <noreply@anthropic.com>' \
-        'Claude Code <noreply@anthropic.com>' \
-        'Claude Opus 4.1 <noreply@anthropic.com>' \
-        'Claude Sonnet 5.5 <claude@example.com>' \
-        'claude-code[bot] <claude-code@users.noreply.github.com>' \
-        'Copilot <198982749+Copilot@users.noreply.github.com>' \
-        'GitHub Copilot <copilot@example.com>' \
-        'Codex <codex@example.com>' \
-        'ChatGPT <chatgpt@example.com>' \
-        'GPT-4o <gpt@example.com>' \
-        'Gemini CLI <gemini@example.com>' \
-        'Cursor Agent <cursoragent@cursor.com>' \
-        'Devin AI <devin@cognition-labs.com>' \
-        'aider <aider@aider.chat>' \
-        'SWE-agent <swe@example.com>' \
-        'dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>' \
-        'A Name <1234+thing[bot]@users.noreply.github.com>' \
-        'copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>' \
-        'Dev Container <noreply@anthropic.com>' \
-        'Dev Container <copilot@github.com>' \
-        'Jane Smith (aider) <jane@example.com>'
-    do
-        assert_ok attribution_names_agent "$who"
+it_asks_a_second_signal_of_each_tool_that_is_also_a_given_name() {
+    local g c h m
+    for g in "${T_given[@]}"; do
+        assert_fails attribution_names_agent "$g <x@example.com>"
+        assert_fails attribution_names_agent "$g"
+        # a version, a companion after it, a vendor word before it, a mailbox
+        assert_ok attribution_names_agent "$g 4.1 <x@example.com>"
+        assert_ok attribution_names_agent "$g v2"
+        for c in "${T_companion[@]}"; do
+            assert_ok attribution_names_agent "$g $c <x@example.com>"
+        done
+        for h in "${T_head[@]}"; do
+            assert_ok attribution_names_agent "$h $g <x@example.com>"
+        done
+        for m in "${T_mailbox[@]}"; do
+            assert_ok attribution_names_agent "$g <$(_instance "$m")>"
+        done
+        # and a word that is none of those is a person
+        assert_fails attribution_names_agent "$g Monet <x@example.com>"
+        assert_fails attribution_names_agent "Max $g <x@example.com>"
+    done
+}
+
+#[test]
+it_counts_each_companion_after_a_tool_and_never_before_one() {
+    local t c
+    for t in "${T_tool[@]}" "${T_given[@]}"; do
+        for c in "${T_companion[@]}"; do
+            assert_ok attribution_names_agent "$t $c <x@example.com>"
+            # in front of the tool it is a word of somebody's name, unless it is
+            # a vendor word, or is itself a tool and so a name of its own
+            if _is_in "$c" "${T_head[@]}" "${T_tool[@]}" "${T_given[@]}"; then
+                continue
+            fi
+            assert_fails attribution_names_agent "$c $t <x@example.com>"
+        done
+    done
+}
+
+# Whether the first argument is one of the rest.
+_is_in() {
+    local needle="$1" x
+    shift
+    for x in "$@"; do
+        [[ "$x" == "$needle" ]] && return 0
+    done
+    return 1
+}
+
+#[test]
+it_lets_each_head_word_stand_before_a_tool() {
+    local h t
+    for h in "${T_head[@]}"; do
+        for t in "${T_tool[@]}" "${T_given[@]}"; do
+            assert_ok attribution_names_agent "$h $t <x@example.com>"
+        done
+        # a head word is not a tool, so on its own it names nobody
+        if ! _is_in "$h" "${T_tool[@]}"; then
+            assert_fails attribution_names_agent "$h <x@example.com>"
+        fi
+    done
+}
+
+#[test]
+it_matches_each_mailbox_whole_whatever_the_name() {
+    local m
+    for m in "${T_mailbox[@]}"; do
+        assert_ok attribution_names_agent "Dev Container <$(_instance "$m")>"
+        assert_ok attribution_names_agent "$(_instance "$m")"
+        # an exact address is not matched by a longer one that ends with it
+        if [[ "$m" != *\** ]]; then
+            assert_fails attribution_names_agent "Dev Container <x$m>"
+            assert_fails attribution_names_agent "Dev Container <${m}.example>"
+        fi
+    done
+}
+
+#[test]
+it_matches_each_marker_in_the_name_or_in_the_mailbox() {
+    local m
+    for m in "${T_marker[@]}"; do
+        assert_ok attribution_names_agent "thing${m} <x@example.com>"
+        assert_ok attribution_names_agent "A Name <1234+thing${m}@users.noreply.github.com>"
+    done
+}
+
+#[test]
+it_judges_each_person_row_as_a_person_in_every_form_it_arrives_in() {
+    local p name
+    for p in "${T_person[@]}"; do
+        assert_fails attribution_names_agent "$p"
+        assert_fails attribution_names_agent "Co-authored-by: $p"
+        assert_fails attribution_names_agent "--author=\"$p\""
+        assert_fails attribution_names_agent "$p 1791567502 +0000"
+    done
+}
+
+#[test]
+it_judges_each_agent_row_as_an_agent_in_every_form_it_arrives_in() {
+    local a
+    for a in "${T_agent[@]}"; do
+        assert_ok attribution_names_agent "$a"
+        assert_ok attribution_names_agent "Co-authored-by: $a"
+        assert_ok attribution_names_agent "--author=\"$a\""
+        assert_ok attribution_names_agent "$a 1791567502 +0000"
     done
 }
 
@@ -364,16 +465,33 @@ it_reads_the_forms_a_caller_hands_an_identity_in() {
     assert_ok attribution_names_agent '--author="Claude <noreply@anthropic.com>"'
     assert_ok attribution_names_agent "--author='Claude <noreply@anthropic.com>'"
     assert_ok attribution_names_agent '--author Claude <noreply@anthropic.com>'
-    assert_ok attribution_names_agent 'GIT_AUTHOR_NAME=Claude'
-    assert_ok attribution_names_agent 'GIT_COMMITTER_NAME="Claude Code"'
+    assert_ok attribution_names_agent 'GIT_AUTHOR_NAME="Claude Code"'
+    assert_ok attribution_names_agent 'GIT_COMMITTER_NAME=Copilot'
     assert_ok attribution_names_agent 'GIT_AUTHOR_EMAIL=noreply@anthropic.com'
     assert_ok attribution_names_agent 'noreply@anthropic.com'
-    assert_ok attribution_names_agent 'Claude'
+    assert_ok attribution_names_agent 'Claude Code'
     assert_fails attribution_names_agent '--author="Jane Smith <jane@example.com>"'
     assert_fails attribution_names_agent 'GIT_AUTHOR_NAME="Claude Monet"'
+    assert_fails attribution_names_agent 'GIT_AUTHOR_NAME=Claude'
     assert_fails attribution_names_agent 'GIT_AUTHOR_EMAIL=jane@example.com'
     assert_fails attribution_names_agent 'jane@example.com'
     assert_fails attribution_names_agent ''
+}
+
+#[test]
+it_holds_no_command_substitution_in_the_functions_that_judge_an_identity() {
+    # The claim in the header of the identity net, held. A hook calls this for
+    # every commit in a push, and a command substitution is a subshell each. The
+    # functions keep their words in a global array for that reason, so what is
+    # checked is that none of them has grown a `$(...)` or a backtick. Arithmetic
+    # expansion, `$((...))`, is no process and is let through.
+    local fn body
+    for fn in attribution_names_agent _attribution_words _attribution_words_name_a_tool \
+              _attribution_tools_at _attribution_tail_is_companions; do
+        assert_ok declare -F "$fn"
+        body="$(declare -f "$fn")"
+        assert_fails grep -qE '\$\([^(]|`' <<< "$body"
+    done
 }
 
 #[test]
