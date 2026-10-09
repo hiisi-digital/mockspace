@@ -113,7 +113,7 @@ Those are the transitions. The subcommands that are not transitions:
 |---|---|
 | `cargo mock status` | The current round, its phase, and what may be edited right now |
 | `cargo mock check` | Readiness report: git state, phase, build, tests, lints |
-| `cargo mock check-message` | Lint one commit message, pull request body or comment against the configured policy |
+| `cargo mock check-message` | Lint one commit message, pull request body or comment against the configured policy, and for a commit with its author and committer (`--author`, `--committer`) |
 | `cargo mock query` | Query the registry |
 | `cargo mock bench` | Run the bench harness |
 | `cargo mock test` | Run the tests of every tree mockspace owns, the members only where something they depend on changed (`[test]` below) |
@@ -460,6 +460,8 @@ autonomous = ""
 ```
 
 Glob patterns use bash `[[ == ]]` matching semantics: `*`, `?`, `[...]`. Patterns without wildcards are literal equality. Mockspace has no hardcoded defaults for agent names, emails, or byline formats; consumers configure what their workflow expects. Every value in `config.toml` applies equally to every supported agent platform.
+
+The `commit-msg` and `pre-push` hooks hand a pack's message lints the commit's author and committer as well as its message, read from `git var` at the commit and from each pushed commit at the push. A lint that judges bylines can then judge an agent identity under the same pattern, so a mode that permits no byline permits no agent author or committer either. A pull request body has neither and is handed none.
 
 ## What mockspace does not do
 
