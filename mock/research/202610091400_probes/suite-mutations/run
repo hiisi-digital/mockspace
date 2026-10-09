@@ -1,0 +1,59 @@
+#!/usr/bin/env nutshell
+# =============================================================================
+# run - break `src/suite/` one rule at a time and show a test fails for it
+# =============================================================================
+# The `suite::` unit tests were written beside the code rather than before it,
+# so each is shown failing for its reason here instead: one mutation applied,
+# the tests run, the mutation reverted. A mutation that applies and fails no
+# test is a rule nothing holds, and is reported as such.
+#
+#   run [<out>]     from the repository root; output to <out>, default stdout
+#
+# Copyright (c) 2026 orgrinrt <ort@hiisi.digital>
+# SPDX-License-Identifier: MPL-2.0
+# =============================================================================
+
+use log
+
+out="${1:-/dev/stdout}"
+: > "$out"
+
+mutate() {
+    local file="$1" expr="$2" label="$3" saved
+    saved="$(mktemp)"
+    cp "$file" "$saved"
+    perl -0pi -e "$expr" "$file"
+    if cmp -s "$file" "$saved"; then
+        printf '!! %s: the mutation did not apply\n' "$label" >> "$out"
+    else
+        printf '== %s\n' "$label" >> "$out"
+        cargo test --lib -- suite:: 2>&1 | grep -E '^test .*FAILED|test result' >> "$out"
+    fi
+    cp "$saved" "$file"
+    rm -f "$saved"
+}
+
+mutate src/suite/graph.rs 's/\.filter\(\|\(_, k\)\| \*k != DepKind::Dev\)//' \
+    "closure follows dev edges of dependencies"
+mutate src/suite/fingerprint.rs 's/for r in &reaches \{/for r in reaches.iter().take(0) {/' \
+    "paths outside a member are not hashed"
+mutate src/suite/fingerprint.rs 's/\(!inner.contains\(.\\\\.\)\).then_some\(inner\)/Some(inner)/' \
+    "escaped literals taken as paths"
+mutate src/suite/fingerprint.rs 's/            \|\| member_dir.starts_with\(&p\)\n//' \
+    "a path containing the member is taken"
+mutate src/suite/select.rs 's/\} else if i.mode == Mode::Cheap && record.is_none_or\(\|r\| r.passed\) \{/} else if false {/' \
+    "cheap defers nothing"
+mutate src/suite/select.rs 's/\.filter\(\|n\| !failed.contains\(n\) && !deferred.contains\(n\)\)/.filter(|n| !failed.contains(n))/' \
+    "a deferring run leaves members green"
+mutate src/suite/select.rs 's/if i.cache && at.is_some\(\) && record/if at.is_some() \&\& record/' \
+    "the cache cannot be turned off"
+mutate src/suite/junit.rs 's/\} else if body.contains\("<skipped"\) \{\n            Outcome::Skipped\n/} else if false {\n            Outcome::Skipped\n/' \
+    "a skipped case reads as a pass"
+mutate src/suite/history.rs 's/            if c.outcome == Outcome::Skipped \{\n                continue;\n            \}\n//' \
+    "a skipped case overwrites the timing"
+mutate src/suite/nextest.rs 's/Some\(0\) \| Some\(100\)/Some(0) | Some(100) | Some(101)/' \
+    "a build failure counts as ran to the end"
+mutate src/suite/args.rs 's/            \|\| !self.test_args.is_empty\(\)\n//' \
+    "a test filter does not narrow"
+
+log_info "done; every block under == must name a FAILED test"

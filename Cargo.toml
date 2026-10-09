@@ -69,6 +69,9 @@ serde = { version = "1", features = ["derive"] }
 # back alphabetised, which loses the file's shape while preserving all of
 # its contents.
 serde_json = { version = "1", features = ["preserve_order"] }
+# the digests `mock test` keys its selection and its cache on, kept across runs,
+# so a hash whose output is fixed rather than std's, which may change with rustc
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

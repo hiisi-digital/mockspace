@@ -116,7 +116,7 @@ Those are the transitions. The subcommands that are not transitions:
 | `cargo mock check-message` | Lint one commit message, pull request body or comment against the configured policy |
 | `cargo mock query` | Query the registry |
 | `cargo mock bench` | Run the bench harness |
-| `cargo mock test` | Run the tests of every tree mockspace owns, not only the workspace members |
+| `cargo mock test` | Run the tests of every tree mockspace owns, the members only where something they depend on changed (`[test]` below) |
 | `cargo mock panel` | Mint or consolidate a panel seat, or report a panel's state |
 | `cargo mock pdf` | Render the design documents to PDF |
 | `cargo mock clean` | Remove generated output |
@@ -255,6 +255,38 @@ when every crate carries its own `[workspace]`. A non-spike root whose package g
 cannot be read at all is the one case that still blocks rather than skips, since a
 broken manifest says nothing about whether it is clean. Set `deny_check = false` to
 opt out.
+
+### Tests: `[test]`
+
+`cargo mock test` runs the workspace members under cargo-nextest where it is installed,
+and selects which to run rather than running them all:
+
+- **A member runs when its fingerprint moved since its suite last passed.** The
+  fingerprint is its own files (what git tracks or would track under its directory,
+  shaders and fixtures kept there included), every path outside it that its sources
+  name as a `../` string literal (an `include_str!` of a content file, a directory joined
+  to `CARGO_MANIFEST_DIR`), the same for every member compiled into its tests, and the
+  workspace's lockfile, manifest, toolchain pin and cargo and nextest configuration. A
+  change reaches the member it is in and everything depending on it, and nothing else.
+- **A test is heavy when its last run took `heavy_after_secs` or more.** Heavy tests run
+  `heavy_threads` at a time in nextest's `@tool:mockspace:heavy` group, and a heavy test
+  that passed at its member's current fingerprint is skipped as cached.
+- **Every test is killed after `timeout_secs`**, and each run ends with its slowest tests.
+
+`--full` runs every member asked for, `--no-cache` runs the cached heavy tests too, and
+`--cheap` defers every heavy test that has passed before (a new one, or one that failed
+last time, still runs). `--full --no-cache` is the whole suite, for the end of a piece of
+work and after merging the trunk; `--plain` is `cargo test` as before. The record lives
+under `<mock>/target/mockspace-test-state/`, kept per set of other arguments, so a
+`--features` run keeps its own, and a `cargo clean` or a fresh clone runs everything once.
+
+```toml
+[test]
+heavy_after_secs = 10    # a test this slow or slower is heavy
+heavy_threads = 1        # how many heavy tests run at once
+timeout_secs = 900       # a test still running after this long fails
+on_commit = "off"        # "cheap" or "changed" runs `mock test` before a commit is linted
+```
 
 ### Lints
 

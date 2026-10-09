@@ -267,6 +267,7 @@ pub(crate) const ROOT_KEYS: &[&str] = &[
     "primitive-introductions",
     "canon_paths",
     "panel_consolidate_every",
+    "test",
     "registry",
     "deep_dive_index",
     "ref",

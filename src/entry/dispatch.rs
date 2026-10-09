@@ -824,6 +824,22 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+
+        // The tests a commit runs, where `[test] on_commit` asks for any: the
+        // members the staged change reaches, chosen as `mock test` chooses them.
+        // A commit that changes nothing a suite depends on runs nothing.
+        if mode == LintMode::Commit
+            && let Some(test_args) = cfg.test.on_commit.args()
+        {
+            eprintln!("--- mock test {} ---", test_args.join(" "));
+            if super::test::run(&cfg, test_args) != ExitCode::SUCCESS {
+                eprintln!(
+                    "BLOCKED: the tests failed. `cargo mock test` reruns what failed; \
+                     `[test] on_commit` in mockspace.toml sets what a commit runs."
+                );
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
     eprintln!("--- parsing crates ---");
