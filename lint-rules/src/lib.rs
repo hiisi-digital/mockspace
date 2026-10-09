@@ -1464,6 +1464,17 @@ pub struct MessageContext<'a> {
     /// The invocation that triggered this run, when there was one and the lint
     /// asked for it via [`Lint::invocation_wanted`].
     pub invocation: Option<Invocation<'a>>,
+    /// Who authored the commit, as git writes an identity: `Name <mailbox>`,
+    /// with no date. `None` when there is no commit to name, which is every
+    /// message that did not come from one (a forge body has no author), and also
+    /// a commit the gate could not read an identity for; a lint cannot tell the
+    /// two apart and judges neither.
+    pub author:     Option<&'a str>,
+    /// Who committed it, under the same terms as [`MessageContext::author`].
+    /// Usually the same identity; differs after a rebase, a cherry-pick or an
+    /// amend by another person, and is the forge itself on a merge made in its
+    /// web interface.
+    pub committer:  Option<&'a str>,
 }
 
 /// The command or tool call that triggered a lint run.
@@ -2387,6 +2398,8 @@ mod pack_configuration_tests {
             origin:     "<test>",
             repo_root:  Path::new("/tmp"),
             invocation: None,
+            author:     None,
+            committer:  None,
         }
     }
 

@@ -46,6 +46,8 @@ pub(crate) use durable::*;
 #[cfg(test)]
 mod gitignore_tests;
 #[cfg(test)]
+mod hooks_identity_tests;
+#[cfg(test)]
 mod lint_crates_tests;
 
 /// Marker in generated hooks for identification and versioning.

@@ -128,7 +128,11 @@ const COMMANDS: &[Cmd] = &[
                   the error this prints when it is missing or wrong). --file \
                   <path> reads the message from a file; with no --file it reads \
                   the message from stdin, which is how a hook passes text it \
-                  extracted from a command.",
+                  extracted from a command. --author and --committer each take \
+                  an identity as git writes it, `Name <mailbox>`, and hand it to \
+                  the lints as who the commit is by; the commit-msg hook reads \
+                  both from `git var`. With --batch every record may carry its \
+                  own pair, which is how the pre-push hook sends them.",
     },
     Cmd {
         name:    "query",

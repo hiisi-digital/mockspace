@@ -69,7 +69,12 @@ pub(crate) fn gen_hook(name: &str, mock_rel: &str, user_hook: &Path) -> String {
     }
 }
 
-/// The commit-msg body: hand the message to the configured message lints.
+/// The commit-msg body: hand the message, and who the commit is by, to the
+/// configured message lints.
+///
+/// The author and committer are read from `git var` and passed as `--author`
+/// and `--committer`, so a policy about agent bylines reaches an agent identity
+/// as well, which a message alone never shows.
 ///
 /// Replaces a hardcoded `grep -E` that was baked into two hook layers under a
 /// comment conceding the copies "MUST stay in sync". They could not, and the
@@ -103,7 +108,21 @@ if [ -z "$launcher" ]; then
     exit 1
 fi
 
-"$launcher" check-message --domain commit-message --gate commit --file "$MSG_FILE" || exit 1
+# Who this commit is by, as git will write it into the object. Asked of git and
+# not of the config, because `--author` and the `GIT_AUTHOR_*` and
+# `GIT_COMMITTER_*` variables move it and the config does not know. When git
+# cannot name one the flag is left off, so the message half of the gate still
+# runs, and the lints see the identity as absent.
+ident_args=()
+if author_ident="$(git var GIT_AUTHOR_IDENT 2>/dev/null)" && [ -n "$author_ident" ]; then
+    ident_args+=(--author "$author_ident")
+fi
+if committer_ident="$(git var GIT_COMMITTER_IDENT 2>/dev/null)" && [ -n "$committer_ident" ]; then
+    ident_args+=(--committer "$committer_ident")
+fi
+
+"$launcher" check-message --domain commit-message --gate commit --file "$MSG_FILE" \
+    "${ident_args[@]}" || exit 1
 "##
     .to_string()
 }
@@ -113,7 +132,9 @@ fi
 ///
 /// Every message being pushed goes through the same configured lints the
 /// commit-msg gate uses, at the push tier, so a project can warn locally and
-/// block before anything is shared.
+/// block before anything is shared. Each carries its commit's author and
+/// committer with it, so the identity is judged at the push as it is at the
+/// commit.
 ///
 /// Each message is validated on its own. `check-message` parses its input as
 /// one message with a subject line, so a batch of them cannot be concatenated
@@ -180,11 +201,17 @@ if [ -n "$PUSH_REVS" ]; then
     # label before an 0x1f so a rejection names the commit it came from. The
     # framing is exactly what `--batch` parses.
     #
+    # The label is preceded by the commit's author and committer, as the
+    # commit object holds them, each closed by an 0x1e. That is what the lints
+    # judge a commit's identity by, and it is read per commit here because the
+    # identities of a range differ from commit to commit and a push is exactly
+    # where a commit made under a container's default identity turns up.
+    #
     # `--no-walk=unsorted` keeps the order the revs were fed in; plain
     # `--no-walk` would re-sort by commit date.
     set -o pipefail
     printf '%s\n' "$PUSH_REVS" \
-        | git log --no-walk=unsorted --stdin -z --format='%h %s%x1f%B' \
+        | git log --no-walk=unsorted --stdin -z --format='%an <%ae>%x1e%cn <%ce>%x1e%h %s%x1f%B' \
         | "$launcher" check-message --domain commit-message --gate push --batch || exit 1
     set +o pipefail
 fi

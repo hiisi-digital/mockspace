@@ -402,6 +402,17 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                 let command = arg_value(&args, "--command");
                 let tool = arg_value(&args, "--tool");
 
+                // Who made the commit, when the caller knows. The commit-msg hook
+                // reads both from `git var` and passes them here; a `--batch`
+                // stream carries its own per record, so these flags are the
+                // single-message path's only.
+                let author = arg_value(&args, "--author")
+                    .as_deref()
+                    .and_then(message::clean_ident);
+                let committer = arg_value(&args, "--committer")
+                    .as_deref()
+                    .and_then(message::clean_ident);
+
                 // `--batch`: stdin carries many messages, NUL-separated, each
                 // optionally prefixed with `<origin>\x1f`. One process handles
                 // all of them because startup dominates the work: measured at
@@ -417,14 +428,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     let mut failed = 0usize;
                     let mut checked = 0usize;
 
-                    for (rec_origin, rec_msg) in message::split_batch(&text, &origin) {
+                    for rec in message::split_batch(&text, &origin) {
                         checked += 1;
                         let req = message::Request {
                             domain,
-                            message: rec_msg,
-                            origin: rec_origin,
+                            message: rec.message,
+                            origin: rec.origin,
                             command: command.as_deref(),
                             tool: tool.as_deref(),
+                            author: rec.author.as_deref(),
+                            committer: rec.committer.as_deref(),
                         };
                         if message::run(&cfg, pack, gate, &req) != ExitCode::SUCCESS {
                             failed += 1;
@@ -463,6 +476,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     origin,
                     command: command.as_deref(),
                     tool: tool.as_deref(),
+                    author: author.as_deref(),
+                    committer: committer.as_deref(),
                 };
                 return message::run(&cfg, pack, gate, &req);
             },
