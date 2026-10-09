@@ -103,17 +103,22 @@ ATTRIBUTION_TRAILER_KEY_RE='([A-Za-z]+-)*[A-Za-z]+-(by|session|agent|model|tool)
 # called that. It is an agent when a companion word is anywhere after it (`Claude
 # Code Action`, `Claude Agent SDK`, `Claude Code on the web`), when nothing but
 # versions follow it (`Claude 3.5`), or when nothing follows it and either a
-# vendor word stands in front (`Google Gemini`) or the mailbox is the tool's: its
-# local part is the tool's word (the login after `NNN+` for a
-# `users.noreply.github.com` mailbox), or its domain is one of the tool's vendor
-# domains in `ATTRIBUTION_AGENT_VENDORS`, matched whole. Any other word after it
-# is a word of somebody's name, so `Claude Monet`, `Claude Max` and `Claude Pro`
-# are people.
+# vendor word stands in front (`Google Gemini`) or the mailbox is the tool's. The
+# mailbox is the tool's when its domain is one of the tool's vendor domains in
+# `ATTRIBUTION_AGENT_VENDORS`, matched whole, or when its local part is the tool's
+# word at a mailbox that is a machine's: a domain that is `localhost`, one label
+# with no dot, or one ending in `.local`, `.localdomain`, `.lan`, `.internal` or
+# `.home.arpa`, or a `users.noreply.github.com` mailbox whose login after `NNN+` is
+# the tool's word. The same local part at any other domain is a person called
+# that, `Devin <devin@acme.com>`, and so is the login without its number. Any
+# other word after the name is a word of somebody's name, so `Claude Monet`,
+# `Claude Max` and `Claude Pro` are people.
 #
 # What the default lets through is a bare given name behind a mailbox that is
-# neither the tool's nor on the list, `claude <root@buildhost.local>` being the
-# one found. A caller that knows its own build hosts passes the names, and only
-# a name it passes is read that way.
+# neither the tool's nor on the list: `claude <root@buildhost.local>`, which was
+# found, and a person's own `Devin <devin@acme.com>`, which has to stay a person.
+# A caller that knows its own build hosts passes the names, and only a name it
+# passes is read that way.
 #
 # Each set is a pipe-delimited string, so a membership test is one pattern match
 # and the function adds no process to the hook that calls it: it keeps its words
@@ -192,8 +197,8 @@ attribution_selfcheck() {
         log_error "attribution: the identity net does not recognise a tag"; return 1; }
     attribution_names_agent 'Claude <a@anthropic.com>' || {
         log_error "attribution: the identity net does not recognise a given name at its vendor"; return 1; }
-    attribution_names_agent 'Claude <claude@b.c>' || {
-        log_error "attribution: the identity net does not recognise a given name by its local part"; return 1; }
+    attribution_names_agent 'Claude <claude@localhost>' || {
+        log_error "attribution: the identity net does not recognise a given name by its local part at a machine"; return 1; }
     attribution_names_agent 'Claude <a@b.c>' 'Claude' || {
         log_error "attribution: the identity net does not recognise a name the caller passes"; return 1; }
     attribution_has_advert 'see https://claude.ai/code' || {
@@ -210,6 +215,10 @@ attribution_selfcheck() {
     fi
     if attribution_names_agent 'Claude <a@b.c>'; then
         log_error "attribution: the identity net reads a given name with no second signal as an agent"
+        return 1
+    fi
+    if attribution_names_agent 'Claude <claude@example.org>'; then
+        log_error "attribution: the identity net reads a person called Claude at an ordinary domain as an agent"
         return 1
     fi
     if attribution_names_agent 'Jane Doe (OpenAI)'; then
@@ -340,15 +349,28 @@ attribution_names_agent() {
     mailbox="${mailbox,,}"
 
     # Who the mailbox is, for a tool that is also a given name: the local part,
-    # which is the login after `NNN+` at GitHub's noreply domain, and the domain.
+    # the domain, and whether it is a machine's. A machine's is a domain that is
+    # `localhost`, one label with no dot, or one ending in a name only a private
+    # network uses, and the GitHub noreply form, whose local part is then the
+    # login after `NNN+`. A person is called the same thing at an ordinary domain,
+    # so the local part is a signal at a machine's mailbox and nowhere else.
     _ATTRIBUTION_LOCAL=""
     _ATTRIBUTION_DOMAIN=""
+    _ATTRIBUTION_MACHINE=0
     if [[ "$mailbox" == *@* ]]; then
         _ATTRIBUTION_LOCAL="${mailbox%@*}"
         _ATTRIBUTION_DOMAIN="${mailbox##*@}"
-        if [[ "$_ATTRIBUTION_DOMAIN" == users.noreply.github.com ]] \
-            && [[ "$_ATTRIBUTION_LOCAL" =~ ^[0-9]+\+(.+)$ ]]; then
-            _ATTRIBUTION_LOCAL="${BASH_REMATCH[1]}"
+        if [[ "$_ATTRIBUTION_DOMAIN" == users.noreply.github.com ]]; then
+            if [[ "$_ATTRIBUTION_LOCAL" =~ ^[0-9]+\+(.+)$ ]]; then
+                _ATTRIBUTION_LOCAL="${BASH_REMATCH[1]}"
+                _ATTRIBUTION_MACHINE=1
+            fi
+        elif [[ -n "$_ATTRIBUTION_DOMAIN" ]]; then
+            case "$_ATTRIBUTION_DOMAIN" in
+                *.local | *.localdomain | *.lan | *.internal | *.home.arpa) _ATTRIBUTION_MACHINE=1 ;;
+                *.*) ;;
+                *) _ATTRIBUTION_MACHINE=1 ;;
+            esac
         fi
     fi
 
@@ -496,14 +518,15 @@ _attribution_is_a_version() {
 # _attribution_mailbox_is_the_tools <tool>
 #
 # Whether the mailbox of the identity being judged is the given-name tool's: its
-# local part is the tool's word, or its domain is one of the tool's vendor domains,
-# matched whole. Reads `_ATTRIBUTION_LOCAL` and `_ATTRIBUTION_DOMAIN`, which
-# `attribution_names_agent` sets, and a mailbox with no domain is nobody's.
+# domain is one of the tool's vendor domains, matched whole, or its local part is
+# the tool's word at a mailbox that is a machine's. Reads `_ATTRIBUTION_LOCAL`,
+# `_ATTRIBUTION_DOMAIN` and `_ATTRIBUTION_MACHINE`, which `attribution_names_agent`
+# sets, and a mailbox with no domain is nobody's.
 _attribution_mailbox_is_the_tools() {
     local tool="$1" entry
     local -a entries
     [[ -n "$_ATTRIBUTION_DOMAIN" ]] || return 1
-    [[ "$_ATTRIBUTION_LOCAL" == "$tool" ]] && return 0
+    [[ "$_ATTRIBUTION_MACHINE" == 1 && "$_ATTRIBUTION_LOCAL" == "$tool" ]] && return 0
     IFS='|' read -ra entries <<< "$ATTRIBUTION_AGENT_VENDORS"
     for entry in ${entries[@]+"${entries[@]}"}; do
         [[ "$entry" == "$tool "* && "$_ATTRIBUTION_DOMAIN" == "${entry#* }" ]] && return 0

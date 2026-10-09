@@ -240,23 +240,47 @@ it_asks_a_second_signal_of_each_tool_that_is_also_a_given_name() {
 
 #[test]
 it_reads_a_given_name_behind_a_mailbox_that_is_the_tools() {
-    local g v tool domain
+    local g v tool domain d
     for g in "${T_given[@]}"; do
-        # the local part is the tool's word, whole, and at GitHub's noreply
-        # domain it is the login after the number
-        assert_ok attribution_names_agent "$g <$g@example.com>"
-        assert_ok attribution_names_agent "${g^^} <${g^^}@EXAMPLE.COM>"
+        # the local part is the tool's word, whole, at a mailbox that is a
+        # machine's: localhost, a domain of one label, a name only a private
+        # network uses, or GitHub's noreply form with the login after the number
         assert_ok attribution_names_agent "$g <$g@localhost>"
+        assert_ok attribution_names_agent "$g <$g@buildbox>"
+        assert_ok attribution_names_agent "${g^^} <${g^^}@BUILDBOX>"
+        for d in local localdomain lan internal home.arpa; do
+            assert_ok attribution_names_agent "$g <$g@ci.$d>"
+            assert_ok attribution_names_agent "${g^^} <${g^^}@CI.${d^^}>"
+        done
         assert_ok attribution_names_agent "$g <12345+$g@users.noreply.github.com>"
-        assert_ok attribution_names_agent "$g <$g@users.noreply.github.com>"
+        assert_ok attribution_names_agent "${g^^} <12345+${g^^}@USERS.NOREPLY.GITHUB.COM>"
+        # the same local part at an ordinary domain is a person called that
+        assert_fails attribution_names_agent "$g <$g@example.com>"
+        assert_fails attribution_names_agent "$g <$g@acme.com>"
+        assert_fails attribution_names_agent "$g <$g@gmail.com>"
+        assert_fails attribution_names_agent "${g^^} <${g^^}@EXAMPLE.COM>"
+        # and so is the login without its number, and the number off GitHub
+        assert_fails attribution_names_agent "$g <$g@users.noreply.github.com>"
         assert_fails attribution_names_agent "$g <12345+$g@example.com>"
-        assert_fails attribution_names_agent "$g <x$g@example.com>"
-        assert_fails attribution_names_agent "$g <$g.x@example.com>"
+        assert_fails attribution_names_agent "$g <12345+$g@ci.local>"
+        # a name only a private network uses has to end the domain
+        assert_fails attribution_names_agent "$g <$g@ci.local.example.com>"
+        assert_fails attribution_names_agent "$g <$g@local.example.com>"
+        assert_fails attribution_names_agent "$g <$g@lan.example.com>"
+        assert_fails attribution_names_agent "$g <$g@x.home.arpa.example>"
+        # the local part is the tool's word whole
+        assert_fails attribution_names_agent "$g <x$g@localhost>"
+        assert_fails attribution_names_agent "$g <$g.x@localhost>"
+        assert_fails attribution_names_agent "$g <x$g@ci.local>"
+        assert_fails attribution_names_agent "$g <12345+x$g@users.noreply.github.com>"
         # the mailbox is the whole of the signal, so it needs the whole of the name
-        assert_fails attribution_names_agent "$g Monet <$g@example.com>"
-        # a bare mailbox has no name, and a name with no mailbox has no domain
-        assert_fails attribution_names_agent "$g@example.com"
+        assert_fails attribution_names_agent "$g Monet <$g@localhost>"
+        assert_fails attribution_names_agent "$g Monet <$g@ci.local>"
+        # a bare mailbox has no name, a name with no mailbox has no domain, and a
+        # mailbox with no domain is nobody's
+        assert_fails attribution_names_agent "$g@localhost"
         assert_fails attribution_names_agent "$g"
+        assert_fails attribution_names_agent "$g <$g@>"
     done
     # a vendor's domain, matched whole, and only the vendor of that tool
     for v in "${T_vendor[@]}"; do
@@ -445,6 +469,10 @@ it_keeps_nothing_of_one_identity_for_the_next() {
     # The mailbox is read into globals, and an identity with no mailbox must not
     # be judged on the last one's. These are direct calls, in this shell, so a
     # leak would reach the assertions after them.
+    attribution_names_agent 'Claude <claude@localhost>'
+    assert_fails attribution_names_agent 'Claude <claude@example.org>'
+    attribution_names_agent 'Claude <12345+claude@users.noreply.github.com>'
+    assert_fails attribution_names_agent 'Claude <claude@example.org>'
     attribution_names_agent 'Claude <claude@anthropic.com>'
     assert_fails attribution_names_agent 'Claude'
     assert_fails attribution_names_agent 'Claude <c.dupont@example.com>'

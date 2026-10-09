@@ -39,12 +39,17 @@
 #              `companion` word is anywhere after it (`Claude Code Action`), when
 #              nothing but versions follow it (`Claude 3.5`), or when nothing
 #              follows it and either a `head` word stands in front (`Google
-#              Gemini`) or the mailbox is the tool's: its local part is the tool's
-#              word, the login after `NNN+` for a `users.noreply.github.com`
-#              mailbox, or its domain is one of the tool's `vendor` domains,
-#              matched whole. Any other word after it is a word of somebody's
-#              name (`Claude Monet`, `Claude Max`). A version is a word opening
-#              with a digit, or `v` and digits;
+#              Gemini`) or the mailbox is the tool's. The mailbox is the tool's
+#              when its domain is one of the tool's `vendor` domains, matched
+#              whole, or when its local part is the tool's word at a mailbox that
+#              is a machine's: a domain that is `localhost`, one label with no
+#              dot, or one ending in `.local`, `.localdomain`, `.lan`, `.internal`
+#              or `.home.arpa`, or a `users.noreply.github.com` mailbox whose
+#              login after `NNN+` is the tool's word. The same local part at any
+#              other domain is a person called that (`Devin <devin@acme.com>`),
+#              and so is the login without its number. Any other word after the
+#              name is a word of somebody's name (`Claude Monet`, `Claude Max`). A
+#              version is a word opening with a digit, or `v` and digits;
 #   vendor     a given-name tool and a domain it commits from;
 #   head       a vendor word allowed in front of a tool's name;
 #   companion  a word that rides along with a tool: a model, a product, a surface.
@@ -236,6 +241,10 @@ person	Claude <c.dupont@example.com>
 person	Claude <c.dupont@notanthropic.com>
 person	Claude <c.dupont@mail.anthropic.com>
 person	Claude <12345+claude@example.com>
+person	Claude <claude@example.org>
+person	Claude <claude@users.noreply.github.com>
+person	Devin <devin@acme.com>
+person	Cody <cody@gmail.com>
 person	Claude Monet <claude@anthropic.com>
 person	Smith Copilot <smith@example.com>
 person	Devin <d.patel@patel.example>
@@ -250,6 +259,8 @@ person	Junie <j.virtanen@example.com>
 # --- agents: always an agent -------------------------------------------------
 agent	Claude <noreply@anthropic.com>
 agent	Claude <claude@localhost>
+agent	claude <claude@buildbox>
+agent	Claude <claude@ci.local>
 agent	Claude <12345+claude@users.noreply.github.com>
 agent	Claude <claude@anthropic.com>
 agent	Claude Code <noreply@anthropic.com>
