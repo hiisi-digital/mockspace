@@ -461,7 +461,7 @@ autonomous = ""
 
 Glob patterns use bash `[[ == ]]` matching semantics: `*`, `?`, `[...]`. Patterns without wildcards are literal equality. Mockspace has no hardcoded defaults for agent names, emails, or byline formats; consumers configure what their workflow expects. Every value in `config.toml` applies equally to every supported agent platform.
 
-The `commit-msg` and `pre-push` hooks hand a pack's message lints the commit's author and committer as well as its message, read from `git var` at the commit and from each pushed commit at the push. A lint that judges bylines can then judge an agent identity under the same pattern, so a mode that permits no byline permits no agent author or committer either. A pull request body has neither and is handed none.
+The `commit-msg` and `pre-push` hooks hand a pack's message lints the commit's author and committer as well as its message, read from `git var` at the commit and from each pushed commit at the push. A lint that judges bylines can then judge an agent identity under the same pattern, so a mode that permits no byline permits no agent author or committer either. When git cannot name either, the `commit-msg` hook blocks with the reason, and the engine refuses a pushed record whose header does not parse, so neither half of the gate falls open alone. A pull request body has neither and is handed none. How a lint pack recognises an agent is its own; `lint-rules/data/agent_identity_conformance.tsv` is the table of people and agents that the shell recogniser in `lib/attribution.sh` and a pack holds itself to.
 
 ## What mockspace does not do
 

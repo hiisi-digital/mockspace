@@ -57,11 +57,6 @@ round's current phase, the registry query, the tool listing.
 **Runners** drive something else: the test trees, the bench harness, the
 document rendering.
 
-**Message linting** checks one commit message or forge body against the
-configured attribution and style policy. For a commit it also hands the lints who
-authored and committed it, at the commit and at the push, so a policy that
-refuses an agent byline refuses an agent identity under the same mode.
-
 ## Two things that are easy to get wrong
 
 **A subcommand that is not in `mock tools` does not exist**, whatever a document
