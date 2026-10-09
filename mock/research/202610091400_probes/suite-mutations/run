@@ -53,6 +53,10 @@ mutate src/suite/history.rs 's/            if c.outcome == Outcome::Skipped \{\n
     "a skipped case overwrites the timing"
 mutate src/suite/nextest.rs 's/Some\(0\) \| Some\(100\)/Some(0) | Some(100) | Some(101)/' \
     "a build failure counts as ran to the end"
+mutate src/suite/graph.rs 's/if !members.contains\(id\) && !p\["source"\].is_null\(\) \{/if !members.contains(id) {/' \
+    "a vendored path package is passed over"
+mutate src/suite/fingerprint.rs 's/let skip = name == "target" \|\| /let skip = /' \
+    "build output outside the repository is an input"
 mutate src/suite/args.rs 's/            \|\| !self.test_args.is_empty\(\)\n//' \
     "a test filter does not narrow"
 

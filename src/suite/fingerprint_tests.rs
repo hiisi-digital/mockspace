@@ -70,11 +70,23 @@ impl Repo {
         r.write("content/kaski/rows.toml", "a = 1\n");
         r.write("content/kaski/interface/theme.toml", "dark = true\n");
         r.write("content/kaski/unused.toml", "nobody = \"reads this\"\n");
+        r.write("mock/vendor/lim/Cargo.toml", "[package]\nname = \"lim\"\n");
+        r.write("mock/vendor/lim/src/lib.rs", "pub fn bind() {}\n");
+        let ext = r.outside().join("ext");
+        std::fs::create_dir_all(ext.join("src")).unwrap();
+        std::fs::write(ext.join("src/lib.rs"), "pub fn e() {}\n").unwrap();
+        std::fs::create_dir_all(ext.join("target")).unwrap();
+        std::fs::write(ext.join("target/out"), "build output\n").unwrap();
         r.write(".gitignore", "target/\n*.log\n");
         r.git(&["init", "-q"]);
         r.git(&["add", "-A"]);
         r.git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"]);
         r
+    }
+
+    /// A directory beside the repository, for a path dependency outside it.
+    fn outside(&self) -> PathBuf {
+        self.root.with_extension("outside")
     }
 
     fn write(&self, rel: &str, text: &str) {
@@ -102,18 +114,28 @@ impl Repo {
 
     fn graph(&self) -> Graph {
         let pkg = |name: &str, deps: &[(&str, DepKind)]| {
+            let dir = match name {
+                "lim" => self.root.join("mock/vendor/lim"),
+                "ext" => self.outside().join("ext"),
+                _ => self.root.join("mock/crates").join(name),
+            };
             Package {
                 name: name.to_string(),
-                dir:  self.root.join("mock/crates").join(name),
+                dir,
                 deps: deps.iter().map(|(d, k)| (d.to_string(), *k)).collect(),
             }
         };
         let mut g = Graph::default();
         for p in [
             pkg("mesh", &[]),
-            pkg("render", &[("mesh", DepKind::Normal)]),
+            pkg("render", &[
+                ("mesh", DepKind::Normal),
+                ("lim", DepKind::Normal),
+            ]),
             pkg("web", &[("render", DepKind::Normal)]),
-            pkg("tool", &[]),
+            pkg("tool", &[("ext", DepKind::Normal)]),
+            pkg("lim", &[]),
+            pkg("ext", &[]),
         ] {
             g.packages.insert(p.name.clone(), p);
         }
@@ -129,6 +151,7 @@ impl Repo {
 impl Drop for Repo {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.root).ok();
+        std::fs::remove_dir_all(self.outside()).ok();
     }
 }
 
@@ -213,13 +236,34 @@ fn what_no_member_reads_moves_nothing() {
 }
 
 #[test]
-fn the_lockfile_moves_every_member() {
+fn the_lockfile_moves_every_package() {
     let r = Repo::new("lock");
     let before = r.fp();
     r.append("mock/Cargo.lock", "# bumped\n");
     assert_eq!(moved(&before, &r.fp()), vec![
-        "mesh", "render", "tool", "web"
+        "ext", "lim", "mesh", "render", "tool", "web"
     ]);
+}
+
+/// A vendored crate is no member, and reaches what depends on it all the same.
+#[test]
+fn a_vendored_path_dependency_moves_its_dependents() {
+    let r = Repo::new("vendor");
+    let before = r.fp();
+    r.append("mock/vendor/lim/src/lib.rs", "pub fn unbind() {}\n");
+    assert_eq!(moved(&before, &r.fp()), vec!["lim", "render", "web"]);
+}
+
+/// A path dependency outside the repository is read off the disk, and its
+/// build output is not an input.
+#[test]
+fn a_path_dependency_outside_the_repository_is_read_off_the_disk() {
+    let r = Repo::new("outside");
+    let before = r.fp();
+    std::fs::write(r.outside().join("ext/target/out"), "rebuilt\n").unwrap();
+    assert_eq!(moved(&before, &r.fp()), Vec::<String>::new());
+    std::fs::write(r.outside().join("ext/src/lib.rs"), "pub fn e2() {}\n").unwrap();
+    assert_eq!(moved(&before, &r.fp()), vec!["ext", "tool"]);
 }
 
 #[test]

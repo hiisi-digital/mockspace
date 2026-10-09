@@ -77,11 +77,18 @@ pub fn compute(repo_root: &Path, mock_dir: &Path, graph: &Graph) -> Result<Finge
     let mut fp = Fingerprints::default();
     for (name, pkg) in &graph.packages {
         let Ok(dir) = pkg.dir.strip_prefix(repo_root) else {
-            return Err(format!(
-                "{name} is at {}, outside the repository at {}",
-                pkg.dir.display(),
-                repo_root.display()
-            ));
+            // A path dependency outside the repository: git cannot list it,
+            // so its files are read off the disk, build output aside, and
+            // its own literals are not followed.
+            let mut h = Sha256::new();
+            for f in walk_outside(&pkg.dir) {
+                h.update(f.to_string_lossy().as_bytes());
+                h.update([0]);
+                h.update(hashes.of_absolute(&f));
+            }
+            fp.own.insert(name.clone(), hex(&h.finalize()));
+            fp.reaches.insert(name.clone(), Vec::new());
+            continue;
         };
         let own_files = under(&files, dir);
 
@@ -172,6 +179,30 @@ fn tracked_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
     files.sort();
     files.dedup();
     Ok(files)
+}
+
+/// Every file under a directory outside the repository, skipping `target`
+/// and hidden directories, sorted.
+fn walk_outside(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = e.file_name();
+            let skip = name == "target" || name.to_string_lossy().starts_with('.');
+            match e.file_type() {
+                Ok(t) if t.is_dir() && !skip => stack.push(p),
+                Ok(t) if t.is_file() => out.push(p),
+                _ => {},
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// The files at or under `dir`, from a sorted list.

@@ -60,11 +60,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
             return Some(ExitCode::FAILURE);
         },
     };
-    for p in inv
-        .packages
-        .iter()
-        .filter(|p| !graph.packages.contains_key(*p))
-    {
+    for p in inv.packages.iter().filter(|p| !graph.members.contains(*p)) {
         eprintln!("note: `{p}` is not a member of this workspace, so it is not run");
     }
     let candidates = candidates(&graph, inv);
@@ -167,11 +163,11 @@ fn candidates(graph: &graph::Graph, inv: &Invocation) -> Vec<String> {
     let mut out: Vec<String> = if !inv.packages.is_empty() {
         inv.packages
             .iter()
-            .filter(|p| graph.packages.contains_key(*p))
+            .filter(|p| graph.members.contains(*p))
             .cloned()
             .collect()
     } else if inv.workspace {
-        graph.packages.keys().cloned().collect()
+        graph.members.clone()
     } else {
         graph.default_members.clone()
     };

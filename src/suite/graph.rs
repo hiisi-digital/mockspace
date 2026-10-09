@@ -12,7 +12,8 @@
 //! `--no-deps`, a first run in a fresh tree recorded its passes against a
 //! lockfile that did not exist yet, and the next run found every member moved.
 //!
-//! Only path dependencies onto other members are edges here; a registry
+//! Only path dependencies onto local packages are edges here: the members,
+//! and anything reached by a path, a vendored crate for one. A registry or git
 //! crate's sources are pinned by `Cargo.lock`, which every fingerprint already
 //! covers whole.
 
@@ -34,13 +35,19 @@ pub struct Package {
     pub name: String,
     /// The directory holding its manifest.
     pub dir:  PathBuf,
-    /// Its dependencies that are members of this workspace.
+    /// Its dependencies that are local packages: members of this workspace,
+    /// or path dependencies outside it, such as a vendored crate.
     pub deps: Vec<(String, DepKind)>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Graph {
+    /// Every local package: the members, and every package reached by a path
+    /// rather than from a registry or a git source, since a change to a
+    /// vendored crate reaches its dependents exactly as a member's does.
     pub packages:        BTreeMap<String, Package>,
+    /// The workspace members, the only packages a run is ever asked about.
+    pub members:         Vec<String>,
     /// What a bare `cargo test` in the workspace root reaches.
     pub default_members: Vec<String>,
 }
@@ -60,8 +67,9 @@ impl Graph {
         Graph::from_metadata(&String::from_utf8_lossy(&out.stdout))
     }
 
-    /// The graph out of `cargo metadata --format-version 1`. Every package
-    /// that is not a workspace member is passed over.
+    /// The graph out of `cargo metadata --format-version 1`. A package from a
+    /// registry or a git source is passed over: its sources are pinned by the
+    /// lockfile.
     pub fn from_metadata(json: &str) -> Result<Graph, String> {
         let v: serde_json::Value =
             serde_json::from_str(json).map_err(|e| format!("cargo metadata is not json: {e}"))?;
@@ -74,9 +82,9 @@ impl Graph {
             .filter_map(|m| m.as_str())
             .collect();
 
-        // A member is matched to a dependency by directory rather than by name,
-        // since a dependency may be renamed and a registry crate may share a
-        // member's name.
+        // A local package is matched to a dependency by directory rather than
+        // by name, since a dependency may be renamed and a registry crate may
+        // share a member's name.
         let mut by_dir: BTreeMap<PathBuf, String> = BTreeMap::new();
         let mut id_to_name: BTreeMap<&str, String> = BTreeMap::new();
         for p in packages {
@@ -87,7 +95,7 @@ impl Graph {
             ) else {
                 continue;
             };
-            if !members.contains(id) {
+            if !members.contains(id) && !p["source"].is_null() {
                 continue;
             }
             let dir = Path::new(manifest)
@@ -112,13 +120,13 @@ impl Graph {
                 .unwrap_or(&empty)
                 .iter()
                 .filter_map(|d| {
-                    let member = by_dir.get(Path::new(d["path"].as_str()?))?;
+                    let local = by_dir.get(Path::new(d["path"].as_str()?))?;
                     let kind = match d["kind"].as_str() {
                         Some("dev") => DepKind::Dev,
                         Some("build") => DepKind::Build,
                         _ => DepKind::Normal,
                     };
-                    Some((member.clone(), kind))
+                    Some((local.clone(), kind))
                 })
                 .collect();
             deps.sort();
@@ -130,6 +138,12 @@ impl Graph {
             });
         }
 
+        graph.members = members
+            .iter()
+            .filter_map(|id| id_to_name.get(id).cloned())
+            .collect();
+        graph.members.sort();
+
         // Older cargo omits the default members; the workspace members are
         // then what a bare `cargo test` reaches, which is cargo's own fallback.
         graph.default_members = match v["workspace_default_members"].as_array() {
@@ -138,7 +152,7 @@ impl Graph {
                     .filter_map(|m| id_to_name.get(m.as_str()?).cloned())
                     .collect()
             },
-            None => graph.packages.keys().cloned().collect(),
+            None => graph.members.clone(),
         };
         graph.default_members.sort();
         Ok(graph)
@@ -179,15 +193,15 @@ impl Graph {
 mod tests {
     use super::*;
 
-    /// The shape `cargo metadata` prints, cut to the keys read here, with the
-    /// registry package `serde` among the packages as a resolve lists it.
-    /// `c` dev-depends on `a`, which normally depends on `b`; `b` dev-depends
-    /// on `c`, a cycle cargo accepts; `serde` is a registry dependency and
-    /// `d` a member nothing depends on.
+    /// The shape `cargo metadata` prints, cut to the keys read here. `c`
+    /// dev-depends on `a`, which normally depends on `b` and on `v`, a vendored
+    /// crate reached by path that is no member; `b` dev-depends on `c`, a cycle
+    /// cargo accepts; `serde` is a registry package and `d` a member nothing
+    /// depends on.
     fn fixture() -> String {
         let pkg = |id: &str, deps: &str| {
             format!(
-                r#"{{"id":"{id}","name":"{id}","manifest_path":"/w/{id}/Cargo.toml","dependencies":[{deps}]}}"#
+                r#"{{"id":"{id}","name":"{id}","source":null,"manifest_path":"/w/{id}/Cargo.toml","dependencies":[{deps}]}}"#
             )
         };
         let dep = |name: &str, kind: &str| {
@@ -196,44 +210,53 @@ mod tests {
         };
         let registry = r#"{"name":"serde","kind":null}"#;
         format!(
-            r#"{{"packages":[{},{},{},{},{}],"workspace_members":["a","b","c","d"],"workspace_default_members":["a","b","c"]}}"#,
-            pkg("a", &format!("{},{registry}", dep("b", ""))),
+            r#"{{"packages":[{},{},{},{},{},{}],"workspace_members":["a","b","c","d"],"workspace_default_members":["a","b","c"]}}"#,
+            pkg(
+                "a",
+                &format!("{},{},{registry}", dep("b", ""), dep("v", ""))
+            ),
             pkg("b", &dep("c", "dev")),
             pkg("c", &dep("a", "dev")),
             pkg("d", ""),
-            r#"{"id":"serde","name":"serde","manifest_path":"/registry/serde/Cargo.toml","dependencies":[]}"#,
+            pkg("v", ""),
+            r#"{"id":"serde","name":"serde","source":"registry+https://github.com/rust-lang/crates.io-index","manifest_path":"/registry/serde/Cargo.toml","dependencies":[]}"#,
         )
     }
 
     #[test]
-    fn only_path_dependencies_on_members_are_edges() {
+    fn only_path_dependencies_on_local_packages_are_edges() {
         let g = Graph::from_metadata(&fixture()).unwrap();
-        assert_eq!(g.packages["a"].deps, vec![(
-            "b".to_string(),
-            DepKind::Normal
-        )]);
+        assert_eq!(g.packages["a"].deps, vec![
+            ("b".to_string(), DepKind::Normal),
+            ("v".to_string(), DepKind::Normal),
+        ]);
         assert_eq!(g.packages["b"].deps, vec![("c".to_string(), DepKind::Dev)]);
         assert_eq!(g.packages["d"].deps, vec![]);
+        assert_eq!(g.members, vec!["a", "b", "c", "d"]);
         assert_eq!(g.default_members, vec!["a", "b", "c"]);
         assert!(
+            g.packages.contains_key("v"),
+            "a vendored path package is local"
+        );
+        assert!(
             !g.packages.contains_key("serde"),
-            "a registry package is not a member"
+            "a registry package is not"
         );
     }
 
-    /// `c`'s tests compile `a` (its dev-dependency) and `b` (what `a` needs),
-    /// and not `b`'s own dev-dependency, which would be `c` itself anyway.
+    /// `c`'s tests compile `a` (its dev-dependency) and what `a` needs, and not
+    /// `b`'s own dev-dependency, which would be `c` itself anyway.
     #[test]
     fn a_closure_takes_own_dev_deps_and_only_the_build_graph_beyond() {
         let g = Graph::from_metadata(&fixture()).unwrap();
         let c: Vec<_> = g.test_closure("c").into_iter().collect();
-        assert_eq!(c, vec!["a", "b"]);
-        // `a`'s tests reach `b`, and stop: `b`'s dev-dependency on `c` is
-        // compiled into `b`'s tests only.
+        assert_eq!(c, vec!["a", "b", "v"]);
+        // `a`'s tests reach `b` and `v`, and stop: `b`'s dev-dependency on `c`
+        // is compiled into `b`'s tests only.
         let a: Vec<_> = g.test_closure("a").into_iter().collect();
-        assert_eq!(a, vec!["b"]);
+        assert_eq!(a, vec!["b", "v"]);
         // `b`'s tests compile `c`, whose dev-dependency `a` is not compiled
-        // into them. Following every kind of edge here would add `a`.
+        // into them. Following every kind of edge here would add `a` and `v`.
         let b: Vec<_> = g.test_closure("b").into_iter().collect();
         assert_eq!(b, vec!["c"]);
         assert!(g.test_closure("d").is_empty());
