@@ -107,6 +107,22 @@ _is_this_repo() {{
     return 1
 }}
 
+# Merge control authors no message. `git merge --abort` and its siblings back
+# out of or step past an operation in progress, and the message lints fail
+# while a conflicted merge leaves markers in the tree, so taking them as a
+# message refused the one command that clears the markers and left an agent
+# unable to leave a merge it could not finish. Each form is cut out of the
+# command before the verb tests below look at it, which keeps a chain honest:
+# `git merge --abort && git commit -m x` still has its commit.
+#
+# `--continue` is not here on purpose. It concludes the operation with a
+# commit, and a commit opens an editor or takes `-m` or `-F`, so it can author
+# a message and stays linted. `--skip` on `revert` and `cherry-pick` and
+# `--show-current-patch` on `am` write nothing. The flag must end the word, so
+# `--abortx` is not control.
+_CONTROL_FORM='(^|[^[:alnum:]_-])git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(merge[[:space:]]+--(abort|quit)|revert[[:space:]]+--(abort|quit|skip)|cherry-pick[[:space:]]+--(abort|quit|skip)|am[[:space:]]+--(abort|quit|skip|show-current-patch))([[:space:]]|$|[)"'"'"';&|])'
+COMMAND_AUTHORING=$(printf '%s\n' "$COMMAND" | sed -E "s/$_CONTROL_FORM/\1 /g")
+
 _names_this_repo=0
 _names_other_repo=0
 _bare_git_message=0
@@ -114,7 +130,7 @@ if [ -n "$COMMAND" ]; then
     # A git message verb with no repository in front of it runs wherever the
     # shell is, so an explicit path elsewhere in the same command says nothing
     # about this one and the cwd is still the answer for it.
-    if echo "$COMMAND" | grep -qE '\bgit[[:space:]]+(commit|tag|notes|merge|revert|cherry-pick|am)\b'; then
+    if echo "$COMMAND_AUTHORING" | grep -qE '\bgit[[:space:]]+(commit|tag|notes|merge|revert|cherry-pick|am)\b'; then
         _bare_git_message=1
     fi
     for _p in $(printf '%s\n' "$COMMAND" \
@@ -215,7 +231,7 @@ if [ -z "$DOMAIN" ] && [ -n "$COMMAND" ]; then
        || echo "$COMMAND" | grep -qE "$_GLAB_WRITE" \
        || _forge_api_write; then
         DOMAIN="pull-request-body"
-    elif echo "$COMMAND" | grep -qE '\bgit[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(commit|tag|notes|merge|revert|cherry-pick|am)\b'; then
+    elif echo "$COMMAND_AUTHORING" | grep -qE '\bgit[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?(commit|tag|notes|merge|revert|cherry-pick|am)\b'; then
         DOMAIN="commit-message"
     fi
 fi
