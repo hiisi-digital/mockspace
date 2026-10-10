@@ -195,3 +195,102 @@ fn the_engine_runs_from_the_repository_when_the_shell_is_already_there() {
         Some(mine.canonicalize().unwrap().display().to_string().as_str())
     );
 }
+
+// Merge control that authors no message.
+//
+// A merge with conflicts leaves markers in the tree, and the configured
+// message lints fail while they are there. The gate took `git merge --abort`
+// as a message anyway, so the one command that clears the markers was refused
+// by the lints that the markers made fail, and an agent stuck mid-merge could
+// not back out. The arms below pair every control form that writes nothing
+// with the spellings of the same verbs that do write, so a gate that lets
+// control through by letting the verbs through fails the second set.
+
+const CONTROL: &[&str] = &[
+    "git merge --abort",
+    "git merge --quit",
+    "git revert --abort",
+    "git revert --quit",
+    "git revert --skip",
+    "git cherry-pick --abort",
+    "git cherry-pick --quit",
+    "git cherry-pick --skip",
+    "git am --abort",
+    "git am --quit",
+    "git am --skip",
+    "git am --show-current-patch",
+    "git merge --abort && git status",
+    "git merge --abort; git status",
+    "git status && git merge --abort",
+    "git merge --abort || git reset",
+    "bash -c \"git merge --abort\"",
+];
+
+/// Verbs spelled so that a message can be authored, or may be, among them the
+/// spellings that sit closest to a control form.
+const AUTHORING: &[&str] = &[
+    "git merge origin/dev",
+    "git merge -m 'fix: a title' origin/dev",
+    "git merge --no-ff origin/dev",
+    "git merge --continue",
+    "git revert HEAD",
+    "git revert --continue",
+    "git cherry-pick abc123",
+    "git cherry-pick --continue",
+    "git am patch.mbox",
+    "git am --continue",
+    "git commit -m 'fix: a title'",
+    "git merge --abort && git commit -m 'fix: a title'",
+    "git commit -m 'fix: a title' && git merge --abort",
+    "git revert --abort; git revert HEAD",
+    "git commit -m 'fix: undo git merge --abort'",
+    "git merge --abortx",
+];
+
+#[test]
+fn merge_control_that_authors_no_message_is_left_alone() {
+    let (mine, _) = two_repos("control");
+    let gate = gate_for(&mine);
+    for cmd in CONTROL {
+        let out = run(&mine, &gate, cmd);
+        assert!(left_alone(&out), "`{cmd}` was taken as a message: {out}");
+    }
+}
+
+#[test]
+fn merge_control_is_left_alone_under_the_dash_c_spelling_too() {
+    let (mine, _) = two_repos("controlc");
+    let gate = gate_for(&mine);
+    for cmd in CONTROL.iter().take(12) {
+        let spelled = cmd.replacen("git ", &format!("git -C {} ", mine.display()), 1);
+        let out = run(&mine, &gate, &spelled);
+        assert!(left_alone(&out), "`{spelled}` was taken as a message: {out}");
+    }
+}
+
+#[test]
+fn a_verb_that_can_author_a_message_still_goes_to_the_engine() {
+    let (mine, _) = two_repos("authoring");
+    let gate = gate_for(&mine);
+    for cmd in AUTHORING {
+        let out = run(&mine, &gate, cmd);
+        assert!(
+            engine_ran_in(&out).is_some(),
+            "`{cmd}` did not reach the engine: {out}"
+        );
+    }
+}
+
+#[test]
+fn an_authoring_verb_still_goes_to_the_engine_under_the_dash_c_spelling() {
+    let (mine, _) = two_repos("authoringc");
+    let gate = gate_for(&mine);
+    for cmd in AUTHORING.iter().take(11) {
+        let spelled = cmd.replacen("git ", &format!("git -C {} ", mine.display()), 1);
+        let out = run(&mine, &gate, &spelled);
+        assert!(
+            engine_ran_in(&out).is_some(),
+            "`{spelled}` did not reach the engine: {out}"
+        );
+    }
+}
