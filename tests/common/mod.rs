@@ -142,6 +142,42 @@ impl Repo {
         );
     }
 
+    /// Git in another working tree of the same repository.
+    pub fn git_in(&self, dir: &Path, args: &[&str]) -> Output {
+        self.cmd("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    /// A linked working tree on `branch`, with no `target/` in it: what a
+    /// fresh `git worktree add` gives, and what `cargo clean` leaves.
+    pub fn worktree(&self, branch: &str) -> PathBuf {
+        let dir = self.root.parent().unwrap().join("wt");
+        self.git(&["worktree", "add", "-q", dir.to_str().unwrap(), branch]);
+        assert!(
+            !dir.join("mock/target").exists(),
+            "a fresh worktree has no target/"
+        );
+        dir
+    }
+
+    /// Generation alone, run from the mock directory of the working tree `dir`.
+    pub fn generate_in(&self, dir: &Path) {
+        let out = self
+            .cmd(BIN)
+            .current_dir(dir.join("mock"))
+            .arg("--generate-only")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "generate: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     pub fn doc(&self) -> String {
         fs::read_to_string(self.root.join("docs/ALPHA.md")).unwrap()
     }

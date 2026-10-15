@@ -31,11 +31,18 @@ use crate::render_design::{GENERATED_MARKER, MARKER_WITHIN_LINES};
 /// - the hook that does the regeneration is installed where git will run it.
 ///   `git rev-parse --git-path hooks/<name>` honours `core.hooksPath`, so a
 ///   clone whose hooks are replaced, or a client that skips them, is seen.
-///   `post-merge` follows a merge and `post-rewrite` a rebase.
+///   `post-merge` follows a merge and `post-rewrite` a rebase. The durable hook
+///   delegates to the generated one under `<mock dir>/target/hooks`, which a
+///   fresh linked worktree and a `cargo clean` do not have, and does nothing
+///   when it is missing, so that file is checked too.
 ///
 /// Anything else is `git merge-file`, which writes conflict markers into ours and
 /// exits non-zero on a conflict, as git's own text merge does.
-pub(crate) fn driver_script() -> String {
+///
+/// `generated_hooks` is where the generated hooks live, relative to the working
+/// tree's top level (or absolute): `<mock dir>/target/hooks`.
+pub(crate) fn driver_script(generated_hooks: &str) -> String {
+    let generated_hooks = generated_hooks.replace('\'', "'\\''");
     format!(
         r##"#!/bin/sh
 {MANAGED_MARKER}
@@ -61,10 +68,20 @@ generated() {{
     esac
 }}
 
-# one of our hooks is where git will look for it, which core.hooksPath moves
+# the hook that regenerates is installed where git will look for it, which
+# core.hooksPath moves, and has something to run in this working tree: the
+# durable hook delegates to the generated one under the mock directory's
+# target/, which is per working tree and does nothing, quietly, when missing
+generated_hooks='{generated_hooks}'
+case $generated_hooks in
+    /*) ;;
+    *) generated_hooks="$(git rev-parse --show-toplevel)/$generated_hooks" ;;
+esac
+
 installed() {{
     hook=$(git rev-parse --git-path "hooks/$1") || return 1
-    [ -x "$hook" ] && grep -qF -- '{MANAGED_MARKER}' "$hook"
+    [ -x "$hook" ] && grep -qF -- '{MANAGED_MARKER}' "$hook" || return 1
+    [ -x "$generated_hooks/$1" ]
 }}
 
 exists() {{

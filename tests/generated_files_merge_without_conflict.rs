@@ -369,3 +369,51 @@ fn an_octopus_merge_over_differing_generated_documents_merges_with_no_conflict()
     let merged = r.git_out(&["merge", "a", "b", "-m", "chore: merge a and b"]);
     assert!(merged.status.success(), "{}", Repo::failure(&merged));
 }
+
+// --- what the follow-up commit may carry -----------------------------------------
+
+/// `.gitattributes` is the one file besides the generated ones a follow-up
+/// commit may name, and only when nobody had edited it: an uncommitted line of
+/// somebody's own is theirs to commit.
+fn dirty_attributes(r: &Repo) {
+    let path = r.root.join(".gitattributes");
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(path, format!("{text}*.bin binary\n")).unwrap();
+}
+
+#[test]
+fn an_uncommitted_gitattributes_edit_stays_out_of_the_follow_up_commit() {
+    let r = Repo::new();
+    r.two_sides();
+    dirty_attributes(&r);
+    let merged = r.git_out(&["merge", "a", "-m", "chore: merge a"]);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    assert_eq!(
+        r.git(&["log", "-1", "--format=%s"]).trim(),
+        "chore: regenerate generated files after merge"
+    );
+    assert!(
+        !r.git(&["show", "--name-only", "--format=", "HEAD"])
+            .contains(".gitattributes"),
+        "the follow-up names a file it did not change"
+    );
+    assert!(!r.git(&["show", "HEAD:.gitattributes"]).contains("*.bin"));
+    assert_eq!(
+        r.status(),
+        " M .gitattributes\n",
+        "the edit is still theirs"
+    );
+}
+
+#[test]
+fn an_uncommitted_gitattributes_edit_stays_out_of_a_squash_commit() {
+    let r = Repo::new();
+    r.two_sides();
+    dirty_attributes(&r);
+    let squashed = r.git_out(&["-c", "merge.ff=true", "merge", "--squash", "a"]);
+    assert!(squashed.status.success(), "{}", Repo::failure(&squashed));
+    let done = r.git_out(&["commit", "-q", "-m", "chore: squash a"]);
+    assert!(done.status.success(), "{}", Repo::failure(&done));
+    assert!(!r.git(&["show", "HEAD:.gitattributes"]).contains("*.bin"));
+    assert_eq!(r.status(), " M .gitattributes\n");
+}

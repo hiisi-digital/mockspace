@@ -7,6 +7,8 @@
 
 mod common;
 
+use std::fs;
+
 use common::{BIN, Repo};
 
 #[test]
@@ -98,4 +100,49 @@ fn a_hook_that_is_not_ours_does_not_count() {
     ]);
     assert!(!merged.status.success(), "{}", Repo::failure(&merged));
     assert!(r.doc().contains("<<<<<<<"), "{}", r.doc());
+}
+
+// --- the hook that regenerates is the one in this working tree ------------------
+
+/// `<mock>/target/hooks/` is per working tree: absent in a fresh linked
+/// worktree and after `cargo clean`. The durable hook in the config directory
+/// delegates to it and, with it missing, quietly does nothing, so a driver that
+/// looked only at the durable hook kept ours and nothing regenerated.
+#[test]
+fn a_rebase_in_a_fresh_worktree_conflicts_as_plain_git_does() {
+    let r = Repo::new();
+    r.two_sides();
+    let wt = r.worktree("a");
+    let rebased = r.git_in(&wt, &["rebase", "dev"]);
+    assert!(!rebased.status.success(), "{}", Repo::failure(&rebased));
+    let doc = fs::read_to_string(wt.join("docs/ALPHA.md")).unwrap();
+    assert!(doc.contains("<<<<<<<"), "both sides are in the file: {doc}");
+}
+
+#[test]
+fn a_merge_in_a_fresh_worktree_conflicts_as_plain_git_does() {
+    let r = Repo::new();
+    r.two_sides();
+    let wt = r.worktree("a");
+    let merged = r.git_in(&wt, &["merge", "dev", "-m", "chore: merge dev"]);
+    assert!(!merged.status.success(), "{}", Repo::failure(&merged));
+    let doc = fs::read_to_string(wt.join("docs/ALPHA.md")).unwrap();
+    assert!(doc.contains("<<<<<<<"), "both sides are in the file: {doc}");
+}
+
+#[test]
+fn a_worktree_that_has_generated_its_hooks_regenerates() {
+    // the control: the same rebase, once `mock` has run in the worktree
+    let r = Repo::new();
+    r.two_sides();
+    let wt = r.worktree("a");
+    r.generate_in(&wt);
+    assert!(wt.join("mock/target/hooks/post-rewrite").exists());
+    // generation rewrites the tracked agent hooks for this path, hence the autostash
+    let rebased = r.git_in(&wt, &["rebase", "--autostash", "dev"]);
+    assert!(rebased.status.success(), "{}", Repo::failure(&rebased));
+    let in_head = r.git_in(&wt, &["show", "HEAD:docs/ALPHA.md"]);
+    let in_head = String::from_utf8_lossy(&in_head.stdout);
+    assert!(in_head.contains("one, edited on a"), "{in_head}");
+    assert!(in_head.contains("five, edited on dev"), "{in_head}");
 }

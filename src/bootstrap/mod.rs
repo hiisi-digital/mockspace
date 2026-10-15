@@ -118,7 +118,7 @@ pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
     // Generated files merge without conflict: the driver `.gitattributes` names
     // lives in the clone's config, so it is registered with the hooks.
     if std::env::var("MOCKSPACE_NO_AUTO_ACTIVATE").is_err() {
-        register_driver(repo_root, &mut actions);
+        register_driver(repo_root, mock_dir, &mut actions);
     }
 
     // Opt-out for CI and sandboxed environments where git config edits are

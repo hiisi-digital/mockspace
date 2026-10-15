@@ -1362,15 +1362,18 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // a generated file reports no conflict; the regeneration above is what makes
     // keeping ours correct. Whether a run is allowed to put them in a commit is
     // the caller's flag.
+    // Asked first: afterwards the file differs from HEAD by our line, whoever
+    // else had edited it, and an edit of somebody's own is theirs to commit.
+    let attributes_clean = bootstrap::attributes_clean(&cfg.repo_root);
     if bootstrap::write_gitattributes(&cfg.repo_root, &cfg.docs_dir) {
         eprintln!("  wrote the merge attribute for the documents directory");
     }
     if let Some(subject) = commit_regenerated {
-        if !bootstrap::commit_follow_up(&cfg.repo_root, &generated, subject) {
+        if !bootstrap::commit_follow_up(&cfg.repo_root, &generated, subject, attributes_clean) {
             eprintln!("error: the regenerated files could not be committed");
             return ExitCode::FAILURE;
         }
-    } else if stage_generated && !bootstrap::stage(&cfg.repo_root, &generated) {
+    } else if stage_generated && !bootstrap::stage(&cfg.repo_root, &generated, attributes_clean) {
         eprintln!("error: the regenerated files could not be staged");
         return ExitCode::FAILURE;
     }
