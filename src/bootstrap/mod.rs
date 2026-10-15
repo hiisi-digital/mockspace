@@ -31,8 +31,11 @@
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::{env, fs};
 
+mod merge_driver;
+pub(crate) use merge_driver::*;
 mod gitignore;
 pub(crate) use gitignore::*;
 mod activate;
@@ -57,6 +60,10 @@ use mockspace_manifest::gate::HOOK_VERSION;
 
 /// Hook names that mockspace generates.
 const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push", "commit-msg"];
+
+/// The hooks that follow an event and never block. See
+/// [`mockspace_manifest::gate::FOLLOW_UP_HOOKS`].
+use mockspace_manifest::gate::FOLLOW_UP_HOOKS;
 
 // ──────────────────────────────────────────────────────────────────────
 // Public API
@@ -104,6 +111,12 @@ pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
     // `cargo mock`; if that run did not materialise the validator, the
     // guidance would loop forever.
     ensure_generated_hooks(repo_root, mock_dir, &mut actions);
+
+    // Generated files merge without conflict: the driver `.gitattributes` names
+    // lives in the clone's config, so it is registered with the hooks.
+    if std::env::var("MOCKSPACE_NO_AUTO_ACTIVATE").is_err() {
+        register_driver(repo_root, &mut actions);
+    }
 
     // Opt-out for CI and sandboxed environments where git config edits are
     // unwanted. The hooks above still get written (they are inert files) and

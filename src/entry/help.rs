@@ -352,6 +352,11 @@ pub(crate) fn print_help() -> ExitCode {
     println!("    --scope <crates>   limit linting to a comma-separated crate list");
     println!("    --doc-only         limit linting to documentation");
     println!("    --lint-only        lint without regenerating anything");
+    println!("    --generate-only    regenerate without checking or linting; the merge");
+    println!("                       hooks run this over the merged tree");
+    println!("    --stage            with --generate-only, stage what it generated");
+    println!("    --commit-regenerated");
+    println!("                       with --generate-only, commit what differs from HEAD");
     println!("    --commit           lint at the commit gate's severities");
     println!("    --strict           lint at the push gate's severities");
     println!("    --auto-commit      commit the state transition a subcommand makes");

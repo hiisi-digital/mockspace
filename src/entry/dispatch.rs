@@ -714,6 +714,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     let lint_only = args.iter().any(|a| a == "--lint-only");
+    // Generation and nothing else: no `cargo check`, no lints. What a merge
+    // hook runs, where the question is only whether the generated files match
+    // the merged tree. `--stage` and `--commit-regenerated` then put them in
+    // the commit being made, or in a follow-up commit.
+    let generate_only = args.iter().any(|a| a == "--generate-only");
+    let stage_generated = args.iter().any(|a| a == "--stage");
+    let commit_regenerated = args.iter().any(|a| a == "--commit-regenerated");
     let doc_only = args.iter().any(|a| a == "--doc-only");
     let mode = if args.iter().any(|a| a == "--commit") {
         LintMode::Commit
@@ -801,11 +808,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         doc_only
     };
 
-    if is_infra_only || workspace_nuked || lint_only {
+    if is_infra_only || workspace_nuked || lint_only || generate_only {
         eprintln!(
             "--- cargo check skipped ({}) ---",
             if workspace_nuked {
                 "nuked"
+            } else if generate_only {
+                "generate-only"
             } else if lint_only {
                 "lint-only mode"
             } else {
@@ -874,159 +883,163 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     // --- Lints ---
-    eprintln!("--- running lints ---");
+    if !generate_only {
+        eprintln!("--- running lints ---");
 
-    // The registry, flattened once for both arms. A repo lint checking it gets
-    // the same rows and the same reverse edges a document's `refsto` resolves
-    // against, rather than a second reading of the same files.
-    let lint_registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
-    let lint_registry_view = registry::build_view(&lint_registry, &cfg.registry_namespaces);
-    // The panel ledger lives here rather than in the lint crate, so the answer
-    // is computed once and handed over, the same way the registry view is.
-    let open_panels: Vec<String> = crate::panel::load_all(&cfg.mock_dir)
-        .into_iter()
-        .filter(crate::panel::is_open)
-        .map(|p| p.slug)
-        .collect();
+        // The registry, flattened once for both arms. A repo lint checking it gets
+        // the same rows and the same reverse edges a document's `refsto` resolves
+        // against, rather than a second reading of the same files.
+        let lint_registry = registry::load_registry(&cfg.mock_dir, &cfg.registry_namespaces);
+        let lint_registry_view = registry::build_view(&lint_registry, &cfg.registry_namespaces);
+        // The panel ledger lives here rather than in the lint crate, so the answer
+        // is computed once and handed over, the same way the registry view is.
+        let open_panels: Vec<String> = crate::panel::load_all(&cfg.mock_dir)
+            .into_iter()
+            .filter(crate::panel::is_open)
+            .map(|p| p.slug)
+            .collect();
 
-    // The registry gate, on the lint path only, before the lints that read it.
-    //
-    // A lint handed a registry that is lying reports about the lie rather than
-    // about the repository, so the shape of the data is settled first and this
-    // returns rather than falling through. The pre-commit hook invokes
-    // `--lint-only --commit`, which is the path that until 2026-08-22 ran no
-    // registry validation at all.
-    //
-    // `if lint_only` is load-bearing and is not a shortcut. A generation run
-    // reaches its own call further down, and it must not return early: the
-    // ordering comment above `render_all` says documents are generated even
-    // when the registry is known to be lying, because the dangling-reference
-    // scan reads the OUTPUT. An unconditional gate here writes no documents, so
-    // one duplicate slug hides every dangling reference in the repository. That
-    // is what the first version of this did.
-    //
-    // Two finding kinds this is weaker on than a generation run, both because
-    // resolution has not run. Enumerated rather than summarised, because the
-    // first version claimed there was one and the claim was false.
-    //
-    //   - Reference cycles. Nothing has resolved, so nothing detected a loop.
-    //   - Any reference-bearing field holding a `{{ }}` template. `resolve_data`
-    //     maps every field of every row through `resolve_once`, and
-    //     `validate_provenance` selects fields by declared type, so on a
-    //     generation run the validator sees the substituted text and here it
-    //     sees the template. It reads `{{ pathof(seed` as a root name and
-    //     reports `unknown-provenance-root`, which is a false positive rather
-    //     than a weaker check.
-    if lint_only {
-        let registry_errors = registry_gate(&cfg, &lint_registry, &[], mode);
-        if registry_errors > 0 {
-            eprintln!("registry check failed: {registry_errors} error(s)");
-            return ExitCode::FAILURE;
+        // The registry gate, on the lint path only, before the lints that read it.
+        //
+        // A lint handed a registry that is lying reports about the lie rather than
+        // about the repository, so the shape of the data is settled first and this
+        // returns rather than falling through. The pre-commit hook invokes
+        // `--lint-only --commit`, which is the path that until 2026-08-22 ran no
+        // registry validation at all.
+        //
+        // `if lint_only` is load-bearing and is not a shortcut. A generation run
+        // reaches its own call further down, and it must not return early: the
+        // ordering comment above `render_all` says documents are generated even
+        // when the registry is known to be lying, because the dangling-reference
+        // scan reads the OUTPUT. An unconditional gate here writes no documents, so
+        // one duplicate slug hides every dangling reference in the repository. That
+        // is what the first version of this did.
+        //
+        // Two finding kinds this is weaker on than a generation run, both because
+        // resolution has not run. Enumerated rather than summarised, because the
+        // first version claimed there was one and the claim was false.
+        //
+        //   - Reference cycles. Nothing has resolved, so nothing detected a loop.
+        //   - Any reference-bearing field holding a `{{ }}` template. `resolve_data`
+        //     maps every field of every row through `resolve_once`, and
+        //     `validate_provenance` selects fields by declared type, so on a
+        //     generation run the validator sees the substituted text and here it
+        //     sees the template. It reads `{{ pathof(seed` as a root name and
+        //     reports `unknown-provenance-root`, which is a false positive rather
+        //     than a weaker check.
+        if lint_only {
+            let registry_errors = registry_gate(&cfg, &lint_registry, &[], mode);
+            if registry_errors > 0 {
+                eprintln!("registry check failed: {registry_errors} error(s)");
+                return ExitCode::FAILURE;
+            }
         }
-    }
 
-    match scope_arg {
-        Some("") => {
-            eprintln!(
-                "error: --scope requires a value (use 'infra' for infrastructure-only commits)"
-            );
-            return ExitCode::FAILURE;
-        },
-        Some("infra") => {
-            // No crate lints, and the repo lints still run. They are about
-            // repository state rather than about any crate, and an
-            // infrastructure-only commit is exactly the shape that touches the
-            // things they guard: the canon, the config, the design documents,
-            // the registry. Printing a line and running nothing made them
-            // inert on the commits that matter most, which is the failure the
-            // `RepoLint` trait was introduced to end and this quietly
-            // reintroduced.
-            eprintln!("  scope: infra (repo lints only)");
-            let empty: Vec<String> = Vec::new();
-            let violations = lint::run_lints(
-                &crates,
-                &cfg.src_dirs,
-                &cfg.mock_dir,
-                mode,
-                Some(&empty),
-                doc_only,
-                &cfg.proc_macro_crates,
-                cfg.lint_proc_macro_source,
-                &cfg.crate_prefix,
-                &cfg.lint_overrides,
-                &lint_registry_view,
-                &cfg.canon_paths,
-                &open_panels,
-                &cfg.primitive_introductions,
-                pack,
-            );
-            if violations > 0 {
-                eprintln!("lint check failed: {violations} violation(s)");
-                return ExitCode::FAILURE;
-            }
-            eprintln!("  all repo lints passed");
-        },
-        Some(crate_list) => {
-            let names: Vec<String> = crate_list
-                .split(',')
-                .filter(|c| !c.is_empty())
-                .map(String::from)
-                .collect();
-            if doc_only {
+        match scope_arg {
+            Some("") => {
                 eprintln!(
-                    "  scoped to: {} (doc-only: source lints skipped)",
-                    names.join(", ")
+                    "error: --scope requires a value (use 'infra' for infrastructure-only commits)"
                 );
-            } else {
-                eprintln!("  scoped to: {}", names.join(", "));
-            }
-            let violations = lint::run_lints(
-                &crates,
-                &cfg.src_dirs,
-                &cfg.mock_dir,
-                mode,
-                Some(&names),
-                doc_only,
-                &cfg.proc_macro_crates,
-                cfg.lint_proc_macro_source,
-                &cfg.crate_prefix,
-                &cfg.lint_overrides,
-                &lint_registry_view,
-                &cfg.canon_paths,
-                &open_panels,
-                &cfg.primitive_introductions,
-                pack,
-            );
-            if violations > 0 {
-                eprintln!("lint check failed: {violations} violation(s)");
                 return ExitCode::FAILURE;
-            }
-            eprintln!("  all lints passed");
-        },
-        None => {
-            let violations = lint::run_lints(
-                &crates,
-                &cfg.src_dirs,
-                &cfg.mock_dir,
-                mode,
-                None,
-                doc_only,
-                &cfg.proc_macro_crates,
-                cfg.lint_proc_macro_source,
-                &cfg.crate_prefix,
-                &cfg.lint_overrides,
-                &lint_registry_view,
-                &cfg.canon_paths,
-                &open_panels,
-                &cfg.primitive_introductions,
-                pack,
-            );
-            if violations > 0 {
-                eprintln!("lint check failed: {violations} violation(s)");
-                return ExitCode::FAILURE;
-            }
-            eprintln!("  all lints passed");
-        },
+            },
+            Some("infra") => {
+                // No crate lints, and the repo lints still run. They are about
+                // repository state rather than about any crate, and an
+                // infrastructure-only commit is exactly the shape that touches the
+                // things they guard: the canon, the config, the design documents,
+                // the registry. Printing a line and running nothing made them
+                // inert on the commits that matter most, which is the failure the
+                // `RepoLint` trait was introduced to end and this quietly
+                // reintroduced.
+                eprintln!("  scope: infra (repo lints only)");
+                let empty: Vec<String> = Vec::new();
+                let violations = lint::run_lints(
+                    &crates,
+                    &cfg.src_dirs,
+                    &cfg.mock_dir,
+                    mode,
+                    Some(&empty),
+                    doc_only,
+                    &cfg.proc_macro_crates,
+                    cfg.lint_proc_macro_source,
+                    &cfg.crate_prefix,
+                    &cfg.lint_overrides,
+                    &lint_registry_view,
+                    &cfg.canon_paths,
+                    &open_panels,
+                    &cfg.primitive_introductions,
+                    pack,
+                );
+                if violations > 0 {
+                    eprintln!("lint check failed: {violations} violation(s)");
+                    return ExitCode::FAILURE;
+                }
+                eprintln!("  all repo lints passed");
+            },
+            Some(crate_list) => {
+                let names: Vec<String> = crate_list
+                    .split(',')
+                    .filter(|c| !c.is_empty())
+                    .map(String::from)
+                    .collect();
+                if doc_only {
+                    eprintln!(
+                        "  scoped to: {} (doc-only: source lints skipped)",
+                        names.join(", ")
+                    );
+                } else {
+                    eprintln!("  scoped to: {}", names.join(", "));
+                }
+                let violations = lint::run_lints(
+                    &crates,
+                    &cfg.src_dirs,
+                    &cfg.mock_dir,
+                    mode,
+                    Some(&names),
+                    doc_only,
+                    &cfg.proc_macro_crates,
+                    cfg.lint_proc_macro_source,
+                    &cfg.crate_prefix,
+                    &cfg.lint_overrides,
+                    &lint_registry_view,
+                    &cfg.canon_paths,
+                    &open_panels,
+                    &cfg.primitive_introductions,
+                    pack,
+                );
+                if violations > 0 {
+                    eprintln!("lint check failed: {violations} violation(s)");
+                    return ExitCode::FAILURE;
+                }
+                eprintln!("  all lints passed");
+            },
+            None => {
+                let violations = lint::run_lints(
+                    &crates,
+                    &cfg.src_dirs,
+                    &cfg.mock_dir,
+                    mode,
+                    None,
+                    doc_only,
+                    &cfg.proc_macro_crates,
+                    cfg.lint_proc_macro_source,
+                    &cfg.crate_prefix,
+                    &cfg.lint_overrides,
+                    &lint_registry_view,
+                    &cfg.canon_paths,
+                    &open_panels,
+                    &cfg.primitive_introductions,
+                    pack,
+                );
+                if violations > 0 {
+                    eprintln!("lint check failed: {violations} violation(s)");
+                    return ExitCode::FAILURE;
+                }
+                eprintln!("  all lints passed");
+            },
+        }
+    } else {
+        eprintln!("--- generate-only mode, skipping lints ---");
     }
 
     if lint_only {
@@ -1035,10 +1048,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     // --- Dylib module loading check ---
-    if is_infra_only || workspace_nuked {
+    if is_infra_only || workspace_nuked || generate_only {
         eprintln!(
             "--- dylib check skipped ({}) ---",
-            if workspace_nuked { "nuked" } else { "infra-only" }
+            if workspace_nuked {
+                "nuked"
+            } else if generate_only {
+                "generate-only"
+            } else {
+                "infra-only"
+            }
         );
     } else if !cfg.module_crates.is_empty() {
         eprintln!("--- checking dylib modules ---");
@@ -1329,6 +1348,24 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             "\nregistry: {registry_errors} error(s). A reference that does not resolve, or an \
              identifier declared twice, means the registry is lying about what it holds."
         );
+        return ExitCode::FAILURE;
+    }
+
+    // --- Generated files merge without conflict ---
+    // Named in `.gitattributes` for the driver `ensure_gate` registered, so a
+    // merge touching them reports no conflict; the regeneration above is what
+    // makes keeping either side correct. Whether a run is allowed to put them
+    // in a commit is the caller's flag.
+    if bootstrap::write_gitattributes(&cfg.repo_root, &generated) {
+        eprintln!("  wrote the merge attributes for {} generated files", generated.len());
+    }
+    if commit_regenerated {
+        if !bootstrap::commit_follow_up(&cfg.repo_root, &generated) {
+            eprintln!("error: the regenerated files could not be committed");
+            return ExitCode::FAILURE;
+        }
+    } else if stage_generated && !bootstrap::stage(&cfg.repo_root, &generated) {
+        eprintln!("error: the regenerated files could not be staged");
         return ExitCode::FAILURE;
     }
 

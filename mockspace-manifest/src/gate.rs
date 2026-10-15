@@ -58,6 +58,11 @@ pub const HOOK_VERSION: u32 = 3;
 /// The hooks a repo's gate consists of.
 pub const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push", "commit-msg"];
 
+/// The hooks that follow an event rather than gate it. They never block: a
+/// merge has already happened, so the only thing left to do at `post-merge` is
+/// bring the generated files to the merged tree.
+pub const FOLLOW_UP_HOOKS: &[&str] = &["post-merge"];
+
 /// Marks a file as generated, so a reader knows not to edit it and the installer
 /// knows it may overwrite it.
 pub const MANAGED_MARKER: &str = "# mockspace-managed";
@@ -201,6 +206,9 @@ ms_chain() {{
 /// Every pass ends in the repository's own hook; see [`chain_tail`].
 #[must_use]
 pub fn durable_hook(name: &str, hook_version: u32) -> String {
+    if FOLLOW_UP_HOOKS.contains(&name) {
+        return durable_follow_up_hook(name, hook_version);
+    }
     let stdin_capture = if name == "pre-push" { "PREPUSH_STDIN=$(cat)\n" } else { "" };
     let stdin_replay = if name == "pre-push" { "printf '%s\\n' \"$PREPUSH_STDIN\" | " } else { "" };
     let chain = chain_tail(name, stdin_replay);
@@ -258,6 +266,32 @@ exit 1
     )
 }
 
+/// A hook that follows an event: discover, delegate to the generated per-repo
+/// hook when there is one, and otherwise hand over to the repository's own.
+/// There is no block arm, since nothing here can refuse what already happened,
+/// and a repo where mockspace is not initialised has nothing to follow up.
+fn durable_follow_up_hook(name: &str, hook_version: u32) -> String {
+    let chain = chain_tail(name, "");
+    format!(
+        r##"#!/usr/bin/env bash
+{MANAGED_MARKER}
+# mockspace durable follow-up ({name}), v{hook_version}. Do not edit; rewritten on each
+# `mock` run. Delegates to the generated per-repo hook when mockspace is
+# initialised, and never blocks.
+set -u
+
+{chain}
+{DISCOVERY}
+generated="$mockdir/target/hooks/{name}"
+if [ -x "$generated" ]; then
+    "$generated" "$@"
+    exit $?
+fi
+ms_chain "$@"
+"##
+    )
+}
+
 /// A stable fingerprint of a script, so an unchanged hook is not rewritten.
 #[must_use]
 pub fn fingerprint(content: &str) -> u64 {
@@ -286,7 +320,7 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
         return actions;
     }
 
-    for name in HOOK_NAMES {
+    for name in HOOK_NAMES.iter().chain(FOLLOW_UP_HOOKS) {
         let path = dir.join(name);
         let content = durable_hook(name, hook_version);
         let fp_line = format!(
@@ -540,8 +574,26 @@ mod tests {
         let first = install_durable_hooks(&dir, 3);
         let second = install_durable_hooks(&dir, 3);
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(first.len(), HOOK_NAMES.len(), "first run writes every hook");
+        assert_eq!(
+            first.len(),
+            HOOK_NAMES.len() + FOLLOW_UP_HOOKS.len(),
+            "first run writes every hook"
+        );
         assert!(second.is_empty(), "second run rewrites nothing: {second:?}");
+    }
+
+    #[test]
+    fn a_follow_up_hook_delegates_and_never_blocks() {
+        for name in FOLLOW_UP_HOOKS {
+            let h = durable_hook(name, 3);
+            assert!(h.contains("$generated\" \"$@\""), "{name}: delegates");
+            assert!(!h.contains("BLOCKED"), "{name}: nothing here can refuse");
+            let f = std::env::temp_dir().join(format!("ms_gate_fu_{name}_{}.sh", std::process::id()));
+            std::fs::write(&f, &h).unwrap();
+            let out = std::process::Command::new("bash").arg("-n").arg(&f).output().unwrap();
+            let _ = std::fs::remove_file(&f);
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        }
     }
 
     #[test]
