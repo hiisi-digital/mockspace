@@ -17,6 +17,8 @@
 //! `tool_cdylib.rs` and `custom_lint_cdylib.rs`; `tests/rust_e2e_test.sh` runs
 //! the ignored set.
 
+mod common;
+
 use std::fs;
 use std::path::Path;
 use std::process::Output;
@@ -51,7 +53,7 @@ fn fixture(root: &Path, tool: &str) -> std::path::PathBuf {
 }
 
 fn engine(mock: &Path, args: &[&str]) -> Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .args(args)
         // Cleared, not inherited. The engine builds the tool cdylib by shelling
         // out to cargo and then looks for the artifact under the fixture's own

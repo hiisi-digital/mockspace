@@ -284,3 +284,22 @@ impl Repo {
             .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 }
+
+/// The engine binary, run with a home of its own.
+///
+/// `ensure_gate` writes the durable hooks to `$XDG_CONFIG_HOME` or
+/// `$HOME/.config`, and a test that ran it with the real environment rewrote the
+/// hooks the developer's own clones use. One directory per test process is
+/// enough, since nothing here reads it back.
+pub fn mockspace() -> Command {
+    use std::sync::OnceLock;
+    static HOME: OnceLock<PathBuf> = OnceLock::new();
+    let home = HOME.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("ms-test-home-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    });
+    let mut c = Command::new(BIN);
+    c.env("HOME", home).env_remove("XDG_CONFIG_HOME");
+    c
+}

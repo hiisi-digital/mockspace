@@ -23,9 +23,11 @@
 //! that fails on this path for any reason at all, which is what the first
 //! version of this fixture did (the memberless manifest, since fixed).
 
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 fn write(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
@@ -102,7 +104,7 @@ description = "The spike this one continues, as a row reference."
 /// edit on its own stages no crate file, so this is the path a registry change
 /// is gated on and the one that was running nothing.
 fn commit_gate(root: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .current_dir(root.join("mock"))
         .args(["--lint-only", "--commit", "--scope", "infra"])
         .output()
@@ -211,7 +213,7 @@ fn a_dangling_row_reference_fails_the_commit_gate() {
 
 /// A generation run, which is `mockspace` with no `--lint-only`.
 fn generation_run(root: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .current_dir(root.join("mock"))
         .output()
         .expect("the binary runs")

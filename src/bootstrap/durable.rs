@@ -13,7 +13,24 @@ use super::*;
 /// `<XDG_CONFIG_HOME | $HOME/.config>/mockspace/hooks-v<HOOK_VERSION>`.
 /// Returns `None` when neither env var is set (no durable home to use).
 pub(crate) fn durable_hooks_dir() -> Option<PathBuf> {
-    durable_hooks_dir_from(env::var_os("XDG_CONFIG_HOME"), env::var_os("HOME"))
+    // A test never reaches the real config home: `activate` and the gate write
+    // the durable hooks there, and a run of the suite rewrote the hooks the
+    // developer's own clones use.
+    #[cfg(test)]
+    {
+        durable_hooks_dir_from(Some(test_config_home().into()), None)
+    }
+    #[cfg(not(test))]
+    {
+        durable_hooks_dir_from(env::var_os("XDG_CONFIG_HOME"), env::var_os("HOME"))
+    }
+}
+
+/// One config home per test process, under the system temporary directory.
+#[cfg(test)]
+fn test_config_home() -> &'static Path {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| env::temp_dir().join(format!("ms-lib-test-config-{}", std::process::id())))
 }
 
 /// Pure core of [`durable_hooks_dir`]: resolves the config base from the

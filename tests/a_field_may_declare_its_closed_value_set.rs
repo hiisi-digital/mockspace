@@ -17,6 +17,8 @@
 //! expressible, and `check_schemas` reports `Unavailable` rather than passing
 //! when taplo is absent, so the contract does not quietly lapse.
 
+mod common;
+
 use std::fs;
 use std::path::Path;
 use std::process::Output;
@@ -68,7 +70,7 @@ description = "How firmly this is held."
 }
 
 fn run(root: &Path) -> Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .current_dir(root.join("mock"))
         .env_remove("CARGO_TARGET_DIR")
         .output()

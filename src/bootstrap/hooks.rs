@@ -1339,6 +1339,10 @@ mod generated_pre_commit_tests {
         let out = Command::new("bash")
             .arg(&hook)
             .current_dir(root)
+            // the hook runs `cargo mock`, which writes the durable hooks under the
+            // home it is given, and this test is not about them
+            .env("HOME", root)
+            .env_remove("XDG_CONFIG_HOME")
             .output()
             .expect("bash runs");
         format!(

@@ -25,9 +25,11 @@
 //! path to `SUCCESS` left all five arms green, which for a test runner is the
 //! one property that must not be able to break silently.
 
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::Mutex;
 
 /// One arm at a time.
@@ -87,7 +89,7 @@ fn fixture(root: &Path, member: Option<&str>, tools: &[&str], benches: &[&str]) 
 /// succeeded.
 fn run(root: &Path) -> Output {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .args(["--dir", "mock", "test"])
         .current_dir(root)
         .env("CARGO_BUILD_JOBS", "2")

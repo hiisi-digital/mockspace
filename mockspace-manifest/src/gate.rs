@@ -264,6 +264,7 @@ exit 1
 "##
     )
 }
+
 /// A stable fingerprint of a script, so an unchanged hook is not rewritten.
 #[must_use]
 pub fn fingerprint(content: &str) -> u64 {

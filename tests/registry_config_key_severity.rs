@@ -14,9 +14,10 @@
 //! repository chose, `registry-config-keys` as an ordinary lint name, plus the
 //! opposite direction: a project may also raise it to a blocking error.
 
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 fn write(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
@@ -55,7 +56,7 @@ prefix = "SPK"
 }
 
 fn run(root: &Path) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .current_dir(root.join("mock"))
         .env(
             "PATH",

@@ -7,7 +7,6 @@
 
 use crate::gate::{DISCOVERY, MANAGED_MARKER, chain_tail};
 
-
 /// The hooks that follow an event rather than gate it. They never block: a
 /// merge or a rebase has already happened, so the only thing left to do at
 /// `post-merge` and `post-rewrite` is bring the generated files to the merged
@@ -45,7 +44,6 @@ ms_chain "$@"
 "##
     )
 }
-
 
 #[cfg(test)]
 mod tests {
