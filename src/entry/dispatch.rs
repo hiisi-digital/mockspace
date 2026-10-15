@@ -1352,12 +1352,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     // --- Generated files merge without conflict ---
-    // Named in `.gitattributes` for the driver `ensure_gate` registered, so a
-    // merge touching them reports no conflict; the regeneration above is what
-    // makes keeping either side correct. Whether a run is allowed to put them
-    // in a commit is the caller's flag.
-    if bootstrap::write_gitattributes(&cfg.repo_root, &generated) {
-        eprintln!("  wrote the merge attributes for {} generated files", generated.len());
+    // The documents directory is attached to the driver `ensure_gate` registered,
+    // by one line that does not depend on what was generated, so a merge touching
+    // a generated file reports no conflict; the regeneration above is what makes
+    // keeping ours correct. Whether a run is allowed to put them in a commit is
+    // the caller's flag.
+    if bootstrap::write_gitattributes(&cfg.repo_root, &cfg.docs_dir) {
+        eprintln!("  wrote the merge attribute for the documents directory");
     }
     if commit_regenerated {
         if !bootstrap::commit_follow_up(&cfg.repo_root, &generated) {

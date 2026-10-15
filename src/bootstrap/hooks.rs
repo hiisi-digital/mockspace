@@ -341,10 +341,12 @@ set -e
 MOCK_DIR="{mock_rel}"
 
 # A merge concluding here stopped on something that was not a generated file,
-# since generated files merge without conflict. Whatever side of them it holds,
-# they are regenerated from the merged tree and staged before anything is
-# checked, so this commit never carries one side's copy.
-if [ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ]; then
+# since generated files merge without conflict, or was a squash, which stops
+# for nothing and leaves no MERGE_HEAD. Whatever side of them it holds, they are
+# regenerated from the merged tree and staged before anything is checked, so
+# this commit never carries one side's copy.
+if [ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ] \
+    || [ -f "$(git rev-parse --git-path SQUASH_MSG 2>/dev/null)" ]; then
     echo "pre-commit: concluding a merge, regenerating the generated files..."
     if ! cargo mock --generate-only --stage 2>&1; then
         echo ""

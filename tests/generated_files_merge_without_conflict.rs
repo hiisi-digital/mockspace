@@ -180,7 +180,7 @@ impl Repo {
     }
 
     fn status(&self) -> String {
-        self.git(&["status", "--porcelain", "--", "docs", "mock", ".gitattributes", "notes.txt"])
+        self.git(&["status", "--porcelain"])
     }
 
     fn subjects(&self) -> Vec<String> {
@@ -405,4 +405,302 @@ fn git_drops_what_a_pre_merge_commit_hook_stages() {
         "M  gen.txt\n",
         "left staged beside it"
     );
+}
+
+// --- what the driver must not do -----------------------------------------------
+
+impl Repo {
+    /// A second generated document, from its own template, on a branch of its
+    /// own. Two of these on two branches are two adds, each beside the other.
+    fn add_document(&self, branch: &str, name: &str) {
+        write(
+            &self.root.join(format!("mock/{name}.md.tmpl")),
+            &format!("{name} on {branch}\n"),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        self.generate();
+        self.git(&["add", "-A"]);
+        self.git(&["commit", "-q", "--no-verify", "-m", &format!("chore: add {name}")]);
+    }
+
+    fn failure(out: &Output) -> String {
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    }
+}
+
+#[test]
+fn a_generated_document_added_on_both_sides_merges_with_no_conflict() {
+    let r = Repo::new();
+    r.git(&["switch", "-q", "-c", "a"]);
+    r.add_document("a", "BETA");
+    r.git(&["switch", "-q", "dev"]);
+    r.add_document("dev", "GAMMA");
+
+    let merged = r.git_out(&["merge", "a", "-m", "chore: merge a"]);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    assert!(r.unmerged().is_empty(), "{:?}", r.unmerged());
+    assert!(r.root.join("docs/BETA.md").exists());
+    assert!(r.root.join("docs/GAMMA.md").exists());
+    assert_eq!(r.status(), "", "{}", Repo::failure(&merged));
+}
+
+#[test]
+fn a_rebase_over_a_generated_document_change_conflicts_and_drops_no_edit() {
+    let r = Repo::new();
+    r.two_sides();
+    r.git(&["switch", "-q", "a"]);
+    let rebased = r.git_out(&["rebase", "dev"]);
+    assert!(
+        !rebased.status.success(),
+        "no hook regenerates during a rebase, so the document is left to conflict: {}",
+        Repo::failure(&rebased)
+    );
+    assert!(
+        r.unmerged().contains(&"docs/ALPHA.md".to_string()),
+        "{:?}",
+        r.unmerged()
+    );
+    let doc = r.doc();
+    assert!(
+        doc.contains("<<<<<<<"),
+        "both sides are in the file, not one: {doc}"
+    );
+}
+
+#[test]
+fn a_cherry_pick_over_a_generated_document_change_conflicts_and_drops_no_edit() {
+    let r = Repo::new();
+    r.two_sides();
+    let picked = r.git_out(&["cherry-pick", "a"]);
+    assert!(!picked.status.success(), "{}", Repo::failure(&picked));
+    assert!(
+        r.unmerged().contains(&"docs/ALPHA.md".to_string()),
+        "{:?}",
+        r.unmerged()
+    );
+    assert!(r.doc().contains("<<<<<<<"), "{}", r.doc());
+}
+
+#[test]
+fn a_revert_over_a_generated_document_change_conflicts_and_drops_no_edit() {
+    let r = Repo::new();
+    r.two_sides();
+    r.git(&["merge", "-q", "a", "-m", "chore: merge a"]);
+    // a later edit to the line the reverted commit changed, made in the
+    // document only, so the sources revert cleanly and the document is what is
+    // left to reconcile
+    let path = r.root.join("docs/ALPHA.md");
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("five, edited on dev", "five, hand-edited");
+    fs::write(&path, text).unwrap();
+    r.git(&["commit", "-q", "--no-verify", "-am", "docs: edit alpha by hand"]);
+    let reverted = r.git_out(&["revert", "--no-edit", ":/chore: edit on dev"]);
+    assert!(!reverted.status.success(), "{}", Repo::failure(&reverted));
+    assert!(r.doc().contains("<<<<<<<"), "{}", r.doc());
+}
+
+#[test]
+fn applying_a_stash_over_a_generated_document_change_conflicts_and_drops_no_edit() {
+    let r = Repo::new();
+    r.two_sides();
+    r.git(&["switch", "-q", "a"]);
+    let path = r.root.join("docs/ALPHA.md");
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("five", "five, stashed");
+    fs::write(&path, text).unwrap();
+    r.git(&["stash", "push", "-q", "-m", "mine"]);
+    r.git(&["switch", "-q", "dev"]);
+    let applied = r.git_out(&["stash", "apply"]);
+    assert!(!applied.status.success(), "{}", Repo::failure(&applied));
+    assert!(r.doc().contains("<<<<<<<"), "{}", r.doc());
+}
+
+#[test]
+fn a_hand_written_file_in_the_documents_directory_still_conflicts() {
+    // `docs/` holds files nobody generates (`sweep_retired` leaves them), and
+    // the attribute covers the directory, so the driver is what tells the two
+    // apart. Keeping ours here would drop somebody's edit without a word.
+    let r = Repo::new();
+    write(&r.root.join("docs/CONTRIBUTING.md"), "one\ntwo\nthree\n");
+    r.git(&["add", "-A"]);
+    r.git(&["commit", "-q", "--no-verify", "-m", "docs: add contributing"]);
+    r.git(&["switch", "-q", "-c", "a"]);
+    write(
+        &r.root.join("docs/CONTRIBUTING.md"),
+        "one\ntwo, on a\nthree\n",
+    );
+    r.git(&["commit", "-q", "--no-verify", "-am", "docs: edit on a"]);
+    r.git(&["switch", "-q", "dev"]);
+    write(
+        &r.root.join("docs/CONTRIBUTING.md"),
+        "one\ntwo, on dev\nthree\n",
+    );
+    r.git(&["commit", "-q", "--no-verify", "-am", "docs: edit on dev"]);
+    r.generate();
+
+    let merged = r.git_out(&["merge", "a", "-m", "chore: merge a"]);
+    assert!(!merged.status.success(), "{}", Repo::failure(&merged));
+    assert_eq!(r.unmerged(), ["docs/CONTRIBUTING.md"]);
+    let text = fs::read_to_string(r.root.join("docs/CONTRIBUTING.md")).unwrap();
+    assert!(
+        text.contains("two, on a") && text.contains("two, on dev"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_hand_written_file_in_the_documents_directory_merges_when_the_edits_are_apart() {
+    let r = Repo::new();
+    write(
+        &r.root.join("docs/CONTRIBUTING.md"),
+        "one\ntwo\nthree\nfour\nfive\n",
+    );
+    r.git(&["add", "-A"]);
+    r.git(&["commit", "-q", "--no-verify", "-m", "docs: add contributing"]);
+    r.git(&["switch", "-q", "-c", "a"]);
+    write(
+        &r.root.join("docs/CONTRIBUTING.md"),
+        "one, on a\ntwo\nthree\nfour\nfive\n",
+    );
+    r.git(&["commit", "-q", "--no-verify", "-am", "docs: edit on a"]);
+    r.git(&["switch", "-q", "dev"]);
+    write(
+        &r.root.join("docs/CONTRIBUTING.md"),
+        "one\ntwo\nthree\nfour\nfive, on dev\n",
+    );
+    r.git(&["commit", "-q", "--no-verify", "-am", "docs: edit on dev"]);
+
+    let merged = r.git_out(&["merge", "a", "-m", "chore: merge a"]);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    let text = fs::read_to_string(r.root.join("docs/CONTRIBUTING.md")).unwrap();
+    assert_eq!(text, "one, on a\ntwo\nthree\nfour\nfive, on dev\n");
+}
+
+#[test]
+fn a_rendered_image_follows_the_diagram_beside_it() {
+    // The png carries no header to read, so it is the generated diagram of the
+    // same stem that says the image is generated. Two sides that each changed
+    // the bytes are not a conflict, same as the document.
+    let r = Repo::new();
+    r.git(&["switch", "-q", "-c", "a"]);
+    r.side("a", "one", "one, edited on a");
+    r.git(&["switch", "-q", "dev"]);
+    r.side("dev", "five", "five, edited on dev");
+    let png = "docs/STRUCTURE.GRAPH.png";
+    assert!(
+        r.root.join(png).exists(),
+        "the fixture renders the image (graphviz)"
+    );
+    write(&r.root.join(png), "dev bytes\n");
+    r.git(&["commit", "-q", "--no-verify", "-am", "chore: png on dev"]);
+    r.git(&["switch", "-q", "a"]);
+    write(&r.root.join(png), "a bytes\n");
+    r.git(&["commit", "-q", "--no-verify", "-am", "chore: png on a"]);
+    r.git(&["switch", "-q", "dev"]);
+
+    let merged = r.git_out(&["merge", "a", "-m", "chore: merge a"]);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    assert!(r.unmerged().is_empty());
+}
+
+#[test]
+fn a_squash_merge_commit_carries_the_regenerated_files() {
+    // `git merge --squash` leaves no `MERGE_HEAD` and makes no commit, and the
+    // driver has kept ours for the document, so the commit that follows is the
+    // only place the merged tree can be regenerated.
+    let r = Repo::new();
+    r.two_sides();
+    let squashed = r.git_out(&["-c", "merge.ff=true", "merge", "--squash", "a"]);
+    assert!(squashed.status.success(), "{}", Repo::failure(&squashed));
+    let done = r.git_out(&["commit", "-q", "-m", "chore: squash a"]);
+    assert!(done.status.success(), "{}", Repo::failure(&done));
+    let in_head = r.git(&["show", "HEAD:docs/ALPHA.md"]);
+    assert!(in_head.contains("one, edited on a"), "{in_head}");
+    assert!(in_head.contains("five, edited on dev"), "{in_head}");
+    r.generate();
+    assert_eq!(r.doc(), in_head, "HEAD holds the regenerated file");
+    assert_eq!(r.status(), "");
+}
+
+/// A generated document deleted on one side and edited on the other is a
+/// modify/delete, which git does not hand to a merge driver at all, so nothing
+/// here resolves it and the merge stops.
+#[test]
+#[ignore = "catalogue: modify/delete of a generated document stops the merge, git calls no driver there"]
+fn a_generated_document_deleted_on_one_side_merges_with_no_conflict() {
+    let r = Repo::new();
+    r.git(&["switch", "-q", "-c", "a"]);
+    r.side("a", "one", "one, edited on a");
+    r.git(&["switch", "-q", "dev"]);
+    r.git(&["rm", "-q", "docs/ALPHA.md"]);
+    r.git(&["commit", "-q", "--no-verify", "-m", "chore: drop alpha"]);
+    let merged = r.git_out(&["merge", "a", "-m", "chore: merge a"]);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+}
+
+// --- the opt-out ---------------------------------------------------------------
+
+impl Repo {
+    /// A repository mockspace has not run in yet.
+    fn untouched() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        let root = base.join("repo");
+        let home = base.join("home");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        let repo = Repo {
+            _dir: dir,
+            root,
+            home,
+            shims: base.join("shims"),
+        };
+        repo.git(&["init", "-q", "-b", "dev"]);
+        write(
+            &repo.root.join("mock/Cargo.toml"),
+            "[workspace]\nmembers = []\nresolver = \"2\"\n",
+        );
+        write(
+            &repo.root.join("mock/mockspace.toml"),
+            "project_name = \"fixture\"\ncrate_prefix = \"fixture\"\n",
+        );
+        repo
+    }
+
+    fn config(&self, key: &str) -> Option<String> {
+        let out = self.git_out(&["config", "--local", "--get", key]);
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+}
+
+#[test]
+fn running_mockspace_registers_the_driver_and_the_hooks() {
+    let r = Repo::untouched();
+    r.generate();
+    assert!(r.config("merge.mockspace-generated.driver").is_some());
+    assert!(r.config("core.hooksPath").is_some());
+}
+
+#[test]
+fn the_opt_out_registers_no_driver_and_no_hooks() {
+    let r = Repo::untouched();
+    let out = r
+        .cmd(BIN)
+        .current_dir(r.root.join("mock"))
+        .env("MOCKSPACE_NO_AUTO_ACTIVATE", "1")
+        .arg("--generate-only")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", Repo::failure(&out));
+    assert_eq!(r.config("merge.mockspace-generated.driver"), None);
+    assert_eq!(r.config("merge.mockspace-generated.name"), None);
+    assert_eq!(r.config("core.hooksPath"), None);
 }

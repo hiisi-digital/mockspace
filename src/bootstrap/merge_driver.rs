@@ -3,21 +3,33 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! Generated files do not conflict, and the merged tree gets them regenerated.
+//! Generated files do not conflict in a merge, and the merged tree gets them regenerated.
 //!
 //! A conflict confined to a file mockspace generates is not a conflict: the file
 //! is a function of the tree, so whichever side a merge takes it is wrong until
 //! generation has run over the merged result. Stopping a merge on one only asks
 //! somebody to run the generator by hand, for every agent, every time.
 //!
-//! Three parts. A merge driver, named in `.gitattributes` for each generated
-//! path, resolves the file without a conflict by keeping ours. Generation then
-//! runs over the merged tree, at the commit that concludes a merge that stopped
-//! (the `pre-commit` hook, with `MERGE_HEAD` present) or, where the merge made
-//! its own commit, in a follow-up commit (the `post-merge` hook), because git
-//! does not carry index changes a `pre-merge-commit` hook makes into the merge
-//! commit. The driver is registered in the clone's config, which is the only
-//! place git accepts one from: a repository cannot carry its own.
+//! Three parts. A merge driver, `mockspace-generated`, is attached by a
+//! `.gitattributes` line that names the documents directory and nothing else, so
+//! it is the same text on every branch and cannot conflict itself (a line per
+//! generated path did: two branches each adding a document rewrote adjacent
+//! lines). The directory also holds files nobody generates, so the driver is
+//! what tells them apart: it reads the file. Ours is kept when it carries the
+//! generation header, and anything else is merged by `git merge-file`, which is
+//! what git does with no driver.
+//!
+//! The driver keeps ours only inside a real `git merge`, the one flow a
+//! regeneration follows: at the commit that concludes a merge that stopped (the
+//! `pre-commit` hook, with `MERGE_HEAD` or `SQUASH_MSG` present) or, where the
+//! merge made its own commit, in a follow-up commit (the `post-merge` hook),
+//! because git does not carry index changes a `pre-merge-commit` hook makes into
+//! the merge commit. A rebase, a cherry-pick, a revert and a stash application
+//! run no hook of ours, so a driver keeping ours there drops the other side's
+//! edit with nothing to put it back; there it merges as git would.
+//!
+//! The driver is registered in the clone's config, which is the only place git
+//! accepts one from: a repository cannot carry its own.
 
 use super::*;
 
@@ -27,8 +39,7 @@ pub(crate) const DRIVER: &str = "mockspace-generated";
 /// The subject of the commit that brings generated files to a merge commit.
 pub(crate) const FOLLOW_UP_SUBJECT: &str = "chore: regenerate generated files after merge";
 
-const BEGIN: &str = "# mockspace-generated: begin, rewritten by `mock`, do not edit";
-const END: &str = "# mockspace-generated: end";
+const NOTE: &str = "# mockspace: generated documents merge by regeneration, see the merge driver";
 
 /// A repository-relative path as a `.gitattributes` pattern: `/` separated,
 /// anchored at the root, and with what a pattern reads as syntax escaped.
@@ -53,74 +64,155 @@ fn relative(repo_root: &Path, path: &Path) -> Option<String> {
     )
 }
 
-/// The managed block naming every generated path, sorted so the same set always
-/// writes the same text.
-pub(crate) fn attributes_block(repo_root: &Path, generated: &[PathBuf]) -> String {
-    let mut rels: Vec<String> = generated
-        .iter()
-        .filter_map(|p| relative(repo_root, p))
-        .collect();
-    rels.sort();
-    rels.dedup();
-    let mut block = format!("{BEGIN}\n");
-    for rel in rels {
-        block.push_str(&format!("{} merge={DRIVER}\n", pattern(&rel)));
-    }
-    block.push_str(END);
-    block.push('\n');
-    block
+/// The one attribute line: every top-level file of the documents directory goes
+/// to the driver. Subdirectories are not matched, which is right, since nothing
+/// generated lands in one. `None` when the directory is outside the repository.
+pub(crate) fn attributes_line(repo_root: &Path, docs_dir: &Path) -> Option<String> {
+    let rel = relative(repo_root, docs_dir).filter(|r| !r.is_empty())?;
+    Some(format!("{}/* merge={DRIVER}", pattern(&rel)))
 }
 
-/// `existing` with the managed block replaced by `block`, or appended when
-/// there is none. Whatever else the file holds is left exactly as it was.
-pub(crate) fn splice_block(existing: &str, block: &str) -> String {
-    let start = existing.lines().position(|l| l == BEGIN);
-    let end = existing.lines().position(|l| l == END);
-    match (start, end) {
-        (Some(s), Some(e)) if s <= e => {
-            let mut out: Vec<&str> = existing.lines().take(s).collect();
-            let tail: Vec<&str> = existing.lines().skip(e + 1).collect();
-            let mut text = out.drain(..).collect::<Vec<_>>().join("\n");
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(block);
-            if !tail.is_empty() {
-                text.push_str(&tail.join("\n"));
-                text.push('\n');
-            }
-            text
-        },
-        _ => {
-            let mut text = existing.to_string();
-            if !text.is_empty() && !text.ends_with('\n') {
-                text.push('\n');
-            }
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(block);
-            text
-        },
+/// `existing` with the note and `line` at the end, unless `line` is already
+/// there. Whatever else the file holds is left exactly as it was.
+pub(crate) fn with_attributes(existing: &str, line: &str) -> String {
+    if existing.lines().any(|l| l == line) {
+        return existing.to_string();
     }
+    let mut text = existing.to_string();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(NOTE);
+    text.push('\n');
+    text.push_str(line);
+    text.push('\n');
+    text
 }
 
-/// Write the managed block into the repository's `.gitattributes`. Returns
-/// whether the file changed.
-pub(crate) fn write_gitattributes(repo_root: &Path, generated: &[PathBuf]) -> bool {
+/// Write the driver's attribute line into the repository's `.gitattributes`.
+/// Returns whether the file changed.
+pub(crate) fn write_gitattributes(repo_root: &Path, docs_dir: &Path) -> bool {
+    let Some(line) = attributes_line(repo_root, docs_dir) else {
+        return false;
+    };
     let path = repo_root.join(".gitattributes");
     let existing = fs::read_to_string(&path).unwrap_or_default();
-    let next = splice_block(&existing, &attributes_block(repo_root, generated));
+    let next = with_attributes(&existing, &line);
     if next == existing {
         return false;
     }
     fs::write(&path, next).is_ok()
 }
 
-/// Register the driver in the clone's config. Resolves a file by keeping ours
-/// and reporting no conflict; generation runs over the merged tree afterwards,
-/// so which side it kept never reaches a commit.
+/// The driver, a shell script, because git runs it as a command and nothing
+/// else about it needs a build. Called as `<script> %O %A %B %P`.
+///
+/// Keeps ours and reports no conflict only when both hold:
+///
+/// - the merge is a `git merge` (including `--squash` and `--no-commit`, which
+///   `pre-commit` follows up). Git sets `GITHEAD_<sha>` for the heads a merge
+///   brings and for no other command that calls a driver, which is how it is
+///   told apart from a cherry-pick, a revert and a stash application: none of
+///   them has written its state file yet when the driver runs, so a
+///   `CHERRY_PICK_HEAD` or `REVERT_HEAD` check alone would never fire. The state
+///   files are still checked, for the merge a rebase makes of its own
+///   (`--rebase-merges`);
+/// - the file is one mockspace generates, read from its header, or a rendered
+///   image whose diagram of the same stem at `HEAD` carries one.
+///
+/// Anything else is `git merge-file`, which writes conflict markers into ours and
+/// exits non-zero on a conflict, as git's own text merge does.
+fn driver_script() -> String {
+    use crate::render_design::{GENERATED_MARKER, MARKER_WITHIN_LINES};
+    format!(
+        r##"#!/bin/sh
+# mockspace-managed
+# Merge driver for generated documents, rewritten by `mock`. Git calls it as
+# <this> %O %A %B %P: base, ours, theirs, path.
+base=$1
+ours=$2
+theirs=$3
+path=$4
+
+carries_header() {{
+    head -n {MARKER_WITHIN_LINES} | grep -aqF -- '{GENERATED_MARKER}'
+}}
+
+generated() {{
+    case $path in
+        *.png) git show "HEAD:${{path%.png}}.dot" 2>/dev/null | carries_header ;;
+        *) carries_header < "$ours" ;;
+    esac
+}}
+
+# only a git merge is followed by a regeneration of the merged tree
+in_merge() {{
+    env | grep -q '^GITHEAD_' || return 1
+    for state in rebase-merge rebase-apply sequencer CHERRY_PICK_HEAD REVERT_HEAD; do
+        [ -e "$(git rev-parse --git-path "$state")" ] && return 1
+    done
+    return 0
+}}
+
+if in_merge && generated; then
+    exit 0
+fi
+exec git merge-file -L ours -L base -L theirs "$ours" "$base" "$theirs"
+"##
+    )
+}
+
+/// Where the script lives: the clone's git directory, shared by its worktrees.
+fn driver_script_path(repo_root: &Path) -> PathBuf {
+    resolve_git_dir(repo_root)
+        .join("mockspace")
+        .join("merge-generated")
+}
+
+/// Write the script, executable. Returns whether it changed.
+fn ensure_driver_script(path: &Path) -> bool {
+    let script = driver_script();
+    if fs::read_to_string(path).is_ok_and(|current| current == script) {
+        return false;
+    }
+    let written = path
+        .parent()
+        .is_some_and(|dir| fs::create_dir_all(dir).is_ok())
+        && fs::write(path, script).is_ok();
+    #[cfg(unix)]
+    if written {
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
+    }
+    written
+}
+
+fn quoted(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+}
+
+/// Register the driver in the clone's config, pointing at the script.
 pub(crate) fn register_driver(repo_root: &Path, actions: &mut Vec<String>) {
+    let script = driver_script_path(repo_root);
+    let wanted = format!("{} %O %A %B %P", quoted(&script));
+    let key = format!("merge.{DRIVER}.driver");
+    let current = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["config", "--local", &key])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let wrote_script = ensure_driver_script(&script);
+    if current.as_deref() == Some(wanted.as_str()) {
+        if wrote_script {
+            actions.push(format!("rewrote the {DRIVER} merge driver"));
+        }
+        return;
+    }
     let set = |key: &str, value: &str| {
         Command::new("git")
             .arg("-C")
@@ -130,19 +222,9 @@ pub(crate) fn register_driver(repo_root: &Path, actions: &mut Vec<String>) {
             .map(|s| s.success())
             .unwrap_or(false)
     };
-    let current = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["config", "--local", &format!("merge.{DRIVER}.driver")])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    if current.as_deref() == Some("true") {
-        return;
-    }
-    if set(&format!("merge.{DRIVER}.name"), "mockspace generated file")
-        && set(&format!("merge.{DRIVER}.driver"), "true")
+    if script.is_file()
+        && set(&format!("merge.{DRIVER}.name"), "mockspace generated file")
+        && set(&key, &wanted)
     {
         actions.push(format!("registered the {DRIVER} merge driver"));
     } else {
@@ -150,10 +232,14 @@ pub(crate) fn register_driver(repo_root: &Path, actions: &mut Vec<String>) {
     }
 }
 
+/// A git command in `repo_root` whose paths are taken as written: a generated
+/// file may be named with a `[` or a `*` in it, which a pathspec would read as
+/// a pattern and match its neighbours.
 fn git_ok(repo_root: &Path, args: &[&str]) -> bool {
     Command::new("git")
         .arg("-C")
         .arg(repo_root)
+        .arg("--literal-pathspecs")
         .args(args)
         .status()
         .map(|s| s.success())
@@ -222,17 +308,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_block_names_each_path_once_sorted_and_anchored() {
+    fn the_line_names_the_documents_directory_once_and_no_file() {
         let root = Path::new("/r");
-        let block = attributes_block(root, &[
-            root.join("docs/B.md"),
-            root.join("docs/A.md"),
-            root.join("docs/B.md"),
-        ]);
         assert_eq!(
-            block,
-            format!("{BEGIN}\n/docs/A.md merge={DRIVER}\n/docs/B.md merge={DRIVER}\n{END}\n")
+            attributes_line(root, &root.join("docs")).unwrap(),
+            format!("/docs/* merge={DRIVER}")
         );
+        assert_eq!(attributes_line(root, Path::new("/elsewhere/docs")), None);
+        assert_eq!(attributes_line(root, root), None);
     }
 
     #[test]
@@ -241,24 +324,59 @@ mod tests {
     }
 
     #[test]
-    fn splicing_replaces_only_the_block_and_keeps_the_rest() {
-        let first = splice_block("*.png binary\n", "B1\n");
-        assert!(first.starts_with("*.png binary\n"));
-        let block1 = format!("{BEGIN}\nx\n{END}\n");
-        let with = splice_block("*.png binary\n", &block1);
-        let block2 = format!("{BEGIN}\ny\n{END}\n");
-        let swapped = splice_block(&format!("{with}*.lock -diff\n"), &block2);
-        assert!(swapped.contains("*.png binary\n"), "{swapped}");
-        assert!(swapped.contains("*.lock -diff\n"), "{swapped}");
-        assert!(swapped.contains("\ny\n"), "{swapped}");
-        assert!(!swapped.contains("\nx\n"), "{swapped}");
-        assert_eq!(swapped.matches(BEGIN).count(), 1);
+    fn adding_the_line_keeps_the_rest_and_adds_it_once() {
+        let line = format!("/docs/* merge={DRIVER}");
+        let once = with_attributes("*.png binary\n*.lock -diff", &line);
+        assert!(once.starts_with("*.png binary\n*.lock -diff\n"), "{once}");
+        assert_eq!(once.matches(&line).count(), 1, "{once}");
+        assert_eq!(
+            with_attributes(&once, &line),
+            once,
+            "a second pass changes nothing"
+        );
     }
 
     #[test]
-    fn splicing_the_same_block_twice_changes_nothing() {
-        let block = format!("{BEGIN}\nx\n{END}\n");
-        let once = splice_block("a\n", &block);
-        assert_eq!(splice_block(&once, &block), once);
+    fn adding_the_line_to_nothing_writes_only_the_note_and_the_line() {
+        let line = format!("/docs/* merge={DRIVER}");
+        assert_eq!(with_attributes("", &line), format!("{NOTE}\n{line}\n"));
+    }
+
+    #[test]
+    fn the_driver_script_is_valid_shell_and_names_its_arguments() {
+        let script = driver_script();
+        let file = std::env::temp_dir().join(format!("ms_driver_{}.sh", std::process::id()));
+        fs::write(&file, &script).unwrap();
+        let out = Command::new("sh").arg("-n").arg(&file).output().unwrap();
+        let _ = fs::remove_file(&file);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(script.contains(crate::render_design::GENERATED_MARKER));
+        assert!(script.contains("git merge-file"));
+    }
+
+    #[test]
+    fn staging_takes_a_path_literally() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        git(&["init", "-q", "-b", "dev"]);
+        fs::write(root.join("a[1].md"), "literal\n").unwrap();
+        fs::write(root.join("a1.md"), "lookalike\n").unwrap();
+        // `a[1].md` as a pattern also matches `a1.md`, which is not generated
+        assert!(stage(root, &[root.join("a[1].md")]));
+        let staged = git(&["diff", "--cached", "--name-only"]);
+        assert_eq!(staged.lines().collect::<Vec<_>>(), ["a[1].md"], "{staged}");
     }
 }
