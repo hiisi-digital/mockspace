@@ -16,6 +16,7 @@
 //! Parsing those keys and acting on them is the launcher's, and the launcher's
 //! machinery is `renki`. Nothing here resolves anything.
 
+mod follow_up;
 pub mod gate;
 
 use serde::Deserialize;

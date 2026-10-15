@@ -720,7 +720,12 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // the commit being made, or in a follow-up commit.
     let generate_only = args.iter().any(|a| a == "--generate-only");
     let stage_generated = args.iter().any(|a| a == "--stage");
-    let commit_regenerated = args.iter().any(|a| a == "--commit-regenerated");
+    // The follow-up commit's subject says what it follows: a merge, or a rebase.
+    let commit_regenerated = args.iter().find_map(|a| match a.as_str() {
+        "--commit-regenerated" => Some(bootstrap::FOLLOW_UP_SUBJECT),
+        "--commit-regenerated=rebase" => Some(bootstrap::FOLLOW_UP_SUBJECT_REBASE),
+        _ => None,
+    });
     let doc_only = args.iter().any(|a| a == "--doc-only");
     let mode = if args.iter().any(|a| a == "--commit") {
         LintMode::Commit
@@ -1360,8 +1365,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     if bootstrap::write_gitattributes(&cfg.repo_root, &cfg.docs_dir) {
         eprintln!("  wrote the merge attribute for the documents directory");
     }
-    if commit_regenerated {
-        if !bootstrap::commit_follow_up(&cfg.repo_root, &generated) {
+    if let Some(subject) = commit_regenerated {
+        if !bootstrap::commit_follow_up(&cfg.repo_root, &generated, subject) {
             eprintln!("error: the regenerated files could not be committed");
             return ExitCode::FAILURE;
         }

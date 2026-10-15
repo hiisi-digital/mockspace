@@ -34,6 +34,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
+mod follow_up_hooks;
+pub(crate) use follow_up_hooks::*;
+mod driver_script;
 mod merge_driver;
 pub(crate) use merge_driver::*;
 mod gitignore;

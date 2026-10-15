@@ -352,3 +352,20 @@ fn a_squash_commit_is_not_blocked_by_an_ignored_generated_file() {
     );
     assert_eq!(r.git(&["ls-files", svg]), "");
 }
+
+/// Git resolves an octopus merge file by file with `git-merge-one-file`, which
+/// never consults a merge driver, so documents that differ on the branches
+/// conflict and the merge is abandoned.
+#[test]
+#[ignore = "catalogue: an octopus merge over differing generated documents stops, git consults no driver"]
+fn an_octopus_merge_over_differing_generated_documents_merges_with_no_conflict() {
+    let r = Repo::new();
+    r.git(&["switch", "-q", "-c", "a"]);
+    r.side("a", "one", "one, edited on a");
+    r.git(&["switch", "-q", "dev"]);
+    r.git(&["switch", "-q", "-c", "b"]);
+    r.side("b", "five", "five, edited on b");
+    r.git(&["switch", "-q", "dev"]);
+    let merged = r.git_out(&["merge", "a", "b", "-m", "chore: merge a and b"]);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+}

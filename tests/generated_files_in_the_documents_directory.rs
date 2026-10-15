@@ -104,3 +104,32 @@ fn a_rendered_image_follows_the_diagram_beside_it() {
     assert!(merged.status.success(), "{}", Repo::failure(&merged));
     assert!(r.unmerged().is_empty());
 }
+
+/// The driver has no way to learn of `-X ours` or `-X theirs`, so for a file it
+/// hands to `git merge-file` the option does nothing and the conflict stands.
+#[test]
+#[ignore = "catalogue: -X theirs does not reach the driver, a hand-written file in docs/ still conflicts"]
+fn a_strategy_option_decides_a_hand_written_file_in_the_documents_directory() {
+    let r = Repo::new();
+    write(&r.root.join("docs/CONTRIBUTING.md"), "one\ntwo\nthree\n");
+    r.git(&["add", "-A"]);
+    r.git(&["commit", "-q", "--no-verify", "-m", "docs: add contributing"]);
+    r.git(&["switch", "-q", "-c", "a"]);
+    write(
+        &r.root.join("docs/CONTRIBUTING.md"),
+        "one\ntwo, on a\nthree\n",
+    );
+    r.git(&["commit", "-q", "--no-verify", "-am", "docs: edit on a"]);
+    r.git(&["switch", "-q", "dev"]);
+    write(
+        &r.root.join("docs/CONTRIBUTING.md"),
+        "one\ntwo, on dev\nthree\n",
+    );
+    r.git(&["commit", "-q", "--no-verify", "-am", "docs: edit on dev"]);
+    let merged = r.git_out(&["merge", "-X", "theirs", "a", "-m", "chore: merge a"]);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    assert_eq!(
+        fs::read_to_string(r.root.join("docs/CONTRIBUTING.md")).unwrap(),
+        "one\ntwo, on a\nthree\n"
+    );
+}

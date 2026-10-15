@@ -356,7 +356,8 @@ pub(crate) fn print_help() -> ExitCode {
     println!("                       hooks run this over the merged tree");
     println!("    --stage            with --generate-only, stage what it generated");
     println!("    --commit-regenerated");
-    println!("                       with --generate-only, commit what differs from HEAD");
+    println!("                       with --generate-only, commit what differs from HEAD;");
+    println!("                       --commit-regenerated=rebase names the commit for a rebase");
     println!("    --commit           lint at the commit gate's severities");
     println!("    --strict           lint at the push gate's severities");
     println!("    --auto-commit      commit the state transition a subcommand makes");

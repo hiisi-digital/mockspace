@@ -19,18 +19,25 @@
 //! generation header, and anything else is merged by `git merge-file`, which is
 //! what git does with no driver.
 //!
-//! The driver keeps ours only inside a real `git merge`, the one flow a
-//! regeneration follows: at the commit that concludes a merge that stopped (the
-//! `pre-commit` hook, with `MERGE_HEAD` or `SQUASH_MSG` present) or, where the
-//! merge made its own commit, in a follow-up commit (the `post-merge` hook),
-//! because git does not carry index changes a `pre-merge-commit` hook makes into
-//! the merge commit. A rebase, a cherry-pick, a revert and a stash application
-//! run no hook of ours, so a driver keeping ours there drops the other side's
-//! edit with nothing to put it back; there it merges as git would.
+//! The driver keeps ours only where a regeneration is certain to follow, which
+//! is the two flows below and nothing else. After a `git merge` it is at the
+//! commit that concludes a merge that stopped (the `pre-commit` hook, with
+//! `MERGE_HEAD` or `SQUASH_MSG` present) or, where the merge made its own
+//! commit, in a follow-up commit (the `post-merge` hook), because git does not
+//! carry index changes a `pre-merge-commit` hook makes into the merge commit.
+//! After a rebase it is a follow-up commit on the rewritten tip (the
+//! `post-rewrite` hook): the commits in between may carry the upstream's copy,
+//! the tip does not. A cherry-pick, a revert, `git am`, `git checkout -m` and a
+//! stash application run no hook of ours, and a driver keeping ours there drops
+//! the other side's edit with nothing to put it back, so there it merges as git
+//! would. So does a clone whose hooks do not run: the driver asks git where the
+//! hook is (`core.hooksPath` moves it) and keeps ours only if it is there and
+//! ours. See [`super::driver_script`].
 //!
 //! The driver is registered in the clone's config, which is the only place git
 //! accepts one from: a repository cannot carry its own.
 
+use super::driver_script::driver_script;
 use super::*;
 
 /// The driver's name, as `.gitattributes` and the clone's config both spell it.
@@ -38,6 +45,9 @@ pub(crate) const DRIVER: &str = "mockspace-generated";
 
 /// The subject of the commit that brings generated files to a merge commit.
 pub(crate) const FOLLOW_UP_SUBJECT: &str = "chore: regenerate generated files after merge";
+
+/// The subject of the commit that brings generated files to a rebased tip.
+pub(crate) const FOLLOW_UP_SUBJECT_REBASE: &str = "chore: regenerate generated files after rebase";
 
 const NOTE: &str = "# mockspace: generated documents merge by regeneration, see the merge driver";
 
@@ -107,64 +117,6 @@ pub(crate) fn write_gitattributes(repo_root: &Path, docs_dir: &Path) -> bool {
     fs::write(&path, next).is_ok()
 }
 
-/// The driver, a shell script, because git runs it as a command and nothing
-/// else about it needs a build. Called as `<script> %O %A %B %P`.
-///
-/// Keeps ours and reports no conflict only when both hold:
-///
-/// - the merge is a `git merge` (including `--squash` and `--no-commit`, which
-///   `pre-commit` follows up). Git sets `GITHEAD_<sha>` for the heads a merge
-///   brings and for no other command that calls a driver, which is how it is
-///   told apart from a cherry-pick, a revert and a stash application: none of
-///   them has written its state file yet when the driver runs, so a
-///   `CHERRY_PICK_HEAD` or `REVERT_HEAD` check alone would never fire. The state
-///   files are still checked, for the merge a rebase makes of its own
-///   (`--rebase-merges`);
-/// - the file is one mockspace generates, read from its header, or a rendered
-///   image whose diagram of the same stem at `HEAD` carries one.
-///
-/// Anything else is `git merge-file`, which writes conflict markers into ours and
-/// exits non-zero on a conflict, as git's own text merge does.
-fn driver_script() -> String {
-    use crate::render_design::{GENERATED_MARKER, MARKER_WITHIN_LINES};
-    format!(
-        r##"#!/bin/sh
-# mockspace-managed
-# Merge driver for generated documents, rewritten by `mock`. Git calls it as
-# <this> %O %A %B %P: base, ours, theirs, path.
-base=$1
-ours=$2
-theirs=$3
-path=$4
-
-carries_header() {{
-    head -n {MARKER_WITHIN_LINES} | grep -aqF -- '{GENERATED_MARKER}'
-}}
-
-generated() {{
-    case $path in
-        *.png) git show "HEAD:${{path%.png}}.dot" 2>/dev/null | carries_header ;;
-        *) carries_header < "$ours" ;;
-    esac
-}}
-
-# only a git merge is followed by a regeneration of the merged tree
-in_merge() {{
-    env | grep -q '^GITHEAD_' || return 1
-    for state in rebase-merge rebase-apply sequencer CHERRY_PICK_HEAD REVERT_HEAD; do
-        [ -e "$(git rev-parse --git-path "$state")" ] && return 1
-    done
-    return 0
-}}
-
-if in_merge && generated; then
-    exit 0
-fi
-exec git merge-file -L ours -L base -L theirs "$ours" "$base" "$theirs"
-"##
-    )
-}
-
 /// Where the script lives: the clone's git directory, shared by its worktrees.
 fn driver_script_path(repo_root: &Path) -> PathBuf {
     resolve_git_dir(repo_root)
@@ -196,7 +148,7 @@ fn quoted(path: &Path) -> String {
 /// Register the driver in the clone's config, pointing at the script.
 pub(crate) fn register_driver(repo_root: &Path, actions: &mut Vec<String>) {
     let script = driver_script_path(repo_root);
-    let wanted = format!("{} %O %A %B %P", quoted(&script));
+    let wanted = format!("{} %O %A %B %P %L", quoted(&script));
     let key = format!("merge.{DRIVER}.driver");
     let current = Command::new("git")
         .arg("-C")
@@ -314,12 +266,12 @@ pub(crate) fn stage(repo_root: &Path, generated: &[PathBuf]) -> bool {
 /// still in place, and git refuses a partial commit then (and a plain one would
 /// conclude the merge a second time). The commit is on top of the merge commit,
 /// and the real index is brought to it for these paths afterwards.
-pub(crate) fn commit_follow_up(repo_root: &Path, generated: &[PathBuf]) -> bool {
+pub(crate) fn commit_follow_up(repo_root: &Path, generated: &[PathBuf], subject: &str) -> bool {
     let paths = tracked_set(repo_root, generated);
     if paths.is_empty() {
         return true;
     }
-    match crate::plumbing::commit_paths(repo_root, &paths, FOLLOW_UP_SUBJECT, true) {
+    match crate::plumbing::commit_paths(repo_root, &paths, subject, true) {
         Ok(crate::plumbing::Landed::Unchanged) => true,
         Ok(crate::plumbing::Landed::Committed(_)) => {
             crate::plumbing::sync_index_to_head(repo_root, &paths).is_ok()
