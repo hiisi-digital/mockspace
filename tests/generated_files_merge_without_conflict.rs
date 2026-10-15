@@ -293,3 +293,62 @@ fn a_generated_document_deleted_on_one_side_merges_with_no_conflict() {
     let merged = r.git_out(&["merge", "a", "-m", "chore: merge a"]);
     assert!(merged.status.success(), "{}", Repo::failure(&merged));
 }
+
+/// A generated file the repository ignores (the diagrams, commonly) is not
+/// tracked, so no follow-up commit or staging may put it there. Asking git
+/// whether a path is ignored with `--literal-pathspecs` set is an error it does
+/// not support, and reading that error as "not ignored" force-added the file.
+fn ignored_svg(r: &Repo) -> &'static str {
+    let svg = "docs/STRUCTURE.GRAPH.svg";
+    assert!(
+        r.root.join(svg).exists(),
+        "the fixture renders the svg (graphviz)"
+    );
+    assert_eq!(
+        r.git(&["ls-files", svg]),
+        "",
+        "and the base does not track it"
+    );
+    svg
+}
+
+#[test]
+fn the_follow_up_commit_leaves_an_ignored_generated_file_alone() {
+    let r = Repo::ignoring("docs/*.svg\n");
+    let svg = ignored_svg(&r);
+    r.two_sides();
+    let merged = r.git_out(&["merge", "a", "-m", "chore: merge a"]);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    assert!(
+        !Repo::failure(&merged).contains("fatal:"),
+        "no git command in the hooks is refused: {}",
+        Repo::failure(&merged)
+    );
+    assert_eq!(r.git(&["ls-files", svg]), "", "still untracked");
+    assert_eq!(
+        r.git(&["log", "-1", "--format=%s"]).trim(),
+        "chore: regenerate generated files after merge"
+    );
+    assert!(
+        !r.git(&["show", "--name-only", "--format=", "HEAD"])
+            .contains("svg"),
+        "the follow-up commit names no ignored file"
+    );
+}
+
+#[test]
+fn a_squash_commit_is_not_blocked_by_an_ignored_generated_file() {
+    let r = Repo::ignoring("docs/*.svg\n");
+    let svg = ignored_svg(&r);
+    r.two_sides();
+    let squashed = r.git_out(&["-c", "merge.ff=true", "merge", "--squash", "a"]);
+    assert!(squashed.status.success(), "{}", Repo::failure(&squashed));
+    let done = r.git_out(&["commit", "-q", "-m", "chore: squash a"]);
+    assert!(done.status.success(), "{}", Repo::failure(&done));
+    assert!(
+        !Repo::failure(&done).contains("fatal:"),
+        "{}",
+        Repo::failure(&done)
+    );
+    assert_eq!(r.git(&["ls-files", svg]), "");
+}

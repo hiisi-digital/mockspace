@@ -232,7 +232,8 @@ pub(crate) fn register_driver(repo_root: &Path, actions: &mut Vec<String>) {
     }
 }
 
-/// A git command in `repo_root` whose paths are taken as written: a generated
+/// A git command in `repo_root` whose paths are taken as written (for the
+/// commands that accept the flag, which `check-ignore` does not): a generated
 /// file may be named with a `[` or a `*` in it, which a pathspec would read as
 /// a pattern and match its neighbours.
 fn git_ok(repo_root: &Path, args: &[&str]) -> bool {
@@ -246,12 +247,39 @@ fn git_ok(repo_root: &Path, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// The paths that exist, are not ignored, and so can be staged.
+/// Whether git ignores `rel`: `check-ignore` exits 0 for ignored, 1 for not,
+/// and anything else is an error that says nothing about the path. Run without
+/// `--literal-pathspecs`, which it rejects (exit 128), and a path it is given
+/// is a name and never a pattern here either way.
+fn is_ignored(repo_root: &Path, rel: &str) -> Result<bool, String> {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["check-ignore", "-q", "--", rel])
+        .status()
+        .map_err(|e| e.to_string())?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        other => Err(format!("git check-ignore {rel} exited {other:?}")),
+    }
+}
+
+/// The paths that exist, are not ignored, and so can be staged. A path git
+/// cannot be asked about is left out and said so, never read as not ignored.
 fn stageable(repo_root: &Path, paths: &[String]) -> Vec<String> {
     paths
         .iter()
         .filter(|p| repo_root.join(p).exists())
-        .filter(|p| !git_ok(repo_root, &["check-ignore", "-q", "--", p]))
+        .filter(|p| {
+            match is_ignored(repo_root, p) {
+                Ok(ignored) => !ignored,
+                Err(e) => {
+                    eprintln!("warning: {e}; leaving {p} out");
+                    false
+                },
+            }
+        })
         .cloned()
         .collect()
 }
@@ -356,6 +384,36 @@ mod tests {
         );
         assert!(script.contains(crate::render_design::GENERATED_MARKER));
         assert!(script.contains("git merge-file"));
+    }
+
+    #[test]
+    fn an_ignored_path_is_not_stageable_and_a_tracked_one_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "dev"]);
+        fs::write(root.join(".gitignore"), "*.svg\n").unwrap();
+        fs::write(root.join("a.svg"), "x\n").unwrap();
+        fs::write(root.join("b.md"), "x\n").unwrap();
+        let paths = ["a.svg".to_string(), "b.md".to_string()];
+        assert_eq!(stageable(root, &paths), ["b.md"]);
+    }
+
+    #[test]
+    fn a_path_git_cannot_be_asked_about_is_left_out() {
+        // not a repository: `check-ignore` fails with 128, which says nothing
+        // about the path and must not read as "not ignored"
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.md"), "x\n").unwrap();
+        assert!(is_ignored(dir.path(), "a.md").is_err());
+        assert!(stageable(dir.path(), &["a.md".to_string()]).is_empty());
     }
 
     #[test]

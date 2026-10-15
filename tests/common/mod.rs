@@ -33,6 +33,12 @@ pub fn write(path: &Path, content: &str) {
 
 impl Repo {
     pub fn new() -> Self {
+        Self::ignoring("")
+    }
+
+    /// The same repository with `gitignore` already in place when the first
+    /// generation runs, so a generated file it names is never tracked.
+    pub fn ignoring(gitignore: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path().canonicalize().unwrap();
         let root = base.join("repo");
@@ -81,6 +87,9 @@ impl Repo {
             "one\ntwo\nthree\nfour\nfive\n",
         );
         write(&repo.root.join("notes.txt"), "notes\n");
+        if !gitignore.is_empty() {
+            write(&repo.root.join(".gitignore"), gitignore);
+        }
         repo.generate();
         repo.git(&["add", "-A"]);
         repo.git(&["commit", "-q", "--no-verify", "-m", "chore: base"]);
