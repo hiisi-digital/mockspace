@@ -15,6 +15,8 @@
 //! output. Status alone cannot tell one finding from another, and a fixture
 //! that fails for an unrelated reason produces the same 1.
 
+mod common;
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -43,7 +45,7 @@ fn fixture(root: &Path, config: &str, rows: &str) {
 }
 
 fn run(root: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .current_dir(root.join("mock"))
         .output()
         .unwrap()

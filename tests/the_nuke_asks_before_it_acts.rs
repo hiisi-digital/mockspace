@@ -19,6 +19,8 @@
 //! which a temporary directory has no way to satisfy. What is under test here
 //! is the nuke, not the gate.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -83,7 +85,7 @@ fn a_repo() -> tempfile::TempDir {
 /// A closed input is what a pipe and a script both give, and it has to read as
 /// a no rather than as an answer.
 fn run(root: &Path, args: &[&str]) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    let out = common::mockspace()
         .arg("--dir")
         .arg(root.join("mock"))
         .args(args)
@@ -218,7 +220,7 @@ fn a_dirty_tree_is_refused_whatever_the_answer_would_have_been() {
 /// two paths that skip the reading entirely.
 fn run_answering(root: &Path, args: &[&str], answer: &str) -> String {
     use std::io::Write;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    let mut child = common::mockspace()
         .arg("--dir")
         .arg(root.join("mock"))
         .args(args)
@@ -286,7 +288,7 @@ fn a_plan_where_everything_was_refused_fails_rather_than_reporting_nothing_to_do
     git(d.path(), &["add", "-A"]);
     git(d.path(), &["commit", "-qm", "two"]);
 
-    let out = Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    let out = common::mockspace()
         .arg("--dir")
         .arg(d.path().join("mock"))
         .args(["--nuke", "--y"])

@@ -119,7 +119,7 @@ pub const GENERATED_MARKER: &str = "AUTO-GENERATED: DO NOT EDIT DIRECTLY";
 ///
 /// `every_header_puts_the_marker_inside_the_window` holds the three builders
 /// to it, so widening a header without widening this fails there.
-const MARKER_WITHIN_LINES: usize = 2;
+pub(crate) const MARKER_WITHIN_LINES: usize = 2;
 
 /// Whether this content was written by a generation path.
 ///

@@ -19,9 +19,10 @@
 //! always exits non-zero, which is exactly what an earlier version of this
 //! fixture did for unrelated reasons.
 
+mod common;
+
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 fn write(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
@@ -75,7 +76,7 @@ description = "The question the spike answers."
 }
 
 fn run(root: &Path) -> Option<i32> {
-    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .current_dir(root.join("mock"))
         .output()
         .ok()?
@@ -96,7 +97,7 @@ fn run_without_taplo(root: &Path) -> Option<i32> {
         .split(':')
         .filter(|d| !d.is_empty() && !Path::new(d).join("taplo").exists())
         .collect();
-    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .current_dir(root.join("mock"))
         .env("PATH", kept.join(":"))
         .output()
@@ -135,7 +136,7 @@ fn a_namespace_key_declared_twice_fails_the_command() {
         &config,
         &format!("{once}\n[[registry.namespace]]\nkey = \"spike\"\ntitle = \"Spikes again\"\n"),
     );
-    let out = Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    let out = common::mockspace()
         .current_dir(root.join("mock"))
         .output()
         .unwrap();

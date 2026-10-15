@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
+use mockspace_manifest::kept_ours::KEPT_OURS_SHELL;
+
 use super::*;
 
 /// Where generated hooks live. Build artifact, gitignored.
@@ -23,7 +25,7 @@ pub(crate) fn ensure_generated_hooks(repo_root: &Path, mock_dir: &Path, actions:
     let git_dir = resolve_git_dir(repo_root);
     let user_hooks_dir = git_dir.join("hooks");
 
-    for hook_name in HOOK_NAMES {
+    for hook_name in HOOK_NAMES.iter().chain(FOLLOW_UP_HOOKS) {
         let path = out_dir.join(hook_name);
         let user_hook = user_hooks_dir.join(hook_name);
 
@@ -65,6 +67,8 @@ pub(crate) fn gen_hook(name: &str, mock_rel: &str, user_hook: &Path) -> String {
         "pre-commit" => gen_pre_commit(mock_rel, user_hook),
         "pre-push" => gen_pre_push(mock_rel, user_hook),
         "commit-msg" => gen_commit_msg(user_hook),
+        "post-merge" => gen_post_merge(user_hook),
+        "post-rewrite" => gen_post_rewrite(user_hook),
         _ => String::new(),
     }
 }
@@ -306,6 +310,32 @@ set -e
 {chain}
 MOCK_DIR="{mock_rel}"
 
+# A merge concluding here stopped on something that was not a generated file,
+# since generated files merge without conflict, or was a squash, which stops
+# for nothing and leaves no MERGE_HEAD. Or the merge driver kept one side of a
+# generated file in a merge or rebase that went on without it. Whatever side of
+# them it holds, they are regenerated from the merged tree and staged before
+# anything is checked, so this commit never carries one side's copy.
+{KEPT_OURS_SHELL}
+if [ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ] \
+    || [ -f "$(git rev-parse --git-path SQUASH_MSG 2>/dev/null)" ] \
+    || ms_kept_live; then
+    echo "pre-commit: concluding a merge, regenerating the generated files..."
+    if ! cargo mock --generate-only --stage 2>&1; then
+        echo ""
+        echo "BLOCKED: the generated files could not be regenerated for this merge."
+        exit 1
+    fi
+    # the engine removes the record once it has checked what it staged, so one
+    # still standing is a regeneration that did not happen, whatever it exited
+    if ms_kept_live; then
+        echo ""
+        echo "BLOCKED: generated files kept from one side of a merge or rebase were not regenerated."
+        ms_kept_say
+        exit 1
+    fi
+fi
+
 # Only run mockspace validation when staged files touch the design surface.
 STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
 
@@ -409,6 +439,16 @@ MOCK_DIR="{mock_rel}"
 # stdin. Capture once so both the byline scan and the crate-diff loop below
 # can read it (a here-string keeps the loop in this shell so its vars persist).
 PREPUSH_STDIN=$(cat)
+
+# Generated files the merge driver kept one side of, with nothing having
+# regenerated them since, are a stale document, and a push would publish it.
+{KEPT_OURS_SHELL}
+if ms_kept_live; then
+    echo "" >&2
+    echo "BLOCKED: generated files kept from one side of a merge or rebase were not regenerated, and this push would publish them." >&2
+    ms_kept_say
+    exit 1
+fi
 
 # Byline safety net (runs first, before any launcher work, so it holds
 # regardless of install state). The commit-msg hook catches bylines at commit
@@ -1322,6 +1362,10 @@ mod generated_pre_commit_tests {
         let out = Command::new("bash")
             .arg(&hook)
             .current_dir(root)
+            // the hook runs `cargo mock`, which writes the durable hooks under the
+            // home it is given, and this test is not about them
+            .env("HOME", root)
+            .env_remove("XDG_CONFIG_HOME")
             .output()
             .expect("bash runs");
         format!(

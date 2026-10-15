@@ -45,6 +45,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::kept_ours::KEPT_OURS_SHELL;
+
 /// The gate's version, keying the durable hooks directory.
 ///
 /// Lives here because the launcher and the engine both install and read the same
@@ -57,6 +59,10 @@ pub const HOOK_VERSION: u32 = 3;
 
 /// The hooks a repo's gate consists of.
 pub const HOOK_NAMES: &[&str] = &["pre-commit", "pre-push", "commit-msg"];
+
+// The hooks that follow an event live beside their script, in `follow_up`.
+pub use crate::follow_up::FOLLOW_UP_HOOKS;
+use crate::follow_up::durable_follow_up_hook;
 
 /// Marks a file as generated, so a reader knows not to edit it and the installer
 /// knows it may overwrite it.
@@ -180,6 +186,8 @@ pub fn chain_tail(name: &str, stdin_replay: &str) -> String {
 # installed under .git/hooks, which git does not read while core.hooksPath
 # points elsewhere. Same arguments, same stdin, its exit status.
 ms_chain() {{
+    # a probe asks only whether a generated hook would run, and runs nothing
+    [ -z "${{MOCKSPACE_PROBE:-}}" ] || exit 1
     gitdir=$(git -C "$root" rev-parse --git-common-dir) || {{
         echo "mockspace gate: cannot find the repository's git directory" >&2
         exit 1
@@ -201,8 +209,21 @@ ms_chain() {{
 /// Every pass ends in the repository's own hook; see [`chain_tail`].
 #[must_use]
 pub fn durable_hook(name: &str, hook_version: u32) -> String {
+    if FOLLOW_UP_HOOKS.contains(&name) {
+        return durable_follow_up_hook(name, hook_version);
+    }
     let stdin_capture = if name == "pre-push" { "PREPUSH_STDIN=$(cat)\n" } else { "" };
     let stdin_replay = if name == "pre-push" { "printf '%s\\n' \"$PREPUSH_STDIN\" | " } else { "" };
+    // A file the merge driver left says some generated files were kept from one
+    // side on the promise of a regeneration. With no generated hook here to make
+    // it, a commit or a push would carry them, so those two refuse.
+    let kept_ours = if matches!(name, "pre-commit" | "pre-push") {
+        format!(
+            "\n{KEPT_OURS_SHELL}if ms_kept_live; then\n    echo \"\" >&2\n    echo \"BLOCKED: generated files kept from one side of a merge or rebase were not regenerated.\" >&2\n    ms_kept_say\n    exit 1\nfi\n\n"
+        )
+    } else {
+        String::new()
+    };
     let chain = chain_tail(name, stdin_replay);
     format!(
         r##"#!/usr/bin/env bash
@@ -217,11 +238,17 @@ set -u
 {DISCOVERY}
 # --- initialised? then the generated per-repo hook owns this ---
 generated="$mockdir/target/hooks/{name}"
+# the merge driver asks whether this hook would hand over to a generated one in
+# this working tree, and a hook that would not is not one that regenerates
+if [ -n "${{MOCKSPACE_PROBE:-}}" ]; then
+    [ -x "$generated" ]
+    exit $?
+fi
 if [ -x "$generated" ]; then
     {stdin_replay}"$generated" "$@"
     exit $?
 fi
-
+{kept_ours}
 # --- not initialised: block at the configured scope ---
 scope=$(ms_read_key "$cfg" uninitialised_blocks)
 [ -z "$scope" ] && scope="surface"
@@ -286,7 +313,7 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
         return actions;
     }
 
-    for name in HOOK_NAMES {
+    for name in HOOK_NAMES.iter().chain(FOLLOW_UP_HOOKS) {
         let path = dir.join(name);
         let content = durable_hook(name, hook_version);
         let fp_line = format!(
@@ -448,11 +475,18 @@ mod tests {
                 define < first_use,
                 "{name}: defined before the discovery that calls it"
             );
-            let block = h.find("BLOCKED:").unwrap();
-            assert!(
-                h[block ..].find("ms_chain").is_none(),
-                "{name}: a block never chains"
-            );
+            // every block ends in its exit before anything could chain
+            let mut blocks = 0;
+            for (at, _) in h.match_indices("BLOCKED:") {
+                blocks += 1;
+                let rest = &h[at..];
+                let exit = rest.find("exit 1").expect("a block exits");
+                assert!(
+                    rest[..exit].find("ms_chain").is_none(),
+                    "{name}: a block never chains"
+                );
+            }
+            assert!(blocks >= 1, "{name}: it blocks somewhere");
             // the common git dir: never the hooks path, which would point back
             // here, and never the worktree's own git dir, which has no hooks
             assert!(h.contains("rev-parse --git-common-dir"), "{name}");
@@ -540,7 +574,11 @@ mod tests {
         let first = install_durable_hooks(&dir, 3);
         let second = install_durable_hooks(&dir, 3);
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(first.len(), HOOK_NAMES.len(), "first run writes every hook");
+        assert_eq!(
+            first.len(),
+            HOOK_NAMES.len() + FOLLOW_UP_HOOKS.len(),
+            "first run writes every hook"
+        );
         assert!(second.is_empty(), "second run rewrites nothing: {second:?}");
     }
 

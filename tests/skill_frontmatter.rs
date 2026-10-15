@@ -16,6 +16,8 @@
 //! it would pass with the production path broken, which is exactly what
 //! happened.
 
+mod common;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -47,7 +49,7 @@ fn fixture(root: &Path, description: &str) {
 }
 
 fn generated(root: &Path) -> String {
-    Command::new(env!("CARGO_BIN_EXE_mockspace"))
+    common::mockspace()
         .current_dir(root.join("mock"))
         .output()
         .unwrap();
