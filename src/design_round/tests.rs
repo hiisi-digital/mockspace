@@ -445,6 +445,31 @@ mod seal {
         String::from_utf8_lossy(&out.stdout).to_string()
     }
 
+    /// What the last commit did to which paths, one `STATUS<tab>path` line each,
+    /// with renames left as a delete and an add so the old and new names both show.
+    fn last_commit(repo: &Path) -> Vec<String> {
+        let out = std::process::Command::new("git")
+            .args(["log", "-1", "--no-renames", "--name-status", "--format="])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect()
+    }
+
+    fn head(repo: &Path) -> String {
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
     #[test]
     fn an_auto_committed_lock_leaves_git_status_empty() {
         // The commit is built through a temporary index, so the real one still
@@ -453,9 +478,20 @@ mod seal {
         // then saw the locked changelist as modified.
         let (repo, mock) = repo_in_doc();
         assert_eq!(status(repo.path()), "", "the fixture starts clean");
+        let before = head(repo.path());
         let code = cmd_lock(&Config::from_dir(&mock), &AUTO);
         assert_eq!(code, ExitCode::SUCCESS);
         assert_eq!(status(repo.path()), "");
+        // a lock that committed nothing would also leave the status empty
+        assert_ne!(head(repo.path()), before, "the lock made a commit");
+        assert_eq!(
+            last_commit(repo.path()),
+            [
+                "A\tmock/design_rounds/202609190100_changelist.doc.lock.md".to_string(),
+                format!("D\tmock/design_rounds/{DOC_CL}"),
+            ],
+            "the commit is the round's own files moving and nothing else"
+        );
     }
 
     #[test]
@@ -469,8 +505,22 @@ mod seal {
         assert_eq!(cmd_lock(&Config::from_dir(&mock), &AUTO), ExitCode::SUCCESS);
         assert_eq!(cmd_lock(&Config::from_dir(&mock), &AUTO), ExitCode::SUCCESS);
         assert_eq!(status(repo.path()), "", "after the two locks");
+        let before = head(repo.path());
         assert_eq!(cmd_close(&Config::from_dir(&mock), &AUTO), ExitCode::SUCCESS);
         assert_eq!(status(repo.path()), "", "after the close");
+        assert_ne!(head(repo.path()), before, "the close made a commit");
+        assert_eq!(
+            last_commit(repo.path()),
+            [
+                "A\tmock/design_rounds/202609190100/.history",
+                "A\tmock/design_rounds/202609190100/.meta",
+                "A\tmock/design_rounds/202609190100/202609190100_changelist.doc.lock.md",
+                "A\tmock/design_rounds/202609190100/202609190101_changelist.src.lock.md",
+                "D\tmock/design_rounds/202609190100_changelist.doc.lock.md",
+                "D\tmock/design_rounds/202609190101_changelist.src.lock.md",
+            ],
+            "the two locked changelists left the flat directory for the round's own, and nothing else moved"
+        );
     }
 
     #[test]

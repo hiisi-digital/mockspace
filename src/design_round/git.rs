@@ -55,49 +55,6 @@ pub(crate) fn suggest_fallback(cfg: &Config, message: &str) {
     eprintln!("    git add {dr_rel} && git commit -m \"{message}\"");
 }
 
-/// Run a git command and return Ok(stdout) or Err(stderr).
-pub(crate) fn git_ok(root: &Path, args: &[&str]) -> Result<String, String> {
-    Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|e| e.to_string())
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout).map_err(|e| e.to_string())
-            } else {
-                Err(String::from_utf8_lossy(&o.stderr).to_string())
-            }
-        })
-}
-
-/// Run a git command; returns Ok(()) on success, Err(stderr) on failure.
-pub(crate) fn git_run(root: &Path, args: &[&str]) -> Result<(), String> {
-    git_ok(root, args).map(|_| ())
-}
-
-/// Run a git command with a custom GIT_INDEX_FILE; returns Ok(stdout).
-pub(crate) fn git_env_ok(root: &Path, args: &[&str], index_file: &str) -> Result<String, String> {
-    Command::new("git")
-        .args(args)
-        .env("GIT_INDEX_FILE", index_file)
-        .current_dir(root)
-        .output()
-        .map_err(|e| e.to_string())
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout).map_err(|e| e.to_string())
-            } else {
-                Err(String::from_utf8_lossy(&o.stderr).to_string())
-            }
-        })
-}
-
-/// Run a git command with a custom GIT_INDEX_FILE; returns Ok(()).
-pub(crate) fn git_env_run(root: &Path, args: &[&str], index_file: &str) -> Result<(), String> {
-    git_env_ok(root, args, index_file).map(|_| ())
-}
-
 /// Get a relative path from base to target.
 pub(crate) fn pathdiff(base: &Path, target: &Path) -> String {
     target

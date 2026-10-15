@@ -124,7 +124,69 @@ pub(crate) fn sync_index_to_head(root: &Path, paths: &[String]) -> Result<(), St
     if paths.is_empty() {
         return Ok(());
     }
-    let mut args = vec!["reset", "-q", "--"];
+    let mut args = vec!["--literal-pathspecs", "reset", "-q", "--"];
     args.extend(paths.iter().map(String::as_str));
     run(root, &args, None).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(root: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    /// Two files whose names differ only where a glob would make them equal:
+    /// `a[1].md` is the literal name, and as a pattern it also matches `a1.md`.
+    fn repo_with_lookalikes() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q", "-b", "dev"]);
+        git(root, &["config", "user.name", "t"]);
+        git(root, &["config", "user.email", "t@example.com"]);
+        git(root, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(root.join("a[1].md"), "literal\n").unwrap();
+        std::fs::write(root.join("a1.md"), "lookalike\n").unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-q", "--no-verify", "-m", "chore: base"]);
+        dir
+    }
+
+    #[test]
+    fn syncing_the_index_takes_a_path_literally() {
+        let dir = repo_with_lookalikes();
+        let root = dir.path();
+        std::fs::write(root.join("a[1].md"), "literal, edited\n").unwrap();
+        std::fs::write(root.join("a1.md"), "lookalike, staged\n").unwrap();
+        git(root, &["add", "a1.md"]);
+        sync_index_to_head(root, &["a[1].md".to_string()]).unwrap();
+        assert_eq!(
+            git(root, &["status", "--porcelain"]),
+            "M  a1.md\n M a[1].md\n",
+            "the staged lookalike is somebody else's and stays staged"
+        );
+    }
+
+    #[test]
+    fn committing_paths_takes_a_path_literally() {
+        let dir = repo_with_lookalikes();
+        let root = dir.path();
+        std::fs::write(root.join("a[1].md"), "literal, edited\n").unwrap();
+        std::fs::write(root.join("a1.md"), "lookalike, edited\n").unwrap();
+        let landed = commit_paths(root, &["a[1].md".to_string()], "chore: one", true).unwrap();
+        assert!(matches!(landed, Landed::Committed(_)));
+        assert_eq!(git(root, &["show", "HEAD:a1.md"]), "lookalike\n");
+        assert_eq!(git(root, &["show", "HEAD:a[1].md"]), "literal, edited\n");
+    }
 }
