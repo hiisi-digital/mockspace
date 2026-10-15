@@ -135,10 +135,34 @@ pub(crate) fn commit_or_suggest(cfg: &Config, opts: &SubcmdOpts, files: &[PathBu
         eprintln!("  run: git update-ref {ref_name} {commit_sha}");
     } else {
         eprintln!("  committed: {message}");
+        // 7. The commit above was built beside the real index, so the real one
+        // still holds the old layout: `git status` would show the transition as
+        // staged renames and deletions beside untracked files, and a check
+        // reading the index (the pre-push one reads the locked changelist) would
+        // see it as modified. Bring the paths the commit carried to the new HEAD.
+        // Path-limited rather than a whole `git reset`, so anything somebody has
+        // staged elsewhere stays staged. The working tree is never touched.
+        sync_index_to_head(root, files);
     }
 
-    // 7. Clean up.
+    // 8. Clean up.
     let _ = fs::remove_file(&tmp_index);
+}
+
+/// Set the real index entries for `files` to what `HEAD` holds, touching no
+/// working-tree file. A path `HEAD` does not have, which is the old half of a
+/// rename, is dropped from the index.
+pub(crate) fn sync_index_to_head(root: &Path, files: &[PathBuf]) {
+    let rels: Vec<String> = files.iter().map(|f| pathdiff(root, f)).collect();
+    if rels.is_empty() {
+        return;
+    }
+    let mut args = vec!["reset", "-q", "--"];
+    args.extend(rels.iter().map(String::as_str));
+    if let Err(e) = git_run(root, &args) {
+        eprintln!("warning: the commit landed but the index was not brought to it: {e}");
+        eprintln!("  run: git reset -q");
+    }
 }
 
 /// Print fallback manual commit instructions.

@@ -430,4 +430,57 @@ mod seal {
         assert_eq!(code, ExitCode::FAILURE);
         assert_eq!(listed(dir.path()), before);
     }
+
+    // --- a committed transition leaves the index true ---------------------------
+
+    const AUTO: SubcmdOpts = SubcmdOpts { auto_commit: true };
+
+    fn status(repo: &Path) -> String {
+        let out = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    #[test]
+    fn an_auto_committed_lock_leaves_git_status_empty() {
+        // The commit is built through a temporary index, so the real one still
+        // held the old layout and `git status` showed the lock as a staged
+        // deletion beside an untracked file. A pre-push check reading the index
+        // then saw the locked changelist as modified.
+        let (repo, mock) = repo_in_doc();
+        assert_eq!(status(repo.path()), "", "the fixture starts clean");
+        let code = cmd_lock(&Config::from_dir(&mock), &AUTO);
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(status(repo.path()), "");
+    }
+
+    #[test]
+    fn an_auto_committed_close_leaves_git_status_empty() {
+        let (repo, mock) = repo_in_doc();
+        let dr = mock.join("design_rounds");
+        std::fs::write(dr.join("202609190101_changelist.src.md"), "# src changelist: x\n").unwrap();
+        git(repo.path(), &["add", "-A"]);
+        git(repo.path(), &["commit", "-q", "--no-verify", "-m", "chore: into impl"]);
+        // a lock for each window, then the close
+        assert_eq!(cmd_lock(&Config::from_dir(&mock), &AUTO), ExitCode::SUCCESS);
+        assert_eq!(cmd_lock(&Config::from_dir(&mock), &AUTO), ExitCode::SUCCESS);
+        assert_eq!(status(repo.path()), "", "after the two locks");
+        assert_eq!(cmd_close(&Config::from_dir(&mock), &AUTO), ExitCode::SUCCESS);
+        assert_eq!(status(repo.path()), "", "after the close");
+    }
+
+    #[test]
+    fn a_committed_transition_keeps_unrelated_staged_work_staged() {
+        // Only the paths the transition committed are brought to the new HEAD.
+        // Somebody's staged edit elsewhere is theirs and stays staged.
+        let (repo, mock) = repo_in_doc();
+        std::fs::write(mock.join("README.md.tmpl"), "# readme, staged\n").unwrap();
+        git(repo.path(), &["add", "mock/README.md.tmpl"]);
+        assert_eq!(cmd_lock(&Config::from_dir(&mock), &AUTO), ExitCode::SUCCESS);
+        assert_eq!(status(repo.path()), "M  mock/README.md.tmpl\n");
+    }
 }
