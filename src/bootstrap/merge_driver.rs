@@ -64,7 +64,7 @@ fn pattern(rel: &str) -> String {
     out
 }
 
-fn relative(repo_root: &Path, path: &Path) -> Option<String> {
+pub(crate) fn relative(repo_root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(repo_root).ok()?;
     Some(
         rel.components()
@@ -125,8 +125,8 @@ fn driver_script_path(repo_root: &Path) -> PathBuf {
 }
 
 /// Write the script, executable. Returns whether it changed.
-fn ensure_driver_script(path: &Path, generated_hooks: &str) -> bool {
-    let script = driver_script(generated_hooks);
+fn ensure_driver_script(path: &Path) -> bool {
+    let script = driver_script();
     if fs::read_to_string(path).is_ok_and(|current| current == script) {
         return false;
     }
@@ -145,30 +145,8 @@ fn quoted(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
-/// Where the generated hooks are, relative to the top level of a working tree
-/// (they are per working tree), spelled the way the hooks themselves find them:
-/// `<mock dir>/target/hooks`. Absolute when the mock directory is not under the
-/// repository.
-fn generated_hooks_rel(repo_root: &Path, mock_dir: &Path) -> String {
-    let dir = generated_hooks_dir(mock_dir);
-    relative(repo_root, &dir).unwrap_or_else(|| dir.to_string_lossy().to_string())
-}
-
-/// Whether `.gitattributes` has no uncommitted change, staged or not, so a
-/// follow-up commit that names it carries only what this run wrote into it.
-/// Absent counts as clean, since the run is then the one to create it. Asked
-/// before the run writes its line, because afterwards it always differs.
-pub(crate) fn attributes_clean(repo_root: &Path) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["status", "--porcelain", "--untracked-files=all", "--", ".gitattributes"])
-        .output()
-        .is_ok_and(|o| o.status.success() && o.stdout.is_empty())
-}
-
 /// Register the driver in the clone's config, pointing at the script.
-pub(crate) fn register_driver(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>) {
+pub(crate) fn register_driver(repo_root: &Path, actions: &mut Vec<String>) {
     let script = driver_script_path(repo_root);
     let wanted = format!("{} %O %A %B %P %L", quoted(&script));
     let key = format!("merge.{DRIVER}.driver");
@@ -180,7 +158,7 @@ pub(crate) fn register_driver(repo_root: &Path, mock_dir: &Path, actions: &mut V
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    let wrote_script = ensure_driver_script(&script, &generated_hooks_rel(repo_root, mock_dir));
+    let wrote_script = ensure_driver_script(&script);
     if current.as_deref() == Some(wanted.as_str()) {
         if wrote_script {
             actions.push(format!("rewrote the {DRIVER} merge driver"));
@@ -203,119 +181,6 @@ pub(crate) fn register_driver(repo_root: &Path, mock_dir: &Path, actions: &mut V
         actions.push(format!("registered the {DRIVER} merge driver"));
     } else {
         actions.push(format!("could not register the {DRIVER} merge driver"));
-    }
-}
-
-/// A git command in `repo_root` whose paths are taken as written (for the
-/// commands that accept the flag, which `check-ignore` does not): a generated
-/// file may be named with a `[` or a `*` in it, which a pathspec would read as
-/// a pattern and match its neighbours.
-fn git_ok(repo_root: &Path, args: &[&str]) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .arg("--literal-pathspecs")
-        .args(args)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Whether git ignores `rel`: `check-ignore` exits 0 for ignored, 1 for not,
-/// and anything else is an error that says nothing about the path. Run without
-/// `--literal-pathspecs`, which it rejects (exit 128), and a path it is given
-/// is a name and never a pattern here either way.
-fn is_ignored(repo_root: &Path, rel: &str) -> Result<bool, String> {
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["check-ignore", "-q", "--", rel])
-        .status()
-        .map_err(|e| e.to_string())?;
-    match status.code() {
-        Some(0) => Ok(true),
-        Some(1) => Ok(false),
-        other => Err(format!("git check-ignore {rel} exited {other:?}")),
-    }
-}
-
-/// The paths that exist, are not ignored, and so can be staged. A path git
-/// cannot be asked about is left out and said so, never read as not ignored.
-fn stageable(repo_root: &Path, paths: &[String]) -> Vec<String> {
-    paths
-        .iter()
-        .filter(|p| repo_root.join(p).exists())
-        .filter(|p| {
-            match is_ignored(repo_root, p) {
-                Ok(ignored) => !ignored,
-                Err(e) => {
-                    eprintln!("warning: {e}; leaving {p} out");
-                    false
-                },
-            }
-        })
-        .cloned()
-        .collect()
-}
-
-/// The generated paths, repository-relative, plus `.gitattributes` when asked.
-/// The regeneration made the generated files, so they are its to commit; the
-/// attributes file is only its to commit if nobody had edited it first, see
-/// [`attributes_clean`].
-pub(crate) fn tracked_set(
-    repo_root: &Path,
-    generated: &[PathBuf],
-    include_attributes: bool,
-) -> Vec<String> {
-    let mut rels: Vec<String> = generated
-        .iter()
-        .filter_map(|p| relative(repo_root, p))
-        .collect();
-    if include_attributes {
-        rels.push(".gitattributes".to_string());
-    }
-    rels.sort();
-    rels.dedup();
-    stageable(repo_root, &rels)
-}
-
-/// Stage the generated files, so the commit being made carries them.
-pub(crate) fn stage(repo_root: &Path, generated: &[PathBuf], include_attributes: bool) -> bool {
-    let paths = tracked_set(repo_root, generated, include_attributes);
-    if paths.is_empty() {
-        return true;
-    }
-    let mut args = vec!["add", "--"];
-    args.extend(paths.iter().map(String::as_str));
-    git_ok(repo_root, &args)
-}
-
-/// Where the generated files differ from `HEAD`, commit exactly those paths and
-/// nothing else that may be staged. Quiet when nothing differs.
-///
-/// By plumbing and not `git commit`: `post-merge` runs while the merge state is
-/// still in place, and git refuses a partial commit then (and a plain one would
-/// conclude the merge a second time). The commit is on top of the merge commit,
-/// and the real index is brought to it for these paths afterwards.
-pub(crate) fn commit_follow_up(
-    repo_root: &Path,
-    generated: &[PathBuf],
-    subject: &str,
-    include_attributes: bool,
-) -> bool {
-    let paths = tracked_set(repo_root, generated, include_attributes);
-    if paths.is_empty() {
-        return true;
-    }
-    match crate::plumbing::commit_paths(repo_root, &paths, subject, true) {
-        Ok(crate::plumbing::Landed::Unchanged) => true,
-        Ok(crate::plumbing::Landed::Committed(_)) => {
-            crate::plumbing::sync_index_to_head(repo_root, &paths).is_ok()
-        },
-        Err(e) => {
-            eprintln!("error: {e}");
-            false
-        },
     }
 }
 
@@ -360,7 +225,7 @@ mod tests {
 
     #[test]
     fn the_driver_script_is_valid_shell_and_names_its_arguments() {
-        let script = driver_script(".mock/target/hooks");
+        let script = driver_script();
         let file = std::env::temp_dir().join(format!("ms_driver_{}.sh", std::process::id()));
         fs::write(&file, &script).unwrap();
         let out = Command::new("sh").arg("-n").arg(&file).output().unwrap();
@@ -372,102 +237,5 @@ mod tests {
         );
         assert!(script.contains(crate::render_design::GENERATED_MARKER));
         assert!(script.contains("git merge-file"));
-    }
-
-    #[test]
-    fn an_ignored_path_is_not_stageable_and_a_tracked_one_is() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let git = |args: &[&str]| {
-            let out = Command::new("git")
-                .args(args)
-                .current_dir(root)
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "git {args:?}");
-        };
-        git(&["init", "-q", "-b", "dev"]);
-        fs::write(root.join(".gitignore"), "*.svg\n").unwrap();
-        fs::write(root.join("a.svg"), "x\n").unwrap();
-        fs::write(root.join("b.md"), "x\n").unwrap();
-        let paths = ["a.svg".to_string(), "b.md".to_string()];
-        assert_eq!(stageable(root, &paths), ["b.md"]);
-    }
-
-    #[test]
-    fn a_path_git_cannot_be_asked_about_is_left_out() {
-        // not a repository: `check-ignore` fails with 128, which says nothing
-        // about the path and must not read as "not ignored"
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("a.md"), "x\n").unwrap();
-        assert!(is_ignored(dir.path(), "a.md").is_err());
-        assert!(stageable(dir.path(), &["a.md".to_string()]).is_empty());
-    }
-
-    #[test]
-    fn the_attributes_file_is_clean_when_absent_or_unchanged_and_not_when_edited() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let git = |args: &[&str]| {
-            let out = Command::new("git")
-                .args(["-c", "user.name=t", "-c", "user.email=t@e.c"])
-                .args(args)
-                .current_dir(root)
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "git {args:?}");
-        };
-        git(&["init", "-q", "-b", "dev"]);
-        git(&["commit", "-q", "--allow-empty", "-m", "base"]);
-        assert!(attributes_clean(root), "absent");
-        fs::write(root.join(".gitattributes"), "*.png binary\n").unwrap();
-        assert!(!attributes_clean(root), "untracked, so somebody's own file");
-        git(&["add", ".gitattributes"]);
-        assert!(!attributes_clean(root), "staged and not committed");
-        git(&["commit", "-q", "-m", "attrs"]);
-        assert!(attributes_clean(root), "committed and unchanged");
-        fs::write(root.join(".gitattributes"), "*.png binary\n*.bin binary\n").unwrap();
-        assert!(!attributes_clean(root), "edited");
-        assert_eq!(
-            tracked_set(root, &[], false),
-            Vec::<String>::new(),
-            "an edited attributes file is not named when it is not asked for"
-        );
-        assert_eq!(tracked_set(root, &[], true), [".gitattributes"]);
-    }
-
-    #[test]
-    fn the_generated_hooks_are_found_under_the_mock_directory_not_assumed() {
-        let root = Path::new("/r");
-        assert_eq!(
-            generated_hooks_rel(root, &root.join("linux")),
-            "linux/target/hooks"
-        );
-        assert_eq!(
-            generated_hooks_rel(root, Path::new("/elsewhere/mock")),
-            "/elsewhere/mock/target/hooks"
-        );
-    }
-
-    #[test]
-    fn staging_takes_a_path_literally() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let git = |args: &[&str]| {
-            let out = Command::new("git")
-                .args(args)
-                .current_dir(root)
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "git {args:?}");
-            String::from_utf8_lossy(&out.stdout).to_string()
-        };
-        git(&["init", "-q", "-b", "dev"]);
-        fs::write(root.join("a[1].md"), "literal\n").unwrap();
-        fs::write(root.join("a1.md"), "lookalike\n").unwrap();
-        // `a[1].md` as a pattern also matches `a1.md`, which is not generated
-        assert!(stage(root, &[root.join("a[1].md")], false));
-        let staged = git(&["diff", "--cached", "--name-only"]);
-        assert_eq!(staged.lines().collect::<Vec<_>>(), ["a[1].md"], "{staged}");
     }
 }

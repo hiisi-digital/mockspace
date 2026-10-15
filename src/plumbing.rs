@@ -15,8 +15,9 @@
 //! The real index then still holds the old layout for those paths, so the
 //! caller brings them to the new `HEAD` with [`sync_index_to_head`].
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// What a call landed.
 #[derive(Debug, PartialEq, Eq)]
@@ -41,6 +42,42 @@ fn run(root: &Path, args: &[&str], index: Option<&Path>) -> Result<String, Strin
     }
 }
 
+/// Put `content` into the index at `rel` as a blob of its own, whatever the
+/// working-tree copy holds by now. The entry is a regular file; `index` is the
+/// temporary index, or the real one for `None`.
+pub(crate) fn pin(
+    root: &Path,
+    rel: &str,
+    content: &str,
+    index: Option<&Path>,
+) -> Result<(), String> {
+    let mut child = Command::new("git")
+        .args(["hash-object", "-w", "--stdin"])
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(content.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let blob = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    run(
+        root,
+        &["update-index", "--add", "--cacheinfo", &format!("100644,{blob},{rel}")],
+        index,
+    )
+    .map(|_| ())
+}
+
 /// Where the temporary index lives: the repository's own git directory, which
 /// is not `root/.git` in a linked worktree.
 fn temporary_index(root: &Path) -> Result<PathBuf, String> {
@@ -58,15 +95,20 @@ fn temporary_index(root: &Path) -> Result<PathBuf, String> {
 ///
 /// With `skip_if_unchanged`, a call whose paths already match `HEAD` makes no
 /// commit.
+///
+/// A path in `pinned` is committed with exactly the content given, and not
+/// whatever the working tree holds when the index is built: the caller decided
+/// what it wrote, and a later edit of somebody's is theirs.
 pub(crate) fn commit_paths(
     root: &Path,
     paths: &[String],
     message: &str,
     skip_if_unchanged: bool,
+    pinned: &[(&str, &str)],
 ) -> Result<Landed, String> {
     let index = temporary_index(root)?;
     let _ = std::fs::remove_file(&index);
-    let result = build(root, paths, message, skip_if_unchanged, &index);
+    let result = build(root, paths, message, skip_if_unchanged, pinned, &index);
     let _ = std::fs::remove_file(&index);
     result
 }
@@ -76,11 +118,16 @@ fn build(
     paths: &[String],
     message: &str,
     skip_if_unchanged: bool,
+    pinned: &[(&str, &str)],
     index: &Path,
 ) -> Result<Landed, String> {
     let head = run(root, &["rev-parse", "HEAD"], None)?.trim().to_string();
     run(root, &["read-tree", "HEAD"], Some(index)).map_err(|e| format!("read-tree: {e}"))?;
     for rel in paths {
+        if let Some((_, content)) = pinned.iter().find(|(p, _)| p == rel) {
+            pin(root, rel, content, Some(index))?;
+            continue;
+        }
         let flag = if root.join(rel).exists() { "--add" } else { "--remove" };
         run(root, &["update-index", flag, "--", rel], Some(index))
             .map_err(|e| format!("update-index {rel}: {e}"))?;
@@ -184,9 +231,38 @@ mod tests {
         let root = dir.path();
         std::fs::write(root.join("a[1].md"), "literal, edited\n").unwrap();
         std::fs::write(root.join("a1.md"), "lookalike, edited\n").unwrap();
-        let landed = commit_paths(root, &["a[1].md".to_string()], "chore: one", true).unwrap();
+        let landed = commit_paths(root, &["a[1].md".to_string()], "chore: one", true, &[]).unwrap();
         assert!(matches!(landed, Landed::Committed(_)));
         assert_eq!(git(root, &["show", "HEAD:a1.md"]), "lookalike\n");
         assert_eq!(git(root, &["show", "HEAD:a[1].md"]), "literal, edited\n");
+    }
+
+    #[test]
+    fn a_pinned_path_is_committed_as_given_whatever_the_working_tree_holds_now() {
+        let dir = repo_with_lookalikes();
+        let root = dir.path();
+        std::fs::write(root.join("a1.md"), "lookalike, as the run wrote it\n").unwrap();
+        // somebody edits it after the run decided what to commit
+        std::fs::write(
+            root.join("a1.md"),
+            "lookalike, and then somebody's own line\n",
+        )
+        .unwrap();
+        let landed = commit_paths(root, &["a1.md".to_string()], "chore: pinned", true, &[(
+            "a1.md",
+            "lookalike, as the run wrote it\n",
+        )])
+        .unwrap();
+        assert!(matches!(landed, Landed::Committed(_)));
+        assert_eq!(
+            git(root, &["show", "HEAD:a1.md"]),
+            "lookalike, as the run wrote it\n"
+        );
+        sync_index_to_head(root, &["a1.md".to_string()]).unwrap();
+        assert_eq!(
+            git(root, &["status", "--porcelain"]),
+            " M a1.md\n",
+            "their edit is still theirs, uncommitted"
+        );
     }
 }

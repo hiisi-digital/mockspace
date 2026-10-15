@@ -26,7 +26,7 @@ pub(crate) fn commit_or_suggest(cfg: &Config, opts: &SubcmdOpts, files: &[PathBu
 
     // A surgical commit of exactly our files, built through a temporary index
     // so the real one is never read while it is made. See `crate::plumbing`.
-    match crate::plumbing::commit_paths(root, &rels, message, false) {
+    match crate::plumbing::commit_paths(root, &rels, message, false, &[]) {
         Ok(_) => eprintln!("  committed: {message}"),
         Err(e) => {
             eprintln!("error: {e}");

@@ -146,3 +146,53 @@ fn a_worktree_that_has_generated_its_hooks_regenerates() {
     assert!(in_head.contains("one, edited on a"), "{in_head}");
     assert!(in_head.contains("five, edited on dev"), "{in_head}");
 }
+
+// --- the mock directory is whichever one this working tree has ------------------
+
+/// The mock directory differs across branches and worktrees (one branch renames
+/// `mock/` to `linux/`), so no string kept per clone can say where the generated
+/// hooks are. A leftover `mock/target/hooks` made the path kept at registration
+/// look installed while the durable hook, looking in `linux/target/hooks`,
+/// found nothing and did nothing. The driver asks the hook instead.
+#[test]
+fn a_merge_on_a_branch_with_another_mock_directory_conflicts_as_plain_git_does() {
+    let r = Repo::new();
+    // d: the template edit and its regenerated document, in `mock/`
+    r.git(&["switch", "-q", "-c", "d"]);
+    r.side("d", "one", "one, edited on d");
+    // l: `mock/` is `linux/` here, and the document was edited by hand on the
+    // same line, which the template edit on d regenerates differently
+    r.git(&["switch", "-q", "dev"]);
+    r.git(&["switch", "-q", "-c", "l"]);
+    r.git(&["mv", "mock", "linux"]);
+    r.git(&["commit", "-q", "--no-verify", "-m", "chore: mock is linux"]);
+    let doc = r.root.join("docs/ALPHA.md");
+    let text = fs::read_to_string(&doc)
+        .unwrap()
+        .replace("one\n", "one, by hand on l\n");
+    fs::write(&doc, text).unwrap();
+    r.git(&["commit", "-q", "--no-verify", "-am", "docs: edit by hand on l"]);
+    // what a clone that was on `mock/` before keeps: generated hooks there, none
+    // under `linux/`
+    assert!(r.root.join("linux").is_dir() && !r.root.join("mock/ALPHA.md.tmpl").exists());
+    let leftover = r.root.join("mock/target/hooks");
+    fs::create_dir_all(&leftover).unwrap();
+    for hook in ["post-merge", "post-rewrite"] {
+        common::write(&leftover.join(hook), "#!/bin/sh\nexit 0\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(leftover.join(hook), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    fs::remove_dir_all(r.root.join("linux/target/hooks")).ok();
+
+    let merged = r.git_out(&["merge", "d", "-m", "chore: merge d"]);
+    assert!(!merged.status.success(), "{}", Repo::failure(&merged));
+    let text = fs::read_to_string(&doc).unwrap();
+    assert!(
+        text.contains("<<<<<<<"),
+        "both sides are in the file: {text}"
+    );
+    assert!(!r.kept_ours().exists(), "nothing was promised");
+}

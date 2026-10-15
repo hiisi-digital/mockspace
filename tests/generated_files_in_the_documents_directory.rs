@@ -103,6 +103,17 @@ fn a_rendered_image_follows_the_diagram_beside_it() {
     let merged = r.git_out(&["merge", "a", "-m", "chore: merge a"]);
     assert!(merged.status.success(), "{}", Repo::failure(&merged));
     assert!(r.unmerged().is_empty());
+    // success alone would also be a side's bytes kept: what is committed is the
+    // image `dot` renders from the merged diagram, not either sentinel
+    let committed = r.git_out(&["show", &format!("HEAD:{png}")]).stdout;
+    assert!(
+        committed.starts_with(b"\x89PNG"),
+        "not a rendered image: {:?}",
+        String::from_utf8_lossy(&committed[.. committed.len().min(16)])
+    );
+    assert_ne!(committed, b"dev bytes\n");
+    assert_ne!(committed, b"a bytes\n");
+    assert_eq!(r.status(), "");
 }
 
 /// The driver has no way to learn of `-X ours` or `-X theirs`, so for a file it

@@ -37,6 +37,8 @@ use std::{env, fs};
 mod follow_up_hooks;
 pub(crate) use follow_up_hooks::*;
 mod driver_script;
+mod follow_up_commit;
+pub(crate) use follow_up_commit::*;
 mod merge_driver;
 pub(crate) use merge_driver::*;
 mod gitignore;
@@ -118,7 +120,7 @@ pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
     // Generated files merge without conflict: the driver `.gitattributes` names
     // lives in the clone's config, so it is registered with the hooks.
     if std::env::var("MOCKSPACE_NO_AUTO_ACTIVATE").is_err() {
-        register_driver(repo_root, mock_dir, &mut actions);
+        register_driver(repo_root, &mut actions);
     }
 
     // Opt-out for CI and sandboxed environments where git config edits are

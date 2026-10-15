@@ -17,6 +17,7 @@
 //! machinery is `renki`. Nothing here resolves anything.
 
 mod follow_up;
+pub mod kept_ours;
 pub mod gate;
 
 use serde::Deserialize;

@@ -50,7 +50,7 @@ impl Repo {
         // reached: nothing in these hooks asks for one.
         write(
             &shims.join("cargo"),
-            "#!/bin/sh\n[ \"$1\" = mock ] && { shift; exec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"; }\nexit 127\n",
+            "#!/bin/sh\n# MS_NO_CARGO: a hook whose PATH has no cargo. MS_OLD_ENGINE: a launcher pinned to\n# an engine that ignores the flags it does not know and exits 0.\n[ -n \"$MS_NO_CARGO\" ] && exit 127\n[ \"$1\" = mock ] && [ -n \"$MS_OLD_ENGINE\" ] && exit 0\n[ \"$1\" = mock ] && { shift; exec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"; }\nexit 127\n",
         );
         write(
             &shims.join("mock"),
@@ -302,4 +302,33 @@ pub fn mockspace() -> Command {
     let mut c = Command::new(BIN);
     c.env("HOME", home).env_remove("XDG_CONFIG_HOME");
     c
+}
+
+impl Repo {
+    /// A bare repository to push to, as `origin`.
+    pub fn remote(&self) -> PathBuf {
+        let dir = self.root.parent().unwrap().join("remote.git");
+        let out = Command::new("git")
+            .args(["init", "--bare", "-q"])
+            .arg(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        self.git(&["remote", "add", "origin", dir.to_str().unwrap()]);
+        dir
+    }
+
+    /// The record the merge driver leaves when it keeps one side of a file.
+    pub fn kept_ours(&self) -> PathBuf {
+        self.root.join(".git/mockspace-kept-ours")
+    }
+
+    /// `git`, with extra environment.
+    pub fn git_env(&self, env: &[(&str, &str)], args: &[&str]) -> Output {
+        let mut c = self.cmd("git");
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        c.args(args).output().unwrap()
+    }
 }

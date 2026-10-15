@@ -26,11 +26,15 @@ pub(crate) fn durable_hooks_dir() -> Option<PathBuf> {
     }
 }
 
-/// One config home per test process, under the system temporary directory.
+/// One config home per test thread, under the system temporary directory, so
+/// two tests installing the hooks at once do not write the same files.
 #[cfg(test)]
-fn test_config_home() -> &'static Path {
-    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    HOME.get_or_init(|| env::temp_dir().join(format!("ms-lib-test-config-{}", std::process::id())))
+fn test_config_home() -> PathBuf {
+    env::temp_dir().join(format!(
+        "ms-lib-test-config-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ))
 }
 
 /// Pure core of [`durable_hooks_dir`]: resolves the config base from the
