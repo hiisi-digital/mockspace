@@ -926,6 +926,8 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             "slow test too. Run `--full --no-cache` once at the end of a piece of work and once\n",
             "after merging the trunk. Commit `<mock>/test-history/` with the work: it is the record\n",
             "of what passed at which fingerprint, and a clone without it runs everything once.\n",
+            "A test or binary deleted since is dropped from the run and pruned from it by the\n",
+            "next run; do not hand-edit the record to clear one.\n",
             "`cargo mock help test` says what selects and what is cached.\n",
             "\n",
             "## What NOT to do\n",

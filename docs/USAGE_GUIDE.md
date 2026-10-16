@@ -284,7 +284,9 @@ work that produced it, so a fresh clone or a new container starts from the last 
 run rather than from nothing. The fingerprints are digests of contents and
 repository-relative paths, so a pass recorded on one machine stands on another. Only
 tests near or over the heavy threshold are kept, and a file is rewritten only when what
-it says changed, so a rerun of a settled suite leaves the tree clean. A `--features` run
+it says changed, so a rerun of a settled suite leaves the tree clean. A test or binary
+that no longer exists is dropped from the generated nextest config and pruned from the
+record on the next run, so deleting one never leaves the run refusing to start. A `--features` run
 keeps its own flavour directory. Where two branches both moved a member, either side of
 the conflict is fine to take: the merged tree runs that member once and settles it.
 

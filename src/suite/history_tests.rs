@@ -277,3 +277,75 @@ fn a_flavour_names_its_directory() {
         "release-features-a-b"
     );
 }
+
+fn live(entries: &[(&str, &[&str])]) -> crate::suite::live::Live {
+    entries
+        .iter()
+        .map(|(b, ts)| (b.to_string(), ts.iter().map(|t| t.to_string()).collect()))
+        .collect()
+}
+
+fn remembered(h: &mut History, bin: &str, name: &str) {
+    h.record_cases("", &[case(bin, name, 40.0, Outcome::Pass)], &fps(), T);
+}
+
+#[test]
+fn a_gone_binary_is_forgotten_and_a_present_one_keeps_its_entry() {
+    let mut h = History::default();
+    remembered(&mut h, "village", "drawn");
+    remembered(&mut h, "village::example/figure_preview", "draws");
+    h.prune(
+        "",
+        &["village".to_string()],
+        &live(&[("village", &["drawn"])]),
+    );
+    let t = &h.flavours[""].tests;
+    assert!(t.contains_key("village"), "{t:?}");
+    assert!(!t.contains_key("village::example/figure_preview"), "{t:?}");
+}
+
+#[test]
+fn a_gone_test_in_a_present_binary_is_forgotten() {
+    let mut h = History::default();
+    remembered(&mut h, "village", "drawn");
+    remembered(&mut h, "village", "renamed_away");
+    h.prune(
+        "",
+        &["village".to_string()],
+        &live(&[("village", &["drawn"])]),
+    );
+    let t = &h.flavours[""].tests["village"];
+    assert!(
+        t.contains_key("drawn") && !t.contains_key("renamed_away"),
+        "{t:?}"
+    );
+}
+
+#[test]
+fn members_that_did_not_run_are_left_alone() {
+    let mut h = History::default();
+    remembered(&mut h, "mesh", "drawn");
+    h.prune("", &["village".to_string()], &live(&[("village", &[])]));
+    assert!(h.flavours[""].tests.contains_key("mesh"));
+}
+
+#[test]
+fn the_pruned_record_is_what_a_save_leaves_on_disk() {
+    let dir = scratch("prune-save");
+    let mut h = History::default();
+    remembered(&mut h, "village", "drawn");
+    remembered(&mut h, "village::example/figure_preview", "draws");
+    h.save(&dir).unwrap();
+    h.prune(
+        "",
+        &["village".to_string()],
+        &live(&[("village", &["drawn"])]),
+    );
+    h.save(&dir).unwrap();
+    let text = std::fs::read_to_string(dir.join("test-history/default/village.json")).unwrap();
+    assert!(
+        text.contains("drawn") && !text.contains("figure_preview"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

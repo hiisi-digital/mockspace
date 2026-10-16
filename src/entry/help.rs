@@ -210,6 +210,8 @@ const COMMANDS: &[Cmd] = &[
                   cargo; with -p only the members tree runs. The record is \
                   tracked, <mock>/test-history/<flavour>/<member>.json, \
                   committed with the work so a fresh clone starts warm; \
+                  a test or binary that no longer exists is dropped from \
+                  the run and pruned from the record; \
                   `--features x` has its own flavour. `[test] commit` gates a \
                   commit as a lint level does: warn runs --cheap, error also \
                   blocks, off and info run nothing. Doc tests do not run \
