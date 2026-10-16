@@ -98,9 +98,14 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
 
     // What the history remembers may be gone: a deleted binary named in the
     // generated config stops nextest before any test runs. Listing is how the
-    // existing tests are known; where it cannot answer, nothing is dropped.
+    // existing tests are known, and it builds, so it happens only when the plan
+    // runs something; where it cannot answer, nothing is dropped.
     let run_members: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
-    let live = live::list(&cfg.mock_dir, &run_members, &inv.passed);
+    let live = if run_members.is_empty() {
+        None
+    } else {
+        live::list(&cfg.mock_dir, &run_members, &inv.passed)
+    };
     if let Some(live) = &live {
         plan.retain_live(live);
     }
