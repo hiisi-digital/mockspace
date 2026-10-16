@@ -210,3 +210,97 @@ fn a_piece_of_work_runs_only_what_it_reaches() {
         "a failed member must run again:\n{t}"
     );
 }
+
+/// Every file under the fixture's test history, as one string.
+fn history_text(root: &Path) -> String {
+    fn walk(p: &Path, out: &mut String) {
+        for e in fs::read_dir(p).into_iter().flatten().flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else {
+                out.push_str(&fs::read_to_string(&path).unwrap_or_default());
+            }
+        }
+    }
+    let mut s = String::new();
+    walk(&root.join("mock/test-history"), &mut s);
+    s
+}
+
+/// A heavy test in its own binary, `alone`'s `tests/slow.rs`.
+fn add_slow_binary(root: &Path) {
+    write(
+        &root.join("mock/crates/alone/tests/slow.rs"),
+        "#[test]\nfn slow_gone() { std::thread::sleep(std::time::Duration::from_millis(900)); }\n",
+    );
+}
+
+#[test]
+fn a_deleted_heavy_binary_does_not_stop_the_next_run() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root);
+    add_slow_binary(root);
+
+    let (ok, t) = mock(root, &["--full"]);
+    assert!(ok, "first run:\n{t}");
+    assert!(
+        history_text(root).contains("slow_gone"),
+        "the heavy test is on record once it ran"
+    );
+
+    // Its binary is deleted. The cache would skip it by name in the filterset,
+    // and the config would group it, and nextest refuses both for a binary it
+    // does not have.
+    fs::remove_file(root.join("mock/crates/alone/tests/slow.rs")).unwrap();
+    let (ok, t) = mock(root, &["--full"]);
+    assert!(ok, "after the binary was deleted:\n{t}");
+    assert!(
+        !history_text(root).contains("slow_gone"),
+        "the history still names a test that is gone:\n{}",
+        history_text(root)
+    );
+
+    // The same with flags that only shape a run, which `nextest list` refuses.
+    add_slow_binary(root);
+    let (ok, t) = mock(root, &["--full", "--no-capture", "--retries", "1"]);
+    assert!(ok, "second first run:\n{t}");
+    assert!(history_text(root).contains("slow_gone"));
+    fs::remove_file(root.join("mock/crates/alone/tests/slow.rs")).unwrap();
+    let (ok, t) = mock(root, &["--full", "--no-capture", "--retries", "1"]);
+    assert!(
+        ok,
+        "after the binary was deleted, with run-only flags:\n{t}"
+    );
+    assert!(
+        !history_text(root).contains("slow_gone"),
+        "the history still names a test that is gone:\n{}",
+        history_text(root)
+    );
+}
+
+#[test]
+fn a_run_with_nothing_to_run_builds_nothing() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root);
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "first run:\n{t}");
+
+    fs::remove_dir_all(root.join("mock/target")).unwrap();
+    let (ok, t) = mock(root, &[]);
+    assert!(ok && t.contains("nothing to run"), "second run:\n{t}");
+    assert!(
+        !root.join("mock/target/debug").exists(),
+        "a run with nothing to run compiled the members:\n{t}"
+    );
+}

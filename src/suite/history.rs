@@ -258,6 +258,25 @@ impl History {
     }
 }
 
+impl History {
+    /// Forgets, for the members that were listed, every test that no longer
+    /// exists in this flavour: a binary that is gone, or a name a binary no
+    /// longer has. Members not listed are left as they are.
+    pub fn prune(&mut self, flavour: &str, members: &[String], live: &super::live::Live) {
+        let f = self.flavour_mut(flavour);
+        f.tests.retain(|bin, tests| {
+            if !members.iter().any(|m| m == package_of(bin)) {
+                return true;
+            }
+            match live.get(bin) {
+                Some(now) => tests.retain(|name, _| now.contains(name)),
+                None => tests.clear(),
+            }
+            !tests.is_empty()
+        });
+    }
+}
+
 /// Whether a new timing says nothing the old one did not: on the same side of
 /// the threshold and within half again either way.
 fn steady(old: f64, new: f64, threshold: f64) -> bool {

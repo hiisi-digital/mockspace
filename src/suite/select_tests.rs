@@ -226,3 +226,48 @@ fn a_complete_run_leaves_green_what_passed_and_nothing_deferred() {
     });
     assert_eq!(greens(&p, &cases, true), vec!["mesh", "tool"]);
 }
+
+fn live(entries: &[(&str, &[&str])]) -> crate::suite::live::Live {
+    entries
+        .iter()
+        .map(|(b, ts)| (b.to_string(), ts.iter().map(|t| t.to_string()).collect()))
+        .collect()
+}
+
+#[test]
+fn a_heavy_test_whose_binary_is_gone_is_neither_planned_nor_skipped() {
+    let fp = fps(&[]);
+    let mut h = green_at(&fp);
+    let gone = h.flavour_mut("").tests["render"]["drawn"].clone();
+    h.flavour_mut("")
+        .tests
+        .entry("render::example/figure_preview".to_string())
+        .or_default()
+        .insert("draws".to_string(), gone);
+    // The cache is on and both passed at the current fingerprint, so each is a
+    // cached skip until the one whose binary is gone is dropped.
+    let mut p = plan_for(Mode::Full, true, &fp, &h);
+    assert_eq!(p.heavy.len(), 2, "{:?}", p.heavy);
+    assert_eq!(p.skip.len(), 2, "{:?}", p.skip);
+    p.retain_live(&live(&[("render", &["drawn", "quick"])]));
+    assert_eq!(p.heavy, vec![("render".to_string(), "drawn".to_string())]);
+    assert_eq!(p.skip.len(), 1, "{:?}", p.skip);
+    assert_eq!(
+        (p.skip[0].binary.as_str(), p.skip[0].name.as_str()),
+        ("render", "drawn")
+    );
+    let cfg = crate::suite::nextest::tool_config(&Default::default(), &p.heavy);
+    assert!(!cfg.contains("figure_preview"), "{cfg}");
+    let filter = crate::suite::nextest::filterset(None, &p.skip).unwrap();
+    assert!(!filter.contains("figure_preview"), "{filter}");
+}
+
+#[test]
+fn a_heavy_test_that_still_exists_stays_planned() {
+    let fp = fps(&[]);
+    let h = green_at(&fp);
+    let mut p = plan_for(Mode::Full, false, &fp, &h);
+    let before = p.clone();
+    p.retain_live(&live(&[("render", &["drawn", "quick"])]));
+    assert_eq!(p, before);
+}

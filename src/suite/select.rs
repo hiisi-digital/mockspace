@@ -68,6 +68,16 @@ pub struct Plan {
     pub skip:    Vec<Skip>,
 }
 
+impl Plan {
+    /// Drops the heavy tests that no longer exist, whichever flavour
+    /// remembered them, so none reaches the generated config or the skips.
+    pub fn retain_live(&mut self, live: &super::live::Live) {
+        let exists = |bin: &str, name: &str| live.get(bin).is_some_and(|t| t.contains(name));
+        self.heavy.retain(|(b, n)| exists(b, n));
+        self.skip.retain(|s| exists(&s.binary, &s.name));
+    }
+}
+
 pub struct Inputs<'a> {
     pub mode:       Mode,
     pub cache:      bool,

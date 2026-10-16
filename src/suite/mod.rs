@@ -25,6 +25,7 @@ pub mod fingerprint;
 pub mod graph;
 pub mod history;
 pub mod junit;
+pub mod live;
 pub mod nextest;
 mod report;
 pub mod select;
@@ -84,7 +85,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     let fp_or_empty = fp.clone().unwrap_or_default();
     let mut history = history::History::load(&cfg.mock_dir);
     let flavour = inv.flavour();
-    let plan = select::plan(&Inputs {
+    let mut plan = select::plan(&Inputs {
         mode:       if fp.is_some() { inv.mode } else { Mode::Full },
         cache:      inv.cache && fp.is_some(),
         candidates: &candidates,
@@ -94,6 +95,20 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         flavour:    &flavour,
         threshold:  cfg.test.heavy_after_secs,
     });
+
+    // What the history remembers may be gone: a deleted binary named in the
+    // generated config stops nextest before any test runs. Listing is how the
+    // existing tests are known, and it builds, so it happens only when the plan
+    // runs something; where it cannot answer, nothing is dropped.
+    let run_members: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
+    let live = if run_members.is_empty() {
+        None
+    } else {
+        live::list(&cfg.mock_dir, &run_members, &inv.passed)
+    };
+    if let Some(live) = &live {
+        plan.retain_live(live);
+    }
 
     report::plan(&plan, inv, &fp_or_empty, cfg);
     if plan.run.is_empty() {
@@ -136,6 +151,9 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
 
     if let Some(fp) = &fp {
         history.record_cases(&flavour, &cases, &fp.full, cfg.test.heavy_after_secs);
+        if let Some(live) = &live {
+            history.prune(&flavour, &run_members, live);
+        }
         let complete = nextest::ran_to_the_end(code) && !inv.narrowed();
         let greens = select::greens(&plan, &cases, complete);
         let f = history.flavour_mut(&flavour);
