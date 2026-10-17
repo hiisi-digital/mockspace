@@ -267,8 +267,9 @@ and selects which to run rather than running them all:
   name as a `../` string literal (an `include_str!` of a content file, a directory joined
   to `CARGO_MANIFEST_DIR`), the same for every member compiled into its tests, and the
   workspace's lockfile, manifest, toolchain pin and cargo and nextest configuration, and
-  the cargo config `mock test` generates from `[test.opt_level]`, so changing that table
-  reruns every member. A change reaches the member it is in and everything depending on it, and nothing else.
+  the cargo config `mock test` generates from `[test.opt_level]`. A change to a member's
+  own inputs reaches that member and everything depending on it, and nothing else; a
+  change to a workspace input, that table included, reruns every member.
 - **A test is heavy when its last run took `heavy_after_secs` or more.** Heavy tests run
   `heavy_threads` at a time in nextest's `@tool:mockspace:heavy` group, and a heavy test
   that passed at its member's current fingerprint is skipped as cached.

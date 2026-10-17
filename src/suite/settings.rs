@@ -45,7 +45,7 @@ pub enum OptLevel {
 
 impl OptLevel {
     /// Whether cargo spells this level as a string rather than a number.
-    pub fn is_word(self) -> bool {
+    pub const fn is_word(self) -> bool {
         matches!(self, Self::Size | Self::SizeMin)
     }
 }

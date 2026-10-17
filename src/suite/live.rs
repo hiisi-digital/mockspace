@@ -118,6 +118,20 @@ pub fn list_command_args(
     out
 }
 
+/// The `nextest list` command for these packages, built with the generated
+/// cargo config so the listing compiles what the run will.
+pub fn list_command(
+    mock_dir: &Path,
+    packages: &[String],
+    passed: &[String],
+    cargo_config: Option<&Path>,
+) -> std::process::Command {
+    let mut cmd =
+        crate::entry::cargo_gate::cargo(mock_dir, &["nextest", "list", "--message-format", "json"]);
+    cmd.args(list_command_args(packages, passed, cargo_config));
+    cmd
+}
+
 /// What nextest lists for these packages, built as the tests themselves will
 /// be. `None` when it cannot say (a build that fails, say), and then nothing
 /// is dropped: the run reports its own trouble. Its stderr is the user's to
@@ -128,9 +142,7 @@ pub fn list(
     passed: &[String],
     cargo_config: Option<&Path>,
 ) -> Option<Live> {
-    let mut cmd =
-        crate::entry::cargo_gate::cargo(mock_dir, &["nextest", "list", "--message-format", "json"]);
-    cmd.args(list_command_args(packages, passed, cargo_config));
+    let mut cmd = list_command(mock_dir, packages, passed, cargo_config);
     let out = match cmd.stderr(std::process::Stdio::inherit()).output() {
         Ok(o) => o,
         Err(e) => {
@@ -226,6 +238,39 @@ mod tests {
             list_command_args(&words("a"), &words("--release"), None),
             words("-p a --release")
         );
+    }
+
+    /// The command `list` runs, not only its argument list: the listing builds
+    /// with the generated config, or it compiles every member at the
+    /// manifest's level and the run then builds it again at the configured one.
+    #[test]
+    fn the_list_command_carries_the_generated_config() {
+        let config = Path::new("/w/mock/target/state/cargo.toml");
+        let args = |c: &std::process::Command| {
+            c.get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        let with = args(&list_command(
+            Path::new("/w/mock"),
+            &words("a"),
+            &words("--release"),
+            Some(config),
+        ));
+        let list = with.iter().position(|a| a == "list").unwrap();
+        let at = with
+            .iter()
+            .position(|a| a == "/w/mock/target/state/cargo.toml")
+            .unwrap();
+        assert!(at > list, "{with:?}");
+        assert_eq!(with[at - 1], "--config");
+        let without = args(&list_command(
+            Path::new("/w/mock"),
+            &words("a"),
+            &words("--release"),
+            None,
+        ));
+        assert!(!without.iter().any(|a| a == "--config"), "{without:?}");
     }
 
     #[test]
