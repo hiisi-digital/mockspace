@@ -144,7 +144,7 @@ impl Repo {
     }
 
     fn fp(&self) -> Fingerprints {
-        compute(&self.root, &self.root.join("mock"), &self.graph()).unwrap()
+        compute(&self.root, &self.root.join("mock"), &self.graph(), None).unwrap()
     }
 }
 
@@ -363,4 +363,21 @@ fn the_same_tree_elsewhere_has_the_same_fingerprints() {
     }
     assert_eq!(here.fp().full, there.fp().full);
     assert_eq!(here.fp().own, there.fp().own);
+}
+
+#[test]
+fn the_cargo_config_the_run_builds_with_moves_every_member() {
+    let r = Repo::new("cargo-config");
+    let g = r.graph();
+    let at = |config: Option<&str>| {
+        compute(&r.root, &r.root.join("mock"), &g, config).unwrap()
+    };
+    let none = at(None);
+    let three = at(Some("[profile.dev.package.\"web\"]\nopt-level = 3\n"));
+    let two = at(Some("[profile.dev.package.\"web\"]\nopt-level = 2\n"));
+    let all = g.packages.len();
+    assert_eq!(moved(&none, &three).len(), all, "a table added moves them all");
+    assert_eq!(moved(&three, &two).len(), all, "a level changed moves them all");
+    assert!(moved(&three, &at(Some("[profile.dev.package.\"web\"]\nopt-level = 3\n"))).is_empty());
+    assert_eq!(none, at(None), "no config is the salt there always was");
 }

@@ -305,9 +305,29 @@ fn a_run_with_nothing_to_run_builds_nothing() {
     );
 }
 
-/// A member's `[test.opt_level]` reaches what is compiled. `base` reads the
-/// level cargo built it at from its build script, which is handed `OPT_LEVEL`
-/// per package, and its test fails unless that is the level the table gave.
+/// `base` and `alone` read the level cargo built them at from their build
+/// scripts, which are handed `OPT_LEVEL` per package, and their tests fail
+/// unless it is the level `[test.opt_level]` gave: 3 and `s`.
+fn opt_level_fixture(root: &Path) {
+    fixture(root);
+    write(
+        &root.join("mockspace.toml"),
+        "project_name = \"fixture\"\nmock_dir = \"mock\"\n\n[test.opt_level]\nbase = 3\nalone = \"s\"\n",
+    );
+    let build = "fn main() { println!(\"cargo:rustc-env=BUILT_AT={}\", std::env::var(\"OPT_LEVEL\").unwrap()); }\n";
+    write(&root.join("mock/crates/base/build.rs"), build);
+    write(
+        &root.join("mock/crates/base/src/lib.rs"),
+        "pub fn four() -> u32 { 4 }\n#[test]\nfn quick_base() { assert_eq!(env!(\"BUILT_AT\"), \"3\"); }\n",
+    );
+    write(&root.join("mock/crates/alone/build.rs"), build);
+    write(
+        &root.join("mock/crates/alone/src/lib.rs"),
+        "#[test]\nfn quick_alone() { assert_eq!(env!(\"BUILT_AT\"), \"s\"); }\n",
+    );
+}
+
+/// A member's `[test.opt_level]` reaches what is compiled.
 #[test]
 fn a_members_opt_level_reaches_the_build() {
     if !nextest_here() {
@@ -316,29 +336,70 @@ fn a_members_opt_level_reaches_the_build() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    fixture(root);
-    write(
-        &root.join("mockspace.toml"),
-        "project_name = \"fixture\"\nmock_dir = \"mock\"\n\n[test.opt_level]\nbase = 3\nalone = \"s\"\n",
-    );
-    write(
-        &root.join("mock/crates/base/build.rs"),
-        "fn main() { println!(\"cargo:rustc-env=BUILT_AT={}\", std::env::var(\"OPT_LEVEL\").unwrap()); }\n",
-    );
-    write(
-        &root.join("mock/crates/base/src/lib.rs"),
-        "pub fn four() -> u32 { 4 }\n#[test]\nfn quick_base() { assert_eq!(env!(\"BUILT_AT\"), \"3\"); }\n",
-    );
-    write(
-        &root.join("mock/crates/alone/build.rs"),
-        "fn main() { println!(\"cargo:rustc-env=BUILT_AT={}\", std::env::var(\"OPT_LEVEL\").unwrap()); }\n",
-    );
-    write(
-        &root.join("mock/crates/alone/src/lib.rs"),
-        "#[test]\nfn quick_alone() { assert_eq!(env!(\"BUILT_AT\"), \"s\"); }\n",
-    );
+    opt_level_fixture(root);
     let (ok, t) = mock(root, &["--full"]);
     assert!(ok, "a member's opt level did not reach its build:\n{t}");
+}
+
+/// The table holds however the run is taken: `--plain`, no nextest and an
+/// unreadable graph all run `cargo test`, and it gets the same config.
+#[test]
+fn a_members_opt_level_reaches_a_plain_cargo_test() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    opt_level_fixture(root);
+    let (ok, t) = mock(root, &["--plain"]);
+    assert!(
+        ok,
+        "a member's opt level did not reach a plain cargo test:\n{t}"
+    );
+}
+
+/// A change to `[test.opt_level]` changes what was built, so a member recorded
+/// green before it is not green after.
+#[test]
+fn a_change_to_the_opt_levels_runs_what_passed_before() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root);
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "first run:\n{t}");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok && t.contains("nothing to run"), "second run:\n{t}");
+
+    append(
+        &root.join("mockspace.toml"),
+        "\n[test.opt_level]\nbase = 3\nuses = 2\nalone = \"s\"\n",
+    );
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after the table was added:\n{t}");
+    assert!(
+        !t.contains("nothing to run"),
+        "a pass recorded at the manifest's levels stood after the table moved them:\n{t}"
+    );
+    for m in ["alone", "base", "uses"] {
+        assert!(t.contains(&format!("run      {m}")), "{m}:\n{t}");
+    }
+
+    // The next change of level runs them again, and an unchanged table does not.
+    let (ok, t) = mock(root, &[]);
+    assert!(ok && t.contains("nothing to run"), "unchanged table:\n{t}");
+    // ... and with nothing to run the config is not written again.
+    let written = root.join("mock/target/mockspace-test-state/cargo.toml");
+    assert!(written.is_file(), "the run that ran wrote the config");
+    fs::remove_file(&written).unwrap();
+    let (ok, t) = mock(root, &[]);
+    assert!(ok && t.contains("nothing to run"), "unchanged table:\n{t}");
+    assert!(!written.exists(), "a run with nothing to run wrote the config");
+    let toml = root.join("mockspace.toml");
+    let text = fs::read_to_string(&toml).unwrap().replace("base = 3", "base = 1");
+    fs::write(&toml, text).unwrap();
+    let (ok, t) = mock(root, &[]);
+    assert!(ok && !t.contains("nothing to run"), "a level changed:\n{t}");
 }
 
 /// kaski's shape of the same failure: the heavy test lives in an example

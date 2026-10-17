@@ -82,7 +82,12 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
 
     // A fingerprint that cannot be taken, outside git for one, runs everything:
     // the selection is an economy, never a reason to test less than asked.
-    let fp = match fingerprint::compute(&cfg.repo_root, &cfg.mock_dir, &graph) {
+    let fp = match fingerprint::compute(
+        &cfg.repo_root,
+        &cfg.mock_dir,
+        &graph,
+        cargo_config_text.as_deref(),
+    ) {
         Ok(fp) => Some(fp),
         Err(e) => {
             eprintln!("note: {e}; every member asked for runs, and nothing is cached");
@@ -204,6 +209,26 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// The cargo config for the members tree when it runs under plain `cargo test`
+/// (`--plain`, no nextest, or a workspace that could not be read), so the opt
+/// levels hold however the run is taken. `None` when no entry applies.
+pub fn plain_cargo_config(cfg: &Config, inv: &Invocation) -> Result<Option<PathBuf>, String> {
+    if cfg.test.opt_level.is_empty() {
+        return Ok(None);
+    }
+    let graph = graph::Graph::read(&cfg.mock_dir).ok();
+    let text = opt_level_config(
+        cfg,
+        graph.as_ref().map(|g| g.members.as_slice()),
+        &nextest::build_profile(&inv.passed, "--profile"),
+    );
+    let Some(text) = text else {
+        return Ok(None);
+    };
+    let state = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test-state"]);
+    write_cargo_config(&state, &text).map(Some)
 }
 
 /// The cargo config text carrying `[test.opt_level]` for a run, with a note for
