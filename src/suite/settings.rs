@@ -28,7 +28,55 @@ pub struct TestSettings {
     /// failure without blocking, `error` runs it and blocks on a failure.
     pub commit:           Level,
     /// The opt level each named member is built at under `mock test`.
-    pub opt_level:        BTreeMap<String, String>,
+    pub opt_level:        BTreeMap<String, OptLevel>,
+}
+
+/// An opt level as cargo reads it: `0` to `3`, `s` or `z`. Parsed once where
+/// the table is read, so nothing downstream holds a string it has to trust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptLevel {
+    Zero,
+    One,
+    Two,
+    Three,
+    Size,
+    SizeMin,
+}
+
+impl OptLevel {
+    /// Whether cargo spells this level as a string rather than a number.
+    pub fn is_word(self) -> bool {
+        matches!(self, Self::Size | Self::SizeMin)
+    }
+}
+
+impl std::fmt::Display for OptLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Zero => "0",
+            Self::One => "1",
+            Self::Two => "2",
+            Self::Three => "3",
+            Self::Size => "s",
+            Self::SizeMin => "z",
+        })
+    }
+}
+
+impl std::str::FromStr for OptLevel {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, ()> {
+        Ok(match s {
+            "0" => Self::Zero,
+            "1" => Self::One,
+            "2" => Self::Two,
+            "3" => Self::Three,
+            "s" => Self::Size,
+            "z" => Self::SizeMin,
+            _ => return Err(()),
+        })
+    }
 }
 
 /// Ten seconds: kaski's drawn tests start a Bevy app on a software Vulkan
@@ -125,11 +173,9 @@ impl RawTest {
                 RawOpt::Number(n) => n.to_string(),
                 RawOpt::Word(w) => w.clone(),
             };
-            if !matches!(level.as_str(), "0" | "1" | "2" | "3" | "s" | "z") {
-                return Err(format!(
-                    "[test.opt_level] {member} is 0, 1, 2, 3, \"s\" or \"z\"; got {level:?}"
-                ));
-            }
+            let level = level.parse::<OptLevel>().map_err(|()| {
+                format!("[test.opt_level] {member} is 0, 1, 2, 3, \"s\" or \"z\"; got {level:?}")
+            })?;
             opt_level.insert(member, level);
         }
         Ok(TestSettings {
@@ -217,12 +263,27 @@ mod tests {
     fn a_member_carries_its_opt_level() {
         let s = parse("[opt_level]\nkaski-village = 3\nkaski-render = \"s\"\nkaski-web = \"1\"\n")
             .unwrap();
-        let want: BTreeMap<String, String> =
-            [("kaski-village", "3"), ("kaski-render", "s"), ("kaski-web", "1")]
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .into();
+        let want: BTreeMap<String, OptLevel> = [
+            ("kaski-village", OptLevel::Three),
+            ("kaski-render", OptLevel::Size),
+            ("kaski-web", OptLevel::One),
+        ]
+        .map(|(k, v)| (k.to_string(), v))
+        .into();
         assert_eq!(s.opt_level, want);
         assert!(parse("").unwrap().opt_level.is_empty());
+    }
+
+    #[test]
+    fn an_opt_level_prints_as_cargo_spells_it() {
+        for text in ["0", "1", "2", "3", "s", "z"] {
+            let level: OptLevel = text.parse().unwrap();
+            assert_eq!(level.to_string(), text);
+            assert_eq!(level.is_word(), text == "s" || text == "z");
+        }
+        for bad in ["", "4", "S", "-1", "3\"\n[x]"] {
+            assert!(bad.parse::<OptLevel>().is_err(), "{bad:?}");
+        }
     }
 
     #[test]

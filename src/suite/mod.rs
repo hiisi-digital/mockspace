@@ -31,6 +31,7 @@ mod report;
 pub mod select;
 pub mod settings;
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use args::Invocation;
@@ -73,6 +74,12 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         return Some(ExitCode::FAILURE);
     }
 
+    let cargo_config_text = opt_level_config(
+        cfg,
+        Some(&graph.members),
+        &nextest::build_profile(&inv.passed, "--cargo-profile"),
+    );
+
     // A fingerprint that cannot be taken, outside git for one, runs everything:
     // the selection is an economy, never a reason to test less than asked.
     let fp = match fingerprint::compute(&cfg.repo_root, &cfg.mock_dir, &graph) {
@@ -96,26 +103,21 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         threshold:  cfg.test.heavy_after_secs,
     });
 
-    // A member's opt level is cargo config, so it is written before the
-    // listing, which builds, and the run builds the same way.
+    // A member's opt level is cargo config, written before the listing, which
+    // builds, so the run builds the same way. Nothing to run writes nothing.
     let state = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test-state"]);
-    for m in cfg
-        .test
-        .opt_level
-        .keys()
-        .filter(|m| !graph.members.contains(*m))
-    {
-        eprintln!("note: [test.opt_level] names `{m}`, which is not a member of this workspace");
-    }
-    let cargo_config = nextest::cargo_config(&cfg.test, &nextest::build_profile(&inv.passed))
-        .map(|text| (state.join("cargo.toml"), text));
-    if let Some((path, text)) = &cargo_config
-        && let Err(e) = std::fs::write(path, text)
-    {
-        eprintln!("mock test: could not write {}: {e}", path.display());
-        return Some(ExitCode::FAILURE);
-    }
-    let cargo_config = cargo_config.map(|(path, _)| path);
+    let cargo_config = match cargo_config_text {
+        Some(text) if !plan.run.is_empty() => {
+            match write_cargo_config(&state, &text) {
+                Ok(path) => Some(path),
+                Err(e) => {
+                    eprintln!("mock test: {e}");
+                    return Some(ExitCode::FAILURE);
+                },
+            }
+        },
+        _ => None,
+    };
 
     // What the history remembers may be gone: a deleted binary named in the
     // generated config stops nextest before any test runs. Listing is how the
@@ -202,6 +204,29 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// The cargo config text carrying `[test.opt_level]` for a run, with a note for
+/// each entry that names no member. `members` is `None` where the workspace
+/// could not be read.
+fn opt_level_config(cfg: &Config, members: Option<&[String]>, profile: &str) -> Option<String> {
+    if let Some(members) = members {
+        for m in cfg.test.opt_level.keys().filter(|m| !members.contains(*m)) {
+            eprintln!(
+                "note: [test.opt_level] names `{m}`, which is not a member of this workspace"
+            );
+        }
+    }
+    nextest::cargo_config(&cfg.test, profile, members)
+}
+
+/// Writes the cargo config under `state`, where the run passes it with
+/// `--config`.
+fn write_cargo_config(state: &Path, text: &str) -> Result<PathBuf, String> {
+    let path = state.join("cargo.toml");
+    std::fs::write(&path, text)
+        .map(|()| path.clone())
+        .map_err(|e| format!("could not write {}: {e}", path.display()))
 }
 
 /// The members a run is asked about: those named with `-p`, else every member
