@@ -98,6 +98,26 @@ pub fn list_args(passed: &[String]) -> Vec<String> {
     out
 }
 
+/// The arguments `nextest list` gets after its subcommand: the packages, the
+/// generated cargo config, and the build flags the caller passed. The config
+/// comes before the caller's flags, so a `--config` of theirs wins, and it is
+/// what makes the listing build as the run will.
+pub fn list_command_args(
+    packages: &[String],
+    passed: &[String],
+    cargo_config: Option<&Path>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for p in packages {
+        out.extend(["-p".to_string(), p.clone()]);
+    }
+    if let Some(c) = cargo_config {
+        out.extend(["--config".to_string(), c.display().to_string()]);
+    }
+    out.extend(list_args(passed));
+    out
+}
+
 /// What nextest lists for these packages, built as the tests themselves will
 /// be. `None` when it cannot say (a build that fails, say), and then nothing
 /// is dropped: the run reports its own trouble. Its stderr is the user's to
@@ -110,13 +130,7 @@ pub fn list(
 ) -> Option<Live> {
     let mut cmd =
         crate::entry::cargo_gate::cargo(mock_dir, &["nextest", "list", "--message-format", "json"]);
-    for p in packages {
-        cmd.arg("-p").arg(p);
-    }
-    if let Some(c) = cargo_config {
-        cmd.arg("--config").arg(c);
-    }
-    cmd.args(list_args(passed));
+    cmd.args(list_command_args(packages, passed, cargo_config));
     let out = match cmd.stderr(std::process::Stdio::inherit()).output() {
         Ok(o) => o,
         Err(e) => {
@@ -187,6 +201,24 @@ mod tests {
                 assert_eq!(list_args(&passed), passed, "{form}");
             }
         }
+    }
+
+    #[test]
+    fn the_listing_builds_with_the_generated_config_before_the_callers_flags() {
+        let config = Path::new("/w/mock/target/state/cargo.toml");
+        let args = list_command_args(
+            &words("a b"),
+            &words("--config x=1 --release"),
+            Some(config),
+        );
+        assert_eq!(
+            args,
+            words("-p a -p b --config /w/mock/target/state/cargo.toml --config x=1 --release")
+        );
+        assert_eq!(
+            list_command_args(&words("a"), &words("--release"), None),
+            words("-p a --release")
+        );
     }
 
     #[test]
