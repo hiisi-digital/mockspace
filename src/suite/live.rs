@@ -56,6 +56,7 @@ const BUILD_BARE: &[&str] = &[
 const BUILD_VALUED: &[&str] = &[
     "--features",
     "-F",
+    "-Z",
     "--cargo-profile",
     "--target",
     "--target-dir",
@@ -66,6 +67,10 @@ const BUILD_VALUED: &[&str] = &[
     "--example",
     "--bench",
 ];
+
+/// The short flags among those, which clap also reads with the value attached,
+/// as `-Ffoo`.
+const BUILD_ATTACHED: &[&str] = &["-F", "-Z"];
 
 /// The part of what the caller passed that `nextest list` accepts: the build
 /// and selection flags. The flags that only shape a run (`--no-capture`,
@@ -83,6 +88,9 @@ pub fn list_args(passed: &[String]) -> Vec<String> {
         } else if a
             .split_once('=')
             .is_some_and(|(flag, _)| BUILD_VALUED.contains(&flag))
+            || BUILD_ATTACHED
+                .iter()
+                .any(|f| a.strip_prefix(f).is_some_and(|v| !v.is_empty()))
         {
             out.push(a.clone());
         }
@@ -153,6 +161,35 @@ mod tests {
             words("--features editor --release --target-dir=out --cargo-profile dev --locked")
         );
         assert!(list_args(&words("--no-capture --retries 2")).is_empty());
+    }
+
+    /// Each valued build flag, in every way clap reads a value: the next word,
+    /// `=`, and for the short flags the value attached.
+    #[test]
+    fn every_separated_and_attached_form_of_a_valued_flag_is_listed() {
+        for long in BUILD_VALUED.iter().filter(|f| f.starts_with("--")) {
+            let sep = words(&format!("{long} v"));
+            assert_eq!(list_args(&sep), sep, "{long} v");
+            let eq = words(&format!("{long}=v"));
+            assert_eq!(list_args(&eq), eq, "{long}=v");
+        }
+        for short in ["-F", "-Z"] {
+            for form in [format!("{short} v"), format!("{short}=v"), format!("{short}v")] {
+                let passed = words(&form);
+                assert_eq!(list_args(&passed), passed, "{form}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_attached_feature_does_not_swallow_the_word_after_it() {
+        let passed = words("-Ffoo --no-capture -Zunstable-options --retries 2 --release");
+        assert_eq!(
+            list_args(&passed),
+            words("-Ffoo -Zunstable-options --release")
+        );
+        let passed = words("-F foo --no-capture -Z unstable-options --retries 2");
+        assert_eq!(list_args(&passed), words("-F foo -Z unstable-options"));
     }
 
     #[test]
