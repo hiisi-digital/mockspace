@@ -195,10 +195,17 @@ mod tests {
             let eq = words(&format!("{long}=v"));
             assert_eq!(list_args(&eq), eq, "{long}=v");
         }
-        for short in ["-F", "-Z"] {
-            for form in [format!("{short} v"), format!("{short}=v"), format!("{short}v")] {
-                let passed = words(&form);
-                assert_eq!(list_args(&passed), passed, "{form}");
+        // The values that have bitten: a list, and one holding an `=` of its own.
+        for short in BUILD_ATTACHED {
+            for value in ["v", "build-std=core,alloc", "foo=bar"] {
+                for form in [
+                    format!("{short} {value}"),
+                    format!("{short}={value}"),
+                    format!("{short}{value}"),
+                ] {
+                    let passed = words(&form);
+                    assert_eq!(list_args(&passed), passed, "{form}");
+                }
             }
         }
     }
