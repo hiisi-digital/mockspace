@@ -304,3 +304,39 @@ fn a_run_with_nothing_to_run_builds_nothing() {
         "a run with nothing to run compiled the members:\n{t}"
     );
 }
+
+/// A member's `[test.opt_level]` reaches what is compiled. `base` reads the
+/// level cargo built it at from its build script, which is handed `OPT_LEVEL`
+/// per package, and its test fails unless that is the level the table gave.
+#[test]
+fn a_members_opt_level_reaches_the_build() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root);
+    write(
+        &root.join("mockspace.toml"),
+        "project_name = \"fixture\"\nmock_dir = \"mock\"\n\n[test.opt_level]\nbase = 3\nalone = \"s\"\n",
+    );
+    write(
+        &root.join("mock/crates/base/build.rs"),
+        "fn main() { println!(\"cargo:rustc-env=BUILT_AT={}\", std::env::var(\"OPT_LEVEL\").unwrap()); }\n",
+    );
+    write(
+        &root.join("mock/crates/base/src/lib.rs"),
+        "pub fn four() -> u32 { 4 }\n#[test]\nfn quick_base() { assert_eq!(env!(\"BUILT_AT\"), \"3\"); }\n",
+    );
+    write(
+        &root.join("mock/crates/alone/build.rs"),
+        "fn main() { println!(\"cargo:rustc-env=BUILT_AT={}\", std::env::var(\"OPT_LEVEL\").unwrap()); }\n",
+    );
+    write(
+        &root.join("mock/crates/alone/src/lib.rs"),
+        "#[test]\nfn quick_alone() { assert_eq!(env!(\"BUILT_AT\"), \"s\"); }\n",
+    );
+    let (ok, t) = mock(root, &["--full"]);
+    assert!(ok, "a member's opt level did not reach its build:\n{t}");
+}

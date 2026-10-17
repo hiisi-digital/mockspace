@@ -299,6 +299,9 @@ heavy_after_secs = 10    # a test this slow or slower is heavy
 heavy_threads = 1        # how many heavy tests run at once
 timeout_secs = 900       # a test still running after this long fails
 commit = "off"           # a lint level: warn runs `mock test --cheap` on commit, error also blocks
+
+[test.opt_level]         # optional: the opt level a member is built at under `mock test`
+kaski-village = 3        # 0 to 3, "s" or "z"; members not named keep their manifest's
 ```
 
 ### Lints

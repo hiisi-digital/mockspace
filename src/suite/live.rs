@@ -102,11 +102,19 @@ pub fn list_args(passed: &[String]) -> Vec<String> {
 /// be. `None` when it cannot say (a build that fails, say), and then nothing
 /// is dropped: the run reports its own trouble. Its stderr is the user's to
 /// read, the build's progress and, when it refuses, why.
-pub fn list(mock_dir: &Path, packages: &[String], passed: &[String]) -> Option<Live> {
+pub fn list(
+    mock_dir: &Path,
+    packages: &[String],
+    passed: &[String],
+    cargo_config: Option<&Path>,
+) -> Option<Live> {
     let mut cmd =
         crate::entry::cargo_gate::cargo(mock_dir, &["nextest", "list", "--message-format", "json"]);
     for p in packages {
         cmd.arg("-p").arg(p);
+    }
+    if let Some(c) = cargo_config {
+        cmd.arg("--config").arg(c);
     }
     cmd.args(list_args(passed));
     let out = match cmd.stderr(std::process::Stdio::inherit()).output() {

@@ -96,6 +96,27 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         threshold:  cfg.test.heavy_after_secs,
     });
 
+    // A member's opt level is cargo config, so it is written before the
+    // listing, which builds, and the run builds the same way.
+    let state = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test-state"]);
+    for m in cfg
+        .test
+        .opt_level
+        .keys()
+        .filter(|m| !graph.members.contains(*m))
+    {
+        eprintln!("note: [test.opt_level] names `{m}`, which is not a member of this workspace");
+    }
+    let cargo_config = nextest::cargo_config(&cfg.test, &nextest::build_profile(&inv.passed))
+        .map(|text| (state.join("cargo.toml"), text));
+    if let Some((path, text)) = &cargo_config
+        && let Err(e) = std::fs::write(path, text)
+    {
+        eprintln!("mock test: could not write {}: {e}", path.display());
+        return Some(ExitCode::FAILURE);
+    }
+    let cargo_config = cargo_config.map(|(path, _)| path);
+
     // What the history remembers may be gone: a deleted binary named in the
     // generated config stops nextest before any test runs. Listing is how the
     // existing tests are known, and it builds, so it happens only when the plan
@@ -104,7 +125,12 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     let live = if run_members.is_empty() {
         None
     } else {
-        live::list(&cfg.mock_dir, &run_members, &inv.passed)
+        live::list(
+            &cfg.mock_dir,
+            &run_members,
+            &inv.passed,
+            cargo_config.as_deref(),
+        )
     };
     if let Some(live) = &live {
         plan.retain_live(live);
@@ -116,7 +142,6 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         return Some(ExitCode::SUCCESS);
     }
 
-    let state = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test-state"]);
     let tool_config = state.join("nextest.toml");
     if let Err(e) = std::fs::write(&tool_config, nextest::tool_config(&cfg.test, &plan.heavy)) {
         eprintln!("mock test: could not write {}: {e}", tool_config.display());
@@ -129,12 +154,13 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     let packages: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
     let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip);
     let status = nextest::command(&nextest::RunSpec {
-        mock_dir:    &cfg.mock_dir,
-        tool_config: &tool_config,
-        packages:    &packages,
-        passed:      &inv.passed,
-        filterset:   filter.as_deref(),
-        test_args:   &inv.test_args,
+        mock_dir:     &cfg.mock_dir,
+        tool_config:  &tool_config,
+        cargo_config: cargo_config.as_deref(),
+        packages:     &packages,
+        passed:       &inv.passed,
+        filterset:    filter.as_deref(),
+        test_args:    &inv.test_args,
     })
     .status();
     let code = status.as_ref().ok().and_then(|s| s.code());
