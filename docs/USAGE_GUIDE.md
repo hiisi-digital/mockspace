@@ -266,8 +266,9 @@ and selects which to run rather than running them all:
   shaders and fixtures kept there included), every path outside it that its sources
   name as a `../` string literal (an `include_str!` of a content file, a directory joined
   to `CARGO_MANIFEST_DIR`), the same for every member compiled into its tests, and the
-  workspace's lockfile, manifest, toolchain pin and cargo and nextest configuration. A
-  change reaches the member it is in and everything depending on it, and nothing else.
+  workspace's lockfile, manifest, toolchain pin and cargo and nextest configuration, and
+  the cargo config `mock test` generates from `[test.opt_level]`, so changing that table
+  reruns every member. A change reaches the member it is in and everything depending on it, and nothing else.
 - **A test is heavy when its last run took `heavy_after_secs` or more.** Heavy tests run
   `heavy_threads` at a time in nextest's `@tool:mockspace:heavy` group, and a heavy test
   that passed at its member's current fingerprint is skipped as cached.
@@ -276,7 +277,8 @@ and selects which to run rather than running them all:
 `--full` runs every member asked for, `--no-cache` runs the cached heavy tests too, and
 `--cheap` defers every heavy test that has passed before (a new one, or one that failed
 last time, still runs). `--full --no-cache` is the whole suite, for the end of a piece of
-work and after merging the trunk; `--plain` is `cargo test` as before. Doc tests do not
+work and after merging the trunk; `--plain` is `cargo test` as before, with the opt
+levels of `[test.opt_level]` applied the same way. Doc tests do not
 run under nextest, a known gap: `--plain` is the way to them for now.
 
 The record is tracked: `<mock>/test-history/<flavour>/<member>.json`, committed with the
@@ -300,8 +302,9 @@ heavy_threads = 1        # how many heavy tests run at once
 timeout_secs = 900       # a test still running after this long fails
 commit = "off"           # a lint level: warn runs `mock test --cheap` on commit, error also blocks
 
-[test.opt_level]         # optional: the opt level a member is built at under `mock test`
-kaski-village = 3        # 0 to 3, "s" or "z"; members not named keep their manifest's
+[test.opt_level]         # optional: the opt level a member is built at under `mock test`,
+                         # nextest or `--plain`; a name that is no member is ignored
+sim-core = 3             # 0 to 3, "s" or "z"; members not named keep their manifest's
 ```
 
 ### Lints

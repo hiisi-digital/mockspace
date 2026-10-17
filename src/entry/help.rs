@@ -216,7 +216,7 @@ const COMMANDS: &[Cmd] = &[
                   commit as a lint level does: warn runs --cheap, error also \
                   blocks, off and info run nothing. `[test.opt_level]` maps a \
                   member to the opt level (0 to 3, \"s\", \"z\") it is built \
-                  at under nextest, in the profile the run builds. Doc tests \
+                  at in the run's profile, --plain too; a change reruns members. Doc tests \
                   do not run under nextest; --plain reaches them.\n\n\
                   Everything else after `test` is forwarded to each cargo \
                   invocation, so `mock test --release` and `mock test -- \
