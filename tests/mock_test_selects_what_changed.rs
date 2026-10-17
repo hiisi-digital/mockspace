@@ -340,3 +340,43 @@ fn a_members_opt_level_reaches_the_build() {
     let (ok, t) = mock(root, &["--full"]);
     assert!(ok, "a member's opt level did not reach its build:\n{t}");
 }
+
+/// kaski's shape of the same failure: the heavy test lives in an example
+/// binary, which the history remembers after the example is deleted.
+#[test]
+fn a_deleted_example_with_a_heavy_test_does_not_stop_the_next_run() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root);
+    let manifest = root.join("mock/crates/alone/Cargo.toml");
+    let plain = fs::read_to_string(&manifest).unwrap();
+    append(
+        &manifest,
+        "\n[[example]]\nname = \"figure_preview\"\ntest = true\n",
+    );
+    write(
+        &root.join("mock/crates/alone/examples/figure_preview.rs"),
+        "fn main() {}\n#[test]\nfn slow_preview() { std::thread::sleep(std::time::Duration::from_millis(900)); }\n",
+    );
+
+    let (ok, t) = mock(root, &["--full"]);
+    assert!(ok, "first run:\n{t}");
+    assert!(
+        history_text(root).contains("slow_preview"),
+        "the example's test is on record once it ran"
+    );
+
+    fs::remove_file(root.join("mock/crates/alone/examples/figure_preview.rs")).unwrap();
+    fs::write(&manifest, plain).unwrap();
+    let (ok, t) = mock(root, &["--full", "--workspace"]);
+    assert!(ok, "after the example was deleted:\n{t}");
+    assert!(
+        !history_text(root).contains("slow_preview"),
+        "the history still names a test that is gone:\n{}",
+        history_text(root)
+    );
+}
