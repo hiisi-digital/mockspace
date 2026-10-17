@@ -56,6 +56,7 @@ const BUILD_BARE: &[&str] = &[
 const BUILD_VALUED: &[&str] = &[
     "--features",
     "-F",
+    "-Z",
     "--cargo-profile",
     "--target",
     "--target-dir",
@@ -66,6 +67,10 @@ const BUILD_VALUED: &[&str] = &[
     "--example",
     "--bench",
 ];
+
+/// The short flags among those, which clap also reads with the value attached,
+/// as `-Ffoo`.
+const BUILD_ATTACHED: &[&str] = &["-F", "-Z"];
 
 /// The part of what the caller passed that `nextest list` accepts: the build
 /// and selection flags. The flags that only shape a run (`--no-capture`,
@@ -83,6 +88,9 @@ pub fn list_args(passed: &[String]) -> Vec<String> {
         } else if a
             .split_once('=')
             .is_some_and(|(flag, _)| BUILD_VALUED.contains(&flag))
+            || BUILD_ATTACHED
+                .iter()
+                .any(|f| a.strip_prefix(f).is_some_and(|v| !v.is_empty()))
         {
             out.push(a.clone());
         }
@@ -90,17 +98,51 @@ pub fn list_args(passed: &[String]) -> Vec<String> {
     out
 }
 
+/// The arguments `nextest list` gets after its subcommand: the packages, the
+/// generated cargo config, and the build flags the caller passed. The config
+/// comes before the caller's flags, so a `--config` of theirs wins, and it is
+/// what makes the listing build as the run will.
+pub fn list_command_args(
+    packages: &[String],
+    passed: &[String],
+    cargo_config: Option<&Path>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for p in packages {
+        out.extend(["-p".to_string(), p.clone()]);
+    }
+    if let Some(c) = cargo_config {
+        out.extend(["--config".to_string(), c.display().to_string()]);
+    }
+    out.extend(list_args(passed));
+    out
+}
+
+/// The `nextest list` command for these packages, built with the generated
+/// cargo config so the listing compiles what the run will.
+pub fn list_command(
+    mock_dir: &Path,
+    packages: &[String],
+    passed: &[String],
+    cargo_config: Option<&Path>,
+) -> std::process::Command {
+    let mut cmd =
+        crate::entry::cargo_gate::cargo(mock_dir, &["nextest", "list", "--message-format", "json"]);
+    cmd.args(list_command_args(packages, passed, cargo_config));
+    cmd
+}
+
 /// What nextest lists for these packages, built as the tests themselves will
 /// be. `None` when it cannot say (a build that fails, say), and then nothing
 /// is dropped: the run reports its own trouble. Its stderr is the user's to
 /// read, the build's progress and, when it refuses, why.
-pub fn list(mock_dir: &Path, packages: &[String], passed: &[String]) -> Option<Live> {
-    let mut cmd =
-        crate::entry::cargo_gate::cargo(mock_dir, &["nextest", "list", "--message-format", "json"]);
-    for p in packages {
-        cmd.arg("-p").arg(p);
-    }
-    cmd.args(list_args(passed));
+pub fn list(
+    mock_dir: &Path,
+    packages: &[String],
+    passed: &[String],
+    cargo_config: Option<&Path>,
+) -> Option<Live> {
+    let mut cmd = list_command(mock_dir, packages, passed, cargo_config);
     let out = match cmd.stderr(std::process::Stdio::inherit()).output() {
         Ok(o) => o,
         Err(e) => {
@@ -153,6 +195,93 @@ mod tests {
             words("--features editor --release --target-dir=out --cargo-profile dev --locked")
         );
         assert!(list_args(&words("--no-capture --retries 2")).is_empty());
+    }
+
+    /// Each valued build flag, in every way clap reads a value: the next word,
+    /// `=`, and for the short flags the value attached.
+    #[test]
+    fn every_separated_and_attached_form_of_a_valued_flag_is_listed() {
+        for long in BUILD_VALUED.iter().filter(|f| f.starts_with("--")) {
+            let sep = words(&format!("{long} v"));
+            assert_eq!(list_args(&sep), sep, "{long} v");
+            let eq = words(&format!("{long}=v"));
+            assert_eq!(list_args(&eq), eq, "{long}=v");
+        }
+        // The values that have bitten: a list, and one holding an `=` of its own.
+        for short in BUILD_ATTACHED {
+            for value in ["v", "build-std=core,alloc", "foo=bar"] {
+                for form in [
+                    format!("{short} {value}"),
+                    format!("{short}={value}"),
+                    format!("{short}{value}"),
+                ] {
+                    let passed = words(&form);
+                    assert_eq!(list_args(&passed), passed, "{form}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_listing_builds_with_the_generated_config_before_the_callers_flags() {
+        let config = Path::new("/w/mock/target/state/cargo.toml");
+        let args = list_command_args(
+            &words("a b"),
+            &words("--config x=1 --release"),
+            Some(config),
+        );
+        assert_eq!(
+            args,
+            words("-p a -p b --config /w/mock/target/state/cargo.toml --config x=1 --release")
+        );
+        assert_eq!(
+            list_command_args(&words("a"), &words("--release"), None),
+            words("-p a --release")
+        );
+    }
+
+    /// The command `list` runs, not only its argument list: the listing builds
+    /// with the generated config, or it compiles every member at the
+    /// manifest's level and the run then builds it again at the configured one.
+    #[test]
+    fn the_list_command_carries_the_generated_config() {
+        let config = Path::new("/w/mock/target/state/cargo.toml");
+        let args = |c: &std::process::Command| {
+            c.get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        let with = args(&list_command(
+            Path::new("/w/mock"),
+            &words("a"),
+            &words("--release"),
+            Some(config),
+        ));
+        let list = with.iter().position(|a| a == "list").unwrap();
+        let at = with
+            .iter()
+            .position(|a| a == "/w/mock/target/state/cargo.toml")
+            .unwrap();
+        assert!(at > list, "{with:?}");
+        assert_eq!(with[at - 1], "--config");
+        let without = args(&list_command(
+            Path::new("/w/mock"),
+            &words("a"),
+            &words("--release"),
+            None,
+        ));
+        assert!(!without.iter().any(|a| a == "--config"), "{without:?}");
+    }
+
+    #[test]
+    fn an_attached_feature_does_not_swallow_the_word_after_it() {
+        let passed = words("-Ffoo --no-capture -Zunstable-options --retries 2 --release");
+        assert_eq!(
+            list_args(&passed),
+            words("-Ffoo -Zunstable-options --release")
+        );
+        let passed = words("-F foo --no-capture -Z unstable-options --retries 2");
+        assert_eq!(list_args(&passed), words("-F foo -Z unstable-options"));
     }
 
     #[test]

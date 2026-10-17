@@ -58,7 +58,16 @@ const WORKSPACE_INPUTS: &[&str] = &[
     ".config/nextest.toml",
 ];
 
-pub fn compute(repo_root: &Path, mock_dir: &Path, graph: &Graph) -> Result<Fingerprints, String> {
+/// `cargo_config` is the generated cargo config the run builds with, if any: a
+/// member's opt level changes what its tests are built from, so it salts every
+/// fingerprint as a workspace input does. Absent, the salt is what it was
+/// before the config existed, and the pass already on record stands.
+pub fn compute(
+    repo_root: &Path,
+    mock_dir: &Path,
+    graph: &Graph,
+    cargo_config: Option<&str>,
+) -> Result<Fingerprints, String> {
     let files = tracked_files(repo_root)?;
     let mut hashes = FileHashes::new(repo_root);
 
@@ -74,6 +83,10 @@ pub fn compute(repo_root: &Path, mock_dir: &Path, graph: &Graph) -> Result<Finge
                 salt.update(hashes.of_absolute(&p));
             }
         }
+    }
+    if let Some(text) = cargo_config {
+        salt.update(b"cargo-config\0");
+        salt.update(text.as_bytes());
     }
     let salt = salt.finalize();
 

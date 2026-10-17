@@ -252,15 +252,26 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             }
             continue;
         }
-        let mut cmd = crate::entry::cargo_gate::cargo(&t.dir, &["test"]);
-        if let Some(dir) = redirect_for(t, shared.as_ref()) {
-            // Before `args`, so a `--` the caller passed still separates
-            // cargo's flags from the test binary's.
-            cmd.arg("--target-dir").arg(dir);
-        }
-        let ok = cmd
-            .args(args)
-            .status()
+        // The members' opt levels hold under plain cargo test too.
+        let cargo_config = if t.members {
+            match crate::suite::plain_cargo_config(cfg, &inv) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("mock test: {e}");
+                    failed.push(format!("{} at {}", t.what, t.dir.display()));
+                    continue;
+                },
+            }
+        } else {
+            None
+        };
+        let ok = plain_command(
+            &t.dir,
+            redirect_for(t, shared.as_ref()),
+            cargo_config.as_deref(),
+            args,
+        )
+        .status()
             .map(|s| s.success())
             .unwrap_or(false);
         if !ok {
@@ -279,6 +290,27 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         eprintln!("mock test: {} of {ran} tree(s) failed", failed.len());
         ExitCode::FAILURE
     }
+}
+
+/// `cargo test` for one tree. The `--target-dir` and the generated `--config`
+/// come before `args`, so a `--` the caller passed still separates cargo's
+/// flags from the test binary's, and a `--config` of theirs comes later and
+/// wins.
+fn plain_command(
+    dir: &Path,
+    target_dir: Option<&PathBuf>,
+    cargo_config: Option<&Path>,
+    args: &[&str],
+) -> std::process::Command {
+    let mut cmd = crate::entry::cargo_gate::cargo(dir, &["test"]);
+    if let Some(dir) = target_dir {
+        cmd.arg("--target-dir").arg(dir);
+    }
+    if let Some(c) = cargo_config {
+        cmd.arg("--config").arg(c);
+    }
+    cmd.args(args);
+    cmd
 }
 
 /// How many trees this run actually tested.

@@ -9,6 +9,8 @@
 //! what counts as slow and how many slow tests a machine can take at once are
 //! properties of the repository and the machine, not of mockspace.
 
+use std::collections::BTreeMap;
+
 use mockspace_lint_rules::Level;
 use serde::Deserialize;
 
@@ -25,6 +27,56 @@ pub struct TestSettings {
     /// `info` run nothing, `warn` runs `mock test --cheap` and reports a
     /// failure without blocking, `error` runs it and blocks on a failure.
     pub commit:           Level,
+    /// The opt level each named member is built at under `mock test`.
+    pub opt_level:        BTreeMap<String, OptLevel>,
+}
+
+/// An opt level as cargo reads it: `0` to `3`, `s` or `z`. Parsed once where
+/// the table is read, so nothing downstream holds a string it has to trust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptLevel {
+    Zero,
+    One,
+    Two,
+    Three,
+    Size,
+    SizeMin,
+}
+
+impl OptLevel {
+    /// Whether cargo spells this level as a string rather than a number.
+    pub const fn is_word(self) -> bool {
+        matches!(self, Self::Size | Self::SizeMin)
+    }
+}
+
+impl std::fmt::Display for OptLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Zero => "0",
+            Self::One => "1",
+            Self::Two => "2",
+            Self::Three => "3",
+            Self::Size => "s",
+            Self::SizeMin => "z",
+        })
+    }
+}
+
+impl std::str::FromStr for OptLevel {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, ()> {
+        Ok(match s {
+            "0" => Self::Zero,
+            "1" => Self::One,
+            "2" => Self::Two,
+            "3" => Self::Three,
+            "s" => Self::Size,
+            "z" => Self::SizeMin,
+            _ => return Err(()),
+        })
+    }
 }
 
 /// Ten seconds: kaski's drawn tests start a Bevy app on a software Vulkan
@@ -59,6 +111,7 @@ impl Default for TestSettings {
             heavy_threads:    DEFAULT_HEAVY_THREADS,
             timeout_secs:     DEFAULT_TIMEOUT_SECS,
             commit:           Level::Pass,
+            opt_level:        BTreeMap::new(),
         }
     }
 }
@@ -72,6 +125,16 @@ pub(crate) struct RawTest {
     heavy_threads:    Option<u32>,
     timeout_secs:     Option<u64>,
     commit:           Option<String>,
+    opt_level:        BTreeMap<String, RawOpt>,
+}
+
+/// An opt level as written: cargo's own spelling, a number or `"s"` or `"z"`.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[serde(untagged)]
+pub(crate) enum RawOpt {
+    Number(i64),
+    Word(String),
 }
 
 impl RawTest {
@@ -104,11 +167,23 @@ impl RawTest {
                 })?
             },
         };
+        let mut opt_level = BTreeMap::new();
+        for (member, raw) in self.opt_level {
+            let level = match &raw {
+                RawOpt::Number(n) => n.to_string(),
+                RawOpt::Word(w) => w.clone(),
+            };
+            let level = level.parse::<OptLevel>().map_err(|()| {
+                format!("[test.opt_level] {member} is 0, 1, 2, 3, \"s\" or \"z\"; got {level:?}")
+            })?;
+            opt_level.insert(member, level);
+        }
         Ok(TestSettings {
             heavy_after_secs,
             heavy_threads,
             timeout_secs,
             commit,
+            opt_level,
         })
     }
 }
@@ -180,6 +255,43 @@ mod tests {
             !TestSettings::default().commit_runs(),
             "the default runs nothing"
         );
+    }
+
+    /// Cargo reads `0` to `3`, `"s"` and `"z"`; the table keeps them as cargo
+    /// spells them, so a number and its string are one level.
+    #[test]
+    fn a_member_carries_its_opt_level() {
+        let s = parse("[opt_level]\nkaski-village = 3\nkaski-render = \"s\"\nkaski-web = \"1\"\n")
+            .unwrap();
+        let want: BTreeMap<String, OptLevel> = [
+            ("kaski-village", OptLevel::Three),
+            ("kaski-render", OptLevel::Size),
+            ("kaski-web", OptLevel::One),
+        ]
+        .map(|(k, v)| (k.to_string(), v))
+        .into();
+        assert_eq!(s.opt_level, want);
+        assert!(parse("").unwrap().opt_level.is_empty());
+    }
+
+    #[test]
+    fn an_opt_level_prints_as_cargo_spells_it() {
+        for text in ["0", "1", "2", "3", "s", "z"] {
+            let level: OptLevel = text.parse().unwrap();
+            assert_eq!(level.to_string(), text);
+            assert_eq!(level.is_word(), text == "s" || text == "z");
+        }
+        for bad in ["", "4", "S", "-1", "3\"\n[x]"] {
+            assert!(bad.parse::<OptLevel>().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_opt_level_cargo_would_refuse_is_refused_with_its_member() {
+        for bad in ["4", "-1", "\"fast\"", "\"\""] {
+            let e = parse(&format!("[opt_level]\nkaski-village = {bad}\n")).unwrap_err();
+            assert!(e.contains("kaski-village"), "{bad}: {e}");
+        }
     }
 
     /// A misspelt key is a setting that silently does nothing, which is the

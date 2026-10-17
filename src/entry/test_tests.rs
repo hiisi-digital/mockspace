@@ -204,3 +204,36 @@ fn a_root_is_the_manifest_declaring_a_workspace_and_nothing_else() {
 
     std::fs::remove_dir_all(&tmp).ok();
 }
+
+#[test]
+fn a_plain_run_gets_the_generated_config_before_the_callers_flags() {
+    let config = Path::new("/w/mock/target/state/cargo.toml");
+    let target = PathBuf::from("/t");
+    let argv = |c: &std::process::Command| {
+        c.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    };
+    let with = argv(&plain_command(
+        Path::new("."),
+        Some(&target),
+        Some(config),
+        &["--config", "x=1", "--", "--nocapture"],
+    ));
+    assert_eq!(
+        with,
+        [
+            "test",
+            "--target-dir",
+            "/t",
+            "--config",
+            "/w/mock/target/state/cargo.toml",
+            "--config",
+            "x=1",
+            "--",
+            "--nocapture"
+        ]
+    );
+    let without = argv(&plain_command(Path::new("."), None, None, &["--release"]));
+    assert_eq!(without, ["test", "--release"]);
+}

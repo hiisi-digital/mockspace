@@ -62,6 +62,59 @@ pub fn tool_config(s: &TestSettings, heavy: &[(String, String)]) -> String {
     t
 }
 
+/// The cargo config for one run: each member's opt level, under the profile
+/// the run builds. An entry naming something that is not among `members` is
+/// left out, since cargo warns about a profile spec that matches no package on
+/// every build; `members` is `None` where the workspace could not be read, and
+/// then every entry stays. `None` when no entry is left.
+pub fn cargo_config(
+    s: &TestSettings,
+    profile: &str,
+    members: Option<&[String]>,
+) -> Option<String> {
+    let mut t = String::from(
+        "# Written by `cargo mock test` for each run, from `[test.opt_level]` in\n\
+         # mockspace.toml. Edits here are lost.\n",
+    );
+    let mut any = false;
+    for (member, level) in &s.opt_level {
+        if members.is_some_and(|m| !m.contains(member)) {
+            continue;
+        }
+        any = true;
+        let _ = writeln!(t, "\n[profile.{profile}.package.\"{member}\"]");
+        if level.is_word() {
+            let _ = writeln!(t, "opt-level = \"{level}\"");
+        } else {
+            let _ = writeln!(t, "opt-level = {level}");
+        }
+    }
+    any.then_some(t)
+}
+
+/// The cargo profile a run builds, which is where a member's opt level goes:
+/// `release` for `--release`, the profile named by `profile_flag`, else `dev`.
+/// The flag is `--cargo-profile` for nextest and `--profile` for `cargo test`.
+pub fn build_profile(passed: &[String], profile_flag: &str) -> String {
+    let mut it = passed.iter();
+    while let Some(a) = it.next() {
+        if a == "--release" || a == "-r" {
+            return "release".to_string();
+        }
+        if a == profile_flag {
+            if let Some(p) = it.next() {
+                return p.clone();
+            }
+        } else if let Some(p) = a
+            .strip_prefix(profile_flag)
+            .and_then(|r| r.strip_prefix('='))
+        {
+            return p.to_string();
+        }
+    }
+    "dev".to_string()
+}
+
 /// A filterset matching exactly these tests.
 fn any_of<'a>(tests: impl IntoIterator<Item = &'a (String, String)>) -> String {
     tests
@@ -112,12 +165,14 @@ pub fn junit_path(mock_dir: &Path, passed: &[String]) -> PathBuf {
 }
 
 pub struct RunSpec<'a> {
-    pub mock_dir:    &'a Path,
-    pub tool_config: &'a Path,
-    pub packages:    &'a [String],
-    pub passed:      &'a [String],
-    pub filterset:   Option<&'a str>,
-    pub test_args:   &'a [String],
+    pub mock_dir:     &'a Path,
+    pub tool_config:  &'a Path,
+    /// The generated cargo config, where a member has an opt level.
+    pub cargo_config: Option<&'a Path>,
+    pub packages:     &'a [String],
+    pub passed:       &'a [String],
+    pub filterset:    Option<&'a str>,
+    pub test_args:    &'a [String],
 }
 
 pub fn command(r: &RunSpec) -> Command {
@@ -130,6 +185,11 @@ pub fn command(r: &RunSpec) -> Command {
         .arg("--no-tests=warn");
     for p in r.packages {
         cmd.arg("-p").arg(p);
+    }
+    // Before the caller's own flags, so a `--config` of theirs comes later and
+    // wins.
+    if let Some(c) = r.cargo_config {
+        cmd.arg("--config").arg(c);
     }
     cmd.args(r.passed);
     if let Some(f) = r.filterset {
@@ -198,6 +258,114 @@ mod tests {
             ..TestSettings::default()
         };
         assert!(tool_config(&s, &[]).contains("period = \"60s\", terminate-after = 2"));
+    }
+
+    fn levels(pairs: &[(&str, &str)]) -> TestSettings {
+        TestSettings {
+            opt_level: pairs
+                .iter()
+                .map(|(m, l)| (m.to_string(), l.parse().unwrap()))
+                .collect(),
+            ..TestSettings::default()
+        }
+    }
+
+    #[test]
+    fn each_member_gets_its_own_opt_level_under_the_profile_built() {
+        let s = levels(&[("kaski-village", "3"), ("kaski-render", "s")]);
+        let c = cargo_config(&s, "dev", None).unwrap();
+        assert!(
+            c.contains("[profile.dev.package.\"kaski-village\"]\nopt-level = 3\n"),
+            "{c}"
+        );
+        assert!(
+            c.contains("[profile.dev.package.\"kaski-render\"]\nopt-level = \"s\"\n"),
+            "{c}"
+        );
+        assert!(!c.contains("kaski-web"), "{c}");
+        let doc = c.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(
+            doc["profile"]["dev"]["package"]["kaski-village"]["opt-level"].as_integer(),
+            Some(3)
+        );
+        let r = cargo_config(&s, "release", None).unwrap();
+        assert!(
+            r.contains("[profile.release.package.\"kaski-village\"]"),
+            "{r}"
+        );
+        assert!(!r.contains("profile.dev"), "{r}");
+    }
+
+    #[test]
+    fn a_name_that_is_no_member_is_left_out_of_the_cargo_config() {
+        let s = levels(&[("kaski-village", "3"), ("gone", "2")]);
+        let members = vec!["kaski-village".to_string(), "kaski-web".to_string()];
+        let c = cargo_config(&s, "dev", Some(&members)).unwrap();
+        assert!(c.contains("kaski-village"), "{c}");
+        assert!(!c.contains("gone"), "{c}");
+        // Nothing left is no config, not a file of comments.
+        let only_gone = levels(&[("gone", "2")]);
+        assert_eq!(cargo_config(&only_gone, "dev", Some(&members)), None);
+        // Where the workspace could not be read, nothing can be ruled out.
+        assert!(cargo_config(&only_gone, "dev", None).unwrap().contains("gone"));
+    }
+
+    #[test]
+    fn no_member_opt_level_means_no_cargo_config() {
+        assert_eq!(cargo_config(&TestSettings::default(), "dev", None), None);
+    }
+
+    #[test]
+    fn the_profile_built_follows_the_flags_that_choose_it() {
+        let words = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+        let p = |s: &str| build_profile(&words(s), "--cargo-profile");
+        assert_eq!(p(""), "dev");
+        assert_eq!(p("--features x"), "dev");
+        assert_eq!(p("--release"), "release");
+        assert_eq!(p("-r"), "release");
+        assert_eq!(p("--cargo-profile ci"), "ci");
+        assert_eq!(p("--cargo-profile=ci"), "ci");
+        assert_eq!(build_profile(&words("--profile ci"), "--profile"), "ci");
+        assert_eq!(build_profile(&words("--profile=ci"), "--profile"), "ci");
+        assert_eq!(build_profile(&words("--profile ci"), "--cargo-profile"), "dev");
+    }
+
+    #[test]
+    fn the_run_builds_with_the_generated_cargo_config_before_the_callers_flags() {
+        let cargo = Path::new("/w/mock/target/state/cargo.toml");
+        let passed = vec!["--config".to_string(), "x=1".to_string()];
+        let spec = |cargo_config| {
+            RunSpec {
+                mock_dir: Path::new("."),
+                tool_config: Path::new("nextest.toml"),
+                cargo_config,
+                packages: &[],
+                passed: &passed,
+                filterset: None,
+                test_args: &[],
+            }
+        };
+        let args = |c: &Command| {
+            c.get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        let with = args(&command(&spec(Some(cargo))));
+        let at = with
+            .iter()
+            .position(|a| a == "/w/mock/target/state/cargo.toml")
+            .unwrap();
+        assert_eq!(with[at - 1], "--config");
+        let callers = with.iter().position(|a| a == "x=1").unwrap();
+        assert!(
+            at < callers,
+            "the caller's own --config must come later and win: {with:?}"
+        );
+        assert!(
+            !args(&command(&spec(None)))
+                .iter()
+                .any(|a| a.ends_with("cargo.toml"))
+        );
     }
 
     #[test]
