@@ -47,8 +47,14 @@ pub(crate) fn registry_attributes_line(repo_root: &Path, registry_dir: &Path) ->
 /// wants for the path, from its `conflict-marker-size` attribute, and both the
 /// engine and the text-merge fallback are given it.
 pub(crate) fn registry_driver_command(launcher: &str) -> String {
+    engine_driver_command(launcher, "merge-registry")
+}
+
+/// The same command for any driver that is a subcommand of the engine taking
+/// `%O %A %B %P %L`.
+pub(crate) fn engine_driver_command(launcher: &str, subcommand: &str) -> String {
     format!(
-        "s=0; {launcher} merge-registry %O %A %B %P %L || s=$?; if [ $s -gt 1 ]; then git \
+        "s=0; {launcher} {subcommand} %O %A %B %P %L || s=$?; if [ $s -gt 1 ]; then git \
          merge-file --marker-size=%L -L ours -L base -L theirs %A %O %B; else exit $s; fi"
     )
 }
@@ -59,7 +65,7 @@ pub(crate) fn register_registry_driver(
     launcher: &str,
     actions: &mut Vec<String>,
 ) {
-    register_named_driver(
+    register_engine_driver(
         repo_root,
         REGISTRY_DRIVER,
         "mockspace registry rows",
@@ -68,12 +74,13 @@ pub(crate) fn register_registry_driver(
     );
 }
 
-/// Register the merge driver `driver` in the clone's config, running `wanted`.
+/// Register the merge driver `driver` in the clone's config, running `wanted`: the one
+/// registration every driver goes through, whether it is an engine subcommand or not.
 /// Idempotent: a second call with the same command changes nothing.
-pub(crate) fn register_named_driver(
+pub(crate) fn register_engine_driver(
     repo_root: &Path,
     driver: &str,
-    label: &str,
+    title: &str,
     wanted: &str,
     actions: &mut Vec<String>,
 ) {
@@ -94,7 +101,7 @@ pub(crate) fn register_named_driver(
         return;
     }
     let ok = |args: &[&str]| git_config(args).is_some_and(|o| o.status.success());
-    if ok(&[&format!("merge.{driver}.name"), label]) && ok(&[&key, wanted]) {
+    if ok(&[&format!("merge.{driver}.name"), title]) && ok(&[&key, wanted]) {
         actions.push(format!("registered the {driver} merge driver"));
     } else {
         actions.push(format!("could not register the {driver} merge driver"));

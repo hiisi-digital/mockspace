@@ -108,9 +108,17 @@ pub(crate) fn with_note_line(existing: &str, note: &str, line: &str) -> String {
 }
 
 /// Write the attribute lines into the repository's `.gitattributes`: the documents
-/// directory always, and the registry directory once it exists.
+/// directory always, the registry directory once it exists, and the test-history
+/// directory always: its first file is written by a test run on any branch, and the
+/// line is the same text whether or not that has happened yet. The design rounds
+/// directory is always written too, for the same reason.
 /// Returns whether the file changed.
-pub(crate) fn write_gitattributes(repo_root: &Path, docs_dir: &Path, registry_dir: &Path) -> bool {
+pub(crate) fn write_gitattributes(
+    repo_root: &Path,
+    docs_dir: &Path,
+    registry_dir: &Path,
+    history_dir: &Path,
+) -> bool {
     let Some(line) = attributes_line(repo_root, docs_dir) else {
         return false;
     };
@@ -127,6 +135,9 @@ pub(crate) fn write_gitattributes(repo_root: &Path, docs_dir: &Path, registry_di
     let rounds_dir = registry_dir.with_file_name("design_rounds");
     if let Some(line) = round_attributes_line(repo_root, &rounds_dir) {
         next = with_note_line(&next, ROUND_NOTE, &line);
+    }
+    if let Some(line) = history_attributes_line(repo_root, history_dir) {
+        next = with_note_line(&next, HISTORY_NOTE, &line);
     }
     if next == existing {
         return false;

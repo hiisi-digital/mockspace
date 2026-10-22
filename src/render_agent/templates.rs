@@ -24,6 +24,7 @@ pub(crate) const BUILTIN_SKILL_DIRS: &[&str] = &[
     "design-talk",
     "canon-tiers",
     "reference-syntax",
+    "test-history",
 ];
 
 pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> BuiltinTemplates {
@@ -1171,6 +1172,20 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             skill_description: "Use when writing a reference, a citation, or a registry field that holds a row, and when a reference is reported as pointing nowhere. Covers the field types that hold rows, pathof / sourcesof / refsto and what each answers, the postfix chains that narrow a result, and how a citation is addressed.".to_string(),
             body: substitute_builtin_vars(
                 include_str!("skills/reference-syntax/SKILL.md"),
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            ),
+            files: vec![],
+        },
+        // How the test history merges and what the commit gate refuses; the rule
+        // names the moment, this is fetched when a merge or a commit meets one.
+        BuiltinSkill {
+            dir_name: "test-history".to_string(),
+            skill_name: "test-history".to_string(),
+            skill_description: "Use when a merge or rebase touches a file under test-history/, when a commit is refused for nulling a member's green record, or when merge-test-history refuses a file. Covers how the merge driver settles a green, a binary's pass and per-test timings, what it refuses, and what the pre-commit guard accepts.".to_string(),
+            body: substitute_builtin_vars(
+                include_str!("skills/test-history/SKILL.md"),
                 &mock_rel,
                 project_name,
                 crate_prefix,

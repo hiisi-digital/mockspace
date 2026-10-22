@@ -43,6 +43,8 @@ mod registry_driver;
 pub(crate) use registry_driver::*;
 mod round_driver;
 pub(crate) use round_driver::*;
+mod history_driver;
+pub(crate) use history_driver::*;
 mod merge_driver;
 pub(crate) use merge_driver::*;
 mod gitignore;
@@ -127,6 +129,7 @@ pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
         register_driver(repo_root, &mut actions);
         register_registry_driver(repo_root, "cargo mock", &mut actions);
         register_round_driver(repo_root, "cargo mock", &mut actions);
+        register_history_driver(repo_root, "cargo mock", &mut actions);
     }
 
     // Opt-out for CI and sandboxed environments where git config edits are
