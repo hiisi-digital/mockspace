@@ -707,7 +707,11 @@ fn a_manifest_dir_placeholder_names_the_member_or_climbs_out_of_it() {
         );
     }
     let f = facts("const D: &str = \"$CARGO_MANIFEST_DIR/../../content/x.toml\";");
-    assert_eq!(f.climbing, vec!["../../content/x.toml".to_string()]);
+    assert_eq!(f.member_climbing, vec!["../../content/x.toml".to_string()]);
+    assert!(
+        f.climbing.is_empty(),
+        "it is the member's alone, not the file's"
+    );
     assert!(
         !f.ambient,
         "a path under the member is placed, climbing or not"
@@ -740,4 +744,56 @@ fn a_pulled_file_with_a_mod_in_a_macro_shares_every_claimed_file() {
     for f in ["m/tests/a.rs", "m/tests/b.rs", "m/tests/stray/x.txt", "m/tests/common/mod.rs"] {
         assert!(l.shared_pulls.contains(&p(f)), "{f}: {:?}", l.shared_pulls);
     }
+}
+
+/// A path under the placeholder is the member's alone: a decoy of the same name
+/// beside the file is not what it reads, and the real one is.
+#[test]
+fn a_placeholder_rest_reads_outside_from_the_member_and_not_the_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    for f in ["content/other.toml", "mm/content/other.toml"] {
+        std::fs::create_dir_all(repo.join(f).parent().unwrap()).unwrap();
+        std::fs::write(repo.join(f), "x").unwrap();
+    }
+    let f = facts(
+        "const A: &str = \"$CARGO_MANIFEST_DIR/../../content/other.toml\";\n\
+         const B: &str = \"../../content/other.toml\";\n",
+    );
+    // `B` resolves from the file's directory first, which is where its decoy is;
+    // `A` has no such choice.
+    let got = f.reads_outside(Path::new("mm/m/tests"), Path::new("mm/m"), repo);
+    assert_eq!(got, vec![
+        p("mm/content/other.toml"),
+        p("content/other.toml")
+    ]);
+}
+
+/// A pulled source that could not be read may declare anything, as one a unit
+/// holds that cannot be read makes the unit wide.
+#[test]
+fn a_pulled_source_that_cannot_be_read_shares_every_claimed_file() {
+    let mut fx = Fx::new(&[
+        (
+            "m/src/lib.rs",
+            "#[path = \"../tests/common/mod.rs\"]\nmod common;\n",
+        ),
+        ("m/tests/a.rs", "mod common;\n"),
+        ("m/tests/b.rs", ""),
+        ("m/tests/common/mod.rs", ""),
+    ]);
+    let l = fx.layout(PLAIN);
+    assert!(
+        !l.shared_pulls.contains(&p("m/tests/b.rs")),
+        "control: nothing else is shared"
+    );
+    // The same tree with the pulled source unread.
+    fx.facts.remove(&p("m/tests/common/mod.rs"));
+    let l = fx.layout(PLAIN);
+    assert!(
+        l.shared_pulls.contains(&p("m/tests/b.rs")),
+        "{:?}",
+        l.shared_pulls
+    );
+    assert!(l.units["a"].wide);
 }

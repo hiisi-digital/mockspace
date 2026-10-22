@@ -52,11 +52,13 @@
 //! environment variables are not part of any fingerprint, here or at the member
 //! level, so a binary that reads one is wide but is not rerun when only the
 //! variable changed.
+//! A `$CARGO_MANIFEST_DIR/tests/../..` path that descends before it climbs out is
+//! resolved inside the member and dropped, not read as a path outside it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::fingerprint::{normalise, reach};
+use super::fingerprint::{normalise, reach, reach_in};
 
 /// What reading one Rust source file tells about what it is built from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -64,17 +66,20 @@ pub struct Facts {
     /// The string literals that climb out of where they resolve, the reads of
     /// content outside the member that the member-level fingerprint has always
     /// followed.
-    pub climbing: Vec<String>,
+    pub climbing:        Vec<String>,
+    /// The reads outside the member of a path under `$CARGO_MANIFEST_DIR/`, which
+    /// is relative to the member and to nothing else.
+    pub member_climbing: Vec<String>,
     /// Every string literal that could name a path: no escape, not empty, short,
     /// on one line. The climbing ones are among them.
-    pub strings:  Vec<String>,
+    pub strings:         Vec<String>,
     /// The `mod name;` declarations at the top level of the file.
-    pub mods:     Vec<ModDecl>,
+    pub mods:            Vec<ModDecl>,
     /// It reads the environment or `file!()`, so it may build a path to anything.
-    pub ambient:  bool,
+    pub ambient:         bool,
     /// What it declares or includes cannot be followed: it did not parse, a `mod`
     /// sits inside an inline module or a macro.
-    pub opaque:   bool,
+    pub opaque:          bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +87,30 @@ pub struct ModDecl {
     pub name:      String,
     /// It carries a `#[path]`, so the literal in the attribute says where it is.
     pub path_attr: bool,
+}
+
+impl Facts {
+    /// Every path outside the member that the file reads, as the repository
+    /// root sees it: the climbing literals from where they are written or from
+    /// the member, the placeholder ones from the member alone.
+    pub fn reads_outside(
+        &self,
+        file_dir: &Path,
+        member_dir: &Path,
+        repo_root: &Path,
+    ) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = self
+            .climbing
+            .iter()
+            .filter_map(|lit| reach(lit, file_dir, member_dir, repo_root))
+            .collect();
+        out.extend(
+            self.member_climbing
+                .iter()
+                .filter_map(|lit| reach_in(lit, &[member_dir], member_dir, repo_root)),
+        );
+        out
+    }
 }
 
 /// Longest literal kept: a path is not a paragraph.
@@ -133,7 +162,7 @@ pub fn facts(source: &str) -> Facts {
                     if let Some(("CARGO_MANIFEST_DIR", rest)) = holder
                         && climbs_out(rest)
                     {
-                        out.climbing.push(rest.to_string());
+                        out.member_climbing.push(rest.to_string());
                     }
                     if climbs_out(&v) {
                         out.climbing.push(v.clone());
@@ -458,11 +487,8 @@ pub fn layout(ctx: &Ctx, roots: &[Root]) -> Layout {
             continue;
         }
         let file_dir = path.parent().unwrap_or(Path::new(""));
-        for lit in &f.climbing {
-            if let Some(r) = reach(lit, file_dir, ctx.member_dir, ctx.repo_root) {
-                l.shared_reaches.insert(r);
-            }
-        }
+        l.shared_reaches
+            .extend(f.reads_outside(file_dir, ctx.member_dir, ctx.repo_root));
         for lit in &f.strings {
             for p in resolve(lit, file_dir, ctx.member_dir, ctx.index) {
                 if l.claimed.contains(&p) && l.shared_pulls.insert(p.clone()) {
@@ -480,16 +506,15 @@ pub fn layout(ctx: &Ctx, roots: &[Root]) -> Layout {
     let mut everything = false;
     while let Some(path) = queue.pop() {
         let Some(f) = ctx.facts.get(&path) else {
+            // A source that could not be read may declare anything.
+            everything |= path.extension().is_some_and(|e| e == "rs");
             continue;
         };
         // A pulled file whose modules cannot be followed may declare any of them.
         everything |= f.opaque;
         let file_dir = path.parent().unwrap_or(Path::new(""));
-        for lit in &f.climbing {
-            if let Some(r) = reach(lit, file_dir, ctx.member_dir, ctx.repo_root) {
-                l.shared_reaches.insert(r);
-            }
-        }
+        l.shared_reaches
+            .extend(f.reads_outside(file_dir, ctx.member_dir, ctx.repo_root));
         let own_dir = file_dir.join(path.file_stem().unwrap_or_default());
         let mut named: Vec<PathBuf> = Vec::new();
         for m in f.mods.iter().filter(|m| !m.path_attr) {
@@ -551,11 +576,8 @@ fn claim(ctx: &Ctx, tests: &Path, root: &Root) -> Unit {
         };
         u.wide |= f.ambient || f.opaque;
         let file_dir = path.parent().unwrap_or(Path::new(""));
-        for lit in &f.climbing {
-            if let Some(r) = reach(lit, file_dir, ctx.member_dir, ctx.repo_root) {
-                u.reaches.insert(r);
-            }
-        }
+        u.reaches
+            .extend(f.reads_outside(file_dir, ctx.member_dir, ctx.repo_root));
         if kind == Kind::Pulled && !f.mods.is_empty() {
             u.wide = true;
         } else {

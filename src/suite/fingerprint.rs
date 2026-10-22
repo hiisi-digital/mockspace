@@ -161,11 +161,7 @@ pub fn compute(
             };
             let facts_of = units::facts(&src);
             let file_dir = f.parent().unwrap_or(Path::new(""));
-            for lit in &facts_of.climbing {
-                if let Some(r) = reach(lit, file_dir, dir, repo_root) {
-                    reaches.insert(r);
-                }
-            }
+            reaches.extend(facts_of.reads_outside(file_dir, dir, repo_root));
             facts.insert(f.clone(), facts_of);
         }
 
@@ -432,8 +428,19 @@ pub fn path_literals(source: &str) -> Vec<String> {
 /// anything containing the member, which would make every file an input; and
 /// anything outside the repository or under a `target` directory.
 pub fn reach(lit: &str, file_dir: &Path, member_dir: &Path, repo_root: &Path) -> Option<PathBuf> {
+    reach_in(lit, &[file_dir, member_dir], member_dir, repo_root)
+}
+
+/// [`reach`] from these bases only, in order. A path rooted at a placeholder is
+/// relative to the member and to no file, and takes just the member.
+pub fn reach_in(
+    lit: &str,
+    bases: &[&Path],
+    member_dir: &Path,
+    repo_root: &Path,
+) -> Option<PathBuf> {
     let rel = Path::new(lit.trim_start_matches('/'));
-    for base in [file_dir, member_dir] {
+    for base in bases {
         let Some(p) = normalise(&base.join(rel)) else {
             continue;
         };

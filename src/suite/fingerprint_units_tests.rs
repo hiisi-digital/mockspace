@@ -620,3 +620,17 @@ fn a_cycle_of_path_pulls_ends_and_is_shared() {
         "{m:?}"
     );
 }
+
+#[test]
+fn a_placeholder_rest_is_the_members_not_the_files() {
+    let r = Repo::new("rev-base");
+    r.write("mock/content/other.toml", "decoy\n");
+    r.append(
+        "mock/crates/uses/tests/one.rs",
+        "const D: &str = \"$CARGO_MANIFEST_DIR/../../../content/other.toml\";\n",
+    );
+    let before = r.fp();
+    r.append("content/other.toml", "z = 1\n");
+    let m = moved(&before, &r.fp());
+    assert!(m.contains(&"bin:uses::one".to_string()), "{m:?}");
+}
