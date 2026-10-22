@@ -82,11 +82,13 @@ Every round walks five phases. Each phase is detected from the presence and stat
 | `IMPL`      | `*_changelist.doc.lock.md` and `*_changelist.src.md` both exist |
 | `CLOSED`    | `*_changelist.doc.lock.md` and `*_changelist.src.lock.md`       |
 
-Filenames use a compact timestamp prefix:
+Filenames start with the round id:
 
 ```
-YYYYMMDDHHMM_{topic|research|changelist}.{name|doc|src}[.lock|.deprecated].md
+<id>_{topic|research|changelist}.{name|doc|src}[.lock|.deprecated].md
 ```
+
+An id is `YYYYMMDDHHMM-tttt`, the minute and a four character tag (a lowercase letter, then letters or digits). `cargo mock round-id` prints a fresh one and is how a round is opened: the tag is drawn from the branch, host and time, and the id is checked against the working tree, the `round/*` tags and `origin/dev` and `origin/main`, so two sessions that open a round in the same minute on separate branches do not meet in a collision when both close. A bare `YYYYMMDDHHMM` from an older round is still an id; the minute stays first, so ids sort by time across old and new. Two closed rounds that still share one id fail the merge of their `.meta` with `round id collision`, and `cargo mock rename-round <id>` renames one side (directory, files, the `round:` field, the local tags) on its own branch before the merge is tried again.
 
 Transitions are subcommands, not manual renames:
 
@@ -98,6 +100,8 @@ Transitions are subcommands, not manual renames:
 | `cargo mock close`        | Archive the round into a timestamped subdir with `.meta` + `.history` | `CLOSED` only       |
 | `cargo mock archive`      | Archive an abandoned round into a `<timestamp>-abandoned/` subdir | any                     |
 | `cargo mock migrate`      | Rename legacy `YYYY-MM-DD_*.md` files to the compact format       | any                     |
+| `cargo mock round-id`     | Print a fresh round id, `YYYYMMDDHHMM-tttt`                       | any                     |
+| `cargo mock rename-round <old> [<new>]` | Give a round a new id: directory, files, `.meta`, local tags | any                     |
 
 All transition subcommands accept `--auto-commit`, which commits only the renamed files. A temporary `GIT_INDEX_FILE` is used, so whatever is staged stays staged and is not swept into the commit.
 

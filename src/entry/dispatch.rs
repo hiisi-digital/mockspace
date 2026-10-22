@@ -240,6 +240,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         return crate::registry_merge::run(&subcommand_args(&args, "merge-registry"));
     }
 
+    // The same for the driver that refuses two closed rounds sharing an id.
+    if first_positional(&args) == Some("merge-round-meta") {
+        return crate::design_round::round_merge::run(&subcommand_args(&args, "merge-round-meta"));
+    }
+
     // Determine mock directory, the one way help asks the same question: see
     // `discover_mock_dir` for the order and why the last arm is `design_rounds/`.
     let cwd = std::env::current_dir().unwrap();
@@ -630,6 +635,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     "migrate" => design_round::cmd_migrate(&cfg, &subcmd_opts),
                     _ => unreachable!(),
                 };
+            },
+            "round-id" => return design_round::cmd_round_id(&cfg),
+            "rename-round" => {
+                let subcmd_opts = design_round::SubcmdOpts {
+                    auto_commit: auto_commit_wanted(&args),
+                };
+                let rest = subcommand_args(&args, "rename-round");
+                return design_round::cmd_rename_round(&cfg, &subcmd_opts, &rest);
             },
             "bench" => {
                 // Flags included: see `subcommand_args`. Taking these from

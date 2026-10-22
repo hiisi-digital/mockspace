@@ -90,19 +90,55 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name:    "close",
-        summary: "archive a finished round into a timestamped directory",
+        summary: "archive a finished round into a directory named by its id",
         args:    &[],
         help:    "Archives a finished round (both changelists locked) into \
-                  design_rounds/<timestamp>/ with .meta and .history. Valid only \
+                  design_rounds/<id>/ with .meta and .history. Valid only \
                   from CLOSED. Accepts --auto-commit.",
     },
     Cmd {
         name:    "archive",
         summary: "archive an abandoned round without closing it",
         args:    &[],
-        help:    "Archives an abandoned round into a <timestamp>-abandoned/ \
+        help:    "Archives an abandoned round into an <id>-abandoned/ \
                   subdirectory at any phase, without requiring it to reach \
                   CLOSED first. Accepts --auto-commit.",
+    },
+    Cmd {
+        name:    "round-id",
+        summary: "print a fresh design round id",
+        args:    &[],
+        help:    "Prints one id for a round you are about to open, and nothing else: \
+                  the minute, YYYYMMDDHHMM, then a four character tag, \
+                  YYYYMMDDHHMM-tttt. Name every file of the round with it, \
+                  <id>_topic.<name>.md and <id>_changelist.doc.md, instead of a \
+                  bare minute that another branch may have taken. The tag is drawn \
+                  from the branch, host and time of the call, and walked past any \
+                  id the working tree, the round tags or origin/dev and origin/main \
+                  already hold. Ids written without a tag stay valid and sort with \
+                  the new ones by minute.",
+    },
+    Cmd {
+        name:    "rename-round",
+        summary: "give a round a new id, when two rounds share one",
+        args:    &[],
+        help:    "`rename-round <old id or directory> [<new id>]` renames one round: the closed directory (or the flat files of the \
+                  active round) with the old id, every file inside that starts with \
+                  it, the `round:` line of .meta, and the local round/<old>/* tags. \
+                  The new id defaults to a fresh one on the same minute. Run it on \
+                  the branch to rename, before merging, when a merge was refused with \
+                  a round id collision. Accepts --auto-commit.",
+    },
+    Cmd {
+        name:    "merge-round-meta",
+        summary: "refuse a merge of two closed rounds that share an id, as git's merge driver",
+        args:    &[],
+        help:    "The merge driver `cargo mock` installs for \
+                  <mock>/design_rounds/*/.meta; git calls it as `merge-round-meta %O \
+                  %A %B %P`. A .meta added on both sides with different content is \
+                  two rounds with one id: it exits 1 and names the id and `cargo mock \
+                  rename-round <id>`. Anything else merges as text. It needs no \
+                  project and installs nothing: the wiring is done by `cargo mock`.",
     },
     Cmd {
         name:    "status",

@@ -177,6 +177,9 @@ fn every_dispatched_subcommand_is_in_the_known_list() {
         "close",
         "archive",
         "migrate",
+        "round-id",
+        "rename-round",
+        "merge-round-meta",
         "bench",
     ] {
         assert!(

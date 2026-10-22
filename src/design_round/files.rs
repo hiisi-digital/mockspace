@@ -50,15 +50,10 @@ pub(crate) fn rewrite_filename(name: &str, kind: ClKind, new_status: ClStatus) -
         ClStatus::Deprecated => "deprecated.md",
     };
 
-    // Format: {YYYYMMDDHHMM}_changelist.{kind}.{status}.md
-    if name.len() >= 12 && name[.. 12].chars().all(|c| c.is_ascii_digit()) {
-        if let Some(pos) = name.find("_changelist.") {
-            let prefix = &name[.. pos];
-            return Some(format!("{prefix}_changelist.{kind_str}.{status_suffix}"));
-        }
-    }
-
-    None
+    // Format: {round id}_changelist.{kind}.{status}.md
+    let (id, rest) = lint_rules::round_id::split_prefix(name)?;
+    rest.starts_with("_changelist.")
+        .then(|| format!("{id}_changelist.{kind_str}.{status_suffix}"))
 }
 
 // ---------------------------------------------------------------------------

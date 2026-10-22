@@ -82,6 +82,7 @@ mod no_raw_error_outside_primitives;
 mod no_self_define;
 mod no_todo;
 pub mod path_filter;
+pub mod round_id;
 mod registrable_completeness;
 mod repr_c_abi_safety;
 mod single_source;

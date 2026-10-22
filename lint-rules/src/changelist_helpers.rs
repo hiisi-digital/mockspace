@@ -93,13 +93,10 @@ pub fn parse_changelist(name: &str) -> Option<ParsedChangelist> {
     None
 }
 
-/// Strip a `YYYYMMDDHHMM` prefix (12 digits) and return the remainder.
+/// Strip a round id (`YYYYMMDDHHMM`, or with a `-tag`, see [`crate::round_id`])
+/// and return the remainder.
 fn strip_timestamp_prefix(name: &str) -> Option<&str> {
-    if name.len() < 12 {
-        return None;
-    }
-    let (prefix, rest) = name.split_at(12);
-    if prefix.chars().all(|c| c.is_ascii_digit()) { Some(rest) } else { None }
+    crate::round_id::split_prefix(name).map(|(_, rest)| rest)
 }
 
 /// Parse the suffix after `_changelist.` in new-format filenames.

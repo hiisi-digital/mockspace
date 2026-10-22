@@ -122,6 +122,12 @@ pub(crate) fn write_gitattributes(repo_root: &Path, docs_dir: &Path, registry_di
             next = with_note_line(&next, REGISTRY_NOTE, &line);
         }
     }
+    // Beside the registry, the design rounds: the line is written before the
+    // first round exists, so it is there on every branch that will ever close one.
+    let rounds_dir = registry_dir.with_file_name("design_rounds");
+    if let Some(line) = round_attributes_line(repo_root, &rounds_dir) {
+        next = with_note_line(&next, ROUND_NOTE, &line);
+    }
     if next == existing {
         return false;
     }

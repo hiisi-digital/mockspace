@@ -59,8 +59,25 @@ pub(crate) fn register_registry_driver(
     launcher: &str,
     actions: &mut Vec<String>,
 ) {
-    let key = format!("merge.{REGISTRY_DRIVER}.driver");
-    let wanted = registry_driver_command(launcher);
+    register_named_driver(
+        repo_root,
+        REGISTRY_DRIVER,
+        "mockspace registry rows",
+        &registry_driver_command(launcher),
+        actions,
+    );
+}
+
+/// Register the merge driver `driver` in the clone's config, running `wanted`.
+/// Idempotent: a second call with the same command changes nothing.
+pub(crate) fn register_named_driver(
+    repo_root: &Path,
+    driver: &str,
+    label: &str,
+    wanted: &str,
+    actions: &mut Vec<String>,
+) {
+    let key = format!("merge.{driver}.driver");
     let git_config = |args: &[&str]| {
         Command::new("git")
             .arg("-C")
@@ -73,18 +90,14 @@ pub(crate) fn register_registry_driver(
     let current = git_config(&[&key])
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    if current.as_deref() == Some(wanted.as_str()) {
+    if current.as_deref() == Some(wanted) {
         return;
     }
     let ok = |args: &[&str]| git_config(args).is_some_and(|o| o.status.success());
-    if ok(&[&format!("merge.{REGISTRY_DRIVER}.name"), "mockspace registry rows"])
-        && ok(&[&key, &wanted])
-    {
-        actions.push(format!("registered the {REGISTRY_DRIVER} merge driver"));
+    if ok(&[&format!("merge.{driver}.name"), label]) && ok(&[&key, wanted]) {
+        actions.push(format!("registered the {driver} merge driver"));
     } else {
-        actions.push(format!(
-            "could not register the {REGISTRY_DRIVER} merge driver"
-        ));
+        actions.push(format!("could not register the {driver} merge driver"));
     }
 }
 
