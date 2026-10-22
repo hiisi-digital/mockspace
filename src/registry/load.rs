@@ -119,5 +119,12 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
             }
         }
     }
+    // A namespace lists its rows by key path. The order the loader met them in is the order of
+    // the files and of the rows within each, which is where they happen to be written, and an
+    // answer that changes when a file is split, merged, renamed or moved is an identity that
+    // includes the file.
+    for ids in reg.by_namespace.values_mut() {
+        ids.sort();
+    }
     reg
 }
