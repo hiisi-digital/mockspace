@@ -413,6 +413,8 @@ Three sources contribute rules:
 
 Each lint has a `commit` / `build` / `push` level. Violations at `error` fail the pipeline; `warn` prints without failing; `info` is purely informational.
 
+`single-source` is the cross-package lint for one concept defined in more than one package. It reads every source file of every package, following `mod` declarations from the package roots, so a definition in a module file, a nested or `#[path]` module or a `cfg`-gated module is found; test code is exempt. It reports two finding kinds, `type` (the same struct, enum, trait or union name in two packages) and `constant` (the same `const` or `static` name, type and value in two packages), and `[lints.single-source.findings]` can set their severities apart. A constant is compared only when its value is built from literals, so a value that names something is never reported. The module doc of `lint-rules/src/single_source.rs` lists what it cannot see.
+
 ## Generated documentation
 
 Every `cargo mock` run regenerates:
