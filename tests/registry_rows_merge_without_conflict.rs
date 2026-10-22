@@ -192,7 +192,7 @@ fn the_wiring_is_written_once_and_a_second_run_changes_nothing() {
     );
     let driver = r.git(&["config", "--local", "merge.mockspace-registry.driver"]);
     assert!(
-        driver.contains("cargo mock merge-registry %O %A %B %P"),
+        driver.contains("cargo mock merge-registry %O %A %B %P %L"),
         "{driver}"
     );
     r.generate();
@@ -227,4 +227,135 @@ fn a_clone_where_the_engine_cannot_be_run_merges_as_git_would() {
         .unwrap();
     assert!(!out.status.success(), "{}", Repo::failure(&out));
     assert_eq!(r.unmerged(), [FILE]);
+}
+
+/// Branch `a` and `dev` each change row `b` of the registry file, in two ways.
+fn row_changed_two_ways(r: &Repo) {
+    let path = r.root.join(FILE);
+    r.git(&["switch", "-q", "-c", "a"]);
+    let base = fs::read_to_string(&path).unwrap();
+    fs::write(
+        &path,
+        base.replace("text = \"2\"", "text = \"two, edited on a\""),
+    )
+    .unwrap();
+    r.git(&["commit", "-q", "--no-verify", "-am", "chore: edit on a"]);
+    r.git(&["switch", "-q", "dev"]);
+    fs::write(
+        &path,
+        base.replace("text = \"2\"", "text = \"two, edited on dev\""),
+    )
+    .unwrap();
+    r.git(&["commit", "-q", "--no-verify", "-am", "chore: edit on dev"]);
+}
+
+/// Ask git for markers `size` long on the registry file, the way a clone's own attributes do.
+fn marker_size(r: &Repo, size: usize) {
+    let attrs = r.root.join(".git/info/attributes");
+    write(&attrs, &format!("{FILE} conflict-marker-size={size}\n"));
+}
+
+/// The number of `<` opening the line that starts a conflict.
+fn opening_marker_len(text: &str) -> usize {
+    let line = text
+        .lines()
+        .find(|l| l.starts_with('<'))
+        .unwrap_or_else(|| panic!("no conflict marker: {text}"));
+    line.chars().take_while(|c| *c == '<').count()
+}
+
+#[test]
+fn a_conflict_is_marked_as_long_as_git_asks_for() {
+    let r = repo();
+    row_changed_two_ways(&r);
+    marker_size(&r, 11);
+    let merged = merge(&r);
+    assert!(!merged.status.success(), "{}", Repo::failure(&merged));
+    let text = fs::read_to_string(r.root.join(FILE)).unwrap();
+    assert_eq!(opening_marker_len(&text), 11, "{text}");
+    assert!(
+        text.lines()
+            .any(|l| l.starts_with(&">".repeat(11)) && !l.starts_with(&">".repeat(12))),
+        "the closing marker is as long: {text}"
+    );
+}
+
+#[test]
+fn a_conflict_with_no_attribute_is_marked_seven_long() {
+    // the control for the arm above: the length is read from git, not always eleven
+    let r = repo();
+    row_changed_two_ways(&r);
+    let merged = merge(&r);
+    assert!(!merged.status.success(), "{}", Repo::failure(&merged));
+    let text = fs::read_to_string(r.root.join(FILE)).unwrap();
+    assert_eq!(opening_marker_len(&text), 7, "{text}");
+}
+
+#[test]
+fn the_text_fallback_marks_as_long_as_git_asks_for_too() {
+    let r = repo();
+    two_additions(&r, FILE);
+    marker_size(&r, 11);
+    let out = r
+        .cmd("git")
+        .env("MS_NO_CARGO", "1")
+        .args(["merge", "a", "-m", "chore: merge a"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "{}", Repo::failure(&out));
+    let text = fs::read_to_string(r.root.join(FILE)).unwrap();
+    assert_eq!(opening_marker_len(&text), 11, "{text}");
+}
+
+/// The registry file with CRLF line endings on `dev`, committed.
+fn crlf_repo() -> Repo {
+    let r = repo();
+    let path = r.root.join(FILE);
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(&path, text.replace('\n', "\r\n")).unwrap();
+    r.git(&["commit", "-q", "--no-verify", "-am", "chore: crlf"]);
+    r
+}
+
+/// True when every line of `text` ends in CRLF and no bare LF is left.
+fn all_crlf(text: &str) -> bool {
+    text.matches('\n').count() == text.matches("\r\n").count()
+}
+
+#[test]
+fn rows_added_to_a_crlf_file_merge_with_crlf_throughout() {
+    let r = crlf_repo();
+    let crlf = |s: String| s.replace('\n', "\r\n");
+    let add = |branch: &str, id: &str| {
+        let path = r.root.join(FILE);
+        let text = fs::read_to_string(&path).unwrap();
+        fs::write(&path, format!("{text}\r\n{}", crlf(row(id, "x")))).unwrap();
+        r.git(&["commit", "-q", "--no-verify", "-am", &format!("chore: edit on {branch}")]);
+    };
+    r.git(&["switch", "-q", "-c", "a"]);
+    add("a", "from-a");
+    r.git(&["switch", "-q", "dev"]);
+    add("dev", "from-dev");
+    let merged = merge(&r);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    let text = fs::read_to_string(r.root.join(FILE)).unwrap();
+    assert!(
+        text.contains("from-a") && text.contains("from-dev"),
+        "{text:?}"
+    );
+    assert!(all_crlf(&text), "a bare LF got into a CRLF file: {text:?}");
+}
+
+#[test]
+fn a_conflict_in_a_crlf_file_has_crlf_markers() {
+    let r = crlf_repo();
+    row_changed_two_ways(&r);
+    let merged = merge(&r);
+    assert!(!merged.status.success(), "{}", Repo::failure(&merged));
+    let text = fs::read_to_string(r.root.join(FILE)).unwrap();
+    assert!(text.contains("<<<<<<< ours"), "{text:?}");
+    assert!(
+        all_crlf(&text),
+        "a marker line ended in a bare LF: {text:?}"
+    );
 }

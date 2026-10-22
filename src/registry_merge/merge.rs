@@ -142,13 +142,13 @@ fn decide(base: Option<&Block>, ours: Option<&Block>, theirs: Option<&Block>) ->
     }
 }
 
-fn marker_block(ours: Option<&str>, theirs: Option<&str>, size: usize) -> String {
+fn marker_block(ours: Option<&str>, theirs: Option<&str>, size: usize, nl: &str) -> String {
     let mut lines = vec![format!("{} ours", "<".repeat(size))];
     lines.extend(ours.map(str::to_string));
     lines.push("=".repeat(size));
     lines.extend(theirs.map(str::to_string));
     lines.push(format!("{} theirs", ">".repeat(size)));
-    lines.join("\n")
+    lines.join(nl)
 }
 
 /// The surviving keys of one side, in that side's order.
@@ -257,6 +257,7 @@ pub(crate) fn merge(base: &Doc, ours: &Doc, theirs: &Doc, marker: usize) -> Outc
         .collect();
     let placed = order(base, &sequence(ours, &alive), &sequence(theirs, &alive));
 
+    let nl = eol(&[ours, theirs]);
     let mut conflicts = 0;
     let head = if ours.head == theirs.head {
         ours.head.clone()
@@ -267,16 +268,16 @@ pub(crate) fn merge(base: &Doc, ours: &Doc, theirs: &Doc, marker: usize) -> Outc
     } else {
         conflicts += 1;
         format!(
-            "{}\n",
+            "{}{nl}",
             marker_block(
-                Some(ours.head.trim_end_matches('\n')),
-                Some(theirs.head.trim_end_matches('\n')),
-                marker
+                Some(ours.head.trim_end_matches(['\r', '\n'])),
+                Some(theirs.head.trim_end_matches(['\r', '\n'])),
+                marker,
+                nl
             )
         )
     };
 
-    let nl = eol(&[ours, theirs]);
     let spaced = [ours, theirs].iter().any(|d| {
         d.blocks
             .iter()
@@ -300,7 +301,7 @@ pub(crate) fn merge(base: &Doc, ours: &Doc, theirs: &Doc, marker: usize) -> Outc
             }) => {
                 conflicts += 1;
                 (
-                    marker_block(ours.as_deref(), theirs.as_deref(), marker),
+                    marker_block(ours.as_deref(), theirs.as_deref(), marker, nl),
                     tail,
                 )
             },

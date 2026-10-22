@@ -11,9 +11,9 @@
 //! merges by what a row is, its namespace and `id`, so concurrent additions
 //! both stay and only a row changed two different ways reaches a person.
 //!
-//! Git calls it as `mock merge-registry %O %A %B %P`: base, ours, theirs and the
-//! path, and reads the result from `%A`. Exit 0 is a clean merge, exit 1 a
-//! conflict whose markers sit in `%A` around the one block concerned. A file the
+//! Git calls it as `mock merge-registry %O %A %B %P %L`: base, ours, theirs, the
+//! path and the conflict marker length, and reads the result from `%A`. Exit 0 is a clean
+//! merge, exit 1 a conflict whose markers sit in `%A` around the one block concerned. A file the
 //! driver cannot cut into rows (invalid TOML, an entry with no `id`, a row
 //! twice) is merged by `git merge-file`, which is what git does without a
 //! driver, so the driver is never worse than none.
@@ -87,7 +87,7 @@ fn text_merge(base: &str, ours: &str, theirs: &str, marker: usize) -> ExitCode {
     }
 }
 
-/// `args` are what follows the subcommand: `%O %A %B %P [marker size]`.
+/// `args` are what follows the subcommand: `%O %A %B %P [%L]`, the marker size being git's `%L`.
 pub(crate) fn run(args: &[&str]) -> ExitCode {
     let [base, ours, theirs, path, rest @ ..] = args else {
         eprintln!("usage: mock merge-registry <base> <ours> <theirs> <path> [<marker size>]");

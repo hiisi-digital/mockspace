@@ -43,11 +43,13 @@ pub(crate) fn registry_attributes_line(repo_root: &Path, registry_dir: &Path) ->
 }
 
 /// What git runs for a conflicting registry file, with `launcher` the command
-/// that reaches the engine (`cargo mock`).
+/// that reaches the engine (`cargo mock`). `%L` is the conflict marker length git
+/// wants for the path, from its `conflict-marker-size` attribute, and both the
+/// engine and the text-merge fallback are given it.
 pub(crate) fn registry_driver_command(launcher: &str) -> String {
     format!(
-        "s=0; {launcher} merge-registry %O %A %B %P || s=$?; if [ $s -gt 1 ]; then git merge-file \
-         -L ours -L base -L theirs %A %O %B; else exit $s; fi"
+        "s=0; {launcher} merge-registry %O %A %B %P %L || s=$?; if [ $s -gt 1 ]; then git \
+         merge-file --marker-size=%L -L ours -L base -L theirs %A %O %B; else exit $s; fi"
     )
 }
 
@@ -121,10 +123,23 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
-        assert!(cmd.contains("cargo mock merge-registry %O %A %B %P"));
+        assert!(cmd.contains("cargo mock merge-registry %O %A %B %P %L"));
         assert!(
             cmd.contains("-gt 1"),
             "exit 1 is a conflict and is final: {cmd}"
+        );
+    }
+
+    #[test]
+    fn the_marker_length_git_asks_for_reaches_the_engine_and_the_fallback() {
+        let cmd = registry_driver_command("cargo mock");
+        assert!(
+            cmd.contains("%P %L ||"),
+            "the engine is told the length: {cmd}"
+        );
+        assert!(
+            cmd.contains("git merge-file --marker-size=%L"),
+            "the fallback is told it too: {cmd}"
         );
     }
 }

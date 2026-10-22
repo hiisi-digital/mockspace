@@ -208,6 +208,46 @@ fn the_marker_length_is_the_one_git_asked_for() {
     );
 }
 
+fn crlf(s: &str) -> String {
+    s.replace('\n', "\r\n")
+}
+
+#[test]
+fn a_conflict_in_a_crlf_file_is_marked_with_crlf_lines() {
+    let b = crlf(&base());
+    let o = crlf(&file(&[row("a", "1"), row("b", "x"), row("c", "3")]));
+    let t = crlf(&file(&[row("a", "1"), row("b", "y"), row("c", "3")]));
+    let out = merge_text(&b, &o, &t, 7).unwrap();
+    assert_eq!(out.conflicts, 1);
+    assert_eq!(
+        out.text.matches('\n').count(),
+        out.text.matches("\r\n").count(),
+        "a bare LF in a CRLF file: {:?}",
+        out.text
+    );
+    assert!(
+        out.text.contains("<<<<<<< ours\r\n") && out.text.contains("\r\n=======\r\n"),
+        "{:?}",
+        out.text
+    );
+}
+
+#[test]
+fn a_header_changed_on_both_sides_of_a_crlf_file_is_marked_with_crlf_lines() {
+    let b = crlf(&format!("# header\n\n{}", file(&[row("a", "1")])));
+    let o = crlf(&format!("# header ours\n\n{}", file(&[row("a", "1")])));
+    let t = crlf(&format!("# header theirs\n\n{}", file(&[row("a", "1")])));
+    let out = merge_text(&b, &o, &t, 7).unwrap();
+    assert_eq!(out.conflicts, 1);
+    assert_eq!(
+        out.text.matches('\n').count(),
+        out.text.matches("\r\n").count(),
+        "a bare LF or a doubled CR: {:?}",
+        out.text
+    );
+    assert!(!out.text.contains("\r\r"), "{:?}", out.text);
+}
+
 #[test]
 fn comments_and_formatting_of_untouched_rows_survive_byte_for_byte() {
     let odd = "# why a exists\n[[probe]]\nid   =   \"a\"   # trailing\ntext='single'\nlist = [\n  1,\n  2,\n]\n";

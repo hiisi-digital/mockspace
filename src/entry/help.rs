@@ -148,9 +148,9 @@ const COMMANDS: &[Cmd] = &[
         summary: "merge registry TOML by row, as git's merge driver",
         args:    &[],
         help:    "The merge driver `cargo mock` installs for <mock>/registry/**/*.toml; \
-                  git calls it as `merge-registry %O %A %B %P` (base, ours, theirs, \
-                  path) and reads the result from the second. Rows are keyed by their \
-                  [[namespace]] and `id`, never by file or position, so two branches \
+                  git calls it as `merge-registry %O %A %B %P %L` (base, ours, theirs, \
+                  path, marker length) and reads the result from the second. \
+                  Rows are keyed by their [[namespace]] and `id`, never by file or position, so two branches \
                   that each added a row to the same spot both keep it. A row changed \
                   on one side takes that change, one deleted on one side and untouched \
                   on the other is deleted, and one changed differently on both sides \
