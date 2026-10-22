@@ -74,11 +74,28 @@ pub fn base_id(dir_name: &str) -> Option<&str> {
 }
 
 /// What follows the id in a round directory name that must survive a rename:
-/// `-abandoned` or nothing. A `-N` is the collision walk of a close and goes.
+/// `-abandoned`, with its `-N` collision count dropped, or nothing. A bare `-N`
+/// is the collision walk of a close and goes too. Dropping `-abandoned-N` to
+/// nothing would turn an abandoned round into one [`is_round_dir`] reads as
+/// closed, which `changelist-seal` then holds to the rules of a closed round.
 pub fn kept_tail(dir_name: &str) -> &str {
     match split_prefix(dir_name) {
-        Some((_, "-abandoned")) => "-abandoned",
+        Some((_, rest)) if is_abandoned_tail(rest) => "-abandoned",
         _ => "",
+    }
+}
+
+/// `-abandoned`, or `-abandoned-N` for the digits `N` a close appends when two
+/// abandoned rounds still shared a name.
+fn is_abandoned_tail(rest: &str) -> bool {
+    match rest.strip_prefix("-abandoned") {
+        Some("") => true,
+        Some(count) => {
+            count
+                .strip_prefix('-')
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        },
+        None => false,
     }
 }
 

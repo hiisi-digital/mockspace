@@ -37,24 +37,57 @@ fn git_line(cfg: &Config, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// What makes two sessions in the same minute draw different tags: the branch,
-/// the host, the process and the nanosecond. None of it is secret or stable.
-fn seed(cfg: &Config) -> String {
-    let branch = git_line(cfg, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
-    let host = std::env::var("HOSTNAME")
-        .ok()
-        .or_else(|| {
+/// Where a round is being opened from: what makes two sessions in the same
+/// minute draw different tags. None of it is secret or stable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Origin {
+    pub(crate) branch: String,
+    pub(crate) host:   String,
+    pub(crate) pid:    u32,
+    pub(crate) nanos:  u128,
+}
+
+impl Origin {
+    /// Read from the clone and the process.
+    pub(crate) fn here(cfg: &Config) -> Origin {
+        let branch = git_line(cfg, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+        let host = pick_host(std::env::var("HOSTNAME").ok(), || {
             Command::new("hostname")
                 .output()
                 .ok()
                 .and_then(|o| String::from_utf8(o.stdout).ok())
-        })
-        .unwrap_or_default();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    format!("{branch}|{}|{}|{nanos}", host.trim(), std::process::id())
+        });
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        Origin {
+            branch,
+            host,
+            pid: std::process::id(),
+            nanos,
+        }
+    }
+
+    /// The text the tag is drawn from.
+    pub(crate) fn seed(&self) -> String {
+        format!(
+            "{}|{}|{}|{}",
+            self.branch,
+            self.host.trim(),
+            self.pid,
+            self.nanos
+        )
+    }
+}
+
+/// The environment's `HOSTNAME` when it has one, else what `hostname` prints.
+fn pick_host(env: Option<String>, command: impl FnOnce() -> Option<String>) -> String {
+    env.or_else(command).unwrap_or_default()
+}
+
+fn seed(cfg: &Config) -> String {
+    Origin::here(cfg).seed()
 }
 
 /// Ids and round directory names present in `names`, both the whole name and
@@ -96,6 +129,19 @@ pub(crate) fn taken_ids(cfg: &Config) -> BTreeSet<String> {
         }
     }
     taken
+}
+
+/// The trunk that already holds the closed round directory `old` exactly as it is
+/// committed here, if one does. That round has landed and is frozen: renaming it
+/// on this branch would leave the trunk's copy and a renamed one side by side.
+/// A trunk directory of the same name with other contents is a different round
+/// that took the id first, which is the case a rename is for.
+pub(crate) fn landed_on(cfg: &Config, old: &str) -> Option<&'static str> {
+    let rel = pathdiff(&cfg.repo_root, &design_rounds_dir(cfg));
+    let here = git_line(cfg, &["rev-parse", &format!("HEAD:{rel}/{old}")])?;
+    ["origin/dev", "origin/main"].into_iter().find(|trunk| {
+        git_line(cfg, &["rev-parse", &format!("{trunk}:{rel}/{old}")]).is_some_and(|t| t == here)
+    })
 }
 
 /// `cargo mock round-id`: print a fresh id, and nothing else, on stdout.
@@ -256,6 +302,14 @@ pub fn cmd_rename_round(cfg: &Config, opts: &SubcmdOpts, args: &[&str]) -> ExitC
         eprintln!("error: `{old}` does not start with a round id (YYYYMMDDHHMM)");
         return ExitCode::FAILURE;
     };
+    if let Some(trunk) = landed_on(cfg, old) {
+        eprintln!(
+            "error: round `{old}` is already on {trunk} exactly as it is here, so it has landed \
+             and its id is frozen; rename the round of that id that this branch closed, which \
+             differs from the one on {trunk}"
+        );
+        return ExitCode::FAILURE;
+    }
     let taken = taken_ids(cfg);
     let new_id = match wanted {
         Some(new) if taken.contains(new) => {

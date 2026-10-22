@@ -140,3 +140,39 @@ fn rename_prefix_moves_exactly_one_id() {
     assert_eq!(rename_prefix("202610221529-zz9z.md", "202610221529-zz9z", new), None);
     assert_eq!(rename_prefix("README.md", "202610221529", new), None);
 }
+
+#[test]
+fn an_abandoned_count_goes_and_the_abandoned_stays() {
+    // `-abandoned-N` is what a close writes when two abandoned rounds shared a
+    // name. Mutant: `kept_tail` matches `-abandoned` exactly, so the count
+    // makes it drop the word and the renamed directory reads as a closed round.
+    for (old, kept) in [
+        ("202610221529-abandoned-2", "-abandoned"),
+        ("202610221529-abandoned-17", "-abandoned"),
+        ("202610221529-kx3f-abandoned-2", "-abandoned"),
+        ("202610221529-kx3f-abandoned", "-abandoned"),
+    ] {
+        assert_eq!(kept_tail(old), kept, "{old}");
+        let renamed = format!("202610221530-zz9z{}", kept_tail(old));
+        assert!(
+            !is_round_dir(&renamed),
+            "{old} became {renamed}, which reads as closed"
+        );
+    }
+}
+
+#[test]
+fn only_an_abandoned_with_digits_after_it_is_abandoned() {
+    // Mutant: the tail test is a `starts_with("-abandoned")`.
+    for not in [
+        "202610221529-abandoned-",
+        "202610221529-abandoned-x",
+        "202610221529-abandoned-2-3",
+        "202610221529-abandonedx",
+        "202610221529-abandoned_2",
+        "202610221529-kx3f-2",
+        "202610221529",
+    ] {
+        assert_eq!(kept_tail(not), "", "{not}");
+    }
+}

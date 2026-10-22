@@ -127,7 +127,10 @@ const COMMANDS: &[Cmd] = &[
                   it, the `round:` line of .meta, and the local round/<old>/* tags. \
                   The new id defaults to a fresh one on the same minute. Run it on \
                   the branch to rename, before merging, when a merge was refused with \
-                  a round id collision. Accepts --auto-commit.",
+                  a round id collision. An abandoned round keeps its -abandoned and loses \
+                  its -N count. A closed round that origin/dev or origin/main \
+                  already holds exactly as committed has landed and is refused. \
+                  Accepts --auto-commit.",
     },
     Cmd {
         name:    "merge-round-meta",

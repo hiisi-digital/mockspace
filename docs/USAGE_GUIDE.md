@@ -46,10 +46,10 @@ Everything outside `mock/` is yours. Mockspace owns:
     │                                          DESIGN.md.tmpl, optional BACKLOG.md.tmpl,
     │                                          optional SHAME.md.tmpl]
     ├── design_rounds/                        [authored: round state machine]
-    │   ├── <timestamp>_topic.<name>.md
-    │   ├── <timestamp>_research.<name>.md
-    │   ├── <timestamp>_changelist.doc[.lock|.deprecated].md
-    │   ├── <timestamp>_changelist.src[.lock|.deprecated].md
+    │   ├── <round-id>_topic.<name>.md
+    │   ├── <round-id>_research.<name>.md
+    │   ├── <round-id>_changelist.doc[.lock|.deprecated].md
+    │   ├── <round-id>_changelist.src[.lock|.deprecated].md
     │   └── <archived-round>/                 [after `cargo mock close`]
     ├── research/                             [optional: round-independent material]
     ├── agent/                                [optional: agent template files]
@@ -88,7 +88,7 @@ Filenames start with the round id:
 <id>_{topic|research|changelist}.{name|doc|src}[.lock|.deprecated].md
 ```
 
-An id is `YYYYMMDDHHMM-tttt`, the minute and a four character tag (a lowercase letter, then letters or digits). `cargo mock round-id` prints a fresh one and is how a round is opened: the tag is drawn from the branch, host and time, and the id is checked against the working tree, the `round/*` tags and `origin/dev` and `origin/main`, so two sessions that open a round in the same minute on separate branches do not meet in a collision when both close. A bare `YYYYMMDDHHMM` from an older round is still an id; the minute stays first, so ids sort by time across old and new. Two closed rounds that still share one id fail the merge of their `.meta` with `round id collision`, and `cargo mock rename-round <id>` renames one side (directory, files, the `round:` field, the local tags) on its own branch before the merge is tried again.
+An id is `YYYYMMDDHHMM-tttt`, the minute and a four character tag (a lowercase letter, then letters or digits). `cargo mock round-id` prints a fresh one and is how a round is opened: the tag is drawn from the branch, host and time, and the id is checked against the working tree, the `round/*` tags and `origin/dev` and `origin/main`, so two sessions that open a round in the same minute on separate branches do not meet in a collision when both close. A bare `YYYYMMDDHHMM` from an older round is still an id; the minute stays first, so ids sort by time across old and new. Two closed rounds that still share one id fail the merge of their `.meta` with `round id collision`, and `cargo mock rename-round <id>` renames one side (directory, files, the `round:` field, the local tags) on its own branch before the merge is tried again. An abandoned round keeps `-abandoned` through the rename and loses its `-N` count. A round already on `origin/dev` or `origin/main` exactly as it is committed has landed and is not renamed.
 
 Transitions are subcommands, not manual renames:
 
@@ -97,8 +97,8 @@ Transitions are subcommands, not manual renames:
 | `cargo mock lock`         | Lock the active changelist (`DOC -> DRAFT`, `IMPL -> CLOSED`)     | `DOC`, `IMPL`           |
 | `cargo mock unlock`       | Deprecate src CL and unlock doc CL (destructive; source unchanged) | `DRAFT`, `IMPL`, `CLOSED` |
 | `cargo mock deprecate`    | Deprecate the active CL; in `IMPL` also unlocks doc CL            | `DOC`, `IMPL`           |
-| `cargo mock close`        | Archive the round into a timestamped subdir with `.meta` + `.history` | `CLOSED` only       |
-| `cargo mock archive`      | Archive an abandoned round into a `<timestamp>-abandoned/` subdir | any                     |
+| `cargo mock close`        | Archive the round into a `<round-id>/` subdir with `.meta` + `.history` | `CLOSED` only       |
+| `cargo mock archive`      | Archive an abandoned round into a `<round-id>-abandoned/` subdir | any                     |
 | `cargo mock migrate`      | Rename legacy `YYYY-MM-DD_*.md` files to the compact format       | any                     |
 | `cargo mock round-id`     | Print a fresh round id, `YYYYMMDDHHMM-tttt`                       | any                     |
 | `cargo mock rename-round <old> [<new>]` | Give a round a new id: directory, files, `.meta`, local tags | any                     |

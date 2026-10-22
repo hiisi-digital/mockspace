@@ -185,3 +185,40 @@ fn the_wiring_is_written_once() {
         1
     );
 }
+
+#[test]
+fn an_abandoned_round_with_a_count_is_renamed_and_stays_abandoned() {
+    // Mutant: `kept_tail` knows `-abandoned` only whole, so the count drops the
+    // word and the renamed directory reads as a closed round.
+    let r = Repo::new();
+    let old = format!("{ID}-abandoned-2");
+    let dir = format!("mock/design_rounds/{old}");
+    write(
+        &r.root.join(&dir).join(format!("{ID}_changelist.doc.md")),
+        "# doc changelist: none\n",
+    );
+    write(
+        &r.root.join(&dir).join(".meta"),
+        &format!("round: {old}\nabandoned: true\n"),
+    );
+    r.git(&["add", "-A"]);
+    r.git(&["commit", "-q", "--no-verify", "-m", "chore: archive a design round"]);
+    let out = r
+        .cmd("cargo")
+        .args(["mock", "rename-round", &old, "--auto-commit"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", Repo::failure(&out));
+    let dirs: Vec<String> = fs::read_dir(r.root.join("mock/design_rounds"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(dirs.len(), 1, "{dirs:?}");
+    assert!(
+        dirs[0].starts_with(ID) && dirs[0].ends_with("-abandoned"),
+        "{dirs:?}"
+    );
+    assert!(!dirs[0].ends_with("-abandoned-2"), "{dirs:?}");
+    assert_eq!(r.status(), "");
+}
