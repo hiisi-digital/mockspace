@@ -341,21 +341,47 @@ fn a_dependencys_tests_do_not_move_its_dependents_but_its_library_does() {
     );
 }
 
+/// Every file a build reads whatever it builds, read from the mock directory and
+/// from the repository root, moves every digest of every member, a file that is
+/// new and one that was there alike; one beside them that is not on the list
+/// moves none.
 #[test]
 fn the_workspace_moving_moves_every_digest_of_every_member() {
-    let r = Repo::new("lock");
-    let before = r.fp();
-    r.append("mock/Cargo.lock", "# lock v2\n");
-    let after = r.fp();
-    for k in before.bins.keys() {
-        assert_ne!(before.bins[k], after.bins[k], "{k}");
+    let digests = |fp: &Fingerprints| {
+        let mut all: Vec<(String, String)> = Vec::new();
+        for (label, m) in [("full", &fp.full), ("base", &fp.base), ("bin", &fp.bins)] {
+            all.extend(m.iter().map(|(k, v)| (format!("{label}:{k}"), v.clone())));
+        }
+        all
+    };
+    assert_eq!(
+        WORKSPACE_INPUTS.len(),
+        7,
+        "a new workspace input needs its place here"
+    );
+    for base in ["mock", ""] {
+        for name in WORKSPACE_INPUTS {
+            let r = Repo::new(&format!("ws-{}", name.replace(['.', '/'], "-")));
+            let rel = format!("{base}/{name}");
+            let rel = rel.trim_start_matches('/');
+            let before = digests(&r.fp());
+            if r.root.join(rel).is_file() {
+                r.append(rel, "# moved\n");
+            } else {
+                r.write(rel, "# new\n");
+            }
+            let after = digests(&r.fp());
+            assert_eq!(before.len(), after.len());
+            for ((k, a), (_, b)) in before.iter().zip(&after) {
+                assert_ne!(a, b, "{rel} did not move {k}");
+            }
+        }
     }
-    for k in before.base.keys() {
-        assert_ne!(before.base[k], after.base[k], "{k}");
-    }
-    for k in before.full.keys() {
-        assert_ne!(before.full[k], after.full[k], "{k}");
-    }
+    let r = Repo::new("ws-control");
+    let before = digests(&r.fp());
+    r.write("mock/.cargo/not-config.toml", "x = 1\n");
+    r.write("NOTES.md", "text\n");
+    assert_eq!(before, digests(&r.fp()));
 }
 
 /// Whatever is not an integration test shares the member's base, and an
@@ -406,4 +432,114 @@ fn a_claimed_file_the_library_names_moves_every_binary() {
     let mut m = moved(&before, &r.fp());
     m.sort();
     assert_eq!(m, ALL_OF_USES);
+}
+
+// ---- probes: inputs a binary depends on that the split does not see ----
+
+/// The library compiles `tests/common/mod.rs` by `#[path]`, and that file
+/// declares `inner`. `inner.rs` is built into the library, so every binary and
+/// the base move with it. Only the direct literal is a shared pull.
+#[test]
+fn probe_a_module_the_library_pulls_from_tests_brings_its_own_modules() {
+    let r = Repo::new("probe-lib-pulls-tree");
+    r.write(
+        "mock/crates/uses/tests/common/mod.rs",
+        "mod inner;\npub fn c() {}\n",
+    );
+    r.write("mock/crates/uses/tests/common/inner.rs", "pub fn i() {}\n");
+    r.append(
+        "mock/crates/uses/src/lib.rs",
+        "#[cfg(test)]\n#[path = \"../tests/common/mod.rs\"]\nmod common;\n",
+    );
+    let before = r.fp();
+    r.append("mock/crates/uses/tests/common/inner.rs", "// edit\n");
+    let mut m = moved(&before, &r.fp());
+    m.sort();
+    assert_eq!(m, ALL_OF_USES);
+}
+
+/// `include_dir!("$CARGO_MANIFEST_DIR/tests/dir")` and `rust-embed`'s `folder`
+/// expand the placeholder themselves, and the test source mentions no `env!`.
+#[test]
+fn probe_a_placeholder_rooted_literal_names_what_it_expands_to() {
+    let r = Repo::new("probe-placeholder");
+    r.append(
+        "mock/crates/uses/tests/one.rs",
+        "const D: &str = \"$CARGO_MANIFEST_DIR/tests/dir/golden.txt\";\n",
+    );
+    let before = r.fp();
+    r.append("mock/crates/uses/tests/dir/golden.txt", "more\n");
+    let m = moved(&before, &r.fp());
+    assert!(m.contains(&"bin:uses::one".to_string()), "{m:?}");
+}
+
+/// The same pull, with the content reached from the pulled file rather than a
+/// module: the library compiles it, so the library's digests must move.
+#[test]
+fn probe_content_a_module_the_library_pulls_reads_moves_the_library() {
+    let r = Repo::new("probe-lib-pulls-content");
+    r.write(
+        "mock/crates/uses/tests/common/mod.rs",
+        "pub const O: &str = include_str!(\"../../../../../content/other.toml\");\n",
+    );
+    r.append(
+        "mock/crates/uses/src/lib.rs",
+        "#[cfg(test)]\n#[path = \"../tests/common/mod.rs\"]\nmod common;\n",
+    );
+    let before = r.fp();
+    r.append("content/other.toml", "e = 5\n");
+    let mut m = moved(&before, &r.fp());
+    m.sort();
+    assert_eq!(m, ALL_OF_USES);
+}
+
+#[test]
+fn control_concat_include_bytes_and_custom_test_path_and_out_dir() {
+    let r = Repo::new("control");
+    // concat! of two literals
+    r.write(
+        "mock/crates/uses/tests/cc.rs",
+        "const B: &[u8] = include_bytes!(concat!(\"fix/\", \"a.json\"));\n",
+    );
+    // custom path inside tests/, harness = false
+    r.append(
+        "mock/crates/uses/Cargo.toml",
+        "\n[[test]]\nname = \"custom\"\npath = \"tests/sub/entry.rs\"\nharness = false\n",
+    );
+    r.write(
+        "mock/crates/uses/tests/sub/entry.rs",
+        "mod helper;\nfn main() {}\n",
+    );
+    r.write("mock/crates/uses/tests/sub/helper.rs", "");
+    // OUT_DIR reader
+    r.write(
+        "mock/crates/uses/tests/od.rs",
+        "const G: &str = include_str!(concat!(env!(\"OUT_DIR\"), \"/g.txt\"));\n",
+    );
+    r.write("mock/crates/uses/build.rs", "fn main() {}\n");
+    let b = r.fp();
+    assert!(
+        b.bins.contains_key("uses::custom") && b.bins.contains_key("uses::cc"),
+        "{:?}",
+        b.bins.keys().collect::<Vec<_>>()
+    );
+    r.append("mock/crates/uses/tests/fix/a.json", "\n");
+    let m = moved(&b, &r.fp());
+    assert!(m.contains(&"bin:uses::cc".to_string()), "{m:?}");
+    let b = r.fp();
+    r.append("mock/crates/uses/tests/sub/helper.rs", "// x\n");
+    let m = moved(&b, &r.fp());
+    assert!(
+        m.contains(&"bin:uses::custom".to_string())
+            && !m.contains(&"bin:uses::cc".to_string())
+            && !m.contains(&"shared:uses".to_string()),
+        "{m:?}"
+    );
+    let b = r.fp();
+    r.append("mock/crates/uses/build.rs", "// x\n");
+    let m = moved(&b, &r.fp());
+    assert!(
+        m.contains(&"bin:uses::od".to_string()) && m.contains(&"shared:uses".to_string()),
+        "{m:?}"
+    );
 }

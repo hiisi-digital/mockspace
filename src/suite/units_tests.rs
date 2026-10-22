@@ -537,3 +537,161 @@ fn the_index_answers_a_file_or_everything_under_a_directory() {
     ]);
     assert!(idx.under(Path::new("a/zzz")).is_empty());
 }
+
+// ---- literals rooted at a placeholder ----
+
+#[test]
+fn a_placeholder_is_a_name_and_the_path_after_it() {
+    assert_eq!(
+        placeholder("$CARGO_MANIFEST_DIR/tests/x"),
+        Some(("CARGO_MANIFEST_DIR", "tests/x"))
+    );
+    assert_eq!(
+        placeholder("${CARGO_MANIFEST_DIR}/tests/x"),
+        Some(("CARGO_MANIFEST_DIR", "tests/x"))
+    );
+    assert_eq!(placeholder("$OUT_DIR"), Some(("OUT_DIR", "")));
+    assert_eq!(placeholder("${OUT_DIR}/g.txt"), Some(("OUT_DIR", "g.txt")));
+    // Not placeholders: no leading `$`, no name, a name run into more text, an
+    // unclosed brace, and a dollar in the middle.
+    for lit in ["tests/$X", "$", "$/x", "$X.txt", "${X/x", "${}/x", "a$X/b", "^end$"] {
+        assert_eq!(placeholder(lit), None, "{lit}");
+    }
+}
+
+#[test]
+fn the_manifest_dir_placeholder_resolves_against_the_member_alone() {
+    let fx = Fx::new(&[
+        ("m/tests/dir/golden.txt", ""),
+        ("m/tests/sub/tests/dir/golden.txt", ""),
+        ("m/tests/sub/a.rs", ""),
+    ]);
+    let r = |lit: &str| resolve(lit, Path::new("m/tests/sub"), Path::new("m"), &fx.index);
+    assert_eq!(r("$CARGO_MANIFEST_DIR/tests/dir/golden.txt"), vec![p(
+        "m/tests/dir/golden.txt"
+    )]);
+    assert_eq!(r("${CARGO_MANIFEST_DIR}/tests/dir"), vec![p(
+        "m/tests/dir/golden.txt"
+    )]);
+    // A wildcard cuts the path at its component, as for any literal.
+    assert_eq!(
+        r("${CARGO_MANIFEST_DIR}/tests/*/golden.txt"),
+        fx.index.under(Path::new("m/tests"))
+    );
+    // Another name is not the member, and names nothing here.
+    assert!(r("$OUT_DIR/tests/dir/golden.txt").is_empty());
+}
+
+/// A placeholder the environment fills, or one for the whole member, is a path
+/// this cannot place, so the binary is wide; the member's own directory and a
+/// path under it is placed, and is not.
+#[test]
+fn a_placeholder_this_cannot_place_makes_a_binary_wide() {
+    for (lit, wide) in [
+        ("$OUT_DIR/g.txt", true),
+        ("${HOME}/x", true),
+        ("$CARGO_MANIFEST_DIR", true),
+        ("$CARGO_MANIFEST_DIR/", true),
+        ("$CARGO_MANIFEST_DIR/tests/dir/golden.txt", false),
+        ("${CARGO_MANIFEST_DIR}/tests/dir", false),
+        ("tests/$X", false),
+    ] {
+        assert_eq!(
+            facts(&format!("const D: &str = \"{lit}\";")).ambient,
+            wide,
+            "{lit}"
+        );
+    }
+}
+
+// ---- what a pulled file brings with it ----
+
+/// The library compiles `tests/common/mod.rs` by `#[path]`, so what that file
+/// declares and names is compiled into the library too, however deep.
+#[test]
+fn a_file_the_library_pulls_brings_its_modules_and_literals_all_the_way_down() {
+    let fx = Fx::new(&[
+        (
+            "m/src/lib.rs",
+            "#[cfg(test)]\n#[path = \"../tests/common/mod.rs\"]\nmod common;\n",
+        ),
+        ("m/tests/a.rs", "mod common;\n"),
+        ("m/tests/b.rs", ""),
+        (
+            "m/tests/common/mod.rs",
+            "mod inner;\nconst D: &str = include_str!(\"data/x.json\");\n",
+        ),
+        ("m/tests/common/inner.rs", "mod deeper;\n"),
+        (
+            "m/tests/common/inner/deeper.rs",
+            "const E: &str = include_str!(\"../../only_a.json\");\n",
+        ),
+        ("m/tests/common/data/x.json", "{}"),
+        ("m/tests/only_a.json", "{}"),
+    ]);
+    // `only_a.json` is named only by a file the library pulls; the others by `a`.
+    let mut fx = fx;
+    fx.facts.insert(
+        p("m/tests/a.rs"),
+        facts("mod common;\nconst O: &str = include_str!(\"only_a.json\");\n"),
+    );
+    let l = fx.layout(PLAIN);
+    for f in [
+        "m/tests/common/mod.rs",
+        "m/tests/common/inner.rs",
+        "m/tests/common/inner/deeper.rs",
+        "m/tests/common/data/x.json",
+        "m/tests/only_a.json",
+    ] {
+        assert!(l.claimed.contains(&p(f)), "{f} is claimed");
+        assert!(
+            l.shared_pulls.contains(&p(f)),
+            "{f} is shared with the library: {:?}",
+            l.shared_pulls
+        );
+    }
+    assert!(
+        !l.shared_pulls.contains(&p("m/tests/a.rs")),
+        "a root is not pulled by naming it"
+    );
+    assert!(!l.shared_pulls.contains(&p("m/tests/b.rs")));
+}
+
+#[test]
+fn what_a_pulled_file_reads_outside_the_member_is_the_librarys_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    std::fs::create_dir_all(repo.join("content")).unwrap();
+    std::fs::write(repo.join("content/other.toml"), "x").unwrap();
+    let files = [
+        (
+            "m/src/lib.rs",
+            "#[path = \"../tests/common/mod.rs\"]\nmod common;\n",
+        ),
+        ("m/tests/a.rs", "mod common;\n"),
+        (
+            "m/tests/common/mod.rs",
+            "const O: &str = include_str!(\"../../../content/other.toml\");\n",
+        ),
+    ];
+    let fx = Fx::new(&files);
+    let roots = roots(PLAIN, Path::new("m"), &fx.index).unwrap();
+    let l = layout(
+        &Ctx {
+            repo_root:  repo,
+            member_dir: Path::new("m"),
+            index:      &fx.index,
+            facts:      &fx.facts,
+        },
+        &roots,
+    );
+    assert!(
+        l.shared_reaches.contains(&p("content/other.toml")),
+        "{:?}",
+        l.shared_reaches
+    );
+    assert!(
+        l.units["a"].reaches.contains(&p("content/other.toml")),
+        "and the unit keeps it"
+    );
+}

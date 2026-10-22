@@ -113,6 +113,14 @@ pub fn facts(source: &str) -> Facts {
                     && v.len() <= LONGEST_LITERAL
                     && !v.contains('\n')
                 {
+                    // A placeholder the macros expand from the environment names
+                    // something this cannot place, unless it is the member's own
+                    // directory and a path under it.
+                    if placeholder(&v)
+                        .is_some_and(|(n, rest)| n != "CARGO_MANIFEST_DIR" || rest.is_empty())
+                    {
+                        out.ambient = true;
+                    }
                     if climbs_out(&v) {
                         out.climbing.push(v.clone());
                     }
@@ -430,6 +438,7 @@ pub fn layout(ctx: &Ctx, roots: &[Root]) -> Layout {
 
     // What the shared sources name: their reads outside the member, and any
     // claimed file they pull in, which then belongs to every binary.
+    let mut queue: Vec<PathBuf> = Vec::new();
     for (path, f) in ctx.facts {
         if l.claimed.contains(path) {
             continue;
@@ -442,9 +451,42 @@ pub fn layout(ctx: &Ctx, roots: &[Root]) -> Layout {
         }
         for lit in &f.strings {
             for p in resolve(lit, file_dir, ctx.member_dir, ctx.index) {
-                if l.claimed.contains(&p) {
-                    l.shared_pulls.insert(p);
+                if l.claimed.contains(&p) && l.shared_pulls.insert(p.clone()) {
+                    queue.push(p);
                 }
+            }
+        }
+    }
+
+    // A pulled file is compiled into the library, so what it declares and names
+    // is shared as well, however deep: its modules, the files its literals name,
+    // and its reads outside the member. Its modules are looked for where a
+    // crate root or a `mod.rs` would find them and where any other file would,
+    // since nothing says which it is when a `#[path]` pulled it in.
+    while let Some(path) = queue.pop() {
+        let Some(f) = ctx.facts.get(&path) else {
+            continue;
+        };
+        let file_dir = path.parent().unwrap_or(Path::new(""));
+        for lit in &f.climbing {
+            if let Some(r) = reach(lit, file_dir, ctx.member_dir, ctx.repo_root) {
+                l.shared_reaches.insert(r);
+            }
+        }
+        let own_dir = file_dir.join(path.file_stem().unwrap_or_default());
+        let mut named: Vec<PathBuf> = Vec::new();
+        for m in f.mods.iter().filter(|m| !m.path_attr) {
+            for dir in [file_dir, own_dir.as_path()] {
+                named.push(dir.join(format!("{}.rs", m.name)));
+                named.push(dir.join(&m.name).join("mod.rs"));
+            }
+        }
+        for lit in &f.strings {
+            named.extend(resolve(lit, file_dir, ctx.member_dir, ctx.index));
+        }
+        for p in named {
+            if l.claimed.contains(&p) && l.shared_pulls.insert(p.clone()) {
+                queue.push(p);
             }
         }
     }
@@ -530,13 +572,37 @@ fn take(tests: &Path, p: PathBuf, kind: Kind, u: &mut Unit, queue: &mut Vec<(Pat
     }
 }
 
+/// A literal rooted at a placeholder, `$NAME/rest` or `${NAME}/rest`, as
+/// `include_dir!` and `rust-embed` take their paths: the name and the rest.
+/// Only a literal that begins with it and goes on as a path is one.
+pub fn placeholder(lit: &str) -> Option<(&str, &str)> {
+    let after = lit.strip_prefix('$')?;
+    let (name, rest) = if let Some(braced) = after.strip_prefix('{') {
+        braced.split_once('}')?
+    } else {
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        after.split_at(end)
+    };
+    let named = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    let path = rest.strip_prefix('/');
+    (named && (rest.is_empty() || path.is_some())).then_some((name, path.unwrap_or(rest)))
+}
+
 /// The files and directories a literal names inside the member, resolved from
 /// the directory of the file it is written in and from the member's own, the two
 /// places a path in a test resolves from. A wildcard cuts the path at the
 /// component holding it. Empty for a literal that names nothing, and for `.`,
 /// which names everything and would make every binary read the member.
 pub fn resolve(lit: &str, file_dir: &Path, member_dir: &Path, index: &Index) -> Vec<PathBuf> {
-    let trimmed = lit.trim_start_matches('/');
+    // A leading `$CARGO_MANIFEST_DIR` is the member's own directory, spelled as
+    // the macros that expand it spell it; the rest is relative to the member.
+    let (trimmed, bases): (&str, &[&Path]) = match placeholder(lit) {
+        Some(("CARGO_MANIFEST_DIR", rest)) => (rest, &[member_dir]),
+        Some(_) => return Vec::new(),
+        None => (lit.trim_start_matches('/'), &[file_dir, member_dir]),
+    };
     let mut kept: Vec<&str> = Vec::new();
     for part in trimmed.split('/') {
         if part.contains(['*', '?', '[', '{']) {
@@ -550,7 +616,7 @@ pub fn resolve(lit: &str, file_dir: &Path, member_dir: &Path, index: &Index) -> 
     }
     let rel = Path::new(&rel);
     let mut out: Vec<PathBuf> = Vec::new();
-    for base in [file_dir, member_dir] {
+    for base in bases {
         let Some(p) = normalise(&base.join(rel)) else {
             continue;
         };

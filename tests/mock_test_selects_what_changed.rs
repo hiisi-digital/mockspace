@@ -759,3 +759,25 @@ fn a_shared_target_dir_does_not_lose_the_run_record() {
     let (ok, t) = mock_with(root, &[], &env);
     assert!(ok && t.contains("nothing to run"), "second run:\n{t}");
 }
+
+/// `--test one` runs one target of the member. The member is not thereby green:
+/// `two` changed and has not run since.
+#[test]
+fn probe_a_run_narrowed_to_one_target_leaves_the_others_owed() {
+    if !nextest_here() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    binaries_fixture(root);
+    let uses = root.join("mock/crates/uses");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "first run:\n{t}");
+    append(&uses.join("tests/one.rs"), "// one line\n");
+    append(&uses.join("tests/two.rs"), "// one line\n");
+    let (ok, t) = mock(root, &["--test", "one"]);
+    assert!(ok, "narrowed run:\n{t}");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "{t}");
+    assert!(!t.contains("nothing to run"), "two changed and never ran:\n{t}");
+}
