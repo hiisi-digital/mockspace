@@ -90,6 +90,21 @@ fn dispatchable_tool_names(mock_dir: &Path, pack: &LintPack) -> Vec<String> {
 /// be forwarded to one.
 pub(super) const VALUE_GLOBALS: [&str; 3] = ["--dir", "--scope", "--mockspace-lint-rules-dep"];
 
+/// The first argument that is neither a flag nor a value-global's value.
+fn first_positional(args: &[String]) -> Option<&str> {
+    let mut skip_next = false;
+    for arg in args.iter().skip(1) {
+        if skip_next {
+            skip_next = false;
+        } else if VALUE_GLOBALS.contains(&arg.as_str()) {
+            skip_next = true;
+        } else if !arg.starts_with('-') {
+            return Some(arg.as_str());
+        }
+    }
+    None
+}
+
 /// Every argument that follows `subcmd`, **flags included**.
 ///
 /// `positional_args` exists to FIND the subcommand, so it drops every flag.
@@ -216,6 +231,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             Some(_) => return help::print_help(),
             None => return help::print_help(),
         }
+    }
+
+    // The registry merge driver is called by git in the middle of a merge, on
+    // three temp files, and needs no project: discovery, the gate and a lint
+    // pack that may have to build are all work a merge must not wait on.
+    if first_positional(&args) == Some("merge-registry") {
+        return crate::registry_merge::run(&subcommand_args(&args, "merge-registry"));
     }
 
     // Determine mock directory, the one way help asks the same question: see
@@ -1365,6 +1387,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     if let Err(what) = bootstrap::finish_generation(
         &cfg.repo_root,
         &cfg.docs_dir,
+        &cfg.mock_dir.join("registry"),
         &generated,
         commit_regenerated,
         stage_generated,

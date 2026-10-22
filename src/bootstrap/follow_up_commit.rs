@@ -167,6 +167,7 @@ pub(crate) fn commit_follow_up(
 pub(crate) fn finish_generation(
     repo_root: &Path,
     docs_dir: &Path,
+    registry_dir: &Path,
     generated: &[PathBuf],
     commit: Option<&str>,
     stage_it: bool,
@@ -174,8 +175,8 @@ pub(crate) fn finish_generation(
     // Asked first: afterwards the file differs from HEAD by our line, whoever
     // else had edited it, and an edit of somebody's own is theirs to commit.
     let was_clean = attributes_clean(repo_root);
-    if write_gitattributes(repo_root, docs_dir) {
-        eprintln!("  wrote the merge attribute for the documents directory");
+    if write_gitattributes(repo_root, docs_dir, registry_dir) {
+        eprintln!("  wrote the merge attributes");
     }
     let written = was_clean
         .then(|| fs::read_to_string(repo_root.join(".gitattributes")).ok())

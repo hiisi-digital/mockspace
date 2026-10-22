@@ -53,7 +53,7 @@ const NOTE: &str = "# mockspace: generated documents merge by regeneration, see 
 
 /// A repository-relative path as a `.gitattributes` pattern: `/` separated,
 /// anchored at the root, and with what a pattern reads as syntax escaped.
-fn pattern(rel: &str) -> String {
+pub(crate) fn pattern(rel: &str) -> String {
     let mut out = String::from("/");
     for c in rel.chars() {
         if matches!(c, ' ' | '#' | '!' | '*' | '?' | '[' | ']' | '\\') {
@@ -85,6 +85,11 @@ pub(crate) fn attributes_line(repo_root: &Path, docs_dir: &Path) -> Option<Strin
 /// `existing` with the note and `line` at the end, unless `line` is already
 /// there. Whatever else the file holds is left exactly as it was.
 pub(crate) fn with_attributes(existing: &str, line: &str) -> String {
+    with_note_line(existing, NOTE, line)
+}
+
+/// The same with the note that introduces `line`.
+pub(crate) fn with_note_line(existing: &str, note: &str, line: &str) -> String {
     if existing.lines().any(|l| l == line) {
         return existing.to_string();
     }
@@ -95,22 +100,28 @@ pub(crate) fn with_attributes(existing: &str, line: &str) -> String {
     if !text.is_empty() {
         text.push('\n');
     }
-    text.push_str(NOTE);
+    text.push_str(note);
     text.push('\n');
     text.push_str(line);
     text.push('\n');
     text
 }
 
-/// Write the driver's attribute line into the repository's `.gitattributes`.
+/// Write the attribute lines into the repository's `.gitattributes`: the documents
+/// directory always, and the registry directory once it exists.
 /// Returns whether the file changed.
-pub(crate) fn write_gitattributes(repo_root: &Path, docs_dir: &Path) -> bool {
+pub(crate) fn write_gitattributes(repo_root: &Path, docs_dir: &Path, registry_dir: &Path) -> bool {
     let Some(line) = attributes_line(repo_root, docs_dir) else {
         return false;
     };
     let path = repo_root.join(".gitattributes");
     let existing = fs::read_to_string(&path).unwrap_or_default();
-    let next = with_attributes(&existing, &line);
+    let mut next = with_attributes(&existing, &line);
+    if registry_dir.is_dir() {
+        if let Some(line) = registry_attributes_line(repo_root, registry_dir) {
+            next = with_note_line(&next, REGISTRY_NOTE, &line);
+        }
+    }
     if next == existing {
         return false;
     }
