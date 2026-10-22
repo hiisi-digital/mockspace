@@ -36,7 +36,13 @@ use serde::{Deserialize, Serialize};
 
 use super::junit::{Case, Outcome, package_of};
 
-pub const VERSION: u32 = 1;
+/// 2: a member's record also keeps each test binary that passed, and a fingerprint is
+/// the digest of a different set of inputs, so a version 1 record gives its
+/// timings and no pass.
+pub const VERSION: u32 = 2;
+
+/// The version before it, whose timings are still read and whose passes are not.
+const PREVIOUS: u32 = 1;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct History {
@@ -50,14 +56,18 @@ pub struct Flavour {
     pub green: BTreeMap<String, Green>,
     /// Each test by binary, then by name.
     pub tests: BTreeMap<String, BTreeMap<String, TestRecord>>,
+    /// Each test binary at the fingerprint it last ran whole and passed at, kept
+    /// across a run in which another binary of its member failed.
+    pub bins:  BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Green {
     /// The member's fingerprint when its suite last passed whole.
     pub full: String,
-    /// The own inputs of it and of everything in its closure at that moment,
-    /// so a later run can say which of them moved rather than only that one did.
+    /// The own inputs of the member and the shared inputs of everything in its
+    /// closure at that moment, so a later run can say which of them moved rather
+    /// than only that one did.
     pub own:  BTreeMap<String, String>,
 }
 
@@ -66,7 +76,7 @@ pub struct TestRecord {
     /// How long it took, to a tenth of a second, as last rewritten.
     pub secs:      f64,
     pub passed:    bool,
-    /// Its member's fingerprint when it last passed. A heavy test whose member
+    /// Its binary's fingerprint when it last passed. A heavy test whose binary
     /// still has this fingerprint has nothing new to say.
     pub passed_at: Option<String>,
 }
@@ -79,6 +89,8 @@ struct MemberFile {
     member:  String,
     green:   Option<Green>,
     tests:   BTreeMap<String, BTreeMap<String, TestRecord>>,
+    #[serde(default)]
+    bins:    BTreeMap<String, String>,
 }
 
 impl History {
@@ -105,17 +117,25 @@ impl History {
                 let Some(m) = std::fs::read_to_string(file.path())
                     .ok()
                     .and_then(|t| serde_json::from_str::<MemberFile>(&t).ok())
-                    .filter(|m| m.version == VERSION)
+                    .filter(|m| m.version == VERSION || m.version == PREVIOUS)
                 else {
                     continue;
                 };
+                let older = m.version == PREVIOUS;
                 let f = h.flavour_mut(&m.flavour);
-                if let Some(g) = m.green {
+                // The fingerprints of an older record were made of other inputs,
+                // so no pass of it stands. What a test took does not depend on
+                // them, and is what says which tests are heavy.
+                if let Some(g) = m.green.filter(|_| !older) {
                     f.green.insert(m.member.clone(), g);
                 }
-                for (bin, tests) in m.tests {
+                for (bin, mut tests) in m.tests {
+                    if older {
+                        tests.values_mut().for_each(|t| t.passed_at = None);
+                    }
                     f.tests.entry(bin).or_default().extend(tests);
                 }
+                f.bins.extend(m.bins);
             }
         }
         h
@@ -147,6 +167,14 @@ impl History {
                     .or_insert_with(|| blank(member))
                     .tests
                     .insert(bin.clone(), tests.clone());
+            }
+            for (bin, at) in &f.bins {
+                let member = package_of(bin);
+                members
+                    .entry(member.to_string())
+                    .or_insert_with(|| blank(member))
+                    .bins
+                    .insert(bin.clone(), at.clone());
             }
             let dir = Self::dir(mock_dir).join(flavour_dir(flavour));
             // A member with nothing left to record loses its file, or a green
@@ -223,8 +251,9 @@ impl History {
             .collect()
     }
 
-    /// Folds one run's results in. `fingerprint` is each member's fingerprint
-    /// for this run; `threshold` is what counts as heavy.
+    /// Folds one run's results in. `fingerprint` is the fingerprint of each test
+    /// binary for this run, by binary id, and of each member by package name for
+    /// a binary it does not list; `threshold` is what counts as heavy.
     pub fn record_cases(
         &mut self,
         flavour: &str,
@@ -251,7 +280,14 @@ impl History {
             tests.insert(c.name.clone(), TestRecord {
                 secs,
                 passed,
-                passed_at: if passed { fingerprint.get(c.package()).cloned() } else { None },
+                passed_at: if passed {
+                    fingerprint
+                        .get(&c.binary)
+                        .or_else(|| fingerprint.get(c.package()))
+                        .cloned()
+                } else {
+                    None
+                },
             });
         }
         f.tests.retain(|_, t| !t.is_empty());
@@ -273,6 +309,9 @@ impl History {
                 None => tests.clear(),
             }
             !tests.is_empty()
+        });
+        f.bins.retain(|bin, _| {
+            !members.iter().any(|m| m == package_of(bin)) || live.contains_key(bin)
         });
     }
 }

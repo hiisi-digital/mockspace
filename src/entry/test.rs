@@ -52,6 +52,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use crate::build_dir::{inherited_target_dir, may_pass_target_dir as may_share};
 use crate::config::Config;
 
 /// One tree, its label, and where its manifest lives.
@@ -272,8 +273,8 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             args,
         )
         .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        .map(|s| s.success())
+        .unwrap_or(false);
         if !ok {
             failed.push(format!("{} at {}", t.what, t.dir.display()));
         }
@@ -362,41 +363,6 @@ fn shared_target_dir(cfg: &Config, trees: &[Tree], args: &[&str]) -> Option<Path
 /// tree with every test still green.
 fn redirect_for<'a>(t: &Tree, shared: Option<&'a PathBuf>) -> Option<&'a PathBuf> {
     t.own_root.then_some(shared).flatten()
-}
-
-/// Every environment spelling that already fixes where cargo builds.
-///
-/// Both are honoured on the pinned toolchain and either one is enough to
-/// decline. `.cargo/config.toml`'s `[build] target-dir` is a third mechanism
-/// and is NOT read here: it is resolved by walking up from each tool's own
-/// directory, so there is no single answer to read, and the cost of missing it
-/// is the duplication that was there before rather than a wrong build.
-fn inherited_target_dir() -> Option<std::ffi::OsString> {
-    // `CARGO_TARGET_DIR` first, which is cargo's own precedence over the
-    // config-backed spelling. Only presence is read, so the order changes
-    // nothing here and is kept honest for the next reader.
-    std::env::var_os("CARGO_TARGET_DIR").or_else(|| std::env::var_os("CARGO_BUILD_TARGET_DIR"))
-}
-
-/// Whether this run may pass a `--target-dir` of its own.
-///
-/// Split out from [`shared_target_dir`] with the environment passed in rather
-/// than read, so the decision is testable without a test mutating the process
-/// environment out from under every other arm running beside it.
-fn may_share(args: &[&str], inherited: Option<&std::ffi::OsStr>) -> bool {
-    // An inherited target directory already puts every build in one place, and
-    // `--target-dir` overrides it, so passing ours would open a second build
-    // directory beside the one the machine chose and duplicate the exact thing
-    // this is here to stop.
-    if inherited.is_some() {
-        return false;
-    }
-    // The caller's own flag wins, and only up to `--`, after which the tokens
-    // belong to the test binary and say nothing about where cargo builds.
-    !args
-        .iter()
-        .take_while(|a| **a != "--")
-        .any(|a| *a == "--target-dir" || a.starts_with("--target-dir="))
 }
 
 /// Every directory under `root` holding a `Cargo.toml`, one level down.

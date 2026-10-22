@@ -27,9 +27,8 @@ use std::process::{Command, ExitCode};
 use mockspace_bench_harness::config::BuildSection;
 use mockspace_bench_harness::tree as bench_tree;
 
-use crate::bench_gen;
-use crate::bench_rev;
 use crate::config::Config;
+use crate::{bench_gen, bench_rev};
 
 /// Splits one subcommand's argv into positional names and flags to
 /// forward, with one shared grammar rather than the two independent
@@ -453,8 +452,17 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     // sharing a compiled copy of a common dependency (mockspace-bench-core,
     // mockspace-bench-harness, ...), which is real disk and real duplicated
     // compile time on every run.
-    let target_dir =
-        crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-bench-test"]);
+    //
+    // Not when the machine already chose one, which is the same decision
+    // `mock test` makes for the tool and lint trees: `--target-dir` overrides
+    // `CARGO_TARGET_DIR`, so passing ours opens a second build tree beside the
+    // shared one, and one run of a large bench tree put several gigabytes into
+    // it. The caller's own `--target-dir` stays theirs for the same reason.
+    let target_dir = bench_test_target_dir(
+        &cfg.mock_dir,
+        &extra,
+        crate::build_dir::inherited_target_dir().as_deref(),
+    );
 
     for manifest in &manifests {
         let dir = manifest.parent().unwrap_or(manifest.as_path());
@@ -474,7 +482,9 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
 
         let mut cmd = Command::new("cargo");
         cmd.arg("test").arg("--manifest-path").arg(manifest);
-        cmd.arg("--target-dir").arg(&target_dir);
+        if let Some(dir) = &target_dir {
+            cmd.arg("--target-dir").arg(dir);
+        }
         for e in &extra {
             cmd.arg(e);
         }
@@ -537,6 +547,19 @@ fn cmd_test(cfg: &Config, args: &[&str]) -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// The `--target-dir` `mock bench test` passes every crate it builds: one of its
+/// own under `target/`, unless the environment or the caller already fixed where
+/// cargo builds, and then none. `inherited` is the environment's, passed in so
+/// the decision is testable without touching the process's.
+fn bench_test_target_dir(
+    mock_dir: &Path,
+    extra: &[&str],
+    inherited: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    crate::build_dir::may_pass_target_dir(extra, inherited)
+        .then(|| crate::build_dir::ensure_under_target(mock_dir, &["mockspace-bench-test"]))
 }
 
 /// A readable label for a manifest path in `mock bench test`'s output:
@@ -1728,7 +1751,39 @@ the same manifest semantics either way.
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+
     use super::*;
+
+    /// The bench crates build into the target directory the machine chose, and
+    /// into one of their own only where nothing chose. A second build tree is
+    /// several gigabytes on a large bench tree.
+    #[test]
+    fn bench_test_builds_where_the_environment_or_the_caller_said() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mock = tmp.path();
+        // The environment's target directory, or the caller's own flag: none of ours.
+        assert_eq!(
+            bench_test_target_dir(mock, &[], Some(OsStr::new("/shared"))),
+            None
+        );
+        assert_eq!(
+            bench_test_target_dir(mock, &["--target-dir", "/mine"], None),
+            None
+        );
+        assert_eq!(
+            bench_test_target_dir(mock, &["--target-dir=/mine"], None),
+            None
+        );
+        assert!(
+            !mock.join("target").exists(),
+            "declining must not create the directory it declined"
+        );
+        // Nothing chose, so the crates share one of ours under `target/`.
+        let own = bench_test_target_dir(mock, &["--release"], None).unwrap();
+        assert_eq!(own, mock.join("target").join("mockspace-bench-test"));
+        assert!(own.is_dir());
+    }
 
     /// A real `cargo test` line, captured verbatim from a support crate
     /// (a real bench tree) rather than typed from memory of the format.

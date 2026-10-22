@@ -349,3 +349,156 @@ fn the_pruned_record_is_what_a_save_leaves_on_disk() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A pass is kept per test binary, in the file of the member it belongs to,
+/// and comes back from it.
+#[test]
+fn the_binaries_that_passed_are_kept_in_their_members_files() {
+    let mock = scratch("bins");
+    let mut h = History::default();
+    let f = h.flavour_mut("");
+    f.bins.insert("render".to_string(), "base1".to_string());
+    f.bins.insert("render::it".to_string(), "it1".to_string());
+    f.bins
+        .insert("web::sound_gate".to_string(), "sg1".to_string());
+    h.save(&mock).unwrap();
+
+    let dir = History::dir(&mock).join("default");
+    let render = std::fs::read_to_string(dir.join("render.json")).unwrap();
+    assert!(
+        render.contains("render::it") && !render.contains("sound_gate"),
+        "{render}"
+    );
+    assert!(dir.join("web.json").is_file());
+    assert_eq!(History::load(&mock).flavours, h.flavours);
+
+    // A binary whose record is dropped is dropped from its file, and a member
+    // left with nothing loses the file.
+    let f = h.flavour_mut("");
+    f.bins.remove("web::sound_gate");
+    f.bins.remove("render::it");
+    h.save(&mock).unwrap();
+    assert!(!dir.join("web.json").exists());
+    assert_eq!(History::load(&mock).flavours[""].bins.len(), 1);
+    std::fs::remove_dir_all(&mock).ok();
+}
+
+/// A record written before binaries were kept has no field for them and reads
+/// as having none, rather than as unreadable. (Its version is another matter:
+/// the fingerprints in it were made of other inputs.)
+#[test]
+fn a_file_without_binaries_reads_as_having_none() {
+    let mock = scratch("nobins");
+    let dir = History::dir(&mock).join("default");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("a.json"),
+        format!(r#"{{"version": {VERSION}, "flavour": "", "member": "a", "green": null, "tests": {{}}}}"#),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("b.json"),
+        r#"{"version": 1, "flavour": "", "member": "b", "green": {"full": "x", "own": {}}, "tests": {}}"#,
+    )
+    .unwrap();
+    let h = History::load(&mock);
+    let f = h.flavour("").expect("the current file was read");
+    assert!(f.bins.is_empty());
+    assert!(
+        !f.green.contains_key("b"),
+        "a version 1 record is made of other fingerprints and is not read"
+    );
+    std::fs::remove_dir_all(&mock).ok();
+}
+
+#[test]
+fn a_gone_binary_loses_its_pass_and_a_present_one_keeps_it() {
+    let mut h = History::default();
+    let f = h.flavour_mut("");
+    f.bins.insert("village".to_string(), "a".to_string());
+    f.bins.insert("village::gone".to_string(), "b".to_string());
+    f.bins.insert("village::kept".to_string(), "c".to_string());
+    f.bins.insert("other::gone".to_string(), "d".to_string());
+    h.prune(
+        "",
+        &["village".to_string()],
+        &live(&[("village", &[]), ("village::kept", &[])]),
+    );
+    let keys: Vec<_> = h.flavour("").unwrap().bins.keys().cloned().collect();
+    assert_eq!(
+        keys,
+        vec!["other::gone", "village", "village::kept"],
+        "a member not listed is left as it is"
+    );
+}
+
+/// A test's pass stands at its own binary's fingerprint where one is given, and
+/// at its member's where it is not.
+#[test]
+fn a_tests_pass_is_recorded_at_its_binarys_fingerprint() {
+    let at = BTreeMap::from([
+        ("render".to_string(), "member".to_string()),
+        ("render::it".to_string(), "binary".to_string()),
+    ]);
+    let mut h = History::default();
+    h.record_cases(
+        "",
+        &[
+            case("render::it", "slow", 40.0, Outcome::Pass),
+            case("render", "other_slow", 40.0, Outcome::Pass),
+            case("render::example/e", "third", 40.0, Outcome::Pass),
+        ],
+        &at,
+        T,
+    );
+    let t = &h.flavour("").unwrap().tests;
+    assert_eq!(t["render::it"]["slow"].passed_at.as_deref(), Some("binary"));
+    assert_eq!(
+        t["render"]["other_slow"].passed_at.as_deref(),
+        Some("member")
+    );
+    assert_eq!(
+        t["render::example/e"]["third"].passed_at.as_deref(),
+        Some("member")
+    );
+}
+
+/// A version 1 record keeps what it timed, so the first run after the bump still
+/// knows which tests are heavy and holds them to `heavy_threads`, and gives up
+/// every pass, which was made at fingerprints of other inputs.
+#[test]
+fn a_version_1_record_gives_its_timings_and_no_pass() {
+    let mock = scratch("v1");
+    let dir = History::dir(&mock).join("default");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("render.json"),
+        r#"{"version": 1, "flavour": "", "member": "render",
+            "green": {"full": "old", "own": {"render": "old"}},
+            "tests": {"render::it": {
+                "drawn": {"secs": 40.0, "passed": true, "passed_at": "old"},
+                "broke": {"secs": 12.0, "passed": false, "passed_at": null}}}}"#,
+    )
+    .unwrap();
+    let h = History::load(&mock);
+    let f = h.flavour("").expect("the v1 file was read");
+    assert!(
+        f.green.is_empty(),
+        "no member is green on the strength of a v1 pass"
+    );
+    assert!(f.bins.is_empty());
+    let t = &f.tests["render::it"];
+    assert_eq!(t["drawn"].secs, 40.0);
+    assert!(t["drawn"].passed, "that it passed is kept, for --cheap");
+    assert_eq!(t["drawn"].passed_at, None, "at what, is not");
+    assert!(!t["broke"].passed);
+    assert_eq!(h.heavy("", T), vec![
+        ("render::it".to_string(), "broke".to_string()),
+        ("render::it".to_string(), "drawn".to_string())
+    ]);
+    // The next save writes it as version 2.
+    h.save(&mock).unwrap();
+    let text = std::fs::read_to_string(dir.join("render.json")).unwrap();
+    assert!(text.contains(&format!("\"version\": {VERSION}")), "{text}");
+    std::fs::remove_dir_all(&mock).ok();
+}

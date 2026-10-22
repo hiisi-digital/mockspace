@@ -270,3 +270,56 @@ fn it_says_there_is_nothing_when_there_is_nothing() {
         "an empty workspace did not say so:\n{t}"
     );
 }
+
+/// `mock test` with the build directory the environment names, or none.
+fn run_building_into(root: &Path, target: Option<&Path>) -> Output {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cmd = common::mockspace();
+    cmd.args(["--dir", "mock", "test"])
+        .current_dir(root)
+        .env("CARGO_BUILD_JOBS", "2")
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_BUILD_TARGET_DIR");
+    if let Some(t) = target {
+        cmd.env("CARGO_TARGET_DIR", t);
+    }
+    cmd.output().unwrap()
+}
+
+/// The bench crates are built where the machine said everything is built.
+/// `--target-dir` overrides `CARGO_TARGET_DIR`, so a bench run that always
+/// passed its own opened a second build tree beside the shared one, several
+/// gigabytes of it on a large bench tree.
+#[test]
+fn the_bench_crates_build_into_the_target_dir_the_environment_chose() {
+    let tmp = tempfile::tempdir().unwrap();
+    fixture(tmp.path(), None, &[], &["benchy"]);
+    write(
+        &tmp.path().join("mock/benches/benchy/src/lib.rs"),
+        "#[test]\nfn passes() {}\n",
+    );
+    let own = tmp.path().join("mock/target/mockspace-bench-test");
+
+    let shared = tmp.path().join("shared-target");
+    let o = run_building_into(tmp.path(), Some(&shared));
+    let t = text(&o);
+    assert!(ok(&o), "{t}");
+    assert!(
+        shared.join("debug").is_dir(),
+        "nothing was built into the target directory the environment named:\n{t}"
+    );
+    assert!(
+        !own.exists(),
+        "the bench crates opened a build tree of their own beside the shared one:\n{t}"
+    );
+
+    // The control: with nothing chosen, they share one of their own under
+    // `target/`, which is what keeps ninety crates from each building a copy.
+    let o = run_building_into(tmp.path(), None);
+    let t = text(&o);
+    assert!(ok(&o), "{t}");
+    assert!(
+        own.is_dir(),
+        "with no target directory chosen, none was made:\n{t}"
+    );
+}

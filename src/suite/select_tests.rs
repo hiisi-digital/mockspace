@@ -43,11 +43,13 @@ fn fps(versions: &[(&str, u32)]) -> Fingerprints {
     let mut fp = Fingerprints::default();
     for name in g.packages.keys() {
         fp.own.insert(name.clone(), own(name));
+        fp.shared.insert(name.clone(), own(name));
         let mut full = own(name);
         for d in g.test_closure(name) {
             full.push('+');
             full.push_str(&own(&d));
         }
+        fp.base.insert(name.clone(), full.clone());
         fp.full.insert(name.clone(), full);
     }
     fp
@@ -256,9 +258,9 @@ fn a_heavy_test_whose_binary_is_gone_is_neither_planned_nor_skipped() {
         (p.skip[0].binary.as_str(), p.skip[0].name.as_str()),
         ("render", "drawn")
     );
-    let cfg = crate::suite::nextest::tool_config(&Default::default(), &p.heavy);
+    let cfg = crate::suite::nextest::tool_config(&Default::default(), &p.heavy, std::path::Path::new("junit.xml"));
     assert!(!cfg.contains("figure_preview"), "{cfg}");
-    let filter = crate::suite::nextest::filterset(None, &p.skip).unwrap();
+    let filter = crate::suite::nextest::filterset(None, &p.skip, &[]).unwrap();
     assert!(!filter.contains("figure_preview"), "{filter}");
 }
 
@@ -270,4 +272,306 @@ fn a_heavy_test_that_still_exists_stays_planned() {
     let before = p.clone();
     p.retain_live(&live(&[("render", &["drawn", "quick"])]));
     assert_eq!(p, before);
+}
+
+// ---- test binaries ----
+
+/// Fingerprints where `render` has three binaries: its library `render`, and the
+/// integration tests `render::a` and `render::b`, each at `@<version>`.
+fn with_bins(mut fp: Fingerprints, versions: &[(&str, u32)]) -> Fingerprints {
+    let v: BTreeMap<&str, u32> = versions.iter().copied().collect();
+    for b in ["render::a", "render::b"] {
+        fp.bins.insert(
+            b.to_string(),
+            format!("{b}@{}", v.get(b).copied().unwrap_or(0)),
+        );
+    }
+    fp
+}
+
+/// A history where `render` and `web` are green at `fp` and the three of
+/// `render`'s binaries passed there.
+fn passed_at(fp: &Fingerprints) -> History {
+    let mut h = green_at(fp);
+    let f = h.flavour_mut("");
+    for b in ["render", "render::a", "render::b"] {
+        f.bins
+            .insert(b.to_string(), fp.of_binary(b).unwrap().clone());
+    }
+    h
+}
+
+#[test]
+fn a_binary_whose_inputs_did_not_move_is_left_out_of_a_member_that_runs() {
+    let before = with_bins(fps(&[]), &[]);
+    let h = passed_at(&before);
+    // `render::b` changed, so the member does, and `a` and the library did not.
+    let after = with_bins(fps(&[("render", 1)]), &[("render::b", 1)]);
+    let mut after = after;
+    after
+        .base
+        .insert("render".to_string(), before.base["render"].clone());
+    let p = plan_for(Mode::Changed, true, &after, &h);
+    assert_eq!(p.reuse, vec!["render", "render::a"]);
+    assert_eq!(names(&p), vec!["render", "web"]);
+}
+
+/// The rule over the whole set of shapes it is stated for: a binary is left out
+/// of a run exactly when the cache is on, the run is not a full one, its member
+/// runs, and the record is of the fingerprint it has now.
+#[test]
+fn a_binary_is_reused_exactly_when_every_condition_holds() {
+    let before = with_bins(fps(&[]), &[]);
+    for mode in [Mode::Changed, Mode::Full, Mode::Cheap] {
+        for cache in [true, false] {
+            for record in [None, Some("same"), Some("other")] {
+                for member_runs in [true, false] {
+                    let mut h = green_at(&before);
+                    if let Some(r) = record {
+                        let at = if r == "same" {
+                            before.bins["render::a"].clone()
+                        } else {
+                            "stale".to_string()
+                        };
+                        h.flavour_mut("").bins.insert("render::a".to_string(), at);
+                    }
+                    let fp = if member_runs {
+                        with_bins(fps(&[("render", 1)]), &[("render::b", 1)])
+                    } else {
+                        before.clone()
+                    };
+                    let p = plan_for(mode, cache, &fp, &h);
+                    let want = cache && mode != Mode::Full && record == Some("same") && member_runs;
+                    assert_eq!(
+                        p.reuse.contains(&"render::a".to_string()),
+                        want,
+                        "mode {mode:?}, cache {cache}, record {record:?}, member runs {member_runs}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A binary of a member that does not run is the member's business: it is
+/// settled whole, and nothing of it is listed as left out.
+#[test]
+fn only_the_binaries_of_members_that_run_are_listed() {
+    let before = with_bins(fps(&[]), &[]);
+    let h = passed_at(&before);
+    let p = plan_for(Mode::Changed, true, &before, &h);
+    assert!(p.run.is_empty());
+    assert!(p.reuse.is_empty());
+}
+
+/// The heavy tests of a binary that is left out are not planned, and the heavy
+/// tests of one that runs are.
+#[test]
+fn heavy_tests_follow_their_binary() {
+    let before = with_bins(fps(&[]), &[]);
+    let mut h = passed_at(&before);
+    let slow = |at: &str| {
+        TestRecord {
+            secs:      40.0,
+            passed:    true,
+            passed_at: Some(at.to_string()),
+        }
+    };
+    let f = h.flavour_mut("");
+    f.tests
+        .entry("render::a".to_string())
+        .or_default()
+        .insert("drawn_a".to_string(), slow(&before.bins["render::a"]));
+    f.tests
+        .entry("render::b".to_string())
+        .or_default()
+        .insert("drawn_b".to_string(), slow(&before.bins["render::b"]));
+    let mut after = with_bins(fps(&[("render", 1)]), &[("render::b", 1)]);
+    after
+        .base
+        .insert("render".to_string(), before.base["render"].clone());
+    let p = plan_for(Mode::Changed, true, &after, &h);
+    let heavy: Vec<_> = p.heavy.iter().map(|(b, n)| format!("{b} {n}")).collect();
+    assert!(
+        heavy.contains(&"render::b drawn_b".to_string()),
+        "{heavy:?}"
+    );
+    assert!(!heavy.iter().any(|h| h.contains("drawn_a")), "{heavy:?}");
+    assert!(
+        p.skip.iter().all(|s| s.binary != "render::a"),
+        "{:?}",
+        p.skip
+    );
+}
+
+/// A heavy test's pass stands as long as its own binary's inputs, which can be
+/// longer than its member's.
+#[test]
+fn a_heavy_tests_pass_stands_at_its_binarys_fingerprint_not_its_members() {
+    let before = with_bins(fps(&[]), &[]);
+    let mut h = green_at(&before);
+    h.flavour_mut("")
+        .tests
+        .entry("render::a".to_string())
+        .or_default()
+        .insert("drawn_a".to_string(), TestRecord {
+            secs:      40.0,
+            passed:    true,
+            passed_at: Some(before.bins["render::a"].clone()),
+        });
+    // The member moved (`b` changed) and `a` did not; a full run still asks for
+    // `a`, and its heavy test's pass stands.
+    let after = with_bins(fps(&[("render", 1)]), &[("render::b", 1)]);
+    assert_ne!(after.full["render"], before.full["render"]);
+    let p = plan_for(Mode::Full, true, &after, &h);
+    assert_eq!(p.skip, vec![Skip {
+        binary: "render::a".to_string(),
+        name:   "drawn_a".to_string(),
+        why:    SkipWhy::Cached,
+    }]);
+    // And once `a` itself moves it does not.
+    let moved_a = with_bins(fps(&[("render", 1)]), &[("render::a", 1)]);
+    assert!(plan_for(Mode::Full, true, &moved_a, &h).skip.is_empty());
+}
+
+fn pass(bin: &str, outcome: Outcome) -> Case {
+    Case {
+        binary: bin.to_string(),
+        name: "t".to_string(),
+        secs: 0.1,
+        outcome,
+    }
+}
+
+#[test]
+fn a_run_leaves_each_binary_that_passed_at_its_fingerprint_and_names_each_that_failed() {
+    let fp = with_bins(fps(&[]), &[]);
+    let p = plan_for(Mode::Full, false, &fp, &History::default());
+    let cases = vec![
+        pass("render", Outcome::Pass),
+        pass("render::a", Outcome::Pass),
+        pass("render::a", Outcome::Skipped),
+        pass("render::b", Outcome::Pass),
+        pass("render::b", Outcome::Fail),
+        pass("unknown::x", Outcome::Pass),
+    ];
+    let o = binary_outcomes(&p, &cases, &fp, true);
+    assert_eq!(o.passed, vec![
+        ("render".to_string(), fp.base["render"].clone()),
+        ("render::a".to_string(), fp.bins["render::a"].clone()),
+    ]);
+    assert_eq!(o.failed, vec!["render::b"]);
+    // A binary nothing is known of cannot be recorded, passing or not.
+}
+
+#[test]
+fn an_incomplete_run_settles_no_binary() {
+    let fp = with_bins(fps(&[]), &[]);
+    let p = plan_for(Mode::Full, false, &fp, &History::default());
+    let o = binary_outcomes(
+        &p,
+        &[pass("render::a", Outcome::Pass), pass("render::b", Outcome::Fail)],
+        &fp,
+        false,
+    );
+    assert_eq!(o, BinaryOutcomes::default());
+}
+
+/// A binary with a heavy test the run deferred has not run whole.
+#[test]
+fn a_binary_with_a_deferred_heavy_test_does_not_pass() {
+    let fp = with_bins(fps(&[]), &[]);
+    let mut p = plan_for(Mode::Full, false, &fp, &History::default());
+    p.skip.push(Skip {
+        binary: "render::a".to_string(),
+        name:   "drawn".to_string(),
+        why:    SkipWhy::Deferred,
+    });
+    // A cached one has a standing pass and does not stop it.
+    p.skip.push(Skip {
+        binary: "render::b".to_string(),
+        name:   "drawn".to_string(),
+        why:    SkipWhy::Cached,
+    });
+    let o = binary_outcomes(
+        &p,
+        &[pass("render::a", Outcome::Pass), pass("render::b", Outcome::Pass)],
+        &fp,
+        true,
+    );
+    assert_eq!(
+        o.passed.iter().map(|(b, _)| b.as_str()).collect::<Vec<_>>(),
+        vec!["render::b"]
+    );
+}
+
+/// A binary left out of the run is still there after it: a run's record keeps
+/// what it did not touch.
+#[test]
+fn a_gone_binary_is_not_reused() {
+    let before = with_bins(fps(&[]), &[]);
+    let h = passed_at(&before);
+    let mut after = with_bins(fps(&[("render", 1)]), &[("render::b", 1)]);
+    after
+        .base
+        .insert("render".to_string(), before.base["render"].clone());
+    let mut p = plan_for(Mode::Changed, true, &after, &h);
+    p.retain_live(&live(&[("render", &["q"]), ("render::b", &["q"])]));
+    assert_eq!(
+        p.reuse,
+        vec!["render"],
+        "`render::a` is gone, and nextest refuses a filter naming it"
+    );
+}
+
+/// A failure takes the pass away even at the fingerprint it passed at, which is
+/// what a test depending on something no fingerprint holds does; and a pass
+/// brings it back. The plan after each is what decides.
+#[test]
+fn a_failure_at_the_same_inputs_takes_the_pass_away() {
+    let fp = with_bins(fps(&[]), &[]);
+    let mut h = passed_at(&fp);
+    let moved_b = with_bins(fps(&[("render", 1)]), &[("render::b", 1)]);
+    let reused = |h: &History| plan_for(Mode::Changed, true, &moved_b, h).reuse;
+    assert!(reused(&h).contains(&"render::a".to_string()));
+
+    let failed = BinaryOutcomes {
+        passed: vec![],
+        failed: vec!["render::a".to_string()],
+    };
+    failed.apply(h.flavour_mut(""));
+    assert!(
+        !reused(&h).contains(&"render::a".to_string()),
+        "a binary that last failed is rerun"
+    );
+
+    let passed = BinaryOutcomes {
+        passed: vec![("render::a".to_string(), fp.bins["render::a"].clone())],
+        failed: vec![],
+    };
+    passed.apply(h.flavour_mut(""));
+    assert!(reused(&h).contains(&"render::a".to_string()));
+}
+
+/// A binary with no test in it never appears in a report, and is settled by
+/// holding none rather than by passing one.
+#[test]
+fn a_binary_holding_no_test_is_settled_with_the_members_that_ran() {
+    let fp = with_bins(fps(&[]), &[]);
+    let p = plan_for(Mode::Full, false, &fp, &History::default());
+    let l = live(&[
+        ("render", &[]),
+        ("render::a", &["t"]),
+        ("render::b", &[]),
+        // A member that did not run in this plan is not this plan's to settle.
+        ("web", &[]),
+    ]);
+    let mut p_without_web = p.clone();
+    p_without_web.run.retain(|(n, _)| n != "web");
+    let idle = idle_binaries(&p_without_web, &l, &fp, true);
+    assert_eq!(idle, vec![
+        ("render".to_string(), fp.base["render"].clone()),
+        ("render::b".to_string(), fp.bins["render::b"].clone()),
+    ]);
+    assert!(idle_binaries(&p_without_web, &l, &fp, false).is_empty());
 }

@@ -85,16 +85,22 @@ fn fixture(root: &Path) {
 }
 
 fn mock(root: &Path, args: &[&str]) -> (bool, String) {
-    let o: Output = Command::new(env!("CARGO_BIN_EXE_mockspace"))
-        .args(["--dir", "mock", "test"])
+    mock_with(root, args, &[])
+}
+
+fn mock_with(root: &Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_mockspace"));
+    cmd.args(["--dir", "mock", "test"])
         .args(args)
         .current_dir(root)
         // The fixture's own `target/`, whatever the caller shares.
         .env_remove("CARGO_TARGET_DIR")
         .env_remove("CARGO_BUILD_TARGET_DIR")
-        .env("CARGO_BUILD_JOBS", "2")
-        .output()
-        .unwrap();
+        .env("CARGO_BUILD_JOBS", "2");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let o: Output = cmd.output().unwrap();
     let t = format!(
         "{}{}",
         String::from_utf8_lossy(&o.stdout),
@@ -394,9 +400,14 @@ fn a_change_to_the_opt_levels_runs_what_passed_before() {
     fs::remove_file(&written).unwrap();
     let (ok, t) = mock(root, &[]);
     assert!(ok && t.contains("nothing to run"), "unchanged table:\n{t}");
-    assert!(!written.exists(), "a run with nothing to run wrote the config");
+    assert!(
+        !written.exists(),
+        "a run with nothing to run wrote the config"
+    );
     let toml = root.join("mockspace.toml");
-    let text = fs::read_to_string(&toml).unwrap().replace("base = 3", "base = 1");
+    let text = fs::read_to_string(&toml)
+        .unwrap()
+        .replace("base = 3", "base = 1");
     fs::write(&toml, text).unwrap();
     let (ok, t) = mock(root, &[]);
     assert!(ok && !t.contains("nothing to run"), "a level changed:\n{t}");
@@ -439,5 +450,347 @@ fn a_deleted_example_with_a_heavy_test_does_not_stop_the_next_run() {
         !history_text(root).contains("slow_preview"),
         "the history still names a test that is gone:\n{}",
         history_text(root)
+    );
+}
+
+// ---- test binaries ----
+
+/// `base` has one integration test, `x`. `uses` depends on it and has a library
+/// test and four integration-test targets: `one`, which reads `fix/a.json`;
+/// `two`, which declares `mod common`; `envy`, which reads the environment and
+/// so may read anything; and the directory form `dir`. `tests/data/note.txt` is
+/// named by none of them.
+fn binaries_fixture(root: &Path) {
+    write(
+        &root.join("mockspace.toml"),
+        "project_name = \"fixture\"\nmock_dir = \"mock\"\n",
+    );
+    write(&root.join(".gitignore"), "target/\n");
+    write(
+        &root.join("mock/Cargo.toml"),
+        "[workspace]\nresolver = \"2\"\nmembers = [\"crates/base\", \"crates/uses\"]\n",
+    );
+    let pkg = |name: &str, deps: &str| {
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\n{deps}"
+        )
+    };
+    write(&root.join("mock/crates/base/Cargo.toml"), &pkg("base", ""));
+    write(
+        &root.join("mock/crates/base/src/lib.rs"),
+        "pub fn four() -> u32 { 4 }\n#[test]\nfn lib_base() { assert_eq!(four(), 4); }\n",
+    );
+    write(
+        &root.join("mock/crates/base/tests/x.rs"),
+        "#[test]\nfn x() { assert_eq!(base::four(), 4); }\n",
+    );
+    write(
+        &root.join("mock/crates/uses/Cargo.toml"),
+        &pkg("uses", "base = { path = \"../base\" }\n"),
+    );
+    write(
+        &root.join("mock/crates/uses/src/lib.rs"),
+        "pub fn five() -> u32 { base::four() + 1 }\n#[test]\nfn lib_uses() { assert_eq!(five(), 5); }\n",
+    );
+    let t = |name: &str, body: &str| {
+        write(
+            &root.join(format!("mock/crates/uses/tests/{name}.rs")),
+            &format!("#[test]\nfn {name}_a() {{ {body} }}\n#[test]\nfn {name}_b() {{ {body} }}\n"),
+        );
+    };
+    t("one", "assert!(include_str!(\"fix/a.json\").len() > 0);");
+    write(&root.join("mock/crates/uses/tests/fix/a.json"), "{}\n");
+    write(
+        &root.join("mock/crates/uses/tests/two.rs"),
+        "mod common;\n#[test]\nfn two_a() { assert_eq!(common::six(), 6); }\n",
+    );
+    write(
+        &root.join("mock/crates/uses/tests/common/mod.rs"),
+        "pub fn six() -> u32 { 6 }\n",
+    );
+    write(
+        &root.join("mock/crates/uses/tests/envy.rs"),
+        "#[test]\nfn envy_a() {\n    assert!(!env!(\"CARGO_MANIFEST_DIR\").is_empty());\n    assert!(std::env::var(\"FAIL_ENVY\").is_err(), \"told to fail\");\n}\n",
+    );
+    write(
+        &root.join("mock/crates/uses/tests/dir/main.rs"),
+        "mod part;\n#[test]\nfn dir_a() { assert_eq!(part::seven(), 7); }\n",
+    );
+    write(
+        &root.join("mock/crates/uses/tests/dir/part.rs"),
+        "pub fn seven() -> u32 { 7 }\n",
+    );
+    write(
+        &root.join("mock/crates/uses/tests/data/note.txt"),
+        "nobody names this\n",
+    );
+    let ok = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git init");
+}
+
+/// The tests and binaries a run says it ran, from its closing line.
+fn ran(t: &str) -> Option<(usize, usize)> {
+    let line = t.lines().find(|l| l.contains("binary(ies) ran,"))?;
+    let rest = line.strip_prefix("mock test: ")?;
+    let (tests, rest) = rest.split_once(" test(s) in ")?;
+    let (bins, _) = rest.split_once(" binary(ies) ran")?;
+    Some((tests.parse().ok()?, bins.parse().ok()?))
+}
+
+/// The binaries a run says it left out.
+fn reused(t: &str) -> Vec<String> {
+    let mut lines = t
+        .lines()
+        .skip_while(|l| !l.contains("test binary(ies) not run"));
+    if lines.next().is_none() {
+        return Vec::new();
+    }
+    lines
+        .take_while(|l| l.starts_with("               "))
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+#[test]
+fn a_change_confined_to_one_test_file_runs_that_binary_alone() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    binaries_fixture(root);
+    let uses = root.join("mock/crates/uses");
+
+    // First run: every binary of both members.
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "first run:\n{t}");
+    // base: lib 1 + x 1; uses: lib 1 + one 2 + two 1 + envy 1 + dir 1.
+    assert_eq!(ran(&t), Some((8, 7)), "{t}");
+    assert!(reused(&t).is_empty(), "{t}");
+
+    // Only `tests/two.rs` touched: it runs, and `envy`, which may read anything.
+    // The library, `one` and `dir` do not, and neither does `base`.
+    append(&uses.join("tests/two.rs"), "// one line\n");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after one test file changed:\n{t}");
+    assert_eq!(ran(&t), Some((2, 2)), "{t}");
+    assert_eq!(reused(&t), vec!["uses", "uses::dir", "uses::one"], "{t}");
+    assert!(!t.contains("run      base"), "{t}");
+
+    // The helper it declares: the targets that declare it, and the wide one.
+    append(&uses.join("tests/common/mod.rs"), "// one line\n");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after a helper module changed:\n{t}");
+    assert_eq!(ran(&t), Some((2, 2)), "{t}");
+    assert_eq!(reused(&t), vec!["uses", "uses::dir", "uses::one"], "{t}");
+
+    // A data file one test names, and the directory form's own part.
+    append(&uses.join("tests/fix/a.json"), "\n");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after a data file changed:\n{t}");
+    assert_eq!(ran(&t), Some((3, 2)), "{t}");
+    assert_eq!(reused(&t), vec!["uses", "uses::dir", "uses::two"], "{t}");
+    append(&uses.join("tests/dir/part.rs"), "// one line\n");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after the directory form changed:\n{t}");
+    assert_eq!(ran(&t), Some((2, 2)), "{t}");
+    assert_eq!(reused(&t), vec!["uses", "uses::one", "uses::two"], "{t}");
+
+    // A file in tests/ no binary names is shared: everything of `uses` runs.
+    append(&uses.join("tests/data/note.txt"), "more\n");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after an unclaimed file changed:\n{t}");
+    assert_eq!(ran(&t), Some((6, 5)), "{t}");
+    assert!(reused(&t).is_empty(), "{t}");
+
+    // So is the library: everything of `uses`, and nothing of `base`.
+    append(&uses.join("src/lib.rs"), "// one line\n");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after the library changed:\n{t}");
+    assert_eq!(ran(&t), Some((6, 5)), "{t}");
+    assert!(!t.contains("run      base"), "{t}");
+
+    // A dependency's tests are not what its dependents are built from.
+    append(&root.join("mock/crates/base/tests/x.rs"), "// one line\n");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after a dependency's test changed:\n{t}");
+    assert_eq!(ran(&t), Some((1, 1)), "{t}");
+    assert!(!t.contains("run      uses"), "{t}");
+    assert_eq!(reused(&t), vec!["base"], "{t}");
+
+    // Its library is.
+    append(&root.join("mock/crates/base/src/lib.rs"), "// one line\n");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after a dependency's library changed:\n{t}");
+    assert_eq!(ran(&t), Some((8, 7)), "{t}");
+    assert!(t.contains("run      uses: moved: base"), "{t}");
+    assert!(reused(&t).is_empty(), "{t}");
+
+    // Nothing changed: nothing runs.
+    let (ok, t) = mock(root, &[]);
+    assert!(ok && t.contains("nothing to run"), "{t}");
+
+    // A full run asks for every binary, and so does one without the cache.
+    let (ok, t) = mock(root, &["--full"]);
+    assert!(ok, "full:\n{t}");
+    assert_eq!(ran(&t), Some((8, 7)), "{t}");
+    let (ok, t) = mock(root, &["--full", "--no-cache"]);
+    assert!(ok, "full without cache:\n{t}");
+    assert_eq!(ran(&t), Some((8, 7)), "{t}");
+    append(&uses.join("tests/two.rs"), "// another line\n");
+    let (ok, t) = mock(root, &["--no-cache"]);
+    assert!(ok, "changed without cache:\n{t}");
+    assert_eq!(ran(&t), Some((6, 5)), "{t}");
+    assert!(reused(&t).is_empty(), "{t}");
+}
+
+/// A member in which one binary failed reruns only what did not pass: the
+/// failing binary, and nothing that passed at inputs that have not moved.
+#[test]
+fn a_member_with_a_failing_binary_reruns_only_that_binary() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    binaries_fixture(root);
+    let uses = root.join("mock/crates/uses");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "first run:\n{t}");
+
+    append(
+        &uses.join("tests/one.rs"),
+        "#[test]\nfn breaks() { panic!(\"this arm must fail the run\"); }\n",
+    );
+    let (ok, t) = mock(root, &[]);
+    assert!(!ok, "a failing test did not fail the run:\n{t}");
+    assert_eq!(reused(&t), vec!["uses", "uses::dir", "uses::two"], "{t}");
+
+    // Run again with nothing changed: the member is not green, and what passed
+    // (the wide binary among it, which passed at its new inputs) is not rerun.
+    // Only the binary that failed is.
+    let (ok, t) = mock(root, &[]);
+    assert!(!ok, "{t}");
+    assert!(t.contains("run      uses"), "{t}");
+    assert_eq!(
+        reused(&t),
+        vec!["uses", "uses::dir", "uses::envy", "uses::two"],
+        "{t}"
+    );
+    assert_eq!(ran(&t).map(|(_, b)| b), Some(1), "{t}");
+
+    // Mended: the member settles, and the next run has nothing to do.
+    let one = uses.join("tests/one.rs");
+    let text = fs::read_to_string(&one).unwrap();
+    fs::write(
+        &one,
+        text.replace("panic!(\"this arm must fail the run\")", ""),
+    )
+    .unwrap();
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "after the mend:\n{t}");
+    assert_eq!(reused(&t), vec!["uses", "uses::dir", "uses::two"], "{t}");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok && t.contains("nothing to run"), "{t}");
+}
+
+/// A binary that failed is rerun even where its inputs are the ones it once
+/// passed at, which is what a test does when it depends on something no
+/// fingerprint holds, and the binaries that passed beside it are not.
+#[test]
+fn a_binary_that_last_failed_is_not_taken_on_an_earlier_pass() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    binaries_fixture(root);
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "first run:\n{t}");
+
+    // The same inputs, a different environment, and the whole suite asked for.
+    let (ok, t) = mock_with(root, &["--full"], &[("FAIL_ENVY", "1")]);
+    assert!(!ok, "the environment did not reach the test:\n{t}");
+
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "the next run, in a mended environment:\n{t}");
+    assert_eq!(
+        reused(&t),
+        vec!["uses", "uses::dir", "uses::one", "uses::two"],
+        "{t}"
+    );
+    assert_eq!(
+        ran(&t),
+        Some((1, 1)),
+        "only the binary that failed is rerun:\n{t}"
+    );
+}
+
+/// Where the build goes is not where nextest keeps its report. With one target
+/// directory shared by every clone, which is how the workspace runs, the report
+/// was looked for under it and never found, so no timing and no pass was
+/// recorded and the next run started from nothing.
+#[test]
+fn a_shared_target_dir_does_not_lose_the_run_record() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    fixture(root);
+    let shared = tmp.path().join("shared-target");
+    let env = [("CARGO_TARGET_DIR", shared.to_str().unwrap())];
+
+    let (ok, t) = mock_with(root, &["--full"], &env);
+    assert!(ok, "first run:\n{t}");
+    assert!(
+        shared.join("debug").is_dir(),
+        "the build did not go to the shared directory:\n{t}"
+    );
+    let record = history_text(root);
+    assert!(
+        record.contains("slow_drawn"),
+        "the slow test's timing was lost:\n{record}"
+    );
+    assert!(
+        !record.contains("\"bins\": {}"),
+        "a binary that passed was not recorded:\n{record}"
+    );
+    let (ok, t) = mock_with(root, &[], &env);
+    assert!(ok && t.contains("nothing to run"), "second run:\n{t}");
+}
+
+/// `--test one` runs one target of the member. The member is not thereby green:
+/// `two` changed and has not run since.
+#[test]
+fn a_run_narrowed_to_one_target_leaves_the_others_owed() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    binaries_fixture(root);
+    let uses = root.join("mock/crates/uses");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "first run:\n{t}");
+    append(&uses.join("tests/one.rs"), "// one line\n");
+    append(&uses.join("tests/two.rs"), "// one line\n");
+    let (ok, t) = mock(root, &["--test", "one"]);
+    assert!(ok, "narrowed run:\n{t}");
+    let (ok, t) = mock(root, &[]);
+    assert!(ok, "{t}");
+    assert!(
+        !t.contains("nothing to run"),
+        "two changed and never ran:\n{t}"
     );
 }
