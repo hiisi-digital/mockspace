@@ -12,14 +12,17 @@
 //! [`crate::bootstrap`] for the wiring), and settles what git conflicted on.
 //!
 //! **A green record** names the fingerprint a member's suite last passed at. The
-//! merged tree has a fingerprint neither side recorded, so a green is kept only
-//! where the merge has nothing to decide: both sides hold the same one, or one
-//! side left it as the base had it and the other moved it. Where both moved it,
-//! to different values, it is dropped, and the next run records it for the tree
-//! that exists. The driver never picks one side's green over the other's. A
-//! green kept this way is only ever used where it still equals the member's
-//! fingerprint, which is how every green is used, so keeping one cannot make a
-//! run skip tests the merged tree changed.
+//! merged tree has a fingerprint neither side recorded, so the rule is: keep a
+//! green where only one side moved it, or both hold the same one, and drop it
+//! only where both moved it to different values. Where only one side moved it
+//! the other left it as the base had it, and the merge has nothing to decide, so
+//! the mover's green stays. That is sound because a green is used only where its
+//! `full` equals the member's current fingerprint (`src/suite/select.rs`, the
+//! `Some(g) if Some(&g.full) == now` arm of the selection), so a green kept for
+//! a tree it does not describe settles nothing and the member runs again; keeping
+//! one cannot make a run skip tests the merged tree changed. Where both moved it
+//! to different values, the driver never picks between the two: the green is
+//! dropped, and the next run records it for the tree that exists.
 //!
 //! **A test binary's pass** (`bins`) is the same kind of fact and settles the
 //! same way.
@@ -28,7 +31,7 @@
 //! kept, unless the base had it and the side that still has it left it as it
 //! was, which is a deletion on the other side. A test both sides hold
 //! differently takes the later measurement: the one side moved when only one
-//! did, else the side whose tip commit is later, else (no clock to ask) the
+//! did, else the side that last changed the file later, else (no clock to ask) the
 //! longer timing, and a failure over a pass on a tie, since the slower and the
 //! failing reading are the ones a selection errs towards.
 //!
@@ -218,9 +221,13 @@ fn read(path: &str) -> Result<String, String> {
     }
 }
 
-fn commit_time(rev: &str) -> Option<i64> {
+/// When `rev` last changed `path`, not when `rev` itself was committed: a file
+/// measured long ago on a branch whose tip was committed today is an old
+/// measurement, and an old one loses to a newer one.
+fn commit_time(rev: &str, path: &str) -> Option<i64> {
+    let literal = format!(":(literal){path}");
     let out = Command::new("git")
-        .args(["log", "-1", "--format=%ct", rev, "--"])
+        .args(["log", "-1", "--format=%ct", rev, "--", &literal])
         .output()
         .ok()
         .filter(|o| o.status.success())?;
@@ -242,13 +249,16 @@ fn merged_in() -> Vec<String> {
 /// whichever the operation in progress has recorded. A rebase or a cherry-pick
 /// records its commit only once it has stopped, after the driver ran, so there the
 /// clock says nothing and the merge falls to the longer timing.
-fn later_by_the_clock() -> Later {
-    let ours = commit_time("HEAD");
-    let named = merged_in().iter().filter_map(|s| commit_time(s)).max();
+fn later_by_the_clock(path: &str) -> Later {
+    let ours = commit_time("HEAD", path);
+    let named = merged_in()
+        .iter()
+        .filter_map(|s| commit_time(s, path))
+        .max();
     let theirs = named.or_else(|| {
         ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD", "REVERT_HEAD"]
             .into_iter()
-            .find_map(commit_time)
+            .find_map(|rev| commit_time(rev, path))
     });
     match (ours, theirs) {
         (Some(o), Some(t)) if o > t => Later::Ours,
@@ -274,7 +284,7 @@ pub(crate) fn run(args: &[&str]) -> ExitCode {
         eprintln!("mock merge-test-history: {}", err.unwrap_or_default());
         return ExitCode::from(2);
     };
-    match merge_text(&b, &o, &t, later_by_the_clock()) {
+    match merge_text(&b, &o, &t, later_by_the_clock(path)) {
         Ok(m) => {
             if let Err(e) = std::fs::write(Path::new(ours), &m.text) {
                 eprintln!("mock merge-test-history: could not write {ours}: {e}");

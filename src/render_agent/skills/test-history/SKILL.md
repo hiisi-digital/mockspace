@@ -14,10 +14,10 @@ merge-test-history`. Two branches that both reran a member do not conflict:
 - a green record, and a binary's recorded pass, is kept where both sides hold the same one or only
   one side moved it from the base, and dropped where both moved it to different values. Neither
   fingerprint is the merged tree's, so the next `cargo mock test` records it afresh. The driver never
-  keeps one side's green over the other's;
+  picks between two greens that both moved;
 - per-test results and timings are unioned. A test one side removed and the other left alone stays
   removed. A test both sides timed takes the later measurement: the side that moved it, else the side
-  whose tip commit is later (for a `git merge`), else the longer timing;
+  that last changed the file later (for a `git merge`), else the longer timing;
 - a side that is not a test-history record, two versions, or two members or flavours are refused
   with a message and the path stays conflicted. Do not pick a side by hand: rerun `cargo mock test`
   on one side so both are the current version, then merge again.

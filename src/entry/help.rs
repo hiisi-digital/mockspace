@@ -169,10 +169,10 @@ const COMMANDS: &[Cmd] = &[
                   pass) is kept where both sides hold the same one or only one side \
                   moved it from the base, and dropped where both moved it to different \
                   values, since neither fingerprint is the merged tree's: the next \
-                  `cargo mock test` records it. It never keeps one side's green over \
-                  the other's. Per-test results and timings are unioned, a test both \
+                  `cargo mock test` records it. It never picks between two greens \
+                  that both moved. Per-test results and timings are unioned, a test both \
                   sides hold differently taking the later measurement (the side that \
-                  moved it, else the side whose tip commit is later (for a `git merge`; a rebase or cherry-pick has no second tip to compare yet), else the longer \
+                  moved it, else the side that last changed the file later (for a `git merge`; a rebase or cherry-pick has no second tip to compare yet), else the longer \
                   timing). Two files of different versions, members or flavours, or one \
                   that is not a record, are refused with a message and exit status 1, \
                   leaving the path conflicted. It needs no project and installs \

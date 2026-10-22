@@ -28,6 +28,14 @@
 //! member's inputs as any commit may; a green the rule would have kept that the
 //! merge commit nulls is the cut-short run again.
 //!
+//! **A squash merge is not told apart, on purpose.** `git merge --squash` runs
+//! the driver but leaves no `MERGE_HEAD`, so the commit that follows is an
+//! ordinary one to this gate. Its null green is accepted when the squashed
+//! changes touch the member's inputs, as for any commit. When they do not, the
+//! tree it lands is the first parent's own for that member, whose recorded green
+//! still describes it, so the null is a loss and the refusal is right; unstaging
+//! the file keeps that green.
+//!
 //! The paths a commit changed are read from the index against `HEAD`, so what is
 //! checked is what the commit will hold and not the working tree. A member the
 //! workspace no longer has is not guarded, since its record going is a removal.

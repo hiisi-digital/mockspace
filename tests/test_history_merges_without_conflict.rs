@@ -452,3 +452,225 @@ fn a_merge_commit_that_nulls_a_green_both_sides_agree_on_is_refused() {
         Repo::failure(&out)
     );
 }
+
+// ---- which side measured later, and the other ways a branch is brought in ----
+
+const MID: &str = "2026-01-15T00:00:00Z";
+
+fn commit_file_at(r: &Repo, file: &str, text: &str, when: &str, msg: &str) {
+    put(r, file, text);
+    commit_at(r, when, msg);
+}
+
+fn slow_secs(r: &Repo) -> serde_json::Value {
+    read(r, APP)["tests"]["app"]["slow"]["secs"].clone()
+}
+
+/// The trunk measured `slow` in January and has had unrelated commits since; the
+/// branch measured it in mid January. The branch's measurement is the newer, and
+/// a trunk tip committed in March says nothing about when the file was.
+#[test]
+fn the_later_measurement_is_the_file_last_changed_later_not_the_later_tip() {
+    let r = repo();
+    r.git(&["switch", "-q", "-c", "a"]);
+    commit_file_at(
+        &r,
+        APP,
+        &app(Some("g1"), &[("slow", 31.0, true, "b1")]),
+        MID,
+        "chore: rerun on a",
+    );
+    r.git(&["switch", "-q", "dev"]);
+    commit_file_at(
+        &r,
+        APP,
+        &app(Some("g2"), &[("slow", 40.0, true, "b2")]),
+        EARLY,
+        "chore: rerun on dev",
+    );
+    commit_file_at(
+        &r,
+        "notes.txt",
+        "later notes\n",
+        LATE,
+        "chore: touch something else",
+    );
+    let merged = merge(&r);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    assert_eq!(
+        slow_secs(&r),
+        json!(31.0),
+        "the branch measured it later than the trunk did"
+    );
+}
+
+/// The same fixture with the sides swapped, so that the answer is not "theirs".
+#[test]
+fn the_file_last_changed_later_wins_from_either_side() {
+    let r = repo();
+    r.git(&["switch", "-q", "-c", "a"]);
+    commit_file_at(
+        &r,
+        APP,
+        &app(Some("g1"), &[("slow", 31.0, true, "b1")]),
+        EARLY,
+        "chore: rerun on a",
+    );
+    commit_file_at(
+        &r,
+        "notes.txt",
+        "later notes\n",
+        LATE,
+        "chore: touch something else",
+    );
+    r.git(&["switch", "-q", "dev"]);
+    commit_file_at(
+        &r,
+        APP,
+        &app(Some("g2"), &[("slow", 40.0, true, "b2")]),
+        MID,
+        "chore: rerun on dev",
+    );
+    let merged = merge(&r);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    assert_eq!(slow_secs(&r), json!(40.0));
+}
+
+/// `a` timed `slow` at 40s on a January commit and the trunk at 31s on a later
+/// one, so a clock that is known answers 31 and one that is not answers the
+/// longer, 40.
+fn clocked_sides(r: &Repo) {
+    two_sides(
+        r,
+        &app(Some("g1"), &[
+            ("slow", 40.0, true, "b1"),
+            ("only_a", 12.0, true, "b1"),
+        ]),
+        &app(Some("g2"), &[
+            ("slow", 31.0, true, "b2"),
+            ("only_dev", 14.0, true, "b2"),
+        ]),
+        EARLY,
+        LATE,
+    );
+}
+
+fn names(r: &Repo) -> Vec<String> {
+    read(r, APP)["tests"]["app"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_rebase_merges_the_two_files_and_drops_the_green_both_moved() {
+    let r = repo();
+    clocked_sides(&r);
+    r.git(&["switch", "-q", "a"]);
+    let out = r.git_out(&["rebase", "dev"]);
+    assert!(out.status.success(), "{}", Repo::failure(&out));
+    assert!(r.unmerged().is_empty());
+    let v = read(&r, APP);
+    assert_eq!(v["green"], Value::Null, "{v}");
+    assert_eq!(names(&r), ["only_a", "only_dev", "slow"]);
+    // a rebase has no second tip to ask the clock about, so the longer timing wins
+    assert_eq!(slow_secs(&r), json!(40.0));
+}
+
+#[test]
+fn a_cherry_pick_merges_the_two_files_and_drops_the_green_both_moved() {
+    let r = repo();
+    clocked_sides(&r);
+    let out = r.git_out(&["cherry-pick", "a"]);
+    assert!(out.status.success(), "{}", Repo::failure(&out));
+    assert!(r.unmerged().is_empty());
+    let v = read(&r, APP);
+    assert_eq!(v["green"], Value::Null, "{v}");
+    assert_eq!(names(&r), ["only_a", "only_dev", "slow"]);
+    assert_eq!(slow_secs(&r), json!(40.0));
+}
+
+#[test]
+fn a_rebase_keeps_a_green_only_the_replayed_commit_moved() {
+    let r = repo();
+    two_sides(
+        &r,
+        &app(Some("g1"), &[
+            ("slow", 30.0, true, "b0"),
+            ("only_a", 12.0, true, "b1"),
+        ]),
+        &app(Some("g0"), &[
+            ("slow", 30.0, true, "b0"),
+            ("only_dev", 14.0, true, "b2"),
+        ]),
+        EARLY,
+        LATE,
+    );
+    r.git(&["switch", "-q", "a"]);
+    let out = r.git_out(&["rebase", "dev"]);
+    assert!(out.status.success(), "{}", Repo::failure(&out));
+    assert_eq!(read(&r, APP)["green"]["full"], "g1");
+}
+
+/// `git merge --squash` leaves no `MERGE_HEAD`, so the commit that follows is
+/// told nothing of the merge. The driver still ran at the squash and dropped the
+/// green both sides moved.
+#[test]
+fn a_squash_runs_the_driver_and_drops_the_green_both_moved() {
+    let r = repo();
+    clocked_sides(&r);
+    let out = r.git_out(&["-c", "merge.ff=true", "merge", "--squash", "a"]);
+    assert!(out.status.success(), "{}", Repo::failure(&out));
+    assert!(r.unmerged().is_empty());
+    assert_eq!(read(&r, APP)["green"], Value::Null);
+    assert_eq!(names(&r), ["only_a", "only_dev", "slow"]);
+}
+
+/// A squash whose branch changed nothing the member is built from nulls a green
+/// the trunk's own record still describes, since the tree it lands is the trunk's.
+/// The guard has no merge to excuse the null and refuses it, and that is right:
+/// the way out it names, keeping the staged record out, keeps a true green.
+#[test]
+fn a_squash_that_nulls_a_green_over_an_unchanged_member_is_refused() {
+    let r = repo();
+    clocked_sides(&r);
+    let out = r.git_out(&["-c", "merge.ff=true", "merge", "--squash", "a"]);
+    assert!(out.status.success(), "{}", Repo::failure(&out));
+    let refused = guard(&r);
+    assert!(!refused.status.success(), "{}", Repo::failure(&refused));
+    let said = Repo::failure(&refused);
+    assert!(
+        said.contains("member `app`") && said.contains("changes nothing its tests are built from"),
+        "{said}"
+    );
+    // restoring the record the trunk holds is what the message asks for
+    r.git(&["restore", "--staged", "--worktree", "--source=HEAD", APP]);
+    assert_eq!(read(&r, APP)["green"]["full"], "g2");
+    assert!(guard(&r).status.success());
+}
+
+/// The same squash over a branch that did change the member is accepted, because
+/// a commit touching a member's inputs owes it a new run and may drop its green.
+#[test]
+fn a_squash_that_nulls_a_green_over_a_changed_member_is_accepted() {
+    let r = repo();
+    r.git(&["switch", "-q", "-c", "a"]);
+    put(&r, "mock/crates/app/src/lib.rs", "pub fn f() { /* a */ }\n");
+    put(&r, APP, &app(Some("g1"), &[("slow", 40.0, true, "b1")]));
+    commit_at(&r, EARLY, "chore: change app and rerun it");
+    r.git(&["switch", "-q", "dev"]);
+    commit_file_at(
+        &r,
+        APP,
+        &app(Some("g2"), &[("slow", 31.0, true, "b2")]),
+        LATE,
+        "chore: rerun on dev",
+    );
+    let out = r.git_out(&["-c", "merge.ff=true", "merge", "--squash", "a"]);
+    assert!(out.status.success(), "{}", Repo::failure(&out));
+    assert_eq!(read(&r, APP)["green"], Value::Null);
+    let g = guard(&r);
+    assert!(g.status.success(), "{}", Repo::failure(&g));
+}
