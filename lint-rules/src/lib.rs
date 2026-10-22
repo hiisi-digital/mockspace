@@ -2126,11 +2126,12 @@ fn run_with_overrides(
     out.extend(lint_errors);
 }
 
-// FIXME: no per-file dispatch here: every workspace lint reads each crate's
-// root tree only, so single-source, no-duplicate-fn and undocumented-type miss
-// module files that the per-crate path now covers. A naive per-file expansion
-// of the pairs corrupts no-duplicate-fn's crate-keyed suppression lookup, so
-// the fix is per-lint collection with file-attributed items. tracked: #33
+// FIXME: no per-file dispatch here: no-duplicate-fn and undocumented-type
+// read each crate's root tree only, so they miss module files that the
+// per-crate path now covers. A naive per-file expansion of the pairs corrupts
+// no-duplicate-fn's crate-keyed suppression lookup, so the fix is per-lint
+// collection with file-attributed items, which single-source now does (its
+// `defs` module). tracked: #33
 /// Run all workspace lints plus any custom ones, returning violations.
 pub fn check_workspace_with_extra(
     crates: &[(&str, &LintContext)],

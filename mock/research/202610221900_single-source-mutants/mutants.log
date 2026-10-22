@@ -1,0 +1,10 @@
+killed    suffix dropped everywhere
+killed    visibility filter removed
+killed    switch flipped
+killed    qualifier always pub
+killed    pub(crate) counts as pub
+killed    inline mod dir ignores the stem
+killed    bin file root removed
+killed    non-mod-rs file does not nest under its stem
+killed    orphans not walked
+killed=9 survived=0 other=0
