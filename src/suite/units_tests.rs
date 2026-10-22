@@ -695,3 +695,49 @@ fn what_a_pulled_file_reads_outside_the_member_is_the_librarys_read() {
         "and the unit keeps it"
     );
 }
+
+/// The member's own directory spelled with a dot is the member itself, and a
+/// climbing path under the placeholder is a read outside it.
+#[test]
+fn a_manifest_dir_placeholder_names_the_member_or_climbs_out_of_it() {
+    for lit in ["$CARGO_MANIFEST_DIR/.", "$CARGO_MANIFEST_DIR/./", "${CARGO_MANIFEST_DIR}/."] {
+        assert!(
+            facts(&format!("const D: &str = \"{lit}\";")).ambient,
+            "{lit}"
+        );
+    }
+    let f = facts("const D: &str = \"$CARGO_MANIFEST_DIR/../../content/x.toml\";");
+    assert_eq!(f.climbing, vec!["../../content/x.toml".to_string()]);
+    assert!(
+        !f.ambient,
+        "a path under the member is placed, climbing or not"
+    );
+    assert!(
+        facts("const D: &str = \"$OUT_DIR/../x\";")
+            .climbing
+            .is_empty()
+    );
+}
+
+/// A pulled file whose modules cannot be followed may declare any claimed file,
+/// so all of them are the library's.
+#[test]
+fn a_pulled_file_with_a_mod_in_a_macro_shares_every_claimed_file() {
+    let fx = Fx::new(&[
+        (
+            "m/src/lib.rs",
+            "#[path = \"../tests/common/mod.rs\"]\nmod common;\n",
+        ),
+        ("m/tests/a.rs", "mod common;\n"),
+        ("m/tests/b.rs", "const X: &str = \"stray/x.txt\";\n"),
+        ("m/tests/stray/x.txt", ""),
+        (
+            "m/tests/common/mod.rs",
+            "cfg_if::cfg_if! { if #[cfg(test)] { mod inner; } }\n",
+        ),
+    ]);
+    let l = fx.layout(PLAIN);
+    for f in ["m/tests/a.rs", "m/tests/b.rs", "m/tests/stray/x.txt", "m/tests/common/mod.rs"] {
+        assert!(l.shared_pulls.contains(&p(f)), "{f}: {:?}", l.shared_pulls);
+    }
+}

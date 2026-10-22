@@ -752,10 +752,19 @@ fn a_shared_target_dir_does_not_lose_the_run_record() {
 
     let (ok, t) = mock_with(root, &["--full"], &env);
     assert!(ok, "first run:\n{t}");
-    assert!(shared.join("debug").is_dir(), "the build did not go to the shared directory:\n{t}");
+    assert!(
+        shared.join("debug").is_dir(),
+        "the build did not go to the shared directory:\n{t}"
+    );
     let record = history_text(root);
-    assert!(record.contains("slow_drawn"), "the slow test's timing was lost:\n{record}");
-    assert!(!record.contains("\"bins\": {}"), "a binary that passed was not recorded:\n{record}");
+    assert!(
+        record.contains("slow_drawn"),
+        "the slow test's timing was lost:\n{record}"
+    );
+    assert!(
+        !record.contains("\"bins\": {}"),
+        "a binary that passed was not recorded:\n{record}"
+    );
     let (ok, t) = mock_with(root, &[], &env);
     assert!(ok && t.contains("nothing to run"), "second run:\n{t}");
 }
@@ -763,8 +772,9 @@ fn a_shared_target_dir_does_not_lose_the_run_record() {
 /// `--test one` runs one target of the member. The member is not thereby green:
 /// `two` changed and has not run since.
 #[test]
-fn probe_a_run_narrowed_to_one_target_leaves_the_others_owed() {
+fn a_run_narrowed_to_one_target_leaves_the_others_owed() {
     if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
@@ -779,5 +789,8 @@ fn probe_a_run_narrowed_to_one_target_leaves_the_others_owed() {
     assert!(ok, "narrowed run:\n{t}");
     let (ok, t) = mock(root, &[]);
     assert!(ok, "{t}");
-    assert!(!t.contains("nothing to run"), "two changed and never ran:\n{t}");
+    assert!(
+        !t.contains("nothing to run"),
+        "two changed and never ran:\n{t}"
+    );
 }

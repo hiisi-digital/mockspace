@@ -433,14 +433,14 @@ fn a_claimed_file_the_library_names_moves_every_binary() {
     m.sort();
     assert_eq!(m, ALL_OF_USES);
 }
-
+// ---- inputs a binary depends on that the split could miss ----
 // ---- probes: inputs a binary depends on that the split does not see ----
 
 /// The library compiles `tests/common/mod.rs` by `#[path]`, and that file
-/// declares `inner`. `inner.rs` is built into the library, so every binary and
+/// the base move with it, as does anything that file declares in turn.
 /// the base move with it. Only the direct literal is a shared pull.
 #[test]
-fn probe_a_module_the_library_pulls_from_tests_brings_its_own_modules() {
+fn a_module_the_library_pulls_from_tests_brings_its_own_modules() {
     let r = Repo::new("probe-lib-pulls-tree");
     r.write(
         "mock/crates/uses/tests/common/mod.rs",
@@ -461,7 +461,7 @@ fn probe_a_module_the_library_pulls_from_tests_brings_its_own_modules() {
 /// `include_dir!("$CARGO_MANIFEST_DIR/tests/dir")` and `rust-embed`'s `folder`
 /// expand the placeholder themselves, and the test source mentions no `env!`.
 #[test]
-fn probe_a_placeholder_rooted_literal_names_what_it_expands_to() {
+fn a_placeholder_rooted_literal_names_what_it_expands_to() {
     let r = Repo::new("probe-placeholder");
     r.append(
         "mock/crates/uses/tests/one.rs",
@@ -476,7 +476,7 @@ fn probe_a_placeholder_rooted_literal_names_what_it_expands_to() {
 /// The same pull, with the content reached from the pulled file rather than a
 /// module: the library compiles it, so the library's digests must move.
 #[test]
-fn probe_content_a_module_the_library_pulls_reads_moves_the_library() {
+fn content_a_module_the_library_pulls_reads_moves_the_library() {
     let r = Repo::new("probe-lib-pulls-content");
     r.write(
         "mock/crates/uses/tests/common/mod.rs",
@@ -494,7 +494,7 @@ fn probe_content_a_module_the_library_pulls_reads_moves_the_library() {
 }
 
 #[test]
-fn control_concat_include_bytes_and_custom_test_path_and_out_dir() {
+fn concat_include_bytes_a_custom_test_path_and_out_dir_are_placed() {
     let r = Repo::new("control");
     // concat! of two literals
     r.write(
@@ -540,6 +540,83 @@ fn control_concat_include_bytes_and_custom_test_path_and_out_dir() {
     let m = moved(&b, &r.fp());
     assert!(
         m.contains(&"bin:uses::od".to_string()) && m.contains(&"shared:uses".to_string()),
+        "{m:?}"
+    );
+}
+
+#[test]
+fn a_manifest_dir_placeholder_climbing_out_names_content_outside() {
+    let r = Repo::new("rev-n1");
+    r.append(
+        "mock/crates/uses/tests/one.rs",
+        "const D: &str = \"$CARGO_MANIFEST_DIR/../../../content/other.toml\";\n",
+    );
+    let before = r.fp();
+    r.append("content/other.toml", "z = 1\n");
+    let m = moved(&before, &r.fp());
+    assert!(m.contains(&"bin:uses::one".to_string()), "{m:?}");
+}
+
+#[test]
+fn concat_of_env_manifest_dir_climbing_out_names_content_outside() {
+    let r = Repo::new("rev-n5");
+    r.append(
+        "mock/crates/uses/tests/one.rs",
+        "const D: &str = include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../../content/other.toml\"));\n",
+    );
+    let before = r.fp();
+    r.append("content/other.toml", "z = 1\n");
+    let m = moved(&before, &r.fp());
+    assert!(m.contains(&"bin:uses::one".to_string()), "{m:?}");
+}
+
+#[test]
+fn a_pulled_file_with_a_mod_in_a_macro_makes_every_claimed_file_shared() {
+    let r = Repo::new("rev-n2");
+    r.append(
+        "mock/crates/uses/tests/one.rs",
+        "const I: &str = include_str!(\"common/inner.rs\");\n",
+    );
+    r.write(
+        "mock/crates/uses/tests/common/mod.rs",
+        "cfg_if::cfg_if! { if #[cfg(test)] { mod inner; } }\n",
+    );
+    r.write("mock/crates/uses/tests/common/inner.rs", "pub fn i() {}\n");
+    r.append(
+        "mock/crates/uses/src/lib.rs",
+        "#[cfg(test)]\n#[path = \"../tests/common/mod.rs\"]\nmod common;\n",
+    );
+    let before = r.fp();
+    r.append("mock/crates/uses/tests/common/inner.rs", "// edit\n");
+    let mut m = moved(&before, &r.fp());
+    m.sort();
+    assert_eq!(m, ALL_OF_USES);
+}
+
+#[test]
+fn a_cycle_of_path_pulls_ends_and_is_shared() {
+    let r = Repo::new("rev-n4");
+    r.write(
+        "mock/crates/uses/tests/cyc.rs",
+        "#[path = \"x.rs\"]\nmod x;\n",
+    );
+    r.write(
+        "mock/crates/uses/tests/x.rs",
+        "#[path = \"y.rs\"]\nmod y;\n",
+    );
+    r.write(
+        "mock/crates/uses/tests/y.rs",
+        "#[path = \"x.rs\"]\nmod x;\n",
+    );
+    r.append(
+        "mock/crates/uses/src/lib.rs",
+        "#[cfg(test)]\n#[path = \"../tests/x.rs\"]\nmod x;\n",
+    );
+    let before = r.fp();
+    r.append("mock/crates/uses/tests/y.rs", "// edit\n");
+    let m = moved(&before, &r.fp());
+    assert!(
+        m.contains(&"shared:uses".to_string()) && m.contains(&"base:uses".to_string()),
         "{m:?}"
     );
 }

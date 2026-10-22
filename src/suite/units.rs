@@ -46,9 +46,12 @@
 //! file nobody claims is shared, so the same computed read of an unclaimed file
 //! is still seen. A literal that is only `.` names the whole member and is not
 //! followed, since following it would make every binary that splits a string on a
-//! dot read everything. The values of environment variables are not part of any
-//! fingerprint, here or at the member level, so a binary that reads one is wide
-//! but is not rerun when only the variable changed.
+//! dot read everything. A placeholder is read only at the start of a literal, as the
+//! macros that expand them read it, so `tests/$X` is a path under the member and
+//! not wide; `$CARGO_MANIFEST_DIR/.` is the member itself and is. The values of
+//! environment variables are not part of any fingerprint, here or at the member
+//! level, so a binary that reads one is wide but is not rerun when only the
+//! variable changed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -115,11 +118,22 @@ pub fn facts(source: &str) -> Facts {
                 {
                     // A placeholder the macros expand from the environment names
                     // something this cannot place, unless it is the member's own
-                    // directory and a path under it.
-                    if placeholder(&v)
-                        .is_some_and(|(n, rest)| n != "CARGO_MANIFEST_DIR" || rest.is_empty())
-                    {
+                    // directory and a path under it. That path may climb out of
+                    // the member, as `rust-embed` and `include_dir` are pointed at
+                    // a folder beside the crate, and is then a read like any other.
+                    let holder = placeholder(&v);
+                    if holder.is_some_and(|(n, rest)| {
+                        n != "CARGO_MANIFEST_DIR"
+                            || Path::new(rest)
+                                .components()
+                                .all(|c| matches!(c, std::path::Component::CurDir))
+                    }) {
                         out.ambient = true;
+                    }
+                    if let Some(("CARGO_MANIFEST_DIR", rest)) = holder
+                        && climbs_out(rest)
+                    {
+                        out.climbing.push(rest.to_string());
                     }
                     if climbs_out(&v) {
                         out.climbing.push(v.clone());
@@ -463,10 +477,13 @@ pub fn layout(ctx: &Ctx, roots: &[Root]) -> Layout {
     // and its reads outside the member. Its modules are looked for where a
     // crate root or a `mod.rs` would find them and where any other file would,
     // since nothing says which it is when a `#[path]` pulled it in.
+    let mut everything = false;
     while let Some(path) = queue.pop() {
         let Some(f) = ctx.facts.get(&path) else {
             continue;
         };
+        // A pulled file whose modules cannot be followed may declare any of them.
+        everything |= f.opaque;
         let file_dir = path.parent().unwrap_or(Path::new(""));
         for lit in &f.climbing {
             if let Some(r) = reach(lit, file_dir, ctx.member_dir, ctx.repo_root) {
@@ -489,6 +506,9 @@ pub fn layout(ctx: &Ctx, roots: &[Root]) -> Layout {
                 queue.push(p);
             }
         }
+    }
+    if everything {
+        l.shared_pulls.extend(l.claimed.iter().cloned());
     }
     l
 }
