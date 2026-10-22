@@ -46,11 +46,11 @@ fn a_mod_declaration_without_its_file_defines_nothing() {
 }
 
 #[test]
-fn files_outside_src_are_not_read() {
-    // The fixture is handed the file under a `tests/` path, as nothing in
-    // the engine does: `all_sources` is `src/**` only. Unreachable from the
-    // roots, it counts as an orphan, which is the lint's fallback and not a
-    // reading of `tests/`; the engine never hands one over.
+fn a_file_nothing_reaches_is_counted_wherever_it_sits() {
+    // The engine hands over `src/**` only, so a `tests/` file never arrives;
+    // that is the limit, held by the engine and stated in the module doc. What
+    // this pins is the fallback for a file that does arrive and that no `mod`
+    // reaches: it is ordinary source, whatever directory it sits in.
     let handed = findings(&[
         original("struct Dup;"),
         with_files("test-b", "", &[("tests/it.rs", "struct Dup;")]),
@@ -101,6 +101,13 @@ fn values_are_not_evaluated() {
         0
     );
     assert_eq!(one("const X: &str = \"A\";", "const X: &str = r\"A\";"), 0);
+    // A suffix on a literal inside an expression decides the result, so it is kept
+    // there and `1000` against `1000u32` differ; as the whole value they agree.
+    assert_eq!(one("const X: u32 = 1000;", "const X: u32 = 1000u32;"), 1);
+    assert_eq!(
+        one("const X: u32 = 1000 + 1;", "const X: u32 = 1000u32 + 1;"),
+        0
+    );
 }
 
 #[test]
@@ -171,9 +178,38 @@ fn cfg_attr_is_not_read() {
             "struct Dup;",
         )]),
     ]);
-    assert_eq!(
-        moved.len(),
-        1,
-        "an orphan, found as one, not followed as a path"
-    );
+    // The decision: `cfg_attr` resolves as if it were not there, so `mod m;` looks
+    // for `src/m.rs`, which is absent. `src/x.rs` is then a file nothing reaches,
+    // counted as the orphan fallback says, and named by its own path.
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0].path.as_deref(), Some("src/x.rs"));
+    let default = findings(&[
+        original("struct Dup;"),
+        with_files("test-b", "#[cfg_attr(all(), path = \"x.rs\")] mod m;", &[(
+            "src/m.rs",
+            "struct Dup;",
+        )]),
+    ]);
+    assert_eq!(default.len(), 1);
+    assert_eq!(default[0].path.as_deref(), Some("src/m.rs"));
+}
+
+#[test]
+fn a_custom_crate_root_is_not_read_from_the_manifest() {
+    // The roots are the conventional files. A crate whose root is `src/z.rs`
+    // (a `[lib] path`) has no root the lint knows, so a file that root declares
+    // under `cfg(test)` is an orphan and is counted: a false positive, which
+    // is the documented limit. The same files under `src/lib.rs` are exempt.
+    let mut custom = at_root("test-b", "#[cfg(test)] mod a_tests;");
+    custom.root_at = "src/z.rs";
+    custom.mods = vec![("src/a_tests.rs".to_string(), "struct Dup;".to_string())];
+    assert_eq!(findings(&[original("struct Dup;"), custom]).len(), 1);
+    let conventional = findings(&[
+        original("struct Dup;"),
+        with_files("test-b", "#[cfg(test)] mod a_tests;", &[(
+            "src/a_tests.rs",
+            "struct Dup;",
+        )]),
+    ]);
+    assert!(conventional.is_empty(), "{conventional:?}");
 }

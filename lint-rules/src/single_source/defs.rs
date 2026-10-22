@@ -1,5 +1,5 @@
 //--------------------------------------------------------------------------------------------------
-// Copyright (c) 2026                   orgrinrt                 ort@hiisi.digital
+// Copyright () 2026                   orgrinrt                 ort@hiisi.digital
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
@@ -29,7 +29,18 @@ pub(super) struct Def {
     pub path:       Option<String>,
     pub name:       String,
     pub line:       usize,
+    /// The item's own visibility qualifier as written: `pub`, `pub(crate)`, or
+    /// empty for a private item.
+    pub vis:        String,
     pub item:       Item,
+}
+
+impl Def {
+    /// Whether the item is `pub` with no restriction. Only the item's own
+    /// qualifier is read, not whether the module holding it is reachable.
+    pub fn fully_pub(&self) -> bool {
+        self.vis == "pub"
+    }
 }
 
 pub(super) enum Item {
@@ -42,10 +53,9 @@ pub(super) enum Item {
 
 pub(super) struct ValueDef {
     /// `const`, `static` or `static mut`.
-    pub kind:   &'static str,
-    pub ty:     String,
-    pub value:  String,
-    pub public: bool,
+    pub kind:  &'static str,
+    pub ty:    String,
+    pub value: String,
 }
 
 const CROSS_CRATE_TYPES: &[(&str, &str)] = &[
@@ -104,10 +114,9 @@ pub(super) fn collect_crate(crate_name: &str, ctx: &LintContext) -> Vec<Def> {
         reached: HashSet::new(),
         out: Vec::new(),
     };
-    let roots = ["src/lib.rs", "src/main.rs"];
-    for root in roots {
-        if let Some(&i) = index.get(root) {
-            walker.visit_file(i, false, false);
+    for (i, file) in files.iter().enumerate() {
+        if let Some(mod_rs) = root_kind(&file.key) {
+            walker.visit_file(i, false, mod_rs);
         }
     }
     for i in 0 .. files.len() {
@@ -197,7 +206,7 @@ impl<'a> Walker<'a> {
                 },
                 None => {
                     Scope {
-                        file_dir: scope.file_dir.join(name),
+                        file_dir: scope.mod_dir.join(name),
                         mod_dir:  scope.mod_dir.join(name),
                     }
                 },
@@ -232,7 +241,7 @@ impl<'a> Walker<'a> {
             .find(|(kind, _)| *kind == node.kind())
             .map(|(_, label)| *label)
             .unwrap_or("type");
-        self.push(node, name, file, Item::Type(label));
+        self.push(node, source, name, file, Item::Type(label));
     }
 
     fn push_value(&mut self, node: Node, source: &str, file: usize) {
@@ -250,7 +259,6 @@ impl<'a> Walker<'a> {
         };
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
-        let public = children.iter().any(|c| c.kind() == "visibility_modifier");
         let mutable = children.iter().any(|c| c.kind() == "mutable_specifier");
         let kind = match (node.kind(), mutable) {
             ("const_item", _) => "const",
@@ -260,24 +268,25 @@ impl<'a> Walker<'a> {
         let ty = canonical_type(ty, source);
         self.push(
             node,
+            source,
             name,
             file,
             Item::Value(ValueDef {
                 kind,
                 ty,
                 value,
-                public,
             }),
         );
     }
 
-    fn push(&mut self, node: Node, name: String, file: usize, item: Item) {
+    fn push(&mut self, node: Node, source: &str, name: String, file: usize, item: Item) {
         let key = &self.files[file].key;
         self.out.push(Def {
             crate_name: self.crate_name.to_string(),
             path: (key != "src/lib.rs").then(|| key.clone()),
             name,
             line: node.start_position().row + 1,
+            vis: visibility(node, source),
             item,
         });
     }
@@ -344,4 +353,31 @@ fn normalise(path: &Path) -> String {
         }
     }
     parts.join("/")
+}
+
+/// The item's visibility qualifier as written, empty when it has none.
+fn visibility(node: Node, source: &str) -> String {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .find(|c| c.kind() == "visibility_modifier")
+        .map(|c| {
+            source[c.byte_range()]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
+}
+
+/// Whether a file is the root of a target, and if so whether it is a mod-rs
+/// file (its modules resolve beside it): `src/lib.rs`, `src/main.rs`,
+/// `src/bin/<name>.rs` and `src/bin/<name>/main.rs`. A custom `[lib] path` or
+/// `[[bin]] path` is not read; see the module doc.
+fn root_kind(key: &str) -> Option<bool> {
+    match key.split('/').collect::<Vec<_>>()[..] {
+        ["src", "lib.rs"] | ["src", "main.rs"] => Some(false),
+        ["src", "bin", file] if file.ends_with(".rs") => Some(true),
+        ["src", "bin", _, "main.rs"] => Some(false),
+        _ => None,
+    }
 }

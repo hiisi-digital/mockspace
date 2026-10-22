@@ -6,14 +6,19 @@
 //! to the rest. Each table row is one crate holding the definition there and one
 //! holding it at its root, in both orders.
 
+use std::path::PathBuf;
+
+use self::placements::{ITEMS, counted_placements, rooted_placements, test_placements};
 use super::*;
-use crate::check_workspace;
 use crate::testkit::LintFixture;
+use crate::{CrateSourceFile, check_workspace};
 
 struct Spec {
-    name: &'static str,
-    root: String,
-    mods: Vec<(String, String)>,
+    name:    &'static str,
+    root:    String,
+    mods:    Vec<(String, String)>,
+    /// Where `root` sits: `src/lib.rs` unless a test says otherwise.
+    root_at: &'static str,
 }
 
 fn at_root(name: &'static str, root: &str) -> Spec {
@@ -21,6 +26,7 @@ fn at_root(name: &'static str, root: &str) -> Spec {
         name,
         root: root.to_string(),
         mods: Vec::new(),
+        root_at: "src/lib.rs",
     }
 }
 
@@ -32,21 +38,46 @@ fn with_files(name: &'static str, root: &str, mods: &[(&str, &str)]) -> Spec {
             .iter()
             .map(|(p, t)| (p.to_string(), t.to_string()))
             .collect(),
+        root_at: "src/lib.rs",
     }
 }
 
-/// Run the lint over crates built from the specs, in order.
-fn findings(specs: &[Spec]) -> Vec<LintError> {
-    let fixtures: Vec<LintFixture> = specs
+/// A fixture for each spec, with the root file at `root_at` and the rest beside it.
+fn fixtures(specs: &[Spec]) -> Vec<LintFixture> {
+    specs
         .iter()
         .map(|s| {
-            let mut f = LintFixture::new(&s.root).with_crate_name(s.name, s.name);
-            for (path, text) in &s.mods {
-                f = f.with_module(path, text);
-            }
-            f
+            let mut files = vec![CrateSourceFile {
+                rel_path: PathBuf::from(s.root_at),
+                text:     s.root.clone(),
+            }];
+            files.extend(s.mods.iter().map(|(p, t)| {
+                CrateSourceFile {
+                    rel_path: PathBuf::from(p),
+                    text:     t.clone(),
+                }
+            }));
+            LintFixture::new(&s.root)
+                .with_crate_name(s.name, s.name)
+                .with_sources(files)
         })
-        .collect();
+        .collect()
+}
+
+/// Run the lint over crates built from the specs, in order, comparing items of
+/// every visibility: most of the fixtures below are private items, and what is
+/// under test is where the lint reads, not which items it compares.
+fn findings(specs: &[Spec]) -> Vec<LintError> {
+    let fixtures = fixtures(specs);
+    let ctxs: Vec<LintContext> = fixtures.iter().map(LintFixture::ctx).collect();
+    let crates: Vec<(&str, &LintContext)> =
+        specs.iter().zip(&ctxs).map(|(s, c)| (s.name, c)).collect();
+    check(&crates, false)
+}
+
+/// The same specs through the production switch, which compares `pub` items only.
+fn pub_findings(specs: &[Spec]) -> Vec<LintError> {
+    let fixtures = fixtures(specs);
     let ctxs: Vec<LintContext> = fixtures.iter().map(LintFixture::ctx).collect();
     let crates: Vec<(&str, &LintContext)> =
         specs.iter().zip(&ctxs).map(|(s, c)| (s.name, c)).collect();
@@ -55,16 +86,7 @@ fn findings(specs: &[Spec]) -> Vec<LintError> {
 
 /// The same specs through the runner, which is what honours `lint:allow`.
 fn through_the_runner(specs: &[Spec]) -> Vec<LintError> {
-    let fixtures: Vec<LintFixture> = specs
-        .iter()
-        .map(|s| {
-            let mut f = LintFixture::new(&s.root).with_crate_name(s.name, s.name);
-            for (path, text) in &s.mods {
-                f = f.with_module(path, text);
-            }
-            f
-        })
-        .collect();
+    let fixtures = fixtures(specs);
     let ctxs: Vec<LintContext> = fixtures.iter().map(LintFixture::ctx).collect();
     let crates: Vec<(&str, &LintContext)> =
         specs.iter().zip(&ctxs).map(|(s, c)| (s.name, c)).collect();
@@ -72,177 +94,6 @@ fn through_the_runner(specs: &[Spec]) -> Vec<LintError> {
         .into_iter()
         .filter(|e| e.lint_name == "single-source")
         .collect()
-}
-
-/// `(label, root text, files)`: one place a definition can sit.
-type Placement = (&'static str, String, Vec<(&'static str, String)>);
-
-/// One definition of every kind the lint compares, with its finding kind.
-const ITEMS: &[(&str, &str)] = &[
-    ("struct Dup;", "type"),
-    ("pub struct Dup { pub x: u8 }", "type"),
-    ("enum Dup { A }", "type"),
-    ("trait Dup {}", "type"),
-    ("union Dup { a: u8 }", "type"),
-    ("const DUP: u32 = 7;", "constant"),
-    ("pub const DUP: u32 = 7;", "constant"),
-    ("static DUP: u32 = 7;", "constant"),
-    ("pub static mut DUP: u32 = 7;", "constant"),
-];
-
-/// Every place a definition counts from: `(label, root, files)`, `{}` the item.
-fn counted_placements(item: &str) -> Vec<Placement> {
-    let i = item.to_string();
-    vec![
-        ("root", i.clone(), vec![]),
-        ("module file", "mod m;".into(), vec![(
-            "src/m.rs",
-            i.clone(),
-        )]),
-        ("mod.rs", "mod m;".into(), vec![("src/m/mod.rs", i.clone())]),
-        ("pub mod", "pub mod m;".into(), vec![(
-            "src/m.rs",
-            i.clone(),
-        )]),
-        ("pub(crate) mod", "pub(crate) mod m;".into(), vec![(
-            "src/m.rs",
-            i.clone(),
-        )]),
-        ("nested file", "mod a;".into(), vec![
-            ("src/a.rs", "mod b;".into()),
-            ("src/a/b.rs", i.clone()),
-        ]),
-        ("nested mod.rs", "mod a;".into(), vec![
-            ("src/a/mod.rs", "mod b;".into()),
-            ("src/a/b.rs", i.clone()),
-        ]),
-        ("inline mod", format!("mod m {{ {item} }}"), vec![]),
-        (
-            "nested inline mod",
-            format!("mod m {{ mod n {{ {item} }} }}"),
-            vec![],
-        ),
-        ("file under an inline mod", "mod m { mod n; }".into(), vec![
-            ("src/m/n.rs", i.clone()),
-        ]),
-        (
-            "path attribute",
-            "#[path = \"sys/linux.rs\"] mod sys;".into(),
-            vec![("src/sys/linux.rs", i.clone())],
-        ),
-        (
-            "path attribute in an inline mod",
-            "mod m { #[path = \"x.rs\"] mod n; }".into(),
-            vec![("src/m/x.rs", i.clone())],
-        ),
-        (
-            "child of a path attribute file",
-            "#[path = \"sys/like_mod.rs\"] mod sys;".into(),
-            vec![("src/sys/like_mod.rs", "mod child;".into()), ("src/sys/child.rs", i.clone())],
-        ),
-        (
-            "cfg feature module file",
-            "#[cfg(feature = \"x\")] mod m;".into(),
-            vec![("src/m.rs", i.clone())],
-        ),
-        (
-            "cfg not test inline",
-            format!("#[cfg(not(test))] mod m {{ {item} }}"),
-            vec![],
-        ),
-        (
-            "cfg any test inline",
-            format!("#[cfg(any(test, unix))] mod m {{ {item} }}"),
-            vec![],
-        ),
-        (
-            "cfg latest feature",
-            format!("#[cfg(feature = \"latest\")] mod m {{ {item} }}"),
-            vec![],
-        ),
-        (
-            "cfg_attr is not cfg",
-            format!("#[cfg_attr(test, derive(Debug))] {item}"),
-            vec![],
-        ),
-        ("file nothing declares", "".into(), vec![(
-            "src/loose.rs",
-            i.clone(),
-        )]),
-    ]
-}
-
-/// Every place a definition is test code and so defines nothing.
-fn test_placements(item: &str) -> Vec<Placement> {
-    let i = item.to_string();
-    vec![
-        (
-            "item under cfg(test)",
-            format!("#[cfg(test)] {item}"),
-            vec![],
-        ),
-        (
-            "inline test mod",
-            format!("#[cfg(test)] mod tests {{ {item} }}"),
-            vec![],
-        ),
-        (
-            "inner cfg(test) in an inline mod",
-            format!("mod t {{ #![cfg(test)] {item} }}"),
-            vec![],
-        ),
-        ("test mod file", "#[cfg(test)] mod tests;".into(), vec![(
-            "src/tests.rs",
-            i.clone(),
-        )]),
-        ("test mod.rs", "#[cfg(test)] mod tests;".into(), vec![(
-            "src/tests/mod.rs",
-            i.clone(),
-        )]),
-        (
-            "cfg all test",
-            "#[cfg(all(test, unix))] mod tests;".into(),
-            vec![("src/tests.rs", i.clone())],
-        ),
-        (
-            "file opening with an inner cfg(test)",
-            "mod m;".into(),
-            vec![("src/m.rs", format!("#![cfg(test)]\n{item}"))],
-        ),
-        ("child of a test file", "#[cfg(test)] mod t;".into(), vec![
-            ("src/t.rs", "mod u;".into()),
-            ("src/t/u.rs", i.clone()),
-        ]),
-        (
-            "child of a test file, three deep",
-            "#[cfg(test)] mod t;".into(),
-            vec![
-                ("src/t.rs", "mod u;".into()),
-                ("src/t/u.rs", "mod v;".into()),
-                ("src/t/u/v.rs", i.clone()),
-            ],
-        ),
-        (
-            "file under an inline test mod",
-            "#[cfg(test)] mod tests { mod c; }".into(),
-            vec![("src/tests/c.rs", i.clone())],
-        ),
-        (
-            "path attribute in an inline test mod",
-            "#[cfg(test)] mod t { #[path = \"x.rs\"] mod n; }".into(),
-            vec![("src/t/x.rs", i.clone())],
-        ),
-        (
-            "test mod behind a path attribute",
-            "#[cfg(test)]\n#[path = \"x.rs\"]\nmod m;".into(),
-            vec![("src/x.rs", i.clone())],
-        ),
-        (
-            "child of a test path attribute file",
-            "#[cfg(test)] #[path = \"sys/m.rs\"] mod m;".into(),
-            vec![("src/sys/m.rs", "mod c;".into()), ("src/sys/c.rs", i.clone())],
-        ),
-    ]
 }
 
 /// A crate defining `item` at its root, the thing to be compared against.
@@ -258,6 +109,7 @@ fn placed(name: &'static str, root: &str, files: &[(&'static str, String)]) -> S
             .iter()
             .map(|(p, t)| (p.to_string(), t.clone()))
             .collect(),
+        root_at: "src/lib.rs",
     }
 }
 
@@ -327,29 +179,29 @@ fn a_finding_names_its_file_and_a_root_finding_names_none() {
 
 #[test]
 fn an_allow_marker_is_read_from_the_file_the_finding_is_in() {
-    let allowed = "// lint:allow(single-source)\nstruct Dup;";
+    let allowed = "// lint:allow(single-source)\npub struct Dup;";
     let silenced = through_the_runner(&[
-        original("struct Dup;"),
+        original("pub struct Dup;"),
         with_files("test-b", "mod m;", &[("src/m.rs", allowed)]),
     ]);
     assert!(silenced.is_empty(), "{silenced:?}");
 
     // The marker in the root does not reach a finding in a module file.
     let wrong_file = through_the_runner(&[
-        original("struct Dup;"),
+        original("pub struct Dup;"),
         with_files("test-b", "// lint:allow(single-source)\nmod m;", &[(
             "src/m.rs",
-            "struct Dup;",
+            "pub struct Dup;",
         )]),
     ]);
     assert_eq!(wrong_file.len(), 1);
 
     // A marker for another lint does not silence this one.
     let other = through_the_runner(&[
-        original("struct Dup;"),
+        original("pub struct Dup;"),
         with_files("test-b", "mod m;", &[(
             "src/m.rs",
-            "// lint:allow(no-todo)\nstruct Dup;",
+            "// lint:allow(no-todo)\npub struct Dup;",
         )]),
     ]);
     assert_eq!(other.len(), 1);
@@ -432,13 +284,136 @@ fn a_crate_without_module_files_falls_back_to_its_root() {
         .with_crate_name("test-b", "test-b")
         .with_sources(Vec::new());
     let (a, b) = (fixture_a.ctx(), fixture_b.ctx());
-    assert_eq!(
-        SingleSource
-            .check_all(&[("test-a", &a), ("test-b", &b)])
-            .len(),
-        1
+    assert_eq!(check(&[("test-a", &a), ("test-b", &b)], false).len(), 1);
+}
+
+fn rooted(
+    name: &'static str,
+    at: &'static str,
+    root: &str,
+    files: &[(&'static str, String)],
+) -> Spec {
+    Spec {
+        root_at: at,
+        ..placed(name, root, files)
+    }
+}
+
+#[test]
+fn a_definition_is_found_under_every_kind_of_crate_root() {
+    for (item, kind) in ITEMS {
+        for (label, at, root, files) in rooted_placements(item) {
+            let found = findings(&[original(item), rooted("test-there", at, &root, &files)]);
+            assert_eq!(found.len(), 1, "{item} under a {label}: {found:?}");
+            assert_eq!(found[0].finding_kind, Some(*kind), "{item} under a {label}");
+            // The twin: the same crate with its first declaration test-gated. It is
+            // exempt only if the walk reached the file from that root; a root the
+            // lint did not know would leave the file an orphan, and counted.
+            let gated = format!("#[cfg(test)] {root}");
+            let twin = findings(&[original(item), rooted("test-there", at, &gated, &files)]);
+            assert!(twin.is_empty(), "{item} under a gated {label}: {twin:?}");
+        }
+    }
+}
+
+#[test]
+fn every_counted_placement_is_reached_and_not_merely_found() {
+    // Found is not enough: an unreached file is found as an orphan. Gating the
+    // declaration that leads to the file with `cfg(test)` makes it exempt only
+    // when the walk really followed that declaration there.
+    for (item, _) in ITEMS {
+        for (label, root, files) in counted_placements(item) {
+            if root.is_empty() {
+                continue; // the orphan row: reached by nobody, by definition
+            }
+            let gated = format!("#[cfg(test)] {root}");
+            let there = placed("test-there", &gated, &files);
+            let found = findings(&[original(item), there]);
+            assert!(found.is_empty(), "{item} in a gated {label}: {found:?}");
+        }
+    }
+}
+
+#[test]
+fn only_fully_pub_items_are_compared_across_crates() {
+    let private = [
+        "struct Dup;",
+        "pub(crate) struct Dup;",
+        "pub(super) struct Dup;",
+        "pub(self) struct Dup;",
+        "pub(in crate::m) struct Dup;",
+        "const DUP: u32 = 7;",
+        "pub(crate) const DUP: u32 = 7;",
+        "pub(super) static DUP: u32 = 7;",
+        "pub(in crate::m) const DUP: u32 = 7;",
+    ];
+    for item in private {
+        let public = item
+            .replace("pub(crate) ", "")
+            .replace("pub(super) ", "")
+            .replace("pub(self) ", "")
+            .replace("pub(in crate::m) ", "");
+        let public = format!("pub {public}");
+        let pub_item =
+            if item.contains("static") { public.replace("const", "static") } else { public };
+        // Private on either side, in either order: not compared.
+        assert!(
+            pub_findings(&[original(item), at_root("test-b", &pub_item)]).is_empty(),
+            "{item} against {pub_item}"
+        );
+        assert!(
+            pub_findings(&[original(&pub_item), at_root("test-b", item)]).is_empty(),
+            "{pub_item} against {item}"
+        );
+        assert!(
+            pub_findings(&[original(item), at_root("test-b", item)]).is_empty(),
+            "{item} against itself"
+        );
+        // The control: with the switch off the same pair is a finding.
+        assert_eq!(
+            findings(&[original(item), at_root("test-b", &pub_item)]).len(),
+            1,
+            "{item}"
+        );
+    }
+    for item in [
+        "pub struct Dup;",
+        "pub enum Dup { A }",
+        "pub trait Dup {}",
+        "pub union Dup { a: u8 }",
+        "pub const DUP: u32 = 7;",
+        "pub static DUP: u32 = 7;",
+        "pub static mut DUP: u32 = 7;",
+    ] {
+        assert_eq!(
+            pub_findings(&[original(item), at_root("test-b", item)]).len(),
+            1,
+            "{item}"
+        );
+    }
+}
+
+#[test]
+fn the_message_names_the_visibility_it_found() {
+    let msg = |item: &str| {
+        findings(&[original(item), at_root("test-b", item)])[0]
+            .message
+            .clone()
+    };
+    assert!(
+        msg("pub(crate) const DUP: u32 = 7;").starts_with("pub(crate) const `DUP"),
+        "{}",
+        msg("pub(crate) const DUP: u32 = 7;")
     );
+    assert!(msg("const DUP: u32 = 7;").starts_with("const `DUP"));
+    assert!(
+        msg("pub static mut DUP: u32 = 7;").starts_with("pub static mut `DUP"),
+        "{}",
+        msg("pub static mut DUP: u32 = 7;")
+    );
+    assert!(msg("pub(super) struct Dup;").starts_with("pub(super) struct `Dup"));
 }
 
 mod constants;
 mod limits;
+mod placements;

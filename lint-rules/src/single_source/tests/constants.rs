@@ -183,3 +183,42 @@ fn constants_and_types_do_not_group_together() {
         findings(&[at_root("test-a", "struct Dup;"), at_root("test-b", "const Dup: u32 = 1;")]);
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[test]
+fn a_suffix_inside_an_expression_decides_the_value() {
+    // `!0u8 as u32` is 255 and `!0u16 as u32` is 65535; `0.1f32 as f64` is
+    // 0.10000000149011612 and `0.1f64 as f64` is 0.1. Neither pair is one value.
+    differ(
+        "const M: u32 = !0u8 as u32;",
+        "const M: u32 = !0u16 as u32;",
+    );
+    differ(
+        "const F: f64 = 0.1f32 as f64;",
+        "const F: f64 = 0.1f64 as f64;",
+    );
+    differ(
+        "const A: [u8; 1] = [1u8];",
+        "const A: [u8; 1] = [1u16 as u8];",
+    );
+    differ(
+        "const T: (u8, u8) = (1u8, 2);",
+        "const T: (u8, u8) = (1, 2u8);",
+    );
+    differ(
+        "const N: i32 = -1i8 as i32;",
+        "const N: i32 = -1i16 as i32;",
+    );
+    // Spelled the same, with the rest of the literal canonicalised, they agree.
+    agree(
+        "const M: u32 = !0u8 as u32;",
+        "const M: u32 = !0_u8 as u32;",
+    );
+    agree(
+        "const M: u32 = !0x0u8 as u32;",
+        "const M: u32 = !0u8 as u32;",
+    );
+    agree(
+        "const F: f64 = 0.1f32 as f64;",
+        "const F: f64 = 0.10f32 as f64;",
+    );
+}

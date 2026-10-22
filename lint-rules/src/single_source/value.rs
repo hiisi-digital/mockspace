@@ -65,9 +65,21 @@ fn leaf_tokens<'s>(node: Node, source: &'s str, out: &mut Vec<&'s str>) {
 }
 
 /// The canonical form of a closed value, or `None` when it is open.
+///
+/// A literal that *is* the whole value drops its type suffix, because the
+/// constant's own type already says it. A literal anywhere inside an operator,
+/// cast, array or tuple keeps its suffix: there it decides what the expression
+/// computes (`!0u8 as u32` is 255, `!0u16 as u32` is 65535), and a lint that
+/// gates at error cannot call those the same.
 pub(super) fn canonical_value(node: Node, source: &str) -> Option<String> {
+    value(node, source, true)
+}
+
+fn value(node: Node, source: &str, whole: bool) -> Option<String> {
     match node.kind() {
-        "integer_literal" | "float_literal" => Some(canonical_number(&source[node.byte_range()])),
+        "integer_literal" | "float_literal" => {
+            Some(canonical_number(&source[node.byte_range()], whole))
+        },
         "boolean_literal" | "char_literal" | "string_literal" | "raw_string_literal" => {
             Some(source[node.byte_range()].to_string())
         },
@@ -93,15 +105,16 @@ fn composite(node: Node, source: &str) -> Option<String> {
         } else if cast_type == Some(child) {
             parts.push(canonical_type(child, source));
         } else {
-            parts.push(canonical_value(child, source)?);
+            parts.push(value(child, source, false)?);
         }
     }
     Some(parts.join(" "))
 }
 
-/// A numeric literal with its underscores, suffix, radix and float spelling
-/// removed: `1_000u32`, `0x3E8` and `1000` are one value.
-fn canonical_number(text: &str) -> String {
+/// A numeric literal with its underscores, radix and float spelling removed:
+/// `1_000u32`, `0x3E8` and `1000` are one value. The type suffix is kept unless
+/// the literal is `whole`, the entire value of the constant.
+fn canonical_number(text: &str, whole: bool) -> String {
     let lower: String = text
         .chars()
         .filter(|c| *c != '_')
@@ -110,27 +123,30 @@ fn canonical_number(text: &str) -> String {
     let radix = [("0x", 16), ("0o", 8), ("0b", 2)]
         .into_iter()
         .find(|(prefix, _)| lower.starts_with(prefix));
-    if let Some((prefix, radix)) = radix {
-        let body = &lower[prefix.len() ..];
-        let body = INT_SUFFIXES
-            .iter()
-            .find_map(|s| body.strip_suffix(s))
-            .unwrap_or(body);
-        return u128::from_str_radix(body, radix)
+    let (suffix, number) = if let Some((prefix, radix)) = radix {
+        let rest = &lower[prefix.len() ..];
+        let (body, suffix) = split_suffix(rest, INT_SUFFIXES);
+        let number = u128::from_str_radix(body, radix)
             .map(|n| n.to_string())
-            .unwrap_or(lower);
-    }
-    let body = NUM_SUFFIXES
+            .unwrap_or_else(|_| lower.clone());
+        (suffix, number)
+    } else {
+        let (body, suffix) = split_suffix(&lower, NUM_SUFFIXES);
+        let float = body.contains(['.', 'e']) || suffix.starts_with('f');
+        let number = if float {
+            body.parse::<f64>().ok().map(|f| format!("{f:?}"))
+        } else {
+            body.parse::<u128>().ok().map(|n| n.to_string())
+        };
+        (suffix, number.unwrap_or_else(|| body.to_string()))
+    };
+    if whole { number } else { format!("{number}{suffix}") }
+}
+
+/// The text without a trailing type suffix, and the suffix.
+fn split_suffix<'s>(text: &'s str, suffixes: &[&'static str]) -> (&'s str, &'static str) {
+    suffixes
         .iter()
-        .find_map(|s| lower.strip_suffix(s))
-        .unwrap_or(&lower);
-    if body.contains(['.', 'e']) || lower.ends_with("f32") || lower.ends_with("f64") {
-        return body
-            .parse::<f64>()
-            .map(|f| format!("{f:?}"))
-            .unwrap_or_else(|_| body.to_string());
-    }
-    body.parse::<u128>()
-        .map(|n| n.to_string())
-        .unwrap_or_else(|_| body.to_string())
+        .find_map(|s| text.strip_suffix(s).map(|body| (body, *s)))
+        .unwrap_or((text, ""))
 }
