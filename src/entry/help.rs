@@ -144,6 +144,22 @@ const COMMANDS: &[Cmd] = &[
                   absent one queries nothing.",
     },
     Cmd {
+        name:    "merge-registry",
+        summary: "merge registry TOML by row, as git's merge driver",
+        args:    &[],
+        help:    "The merge driver `cargo mock` installs for <mock>/registry/**/*.toml; \
+                  git calls it as `merge-registry %O %A %B %P` (base, ours, theirs, \
+                  path) and reads the result from the second. Rows are keyed by their \
+                  [[namespace]] and `id`, never by file or position, so two branches \
+                  that each added a row to the same spot both keep it. A row changed \
+                  on one side takes that change, one deleted on one side and untouched \
+                  on the other is deleted, and one changed differently on both sides \
+                  (or deleted against a change) is a conflict, written with markers \
+                  around that row alone and exit status 1. A file it cannot read as \
+                  rows is merged as text, as git would without it. It needs no \
+                  project and installs nothing: the wiring is done by `cargo mock`.",
+    },
+    Cmd {
         name:    "bench",
         summary: "run the bench harness",
         args:    &[],

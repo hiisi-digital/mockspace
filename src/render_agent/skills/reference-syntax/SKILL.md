@@ -78,3 +78,27 @@ the two cannot collide. The older `reg::law::keys` still resolves.
 Registry rows are identified by a snake_case slug. A number carries no meaning
 and so has to be managed: never reused, never renumbered, never reordered, since
 any of those silently repoints every reference to it.
+
+## Merging registry files
+
+Two branches that each add a row to the same place in a registry file do not
+conflict in a `git merge`. `.gitattributes` sends every `*.toml` under
+`{mock_dir}/registry/` to the `mockspace-registry` merge driver, which `cargo mock`
+registers in the clone and which runs `cargo mock merge-registry`. It keys a row
+by its `[[namespace]]` and `id`, as the loader does, and never by the file it
+sits in or its position:
+
+- a row added on one side or both under different ids is kept, each side's own
+  order preserved, and the result is the same whichever side is ours;
+- a row identical on both sides is kept once;
+- a row changed on one side takes that change, and one deleted on one side and
+  untouched on the other is deleted;
+- a row changed differently on both sides, deleted against a change, or added
+  twice with different content is a conflict, written with markers around that
+  row alone. A head, or a plain `[table]`, both sides changed is one too. Resolve
+  it keeping both intents, never one side.
+
+A file the driver cannot read as rows (invalid TOML, a row with no `id`, an `id`
+twice in one file) merges as text, as git does without a driver. The driver works
+inside one file: the same `id` added under two different files is two additions
+to it, and the registry's duplicate check reports it afterwards.

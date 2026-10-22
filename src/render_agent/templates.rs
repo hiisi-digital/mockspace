@@ -297,6 +297,18 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             ),
         },
         BuiltinRule {
+            name:     "registry-merge".to_string(),
+            apply_to: vec![format!("{mock_rel}/registry/**/*.toml")],
+            body:     substitute_builtin_vars(
+                concat!(
+                    "Registry rows merge by `[[namespace]]` and `id`: additions on both sides stay, only a row changed two ways conflicts. See the `reference-syntax` skill.",
+                ),
+                &mock_rel,
+                project_name,
+                crate_prefix,
+            ),
+        },
+        BuiltinRule {
             name:     "generated".to_string(),
             apply_to: vec![
                 "CLAUDE.md".to_string(),
