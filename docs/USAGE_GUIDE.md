@@ -265,17 +265,34 @@ and selects which to run rather than running them all:
   fingerprint is its own files (what git tracks or would track under its directory,
   shaders and fixtures kept there included), every path outside it that its sources
   name as a `../` string literal (an `include_str!` of a content file, a directory joined
-  to `CARGO_MANIFEST_DIR`), the same for every member compiled into its tests, and the
-  workspace's lockfile, manifest, toolchain pin and cargo and nextest configuration, and
-  the cargo config `mock test` generates from `[test.opt_level]`. A change to a member's
-  own inputs reaches that member and everything depending on it, and nothing else; a
-  change to a workspace input, that table included, reruns every member.
+  to `CARGO_MANIFEST_DIR`), the shared inputs of every member compiled into its tests
+  (their libraries, never their `tests/`), and the workspace's lockfile, manifest,
+  toolchain pin and cargo and nextest configuration, and the cargo config `mock test`
+  generates from `[test.opt_level]`. A change to a member's library reaches that member
+  and everything depending on it, and nothing else; a change to a workspace input, that
+  table included, reruns every member.
+- **Within a member that runs, an integration-test binary runs when its own inputs
+  moved.** `tests/<name>.rs` and `tests/<name>/main.rs` are each a binary, built from
+  their own files (the modules they declare, the files their string literals name inside
+  the member, a directory named whole, a `trybuild` glob cut at its first wildcard), what
+  their sources read from outside, the member's library and its dependencies. A binary
+  that passed at inputs that have not moved is left out and listed as `reuse`, so a
+  change confined to one `tests/<name>.rs` runs that binary, and a member that failed in
+  one binary reruns only that one. The library's own tests, the binaries and the examples
+  move with the member's shared files. What cannot be placed widens rather than being
+  missed: a file under `tests/` that no binary claims, the manifest, the build script and
+  the library move every binary; a binary that reads the environment or `file!()`, declares
+  a module inside a macro or an inline module, or does not parse, is rebuilt on every file
+  any binary claims; a manifest naming a test outside `tests/` narrows nothing. The values
+  of environment variables are in no fingerprint, a path built at run time from pieces
+  none of which names it is not seen, and `--full` and `--no-cache` run every binary.
 - **A test is heavy when its last run took `heavy_after_secs` or more.** Heavy tests run
   `heavy_threads` at a time in nextest's `@tool:mockspace:heavy` group, and a heavy test
-  that passed at its member's current fingerprint is skipped as cached.
+  that passed at its binary's current fingerprint is skipped as cached.
 - **Every test is killed after `timeout_secs`**, and each run ends with its slowest tests.
 
-`--full` runs every member asked for, `--no-cache` runs the cached heavy tests too, and
+`--full` runs every member asked for, every binary of it, `--no-cache` runs the cached
+heavy tests and the binaries it would leave out too, and
 `--cheap` defers every heavy test that has passed before (a new one, or one that failed
 last time, still runs). `--full --no-cache` is the whole suite, for the end of a piece of
 work and after merging the trunk; `--plain` is `cargo test` as before, with the opt
@@ -286,7 +303,8 @@ The record is tracked: `<mock>/test-history/<flavour>/<member>.json`, committed 
 work that produced it, so a fresh clone or a new container starts from the last green
 run rather than from nothing. The fingerprints are digests of contents and
 repository-relative paths, so a pass recorded on one machine stands on another. Only
-tests near or over the heavy threshold are kept, and a file is rewritten only when what
+tests near or over the heavy threshold are kept, with each test binary that passed and the
+fingerprint it passed at, and a file is rewritten only when what
 it says changed, so a rerun of a settled suite leaves the tree clean. A test or binary
 that no longer exists is dropped from the generated nextest config and pruned from the
 record on the next run that runs something, found by asking nextest what it lists (the

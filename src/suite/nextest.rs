@@ -33,7 +33,7 @@ pub fn installed(mock_dir: &Path) -> bool {
 }
 
 /// The tool config for one run.
-pub fn tool_config(s: &TestSettings, heavy: &[(String, String)]) -> String {
+pub fn tool_config(s: &TestSettings, heavy: &[(String, String)], junit: &Path) -> String {
     // The slow period is how often nextest reports a test still running; the
     // timeout is that period times a whole count, so the period is shrunk to
     // fit a timeout shorter than a minute.
@@ -53,7 +53,12 @@ pub fn tool_config(s: &TestSettings, heavy: &[(String, String)]) -> String {
         "slow-timeout = {{ period = \"{period}s\", terminate-after = {periods} }}"
     );
     t.push_str("fail-fast = false\n\n");
-    t.push_str("[profile.default.junit]\npath = \"junit.xml\"\n");
+    // Quoted and escaped as TOML, whatever characters the path holds.
+    let _ = writeln!(
+        t,
+        "[profile.default.junit]\npath = {}",
+        toml_edit::Value::from(junit.to_string_lossy().as_ref())
+    );
     if !heavy.is_empty() {
         t.push_str("\n[[profile.default.overrides]]\n");
         let _ = writeln!(t, "filter = '{}'", any_of(heavy));
@@ -67,11 +72,7 @@ pub fn tool_config(s: &TestSettings, heavy: &[(String, String)]) -> String {
 /// left out, since cargo warns about a profile spec that matches no package on
 /// every build; `members` is `None` where the workspace could not be read, and
 /// then every entry stays. `None` when no entry is left.
-pub fn cargo_config(
-    s: &TestSettings,
-    profile: &str,
-    members: Option<&[String]>,
-) -> Option<String> {
+pub fn cargo_config(s: &TestSettings, profile: &str, members: Option<&[String]>) -> Option<String> {
     let mut t = String::from(
         "# Written by `cargo mock test` for each run, from `[test.opt_level]` in\n\
          # mockspace.toml. Edits here are lost.\n",
@@ -124,13 +125,19 @@ fn any_of<'a>(tests: impl IntoIterator<Item = &'a (String, String)>) -> String {
         .join(" | ")
 }
 
-/// The `-E` for a run: the caller's own filter, less the tests skipped.
-pub fn filterset(caller: Option<&str>, skip: &[Skip]) -> Option<String> {
+/// The `-E` for a run: the caller's own filter, less the tests skipped and the
+/// binaries left out whole.
+pub fn filterset(caller: Option<&str>, skip: &[Skip], reuse: &[String]) -> Option<String> {
     let skipped: Vec<(String, String)> = skip
         .iter()
         .map(|s| (s.binary.clone(), s.name.clone()))
         .collect();
-    let not_skipped = (!skipped.is_empty()).then(|| format!("not ({})", any_of(&skipped)));
+    let mut left_out: Vec<String> = Vec::new();
+    if !skipped.is_empty() {
+        left_out.push(any_of(&skipped));
+    }
+    left_out.extend(reuse.iter().map(|b| format!("binary_id(={b})")));
+    let not_skipped = (!left_out.is_empty()).then(|| format!("not ({})", left_out.join(" | ")));
     match (caller, not_skipped) {
         (None, None) => None,
         (Some(c), None) => Some(c.to_string()),
@@ -139,29 +146,17 @@ pub fn filterset(caller: Option<&str>, skip: &[Skip]) -> Option<String> {
     }
 }
 
-/// Where nextest writes the report for a run: under the target directory, in
-/// the profile's own directory.
-pub fn junit_path(mock_dir: &Path, passed: &[String]) -> PathBuf {
-    let flag = |long: &str, short: Option<&str>| -> Option<String> {
-        let mut it = passed.iter();
-        while let Some(a) = it.next() {
-            if a == long || Some(a.as_str()) == short {
-                return it.next().cloned();
-            }
-            if let Some(v) = a.strip_prefix(long).and_then(|r| r.strip_prefix('=')) {
-                return Some(v.to_string());
-            }
-        }
-        None
-    };
-    let target = flag("--target-dir", None)
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from))
-        .or_else(|| std::env::var_os("CARGO_BUILD_TARGET_DIR").map(PathBuf::from))
-        .map(|p| if p.is_absolute() { p } else { mock_dir.join(p) })
-        .unwrap_or_else(|| mock_dir.join("target"));
-    let profile = flag("--profile", Some("-P")).unwrap_or_else(|| "default".to_string());
-    target.join("nextest").join(profile).join("junit.xml")
+/// Where nextest writes the report for a run: a file of ours beside the tool
+/// config, named in that config by its absolute path.
+///
+/// Not left to nextest's own default. Its store directory is `target/nextest`
+/// under the workspace and not under `CARGO_TARGET_DIR` or `--target-dir`
+/// (nextest 0.9.148, measured), so a report looked for under the target
+/// directory the build chose was never there on a machine that shares one, and
+/// the run recorded nothing: no timings and no binary that passed. An absolute
+/// path in the config is where it goes whatever else is set.
+pub fn junit_path(state: &Path) -> PathBuf {
+    state.join("junit.xml")
 }
 
 pub struct RunSpec<'a> {
@@ -228,7 +223,7 @@ mod tests {
             timeout_secs: 900,
             ..TestSettings::default()
         };
-        let t = tool_config(&s, &heavy());
+        let t = tool_config(&s, &heavy(), Path::new("/w/mock/target/state/junit.xml"));
         assert!(
             t.contains("[test-groups.\"@tool:mockspace:heavy\"]\nmax-threads = 2\n"),
             "{t}"
@@ -238,7 +233,7 @@ mod tests {
             "{t}"
         );
         assert!(t.contains("fail-fast = false"));
-        assert!(t.contains("[profile.default.junit]\npath = \"junit.xml\""));
+        assert!(t.contains("[profile.default.junit]\npath = \"/w/mock/target/state/junit.xml\"\n"), "{t}");
         assert!(t.contains(
             "filter = '(binary_id(=kaski-render) & test(=tests::drawn::a)) | (binary_id(=kaski-web::it) & test(=b))'"
         ), "{t}");
@@ -252,12 +247,12 @@ mod tests {
             timeout_secs: 45,
             ..TestSettings::default()
         };
-        assert!(tool_config(&s, &[]).contains("period = \"45s\", terminate-after = 1"));
+        assert!(tool_config(&s, &[], Path::new("junit.xml")).contains("period = \"45s\", terminate-after = 1"));
         let s = TestSettings {
             timeout_secs: 61,
             ..TestSettings::default()
         };
-        assert!(tool_config(&s, &[]).contains("period = \"60s\", terminate-after = 2"));
+        assert!(tool_config(&s, &[], Path::new("junit.xml")).contains("period = \"60s\", terminate-after = 2"));
     }
 
     fn levels(pairs: &[(&str, &str)]) -> TestSettings {
@@ -307,7 +302,11 @@ mod tests {
         let only_gone = levels(&[("gone", "2")]);
         assert_eq!(cargo_config(&only_gone, "dev", Some(&members)), None);
         // Where the workspace could not be read, nothing can be ruled out.
-        assert!(cargo_config(&only_gone, "dev", None).unwrap().contains("gone"));
+        assert!(
+            cargo_config(&only_gone, "dev", None)
+                .unwrap()
+                .contains("gone")
+        );
     }
 
     #[test]
@@ -327,7 +326,10 @@ mod tests {
         assert_eq!(p("--cargo-profile=ci"), "ci");
         assert_eq!(build_profile(&words("--profile ci"), "--profile"), "ci");
         assert_eq!(build_profile(&words("--profile=ci"), "--profile"), "ci");
-        assert_eq!(build_profile(&words("--profile ci"), "--cargo-profile"), "dev");
+        assert_eq!(
+            build_profile(&words("--profile ci"), "--cargo-profile"),
+            "dev"
+        );
     }
 
     #[test]
@@ -370,7 +372,7 @@ mod tests {
 
     #[test]
     fn no_heavy_test_means_no_override() {
-        assert!(!tool_config(&TestSettings::default(), &[]).contains("overrides"));
+        assert!(!tool_config(&TestSettings::default(), &[], Path::new("junit.xml")).contains("overrides"));
     }
 
     #[test]
@@ -381,37 +383,63 @@ mod tests {
             why:    SkipWhy::Cached,
         }];
         let not = "not ((binary_id(=kaski-render) & test(=tests::drawn::a)))";
-        assert_eq!(filterset(None, &[]), None);
-        assert_eq!(filterset(Some("test(x)"), &[]).as_deref(), Some("test(x)"));
-        assert_eq!(filterset(None, &skip).as_deref(), Some(not));
+        assert_eq!(filterset(None, &[], &[]), None);
         assert_eq!(
-            filterset(Some("test(x)"), &skip),
+            filterset(Some("test(x)"), &[], &[]).as_deref(),
+            Some("test(x)")
+        );
+        assert_eq!(filterset(None, &skip, &[]).as_deref(), Some(not));
+        assert_eq!(
+            filterset(Some("test(x)"), &skip, &[]),
             Some(format!("(test(x)) & {not}"))
         );
     }
 
     #[test]
-    fn the_report_follows_the_target_dir_and_the_profile() {
-        let m = Path::new("/w/mock");
-        // The environment is read too; this arm is about the arguments, and is
-        // only exact where the environment sets neither variable.
-        if std::env::var_os("CARGO_TARGET_DIR").is_none()
-            && std::env::var_os("CARGO_BUILD_TARGET_DIR").is_none()
-        {
-            assert_eq!(
-                junit_path(m, &[]),
-                PathBuf::from("/w/mock/target/nextest/default/junit.xml")
-            );
-            let p: Vec<String> = ["-P", "ci"].map(String::from).to_vec();
-            assert_eq!(
-                junit_path(m, &p),
-                PathBuf::from("/w/mock/target/nextest/ci/junit.xml")
-            );
-        }
-        let p: Vec<String> = ["--target-dir=/t", "--profile", "x"]
-            .map(String::from)
-            .to_vec();
-        assert_eq!(junit_path(m, &p), PathBuf::from("/t/nextest/x/junit.xml"));
+    fn the_filterset_leaves_out_whole_binaries_beside_single_tests() {
+        let reuse = vec!["kaski-web::sound_gate".to_string(), "kaski-web".to_string()];
+        assert_eq!(
+            filterset(None, &[], &reuse).as_deref(),
+            Some("not (binary_id(=kaski-web::sound_gate) | binary_id(=kaski-web))")
+        );
+        let skip = vec![Skip {
+            binary: "kaski-render".to_string(),
+            name:   "tests::drawn::a".to_string(),
+            why:    SkipWhy::Cached,
+        }];
+        assert_eq!(
+            filterset(Some("test(x)"), &skip, &reuse).as_deref(),
+            Some(
+                "(test(x)) & not ((binary_id(=kaski-render) & test(=tests::drawn::a)) | \
+                 binary_id(=kaski-web::sound_gate) | binary_id(=kaski-web))"
+            )
+        );
+    }
+    /// The report is where the config says, whatever target directory or profile
+    /// the build was told: nextest keeps its own store beside the workspace, not
+    /// under them, which is why the path is named rather than derived.
+    #[test]
+    fn the_report_is_a_file_of_ours_that_the_config_names() {
+        let state = Path::new("/w/mock/target/mockspace-test-state");
+        let junit = junit_path(state);
+        assert_eq!(junit, PathBuf::from("/w/mock/target/mockspace-test-state/junit.xml"));
+        let t = tool_config(&TestSettings::default(), &[], &junit);
+        assert!(
+            t.contains("[profile.default.junit]\npath = \"/w/mock/target/mockspace-test-state/junit.xml\"\n"),
+            "{t}"
+        );
+    }
+
+    /// Whatever the path holds, the config stays TOML that says that path.
+    #[test]
+    fn a_path_with_quotes_and_backslashes_is_escaped_into_the_config() {
+        let odd = Path::new("/w/it's \"mine\"/back\\slash/junit.xml");
+        let t = tool_config(&TestSettings::default(), &[], odd);
+        let doc = t.parse::<toml_edit::DocumentMut>().unwrap_or_else(|e| panic!("{e}\n{t}"));
+        assert_eq!(
+            doc["profile"]["default"]["junit"]["path"].as_str(),
+            Some(odd.to_str().unwrap())
+        );
     }
 
     #[test]

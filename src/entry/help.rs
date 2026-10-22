@@ -196,14 +196,31 @@ const COMMANDS: &[Cmd] = &[
                   outside it its sources name as `../` literals (content, \
                   fixtures), the same for every member compiled into its \
                   tests, and the lockfile, toolchain and cargo configuration. \
+                  Below the member it works per test binary: an integration \
+                  test (`tests/<name>.rs`, `tests/<name>/main.rs`) is built \
+                  from its own file, the modules it declares, the files its \
+                  string literals name inside the member, and what its \
+                  sources read from outside, and from the member's library \
+                  and the libraries it depends on, never from another \
+                  integration test. A binary that passed at inputs that have \
+                  not moved is left out of a member that runs (listed as \
+                  `reuse`), so a change confined to one test file runs that \
+                  binary. Anything it cannot place widens: a file under \
+                  tests/ no binary claims, the library, the manifest and the \
+                  build script move every binary, and a binary that reads \
+                  the environment or `file!()`, or declares a module inside a \
+                  macro or an inline module, is rebuilt on every claimed \
+                  file. A dependent is not moved by its dependency's tests. \
                   A test that took `[test] heavy_after_secs` (10) or longer \
                   last time is heavy: heavy tests run `[test] heavy_threads` \
-                  (1) at a time, and one that passed at its member's current \
+                  (1) at a time, and one that passed at its binary's current \
                   fingerprint is skipped as cached. Every test is killed \
                   after `[test] timeout_secs` (900). The run ends with the \
                   slowest tests.\n\n\
-                  --full runs every member asked for. --no-cache runs the \
-                  cached heavy tests too. --cheap also defers every heavy \
+                  --full runs every member asked for, every binary of it. \
+                  --no-cache runs the cached heavy tests and the binaries it \
+                  would leave out too. \
+                  --cheap also defers every heavy \
                   test that has passed before, running only new ones and ones \
                   that failed last time, and leaves the members it deferred \
                   for owing them. -p and --workspace choose members as in \

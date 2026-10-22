@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::fingerprint::Fingerprints;
 use super::graph::Graph;
 use super::history::{Flavour, Green, History};
-use super::junit::{Case, Outcome};
+use super::junit::{Case, Outcome, package_of};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -66,6 +66,9 @@ pub struct Plan {
     /// Every heavy test known in the members that run, as (binary, name).
     pub heavy:   Vec<(String, String)>,
     pub skip:    Vec<Skip>,
+    /// Test binaries of the members that run which are left out, since their
+    /// inputs have not moved since they last ran whole and passed.
+    pub reuse:   Vec<String>,
 }
 
 impl Plan {
@@ -75,6 +78,7 @@ impl Plan {
         let exists = |bin: &str, name: &str| live.get(bin).is_some_and(|t| t.contains(name));
         self.heavy.retain(|(b, n)| exists(b, n));
         self.skip.retain(|s| exists(&s.binary, &s.name));
+        self.reuse.retain(|b| live.contains_key(b));
     }
 }
 
@@ -109,17 +113,32 @@ pub fn plan(i: &Inputs) -> Plan {
     }
 
     let running: BTreeSet<&str> = p.run.iter().map(|(n, _)| n.as_str()).collect();
+
+    // A binary of a member that runs is left out when it ran whole and passed at
+    // the inputs it has now. A full run asks for every binary, and without the
+    // cache nothing is taken on an earlier pass.
+    if i.cache && i.mode != Mode::Full {
+        p.reuse = f
+            .bins
+            .iter()
+            .filter(|(bin, at)| {
+                running.contains(package_of(bin)) && i.fp.of_binary(bin) == Some(*at)
+            })
+            .map(|(bin, _)| bin.clone())
+            .collect();
+    }
+    let reused: BTreeSet<&str> = p.reuse.iter().map(String::as_str).collect();
+
     p.heavy = i
         .history
         .heavy(i.flavour, i.threshold)
         .into_iter()
-        .filter(|(bin, _)| running.contains(super::junit::package_of(bin)))
+        .filter(|(bin, _)| running.contains(package_of(bin)) && !reused.contains(bin.as_str()))
         .collect();
 
     for (bin, name) in &p.heavy {
-        let pkg = super::junit::package_of(bin);
         let record = f.tests.get(bin).and_then(|t| t.get(name));
-        let at = i.fp.full.get(pkg);
+        let at = i.fp.of_binary(bin);
         let why = if i.cache && at.is_some() && record.and_then(|r| r.passed_at.as_ref()) == at {
             Some(SkipWhy::Cached)
         } else if i.mode == Mode::Cheap && record.is_none_or(|r| r.passed) {
@@ -138,11 +157,17 @@ pub fn plan(i: &Inputs) -> Plan {
     p
 }
 
-/// Which own inputs moved under a member since its suite last passed.
+/// What a member's fingerprint holds of `m` when `m` is `name` itself (its own
+/// inputs) or something its tests are built from (that member's shared inputs).
+fn input_of<'a>(fp: &'a Fingerprints, name: &str, m: &str) -> Option<&'a String> {
+    if m == name { fp.own.get(m) } else { fp.shared.get(m) }
+}
+
+/// Which inputs moved under a member since its suite last passed.
 fn moved(name: &str, g: &Green, fp: &Fingerprints, graph: &Graph) -> Why {
     let mut who: Vec<String> = std::iter::once(name.to_string())
         .chain(graph.test_closure(name))
-        .filter(|m| fp.own.get(m) != g.own.get(m))
+        .filter(|m| input_of(fp, name, m) != g.own.get(m))
         .collect();
     who.sort();
     if who.is_empty() { Why::Workspace } else { Why::Moved(who) }
@@ -169,7 +194,7 @@ pub fn greens(plan: &Plan, cases: &[Case], complete: bool) -> Vec<String> {
         .skip
         .iter()
         .filter(|s| s.why == SkipWhy::Deferred)
-        .map(|s| super::junit::package_of(&s.binary))
+        .map(|s| package_of(&s.binary))
         .collect();
     plan.run
         .iter()
@@ -179,17 +204,99 @@ pub fn greens(plan: &Plan, cases: &[Case], complete: bool) -> Vec<String> {
         .collect()
 }
 
-/// The record a green member keeps: its fingerprint, and the own inputs of it
-/// and its closure.
+/// The record a green member keeps: its fingerprint, its own inputs and the
+/// shared inputs of its closure.
 pub fn green_record(name: &str, fp: &Fingerprints, graph: &Graph) -> Green {
     let own: BTreeMap<String, String> = std::iter::once(name.to_string())
         .chain(graph.test_closure(name))
-        .filter_map(|m| fp.own.get(&m).map(|o| (m.clone(), o.clone())))
+        .filter_map(|m| input_of(fp, name, &m).map(|o| (m.clone(), o.clone())))
         .collect();
     Green {
         full: fp.full.get(name).cloned().unwrap_or_default(),
         own,
     }
+}
+
+/// What a finished run settles about each test binary that ran.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BinaryOutcomes {
+    /// Binaries that ran and passed, with the fingerprint they passed at.
+    pub passed: Vec<(String, String)>,
+    /// Binaries in which a test failed, whose record of a pass is no longer true.
+    pub failed: Vec<String>,
+}
+
+impl BinaryOutcomes {
+    /// Folds the run into the record: a binary that failed loses its pass, even
+    /// one made at the fingerprint it failed at (a test that depends on
+    /// something no fingerprint holds), and one that passed gains it.
+    pub fn apply(self, record: &mut Flavour) {
+        for bin in &self.failed {
+            record.bins.remove(bin);
+        }
+        record.bins.extend(self.passed);
+    }
+}
+
+/// The binaries a run leaves passed or failed, from its report.
+///
+/// A binary passed when it appears in the report, none of its cases failed and
+/// the run deferred none of its heavy tests; the heavy tests a cache skipped
+/// passed at the same fingerprint, so they stand. `complete` is as for
+/// [`greens`]: an incomplete run settles nothing, since a binary missing from
+/// its report looks exactly like one that was never started. A binary that
+/// failed loses its record even though it is rebuilt on different inputs than
+/// the record named, so a stale pass cannot outlive a failure.
+pub fn binary_outcomes(
+    plan: &Plan,
+    cases: &[Case],
+    fp: &Fingerprints,
+    complete: bool,
+) -> BinaryOutcomes {
+    let mut out = BinaryOutcomes::default();
+    if !complete {
+        return out;
+    }
+    let deferred: BTreeSet<&str> = plan
+        .skip
+        .iter()
+        .filter(|s| s.why == SkipWhy::Deferred)
+        .map(|s| s.binary.as_str())
+        .collect();
+    let mut verdict: BTreeMap<&str, bool> = BTreeMap::new();
+    for c in cases {
+        let ok = verdict.entry(c.binary.as_str()).or_insert(true);
+        *ok &= c.outcome != Outcome::Fail;
+    }
+    for (bin, ok) in verdict {
+        if !ok {
+            out.failed.push(bin.to_string());
+        } else if !deferred.contains(bin)
+            && let Some(at) = fp.of_binary(bin)
+        {
+            out.passed.push((bin.to_string(), at.clone()));
+        }
+    }
+    out
+}
+
+/// The binaries of the members that ran which hold no test at all, with the
+/// fingerprint they stand at. Nothing of theirs appears in a report, so without
+/// this they would be started again by every run to find nothing in them.
+pub fn idle_binaries(
+    plan: &Plan,
+    live: &super::live::Live,
+    fp: &Fingerprints,
+    complete: bool,
+) -> Vec<(String, String)> {
+    if !complete {
+        return Vec::new();
+    }
+    let running: BTreeSet<&str> = plan.run.iter().map(|(n, _)| n.as_str()).collect();
+    live.iter()
+        .filter(|(bin, tests)| tests.is_empty() && running.contains(package_of(bin)))
+        .filter_map(|(bin, _)| fp.of_binary(bin).map(|at| (bin.clone(), at.clone())))
+        .collect()
 }
 
 #[cfg(test)]

@@ -16,9 +16,16 @@
 //! marks nothing, and what a test links is decided per test binary, which
 //! holds the quick tests of a crate beside its slow ones.
 //!
+//! **Below the member, it is a test binary that is selected** ([`units`]): an
+//! integration test whose own files and library have not moved since it last ran
+//! whole and passed is left out of a member that runs, which is what makes a
+//! change confined to one `tests/<name>.rs` run that binary and a failed member
+//! rerun only the binary that failed.
+//!
 //! **What a run leaves behind** is the history the next one selects from. A
-//! member is recorded green at its fingerprint when its whole suite passed;
-//! each test's time and result is recorded whatever it did.
+//! member is recorded green at its fingerprint when its whole suite passed; each
+//! test binary that ran whole and passed is recorded at its own fingerprint;
+//! each slow test's time and result is recorded whatever it did.
 
 pub mod args;
 pub mod fingerprint;
@@ -30,6 +37,7 @@ pub mod nextest;
 mod report;
 pub mod select;
 pub mod settings;
+pub mod units;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -149,17 +157,20 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         return Some(ExitCode::SUCCESS);
     }
 
+    let junit = nextest::junit_path(&state);
     let tool_config = state.join("nextest.toml");
-    if let Err(e) = std::fs::write(&tool_config, nextest::tool_config(&cfg.test, &plan.heavy)) {
+    if let Err(e) = std::fs::write(
+        &tool_config,
+        nextest::tool_config(&cfg.test, &plan.heavy, &junit),
+    ) {
         eprintln!("mock test: could not write {}: {e}", tool_config.display());
         return Some(ExitCode::FAILURE);
     }
-    let junit = nextest::junit_path(&cfg.mock_dir, &inv.passed);
     // A report left by an earlier run must not be read as this one's.
     let _ = std::fs::remove_file(&junit);
 
     let packages: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
-    let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip);
+    let filter = nextest::filterset(inv.filter.as_deref(), &plan.skip, &plan.reuse);
     let status = nextest::command(&nextest::RunSpec {
         mock_dir:     &cfg.mock_dir,
         tool_config:  &tool_config,
@@ -183,13 +194,28 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     }
 
     if let Some(fp) = &fp {
-        history.record_cases(&flavour, &cases, &fp.full, cfg.test.heavy_after_secs);
+        // A test's pass stands at its binary's fingerprint.
+        let at: std::collections::BTreeMap<String, String> = cases
+            .iter()
+            .filter_map(|c| {
+                fp.of_binary(&c.binary)
+                    .map(|a| (c.binary.clone(), a.clone()))
+            })
+            .collect();
+        history.record_cases(&flavour, &cases, &at, cfg.test.heavy_after_secs);
         if let Some(live) = &live {
             history.prune(&flavour, &run_members, live);
         }
         let complete = nextest::ran_to_the_end(code) && !inv.narrowed();
         let greens = select::greens(&plan, &cases, complete);
+        let mut binaries = select::binary_outcomes(&plan, &cases, fp, complete);
+        if let Some(live) = &live {
+            binaries
+                .passed
+                .extend(select::idle_binaries(&plan, live, fp, complete));
+        }
         let f = history.flavour_mut(&flavour);
+        binaries.apply(f);
         for (name, _) in &plan.run {
             if greens.contains(name) {
                 f.green

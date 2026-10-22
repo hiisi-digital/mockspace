@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! What a member's tests depend on, reduced to one digest each.
+//! What a member's tests depend on, reduced to digests.
 //!
 //! **A member's own inputs** are every file under its directory that git
 //! tracks or would track, which takes in its sources, its tests, its manifest
@@ -14,18 +14,31 @@
 //! test's content is found without a list: the path a test reads is written in
 //! its source, and it is read the same way here.
 //!
-//! **A member's fingerprint** is its own inputs, the own inputs of every member
-//! compiled into its tests ([`Graph::test_closure`]), and the workspace-wide
-//! inputs every build reads: the lockfile, the workspace manifest, the
-//! toolchain pin and cargo's and nextest's configuration. The same digest
-//! decides whether a member is selected and whether a heavy test's earlier pass
-//! still stands, so the two can never disagree about what changed.
+//! **A member's shared inputs** are its own less the files only one of its
+//! integration-test binaries is built from ([`super::units`] says which, and why
+//! that is sound). What another member's tests compile of it is its library and
+//! what the library needs, never its `tests/`, so its shared inputs are what
+//! reaches a dependent.
+//!
+//! **A member's fingerprint** is its own inputs, the shared inputs of every
+//! member compiled into its tests ([`Graph::test_closure`]), and the
+//! workspace-wide inputs every build reads: the lockfile, the workspace
+//! manifest, the toolchain pin and cargo's and nextest's configuration. It
+//! decides whether a member is selected.
+//!
+//! **A test binary's fingerprint** is the member's shared inputs, that binary's
+//! unit (or every unit, for one that may read any of them), the shared inputs of
+//! the closure, and the workspace's. It decides whether a binary whose member is
+//! selected still needs to run, and whether a heavy test's earlier pass still
+//! stands. Whatever the member builds that is not an integration test (its
+//! library's own tests, its binaries and examples) shares one fingerprint, the
+//! member's base.
 //!
 //! **What it cannot see** is a path built at run time out of pieces none of
 //! which climbs out on its own (`join("..").join("content")`), an environment
-//! variable, or a file outside the repository. Each of those is a test that may
-//! be skipped when it should have run, and `research/202610091400_suite-selection.md`
-//! names them as the open edges.
+//! variable's value, or a file outside the repository. Each of those is a test
+//! that may be skipped when it should have run, and
+//! `research/202610091400_suite-selection.md` names them as the open edges.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -34,16 +47,36 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 
 use super::graph::Graph;
+use super::units::{self, Facts, Index, Layout};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Fingerprints {
     /// Each member's own inputs, as one digest.
     pub own:     BTreeMap<String, String>,
-    /// Each member's fingerprint: its own, its closure's and the workspace's.
+    /// Each member's inputs less its integration tests' own files: what its
+    /// library and every binary of it are built from, and what a dependent sees.
+    pub shared:  BTreeMap<String, String>,
+    /// Each member's fingerprint: its own, its closure's shared and the
+    /// workspace's.
     pub full:    BTreeMap<String, String>,
+    /// Each integration-test binary's fingerprint, by binary id.
+    pub bins:    BTreeMap<String, String>,
+    /// The fingerprint of whatever a member builds that is not an integration
+    /// test: its library's unit tests, its binaries and its examples.
+    pub base:    BTreeMap<String, String>,
     /// The paths outside each member that its sources name, relative to the
     /// repository root, for the report.
     pub reaches: BTreeMap<String, Vec<PathBuf>>,
+}
+
+impl Fingerprints {
+    /// The fingerprint a test binary stands or falls at: its own when it is an
+    /// integration test, else its member's base.
+    pub fn of_binary(&self, binary: &str) -> Option<&String> {
+        self.bins
+            .get(binary)
+            .or_else(|| self.base.get(super::junit::package_of(binary)))
+    }
 }
 
 /// Files every build in the workspace reads, relative to the mock directory and
@@ -58,6 +91,10 @@ const WORKSPACE_INPUTS: &[&str] = &[
     ".config/nextest.toml",
 ];
 
+/// Bumped when what the digests are made of changes, so a record kept under the
+/// old scheme never equals one made under the new.
+const SCHEME: &str = "2";
+
 /// `cargo_config` is the generated cargo config the run builds with, if any: a
 /// member's opt level changes what its tests are built from, so it salts every
 /// fingerprint as a workspace input does. Absent, the salt is what it was
@@ -69,9 +106,11 @@ pub fn compute(
     cargo_config: Option<&str>,
 ) -> Result<Fingerprints, String> {
     let files = tracked_files(repo_root)?;
+    let index = Index::new(&files);
     let mut hashes = FileHashes::new(repo_root);
 
     let mut salt = Sha256::new();
+    salt.update(format!("scheme\0{SCHEME}\0").as_bytes());
     // Named by where they sit relative to the repository, never by absolute
     // path, so the same tree on another machine has the same fingerprints and
     // a pass recorded in the tracked history stands there too.
@@ -91,6 +130,7 @@ pub fn compute(
     let salt = salt.finalize();
 
     let mut fp = Fingerprints::default();
+    let mut layouts: BTreeMap<String, Layout> = BTreeMap::new();
     for (name, pkg) in &graph.packages {
         let Ok(dir) = pkg.dir.strip_prefix(repo_root) else {
             // A path dependency outside the repository: git cannot list it,
@@ -103,12 +143,15 @@ pub fn compute(
                 h.update([0]);
                 h.update(hashes.of_absolute(&f));
             }
-            fp.own.insert(name.clone(), hex(&h.finalize()));
+            let digest = hex(&h.finalize());
+            fp.own.insert(name.clone(), digest.clone());
+            fp.shared.insert(name.clone(), digest);
             fp.reaches.insert(name.clone(), Vec::new());
             continue;
         };
         let own_files = under(&files, dir);
 
+        let mut facts: BTreeMap<PathBuf, Facts> = BTreeMap::new();
         let mut reaches: BTreeSet<PathBuf> = BTreeSet::new();
         for f in own_files
             .iter()
@@ -117,13 +160,34 @@ pub fn compute(
             let Ok(src) = std::fs::read_to_string(repo_root.join(f)) else {
                 continue;
             };
+            let facts_of = units::facts(&src);
             let file_dir = f.parent().unwrap_or(Path::new(""));
-            for lit in path_literals(&src) {
-                if let Some(r) = reach(&lit, file_dir, dir, repo_root) {
+            for lit in &facts_of.climbing {
+                if let Some(r) = reach(lit, file_dir, dir, repo_root) {
                     reaches.insert(r);
                 }
             }
+            facts.insert(f.clone(), facts_of);
         }
+
+        // Which of the member's files belong to one integration-test binary.
+        // A manifest that cannot be read, or tells nothing narrowable, leaves
+        // every file shared.
+        let layout = std::fs::read_to_string(pkg.dir.join("Cargo.toml"))
+            .ok()
+            .and_then(|m| units::roots(&m, dir, &index))
+            .map(|roots| {
+                units::layout(
+                    &units::Ctx {
+                        repo_root,
+                        member_dir: dir,
+                        index: &index,
+                        facts: &facts,
+                    },
+                    &roots,
+                )
+            })
+            .unwrap_or_default();
 
         let mut h = Sha256::new();
         for f in &own_files {
@@ -131,44 +195,122 @@ pub fn compute(
             h.update([0]);
             h.update(hashes.of(f));
         }
-        for r in &reaches {
-            h.update(b"reach\0");
-            h.update(r.to_string_lossy().as_bytes());
-            let inside = under(&files, r);
-            if inside.is_empty() {
-                // A file the source names that git does not list, such as a
-                // generated one: read off the disk, or marked absent.
-                h.update(hashes.of(r));
-            }
-            for f in inside {
-                h.update(f.to_string_lossy().as_bytes());
-                h.update([0]);
-                h.update(hashes.of(&f));
-            }
-        }
+        hash_reaches(&mut h, &reaches, &files, &mut hashes);
         fp.own.insert(name.clone(), hex(&h.finalize()));
+
+        let mut h = Sha256::new();
+        h.update(b"shared\0");
+        for f in own_files
+            .iter()
+            .filter(|f| !layout.claimed.contains(*f) || layout.shared_pulls.contains(*f))
+        {
+            h.update(f.to_string_lossy().as_bytes());
+            h.update([0]);
+            h.update(hashes.of(f));
+        }
+        // With no unit to tell them apart, every read is the shared sources'.
+        let shared_reaches =
+            if layout.units.is_empty() { &reaches } else { &layout.shared_reaches };
+        hash_reaches(&mut h, shared_reaches, &files, &mut hashes);
+        fp.shared.insert(name.clone(), hex(&h.finalize()));
         fp.reaches
             .insert(name.clone(), reaches.into_iter().collect());
+        layouts.insert(name.clone(), layout);
     }
 
     for name in graph.packages.keys() {
+        let closure: Vec<(String, String)> = graph
+            .test_closure(name)
+            .into_iter()
+            .map(|dep| {
+                let digest = fp.shared.get(&dep).cloned().unwrap_or_default();
+                (dep, digest)
+            })
+            .collect();
+        let fold = |h: &mut Sha256| {
+            for (dep, digest) in &closure {
+                h.update(dep.as_bytes());
+                h.update([0]);
+                h.update(digest.as_bytes());
+            }
+        };
+
         let mut h = Sha256::new();
         h.update(salt);
         h.update(fp.own[name].as_bytes());
-        for dep in graph.test_closure(name) {
-            h.update(dep.as_bytes());
-            h.update([0]);
-            h.update(
-                fp.own
-                    .get(&dep)
-                    .map(String::as_str)
-                    .unwrap_or("")
-                    .as_bytes(),
-            );
-        }
+        fold(&mut h);
         fp.full.insert(name.clone(), hex(&h.finalize()));
+
+        let mut h = Sha256::new();
+        h.update(salt);
+        h.update(b"base\0");
+        h.update(fp.shared[name].as_bytes());
+        fold(&mut h);
+        fp.base.insert(name.clone(), hex(&h.finalize()));
+
+        let Some(layout) = layouts.get(name) else {
+            continue;
+        };
+        // What a binary that may read any claimed file is rebuilt on.
+        let mut every = Sha256::new();
+        for f in &layout.claimed {
+            every.update(f.to_string_lossy().as_bytes());
+            every.update([0]);
+            every.update(hashes.of(f));
+        }
+        let every_reach: BTreeSet<PathBuf> = layout
+            .units
+            .values()
+            .flat_map(|u| u.reaches.iter().cloned())
+            .collect();
+        hash_reaches(&mut every, &every_reach, &files, &mut hashes);
+        let every = every.finalize();
+        for (target, unit) in &layout.units {
+            let mut h = Sha256::new();
+            h.update(salt);
+            h.update(format!("bin\0{target}\0").as_bytes());
+            h.update(fp.shared[name].as_bytes());
+            if unit.wide {
+                h.update(b"wide\0");
+                h.update(every);
+            } else {
+                for f in &unit.files {
+                    h.update(f.to_string_lossy().as_bytes());
+                    h.update([0]);
+                    h.update(hashes.of(f));
+                }
+                hash_reaches(&mut h, &unit.reaches, &files, &mut hashes);
+            }
+            fold(&mut h);
+            fp.bins
+                .insert(format!("{name}::{target}"), hex(&h.finalize()));
+        }
     }
     Ok(fp)
+}
+
+/// The contents behind each path a source reaches outside its member: the files
+/// under it that git lists, else the file itself read off the disk (a generated
+/// one), or marked absent.
+fn hash_reaches(
+    h: &mut Sha256,
+    reaches: &BTreeSet<PathBuf>,
+    files: &[PathBuf],
+    hashes: &mut FileHashes,
+) {
+    for r in reaches {
+        h.update(b"reach\0");
+        h.update(r.to_string_lossy().as_bytes());
+        let inside = under(files, r);
+        if inside.is_empty() {
+            h.update(hashes.of(r));
+        }
+        for f in inside {
+            h.update(f.to_string_lossy().as_bytes());
+            h.update([0]);
+            h.update(hashes.of(&f));
+        }
+    }
 }
 
 /// Every file git tracks or would track, relative to the repository root:
@@ -276,55 +418,7 @@ fn hex(bytes: &[u8]) -> String {
 /// Parsed rather than searched, so a path in a comment or a doc string is not
 /// an input, and a raw string is read as written.
 pub fn path_literals(source: &str) -> Vec<String> {
-    let mut parser = tree_sitter::Parser::new();
-    if parser
-        .set_language(&tree_sitter_rust::LANGUAGE.into())
-        .is_err()
-    {
-        return Vec::new();
-    }
-    let Some(tree) = parser.parse(source, None) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    let mut stack = vec![tree.root_node()];
-    while let Some(node) = stack.pop() {
-        match node.kind() {
-            "string_literal" | "raw_string_literal" => {
-                if let Some(v) = node
-                    .utf8_text(source.as_bytes())
-                    .ok()
-                    .and_then(literal_value)
-                    .filter(|v| climbs_out(v))
-                {
-                    out.push(v.to_string());
-                }
-            },
-            _ => {
-                let mut cursor = node.walk();
-                stack.extend(node.children(&mut cursor));
-            },
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
-}
-
-/// The text between a literal's quotes, or nothing for one with an escape in
-/// it, which a path is never written with.
-fn literal_value(text: &str) -> Option<&str> {
-    let body = text.trim_start_matches('r').trim_start_matches('#');
-    let body = body.trim_end_matches('#');
-    let inner = body.strip_prefix('"')?.strip_suffix('"')?;
-    (!inner.contains('\\')).then_some(inner)
-}
-
-fn climbs_out(v: &str) -> bool {
-    let p = Path::new(v.trim_start_matches('/'));
-    let mut comps = p.components();
-    matches!(comps.next(), Some(Component::ParentDir))
-        && p.components().any(|c| matches!(c, Component::Normal(_)))
+    units::facts(source).climbing
 }
 
 /// Where a path literal lands, relative to the repository root, if it lands
@@ -360,7 +454,7 @@ pub fn reach(lit: &str, file_dir: &Path, member_dir: &Path, repo_root: &Path) ->
 
 /// `a/b/../c` as `a/c`, lexically, or nothing when it climbs above where it
 /// started, which here means out of the repository.
-fn normalise(p: &Path) -> Option<PathBuf> {
+pub(super) fn normalise(p: &Path) -> Option<PathBuf> {
     let mut out = PathBuf::new();
     for c in p.components() {
         match c {
@@ -380,3 +474,7 @@ fn normalise(p: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 #[path = "fingerprint_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "fingerprint_units_tests.rs"]
+mod unit_tests;

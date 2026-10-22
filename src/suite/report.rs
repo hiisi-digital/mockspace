@@ -6,6 +6,7 @@
 //! What a run says before and after: which members run and why, which heavy
 //! tests it skips and why, and which tests were slow.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use super::args::Invocation;
@@ -88,6 +89,19 @@ pub fn plan_text(
             p.heavy.len()
         );
     }
+    if !p.reuse.is_empty() {
+        let _ = writeln!(
+            t,
+            "    reuse    {} test binary(ies) not run, passed at inputs that have not moved:",
+            p.reuse.len()
+        );
+        for n in p.reuse.iter().take(NAMED_SKIPS) {
+            let _ = writeln!(t, "               {n}");
+        }
+        if p.reuse.len() > NAMED_SKIPS {
+            let _ = writeln!(t, "               and {} more", p.reuse.len() - NAMED_SKIPS);
+        }
+    }
     for (why, label) in [(SkipWhy::Cached, "cached"), (SkipWhy::Deferred, "deferred")] {
         let names: Vec<String> = p
             .skip
@@ -133,9 +147,14 @@ pub fn outcome_text(p: &Plan, cases: &[Case], heavy_after: f64) -> String {
     ran.sort_by(|a, b| b.secs.total_cmp(&a.secs));
     let total: f64 = ran.iter().map(|c| c.secs).sum();
     let heavy = ran.iter().filter(|c| c.secs >= heavy_after).count();
+    let binaries = ran
+        .iter()
+        .map(|c| c.binary.as_str())
+        .collect::<BTreeSet<_>>()
+        .len();
     let _ = writeln!(
         t,
-        "\nmock test: {} test(s) ran, {:.0}s of test time, {heavy} at or over {heavy_after}s; slowest:",
+        "\nmock test: {} test(s) in {binaries} binary(ies) ran, {:.0}s of test time, {heavy} at or over {heavy_after}s; slowest:",
         ran.len(),
         total
     );
@@ -183,6 +202,7 @@ mod tests {
                 name:   "drawn".to_string(),
                 why:    SkipWhy::Cached,
             }],
+            reuse:   vec!["mesh::it".to_string(), "mesh::gait".to_string()],
         };
         let t = plan_text(
             &p,
@@ -208,6 +228,12 @@ mod tests {
         );
         assert!(t.contains("cached   1 heavy test(s) not run"), "{t}");
         assert!(t.contains("render drawn"), "{t}");
+        assert!(
+            t.contains(
+                "reuse    2 test binary(ies) not run, passed at inputs that have not moved:\n               mesh::it\n               mesh::gait\n"
+            ),
+            "{t}"
+        );
     }
 
     #[test]
@@ -228,7 +254,7 @@ mod tests {
         ];
         let t = outcome_text(&Plan::default(), &cases, 10.0);
         assert!(
-            t.contains("3 test(s) ran, 172s of test time, 2 at or over 10s"),
+            t.contains("3 test(s) in 1 binary(ies) ran, 172s of test time, 2 at or over 10s"),
             "{t}"
         );
         let drawn = t.find("render drawn").unwrap();
