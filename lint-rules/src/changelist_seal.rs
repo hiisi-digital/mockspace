@@ -19,9 +19,9 @@
 //!   holding nothing but a bare title, where the file is not committed at that
 //!   path yet. That is a close carrying either of the above into history.
 //!
-//! A closed round directory is one named by a `YYYYMMDDHHMM` stamp, or by one
-//! with a `-N` suffix, which is what a close writes when two rounds share a
-//! minute. An abandoned round's directory is not one: an abandoned round may
+//! A closed round directory is one named by a round id (a `YYYYMMDDHHMM` stamp,
+//! with or without a `-tag`, see [`crate::round_id`]), or by one with a `-N`
+//! suffix, which is what a close writes when two rounds still share a name. An abandoned round's directory is not one: an abandoned round may
 //! hold unlocked changelists, since abandoning is exactly not finishing.
 //!
 //! Files already committed inside a closed round are not read. They are frozen,
@@ -207,16 +207,7 @@ fn closed_round_dirs(design_rounds: &Path) -> Vec<String> {
     rounds
 }
 
-/// `YYYYMMDDHHMM`, or that with `-N` after it for a close that shared its
-/// minute with an earlier one. Not `-abandoned`, nor anything else.
-fn is_round_dir(name: &str) -> bool {
-    let (stamp, suffix) = match name.split_once('-') {
-        Some((stamp, suffix)) => (stamp, Some(suffix)),
-        None => (name, None),
-    };
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    stamp.len() == 12 && digits(stamp) && suffix.is_none_or(digits)
-}
+use crate::round_id::is_round_dir;
 
 /// The files `HEAD` holds directly inside each round directory, by round.
 ///

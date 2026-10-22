@@ -46,10 +46,10 @@ Everything outside `mock/` is yours. Mockspace owns:
     │                                          DESIGN.md.tmpl, optional BACKLOG.md.tmpl,
     │                                          optional SHAME.md.tmpl]
     ├── design_rounds/                        [authored: round state machine]
-    │   ├── <timestamp>_topic.<name>.md
-    │   ├── <timestamp>_research.<name>.md
-    │   ├── <timestamp>_changelist.doc[.lock|.deprecated].md
-    │   ├── <timestamp>_changelist.src[.lock|.deprecated].md
+    │   ├── <round-id>_topic.<name>.md
+    │   ├── <round-id>_research.<name>.md
+    │   ├── <round-id>_changelist.doc[.lock|.deprecated].md
+    │   ├── <round-id>_changelist.src[.lock|.deprecated].md
     │   └── <archived-round>/                 [after `cargo mock close`]
     ├── research/                             [optional: round-independent material]
     ├── agent/                                [optional: agent template files]
@@ -82,11 +82,13 @@ Every round walks five phases. Each phase is detected from the presence and stat
 | `IMPL`      | `*_changelist.doc.lock.md` and `*_changelist.src.md` both exist |
 | `CLOSED`    | `*_changelist.doc.lock.md` and `*_changelist.src.lock.md`       |
 
-Filenames use a compact timestamp prefix:
+Filenames start with the round id:
 
 ```
-YYYYMMDDHHMM_{topic|research|changelist}.{name|doc|src}[.lock|.deprecated].md
+<id>_{topic|research|changelist}.{name|doc|src}[.lock|.deprecated].md
 ```
+
+An id is `YYYYMMDDHHMM-tttt`, the minute and a four character tag (a lowercase letter, then letters or digits). `cargo mock round-id` prints a fresh one and is how a round is opened: the tag is drawn from the branch, host and time, and the id is checked against the working tree, the `round/*` tags and `origin/dev` and `origin/main`, so two sessions that open a round in the same minute on separate branches do not meet in a collision when both close. A bare `YYYYMMDDHHMM` from an older round is still an id; the minute stays first, so ids sort by time across old and new. Two closed rounds that still share one id fail the merge of their `.meta` with `round id collision`, and `cargo mock rename-round <id>` renames one side (directory, files, the `round:` field, the local tags) on its own branch before the merge is tried again. An abandoned round keeps `-abandoned` through the rename and loses its `-N` count. A round already on `origin/dev` or `origin/main` exactly as it is committed has landed and is not renamed.
 
 Transitions are subcommands, not manual renames:
 
@@ -95,9 +97,11 @@ Transitions are subcommands, not manual renames:
 | `cargo mock lock`         | Lock the active changelist (`DOC -> DRAFT`, `IMPL -> CLOSED`)     | `DOC`, `IMPL`           |
 | `cargo mock unlock`       | Deprecate src CL and unlock doc CL (destructive; source unchanged) | `DRAFT`, `IMPL`, `CLOSED` |
 | `cargo mock deprecate`    | Deprecate the active CL; in `IMPL` also unlocks doc CL            | `DOC`, `IMPL`           |
-| `cargo mock close`        | Archive the round into a timestamped subdir with `.meta` + `.history` | `CLOSED` only       |
-| `cargo mock archive`      | Archive an abandoned round into a `<timestamp>-abandoned/` subdir | any                     |
+| `cargo mock close`        | Archive the round into a `<round-id>/` subdir with `.meta` + `.history` | `CLOSED` only       |
+| `cargo mock archive`      | Archive an abandoned round into a `<round-id>-abandoned/` subdir | any                     |
 | `cargo mock migrate`      | Rename legacy `YYYY-MM-DD_*.md` files to the compact format       | any                     |
+| `cargo mock round-id`     | Print a fresh round id, `YYYYMMDDHHMM-tttt`                       | any                     |
+| `cargo mock rename-round <old> [<new>]` | Give a round a new id: directory, files, `.meta`, local tags | any                     |
 
 All transition subcommands accept `--auto-commit`, which commits only the renamed files. A temporary `GIT_INDEX_FILE` is used, so whatever is staged stays staged and is not swept into the commit.
 
@@ -311,8 +315,26 @@ record on the next run that runs something, found by asking nextest what it list
 build flags you passed, and none that only shape a run). Where that listing cannot be
 had, a failing build for one, the run says so and drops nothing, and a record naming a
 deleted binary can still stop nextest until the build is mended. A `--features` run
-keeps its own flavour directory. Where two branches both moved a member, either side of
-the conflict is fine to take: the merged tree runs that member once and settles it.
+keeps its own flavour directory.
+
+Two branches that both moved a member's file merge without a conflict: `.gitattributes`
+sends `<mock>/test-history/**/*.json` to the `mockspace-test-history` merge driver
+(`cargo mock merge-test-history`), which `cargo mock` registers in the clone beside the
+registry's. A member's green record, and a test binary's recorded pass, stays where both
+sides hold the same one or only one side moved it from the base, and is dropped where
+both moved it to different values, because neither fingerprint is the merged tree's; the
+next run records it. The driver never picks between two greens that both moved.
+Per-test results and timings are unioned, and where both sides timed a test the later
+measurement is kept: the side that moved it, else the side that last changed the file later,
+else the longer timing. Two files of different versions, members or flavours, or one that
+is not a record, are refused with a message and the path stays conflicted.
+
+The pre-commit hook runs `cargo mock check-test-history` for a commit that stages one of
+these files. A commit that nulls a member's green record while touching none of its
+inputs (its directory, the directories of the members compiled into its tests, the paths
+its sources read from outside, the workspace-wide files) is refused, naming the member:
+a run cut short, by a container restart or a full disk, leaves that. A merge commit whose
+nulled green is one the driver's rule drops is not refused.
 
 ```toml
 [test]

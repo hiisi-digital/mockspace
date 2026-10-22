@@ -90,19 +90,58 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name:    "close",
-        summary: "archive a finished round into a timestamped directory",
+        summary: "archive a finished round into a directory named by its id",
         args:    &[],
         help:    "Archives a finished round (both changelists locked) into \
-                  design_rounds/<timestamp>/ with .meta and .history. Valid only \
+                  design_rounds/<id>/ with .meta and .history. Valid only \
                   from CLOSED. Accepts --auto-commit.",
     },
     Cmd {
         name:    "archive",
         summary: "archive an abandoned round without closing it",
         args:    &[],
-        help:    "Archives an abandoned round into a <timestamp>-abandoned/ \
+        help:    "Archives an abandoned round into an <id>-abandoned/ \
                   subdirectory at any phase, without requiring it to reach \
                   CLOSED first. Accepts --auto-commit.",
+    },
+    Cmd {
+        name:    "round-id",
+        summary: "print a fresh design round id",
+        args:    &[],
+        help:    "Prints one id for a round you are about to open, and nothing else: \
+                  the minute, YYYYMMDDHHMM, then a four character tag, \
+                  YYYYMMDDHHMM-tttt. Name every file of the round with it, \
+                  <id>_topic.<name>.md and <id>_changelist.doc.md, instead of a \
+                  bare minute that another branch may have taken. The tag is drawn \
+                  from the branch, host and time of the call, and walked past any \
+                  id the working tree, the round tags or origin/dev and origin/main \
+                  already hold. Ids written without a tag stay valid and sort with \
+                  the new ones by minute.",
+    },
+    Cmd {
+        name:    "rename-round",
+        summary: "give a round a new id, when two rounds share one",
+        args:    &[],
+        help:    "`rename-round <old id or directory> [<new id>]` renames one round: the closed directory (or the flat files of the \
+                  active round) with the old id, every file inside that starts with \
+                  it, the `round:` line of .meta, and the local round/<old>/* tags. \
+                  The new id defaults to a fresh one on the same minute. Run it on \
+                  the branch to rename, before merging, when a merge was refused with \
+                  a round id collision. An abandoned round keeps its -abandoned and loses \
+                  its -N count. A closed round that origin/dev or origin/main \
+                  already holds exactly as committed has landed and is refused. \
+                  Accepts --auto-commit.",
+    },
+    Cmd {
+        name:    "merge-round-meta",
+        summary: "refuse a merge of two closed rounds that share an id, as git's merge driver",
+        args:    &[],
+        help:    "The merge driver `cargo mock` installs for \
+                  <mock>/design_rounds/*/.meta; git calls it as `merge-round-meta %O \
+                  %A %B %P`. A .meta added on both sides with different content is \
+                  two rounds with one id: it exits 1 and names the id and `cargo mock \
+                  rename-round <id>`. Anything else merges as text. It needs no \
+                  project and installs nothing: the wiring is done by `cargo mock`.",
     },
     Cmd {
         name:    "status",
@@ -158,6 +197,38 @@ const COMMANDS: &[Cmd] = &[
                   around that row alone and exit status 1. A file it cannot read as \
                   rows is merged as text, as git would without it. It needs no \
                   project and installs nothing: the wiring is done by `cargo mock`.",
+    },
+    Cmd {
+        name:    "merge-test-history",
+        summary: "merge a member's test-history file, as git's merge driver",
+        args:    &[],
+        help:    "The merge driver `cargo mock` installs for <mock>/test-history/**/*.json; \
+                  git calls it as `merge-test-history %O %A %B %P %L` and reads the \
+                  result from the second. A green record (and a test binary's recorded \
+                  pass) is kept where both sides hold the same one or only one side \
+                  moved it from the base, and dropped where both moved it to different \
+                  values, since neither fingerprint is the merged tree's: the next \
+                  `cargo mock test` records it. It never picks between two greens \
+                  that both moved. Per-test results and timings are unioned, a test both \
+                  sides hold differently taking the later measurement (the side that \
+                  moved it, else the side that last changed the file later (for a `git merge`; a rebase or cherry-pick has no second tip to compare yet), else the longer \
+                  timing). Two files of different versions, members or flavours, or one \
+                  that is not a record, are refused with a message and exit status 1, \
+                  leaving the path conflicted. It needs no project and installs \
+                  nothing: the wiring is done by `cargo mock`.",
+    },
+    Cmd {
+        name:    "check-test-history",
+        summary: "refuse a commit that nulls a green record it has no reason to",
+        args:    &[],
+        help:    "The pre-commit guard over <mock>/test-history/, run by the generated \
+                  hook when a commit stages one of its files. A commit that removes the \
+                  green record of a member whose inputs it does not touch (its own \
+                  directory, the directories of the members compiled into its tests, \
+                  the paths its sources read from outside, the workspace-wide files) is \
+                  refused, naming the member: a run cut short leaves that. In a merge \
+                  commit a null is accepted when `merge-test-history` would have \
+                  written it. Exit status 0 passes, 1 refuses.",
     },
     Cmd {
         name:    "bench",

@@ -240,6 +240,16 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         return crate::registry_merge::run(&subcommand_args(&args, "merge-registry"));
     }
 
+    // The same for the driver that refuses two closed rounds sharing an id.
+    if first_positional(&args) == Some("merge-round-meta") {
+        return crate::design_round::round_merge::run(&subcommand_args(&args, "merge-round-meta"));
+    }
+
+    // The test-history driver is the same kind of call: three temp files, no project.
+    if first_positional(&args) == Some("merge-test-history") {
+        return crate::suite::history_merge::run(&subcommand_args(&args, "merge-test-history"));
+    }
+
     // Determine mock directory, the one way help asks the same question: see
     // `discover_mock_dir` for the order and why the last arm is `design_rounds/`.
     let cwd = std::env::current_dir().unwrap();
@@ -258,6 +268,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     };
 
     let cfg = Config::from_dir(&mock_dir);
+
+    // The pre-commit guard over the test-history files runs on every commit that
+    // stages one, so it answers before the gate, the lint pack and the rest are
+    // brought up.
+    if first_positional(&args) == Some("check-test-history") {
+        return crate::suite::history_guard::run(&cfg.repo_root, &cfg.mock_dir);
+    }
 
     // Keep the durable gate installed and active with no user involvement. This
     // is the whole engine-side setup under the launcher+pin model; the dissolved
@@ -630,6 +647,14 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     "migrate" => design_round::cmd_migrate(&cfg, &subcmd_opts),
                     _ => unreachable!(),
                 };
+            },
+            "round-id" => return design_round::cmd_round_id(&cfg),
+            "rename-round" => {
+                let subcmd_opts = design_round::SubcmdOpts {
+                    auto_commit: auto_commit_wanted(&args),
+                };
+                let rest = subcommand_args(&args, "rename-round");
+                return design_round::cmd_rename_round(&cfg, &subcmd_opts, &rest);
             },
             "bench" => {
                 // Flags included: see `subcommand_args`. Taking these from
@@ -1388,6 +1413,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         &cfg.repo_root,
         &cfg.docs_dir,
         &cfg.mock_dir.join("registry"),
+        &crate::suite::history::History::dir(&cfg.mock_dir),
         &generated,
         commit_regenerated,
         stage_generated,

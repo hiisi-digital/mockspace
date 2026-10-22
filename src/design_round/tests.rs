@@ -197,6 +197,64 @@ mod tests {
         assert!(determine_round_name_from_dir(tmp.path()).is_none());
     }
 
+    // --- tagged round ids ---
+
+    #[test]
+    fn rewrite_keeps_the_tag_of_a_tagged_changelist() {
+        // Mutant: `rewrite_filename` goes back to twelve digits.
+        let result = rewrite_filename(
+            "202610221529-kx3f_changelist.doc.md",
+            ClKind::Doc,
+            ClStatus::Locked,
+        );
+        assert_eq!(result.unwrap(), "202610221529-kx3f_changelist.doc.lock.md");
+    }
+
+    #[test]
+    fn round_name_of_a_tagged_round_carries_the_tag() {
+        // Mutant: `determine_round_name` cuts the id to twelve characters, so a
+        // tagged round archives under the bare minute and collides again.
+        let cls = vec![
+            ParsedChangelist {
+                filename: "202610221529-kx3f_changelist.doc.lock.md".to_string(),
+                kind:     ClKind::Doc,
+                status:   ClStatus::Locked,
+            },
+            ParsedChangelist {
+                filename: "202610221540-kx3f_changelist.src.lock.md".to_string(),
+                kind:     ClKind::Src,
+                status:   ClStatus::Locked,
+            },
+        ];
+        assert_eq!(determine_round_name(&cls), "202610221529-kx3f");
+    }
+
+    #[test]
+    fn round_name_from_dir_reads_old_and_new_ids_in_time_order() {
+        // Mutant: `determine_round_name_from_dir` reads twelve characters, or
+        // sorts the tag ahead of the minute.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dr = tmp.path();
+        std::fs::write(dr.join("202610221600_topic.old.md"), "x").unwrap();
+        std::fs::write(dr.join("202610221530-zzzz_topic.new.md"), "x").unwrap();
+        std::fs::write(dr.join("202610221545-aaaa_topic.newer.md"), "x").unwrap();
+        assert_eq!(
+            determine_round_name_from_dir(dr).as_deref(),
+            Some("202610221530-zzzz")
+        );
+    }
+
+    #[test]
+    fn two_rounds_in_one_minute_get_two_names_without_the_count() {
+        // Mutant: `fresh` ignores `taken`, so the second round of a minute gets
+        // the first one's tag and `disambiguate_archive_name` is the only thing
+        // left between them.
+        let first = lint_rules::round_id::fresh("202610221529", "a", |_| false);
+        let second = lint_rules::round_id::fresh("202610221529", "b", |_| false);
+        assert_ne!(first, second);
+        assert_eq!(disambiguate_archive_name(&first, |n| n == second), first);
+    }
+
     #[test]
     fn archive_kind_meta_and_tag_strings() {
         // Lock down the strings emitted into .meta and tag names so a

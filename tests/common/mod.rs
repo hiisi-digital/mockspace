@@ -50,7 +50,7 @@ impl Repo {
         // reached: nothing in these hooks asks for one.
         write(
             &shims.join("cargo"),
-            "#!/bin/sh\n# MS_NO_CARGO: a hook whose PATH has no cargo. MS_OLD_ENGINE: a launcher pinned to\n# an engine that ignores the flags it does not know and exits 0.\n[ -n \"$MS_NO_CARGO\" ] && exit 127\n[ \"$1\" = mock ] && [ -n \"$MS_OLD_ENGINE\" ] && exit 0\n[ \"$1\" = mock ] && { shift; exec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"; }\nexit 127\n",
+            "#!/bin/sh\n# MS_NO_CARGO: a hook whose PATH has no cargo. MS_OLD_ENGINE: a launcher pinned to\n# an engine that ignores the flags it does not know and exits 0.\n[ -n \"$MS_NO_CARGO\" ] && exit 127\n[ \"$1\" = mock ] && [ -n \"$MS_OLD_ENGINE\" ] && exit 0\n[ \"$1\" = mock ] && { shift; exec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"; }\n# `cargo metadata`, which the engine asks for a member graph, goes to the real one\n[ \"$1\" = metadata ] && [ -n \"$REAL_CARGO\" ] && exec \"$REAL_CARGO\" \"$@\"\nexit 127\n",
         );
         write(
             &shims.join("mock"),
@@ -108,6 +108,10 @@ impl Repo {
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.home.join("config"))
             .env("MOCKSPACE_BIN", BIN)
+            .env(
+                "REAL_CARGO",
+                std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()),
+            )
             .env_remove("MOCK_ROOT");
         c
     }

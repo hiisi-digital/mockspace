@@ -10,6 +10,8 @@
 //! `cargo mock unlock`: destructive: nuke source, deprecate src CL, unlock doc CL.
 //! `cargo mock close`: archive a completed round (CLOSED phase).
 //! `cargo mock archive`: archive an abandoned round from any phase.
+//! `cargo mock round-id`: print a fresh round id (see [`lint_rules::round_id`]).
+//! `cargo mock rename-round`: give a round a new id, when two share one.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,6 +28,9 @@ mod files;
 pub(crate) use files::*;
 mod git;
 pub(crate) use git::*;
+mod rename;
+pub use rename::{cmd_rename_round, cmd_round_id};
+pub(crate) mod round_merge;
 
 #[cfg(test)]
 mod tests;

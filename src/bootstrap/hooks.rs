@@ -336,6 +336,18 @@ if [ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ] \
     fi
 fi
 
+# A commit staging a test-history file must not null the green record of a member
+# whose inputs it does not touch: a run cut short leaves that, and every clone
+# then reruns the member. The engine says which member and why; a merge whose
+# driver dropped a green is not that case and passes.
+if ! git diff --cached --quiet -- "$MOCK_DIR/test-history" 2>/dev/null; then
+    if ! cargo mock check-test-history 2>&1; then
+        echo ""
+        echo "BLOCKED: the test-history files in this commit lose a green record they have no reason to."
+        exit 1
+    fi
+fi
+
 # Only run mockspace validation when staged files touch the design surface.
 STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
 

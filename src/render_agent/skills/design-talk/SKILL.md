@@ -50,7 +50,8 @@ different job and is not this.
    discovered later.
 
 4. Capture as you go, and let a topic file accrete. As each topic firms, write a
-   flat TOPIC-phase file `<mock>/design_rounds/YYYYMMDDHHMM_topic.<slug>.md` and
+   flat TOPIC-phase file `<mock>/design_rounds/<id>_topic.<slug>.md` (the `<id>` is what `cargo mock
+   round-id` prints, taken once for the round) and
    commit it. **A topic file is a transcript, not a decision record.** When the
    talk returns to a subject the file already covers, append a section to that
    file rather than starting a new one. Start a new file when the *subject*

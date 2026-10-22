@@ -81,7 +81,7 @@ impl Fingerprints {
 
 /// Files every build in the workspace reads, relative to the mock directory and
 /// to the repository root. Absent ones are skipped.
-const WORKSPACE_INPUTS: &[&str] = &[
+pub(crate) const WORKSPACE_INPUTS: &[&str] = &[
     "Cargo.toml",
     "Cargo.lock",
     "rust-toolchain",

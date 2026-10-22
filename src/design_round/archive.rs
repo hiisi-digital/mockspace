@@ -72,13 +72,15 @@ pub(crate) fn perform_archive(
     archive_dir_name: &str,
     kind: ArchiveKind,
 ) -> ExitCode {
-    // Disambiguate a colliding archive dir. The round-id is the earliest
-    // changelist's minute-resolution timestamp (determine_round_name), so two
-    // rounds whose first changelist landed in the same minute (across sessions)
-    // would compute the same name and the second close would otherwise hard-error
-    // with a complete-but-unarchivable round. Append `-2`, `-3`, ... until the
-    // name is free so a finished round always archives; the disambiguated name
-    // flows into the dir, `.meta` round id, commit subject, and tag uniformly.
+    // Disambiguate a colliding archive dir within this tree. The round id is
+    // the earliest changelist's id (determine_round_name); ids made by
+    // `cargo mock round-id` carry a tag and do not repeat, but a bare minute
+    // from an older round still can, and the second close would otherwise
+    // hard-error with a complete-but-unarchivable round. Append `-2`, `-3`, ...
+    // until the name is free so a finished round always archives; the
+    // disambiguated name flows into the dir, `.meta` round id, commit subject,
+    // and tag uniformly. This cannot see another branch: two branches that
+    // closed the same name meet in `merge-round-meta`, which refuses the merge.
     let final_name = disambiguate_archive_name(archive_dir_name, |n| dr.join(n).exists());
     if final_name != archive_dir_name {
         eprintln!(
@@ -170,10 +172,8 @@ pub(crate) fn determine_round_name_from_dir(dr: &Path) -> Option<String> {
         if name == "README.md" {
             continue;
         }
-        if let Some(prefix) = name.get(.. 12) {
-            if prefix.chars().all(|c| c.is_ascii_digit()) {
-                prefixes.push(prefix.to_string());
-            }
+        if let Some((id, _)) = lint_rules::round_id::split_prefix(&name) {
+            prefixes.push(id.to_string());
         }
     }
     prefixes.sort();
@@ -206,8 +206,8 @@ pub(crate) fn determine_round_name(cls: &[ParsedChangelist]) -> String {
     let first = sorted[0];
 
     // Extract timestamp prefix.
-    if first.len() >= 12 && first[.. 12].chars().all(|c| c.is_ascii_digit()) {
-        return first[.. 12].to_string();
+    if let Some((id, _)) = lint_rules::round_id::split_prefix(first) {
+        return id.to_string();
     }
     // Legacy: YYYY-MM-DD
     if first.len() >= 10 {

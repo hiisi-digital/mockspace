@@ -31,6 +31,8 @@ pub mod args;
 pub mod fingerprint;
 pub mod graph;
 pub mod history;
+pub mod history_guard;
+pub mod history_merge;
 pub mod junit;
 pub mod live;
 pub mod nextest;
