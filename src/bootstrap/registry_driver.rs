@@ -47,8 +47,14 @@ pub(crate) fn registry_attributes_line(repo_root: &Path, registry_dir: &Path) ->
 /// wants for the path, from its `conflict-marker-size` attribute, and both the
 /// engine and the text-merge fallback are given it.
 pub(crate) fn registry_driver_command(launcher: &str) -> String {
+    engine_driver_command(launcher, "merge-registry")
+}
+
+/// The same command for any driver that is a subcommand of the engine taking
+/// `%O %A %B %P %L`.
+pub(crate) fn engine_driver_command(launcher: &str, subcommand: &str) -> String {
     format!(
-        "s=0; {launcher} merge-registry %O %A %B %P %L || s=$?; if [ $s -gt 1 ]; then git \
+        "s=0; {launcher} {subcommand} %O %A %B %P %L || s=$?; if [ $s -gt 1 ]; then git \
          merge-file --marker-size=%L -L ours -L base -L theirs %A %O %B; else exit $s; fi"
     )
 }
@@ -59,8 +65,24 @@ pub(crate) fn register_registry_driver(
     launcher: &str,
     actions: &mut Vec<String>,
 ) {
-    let key = format!("merge.{REGISTRY_DRIVER}.driver");
-    let wanted = registry_driver_command(launcher);
+    register_engine_driver(
+        repo_root,
+        REGISTRY_DRIVER,
+        "mockspace registry rows",
+        &registry_driver_command(launcher),
+        actions,
+    );
+}
+
+/// Register a driver that is an engine subcommand in the clone's config. Idempotent.
+pub(crate) fn register_engine_driver(
+    repo_root: &Path,
+    driver: &str,
+    title: &str,
+    wanted: &str,
+    actions: &mut Vec<String>,
+) {
+    let key = format!("merge.{driver}.driver");
     let git_config = |args: &[&str]| {
         Command::new("git")
             .arg("-C")
@@ -73,18 +95,14 @@ pub(crate) fn register_registry_driver(
     let current = git_config(&[&key])
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    if current.as_deref() == Some(wanted.as_str()) {
+    if current.as_deref() == Some(wanted) {
         return;
     }
     let ok = |args: &[&str]| git_config(args).is_some_and(|o| o.status.success());
-    if ok(&[&format!("merge.{REGISTRY_DRIVER}.name"), "mockspace registry rows"])
-        && ok(&[&key, &wanted])
-    {
-        actions.push(format!("registered the {REGISTRY_DRIVER} merge driver"));
+    if ok(&[&format!("merge.{driver}.name"), title]) && ok(&[&key, wanted]) {
+        actions.push(format!("registered the {driver} merge driver"));
     } else {
-        actions.push(format!(
-            "could not register the {REGISTRY_DRIVER} merge driver"
-        ));
+        actions.push(format!("could not register the {driver} merge driver"));
     }
 }
 

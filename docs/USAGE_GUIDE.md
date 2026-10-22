@@ -311,8 +311,26 @@ record on the next run that runs something, found by asking nextest what it list
 build flags you passed, and none that only shape a run). Where that listing cannot be
 had, a failing build for one, the run says so and drops nothing, and a record naming a
 deleted binary can still stop nextest until the build is mended. A `--features` run
-keeps its own flavour directory. Where two branches both moved a member, either side of
-the conflict is fine to take: the merged tree runs that member once and settles it.
+keeps its own flavour directory.
+
+Two branches that both moved a member's file merge without a conflict: `.gitattributes`
+sends `<mock>/test-history/**/*.json` to the `mockspace-test-history` merge driver
+(`cargo mock merge-test-history`), which `cargo mock` registers in the clone beside the
+registry's. A member's green record, and a test binary's recorded pass, stays where both
+sides hold the same one or only one side moved it from the base, and is dropped where
+both moved it to different values, because neither fingerprint is the merged tree's; the
+next run records it. The driver never keeps one side's green over the other's.
+Per-test results and timings are unioned, and where both sides timed a test the later
+measurement is kept: the side that moved it, else the side whose tip commit is later,
+else the longer timing. Two files of different versions, members or flavours, or one that
+is not a record, are refused with a message and the path stays conflicted.
+
+The pre-commit hook runs `cargo mock check-test-history` for a commit that stages one of
+these files. A commit that nulls a member's green record while touching none of its
+inputs (its directory, the directories of the members compiled into its tests, the paths
+its sources read from outside, the workspace-wide files) is refused, naming the member:
+a run cut short, by a container restart or a full disk, leaves that. A merge commit whose
+nulled green is one the driver's rule drops is not refused.
 
 ```toml
 [test]

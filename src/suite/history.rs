@@ -14,9 +14,11 @@
 //! paths, so a pass recorded on one machine stands on another.
 //!
 //! **One file per member per flavour**, `<flavour>/<member>.json`, so two
-//! branches conflict only where both moved the same member, and then either
-//! side is as good as the other: the merged tree has a fingerprint neither
-//! recorded, and the next run settles it.
+//! branches meet only where both moved the same member, and then the merge
+//! driver settles the file ([`super::history_merge`]): the merged tree has a
+//! fingerprint neither recorded, so a green both moved is dropped and the next
+//! run records it. A commit that nulls a green it has no reason to is refused
+//! ([`super::history_guard`]).
 //!
 //! **Kept small and still.** Only tests at or over half the heavy threshold are
 //! recorded, since nothing is decided about the others, and a timing is
@@ -42,7 +44,7 @@ use super::junit::{Case, Outcome, package_of};
 pub const VERSION: u32 = 2;
 
 /// The version before it, whose timings are still read and whose passes are not.
-const PREVIOUS: u32 = 1;
+pub(crate) const PREVIOUS: u32 = 1;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct History {
@@ -83,14 +85,28 @@ pub struct TestRecord {
 
 /// One member's record in one flavour, as a file holds it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-struct MemberFile {
-    version: u32,
-    flavour: String,
-    member:  String,
-    green:   Option<Green>,
-    tests:   BTreeMap<String, BTreeMap<String, TestRecord>>,
+pub(crate) struct MemberFile {
+    pub(crate) version: u32,
+    pub(crate) flavour: String,
+    pub(crate) member:  String,
+    pub(crate) green:   Option<Green>,
+    pub(crate) tests:   BTreeMap<String, BTreeMap<String, TestRecord>>,
     #[serde(default)]
-    bins:    BTreeMap<String, String>,
+    pub(crate) bins:    BTreeMap<String, String>,
+}
+
+impl MemberFile {
+    pub(crate) fn parse(text: &str) -> Result<MemberFile, String> {
+        serde_json::from_str(text).map_err(|e| e.to_string())
+    }
+
+    /// The text a run writes, which a merge writes too, so a merged file is the
+    /// one the next run would not rewrite.
+    pub(crate) fn render(&self) -> String {
+        let mut text = serde_json::to_string_pretty(self).unwrap_or_default();
+        text.push('\n');
+        text
+    }
 }
 
 impl History {
@@ -192,8 +208,7 @@ impl History {
             }
             for (member, m) in members {
                 let path = dir.join(format!("{member}.json"));
-                let mut text = serde_json::to_string_pretty(&m).map_err(|e| e.to_string())?;
-                text.push('\n');
+                let text = m.render();
                 if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
                     continue;
                 }

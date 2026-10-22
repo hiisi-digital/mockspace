@@ -160,6 +160,38 @@ const COMMANDS: &[Cmd] = &[
                   project and installs nothing: the wiring is done by `cargo mock`.",
     },
     Cmd {
+        name:    "merge-test-history",
+        summary: "merge a member's test-history file, as git's merge driver",
+        args:    &[],
+        help:    "The merge driver `cargo mock` installs for <mock>/test-history/**/*.json; \
+                  git calls it as `merge-test-history %O %A %B %P %L` and reads the \
+                  result from the second. A green record (and a test binary's recorded \
+                  pass) is kept where both sides hold the same one or only one side \
+                  moved it from the base, and dropped where both moved it to different \
+                  values, since neither fingerprint is the merged tree's: the next \
+                  `cargo mock test` records it. It never keeps one side's green over \
+                  the other's. Per-test results and timings are unioned, a test both \
+                  sides hold differently taking the later measurement (the side that \
+                  moved it, else the side whose tip commit is later (for a `git merge`; a rebase or cherry-pick has no second tip to compare yet), else the longer \
+                  timing). Two files of different versions, members or flavours, or one \
+                  that is not a record, are refused with a message and exit status 1, \
+                  leaving the path conflicted. It needs no project and installs \
+                  nothing: the wiring is done by `cargo mock`.",
+    },
+    Cmd {
+        name:    "check-test-history",
+        summary: "refuse a commit that nulls a green record it has no reason to",
+        args:    &[],
+        help:    "The pre-commit guard over <mock>/test-history/, run by the generated \
+                  hook when a commit stages one of its files. A commit that removes the \
+                  green record of a member whose inputs it does not touch (its own \
+                  directory, the directories of the members compiled into its tests, \
+                  the paths its sources read from outside, the workspace-wide files) is \
+                  refused, naming the member: a run cut short leaves that. In a merge \
+                  commit a null is accepted when `merge-test-history` would have \
+                  written it. Exit status 0 passes, 1 refuses.",
+    },
+    Cmd {
         name:    "bench",
         summary: "run the bench harness",
         args:    &[],
