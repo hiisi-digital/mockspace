@@ -30,11 +30,11 @@
 //!
 //! A crate's non-`pub` items (private, `pub(crate)`, `pub(super)`, `pub(in ..)`,
 //! `pub(self)`) are that crate's own and are not compared across crates; only an
-//! item that is plain `pub` is. This is the coordinator's call of 22 October,
-//! made pending op's ruling, since the canon is silent on whether a private
-//! type in one crate and a public one of the same name in another are one
-//! concept. It is the single switch [`COMPARE_ONLY_PUB`]; flipping it compares
-//! every item regardless of visibility and prints the qualifier in the message.
+//! item that is plain `pub` is. Whether a private type in one crate and a
+//! public one of the same name in another are one concept is not settled
+//! anywhere this lint reads, so the choice is the single switch
+//! [`COMPARE_ONLY_PUB`]; flipping it compares every item regardless of
+//! visibility and prints the qualifier in the message.
 //! Only the item's own qualifier is read: a plain `pub` item inside a private
 //! module is compared as `pub`.
 //!
