@@ -462,3 +462,43 @@ fn a_tests_pass_is_recorded_at_its_binarys_fingerprint() {
         Some("member")
     );
 }
+
+/// A version 1 record keeps what it timed, so the first run after the bump still
+/// knows which tests are heavy and holds them to `heavy_threads`, and gives up
+/// every pass, which was made at fingerprints of other inputs.
+#[test]
+fn a_version_1_record_gives_its_timings_and_no_pass() {
+    let mock = scratch("v1");
+    let dir = History::dir(&mock).join("default");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("render.json"),
+        r#"{"version": 1, "flavour": "", "member": "render",
+            "green": {"full": "old", "own": {"render": "old"}},
+            "tests": {"render::it": {
+                "drawn": {"secs": 40.0, "passed": true, "passed_at": "old"},
+                "broke": {"secs": 12.0, "passed": false, "passed_at": null}}}}"#,
+    )
+    .unwrap();
+    let h = History::load(&mock);
+    let f = h.flavour("").expect("the v1 file was read");
+    assert!(
+        f.green.is_empty(),
+        "no member is green on the strength of a v1 pass"
+    );
+    assert!(f.bins.is_empty());
+    let t = &f.tests["render::it"];
+    assert_eq!(t["drawn"].secs, 40.0);
+    assert!(t["drawn"].passed, "that it passed is kept, for --cheap");
+    assert_eq!(t["drawn"].passed_at, None, "at what, is not");
+    assert!(!t["broke"].passed);
+    assert_eq!(h.heavy("", T), vec![
+        ("render::it".to_string(), "broke".to_string()),
+        ("render::it".to_string(), "drawn".to_string())
+    ]);
+    // The next save writes it as version 2.
+    h.save(&mock).unwrap();
+    let text = std::fs::read_to_string(dir.join("render.json")).unwrap();
+    assert!(text.contains(&format!("\"version\": {VERSION}")), "{text}");
+    std::fs::remove_dir_all(&mock).ok();
+}

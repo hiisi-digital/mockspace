@@ -37,8 +37,12 @@ use serde::{Deserialize, Serialize};
 use super::junit::{Case, Outcome, package_of};
 
 /// 2: a member's record also keeps each test binary that passed, and a fingerprint is
-/// the digest of a different set of inputs, so a version 1 record is not read.
+/// the digest of a different set of inputs, so a version 1 record gives its
+/// timings and no pass.
 pub const VERSION: u32 = 2;
+
+/// The version before it, whose timings are still read and whose passes are not.
+const PREVIOUS: u32 = 1;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct History {
@@ -113,15 +117,22 @@ impl History {
                 let Some(m) = std::fs::read_to_string(file.path())
                     .ok()
                     .and_then(|t| serde_json::from_str::<MemberFile>(&t).ok())
-                    .filter(|m| m.version == VERSION)
+                    .filter(|m| m.version == VERSION || m.version == PREVIOUS)
                 else {
                     continue;
                 };
+                let older = m.version == PREVIOUS;
                 let f = h.flavour_mut(&m.flavour);
-                if let Some(g) = m.green {
+                // The fingerprints of an older record were made of other inputs,
+                // so no pass of it stands. What a test took does not depend on
+                // them, and is what says which tests are heavy.
+                if let Some(g) = m.green.filter(|_| !older) {
                     f.green.insert(m.member.clone(), g);
                 }
-                for (bin, tests) in m.tests {
+                for (bin, mut tests) in m.tests {
+                    if older {
+                        tests.values_mut().for_each(|t| t.passed_at = None);
+                    }
                     f.tests.entry(bin).or_default().extend(tests);
                 }
                 f.bins.extend(m.bins);

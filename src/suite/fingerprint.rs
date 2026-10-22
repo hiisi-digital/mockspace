@@ -38,7 +38,7 @@
 //! which climbs out on its own (`join("..").join("content")`), an environment
 //! variable's value, or a file outside the repository. Each of those is a test
 //! that may be skipped when it should have run, and
-//! `research/202610091400_suite-selection.md` names them as the open edges.
+//! `mock/research/202610091400_suite-selection.md` names them as the open edges.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -97,8 +97,7 @@ const SCHEME: &str = "2";
 
 /// `cargo_config` is the generated cargo config the run builds with, if any: a
 /// member's opt level changes what its tests are built from, so it salts every
-/// fingerprint as a workspace input does. Absent, the salt is what it was
-/// before the config existed, and the pass already on record stands.
+/// fingerprint as a workspace input does. Absent, nothing is added to the salt.
 pub fn compute(
     repo_root: &Path,
     mock_dir: &Path,
