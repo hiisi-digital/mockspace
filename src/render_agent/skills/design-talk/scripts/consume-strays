@@ -215,8 +215,9 @@ problem.
     missed it, which is how these were lost in the first place.
   - NEVER stash one, NEVER drop one, NEVER move one to another branch, and
     NEVER close the round leaving one unmentioned. \`close\` takes a topic into
-    the archive only where a changelist of the round names it, so a named one is
-    closed with the round and an unnamed one stays flat. An older \`close\`
+    the archive where a changelist of the round names it or it carries a
+    changelist's id. A pulled-in topic keeps its own stamp, so naming it is what
+    closes it, and an unnamed one stays flat. An older \`close\`
     swept every loose flat file into its archive, which is how one of these
     disappeared.
   - If a topic is genuinely out of scope, it does not get dropped: it gets
