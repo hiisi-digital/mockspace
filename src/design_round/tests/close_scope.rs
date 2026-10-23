@@ -152,9 +152,40 @@ fn close_leaves_the_readme_and_a_file_without_a_round_id_where_they_are() {
 }
 
 #[test]
-fn an_abandoned_round_still_takes_every_flat_file() {
-    // `archive` has no changelists to tell the round's files by, and what it
-    // is for is clearing the directory of a round given up.
+fn an_abandoned_round_with_changelists_takes_only_its_own_files_like_close() {
+    // `archive` runs at any phase. Here the round is in IMPL: the doc changelist is locked and the
+    // src one is not, and a topic parked before the round sits beside them. The archive is named
+    // by the changelists' id and the parked topic stays flat and open.
+    let src_open = "202610230535_changelist.src.md";
+    let dir = mock(&[
+        (DOC_LOCK, "# doc changelist: x\n"),
+        (src_open, "# src changelist: x\n"),
+        (OWN_TOPIC, "own\n"),
+        (PARKED_OLDER, "parked\n"),
+        ("README.md", "r\n"),
+    ]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(
+        cmd_archive(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        names_in(&dr.join("202610230520-abandoned")),
+        sorted(&[DOC_LOCK, src_open, OWN_TOPIC]),
+        "the abandoned round holds its changelists and what they say are its own"
+    );
+    assert_eq!(
+        names_in(&dr),
+        sorted(&[PARKED_OLDER, "README.md"]),
+        "a topic of no part of the round was swept into its archive"
+    );
+}
+
+#[test]
+fn an_abandoned_round_with_no_changelist_takes_every_flat_file() {
+    // The TOPIC phase has no changelists to tell the round's files by, so `archive` takes every
+    // flat file and names the archive by the earliest file of any kind. This is the behaviour as
+    // it stands, pinned so a change to it is a decision.
     let dir = mock(&[(OWN_TOPIC, "a\n"), (PARKED_OLDER, "b\n"), ("README.md", "r\n")]);
     let dr = dir.path().join("design_rounds");
     assert_eq!(
@@ -166,6 +197,44 @@ fn an_abandoned_round_still_takes_every_flat_file() {
         names_in(&dr.join("202610221816-abandoned")),
         sorted(&[OWN_TOPIC, PARKED_OLDER])
     );
+}
+
+#[test]
+fn a_changelist_naming_a_longer_file_does_not_take_a_shorter_one_inside_its_name() {
+    // the changelist names `..named.md.orig`; the file `..named.md` is a different file whose
+    // name only occurs inside that one
+    let shorter = "202610230330_topic.named.md";
+    let longer = "202610230330_topic.named.md.orig";
+    let names = owned(&[DOC_LOCK, SRC_LOCK, shorter, longer]);
+    let files = files_of_round(&names, |n| {
+        Some(if n == DOC_LOCK {
+            format!("# doc changelist: x\n\nAnswers `{longer}`.\n")
+        } else {
+            "# src changelist: x\n".to_string()
+        })
+    });
+    assert_eq!(files.left, owned(&[shorter]));
+    assert_eq!(files.taken, owned(&[longer, DOC_LOCK, SRC_LOCK]));
+}
+
+#[test]
+fn a_changelist_naming_a_file_at_the_end_of_a_sentence_still_takes_it() {
+    // the control for the whole-name match: a name followed by a full stop, a comma, a bracket or
+    // the end of the text is named
+    let named = "202610230330_topic.named.md";
+    for text in [
+        format!("Answers {named}."),
+        format!("Answers {named}, and more."),
+        format!("Answers ({named})"),
+        format!("Answers {named}"),
+        format!("{named}\nnext line"),
+    ] {
+        let names = owned(&[DOC_LOCK, SRC_LOCK, named]);
+        let files = files_of_round(&names, |n| {
+            Some(if n == DOC_LOCK { text.clone() } else { String::new() })
+        });
+        assert!(files.taken.contains(&named.to_string()), "not taken for `{text}`");
+    }
 }
 
 fn owned(names: &[&str]) -> Vec<String> {

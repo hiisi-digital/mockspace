@@ -113,8 +113,7 @@ pub(crate) fn files_of_round(
             changelist_helpers::parse_changelist(name).is_some()
                 || lint_rules::round_id::split_prefix(name)
                     .is_some_and(|(id, rest)| rest.starts_with('_') && ids.contains(&id))
-                || (lint_rules::round_id::split_prefix(name).is_some()
-                    && text.contains(name.as_str()))
+                || (lint_rules::round_id::split_prefix(name).is_some() && names_file(&text, name))
         });
     // Name order, so what a close reports it left reads the same however the directory was listed.
     taken.sort();
@@ -123,6 +122,26 @@ pub(crate) fn files_of_round(
         taken,
         left,
     }
+}
+
+/// Whether `text` names the file `name` as a whole, rather than only holding its characters
+/// inside the name of a longer file.
+///
+/// A character that can continue a file name before or after an occurrence makes it part of a
+/// longer name. A full stop after it ends a sentence unless a name character follows that, which
+/// is the `.orig` of `topic.md.orig`.
+fn names_file(text: &str, name: &str) -> bool {
+    let continues = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-');
+    text.match_indices(name).any(|(at, _)| {
+        let before = text[.. at].chars().next_back();
+        let mut after = text[at + name.len() ..].chars();
+        let ends_here = match after.next() {
+            None => true,
+            Some('.') => !after.next().is_some_and(continues),
+            Some(c) => !continues(c),
+        };
+        ends_here && !before.is_some_and(|c| continues(c) || c == '.')
+    })
 }
 
 /// What a close prints about the flat files it left, one to a line, or `None` when it left
@@ -141,9 +160,9 @@ pub(crate) fn left_notice(left: &[String]) -> Option<String> {
     Some(out)
 }
 
-/// Move the files `files_of_round` takes (every one, for an abandoned round)
-/// under `dr` into a `<archive_dir_name>/` subdirectory and emit `.meta` +
-/// `.history` metadata. Stages the moves
+/// Move the files `files_of_round` takes (every one, for an abandoned round
+/// with no changelist) under `dr` into a `<archive_dir_name>/` subdirectory and
+/// emit `.meta` + `.history` metadata. Stages the moves
 /// for commit (or prints the manual command if `auto_commit` is unset)
 /// and tags `round/<archive_dir_name>/<suffix>` on success.
 pub(crate) fn perform_archive(
@@ -182,19 +201,23 @@ pub(crate) fn perform_archive(
         .filter(|name| name != "README.md")
         .collect();
     flat.sort();
-    // A closed round has its changelists to tell its files by. An abandoned
-    // one may have none, and what it is for is clearing the directory.
+    // A round with changelists has them to tell its files by, closed or abandoned alike, so a
+    // topic parked beside an abandoned round stays flat and open. An abandoned round in the TOPIC
+    // phase has no changelist, and there `archive` takes every flat file, which is what it did
+    // before changelists told the files apart.
+    let has_changelists = flat
+        .iter()
+        .any(|name| changelist_helpers::parse_changelist(name).is_some());
     let RoundFiles {
         taken,
         left,
-    } = match kind {
-        ArchiveKind::Closed => files_of_round(&flat, |name| fs::read_to_string(dr.join(name)).ok()),
-        ArchiveKind::Abandoned => {
-            RoundFiles {
-                taken: flat,
-                left:  Vec::new(),
-            }
-        },
+    } = if matches!(kind, ArchiveKind::Abandoned) && !has_changelists {
+        RoundFiles {
+            taken: flat,
+            left:  Vec::new(),
+        }
+    } else {
+        files_of_round(&flat, |name| fs::read_to_string(dr.join(name)).ok())
     };
 
     let mut touched = Vec::new();
@@ -255,8 +278,8 @@ pub(crate) fn perform_archive(
 
 /// Earliest 12-digit timestamp prefix among files in `dr`.
 ///
-/// Used by `cmd_archive` when no changelists may exist (TOPIC-only
-/// abandonments). Skips README, subdirectories, and any file lacking
+/// Used by `cmd_archive` when no changelist exists (TOPIC-only
+/// abandonments), where the earliest file of any kind names the round. Skips README, subdirectories, and any file lacking
 /// the canonical `YYYYMMDDHHMM_*` prefix.
 pub(crate) fn determine_round_name_from_dir(dr: &Path) -> Option<String> {
     let entries = fs::read_dir(dr).ok()?;
