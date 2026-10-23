@@ -656,6 +656,16 @@ mod tests {
         std::fs::metadata(path).unwrap().modified().unwrap()
     }
 
+    /// The `Generated at:` line of a header, or the whole header when it has none.
+    fn stamp_of(header: &str) -> String {
+        header
+            .lines()
+            .find(|l| l.contains("Generated at:"))
+            .unwrap_or(header)
+            .trim()
+            .to_string()
+    }
+
     #[test]
     fn generating_twice_with_no_input_change_leaves_the_file_alone() {
         let d = tempfile::tempdir().unwrap();
@@ -665,11 +675,18 @@ mod tests {
         let path = render_one(&cfg, "the body");
         let first = std::fs::read(&path).unwrap();
         let pinned = age(&path);
+        let stamp_before = stamp_of(&crate::render_design::generation_header_md(&cfg));
 
         // The header stamps whole seconds, so the second run has to land in a
         // later one for the timestamp line to differ at all. Without this the
         // test would pass because the two runs rendered the same bytes.
         std::thread::sleep(std::time::Duration::from_millis(1100));
+        let stamp_after = stamp_of(&crate::render_design::generation_header_md(&cfg));
+        assert_ne!(
+            stamp_before, stamp_after,
+            "the stamp did not move across the sleep, so the skip was never reached"
+        );
+        assert!(!stamp_after.contains("unknown"), "no clock reading, so the stamp cannot move");
         let again = render_one(&cfg, "the body");
 
         assert_eq!(again, path);
