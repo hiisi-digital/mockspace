@@ -6,7 +6,10 @@
 //! The id of a design round, and the only place its shape is decided.
 //!
 //! A round is named by the stamp of the minute its first file was written,
-//! `YYYYMMDDHHMM`, and every file of the round starts with it. That alone is not
+//! `YYYYMMDDHHMM`, and its files start with an id: one id throughout for a round
+//! opened with `cargo mock round-id`, while an older round stamped its doc and its
+//! src changelist apart, so the round is named by its earliest changelist and a file
+//! written beside either carries that changelist's id. A stamp alone is not
 //! unique: two sessions in separate containers, on separate branches, open a
 //! round in the same minute, both close it, and the second to land meets the
 //! first in an add/add on the same directory.

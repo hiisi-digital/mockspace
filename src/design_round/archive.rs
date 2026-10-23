@@ -79,9 +79,10 @@ pub(crate) struct RoundFiles {
 ///
 /// - it is a changelist, of any status, because the phase is read over every
 ///   changelist in the directory and they are the round;
-/// - or it starts with the id of one of those changelists, since the doc and
-///   the src changelist of a round are stamped apart and a file written beside
-///   either carries its id;
+/// - or it starts with the id of one of those changelists. A round opened with
+///   `cargo mock round-id` has one id throughout, but an older round stamped
+///   its doc and its src changelist apart, and a file written beside either
+///   carries that changelist's id;
 /// - or one of those changelists names it, which is how a topic written earlier
 ///   under an id of its own is tied to the round that answers it.
 ///
@@ -107,16 +108,37 @@ pub(crate) fn files_of_round(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let (taken, left) = names.iter().cloned().partition(|name| {
-        changelist_helpers::parse_changelist(name).is_some()
-            || lint_rules::round_id::split_prefix(name)
-                .is_some_and(|(id, rest)| rest.starts_with('_') && ids.contains(&id))
-            || (lint_rules::round_id::split_prefix(name).is_some() && text.contains(name.as_str()))
-    });
+    let (mut taken, mut left): (Vec<String>, Vec<String>) =
+        names.iter().cloned().partition(|name| {
+            changelist_helpers::parse_changelist(name).is_some()
+                || lint_rules::round_id::split_prefix(name)
+                    .is_some_and(|(id, rest)| rest.starts_with('_') && ids.contains(&id))
+                || (lint_rules::round_id::split_prefix(name).is_some()
+                    && text.contains(name.as_str()))
+        });
+    // Name order, so what a close reports it left reads the same however the directory was listed.
+    taken.sort();
+    left.sort();
     RoundFiles {
         taken,
         left,
     }
+}
+
+/// What a close prints about the flat files it left, one to a line, or `None` when it left
+/// none.
+pub(crate) fn left_notice(left: &[String]) -> Option<String> {
+    if left.is_empty() {
+        return None;
+    }
+    let mut out = String::from(
+        "left flat, not this round's (no id of its changelists, named by none of them):",
+    );
+    for name in left {
+        out.push_str(&format!("\n  {name}"));
+    }
+    out.push_str("\n  to close one with the round, name it in a changelist before the lock");
+    Some(out)
 }
 
 /// Move the files `files_of_round` takes (every one, for an abandoned round)
@@ -152,13 +174,14 @@ pub(crate) fn perform_archive(
 
     fs::create_dir_all(&archive_dir).expect("failed to create archive directory");
 
-    let flat: Vec<String> = fs::read_dir(dr)
+    let mut flat: Vec<String> = fs::read_dir(dr)
         .expect("can't read design_rounds")
         .flatten()
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|name| name != "README.md")
         .collect();
+    flat.sort();
     // A closed round has its changelists to tell its files by. An abandoned
     // one may have none, and what it is for is clearing the directory.
     let RoundFiles {
@@ -186,12 +209,8 @@ pub(crate) fn perform_archive(
     }
 
     eprintln!("moved {moved} files to {archive_dir_name}/");
-    if !left.is_empty() {
-        eprintln!("left flat, not this round's (no id of its changelists, named by none of them):");
-        for name in &left {
-            eprintln!("  {name}");
-        }
-        eprintln!("  to close one with the round, name it in a changelist before the lock");
+    if let Some(notice) = left_notice(&left) {
+        eprintln!("{notice}");
     }
 
     let head_sha = git_head_sha(cfg);

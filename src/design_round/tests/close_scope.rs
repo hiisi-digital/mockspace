@@ -167,3 +167,72 @@ fn an_abandoned_round_still_takes_every_flat_file() {
         sorted(&[OWN_TOPIC, PARKED_OLDER])
     );
 }
+
+fn owned(names: &[&str]) -> Vec<String> {
+    names.iter().map(|n| n.to_string()).collect()
+}
+
+#[test]
+fn the_files_close_reports_it_left_are_exactly_the_flat_ones_it_did_not_take_in_name_order() {
+    // given in reverse so that a list kept in the order a directory happens to be read in
+    // differs from the sorted one
+    let names = owned(&[PARKED_LATER, PARKED_OLDER, OWN_TOPIC, SRC_LOCK, DOC_LOCK]);
+    let files = files_of_round(&names, |_| Some("# changelist\n".to_string()));
+    assert_eq!(files.left, owned(&[PARKED_OLDER, PARKED_LATER]));
+    assert_eq!(files.taken, owned(&[DOC_LOCK, OWN_TOPIC, SRC_LOCK]));
+}
+
+#[test]
+fn the_notice_names_every_file_left_one_to_a_line_and_says_nothing_when_none_is() {
+    let notice = left_notice(&owned(&[PARKED_OLDER, PARKED_LATER])).expect("two files were left");
+    let lines: Vec<&str> = notice.lines().collect();
+    assert!(
+        lines.contains(&format!("  {PARKED_OLDER}").as_str()),
+        "{notice}"
+    );
+    assert!(
+        lines.contains(&format!("  {PARKED_LATER}").as_str()),
+        "{notice}"
+    );
+    assert!(
+        lines.iter().position(|l| l.contains(PARKED_OLDER))
+            < lines.iter().position(|l| l.contains(PARKED_LATER)),
+        "the files are not listed in the order given:\n{notice}"
+    );
+    assert_eq!(
+        left_notice(&[]),
+        None,
+        "a close that left nothing has nothing to list"
+    );
+}
+
+#[test]
+fn close_with_tagged_ids_leaves_a_same_minute_round_of_another_tag_flat() {
+    // Two rounds opened in the same minute on different branches: same stamp, different tag.
+    // Only the files carrying this round's whole id are its own.
+    let doc = "202610230520-ab12_changelist.doc.lock.md";
+    let src = "202610230520-ab12_changelist.src.lock.md";
+    let own = "202610230520-ab12_topic.ours.md";
+    let other = "202610230520-cd34_topic.another-branchs.md";
+    let dir = mock(&[
+        (doc, "# doc changelist: x\n"),
+        (src, "# src changelist: x\n"),
+        (own, "own\n"),
+        (other, "theirs\n"),
+    ]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(
+        cmd_close(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        names_in(&dr.join("202610230520-ab12")),
+        sorted(&[doc, src, own]),
+        "the archive is named by the whole id and holds only that id's files"
+    );
+    assert_eq!(
+        names_in(&dr),
+        sorted(&[other]),
+        "a same-minute topic of another tag was taken"
+    );
+}
