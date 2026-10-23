@@ -67,32 +67,6 @@ pub fn tool_config(s: &TestSettings, heavy: &[(String, String)], junit: &Path) -
     t
 }
 
-/// The cargo config for one run: each member's opt level, under the profile
-/// the run builds. An entry naming something that is not among `members` is
-/// left out, since cargo warns about a profile spec that matches no package on
-/// every build; `members` is `None` where the workspace could not be read, and
-/// then every entry stays. `None` when no entry is left.
-pub fn cargo_config(s: &TestSettings, profile: &str, members: Option<&[String]>) -> Option<String> {
-    let mut t = String::from(
-        "# Written by `cargo mock test` for each run, from `[test.opt_level]` in\n\
-         # mockspace.toml. Edits here are lost.\n",
-    );
-    let mut any = false;
-    for (member, level) in &s.opt_level {
-        if members.is_some_and(|m| !m.contains(member)) {
-            continue;
-        }
-        any = true;
-        let _ = writeln!(t, "\n[profile.{profile}.package.\"{member}\"]");
-        if level.is_word() {
-            let _ = writeln!(t, "opt-level = \"{level}\"");
-        } else {
-            let _ = writeln!(t, "opt-level = {level}");
-        }
-    }
-    any.then_some(t)
-}
-
 /// The cargo profile a run builds, which is where a member's opt level goes:
 /// `release` for `--release`, the profile named by `profile_flag`, else `dev`.
 /// The flag is `--cargo-profile` for nextest and `--profile` for `cargo test`.
@@ -253,65 +227,6 @@ mod tests {
             ..TestSettings::default()
         };
         assert!(tool_config(&s, &[], Path::new("junit.xml")).contains("period = \"60s\", terminate-after = 2"));
-    }
-
-    fn levels(pairs: &[(&str, &str)]) -> TestSettings {
-        TestSettings {
-            opt_level: pairs
-                .iter()
-                .map(|(m, l)| (m.to_string(), l.parse().unwrap()))
-                .collect(),
-            ..TestSettings::default()
-        }
-    }
-
-    #[test]
-    fn each_member_gets_its_own_opt_level_under_the_profile_built() {
-        let s = levels(&[("kaski-village", "3"), ("kaski-render", "s")]);
-        let c = cargo_config(&s, "dev", None).unwrap();
-        assert!(
-            c.contains("[profile.dev.package.\"kaski-village\"]\nopt-level = 3\n"),
-            "{c}"
-        );
-        assert!(
-            c.contains("[profile.dev.package.\"kaski-render\"]\nopt-level = \"s\"\n"),
-            "{c}"
-        );
-        assert!(!c.contains("kaski-web"), "{c}");
-        let doc = c.parse::<toml_edit::DocumentMut>().unwrap();
-        assert_eq!(
-            doc["profile"]["dev"]["package"]["kaski-village"]["opt-level"].as_integer(),
-            Some(3)
-        );
-        let r = cargo_config(&s, "release", None).unwrap();
-        assert!(
-            r.contains("[profile.release.package.\"kaski-village\"]"),
-            "{r}"
-        );
-        assert!(!r.contains("profile.dev"), "{r}");
-    }
-
-    #[test]
-    fn a_name_that_is_no_member_is_left_out_of_the_cargo_config() {
-        let s = levels(&[("kaski-village", "3"), ("gone", "2")]);
-        let members = vec!["kaski-village".to_string(), "kaski-web".to_string()];
-        let c = cargo_config(&s, "dev", Some(&members)).unwrap();
-        assert!(c.contains("kaski-village"), "{c}");
-        assert!(!c.contains("gone"), "{c}");
-        // Nothing left is no config, not a file of comments.
-        let only_gone = levels(&[("gone", "2")]);
-        assert_eq!(cargo_config(&only_gone, "dev", Some(&members)), None);
-        // Where the workspace could not be read, nothing can be ruled out.
-        assert!(
-            cargo_config(&only_gone, "dev", None)
-                .unwrap()
-                .contains("gone")
-        );
-    }
-
-    #[test]
-    fn no_member_opt_level_means_no_cargo_config() {
-        assert_eq!(cargo_config(&TestSettings::default(), "dev", None), None);
     }
 
     #[test]

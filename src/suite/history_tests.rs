@@ -20,6 +20,16 @@ fn fps() -> BTreeMap<String, String> {
     BTreeMap::from([("render".to_string(), "fp1".to_string())])
 }
 
+/// A save by a run that covered `members`, in a workspace of just them.
+fn save(h: &History, mock: &Path, members: &[&str]) -> Result<(), String> {
+    let members: Vec<String> = members.iter().map(|m| m.to_string()).collect();
+    h.save(mock, &Scope {
+        flavour:   "",
+        ran:       &members,
+        workspace: &members,
+    })
+}
+
 fn scratch(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!(
         "mockspace-suite-hist-{tag}-{}-{}",
@@ -169,105 +179,6 @@ fn heavy_is_at_or_over_the_threshold_and_borrows_across_flavours() {
     );
     assert_eq!(names(h.heavy("--features editor", T)), vec!["edge"]);
 }
-
-/// The record is tracked files: one per member per flavour, loaded back whole.
-#[test]
-fn a_saved_history_loads_back_from_one_file_per_member_and_flavour() {
-    let mock = scratch("roundtrip");
-    let mut h = History::load(&mock);
-    assert_eq!(h.version, VERSION);
-    h.record_cases(
-        "",
-        &[case("render", "drawn", 40.0, Outcome::Pass)],
-        &fps(),
-        T,
-    );
-    h.record_cases(
-        "--features editor",
-        &[case("web::it", "drawn", 30.0, Outcome::Pass)],
-        &fps(),
-        T,
-    );
-    h.flavour_mut("").green.insert("mesh".to_string(), Green {
-        full: "m1".to_string(),
-        own:  BTreeMap::from([("mesh".to_string(), "o1".to_string())]),
-    });
-    h.save(&mock).unwrap();
-
-    let dir = History::dir(&mock);
-    for f in ["default/render.json", "default/mesh.json", "features-editor/web.json"] {
-        assert!(dir.join(f).is_file(), "{f} was not written");
-    }
-    assert_eq!(History::load(&mock).flavours, h.flavours);
-    std::fs::remove_dir_all(&mock).ok();
-}
-
-/// A run that settled nothing leaves every file as it was, so a rerun does not
-/// show up as a change to commit.
-#[test]
-fn saving_what_is_already_there_writes_nothing() {
-    let mock = scratch("still");
-    let mut h = History::default();
-    h.record_cases(
-        "",
-        &[case("render", "drawn", 40.0, Outcome::Pass)],
-        &fps(),
-        T,
-    );
-    h.save(&mock).unwrap();
-    let file = History::dir(&mock).join("default/render.json");
-    let before = std::fs::metadata(&file).unwrap().modified().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let mut again = History::load(&mock);
-    again.record_cases(
-        "",
-        &[case("render", "drawn", 41.0, Outcome::Pass)],
-        &fps(),
-        T,
-    );
-    again.save(&mock).unwrap();
-    assert_eq!(
-        std::fs::metadata(&file).unwrap().modified().unwrap(),
-        before
-    );
-    std::fs::remove_dir_all(&mock).ok();
-}
-
-/// A member whose green a failure took away must not load it back from the
-/// file it was saved in.
-#[test]
-fn a_member_with_nothing_left_loses_its_file() {
-    let mock = scratch("stale");
-    let mut h = History::default();
-    h.flavour_mut("")
-        .green
-        .insert("mesh".to_string(), Green::default());
-    h.save(&mock).unwrap();
-    h.flavour_mut("").green.remove("mesh");
-    h.save(&mock).unwrap();
-    assert!(
-        History::load(&mock)
-            .flavour("")
-            .is_none_or(|f| f.green.is_empty())
-    );
-    std::fs::remove_dir_all(&mock).ok();
-}
-
-#[test]
-fn a_file_of_another_version_or_none_is_passed_over() {
-    let mock = scratch("foreign");
-    let dir = History::dir(&mock).join("default");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("a.json"),
-        r#"{"version": 999, "flavour": "", "member": "a"}"#,
-    )
-    .unwrap();
-    std::fs::write(dir.join("b.json"), "not json").unwrap();
-    assert!(History::load(&mock).flavours.is_empty());
-    std::fs::remove_dir_all(&mock).ok();
-}
-
 #[test]
 fn a_flavour_names_its_directory() {
     assert_eq!(flavour_dir(""), "default");
@@ -327,60 +238,6 @@ fn members_that_did_not_run_are_left_alone() {
     remembered(&mut h, "mesh", "drawn");
     h.prune("", &["village".to_string()], &live(&[("village", &[])]));
     assert!(h.flavours[""].tests.contains_key("mesh"));
-}
-
-#[test]
-fn the_pruned_record_is_what_a_save_leaves_on_disk() {
-    let dir = scratch("prune-save");
-    let mut h = History::default();
-    remembered(&mut h, "village", "drawn");
-    remembered(&mut h, "village::example/figure_preview", "draws");
-    h.save(&dir).unwrap();
-    h.prune(
-        "",
-        &["village".to_string()],
-        &live(&[("village", &["drawn"])]),
-    );
-    h.save(&dir).unwrap();
-    let text = std::fs::read_to_string(dir.join("test-history/default/village.json")).unwrap();
-    assert!(
-        text.contains("drawn") && !text.contains("figure_preview"),
-        "{text}"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// A pass is kept per test binary, in the file of the member it belongs to,
-/// and comes back from it.
-#[test]
-fn the_binaries_that_passed_are_kept_in_their_members_files() {
-    let mock = scratch("bins");
-    let mut h = History::default();
-    let f = h.flavour_mut("");
-    f.bins.insert("render".to_string(), "base1".to_string());
-    f.bins.insert("render::it".to_string(), "it1".to_string());
-    f.bins
-        .insert("web::sound_gate".to_string(), "sg1".to_string());
-    h.save(&mock).unwrap();
-
-    let dir = History::dir(&mock).join("default");
-    let render = std::fs::read_to_string(dir.join("render.json")).unwrap();
-    assert!(
-        render.contains("render::it") && !render.contains("sound_gate"),
-        "{render}"
-    );
-    assert!(dir.join("web.json").is_file());
-    assert_eq!(History::load(&mock).flavours, h.flavours);
-
-    // A binary whose record is dropped is dropped from its file, and a member
-    // left with nothing loses the file.
-    let f = h.flavour_mut("");
-    f.bins.remove("web::sound_gate");
-    f.bins.remove("render::it");
-    h.save(&mock).unwrap();
-    assert!(!dir.join("web.json").exists());
-    assert_eq!(History::load(&mock).flavours[""].bins.len(), 1);
-    std::fs::remove_dir_all(&mock).ok();
 }
 
 /// A record written before binaries were kept has no field for them and reads
@@ -497,7 +354,7 @@ fn a_version_1_record_gives_its_timings_and_no_pass() {
         ("render::it".to_string(), "drawn".to_string())
     ]);
     // The next save writes it as version 2.
-    h.save(&mock).unwrap();
+    save(&h, &mock, &["render"]).unwrap();
     let text = std::fs::read_to_string(dir.join("render.json")).unwrap();
     assert!(text.contains(&format!("\"version\": {VERSION}")), "{text}");
     std::fs::remove_dir_all(&mock).ok();

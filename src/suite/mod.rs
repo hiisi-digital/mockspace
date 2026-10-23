@@ -28,6 +28,9 @@
 //! each slow test's time and result is recorded whatever it did.
 
 pub mod args;
+mod cargo_config;
+pub mod debug;
+pub mod failed;
 pub mod fingerprint;
 pub mod graph;
 pub mod history;
@@ -118,27 +121,50 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
         threshold:  cfg.test.heavy_after_secs,
     });
 
-    // A member's opt level is cargo config, written before the listing, which
-    // builds, so the run builds the same way. Nothing to run writes nothing.
+    // A member's opt level and the debug info of each crate are cargo config,
+    // written before the listing, which builds, so the run builds the same way.
+    // Nothing to run writes nothing. The debug info is no input of the
+    // fingerprint above: a test passes or fails the same with or without it.
     let state = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test-state"]);
-    let cargo_config = match cargo_config_text {
-        Some(text) if !plan.run.is_empty() => {
-            match write_cargo_config(&state, &text) {
-                Ok(path) => Some(path),
-                Err(e) => {
-                    eprintln!("mock test: {e}");
-                    return Some(ExitCode::FAILURE);
-                },
-            }
-        },
-        _ => None,
+    let run_members: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
+    let mut failed = failed::Failed::load(&state);
+    let profile = nextest::build_profile(&inv.passed, "--cargo-profile");
+    let mut symbols = debug::decide(&cfg.test, &debug::Basis {
+        ask:      &inv.debug,
+        packages: &inv.packages,
+        members:  Some(&graph.members),
+        running:  Some(&run_members),
+        failed:   &failed.of(&flavour),
+    });
+    let debug_notes = debug::inspect(
+        &cfg.test,
+        &cfg.mock_dir,
+        &profile,
+        &inv.passed,
+        Some(&graph.members),
+        &mut symbols,
+    );
+    let cargo_config = if plan.run.is_empty() {
+        None
+    } else {
+        match cargo_config::render(&cfg.test, &profile, Some(&graph.members), Some(&symbols)) {
+            Some(text) => {
+                match write_cargo_config(&state, &text) {
+                    Ok(path) => Some(path),
+                    Err(e) => {
+                        eprintln!("mock test: {e}");
+                        return Some(ExitCode::FAILURE);
+                    },
+                }
+            },
+            None => None,
+        }
     };
 
     // What the history remembers may be gone: a deleted binary named in the
     // generated config stops nextest before any test runs. Listing is how the
     // existing tests are known, and it builds, so it happens only when the plan
     // runs something; where it cannot answer, nothing is dropped.
-    let run_members: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
     let live = if run_members.is_empty() {
         None
     } else {
@@ -154,6 +180,9 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     }
 
     report::plan(&plan, inv, &fp_or_empty, cfg);
+    if !plan.run.is_empty() {
+        debug::print(&debug_notes, &symbols);
+    }
     if plan.run.is_empty() {
         println!("mock test: nothing to run; every member asked for passed at what it is now");
         return Some(ExitCode::SUCCESS);
@@ -188,6 +217,17 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     let cases = std::fs::read_to_string(&junit)
         .map(|x| junit::parse(&x))
         .unwrap_or_default();
+    // What failed is what the next run builds with symbols, recorded whether or
+    // not a fingerprint could be taken.
+    failed.settle(
+        &flavour,
+        &run_members,
+        &cases,
+        nextest::ran_to_the_end(code) && !inv.narrowed(),
+    );
+    if let Err(e) = failed.save(&state) {
+        eprintln!("note: could not keep which members failed: {e}");
+    }
     if cases.is_empty() && code != Some(0) {
         eprintln!(
             "note: no report at {}, so this run's timings are not kept",
@@ -226,7 +266,11 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
                 f.green.remove(name);
             }
         }
-        if let Err(e) = history.save(&cfg.mock_dir) {
+        if let Err(e) = history.save(&cfg.mock_dir, &history::Scope {
+            flavour:   &flavour,
+            ran:       &run_members,
+            workspace: &graph.members,
+        }) {
             eprintln!("note: could not keep this run's history: {e}");
         }
     }
@@ -241,28 +285,69 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
 
 /// The cargo config for the members tree when it runs under plain `cargo test`
 /// (`--plain`, no nextest, or a workspace that could not be read), so the opt
-/// levels hold however the run is taken. `None` when no entry applies.
+/// levels and the debug info hold however the run is taken. `None` when it
+/// would say nothing.
+///
+/// What runs is not known here and no report is read back, so symbols go to the
+/// crates named and to the ones the last nextest run recorded as failed; a plain
+/// run records no failure of its own.
 pub fn plain_cargo_config(cfg: &Config, inv: &Invocation) -> Result<Option<PathBuf>, String> {
-    if cfg.test.opt_level.is_empty() {
-        return Ok(None);
-    }
     let graph = graph::Graph::read(&cfg.mock_dir).ok();
-    let text = opt_level_config(
-        cfg,
-        graph.as_ref().map(|g| g.members.as_slice()),
-        &nextest::build_profile(&inv.passed, "--profile"),
+    let members = graph.as_ref().map(|g| g.members.as_slice());
+    let profile = nextest::build_profile(&inv.passed, "--profile");
+    let state = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test-state"]);
+    note_unknown_opt_levels(cfg, members);
+    let mut symbols = debug::decide(&cfg.test, &debug::Basis {
+        ask: &inv.debug,
+        packages: &inv.packages,
+        members,
+        running: None,
+        failed: &failed::Failed::load(&state).of(&inv.flavour()),
+    });
+    let notes = debug::inspect(
+        &cfg.test,
+        &cfg.mock_dir,
+        &profile,
+        &inv.passed,
+        members,
+        &mut symbols,
     );
-    let Some(text) = text else {
-        return Ok(None);
+    debug::print(&notes, &symbols);
+    match cargo_config::render(&cfg.test, &profile, members, Some(&symbols)) {
+        Some(text) => write_cargo_config(&state, &text).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// What a plain run that passed leaves on the record of what failed: the
+/// members it ran come off it. A run narrowed to some tests passed no member
+/// whole, and a plain run that failed says nothing of which one.
+pub fn plain_passed(cfg: &Config, inv: &Invocation) {
+    if inv.narrowed() {
+        return;
+    }
+    let Ok(graph) = graph::Graph::read(&cfg.mock_dir) else {
+        return;
     };
     let state = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test-state"]);
-    write_cargo_config(&state, &text).map(Some)
+    let mut failed = failed::Failed::load(&state);
+    if failed.clear(&inv.flavour(), &candidates(&graph, inv))
+        && let Err(e) = failed.save(&state)
+    {
+        eprintln!("note: could not keep which members failed: {e}");
+    }
 }
 
 /// The cargo config text carrying `[test.opt_level]` for a run, with a note for
 /// each entry that names no member. `members` is `None` where the workspace
-/// could not be read.
+/// could not be read. This is the text a fingerprint is taken over, so it
+/// carries no debug info.
 fn opt_level_config(cfg: &Config, members: Option<&[String]>, profile: &str) -> Option<String> {
+    note_unknown_opt_levels(cfg, members);
+    cargo_config::render(&cfg.test, profile, members, None)
+}
+
+fn note_unknown_opt_levels(cfg: &Config, members: Option<&[String]>) {
     if let Some(members) = members {
         for m in cfg.test.opt_level.keys().filter(|m| !members.contains(*m)) {
             eprintln!(
@@ -270,7 +355,6 @@ fn opt_level_config(cfg: &Config, members: Option<&[String]>, profile: &str) -> 
             );
         }
     }
-    nextest::cargo_config(&cfg.test, profile, members)
 }
 
 /// Writes the cargo config under `state`, where the run passes it with
