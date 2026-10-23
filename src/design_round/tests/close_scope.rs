@@ -235,6 +235,55 @@ fn a_changelist_naming_a_file_inside_a_longer_name_before_it_does_not_take_the_s
 }
 
 #[test]
+fn a_name_character_before_a_file_name_means_the_file_is_not_named() {
+    // `a`, `_`, `-` and `.` before an occurrence each continue a longer name, so none of them
+    // names the file; a space, a backtick and an opening bracket do not, and are the controls
+    let shorter = "202610230330_topic.named.md";
+    for before in ["a", "_", "-", "."] {
+        assert_eq!(
+            left_of(&format!("Answers {before}{shorter}."), shorter),
+            owned(&[shorter]),
+            "taken with `{before}` before it"
+        );
+    }
+    for before in [" ", "`", "("] {
+        assert!(
+            left_of(&format!("Answers {before}{shorter}."), shorter).is_empty(),
+            "not taken with `{before}` before it"
+        );
+    }
+}
+
+#[test]
+fn a_name_character_after_a_file_name_means_the_file_is_not_named() {
+    // `x`, `_`, `-` and `.x` after an occurrence each continue a longer name; a space, a backtick
+    // and a full stop do not, and are the controls
+    let shorter = "202610230330_topic.named.md";
+    for after in ["x", "_", "-", ".x"] {
+        assert_eq!(
+            left_of(&format!("Answers {shorter}{after}."), shorter),
+            owned(&[shorter]),
+            "taken with `{after}` after it"
+        );
+    }
+    for after in [" ", "`", "."] {
+        assert!(
+            left_of(&format!("Answers {shorter}{after}"), shorter).is_empty(),
+            "not taken with `{after}` after it"
+        );
+    }
+}
+
+/// What `files_of_round` leaves flat when the one changelist that names `shorter` says `text`.
+fn left_of(text: &str, shorter: &str) -> Vec<String> {
+    let names = owned(&[DOC_LOCK, SRC_LOCK, shorter]);
+    files_of_round(&names, |n| {
+        Some(if n == DOC_LOCK { text.to_string() } else { String::new() })
+    })
+    .left
+}
+
+#[test]
 fn a_changelist_naming_a_file_at_the_end_of_a_sentence_still_takes_it() {
     // the control for the whole-name match: a name followed by a full stop, a comma, a bracket or
     // the end of the text is named
@@ -250,7 +299,10 @@ fn a_changelist_naming_a_file_at_the_end_of_a_sentence_still_takes_it() {
         let files = files_of_round(&names, |n| {
             Some(if n == DOC_LOCK { text.clone() } else { String::new() })
         });
-        assert!(files.taken.contains(&named.to_string()), "not taken for `{text}`");
+        assert!(
+            files.taken.contains(&named.to_string()),
+            "not taken for `{text}`"
+        );
     }
 }
 
