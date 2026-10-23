@@ -20,6 +20,15 @@ fn fps() -> BTreeMap<String, String> {
     BTreeMap::from([("render".to_string(), "fp1".to_string())])
 }
 
+/// A save by a run that covered `members`, in a workspace of just them.
+fn save(h: &History, mock: &Path, members: &[&str]) -> Result<(), String> {
+    let members: Vec<String> = members.iter().map(|m| m.to_string()).collect();
+    h.save(mock, &Scope {
+        ran:       &members,
+        workspace: &members,
+    })
+}
+
 fn scratch(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!(
         "mockspace-suite-hist-{tag}-{}-{}",
@@ -192,7 +201,7 @@ fn a_saved_history_loads_back_from_one_file_per_member_and_flavour() {
         full: "m1".to_string(),
         own:  BTreeMap::from([("mesh".to_string(), "o1".to_string())]),
     });
-    h.save(&mock).unwrap();
+    save(&h, &mock, &["render", "mesh", "web"]).unwrap();
 
     let dir = History::dir(&mock);
     for f in ["default/render.json", "default/mesh.json", "features-editor/web.json"] {
@@ -214,7 +223,7 @@ fn saving_what_is_already_there_writes_nothing() {
         &fps(),
         T,
     );
-    h.save(&mock).unwrap();
+    save(&h, &mock, &["render"]).unwrap();
     let file = History::dir(&mock).join("default/render.json");
     let before = std::fs::metadata(&file).unwrap().modified().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
@@ -225,7 +234,7 @@ fn saving_what_is_already_there_writes_nothing() {
         &fps(),
         T,
     );
-    again.save(&mock).unwrap();
+    save(&again, &mock, &["render"]).unwrap();
     assert_eq!(
         std::fs::metadata(&file).unwrap().modified().unwrap(),
         before
@@ -242,9 +251,9 @@ fn a_member_with_nothing_left_loses_its_file() {
     h.flavour_mut("")
         .green
         .insert("mesh".to_string(), Green::default());
-    h.save(&mock).unwrap();
+    save(&h, &mock, &["mesh"]).unwrap();
     h.flavour_mut("").green.remove("mesh");
-    h.save(&mock).unwrap();
+    save(&h, &mock, &["mesh"]).unwrap();
     assert!(
         History::load(&mock)
             .flavour("")
@@ -335,13 +344,13 @@ fn the_pruned_record_is_what_a_save_leaves_on_disk() {
     let mut h = History::default();
     remembered(&mut h, "village", "drawn");
     remembered(&mut h, "village::example/figure_preview", "draws");
-    h.save(&dir).unwrap();
+    save(&h, &dir, &["village"]).unwrap();
     h.prune(
         "",
         &["village".to_string()],
         &live(&[("village", &["drawn"])]),
     );
-    h.save(&dir).unwrap();
+    save(&h, &dir, &["village"]).unwrap();
     let text = std::fs::read_to_string(dir.join("test-history/default/village.json")).unwrap();
     assert!(
         text.contains("drawn") && !text.contains("figure_preview"),
@@ -361,7 +370,7 @@ fn the_binaries_that_passed_are_kept_in_their_members_files() {
     f.bins.insert("render::it".to_string(), "it1".to_string());
     f.bins
         .insert("web::sound_gate".to_string(), "sg1".to_string());
-    h.save(&mock).unwrap();
+    save(&h, &mock, &["render", "web"]).unwrap();
 
     let dir = History::dir(&mock).join("default");
     let render = std::fs::read_to_string(dir.join("render.json")).unwrap();
@@ -377,7 +386,7 @@ fn the_binaries_that_passed_are_kept_in_their_members_files() {
     let f = h.flavour_mut("");
     f.bins.remove("web::sound_gate");
     f.bins.remove("render::it");
-    h.save(&mock).unwrap();
+    save(&h, &mock, &["render", "web"]).unwrap();
     assert!(!dir.join("web.json").exists());
     assert_eq!(History::load(&mock).flavours[""].bins.len(), 1);
     std::fs::remove_dir_all(&mock).ok();
@@ -497,8 +506,93 @@ fn a_version_1_record_gives_its_timings_and_no_pass() {
         ("render::it".to_string(), "drawn".to_string())
     ]);
     // The next save writes it as version 2.
-    h.save(&mock).unwrap();
+    save(&h, &mock, &["render"]).unwrap();
     let text = std::fs::read_to_string(dir.join("render.json")).unwrap();
     assert!(text.contains(&format!("\"version\": {VERSION}")), "{text}");
+    std::fs::remove_dir_all(&mock).ok();
+}
+
+fn names_of(members: &[&str]) -> Vec<String> {
+    members.iter().map(|m| m.to_string()).collect()
+}
+
+/// A save is for the members the run covered. The files of the others stand as
+/// they are whatever they hold: blank, of another version, or not a record.
+#[test]
+fn a_save_leaves_the_files_of_members_that_did_not_run() {
+    let mock = scratch("not-ours");
+    let dir = History::dir(&mock).join("default");
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = [
+        (
+            "blank",
+            r#"{"version": 2, "flavour": "", "member": "blank", "green": null, "tests": {}, "bins": {}}"#,
+        ),
+        (
+            "newer",
+            r#"{"version": 3, "flavour": "", "member": "newer", "green": null, "tests": {}}"#,
+        ),
+        (
+            "older",
+            r#"{"version": 1, "flavour": "", "member": "older", "green": {"full": "x", "own": {}}, "tests": {}}"#,
+        ),
+        ("half", "<<<<<<< ours\n{}\n=======\n{}\n>>>>>>> theirs\n"),
+    ];
+    for (m, text) in files {
+        std::fs::write(dir.join(format!("{m}.json")), text).unwrap();
+    }
+    let mut h = History::load(&mock);
+    remembered(&mut h, "render", "drawn");
+    let ran = names_of(&["render"]);
+    let workspace = names_of(&["render", "blank", "newer", "older", "half"]);
+    h.save(&mock, &Scope {
+        ran:       &ran,
+        workspace: &workspace,
+    })
+    .unwrap();
+    for (m, text) in files {
+        assert_eq!(
+            std::fs::read_to_string(dir.join(format!("{m}.json")))
+                .ok()
+                .as_deref(),
+            Some(text),
+            "{m}"
+        );
+    }
+    assert!(dir.join("render.json").is_file());
+    std::fs::remove_dir_all(&mock).ok();
+}
+
+/// What a member that is not in the workspace holds is no one's, and a save
+/// takes it away in every flavour, whether or not the run loaded it.
+#[test]
+fn a_record_goes_when_its_member_does_and_not_before() {
+    let mock = scratch("gone");
+    let mut h = History::default();
+    remembered(&mut h, "gone", "drawn");
+    remembered(&mut h, "kept", "drawn");
+    let both = names_of(&["gone", "kept"]);
+    h.flavour_mut("--features editor")
+        .green
+        .insert("gone".to_string(), Green::default());
+    h.save(&mock, &Scope {
+        ran:       &both,
+        workspace: &both,
+    })
+    .unwrap();
+    let dir = History::dir(&mock);
+    let gone = [dir.join("default/gone.json"), dir.join("features-editor/gone.json")];
+    assert!(gone.iter().all(|p| p.is_file()));
+
+    let h = History::load(&mock);
+    let ran = names_of(&["unrelated"]);
+    let workspace = names_of(&["kept", "unrelated"]);
+    h.save(&mock, &Scope {
+        ran:       &ran,
+        workspace: &workspace,
+    })
+    .unwrap();
+    assert!(gone.iter().all(|p| !p.exists()), "its member is gone");
+    assert!(dir.join("default/kept.json").is_file(), "its member is not");
     std::fs::remove_dir_all(&mock).ok();
 }
