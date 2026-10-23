@@ -836,7 +836,7 @@ impl Config {
         let macro_styles = convert_macro_styles(raw.macro_styles, &domain_kinds);
         let crate_colors = convert_color_section(raw.crate_colors);
 
-        let lint_overrides = parse_lints_from_document(&toml_content, &crate_prefix);
+        let lint_overrides = parse_lints_from_document(&toml_content, &crate_prefix, &toml_path);
 
         let primary_domain_label = raw
             .primary_domain_label
@@ -1125,12 +1125,28 @@ fn convert_color_section(
     result
 }
 
+/// Refuse a `[lints.<name>]` entry that does not deserialise.
+///
+/// `Config::from_dir` has no `Result` to return and every other configuration
+/// error in it (an unparsable file, a missing `src_dirs` entry, a bad `test`
+/// block) is a panic naming the file, so this is one too, in the same channel.
+/// The entry used to be skipped, which dropped the lint's whole table (severity,
+/// params, path and crate filters) over one wrong type, with nothing said.
+fn refuse_lint_entry(source: &Path, lint_name: &str, why: &dyn std::fmt::Display) -> ! {
+    panic!(
+        "{}: [lints.{lint_name}] does not deserialise, so nothing in it was read: {why}\n  \
+         The lint would run on its defaults instead, which is a run that reports success over \
+         a configuration it never applied. Fix the entry or remove it.",
+        source.display(),
+    )
+}
+
 /// Parse the `[lints]` section from the TOML content using `toml_edit`'s
 /// document API to handle heterogeneous values (strings and tables).
 ///
 /// Each lint entry is extracted as a `toml_edit::Value` and then deserialized
 /// via `IntoDeserializer` into a `LintEntry` enum.
-fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConfig {
+fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Path) -> LintConfig {
     let doc = match toml_content.parse::<toml_edit::DocumentMut>() {
         Ok(d) => d,
         Err(_) => return LintConfig::empty(),
@@ -1162,7 +1178,7 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
         let entry: LintEntry = if let Some(v) = item.as_value() {
             match LintEntry::deserialize(v.clone().into_deserializer()) {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(e) => refuse_lint_entry(source, &lint_name, &e),
             }
         } else if let Some(tbl) = item.as_table() {
             // Build a mini TOML document with just this table's contents
@@ -1172,10 +1188,10 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str) -> LintConf
             }
             match toml_edit::de::from_str::<LintTableConfig>(&doc.to_string()) {
                 Ok(cfg) => LintEntry::Config(cfg),
-                Err(_) => continue,
+                Err(e) => refuse_lint_entry(source, &lint_name, &e),
             }
         } else {
-            continue;
+            refuse_lint_entry(source, &lint_name, &"it is neither a value nor a table");
         };
 
         match entry {
@@ -1478,7 +1494,7 @@ exempt_crates = ["widget"]
 [lints.file-size]
 commit = "error"
 "#;
-        let cfg = parse_lints_from_document(toml, "widget");
+        let cfg = parse_lints_from_document(toml, "widget", Path::new("mockspace.toml"));
 
         assert!(cfg.binds_crate("no-std", "widget-dirs"));
         assert!(cfg.binds_crate("no-std", "widget-config"));
@@ -1570,6 +1586,82 @@ commit = "error"
             "control on the control: the new key is read, so this config is one \
              the loader genuinely understood rather than one it failed to open"
         );
+    }
+}
+
+#[cfg(test)]
+mod a_malformed_lint_table_is_not_dropped_in_silence {
+    //! A `[lints.<name>]` table that fails to deserialise used to be skipped, so
+    //! one wrong type (a string where `exclude` wants an array) turned the whole
+    //! lint's configuration off, severity and params included, with nothing
+    //! said. The load now refuses it, in the way every other config error in
+    //! `from_dir` is refused, and names the lint, the file and the serde message.
+
+    use super::*;
+
+    /// A `mock` dir carrying a `mockspace.toml` with the given body.
+    fn mock_dir_with_config(body: &str) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("mockspace.toml"), body).expect("write config");
+        tmp
+    }
+
+    /// The panic text of a load, or `None` when the load went through.
+    fn refusal_of(body: &str) -> Option<String> {
+        let tmp = mock_dir_with_config(body);
+        let dir = tmp.path().to_path_buf();
+        let caught = std::panic::catch_unwind(move || {
+            let _ = Config::from_dir(&dir);
+        });
+        caught.err().map(|payload| {
+            payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                .unwrap_or_default()
+        })
+    }
+
+    #[test]
+    fn a_well_formed_lint_table_loads_with_its_severity_and_path_filter() {
+        let tmp = mock_dir_with_config(
+            "[lints.catalogue-ignore]\nseverity = \"error\"\nexclude = [\"fixtures/**\"]\n",
+        );
+        let cfg = Config::from_dir(tmp.path());
+        assert!(
+            cfg.lint_overrides.base.contains_key("catalogue-ignore"),
+            "the severity the table wrote has to reach the config"
+        );
+        assert!(
+            cfg.lint_overrides.filter_for("catalogue-ignore").is_some(),
+            "and so does the path filter, or the arm above passes on a table read as empty"
+        );
+    }
+
+    #[test]
+    fn a_string_where_exclude_wants_an_array_is_refused_and_names_the_lint() {
+        let msg = refusal_of(
+            "[lints.catalogue-ignore]\nseverity = \"error\"\nexclude = \"fixtures/**\"\n",
+        )
+        .expect("a lint table that does not deserialise must stop the load, not vanish");
+        assert!(msg.contains("catalogue-ignore"), "names the lint: {msg}");
+        assert!(msg.contains("mockspace.toml"), "names the file: {msg}");
+        assert!(msg.contains("exclude"), "carries the serde message: {msg}");
+    }
+
+    #[test]
+    fn an_inline_lint_value_that_does_not_deserialise_is_refused_too() {
+        let msg = refusal_of("[lints]\nfile-size = 5\n")
+            .expect("the inline form has its own skip and gets the same refusal");
+        assert!(msg.contains("file-size"), "names the lint: {msg}");
+    }
+
+    /// The control. Without it a loader that panicked on every config with a
+    /// `[lints]` section would satisfy the arms above.
+    #[test]
+    fn a_config_with_no_malformed_lint_is_not_refused() {
+        assert!(refusal_of("[lints.file-size]\ncommit = \"error\"\n").is_none());
+        assert!(refusal_of("[lints]\nfile-size = \"error\"\n").is_none());
     }
 }
 
