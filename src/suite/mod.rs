@@ -226,7 +226,11 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
                 f.green.remove(name);
             }
         }
-        if let Err(e) = history.save(&cfg.mock_dir) {
+        if let Err(e) = history.save(&cfg.mock_dir, &history::Scope {
+            flavour:   &flavour,
+            ran:       &run_members,
+            workspace: &graph.members,
+        }) {
             eprintln!("note: could not keep this run's history: {e}");
         }
     }

@@ -109,6 +109,28 @@ impl MemberFile {
     }
 }
 
+/// Whose files a save may write or remove.
+#[derive(Debug, Clone, Copy)]
+pub struct Scope<'a> {
+    /// The flavour the run was made in, whose files are the only ones it writes.
+    pub flavour:   &'a str,
+    /// The members the run covered.
+    pub ran:       &'a [String],
+    /// Every member the workspace has now.
+    pub workspace: &'a [String],
+}
+
+impl Scope<'_> {
+    fn ran(&self, member: &str) -> bool {
+        self.ran.iter().any(|m| m == member)
+    }
+
+    /// A member the workspace no longer has, whose record is no longer wanted.
+    fn gone(&self, member: &str) -> bool {
+        !self.workspace.iter().any(|m| m == member)
+    }
+}
+
 impl History {
     pub fn dir(mock_dir: &Path) -> PathBuf {
         mock_dir.join("test-history")
@@ -157,67 +179,48 @@ impl History {
         h
     }
 
-    /// Writes each member's file where its content changed, and only there, so
-    /// a run that settled nothing leaves the tree as it was.
-    pub fn save(&self, mock_dir: &Path) -> Result<(), String> {
-        for (flavour, f) in &self.flavours {
-            let mut members: BTreeMap<String, MemberFile> = BTreeMap::new();
-            let blank = |member: &str| {
-                MemberFile {
-                    version: VERSION,
-                    flavour: flavour.clone(),
-                    member: member.to_string(),
-                    ..MemberFile::default()
-                }
-            };
-            for (member, g) in &f.green {
-                members
-                    .entry(member.clone())
-                    .or_insert_with(|| blank(member))
-                    .green = Some(g.clone());
+    /// Writes the files of the members the run covered where their content
+    /// changed, and only there, so a run that settled nothing leaves the tree as
+    /// it was.
+    ///
+    /// A file is the run's to write or remove only when its member ran, or when
+    /// its member is no longer in the workspace. Every other file stands as it is,
+    /// whatever it holds: blank because a merge dropped its green, of another
+    /// version, or not a record at all. Taking the memory for the whole directory
+    /// deleted every one of those, and rewrote an older record without its green.
+    pub fn save(&self, mock_dir: &Path, scope: &Scope) -> Result<(), String> {
+        let root = Self::dir(mock_dir);
+        // The run's own flavour: the files of its members are written, and one
+        // left with nothing to record is removed, or a green record a failure
+        // took away would load back from it.
+        let dir = root.join(flavour_dir(scope.flavour));
+        let members = self
+            .flavours
+            .get(scope.flavour)
+            .map(|f| member_files(scope.flavour, f))
+            .unwrap_or_default();
+        remove_where(&dir, |m| {
+            scope.gone(m) || (scope.ran(m) && !members.contains_key(m))
+        })?;
+        for (member, m) in members.into_iter().filter(|(member, _)| scope.ran(member)) {
+            let path = dir.join(format!("{member}.json"));
+            let text = m.render();
+            if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
+                continue;
             }
-            for (bin, tests) in &f.tests {
-                let member = package_of(bin);
-                members
-                    .entry(member.to_string())
-                    .or_insert_with(|| blank(member))
-                    .tests
-                    .insert(bin.clone(), tests.clone());
-            }
-            for (bin, at) in &f.bins {
-                let member = package_of(bin);
-                members
-                    .entry(member.to_string())
-                    .or_insert_with(|| blank(member))
-                    .bins
-                    .insert(bin.clone(), at.clone());
-            }
-            let dir = Self::dir(mock_dir).join(flavour_dir(flavour));
-            // A member with nothing left to record loses its file, or a green
-            // record a failure took away would load back from it.
-            if let Ok(existing) = std::fs::read_dir(&dir) {
-                for e in existing.flatten() {
-                    let p = e.path();
-                    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned());
-                    if p.extension().is_some_and(|x| x == "json")
-                        && stem.is_some_and(|s| !members.contains_key(&s))
-                    {
-                        std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-                    }
-                }
-            }
-            for (member, m) in members {
-                let path = dir.join(format!("{member}.json"));
-                let text = m.render();
-                if std::fs::read_to_string(&path).is_ok_and(|old| old == text) {
-                    continue;
-                }
-                std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-                // Beside itself and renamed over, so an interrupted write
-                // leaves the previous record rather than half of one.
-                let tmp = dir.join(format!(".{member}.json.tmp"));
-                std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-                std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
+            std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            // Beside itself and renamed over, so an interrupted write
+            // leaves the previous record rather than half of one.
+            let tmp = dir.join(format!(".{member}.json.tmp"));
+            std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+            std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        // Every other flavour's files belong to the runs made in it, and only a
+        // member the workspace no longer has loses one, in whichever directory
+        // it sits and whether or not it could be read.
+        for fdir in std::fs::read_dir(&root).into_iter().flatten().flatten() {
+            if fdir.path() != dir {
+                remove_where(&fdir.path(), |m| scope.gone(m))?;
             }
         }
         Ok(())
@@ -331,6 +334,54 @@ impl History {
     }
 }
 
+/// One flavour's memory as the files it is kept in, by member.
+fn member_files(flavour: &str, f: &Flavour) -> BTreeMap<String, MemberFile> {
+    let mut members: BTreeMap<String, MemberFile> = BTreeMap::new();
+    let blank = |member: &str| {
+        MemberFile {
+            version: VERSION,
+            flavour: flavour.to_string(),
+            member: member.to_string(),
+            ..MemberFile::default()
+        }
+    };
+    for (member, g) in &f.green {
+        members
+            .entry(member.clone())
+            .or_insert_with(|| blank(member))
+            .green = Some(g.clone());
+    }
+    for (bin, tests) in &f.tests {
+        let member = package_of(bin);
+        members
+            .entry(member.to_string())
+            .or_insert_with(|| blank(member))
+            .tests
+            .insert(bin.clone(), tests.clone());
+    }
+    for (bin, at) in &f.bins {
+        let member = package_of(bin);
+        members
+            .entry(member.to_string())
+            .or_insert_with(|| blank(member))
+            .bins
+            .insert(bin.clone(), at.clone());
+    }
+    members
+}
+
+/// Removes the record files in `dir` whose member `doomed` names.
+fn remove_where(dir: &Path, doomed: impl Fn(&str) -> bool) -> Result<(), String> {
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned());
+        if p.extension().is_some_and(|x| x == "json") && stem.is_some_and(|s| doomed(&s)) {
+            std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// Whether a new timing says nothing the old one did not: on the same side of
 /// the threshold and within half again either way.
 fn steady(old: f64, new: f64, threshold: f64) -> bool {
@@ -358,3 +409,7 @@ fn flavour_dir(flavour: &str) -> String {
 #[cfg(test)]
 #[path = "history_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "history_save_tests.rs"]
+mod save_tests;
