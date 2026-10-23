@@ -630,6 +630,98 @@ mod tests {
         assert!(empty.exists());
     }
 
+    /// One `render_all` over a single computed document, in a fresh `docs/`.
+    fn render_one(cfg: &Config, body: &str) -> PathBuf {
+        let planned = vec![Planned::computed(DocId::root("DESIGN.md", cfg), body.into())];
+        let written = render_all(
+            &planned,
+            &crate::render_design::Placeholders::compute(&Default::default(), cfg),
+            &crate::registry::Registry::default(),
+            cfg,
+        );
+        assert_eq!(written.len(), 1);
+        written.into_iter().next().unwrap()
+    }
+
+    /// Pin a file's mtime to an hour ago, so a later write cannot hide behind
+    /// the clock's resolution.
+    fn age(path: &Path) -> std::time::SystemTime {
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        std::fs::metadata(path).unwrap().modified().unwrap()
+    }
+
+    /// The `Generated at:` line of a header, or the whole header when it has none.
+    fn stamp_of(header: &str) -> String {
+        header
+            .lines()
+            .find(|l| l.contains("Generated at:"))
+            .unwrap_or(header)
+            .trim()
+            .to_string()
+    }
+
+    #[test]
+    fn generating_twice_with_no_input_change_leaves_the_file_alone() {
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::from_dir(d.path());
+        cfg.docs_dir = d.path().join("docs");
+
+        let path = render_one(&cfg, "the body");
+        let first = std::fs::read(&path).unwrap();
+        let pinned = age(&path);
+        let stamp_before = stamp_of(&crate::render_design::generation_header_md(&cfg));
+
+        // The header stamps whole seconds, so the second run has to land in a
+        // later one for the timestamp line to differ at all. Without this the
+        // test would pass because the two runs rendered the same bytes.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let stamp_after = stamp_of(&crate::render_design::generation_header_md(&cfg));
+        assert_ne!(
+            stamp_before, stamp_after,
+            "the stamp did not move across the sleep, so the skip was never reached"
+        );
+        assert!(!stamp_after.contains("unknown"), "no clock reading, so the stamp cannot move");
+        let again = render_one(&cfg, "the body");
+
+        assert_eq!(again, path);
+        assert_eq!(std::fs::read(&path).unwrap(), first, "bytes changed with no input change");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            pinned,
+            "the file was rewritten with no input change"
+        );
+    }
+
+    #[test]
+    fn generating_after_an_input_change_rewrites_the_file() {
+        // The control for the test above: the same two runs, with the body
+        // changed between them, must write. Otherwise "leaves it alone" is a
+        // property of a writer that never writes.
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::from_dir(d.path());
+        cfg.docs_dir = d.path().join("docs");
+
+        let path = render_one(&cfg, "the body");
+        let pinned = age(&path);
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        render_one(&cfg, "the body, changed");
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("the body, changed"), "the new body was not written:\n{text}");
+        assert_ne!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            pinned,
+            "a changed input did not touch the file"
+        );
+    }
+
     #[test]
     fn a_document_reaches_the_output_carrying_the_marker() {
         // The sweep can only ever remove what it recognises, so a rendering

@@ -1178,15 +1178,18 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // because a graphviz that is not installed leaves the previous copy in
         // place and the sweep must not take it.
         generated.push(out.clone());
-        // `dot -o` renders straight to the final path, so snapshot the previous
-        // version before it is clobbered; otherwise the regeneration has nothing
-        // to be compared against and every run rewrites the timestamp.
-        let previous = fs::read_to_string(&out).ok();
+        // `dot -o` writes whatever it is given, so it renders to a file under
+        // `<mock>/target`, out of `docs/` so that a killed run leaves nothing for
+        // the sweep to miss, and the target is replaced only when the bytes
+        // differ. Rendering straight to the target moved its mtime on every run, which
+        // for the svg was then "restored" by writing it again.
+        let staging = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["graph-staging"])
+            .join(format!("STRUCTURE.GRAPH.{ext}"));
         let mut cmd = Command::new("dot");
         cmd.arg(format!("-T{ext}"))
             .arg(&dot_path)
             .arg("-o")
-            .arg(&out);
+            .arg(&staging);
         for a in &extra {
             cmd.arg(a);
         }
@@ -1194,16 +1197,23 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             Ok(s) if s.success() => {
                 eprintln!("  {}", out.display());
                 if ext == "svg" {
-                    if let Ok(svg_content) = fs::read_to_string(&out) {
+                    if let Ok(svg_content) = fs::read_to_string(&staging) {
                         let svg_header = render_design::generation_header_svg(&cfg);
                         let commented = format!("{svg_header}\n{svg_content}");
-                        render_design::write_generated_vs(&out, &commented, previous.as_deref());
+                        render_design::write_generated(&out, &commented);
+                    }
+                } else if let Ok(rendered) = fs::read(&staging) {
+                    if fs::read(&out).ok().as_deref() != Some(rendered.as_slice()) {
+                        fs::write(&out, rendered).unwrap_or_else(|e| {
+                            panic!("failed to write {}: {e}", out.display())
+                        });
                     }
                 }
             },
             Ok(_) => eprintln!("  dot failed for {ext} (is graphviz installed?)"),
             Err(e) => eprintln!("  dot not found for {ext}: {e}"),
         }
+        let _ = fs::remove_file(&staging);
     }
 
     // --- Bench results documentation (opt in via bench.toml [docgen]) ---

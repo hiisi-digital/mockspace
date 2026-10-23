@@ -375,3 +375,130 @@ fn snapshot(dir: &Path) -> std::collections::BTreeMap<String, String> {
     }
     out
 }
+
+/// Every file under `dir` at any depth, by relative path: its bytes and its mtime.
+///
+/// Bytes rather than text, because the rendered graph is a PNG and a text read
+/// of it fails and is skipped, which is how `snapshot` above never saw it.
+fn stamped(
+    dir: &Path,
+) -> std::collections::BTreeMap<String, (Vec<u8>, std::time::SystemTime)> {
+    fn walk(
+        root: &Path,
+        at: &Path,
+        out: &mut std::collections::BTreeMap<String, (Vec<u8>, std::time::SystemTime)>,
+    ) {
+        let Ok(rd) = fs::read_dir(at) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(root, &p, out);
+            } else {
+                let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
+                let when = fs::metadata(&p).unwrap().modified().unwrap();
+                out.insert(rel, (fs::read(&p).unwrap(), when));
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// The whole binary, twice: not one file under `docs/` is touched the second time.
+///
+/// The test above compares text, so it cannot see the rendered graph, and it
+/// compares content, so it cannot see a file written with the same bytes. A
+/// generated file rewritten identically still moves its mtime, which rebuilds
+/// whatever watches it and, for the files a repository tracks, reads as a change
+/// to anything that compares stat data. So this pins the mtime of every file to
+/// an hour ago after the first run and asks that every one of them is still there
+/// after the second, bytes and mtime both.
+#[test]
+fn the_binary_touches_no_generated_file_the_second_time() {
+    let dot_installed = std::process::Command::new("dot")
+        .arg("-V")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    // The graph files are the point of this test. Without graphviz there are none
+    // and what is left is the markdown the test above already holds, so say so
+    // rather than pass looking like the whole.
+    if !dot_installed {
+        eprintln!("SKIPPED: graphviz `dot` is not installed, so no graph file is generated");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()
+        .expect("git init");
+    let mock = root.join("mock");
+    write(&mock.join("mockspace.toml"), "project_name = \"probe\"\n");
+    write(
+        &mock.join("Cargo.toml"),
+        "[workspace]\nmembers = []\nresolver = \"2\"\n",
+    );
+    write(
+        &mock.join("PROJECT.md.tmpl"),
+        "# Probe\n\nA body that does not change.\n",
+    );
+
+    let run = || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_mockspace"))
+            .arg("--dir")
+            .arg(&mock)
+            .output()
+            .expect("the binary runs")
+    };
+
+    run();
+    let docs = root.join("docs");
+    let first = stamped(&docs);
+    for graph in ["STRUCTURE.GRAPH.dot", "STRUCTURE.GRAPH.png", "STRUCTURE.GRAPH.svg"] {
+        assert!(
+            first.contains_key(graph),
+            "control: {graph} must be generated, else this proves nothing; got {:?}",
+            first.keys().collect::<Vec<_>>()
+        );
+    }
+
+    let dot_text = String::from_utf8_lossy(&first["STRUCTURE.GRAPH.dot"].0).to_string();
+    assert!(
+        dot_text.contains("Generated at:") && !dot_text.contains("Generated at: unknown"),
+        "control: the stamp has no clock reading, so it cannot move between runs"
+    );
+
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for rel in first.keys() {
+        fs::File::options()
+            .write(true)
+            .open(docs.join(rel))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    let pinned = stamped(&docs);
+
+    // A later second, so a regenerated header carries a different stamp.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    run();
+    let second = stamped(&docs);
+
+    assert_eq!(
+        pinned.keys().collect::<Vec<_>>(),
+        second.keys().collect::<Vec<_>>(),
+        "the second run changed which files exist"
+    );
+    let touched: Vec<&String> = pinned
+        .iter()
+        .filter(|(rel, before)| second[*rel] != **before)
+        .map(|(rel, _)| rel)
+        .collect();
+    assert!(
+        touched.is_empty(),
+        "a second generation on an unchanged tree rewrote: {touched:?}"
+    );
+}
