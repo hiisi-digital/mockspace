@@ -275,23 +275,20 @@ pub fn render_table(ns: &RegistryNamespace, reg: &Registry, cfg: &crate::config:
     };
 
     if let Some(group) = &ns.group_by {
-        // Groups appear in first-seen order rather than sorted, so the file
-        // order the project chose is the order a reader meets them.
-        let mut order: Vec<String> = Vec::new();
+        // Groups are ordered by the group value. First-seen order would be
+        // whichever group holds the alphabetically first key path, since the
+        // rows are listed by key path, and renaming one slug would flip it.
+        // Rows within a group keep their key path order.
         let mut buckets: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for id in ids {
             let key = reg
                 .get(id)
                 .and_then(|r| r.fields.get(group).cloned())
                 .unwrap_or_else(|| "ungrouped".to_string());
-            if !buckets.contains_key(&key) {
-                order.push(key.clone());
-            }
             buckets.entry(key).or_default().push(id.clone());
         }
         let mut out = String::new();
-        for key in order {
-            let members = &buckets[&key];
+        for (key, members) in &buckets {
             out.push_str(&format!("\n### {key}\n\n"));
             out.push_str(&render_rows(ns, reg, members, cfg));
         }

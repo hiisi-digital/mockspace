@@ -85,7 +85,8 @@ A row is `namespace::slug`, and that is all of its identity. Any number of
 `*.toml` files, under any names and in any directories under `registry/`, make
 one registry, so splitting, merging, renaming or moving a file changes nothing a
 reference, a check or a rendered page sees. A namespace lists its rows by key
-path, not by the order of the files holding them. The same key path in two files
+path, not by the order of the files holding them. A grouped table orders
+its groups by the group value. The same key path in two files
 is an error naming both, and a file and line in a report is where to look, never
 who the row is. Name a row by its key path, and never write a rule or a check
 that depends on which file it sits in.

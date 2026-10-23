@@ -20,7 +20,7 @@ use std::fs;
 use std::path::Path;
 
 use mockspace::registry::{
-    Registry, RegistryNamespace, load_registry, referrers, table_cells, validate,
+    Registry, RegistryNamespace, load_registry, referrers, render_table, table_cells, validate,
     validate_row_references,
 };
 
@@ -40,6 +40,19 @@ title = \"Tenets\"
 [[registry.namespace.field]]
 name = \"subject\"
 type = \"subject\"
+
+[[registry.namespace.field]]
+name = \"text\"
+type = \"string\"
+
+[[registry.namespace]]
+key = \"term\"
+title = \"Terms\"
+group_by = \"kind\"
+
+[[registry.namespace.field]]
+name = \"kind\"
+type = \"string\"
 
 [[registry.namespace.field]]
 name = \"text\"
@@ -70,6 +83,12 @@ fn rows() -> Vec<Row> {
         Row { ns: "subject", id: "planet", body: "what = \"where it happens\"" },
         Row { ns: "tenet", id: "up_is_local", body: "subject = \"planet\"\ntext = \"up\"" },
         Row { ns: "tenet", id: "nights_follow_days", body: "subject = \"sky\"\ntext = \"nights\"" },
+        // a grouped namespace whose first slug sits in the group that sorts last, so the order
+        // the groups render in is told apart from the order their rows were met in
+        Row { ns: "term", id: "aardvark", body: "kind = \"basics\"\ntext = \"first\"" },
+        Row { ns: "term", id: "ladder", body: "kind = \"advanced\"\ntext = \"second\"" },
+        Row { ns: "term", id: "mid", body: "text = \"no group\"" },
+        Row { ns: "term", id: "zebra", body: "kind = \"basics\"\ntext = \"last\"" },
     ]
 }
 
@@ -96,6 +115,7 @@ fn load(layout: &[(&str, &[usize])]) -> (tempfile::TempDir, Vec<RegistryNamespac
 
 /// Everything the registry answers except where a row was written.
 fn answers(namespaces: &[RegistryNamespace], reg: &Registry) -> String {
+    let cfg = mockspace::config::Config::from_dir(Path::new("/nonexistent"));
     let mut out = String::new();
     for (qualified, row) in &reg.rows {
         out.push_str(&format!("{qualified} {:?}\n", row.fields));
@@ -106,6 +126,7 @@ fn answers(namespaces: &[RegistryNamespace], reg: &Registry) -> String {
     for ns in namespaces {
         let (cols, cells) = table_cells(ns, reg);
         out.push_str(&format!("table {}: {cols:?} {cells:?}\n", ns.key));
+        out.push_str(&format!("rendered {}:\n{}\n", ns.key, render_table(ns, reg, &cfg)));
     }
     for q in reg.rows.keys().filter(|q| q.starts_with("subject::")) {
         out.push_str(&format!("referrers {q}: {:?}\n", referrers(reg, namespaces, q)));
@@ -121,12 +142,12 @@ fn answers(namespaces: &[RegistryNamespace], reg: &Registry) -> String {
 
 #[test]
 fn the_same_rows_in_one_file_in_many_and_in_nested_directories_are_one_registry() {
-    let one = load(&[("everything.toml", &[0, 1, 2, 3, 4, 5, 6])]);
+    let one = load(&[("everything.toml", &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])]);
     // file names sorting against the ids, rows split across namespaces
     let many = load(&[
-        ("z_first.toml", &[0, 5]),
-        ("a_last.toml", &[1, 2]),
-        ("m.toml", &[3, 4, 6]),
+        ("z_first.toml", &[0, 5, 7]),
+        ("a_last.toml", &[1, 2, 10]),
+        ("m.toml", &[3, 4, 6, 9, 8]),
     ]);
     // a different depth for each, one directory named for a subject and one for nothing
     let nested = load(&[
@@ -134,6 +155,8 @@ fn the_same_rows_in_one_file_in_many_and_in_nested_directories_are_one_registry(
         ("tenet/time.toml", &[1]),
         ("deep/er/still/planet.toml", &[4, 5]),
         ("subject.toml", &[0, 2]),
+        ("term/b.toml", &[10, 8]),
+        ("term/a.toml", &[9, 7]),
     ]);
 
     let base = answers(&one.1, &one.2);
@@ -213,4 +236,48 @@ fn the_same_row_id_in_two_namespaces_is_two_rows() {
     let reg = load_registry(mock, &cfg.registry_namespaces);
     assert!(reg.duplicates.is_empty(), "{:?}", reg.duplicates);
     assert!(reg.get("subject::sky").is_some() && reg.get("tenet::sky").is_some());
+}
+
+#[test]
+fn a_grouped_namespace_renders_its_groups_by_group_value_and_its_rows_by_key_path() {
+    // the first slug, `aardvark`, sits in `basics`, which sorts after `advanced`; and a row with
+    // no group falls in `ungrouped`. Groups follow the group value, so renaming a slug cannot
+    // move a group, and each group lists its rows by key path.
+    let (_d, ns, reg) = load(&[("one.toml", &[10, 9, 8, 7])]);
+    let term = ns.iter().find(|n| n.key == "term").expect("the grouped namespace");
+    let cfg = mockspace::config::Config::from_dir(Path::new("/nonexistent"));
+    let out = render_table(term, &reg, &cfg);
+    let at = |needle: &str| out.find(needle).unwrap_or_else(|| panic!("no `{needle}` in:\n{out}"));
+    assert!(
+        at("### advanced") < at("### basics") && at("### basics") < at("### ungrouped"),
+        "groups are not in group-value order:\n{out}"
+    );
+    assert!(at("aardvark") < at("zebra"), "rows within a group are not in key path order:\n{out}");
+}
+
+#[test]
+fn renaming_a_slug_does_not_move_a_group() {
+    // `aardvark` to `yak` changes which row is first by key path, and with it which group a
+    // reader meets first if groups follow first sight rather than their own value
+    let headings = |first_slug: &str| {
+        let dir = tempfile::tempdir().expect("a temporary tree");
+        let mock = dir.path();
+        write(&mock.join("mockspace.toml"), CONFIG);
+        let text: String = rows()[7 ..]
+            .iter()
+            .map(|r| r.block().replace("\"aardvark\"", &format!("\"{first_slug}\"")))
+            .collect::<Vec<_>>()
+            .join("\n");
+        write(&mock.join("registry/terms.toml"), &text);
+        let cfg = mockspace::config::Config::from_dir(mock);
+        let reg = load_registry(mock, &cfg.registry_namespaces);
+        let term = cfg.registry_namespaces.iter().find(|n| n.key == "term").unwrap();
+        render_table(term, &reg, &cfg)
+            .lines()
+            .filter(|l| l.starts_with("### "))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(headings("aardvark"), ["### advanced", "### basics", "### ungrouped"]);
+    assert_eq!(headings("yak"), headings("aardvark"), "a rename moved a group");
 }
