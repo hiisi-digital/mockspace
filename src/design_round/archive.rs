@@ -279,8 +279,8 @@ pub(crate) fn perform_archive(
 /// Earliest 12-digit timestamp prefix among files in `dr`.
 ///
 /// Used by `cmd_archive` when no changelist exists (TOPIC-only
-/// abandonments), where the earliest file of any kind names the round. Skips README, subdirectories, and any file lacking
-/// the canonical `YYYYMMDDHHMM_*` prefix.
+/// abandonments), where the earliest file of any kind names the round. Skips README,
+/// subdirectories, and any file lacking the canonical `YYYYMMDDHHMM_*` prefix.
 pub(crate) fn determine_round_name_from_dir(dr: &Path) -> Option<String> {
     let entries = fs::read_dir(dr).ok()?;
     let mut prefixes: Vec<String> = Vec::new();
