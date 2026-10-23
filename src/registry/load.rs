@@ -104,6 +104,9 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
                     fields,
                 };
                 let qualified = row.qualified();
+                // The first file in walk order keeps the key path. The walk is sorted by name at
+                // every directory, so which file is first does not depend on the filesystem, and
+                // the `duplicate-id` finding is what reports the other files.
                 if let Some(existing) = reg.rows.get(&qualified) {
                     reg.duplicates
                         .entry(qualified)

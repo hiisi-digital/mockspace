@@ -279,18 +279,26 @@ pub fn render_table(ns: &RegistryNamespace, reg: &Registry, cfg: &crate::config:
         // whichever group holds the alphabetically first key path, since the
         // rows are listed by key path, and renaming one slug would flip it.
         // Rows within a group keep their key path order.
+        //
+        // Rows with no group value are kept in a list of their own, never under a group name,
+        // so they cannot sort among the real groups or merge with a group really called
+        // anything.
         let mut buckets: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut ungrouped: Vec<String> = Vec::new();
         for id in ids {
-            let key = reg
-                .get(id)
-                .and_then(|r| r.fields.get(group).cloned())
-                .unwrap_or_else(|| "ungrouped".to_string());
-            buckets.entry(key).or_default().push(id.clone());
+            match reg.get(id).and_then(|r| r.fields.get(group)) {
+                Some(key) => buckets.entry(key.clone()).or_default().push(id.clone()),
+                None => ungrouped.push(id.clone()),
+            }
         }
         let mut out = String::new();
         for (key, members) in &buckets {
             out.push_str(&format!("\n### {key}\n\n"));
             out.push_str(&render_rows(ns, reg, members, cfg));
+        }
+        if !ungrouped.is_empty() {
+            out.push_str("\n### no group\n\n");
+            out.push_str(&render_rows(ns, reg, &ungrouped, cfg));
         }
         return out;
     }

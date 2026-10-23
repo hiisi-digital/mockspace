@@ -241,7 +241,7 @@ fn the_same_row_id_in_two_namespaces_is_two_rows() {
 #[test]
 fn a_grouped_namespace_renders_its_groups_by_group_value_and_its_rows_by_key_path() {
     // the first slug, `aardvark`, sits in `basics`, which sorts after `advanced`; and a row with
-    // no group falls in `ungrouped`. Groups follow the group value, so renaming a slug cannot
+    // no group falls under `no group`. Groups follow the group value, so renaming a slug cannot
     // move a group, and each group lists its rows by key path.
     let (_d, ns, reg) = load(&[("one.toml", &[10, 9, 8, 7])]);
     let term = ns.iter().find(|n| n.key == "term").expect("the grouped namespace");
@@ -249,7 +249,7 @@ fn a_grouped_namespace_renders_its_groups_by_group_value_and_its_rows_by_key_pat
     let out = render_table(term, &reg, &cfg);
     let at = |needle: &str| out.find(needle).unwrap_or_else(|| panic!("no `{needle}` in:\n{out}"));
     assert!(
-        at("### advanced") < at("### basics") && at("### basics") < at("### ungrouped"),
+        at("### advanced") < at("### basics") && at("### basics") < at("### no group"),
         "groups are not in group-value order:\n{out}"
     );
     assert!(at("aardvark") < at("zebra"), "rows within a group are not in key path order:\n{out}");
@@ -278,6 +278,44 @@ fn renaming_a_slug_does_not_move_a_group() {
             .map(str::to_string)
             .collect::<Vec<_>>()
     };
-    assert_eq!(headings("aardvark"), ["### advanced", "### basics", "### ungrouped"]);
+    assert_eq!(headings("aardvark"), ["### advanced", "### basics", "### no group"]);
     assert_eq!(headings("yak"), headings("aardvark"), "a rename moved a group");
+}
+
+#[test]
+fn rows_with_no_group_stay_apart_from_a_group_that_is_really_called_ungrouped() {
+    // a real group value `ungrouped` sorts among the others, and a row with no group value at all
+    // is not that group: it renders after every real group, under a heading of its own, and the
+    // two never share a table
+    let dir = tempfile::tempdir().expect("a temporary tree");
+    let mock = dir.path();
+    write(&mock.join("mockspace.toml"), CONFIG);
+    let text = "\
+[[term]]
+id = \"a_real\"
+kind = \"ungrouped\"
+text = \"real\"
+
+[[term]]
+id = \"b_none\"
+text = \"none\"
+
+[[term]]
+id = \"c_late\"
+kind = \"zzz\"
+text = \"late\"
+";
+    write(&mock.join("registry/terms.toml"), text);
+    let cfg = mockspace::config::Config::from_dir(mock);
+    let reg = load_registry(mock, &cfg.registry_namespaces);
+    let term = cfg.registry_namespaces.iter().find(|n| n.key == "term").unwrap();
+    let out = render_table(term, &reg, &cfg);
+    let headings: Vec<&str> = out.lines().filter(|l| l.starts_with("### ")).collect();
+    assert_eq!(headings.len(), 3, "the no-group rows merged with a real group:\n{out}");
+    assert_eq!(headings[0], "### ungrouped", "{out}");
+    assert_eq!(headings[1], "### zzz", "{out}");
+    assert_eq!(headings[2], "### no group", "{out}");
+    let at = |needle: &str| out.find(needle).unwrap_or_else(|| panic!("no `{needle}` in:\n{out}"));
+    assert!(at("b_none") > at("c_late"), "no-group rows are not rendered last:\n{out}");
+    assert!(at("a_real") < at("### zzz"), "the real group lost its row:\n{out}");
 }
