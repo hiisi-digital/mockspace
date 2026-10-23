@@ -93,8 +93,10 @@ const COMMANDS: &[Cmd] = &[
         summary: "archive a finished round into a directory named by its id",
         args:    &[],
         help:    "Archives a finished round (both changelists locked) into \
-                  design_rounds/<id>/ with .meta and .history. Valid only \
-                  from CLOSED. Accepts --auto-commit.",
+                  design_rounds/<id>/ with .meta and .history. Takes the \
+                  changelists, the files that start with the id of one, and \
+                  the files one names; any other flat file stays and is \
+                  listed. Valid only from CLOSED. Accepts --auto-commit.",
     },
     Cmd {
         name:    "archive",

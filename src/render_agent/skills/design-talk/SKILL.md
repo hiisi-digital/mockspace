@@ -18,8 +18,9 @@ different job and is not this.
    open in TOPIC phase is a filing: somebody found something while working
    elsewhere and left it in the way so the next round would have to address it,
    and this is that round. Three ways they vanish, all observed: a topic on a
-   branch that never merged, a topic swept into another round's archive by
-   `close`, and an archive present only on an unmerged branch. Never start a
+   branch that never merged, a topic swept into another round's archive by an
+   older `close` (now it takes only what the round's changelists name or share
+   an id with), and an archive present only on an unmerged branch. Never start a
    round by branching fresh from the trunk and leaving them behind, never stash
    one, never move one to another branch, and never close a round leaving one
    unmentioned. Every topic the script pulls in is named in this round's
