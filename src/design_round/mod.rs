@@ -400,14 +400,23 @@ pub fn cmd_archive(cfg: &Config, opts: &SubcmdOpts) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let round_name = match determine_round_name_from_dir(&dr) {
-        Some(name) => name,
-        None => {
-            eprintln!(
-                "error: no round files to archive (design_rounds/ has no timestamp-prefixed files)"
-            );
-            return ExitCode::FAILURE;
-        },
+    // Named by the round's changelists where it has any, the way `close` names it, so the archive
+    // carries the id of the round and not of whichever topic happens to be oldest. With none
+    // (the TOPIC phase) the earliest file of any kind names it.
+    let changelists = changelist_helpers::find_changelists(&dr);
+    let round_name = if !changelists.is_empty() {
+        determine_round_name(&changelists)
+    } else {
+        match determine_round_name_from_dir(&dr) {
+            Some(name) => name,
+            None => {
+                eprintln!(
+                    "error: no round files to archive (design_rounds/ has no timestamp-prefixed \
+                     files)"
+                );
+                return ExitCode::FAILURE;
+            },
+        }
     };
 
     perform_archive(

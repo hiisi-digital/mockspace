@@ -10,9 +10,11 @@
 #   1. A topic filed to force the next round sits on its own branch and is
 #      never merged. The next round branches from trunk, cannot see it, and
 #      reports the question as still open because the files say so.
-#   2. A topic filed while another round is in flight gets swept into that
-#      round's archive by `close`, which sweeps every loose flat file into one
-#      subdirectory regardless of which round it belonged to.
+#   2. A topic filed while another round is in flight got swept into that
+#      round's archive by an older `close`, which swept every loose flat file
+#      into one subdirectory regardless of which round it belonged to. `close`
+#      now takes only the files the round's changelists name or share an id
+#      with; the archives it already made still hold the ones it swept.
 #   3. An archived round exists only on a branch that never merged, so the
 #      paper trail for a whole design conversation is absent from trunk.
 #
@@ -212,9 +214,12 @@ problem.
     changelist, with the reason. Silence is indistinguishable from having
     missed it, which is how these were lost in the first place.
   - NEVER stash one, NEVER drop one, NEVER move one to another branch, and
-    NEVER close the round leaving one unmentioned. \`close\` sweeps loose flat
-    files into whichever archive it is building, which is exactly how one of
-    these disappeared.
+    NEVER close the round leaving one unmentioned. \`close\` takes a topic into
+    the archive where a changelist of the round names it or it carries a
+    changelist's id. A pulled-in topic keeps its own stamp, so naming it is what
+    closes it, and an unnamed one stays flat. An older \`close\`
+    swept every loose flat file into its archive, which is how one of these
+    disappeared.
   - If a topic is genuinely out of scope, it does not get dropped: it gets
     re-filed as a fresh flat topic AFTER this round closes, so the next round
     inherits it the same way this one did.
