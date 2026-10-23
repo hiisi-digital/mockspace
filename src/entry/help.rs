@@ -329,6 +329,21 @@ const COMMANDS: &[Cmd] = &[
                   at in the run's profile, --plain too; a change reruns \
                   members. Doc tests do not run under nextest; --plain \
                   reaches them.\n\n\
+                  The members are built without debug info, whatever the \
+                  manifest or a cargo config says, and a crate gets symbols \
+                  (`[test] debug`, line-tables-only unless set) only where \
+                  one is needed to trace a problem: a member whose tests \
+                  failed the last time (kept under <mock>/target, not in the \
+                  tracked record), or one named with --debug=<crate,...>, \
+                  which also chooses it and runs it whether or not it \
+                  passed. -p x --debug is the same for x; a bare --debug \
+                  with no -p gives symbols to every member that runs, and \
+                  --no-debug to none. A crate built with symbols is built \
+                  again with its dependents, not with its dependencies or \
+                  the rest, and the lean build stays beside it. A cargo \
+                  config or CARGO_PROFILE_*_DEBUG that sets debug info is \
+                  reported and overridden for the run, never edited; \
+                  `[test] lean = false` lets it stand.\n\n\
                   Everything else after `test` is forwarded to each cargo \
                   invocation, so `mock test --release` and `mock test -- \
                   --nocapture` both work. A filter after `--` or an -E runs, \

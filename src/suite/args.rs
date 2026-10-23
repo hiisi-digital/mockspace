@@ -25,6 +25,38 @@ pub struct Invocation {
     pub passed:    Vec<String>,
     /// Whatever followed `--`, for the test binaries.
     pub test_args: Vec<String>,
+    /// Which crates the caller asked to be built with symbols.
+    pub debug:     DebugAsk,
+}
+
+/// `--debug`, `--debug=<crate,...>` and `--no-debug`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DebugAsk {
+    /// A bare `--debug`: the crates named with `-p`, or where none is, every
+    /// crate that runs.
+    pub bare:  bool,
+    /// Crates named with `--debug=`. Each is also chosen as with `-p`.
+    pub names: Vec<String>,
+    /// `--no-debug`: no crate gets symbols, a failed one included.
+    pub off:   bool,
+}
+
+impl DebugAsk {
+    /// Whether symbols were asked for by name or by `--debug`, as against left
+    /// to the record of what failed.
+    pub fn asked(&self) -> bool {
+        !self.off && (self.bare || !self.names.is_empty())
+    }
+}
+
+/// The flags this module reads and no cargo understands, which are kept from
+/// every cargo command line `mock test` builds. Only ahead of a `--`, which
+/// is the test binaries'.
+pub fn is_own_flag(a: &str) -> bool {
+    matches!(
+        a,
+        "--full" | "--cheap" | "--no-cache" | "--plain" | "--debug" | "--no-debug"
+    ) || a.starts_with("--debug=")
 }
 
 impl Invocation {
@@ -61,6 +93,7 @@ pub fn parse(args: &[&str]) -> Invocation {
         filter:    None,
         passed:    Vec::new(),
         test_args: Vec::new(),
+        debug:     DebugAsk::default(),
     };
     let mut it = args.iter().copied();
     while let Some(a) = it.next() {
@@ -82,9 +115,22 @@ pub fn parse(args: &[&str]) -> Invocation {
             "--cheap" => inv.mode = Mode::Cheap,
             "--no-cache" => inv.cache = false,
             "--plain" => inv.plain = true,
+            "--debug" => {
+                inv.debug.bare = true;
+                inv.debug.off = false;
+            },
+            "--no-debug" => inv.debug.off = true,
             "--workspace" | "--all" => inv.workspace = true,
             _ => {
-                if let Some(p) = value("--package", Some("-p")) {
+                if let Some(list) = a.strip_prefix("--debug=") {
+                    // A crate named here is chosen as well, so that asking for
+                    // its symbols runs it.
+                    for n in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+                        inv.debug.names.push(n.to_string());
+                        inv.packages.push(n.to_string());
+                    }
+                    inv.debug.off = false;
+                } else if let Some(p) = value("--package", Some("-p")) {
                     inv.packages.push(p);
                 } else if let Some(p) = a.strip_prefix("-p").filter(|p| !p.is_empty()) {
                     inv.packages.push(p.to_string());
@@ -100,6 +146,11 @@ pub fn parse(args: &[&str]) -> Invocation {
                 }
             },
         }
+    }
+    // Symbols asked for on crates that were named are asked for to trace
+    // something in them, which a pass that still stands would leave unrun.
+    if inv.mode == Mode::Changed && inv.debug.asked() && !inv.packages.is_empty() {
+        inv.mode = Mode::Full;
     }
     inv
 }
@@ -178,5 +229,80 @@ mod tests {
     fn cheap_and_plain_are_modes_of_their_own() {
         assert_eq!(parse(&["--cheap"]).mode, Mode::Cheap);
         assert!(parse(&["--plain"]).plain);
+    }
+
+    #[test]
+    fn a_bare_run_asks_for_no_symbols() {
+        let i = parse(&[]);
+        assert_eq!(i.debug, DebugAsk::default());
+        assert!(!i.debug.asked());
+    }
+
+    /// `-p x --debug` is a crate asked about with symbols: it runs, passed or
+    /// not, and the flag is none of cargo's.
+    #[test]
+    fn debug_on_a_named_crate_runs_it_in_full() {
+        let i = parse(&["-p", "x", "--debug"]);
+        assert!(i.debug.bare && i.debug.asked());
+        assert_eq!(i.packages, vec!["x"]);
+        assert_eq!(i.mode, Mode::Full);
+        assert!(i.passed.is_empty(), "{:?}", i.passed);
+        // Nothing is named, so what runs is still decided by what changed.
+        assert_eq!(parse(&["--debug"]).mode, Mode::Changed);
+    }
+
+    #[test]
+    fn debug_with_names_chooses_them_as_well() {
+        let i = parse(&["--debug=a,b", "--debug=c"]);
+        assert_eq!(i.debug.names, vec!["a", "b", "c"]);
+        assert_eq!(i.packages, vec!["a", "b", "c"]);
+        assert_eq!(i.mode, Mode::Full);
+        assert!(!i.debug.bare);
+        assert!(i.passed.is_empty());
+        // A trailing comma and a space name nothing.
+        assert_eq!(parse(&["--debug=a, ,"]).debug.names, vec!["a"]);
+    }
+
+    /// An explicit `--cheap` stays what it was written as.
+    #[test]
+    fn debug_does_not_widen_a_cheap_run() {
+        assert_eq!(parse(&["--cheap", "-p", "x", "--debug"]).mode, Mode::Cheap);
+    }
+
+    #[test]
+    fn no_debug_wins_over_an_earlier_ask_and_loses_to_a_later_one() {
+        assert!(parse(&["--debug", "--no-debug"]).debug.off);
+        assert!(!parse(&["--debug", "--no-debug"]).debug.asked());
+        assert!(!parse(&["--no-debug", "--debug"]).debug.off);
+        assert!(parse(&["--no-debug", "--debug"]).debug.asked());
+        // It does not widen the run either.
+        assert_eq!(parse(&["-p", "x", "--no-debug"]).mode, Mode::Changed);
+    }
+
+    /// A `--debug` after `--` is the test binary's, not ours, so it is neither
+    /// taken here nor dropped from the command line by [`is_own_flag`]'s caller.
+    #[test]
+    fn a_debug_flag_after_the_separator_is_the_test_binarys() {
+        let i = parse(&["--", "--debug"]);
+        assert_eq!(i.test_args, vec!["--debug"]);
+        assert!(!i.debug.asked());
+    }
+
+    #[test]
+    fn the_flags_read_here_are_the_flags_that_are_not_cargos() {
+        for f in [
+            "--full",
+            "--cheap",
+            "--no-cache",
+            "--plain",
+            "--debug",
+            "--no-debug",
+            "--debug=a",
+        ] {
+            assert!(is_own_flag(f), "{f}");
+        }
+        for f in ["--features", "--release", "-p", "--debugger", "--debug-assertions", "x"] {
+            assert!(!is_own_flag(f), "{f}");
+        }
     }
 }

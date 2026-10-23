@@ -29,6 +29,51 @@ pub struct TestSettings {
     pub commit:           Level,
     /// The opt level each named member is built at under `mock test`.
     pub opt_level:        BTreeMap<String, OptLevel>,
+    /// Whether `mock test` builds every crate without debug info unless it needs
+    /// symbols. Off hands the profile back to the manifest and the cargo config.
+    pub lean:             bool,
+    /// The debug info a crate gets when it needs symbols.
+    pub debug:            DebugLevel,
+}
+
+/// The debug info cargo can be asked for, less none: what a crate that needs
+/// symbols is built with. Parsed once where the table is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugLevel {
+    /// Cargo's `1` or `"limited"`.
+    Limited,
+    /// Cargo's `2`, `true` or `"full"`.
+    Full,
+    LineDirectivesOnly,
+    /// Enough for a backtrace to name lines, and a fraction of the size of
+    /// `Full`.
+    LineTablesOnly,
+}
+
+impl DebugLevel {
+    /// The value as it is written in a cargo config, a number or a quoted word.
+    pub fn toml(self) -> String {
+        match self {
+            Self::Limited => "1".to_string(),
+            Self::Full => "2".to_string(),
+            Self::LineDirectivesOnly => "\"line-directives-only\"".to_string(),
+            Self::LineTablesOnly => "\"line-tables-only\"".to_string(),
+        }
+    }
+}
+
+impl std::str::FromStr for DebugLevel {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, ()> {
+        Ok(match s {
+            "1" | "limited" => Self::Limited,
+            "2" | "full" | "true" => Self::Full,
+            "line-directives-only" => Self::LineDirectivesOnly,
+            "line-tables-only" => Self::LineTablesOnly,
+            _ => return Err(()),
+        })
+    }
 }
 
 /// An opt level as cargo reads it: `0` to `3`, `s` or `z`. Parsed once where
@@ -112,6 +157,8 @@ impl Default for TestSettings {
             timeout_secs:     DEFAULT_TIMEOUT_SECS,
             commit:           Level::Pass,
             opt_level:        BTreeMap::new(),
+            lean:             true,
+            debug:            DebugLevel::LineTablesOnly,
         }
     }
 }
@@ -126,6 +173,18 @@ pub(crate) struct RawTest {
     timeout_secs:     Option<u64>,
     commit:           Option<String>,
     opt_level:        BTreeMap<String, RawOpt>,
+    lean:             Option<bool>,
+    debug:            Option<RawDebug>,
+}
+
+/// A debug level as written: cargo's own spelling, a number, a word or a bool.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[serde(untagged)]
+pub(crate) enum RawDebug {
+    Number(i64),
+    Bool(bool),
+    Word(String),
 }
 
 /// An opt level as written: cargo's own spelling, a number or `"s"` or `"z"`.
@@ -178,12 +237,29 @@ impl RawTest {
             })?;
             opt_level.insert(member, level);
         }
+        let debug = match self.debug {
+            None => d.debug,
+            Some(raw) => {
+                let text = match &raw {
+                    RawDebug::Number(n) => n.to_string(),
+                    RawDebug::Bool(b) => b.to_string(),
+                    RawDebug::Word(w) => w.clone(),
+                };
+                text.parse::<DebugLevel>().map_err(|()| {
+                    format!(
+                        "[test] debug is the level a crate that needs symbols is built with: 1, 2, \"limited\", \"full\", \"line-directives-only\" or \"line-tables-only\"; got {text:?}"
+                    )
+                })?
+            },
+        };
         Ok(TestSettings {
             heavy_after_secs,
             heavy_threads,
             timeout_secs,
             commit,
             opt_level,
+            lean: self.lean.unwrap_or(d.lean),
+            debug,
         })
     }
 }
@@ -299,5 +375,48 @@ mod tests {
     #[test]
     fn an_unknown_key_is_refused() {
         assert!(parse("heavy_after = 3\n").is_err());
+    }
+
+    /// Lean is the default and the level a crate that needs symbols gets is the
+    /// cheap one that still names lines.
+    #[test]
+    fn builds_are_lean_by_default_with_the_cheap_symbols() {
+        let s = parse("").unwrap();
+        assert!(s.lean);
+        assert_eq!(s.debug, DebugLevel::LineTablesOnly);
+        assert!(!parse("lean = false\n").unwrap().lean);
+    }
+
+    #[test]
+    fn every_spelling_of_a_debug_level_cargo_takes_is_one_level() {
+        for (text, want) in [
+            ("1", DebugLevel::Limited),
+            ("\"limited\"", DebugLevel::Limited),
+            ("2", DebugLevel::Full),
+            ("true", DebugLevel::Full),
+            ("\"full\"", DebugLevel::Full),
+            ("\"line-tables-only\"", DebugLevel::LineTablesOnly),
+            ("\"line-directives-only\"", DebugLevel::LineDirectivesOnly),
+        ] {
+            let s = parse(&format!("debug = {text}\n")).unwrap();
+            assert_eq!(s.debug, want, "{text}");
+            // What is written into a cargo config parses back to the same level.
+            let back: toml_edit::DocumentMut = format!("d = {}\n", want.toml()).parse().unwrap();
+            let again = match back["d"].as_integer() {
+                Some(n) => n.to_string(),
+                None => back["d"].as_str().unwrap().to_string(),
+            };
+            assert_eq!(again.parse::<DebugLevel>(), Ok(want), "{text}");
+        }
+    }
+
+    /// A level that adds nothing cannot be the level of a crate that needs
+    /// symbols, and a misspelling is refused rather than defaulted.
+    #[test]
+    fn a_debug_level_that_adds_no_symbols_or_means_nothing_is_refused() {
+        for bad in ["0", "false", "\"none\"", "\"line\"", "3", "\"\""] {
+            let e = parse(&format!("debug = {bad}\n")).unwrap_err();
+            assert!(e.contains("[test] debug"), "{bad}: {e}");
+        }
     }
 }
