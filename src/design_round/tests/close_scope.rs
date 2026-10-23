@@ -125,6 +125,41 @@ fn close_takes_a_topic_a_changelist_names_though_its_id_differs() {
 }
 
 #[test]
+fn close_takes_a_file_a_changelist_names_though_it_carries_no_round_id() {
+    // The help text, the usage guide and the template all say close takes the files one names,
+    // with or without an id.
+    let named = "notes.md";
+    let text = "# doc changelist: x\n\nSee `notes.md`.\n";
+    let dir = mock(&[
+        (DOC_LOCK, text),
+        (SRC_LOCK, "# src changelist: x\n"),
+        (named, "notes\n"),
+        (PARKED_OLDER, "parked\n"),
+    ]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(
+        cmd_close(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        names_in(&dr.join("202610230520")),
+        sorted(&[DOC_LOCK, SRC_LOCK, named])
+    );
+    assert_eq!(names_in(&dr), sorted(&[PARKED_OLDER]));
+
+    let names = owned(&[DOC_LOCK, SRC_LOCK, named, PARKED_OLDER]);
+    let files = files_of_round(&names, |n| {
+        Some(if n == DOC_LOCK { text.to_string() } else { String::new() })
+    });
+    let notice = left_notice(&files.left).expect("the parked topic was left");
+    assert!(
+        !notice.contains(named),
+        "the notice lists a file the round took:\n{notice}"
+    );
+    assert!(notice.contains(PARKED_OLDER), "{notice}");
+}
+
+#[test]
 fn close_takes_a_deprecated_changelist_of_its_round() {
     let deprecated = "202610230525_changelist.src.deprecated.md";
     let dir = closable(&[(deprecated, "# src changelist: first try\n")]);

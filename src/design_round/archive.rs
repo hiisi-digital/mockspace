@@ -113,7 +113,7 @@ pub(crate) fn files_of_round(
             changelist_helpers::parse_changelist(name).is_some()
                 || lint_rules::round_id::split_prefix(name)
                     .is_some_and(|(id, rest)| rest.starts_with('_') && ids.contains(&id))
-                || (lint_rules::round_id::split_prefix(name).is_some() && names_file(&text, name))
+                || names_file(&text, name)
         });
     // Name order, so what a close reports it left reads the same however the directory was listed.
     taken.sort();
