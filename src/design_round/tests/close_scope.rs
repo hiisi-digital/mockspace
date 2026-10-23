@@ -218,6 +218,23 @@ fn a_changelist_naming_a_longer_file_does_not_take_a_shorter_one_inside_its_name
 }
 
 #[test]
+fn a_changelist_naming_a_file_inside_a_longer_name_before_it_does_not_take_the_shorter() {
+    // the character before an occurrence decides it: a name character or `-` continues a longer
+    // name, as in `old-<name>`, and a full stop joins one, as in `x.<name>`, so neither names it
+    let shorter = "202610230330_topic.named.md";
+    let names = owned(&[DOC_LOCK, SRC_LOCK, shorter]);
+    let files = files_of_round(&names, |n| {
+        Some(if n == DOC_LOCK {
+            format!("# doc changelist: x\n\nAnswers `old-{shorter}`.\n")
+        } else {
+            format!("# src changelist: x\n\nAnswers `x.{shorter}`.\n")
+        })
+    });
+    assert_eq!(files.left, owned(&[shorter]));
+    assert_eq!(files.taken, owned(&[DOC_LOCK, SRC_LOCK]));
+}
+
+#[test]
 fn a_changelist_naming_a_file_at_the_end_of_a_sentence_still_takes_it() {
     // the control for the whole-name match: a name followed by a full stop, a comma, a bracket or
     // the end of the text is named
