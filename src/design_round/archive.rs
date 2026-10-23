@@ -61,8 +61,108 @@ pub(crate) fn disambiguate_archive_name(base: &str, exists: impl Fn(&str) -> boo
     }
 }
 
-/// Move every non-README file under `dr` into a `<archive_dir_name>/`
-/// subdirectory and emit `.meta` + `.history` metadata. Stages the moves
+/// The flat files of `design_rounds/` split by whether a close takes them.
+pub(crate) struct RoundFiles {
+    pub(crate) taken: Vec<String>,
+    pub(crate) left:  Vec<String>,
+}
+
+/// Which of the flat files `names` (README excluded) belong to the round being
+/// closed, and which are another's.
+///
+/// `design_rounds/` holds one round's changelists at a time but any number of
+/// topics, because a topic is filed while another round is in flight or parked
+/// for the next. Nothing in a topic's name says which round it is for: it is
+/// stamped when it was written, which is before its round's changelists
+/// (the usual case) or after, and a parked one is re-filed under a new stamp
+/// each time. So a file is the round's when what a round is made of says so:
+///
+/// - it is a changelist, of any status, because the phase is read over every
+///   changelist in the directory and they are the round;
+/// - or it starts with the id of one of those changelists. A round opened with
+///   `cargo mock round-id` has one id throughout, but an older round stamped
+///   its doc and its src changelist apart, and a file written beside either
+///   carries that changelist's id;
+/// - or one of those changelists names it, which is how a topic written earlier
+///   under an id of its own is tied to the round that answers it.
+///
+/// Anything else is left where it is, flat and open. A topic of the round that
+/// no changelist names is therefore left too, which is the visible mistake of
+/// the two: it still reads as open, where a swept topic read as closed.
+/// `read` returns a file's text, or `None` where it cannot be read.
+pub(crate) fn files_of_round(
+    names: &[String],
+    read: impl Fn(&str) -> Option<String>,
+) -> RoundFiles {
+    let changelists: Vec<&String> = names
+        .iter()
+        .filter(|n| changelist_helpers::parse_changelist(n).is_some())
+        .collect();
+    let ids: Vec<&str> = changelists
+        .iter()
+        .filter_map(|n| lint_rules::round_id::split_prefix(n).map(|(id, _)| id))
+        .collect();
+    let text: String = changelists
+        .iter()
+        .filter_map(|n| read(n))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let (mut taken, mut left): (Vec<String>, Vec<String>) =
+        names.iter().cloned().partition(|name| {
+            changelist_helpers::parse_changelist(name).is_some()
+                || lint_rules::round_id::split_prefix(name)
+                    .is_some_and(|(id, rest)| rest.starts_with('_') && ids.contains(&id))
+                || names_file(&text, name)
+        });
+    // Name order, so what a close reports it left reads the same however the directory was listed.
+    taken.sort();
+    left.sort();
+    RoundFiles {
+        taken,
+        left,
+    }
+}
+
+/// Whether `text` names the file `name` as a whole, rather than only holding its characters
+/// inside the name of a longer file.
+///
+/// A character that can continue a file name before or after an occurrence makes it part of a
+/// longer name. A full stop after it ends a sentence unless a name character follows that, which
+/// is the `.orig` of `topic.md.orig`.
+fn names_file(text: &str, name: &str) -> bool {
+    let continues = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-');
+    text.match_indices(name).any(|(at, _)| {
+        let before = text[.. at].chars().next_back();
+        let mut after = text[at + name.len() ..].chars();
+        let ends_here = match after.next() {
+            None => true,
+            Some('.') => !after.next().is_some_and(continues),
+            Some(c) => !continues(c),
+        };
+        ends_here && !before.is_some_and(|c| continues(c) || c == '.')
+    })
+}
+
+/// What a close prints about the flat files it left, one to a line, or `None` when it left
+/// none.
+pub(crate) fn left_notice(left: &[String]) -> Option<String> {
+    if left.is_empty() {
+        return None;
+    }
+    let mut out = String::from(
+        "left flat, not this round's (no id of its changelists, named by none of them):",
+    );
+    for name in left {
+        out.push_str(&format!("\n  {name}"));
+    }
+    out.push_str("\n  to close one with the round, name it in a changelist before the lock");
+    Some(out)
+}
+
+/// Move the files `files_of_round` takes (every one, for an abandoned round
+/// with no changelist) under `dr` into a `<archive_dir_name>/` subdirectory and
+/// emit `.meta` + `.history` metadata. Stages the moves
 /// for commit (or prints the manual command if `auto_commit` is unset)
 /// and tags `round/<archive_dir_name>/<suffix>` on success.
 pub(crate) fn perform_archive(
@@ -93,21 +193,38 @@ pub(crate) fn perform_archive(
 
     fs::create_dir_all(&archive_dir).expect("failed to create archive directory");
 
-    let entries: Vec<_> = fs::read_dir(dr)
+    let mut flat: Vec<String> = fs::read_dir(dr)
         .expect("can't read design_rounds")
         .flatten()
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name != "README.md")
         .collect();
+    flat.sort();
+    // A round with changelists has them to tell its files by, closed or abandoned alike, so a
+    // topic parked beside an abandoned round stays flat and open. An abandoned round in the TOPIC
+    // phase has no changelist, and there `archive` takes every flat file, which is what it did
+    // before changelists told the files apart.
+    let has_changelists = flat
+        .iter()
+        .any(|name| changelist_helpers::parse_changelist(name).is_some());
+    let RoundFiles {
+        taken,
+        left,
+    } = if matches!(kind, ArchiveKind::Abandoned) && !has_changelists {
+        RoundFiles {
+            taken: flat,
+            left:  Vec::new(),
+        }
+    } else {
+        files_of_round(&flat, |name| fs::read_to_string(dr.join(name)).ok())
+    };
 
     let mut touched = Vec::new();
     let mut moved = 0u32;
-    for entry in &entries {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name == "README.md" {
-            continue;
-        }
-        let old_path = entry.path();
-        let dest = archive_dir.join(&name);
+    for name in &taken {
+        let old_path = dr.join(name);
+        let dest = archive_dir.join(name);
         touched.push(old_path.clone());
         fs::rename(&old_path, &dest).unwrap_or_else(|e| panic!("failed to move {name}: {e}"));
         touched.push(dest);
@@ -115,6 +232,9 @@ pub(crate) fn perform_archive(
     }
 
     eprintln!("moved {moved} files to {archive_dir_name}/");
+    if let Some(notice) = left_notice(&left) {
+        eprintln!("{notice}");
+    }
 
     let head_sha = git_head_sha(cfg);
     let today = chrono_date();
@@ -158,9 +278,9 @@ pub(crate) fn perform_archive(
 
 /// Earliest 12-digit timestamp prefix among files in `dr`.
 ///
-/// Used by `cmd_archive` when no changelists may exist (TOPIC-only
-/// abandonments). Skips README, subdirectories, and any file lacking
-/// the canonical `YYYYMMDDHHMM_*` prefix.
+/// Used by `cmd_archive` when no changelist exists (TOPIC-only
+/// abandonments), where the earliest file of any kind names the round. Skips README,
+/// subdirectories, and any file lacking the canonical `YYYYMMDDHHMM_*` prefix.
 pub(crate) fn determine_round_name_from_dir(dr: &Path) -> Option<String> {
     let entries = fs::read_dir(dr).ok()?;
     let mut prefixes: Vec<String> = Vec::new();

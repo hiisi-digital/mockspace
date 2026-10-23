@@ -93,8 +93,10 @@ const COMMANDS: &[Cmd] = &[
         summary: "archive a finished round into a directory named by its id",
         args:    &[],
         help:    "Archives a finished round (both changelists locked) into \
-                  design_rounds/<id>/ with .meta and .history. Valid only \
-                  from CLOSED. Accepts --auto-commit.",
+                  design_rounds/<id>/ with .meta and .history. Takes the \
+                  changelists, the files that start with the id of one, and \
+                  the files one names; any other flat file stays and is \
+                  listed. Valid only from CLOSED. Accepts --auto-commit.",
     },
     Cmd {
         name:    "archive",
@@ -102,7 +104,11 @@ const COMMANDS: &[Cmd] = &[
         args:    &[],
         help:    "Archives an abandoned round into an <id>-abandoned/ \
                   subdirectory at any phase, without requiring it to reach \
-                  CLOSED first. Accepts --auto-commit.",
+                  CLOSED first. Where the round has changelists it takes what \
+                  close takes and is named by their id, and leaves the other \
+                  flat files. In the TOPIC phase, with no changelist, it takes \
+                  every flat file and is named by the earliest of them. \
+                  Accepts --auto-commit.",
     },
     Cmd {
         name:    "round-id",
