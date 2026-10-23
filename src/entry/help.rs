@@ -104,7 +104,11 @@ const COMMANDS: &[Cmd] = &[
         args:    &[],
         help:    "Archives an abandoned round into an <id>-abandoned/ \
                   subdirectory at any phase, without requiring it to reach \
-                  CLOSED first. Accepts --auto-commit.",
+                  CLOSED first. Where the round has changelists it takes what \
+                  close takes and is named by their id, and leaves the other \
+                  flat files. In the TOPIC phase, with no changelist, it takes \
+                  every flat file and is named by the earliest of them. \
+                  Accepts --auto-commit.",
     },
     Cmd {
         name:    "round-id",
