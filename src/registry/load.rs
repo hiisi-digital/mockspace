@@ -104,6 +104,9 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
                     fields,
                 };
                 let qualified = row.qualified();
+                // The first file in walk order keeps the key path. The walk is sorted by name at
+                // every directory, so which file is first does not depend on the filesystem, and
+                // the `duplicate-id` finding is what reports the other files.
                 if let Some(existing) = reg.rows.get(&qualified) {
                     reg.duplicates
                         .entry(qualified)
@@ -118,6 +121,13 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
                 reg.rows.insert(qualified, row);
             }
         }
+    }
+    // A namespace lists its rows by key path. The order the loader met them in is the order of
+    // the files and of the rows within each, which is where they happen to be written, and an
+    // answer that changes when a file is split, merged, renamed or moved is an identity that
+    // includes the file.
+    for ids in reg.by_namespace.values_mut() {
+        ids.sort();
     }
     reg
 }

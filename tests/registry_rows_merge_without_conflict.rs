@@ -142,6 +142,62 @@ fn the_row_is_what_counts_and_the_file_is_not() {
     );
 }
 
+/// The registry as the merged tree loads it, and the rows' key paths.
+fn loaded(r: &Repo) -> mockspace::registry::Registry {
+    let mock = r.root.join("mock");
+    let cfg = mockspace::config::Config::from_dir(&mock);
+    mockspace::registry::load_registry(&mock, &cfg.registry_namespaces)
+}
+
+/// Each branch adds a row of the same table to a file of its own, in different directories.
+fn additions_to_different_files(r: &Repo, id_a: &str, id_dev: &str) {
+    r.git(&["switch", "-q", "-c", "a"]);
+    write(&r.root.join("mock/registry/from/a/rows.toml"), &row(id_a, "x"));
+    r.git(&["add", "-A"]);
+    r.git(&["commit", "-q", "--no-verify", "-m", "chore: add a file on a"]);
+    r.git(&["switch", "-q", "dev"]);
+    write(&r.root.join("mock/registry/dev.toml"), &row(id_dev, "y"));
+    r.git(&["add", "-A"]);
+    r.git(&["commit", "-q", "--no-verify", "-m", "chore: add a file on dev"]);
+}
+
+#[test]
+fn rows_added_to_different_files_under_one_table_all_load_after_the_merge() {
+    let r = repo();
+    additions_to_different_files(&r, "from-a", "from-dev");
+    let merged = merge(&r);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    let reg = loaded(&r);
+    let want: Vec<String> = ["a", "b", "from-a", "from-dev"]
+        .iter()
+        .map(|i| format!("probe::{i}"))
+        .collect();
+    assert_eq!(reg.by_namespace["probe"], want);
+    assert!(reg.duplicates.is_empty(), "{:?}", reg.duplicates);
+}
+
+/// The driver sees one file at a time, so one id added in two files by two branches merges
+/// cleanly as text. What refuses it is the registry, naming both files.
+#[test]
+fn one_key_path_added_to_two_files_by_two_branches_is_refused_after_the_merge() {
+    let r = repo();
+    additions_to_different_files(&r, "same", "same");
+    let merged = merge(&r);
+    assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    let reg = loaded(&r);
+    let files: Vec<String> = reg.duplicates["probe::same"]
+        .iter()
+        .map(|p| p.strip_prefix(r.root.join("mock")).unwrap().display().to_string())
+        .collect();
+    assert_eq!(files, ["registry/dev.toml", "registry/from/a/rows.toml"]);
+    let found = mockspace::registry::validate(&[], &reg);
+    assert!(
+        found.iter().any(|f| f.kind == "duplicate-id" && f.message.contains("probe::same")),
+        "{:?}",
+        found.iter().map(|f| &f.message).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn a_row_changed_two_ways_still_conflicts_and_only_that_row_is_marked() {
     let r = repo();
