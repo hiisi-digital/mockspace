@@ -409,3 +409,22 @@ fn close_with_tagged_ids_leaves_a_same_minute_round_of_another_tag_flat() {
         "a same-minute topic of another tag was taken"
     );
 }
+
+#[test]
+fn close_of_an_untagged_round_leaves_a_file_with_a_dash_after_the_minute_flat() {
+    // The round's id is the bare minute, so a file reading `<minute>-old_topic.md` carries a
+    // suffix that is not a tag and is not this round's whole id: it is another round's, and stays.
+    let stray = "202610230520-old_topic.md";
+    let dir = closable(&[(stray, "stray\n"), (PARKED_OLDER, "parked\n")]);
+    let dr = dir.path().join("design_rounds");
+    assert_eq!(
+        cmd_close(&Config::from_dir(dir.path()), &OPTS),
+        ExitCode::SUCCESS
+    );
+    assert_eq!(
+        names_in(&dr.join("202610230520")),
+        sorted(&[DOC_LOCK, SRC_LOCK]),
+        "a file that only shares the round's minute was taken"
+    );
+    assert_eq!(names_in(&dr), sorted(&[PARKED_OLDER, stray]));
+}
