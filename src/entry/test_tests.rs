@@ -220,20 +220,54 @@ fn a_plain_run_gets_the_generated_config_before_the_callers_flags() {
         Some(config),
         &["--config", "x=1", "--", "--nocapture"],
     ));
-    assert_eq!(
-        with,
-        [
-            "test",
-            "--target-dir",
-            "/t",
-            "--config",
-            "/w/mock/target/state/cargo.toml",
-            "--config",
-            "x=1",
-            "--",
-            "--nocapture"
-        ]
-    );
+    assert_eq!(with, [
+        "test",
+        "--target-dir",
+        "/t",
+        "--config",
+        "/w/mock/target/state/cargo.toml",
+        "--config",
+        "x=1",
+        "--",
+        "--nocapture"
+    ]);
     let without = argv(&plain_command(Path::new("."), None, None, &["--release"]));
     assert_eq!(without, ["test", "--release"]);
+}
+
+fn words(a: &[&str]) -> Vec<String> {
+    cargo_args(a)
+}
+
+/// What `crate::suite` reads is not cargo's, so no cargo is given it, and the
+/// words a user meant for cargo are kept as written.
+#[test]
+fn the_flags_the_suite_reads_are_not_passed_to_cargo() {
+    assert_eq!(
+        words(&["--full", "--debug", "--no-debug", "--features", "x", "--plain"]),
+        ["--features", "x"]
+    );
+}
+
+/// Asking for a crate's symbols chooses it, which cargo is told as `-p`: a
+/// plain `cargo test` given neither would run every member.
+#[test]
+fn a_named_debug_crate_is_a_package_for_cargo() {
+    assert_eq!(words(&["--debug=a,b", "--release"]), [
+        "-p",
+        "a",
+        "-p",
+        "b",
+        "--release"
+    ]);
+}
+
+/// After `--` the words are the test binaries', and one of them may be spelled
+/// like a flag of ours.
+#[test]
+fn the_words_after_the_separator_are_left_alone() {
+    assert_eq!(
+        words(&["--debug", "--", "--debug", "--debug=x", "--full"]),
+        ["--", "--debug", "--debug=x", "--full"]
+    );
 }

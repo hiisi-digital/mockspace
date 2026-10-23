@@ -77,17 +77,35 @@ struct Tree {
     members:  bool,
 }
 
-/// The flags `crate::suite` reads and no cargo understands, kept from every
-/// cargo command line this builds.
-const OWN_FLAGS: &[&str] = &["--full", "--cheap", "--no-cache", "--plain"];
+/// The command line as every cargo this builds is given it: what `crate::suite`
+/// reads is left out, ahead of a `--` (after it the words are the test
+/// binaries'), and a `--debug=<crate,...>` stands as the `-p` of each crate it
+/// names, since asking for a crate's symbols chooses it.
+fn cargo_args(args: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut after_separator = false;
+    for a in args {
+        if after_separator {
+            out.push(a.to_string());
+        } else if *a == "--" {
+            after_separator = true;
+            out.push(a.to_string());
+        } else if let Some(list) = a.strip_prefix("--debug=") {
+            for n in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+                out.push("-p".to_string());
+                out.push(n.to_string());
+            }
+        } else if !crate::suite::args::is_own_flag(a) {
+            out.push(a.to_string());
+        }
+    }
+    out
+}
 
 pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     let inv = crate::suite::args::parse(args);
-    let args: Vec<&str> = args
-        .iter()
-        .copied()
-        .filter(|a| !OWN_FLAGS.contains(a))
-        .collect();
+    let owned = cargo_args(args);
+    let args: Vec<&str> = owned.iter().map(String::as_str).collect();
     let args = args.as_slice();
     // Packages named with `-p` are members; the trees beside them are not
     // what was asked about, and a `-p` passed to them would fail them.
@@ -275,6 +293,9 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
+        if ok && t.members {
+            crate::suite::plain_passed(cfg, &inv);
+        }
         if !ok {
             failed.push(format!("{} at {}", t.what, t.dir.display()));
         }

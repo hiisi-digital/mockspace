@@ -294,13 +294,65 @@ and selects which to run rather than running them all:
   `heavy_threads` at a time in nextest's `@tool:mockspace:heavy` group, and a heavy test
   that passed at its binary's current fingerprint is skipped as cached.
 - **Every test is killed after `timeout_secs`**, and each run ends with its slowest tests.
+- The members are built without debug info, and a crate gets symbols only where one is
+  needed to trace a problem. Debug info is the larger part of what a test build writes,
+  and a failing test needs it only in the crate it fails in. A member needs symbols when its tests failed
+  the last time they ran, or when the run names it with `--debug=<crate,...>` (which also
+  chooses the crate, as `-p` does, and runs it whether or not it passed), or with
+  `-p x --debug`. A bare `--debug` with no `-p` gives symbols to every member the run
+  builds, and `--no-debug` to none, a failed one included. A crate that needs symbols gets
+  `[test] debug` (`line-tables-only` by default, enough for a backtrace to name lines;
+  `"full"` or `2` for a debugger); every other crate, dependencies from a registry
+  included, gets none. The plan prints a `debug` line saying which crates got symbols and
+  why.
+
+  The record of what failed is `<mock>/target/mockspace-test-state/failed.json`, per
+  flavour, and is not part of the tracked `test-history/`: a failure belongs to one working
+  copy, and committed it would hand every other clone symbols for a crate that is red on
+  one machine. A target directory that is gone costs one run without symbols for a crate
+  that fails again. A `--plain` run reads it, and writes only to take off the members it passed whole.
+
+  It reaches cargo as the same generated `--config` file the opt levels do, and no manifest
+  or cargo config is edited: a profile-wide `debug = 0` under `dev` and `test`; the same
+  for `"*"`, which is every dependency (a `"*"` in a manifest or a cargo config beats a
+  profile-wide setting, and this one beats theirs); a `debug` entry for each member and for
+  each package outside the workspace that a manifest or a cargo config names for itself,
+  lean for the ones that need nothing, since a name beats both a profile-wide setting
+  and a `"*"`; and the level for the members that need symbols. A `--config` on the command line beats the file, and a `--release`
+  or `--profile` run is the profile you chose, so only the crates that need symbols are
+  touched there. The environment has no spelling for one package
+  (`CARGO_PROFILE_<P>_PACKAGE_<NAME>_DEBUG` is read as nothing), which is why a file is
+  used. A cargo config file (`.cargo/config.toml` up the tree, or `$CARGO_HOME/config.toml`)
+  or a `CARGO_PROFILE_DEV_DEBUG` that sets debug info for every build is reported by name,
+  once for each file, and overridden for the run: cargo gives a `--config` file precedence
+  over a config file, the environment and the manifest alike, which is also why a helper
+  container's global `debug = "line-tables-only"` used to beat a manifest's `debug = 0`
+  without a word. `[test] lean = false` lets the manifest and those settings stand and
+  gives symbols only to the crates named.
+
+  What no profile setting reaches is rustflags: `-g` or `-C debuginfo=` above none in
+  `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`, `CARGO_BUILD_RUSTFLAGS` or a `rustflags` of
+  `[build]` or `[target.*]` in a cargo config (cargo takes one of those sources, and the
+  configs are read only where no variable is set) give every crate debug info. They are
+  reported by name, never overridden, and the plan line then stops saying every other
+  crate is built without debug info.
+
+  Building a crate with symbols compiles that crate and the crates that depend on it once,
+  since a dependency's profile is part of a dependent's fingerprint; its dependencies and
+  every crate that is neither are not compiled again, and the lean build stays in the
+  target directory beside the other, so going back compiles nothing. A run restricted to
+  the crates that failed builds no dependents. None of this is an input of a member's
+  fingerprint: a test passes or fails the same with or without symbols, so what passed
+  under one setting stands under the other. The first lean run after a manifest that asked
+  for debug info compiles the members once more, and a `cargo build` over the same target
+  directory keeps its own, so the directory holds both.
 
 `--full` runs every member asked for, every binary of it, `--no-cache` runs the cached
 heavy tests and the binaries it would leave out too, and
 `--cheap` defers every heavy test that has passed before (a new one, or one that failed
 last time, still runs). `--full --no-cache` is the whole suite, for the end of a piece of
 work and after merging the trunk; `--plain` is `cargo test` as before, with the opt
-levels of `[test.opt_level]` applied the same way. Doc tests do not
+levels of `[test.opt_level]` and the debug info above applied the same way. Doc tests do not
 run under nextest, a known gap: `--plain` is the way to them for now.
 
 The record is tracked: `<mock>/test-history/<flavour>/<member>.json`, committed with the
@@ -344,6 +396,8 @@ heavy_after_secs = 10    # a test this slow or slower is heavy
 heavy_threads = 1        # how many heavy tests run at once
 timeout_secs = 900       # a test still running after this long fails
 commit = "off"           # a lint level: warn runs `mock test --cheap` on commit, error also blocks
+lean = true              # build every crate without debug info unless it needs symbols; false leaves the profile alone
+debug = "line-tables-only"  # what a crate that needs symbols gets: 1, 2, "limited", "full", "line-tables-only" or "line-directives-only"
 
 [test.opt_level]         # optional: the opt level a member is built at under `mock test`,
                          # nextest or `--plain`; a name that is no member is ignored
