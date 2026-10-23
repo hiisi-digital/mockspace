@@ -1178,11 +1178,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // because a graphviz that is not installed leaves the previous copy in
         // place and the sweep must not take it.
         generated.push(out.clone());
-        // `dot -o` writes whatever it is given, so it renders to a file beside
-        // the target and the target is replaced only when the bytes differ.
-        // Rendering straight to the target moved its mtime on every run, which
+        // `dot -o` writes whatever it is given, so it renders to a file under
+        // `<mock>/target`, out of `docs/` so that a killed run leaves nothing for
+        // the sweep to miss, and the target is replaced only when the bytes
+        // differ. Rendering straight to the target moved its mtime on every run, which
         // for the svg was then "restored" by writing it again.
-        let staging = cfg.docs_dir.join(format!(".STRUCTURE.GRAPH.{ext}.staging"));
+        let staging = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["graph-staging"])
+            .join(format!("STRUCTURE.GRAPH.{ext}"));
         let mut cmd = Command::new("dot");
         cmd.arg(format!("-T{ext}"))
             .arg(&dot_path)

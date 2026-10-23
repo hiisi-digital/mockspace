@@ -415,7 +415,6 @@ fn stamped(
 /// an hour ago after the first run and asks that every one of them is still there
 /// after the second, bytes and mtime both.
 #[test]
-#[ignore = "runs the binary and graphviz; run with --ignored"]
 fn the_binary_touches_no_generated_file_the_second_time() {
     let dot_installed = std::process::Command::new("dot")
         .arg("-V")
