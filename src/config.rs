@@ -1299,7 +1299,7 @@ fn refuse_lint_entry(source: &Path, lint_name: &str, why: &dyn std::fmt::Display
 fn refuse_lint_value(
     source: &Path,
     lint_name: &str,
-    key: &str,
+    subject: &str,
     value: &str,
     accepted: &[&str],
 ) -> ! {
@@ -1307,7 +1307,7 @@ fn refuse_lint_value(
         source,
         lint_name,
         &format!(
-            "`{key}` is \"{value}\", which is not a level it knows. Accepted: {}",
+            "{subject} is \"{value}\", which is not a name it knows. Accepted: {}",
             accepted.join(", ")
         ),
     )
@@ -1318,16 +1318,18 @@ fn gate_level(source: &Path, lint_name: &str, key: &str, value: &Option<String>)
     value.as_deref().map(|s| {
         Level::from_str_name(s).unwrap_or_else(|| {
             let accepted: Vec<&str> = Level::NAMES.iter().map(|(name, _)| *name).collect();
-            refuse_lint_value(source, lint_name, key, s, &accepted)
+            refuse_lint_value(source, lint_name, &format!("`{key}`"), s, &accepted)
         })
     })
 }
 
-/// A severity preset as the value it names, or the load stops.
-fn severity_preset(source: &Path, lint_name: &str, key: &str, value: &str) -> Severity {
+/// A severity preset as the value it names, or the load stops. `subject` is how the
+/// refusal names the value: a backticked key, or `the value` for an inline preset,
+/// which has no key to name.
+fn severity_preset(source: &Path, lint_name: &str, subject: &str, value: &str) -> Severity {
     parse_severity(value).unwrap_or_else(|| {
         let accepted: Vec<&str> = SEVERITY_NAMES.iter().map(|(name, _)| *name).collect();
-        refuse_lint_value(source, lint_name, key, value, &accepted)
+        refuse_lint_value(source, lint_name, subject, value, &accepted)
     })
 }
 
@@ -1414,7 +1416,7 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
             LintEntry::Config(table) => {
                 // Determine base severity from "severity" key
                 if let Some(ref s) = table.severity {
-                    let severity = severity_preset(source, &lint_name, "severity", s);
+                    let severity = severity_preset(source, &lint_name, "`severity`", s);
                     base.insert(lint_name.clone(), severity);
                 }
 
@@ -1442,7 +1444,10 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
                     let entry = findings.entry(lint_name.clone()).or_default();
                     for (kind, val) in finding_map {
                         let key = format!("findings.{kind}");
-                        entry.insert(kind, severity_preset(source, &lint_name, &key, &val));
+                        entry.insert(
+                            kind,
+                            severity_preset(source, &lint_name, &format!("`{key}`"), &val),
+                        );
                     }
                 }
 
@@ -1797,11 +1802,11 @@ commit = "error"
 
 #[cfg(test)]
 mod a_malformed_lint_table_is_not_dropped_in_silence {
-    //! A `[lints.<name>]` table that fails to deserialise used to be skipped, so
-    //! one wrong type (a string where `exclude` wants an array) turned the whole
-    //! lint's configuration off, severity and params included, with nothing
-    //! said. The load now refuses it, in the way every other config error in
-    //! `from_dir` is refused, and names the lint, the file and the serde message.
+    //! A `[lints.<name>]` table holding a value of the wrong type used to be
+    //! skipped, so one wrong type (a string where `exclude` wants an array) turned
+    //! the whole lint's configuration off, severity and params included, with
+    //! nothing said. The load now refuses it, in the way every other config error
+    //! in `from_dir` is refused, and names the lint, the file and the key at fault.
 
     use super::*;
 
@@ -1890,6 +1895,10 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
         for word in severity_words() {
             assert!(msg.contains(word), "lists `{word}`: {msg}");
         }
+        assert!(
+            !msg.contains("`the value`"),
+            "an inline preset has no key to name, so none is backticked: {msg}"
+        );
     }
 
     #[test]
@@ -2130,7 +2139,9 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
         let tmp = mock_dir_with_config(
             "[lints.file-size]\nmax_lines = 400\nratio = 0.5\nstrict = true\nname = \"x\"\n\
              findings = { a = \"warn\" }\n\
-             rules = [{ scope = \"s\", forbidden = \"f\", reason = \"r\" }]\n\
+             rules = [{ scope = \"s\", forbidden = \"f\", reason = \"r\" }, \
+             { scope = \"off\", forbidden = \"f\", reason = \"r\", enabled = false }, \
+             { scope = \"t\", forbidden = \"g\", reason = \"q\" }]\n\
              [lints.file-size.rule.core]\nscope = \"{prefix}-core\"\nlimit = 3\n",
         );
         let cfg = Config::from_dir(tmp.path());
@@ -2140,11 +2151,51 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
         assert_eq!(params["strict"], "true");
         assert_eq!(params["name"], "x");
         assert_eq!(params["rule.core.limit"], "3");
-        assert_eq!(params["rule.rule-0.reason"], "r");
         assert_eq!(params["rule.core.scope"], "project-core");
+        assert_eq!(params["rule.rule-0.scope"], "s");
+        assert_eq!(params["rule.rule-0.reason"], "r");
+        assert_eq!(params["rule.rule-2.scope"], "t");
+        assert_eq!(params["rule.rule-2.forbidden"], "g");
+        assert_eq!(params["rule.rule-2.reason"], "q");
+        assert!(
+            !params.keys().any(|k| k.starts_with("rule.rule-1.")),
+            "a disabled rule is dropped, and its index is not reused: {params:?}"
+        );
         assert_eq!(
             cfg.lint_overrides.findings["file-size"]["a"],
             Severity::ADVISORY
+        );
+    }
+
+    /// The nested `[[lints.<name>.rules]]` spelling of the control's three entries,
+    /// with a key the reader does not name (`note`) on the first. That key is
+    /// tolerated, not refused, and carries nothing into the params.
+    #[test]
+    fn the_nested_rules_spelling_loads_the_same_entries_and_tolerates_an_extra_key() {
+        let tmp = mock_dir_with_config(
+            "[lints.file-size]\nmax_lines = 400\n\
+             [[lints.file-size.rules]]\nscope = \"s\"\nforbidden = \"f\"\nreason = \"r\"\n\
+             note = \"not read\"\n\
+             [[lints.file-size.rules]]\nscope = \"off\"\nforbidden = \"f\"\nreason = \"r\"\n\
+             enabled = false\n\
+             [[lints.file-size.rules]]\nscope = \"t\"\nforbidden = \"g\"\nreason = \"q\"\n",
+        );
+        let cfg = Config::from_dir(tmp.path());
+        let params = &cfg.lint_overrides.params["file-size"];
+        assert_eq!(params["max_lines"], "400");
+        assert_eq!(params["rule.rule-0.scope"], "s");
+        assert_eq!(params["rule.rule-0.forbidden"], "f");
+        assert_eq!(params["rule.rule-0.reason"], "r");
+        assert_eq!(params["rule.rule-2.scope"], "t");
+        assert_eq!(params["rule.rule-2.forbidden"], "g");
+        assert_eq!(params["rule.rule-2.reason"], "q");
+        assert!(
+            !params.keys().any(|k| k.starts_with("rule.rule-1.")),
+            "a disabled rule is dropped in the nested spelling too: {params:?}"
+        );
+        assert!(
+            !params.keys().any(|k| k.contains("note")),
+            "an unnamed key is not a param: {params:?}"
         );
     }
 
@@ -2153,14 +2204,14 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
         let msg = refusal_of(
             "[lints.catalogue-ignore]\nseverity = \"error\"\nexclude = \"fixtures/**\"\n",
         )
-        .expect("a lint table that does not deserialise must stop the load, not vanish");
+        .expect("a lint table with a value of the wrong type must stop the load, not vanish");
         assert!(msg.contains("catalogue-ignore"), "names the lint: {msg}");
         assert!(msg.contains("mockspace.toml"), "names the file: {msg}");
-        assert!(msg.contains("exclude"), "carries the serde message: {msg}");
+        assert!(msg.contains("exclude"), "names the key at fault: {msg}");
     }
 
     #[test]
-    fn an_inline_lint_value_that_does_not_deserialise_is_refused_too() {
+    fn an_inline_lint_value_of_the_wrong_type_is_refused_too() {
         let msg = refusal_of("[lints]\nfile-size = 5\n")
             .expect("the inline form has its own skip and gets the same refusal");
         assert!(msg.contains("file-size"), "names the lint: {msg}");
