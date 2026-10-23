@@ -17,12 +17,11 @@ use mockspace_lint_rules::{
     LintConfig,
     PathFilter,
     PathFilters,
-    Severity,
     SEVERITY_NAMES,
+    Severity,
     parse_severity,
 };
 use serde::Deserialize;
-use serde::de::IntoDeserializer;
 
 /// How mockspace-managed content is installed into existing files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -662,8 +661,13 @@ enum LintEntry {
     Config(LintTableConfig),
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
+/// One `[lints.<name>]` table, read key by key by `read_lint_table`.
+///
+/// Not a `Deserialize` struct: serde reports a value that fits none of a field's
+/// types in words about its own machinery (`untagged enum`, `missing field`) and
+/// loses which key held it, so every value here is converted by hand and a
+/// refusal names the key and the types it takes.
+#[derive(Default)]
 struct LintTableConfig {
     commit:        Option<String>,
     build:         Option<String>,
@@ -671,8 +675,8 @@ struct LintTableConfig {
     severity:      Option<String>,
     findings:      Option<BTreeMap<String, String>>,
     /// Path globs this lint may be shown, and ones it may not. Named explicitly rather than
-    /// left to the flattened `params` map, because both are arrays and everything that map
-    /// holds is a string.
+    /// left to the `params` map, because both are arrays and everything that map holds is a
+    /// scalar.
     include:       Option<Vec<String>>,
     exclude:       Option<Vec<String>>,
     // Which crates the lint binds, as globs over the crate name. `crates`
@@ -681,48 +685,194 @@ struct LintTableConfig {
     // configuration written for one is read by the other.
     crates:        Option<Vec<String>>,
     exempt_crates: Option<Vec<String>>,
-    rule:          Option<BTreeMap<String, BTreeMap<String, StringOrOther>>>,
+    /// `[lints.<name>.rule.<rule>]` sub-tables, flattened to `rule -> key -> value`.
+    rule:          Option<BTreeMap<String, BTreeMap<String, String>>>,
     /// Inline array of tables format:
     /// `rules = [{ scope = "...", forbidden = "...", reason = "..." }]`
     rules:         Option<Vec<InlineRule>>,
-    #[serde(flatten)]
-    params:        BTreeMap<String, StringOrOther>,
+    /// Every other key, each a string, integer, float or boolean.
+    params:        BTreeMap<String, String>,
 }
 
 /// A single forbidden-imports rule in inline array format.
-#[derive(Deserialize)]
 struct InlineRule {
     scope:     String,
     forbidden: String,
     reason:    String,
-    #[serde(default = "default_true")]
     enabled:   bool,
 }
 
-fn default_true() -> bool {
-    true
+/// The one refusal for a value of a type its key does not take. `found` is the
+/// value as the TOML parser typed it, so the message says what the file holds
+/// as well as what would have been read.
+fn refuse_lint_type(
+    source: &Path,
+    lint_name: &str,
+    key: &str,
+    found: &toml_edit::Value,
+    accepts: &str,
+) -> ! {
+    refuse_lint_entry(
+        source,
+        lint_name,
+        &format!("`{key}` is {}, and it takes {accepts}", found.type_name()),
+    )
 }
 
-/// Helper to deserialize heterogeneous TOML values as strings.
-/// Handles string, integer, float, and boolean values.
-#[derive(Deserialize, Clone)]
-#[serde(untagged)]
-enum StringOrOther {
-    String(String),
-    Integer(i64),
-    Float(f64),
-    Bool(bool),
+const ACCEPTS_STRING: &str = "a string";
+const ACCEPTS_STRINGS: &str = "an array of strings";
+const ACCEPTS_SCALAR: &str = "a string, integer, float or boolean";
+
+fn lint_string(source: &Path, lint: &str, key: &str, v: &toml_edit::Value) -> String {
+    match v.as_str() {
+        Some(s) => s.to_string(),
+        None => refuse_lint_type(source, lint, key, v, ACCEPTS_STRING),
+    }
 }
 
-impl StringOrOther {
-    fn into_string(self) -> String {
-        match self {
-            StringOrOther::String(s) => s,
-            StringOrOther::Integer(i) => i.to_string(),
-            StringOrOther::Float(f) => f.to_string(),
-            StringOrOther::Bool(b) => b.to_string(),
+fn lint_strings(source: &Path, lint: &str, key: &str, v: &toml_edit::Value) -> Vec<String> {
+    let Some(array) = v.as_array() else {
+        refuse_lint_type(source, lint, key, v, ACCEPTS_STRINGS)
+    };
+    array
+        .iter()
+        .enumerate()
+        .map(|(i, item)| lint_string(source, lint, &format!("{key}[{i}]"), item))
+        .collect()
+}
+
+/// A param value as the string the lints read: a string, integer, float or boolean.
+fn lint_scalar(source: &Path, lint: &str, key: &str, v: &toml_edit::Value) -> String {
+    use toml_edit::Value;
+    match v {
+        Value::String(s) => s.value().clone(),
+        Value::Integer(i) => i.value().to_string(),
+        Value::Float(f) => f.value().to_string(),
+        Value::Boolean(b) => b.value().to_string(),
+        other => refuse_lint_type(source, lint, key, other, ACCEPTS_SCALAR),
+    }
+}
+
+fn lint_table<'a>(
+    source: &Path,
+    lint: &str,
+    key: &str,
+    v: &'a toml_edit::Value,
+    accepts: &str,
+) -> &'a toml_edit::InlineTable {
+    match v.as_inline_table() {
+        Some(t) => t,
+        None => refuse_lint_type(source, lint, key, v, accepts),
+    }
+}
+
+fn lint_inline_rule(source: &Path, lint: &str, at: &str, v: &toml_edit::Value) -> InlineRule {
+    let table = lint_table(
+        source,
+        lint,
+        at,
+        v,
+        "a table with `scope`, `forbidden` and `reason`",
+    );
+    let required = |field: &str| -> String {
+        let key = format!("{at}.{field}");
+        match table.get(field) {
+            Some(v) => lint_string(source, lint, &key, v),
+            None => {
+                refuse_lint_entry(
+                    source,
+                    lint,
+                    &format!("`{key}` is missing, and it takes {ACCEPTS_STRING}"),
+                )
+            },
+        }
+    };
+    let enabled = match table.get("enabled") {
+        None => true,
+        Some(v) => {
+            v.as_bool().unwrap_or_else(|| {
+                refuse_lint_type(source, lint, &format!("{at}.enabled"), v, "a boolean")
+            })
+        },
+    };
+    InlineRule {
+        scope: required("scope"),
+        forbidden: required("forbidden"),
+        reason: required("reason"),
+        enabled,
+    }
+}
+
+/// Read a lint's inline table one key at a time, refusing the first value whose
+/// type its key does not take.
+fn read_lint_table(source: &Path, lint: &str, table: &toml_edit::InlineTable) -> LintTableConfig {
+    let mut cfg = LintTableConfig::default();
+    for (key, v) in table.iter() {
+        match key {
+            "commit" => cfg.commit = Some(lint_string(source, lint, key, v)),
+            "build" => cfg.build = Some(lint_string(source, lint, key, v)),
+            "push" => cfg.push = Some(lint_string(source, lint, key, v)),
+            "severity" => cfg.severity = Some(lint_string(source, lint, key, v)),
+            "include" => cfg.include = Some(lint_strings(source, lint, key, v)),
+            "exclude" => cfg.exclude = Some(lint_strings(source, lint, key, v)),
+            "crates" => cfg.crates = Some(lint_strings(source, lint, key, v)),
+            "exempt_crates" => cfg.exempt_crates = Some(lint_strings(source, lint, key, v)),
+            "findings" => {
+                let t = lint_table(
+                    source,
+                    lint,
+                    key,
+                    v,
+                    "a table of finding name to severity name",
+                );
+                cfg.findings = Some(
+                    t.iter()
+                        .map(|(kind, v)| {
+                            let at = format!("findings.{kind}");
+                            (kind.to_string(), lint_string(source, lint, &at, v))
+                        })
+                        .collect(),
+                );
+            },
+            "rule" => {
+                let rules = lint_table(source, lint, key, v, "a table of rule name to table");
+                cfg.rule = Some(
+                    rules
+                        .iter()
+                        .map(|(rule, v)| {
+                            let at = format!("rule.{rule}");
+                            let fields = lint_table(source, lint, &at, v, "a table of values");
+                            let fields = fields
+                                .iter()
+                                .map(|(k, v)| {
+                                    let at = format!("rule.{rule}.{k}");
+                                    (k.to_string(), lint_scalar(source, lint, &at, v))
+                                })
+                                .collect();
+                            (rule.to_string(), fields)
+                        })
+                        .collect(),
+                );
+            },
+            "rules" => {
+                let Some(array) = v.as_array() else {
+                    refuse_lint_type(source, lint, key, v, "an array of tables")
+                };
+                cfg.rules = Some(
+                    array
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| lint_inline_rule(source, lint, &format!("rules[{i}]"), v))
+                        .collect(),
+                );
+            },
+            _ => {
+                cfg.params
+                    .insert(key.to_string(), lint_scalar(source, lint, key, v));
+            },
         }
     }
+    cfg
 }
 
 // ---------------------------------------------------------------------------
@@ -1184,9 +1334,9 @@ fn severity_preset(source: &Path, lint_name: &str, key: &str, value: &str) -> Se
 /// Parse the `[lints]` section from the TOML content using `toml_edit`'s
 /// document API to handle heterogeneous values (strings and tables).
 ///
-/// Every entry is turned into a `toml_edit::Value` and deserialised through
-/// `IntoDeserializer`, so a type error is reported against the value and never
-/// against line and column numbers of a document that is not the file on disk.
+/// Every entry is turned into a `toml_edit::Value` and read by `read_lint_table`, so a
+/// type error is reported against the key and never against line and column numbers
+/// of a document that is not the file on disk.
 /// Nothing in here drops or defaults a value it cannot read: each such arm goes
 /// through `refuse_lint_entry`.
 fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Path) -> LintConfig {
@@ -1203,12 +1353,14 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
     // `[lints]` and `lints = { ... }` are both a table.
     let lints_table = match lints_item.as_table_like() {
         Some(t) => t,
-        None => panic!(
-            "{}: `lints` is of type {}, and it has to be a table of lint names. Nothing under it was \
+        None => {
+            panic!(
+                "{}: `lints` is of type {}, and it has to be a table of lint names. Nothing under it was \
              read, so every lint would run on its defaults.",
-            source.display(),
-            lints_item.type_name(),
-        ),
+                source.display(),
+                lints_item.type_name(),
+            )
+        },
     };
 
     let mut base = HashMap::new();
@@ -1221,36 +1373,37 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
         let lint_name = lint_name.to_string();
 
         // Every form is read as a `Value`: a `[lints.name]` table becomes the
-        // equivalent inline table, and the deserialiser then reports an error
-        // against the field rather than against a made-up document.
+        // equivalent inline table, so one reader serves both and a refusal names
+        // the key rather than a position in a document that is not the file.
         let value = match item {
             toml_edit::Item::Value(v) => v.clone(),
             toml_edit::Item::Table(t) => {
                 toml_edit::Value::InlineTable(t.clone().into_inline_table())
             },
-            toml_edit::Item::ArrayOfTables(_) => refuse_lint_entry(
-                source,
-                &lint_name,
-                &"it is an array of tables ([[lints.name]]), and a lint is one table or one name",
-            ),
+            toml_edit::Item::ArrayOfTables(_) => {
+                refuse_lint_entry(
+                    source,
+                    &lint_name,
+                    &"it is an array of tables ([[lints.name]]), and a lint is one table or one name",
+                )
+            },
             toml_edit::Item::None => refuse_lint_entry(source, &lint_name, &"it has no value"),
         };
         let entry = match value {
             toml_edit::Value::String(s) => LintEntry::Preset(s.into_value()),
-            toml_edit::Value::InlineTable(_) => {
-                match LintTableConfig::deserialize(value.into_deserializer()) {
-                    Ok(cfg) => LintEntry::Config(cfg),
-                    Err(e) => refuse_lint_entry(source, &lint_name, &e),
-                }
+            toml_edit::Value::InlineTable(ref table) => {
+                LintEntry::Config(read_lint_table(source, &lint_name, table))
             },
-            other => refuse_lint_entry(
-                source,
-                &lint_name,
-                &format!(
-                    "it is {}, and a lint is a severity name or a table",
-                    other.type_name()
-                ),
-            ),
+            other => {
+                refuse_lint_entry(
+                    source,
+                    &lint_name,
+                    &format!(
+                        "it is {}, and a lint is a severity name or a table",
+                        other.type_name()
+                    ),
+                )
+            },
         };
 
         match entry {
@@ -1324,7 +1477,7 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
                     let param_entry = params.entry(lint_name.clone()).or_default();
                     for (rule_name, rule_fields) in rule_map {
                         for (key, val) in rule_fields {
-                            let val_str = val.into_string().replace("{prefix}", crate_prefix);
+                            let val_str = val.replace("{prefix}", crate_prefix);
                             let param_key = format!("rule.{rule_name}.{key}");
                             param_entry.insert(param_key, val_str);
                         }
@@ -1352,7 +1505,7 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
                 if !table.params.is_empty() {
                     let param_entry = params.entry(lint_name.clone()).or_default();
                     for (key, val) in table.params {
-                        let val_str = val.into_string().replace("{prefix}", crate_prefix);
+                        let val_str = val.replace("{prefix}", crate_prefix);
                         param_entry.insert(key, val_str);
                     }
                 }
@@ -1721,33 +1874,29 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
         msg
     }
 
-    /// The accepted severity names as `parse_severity` defines them.
-    const SEVERITY_WORDS: &[&str] = &[
-        "off",
-        "error",
-        "hard-error",
-        "build-gate",
-        "push-gate",
-        "advisory",
-        "warn",
-        "info",
-    ];
+    /// The accepted severity spellings, read from the table `parse_severity` reads. Not a
+    /// copy: a copy still passes after a spelling is deleted from the table.
+    fn severity_words() -> Vec<&'static str> {
+        SEVERITY_NAMES.iter().map(|(name, _)| *name).collect()
+    }
+
+    fn gate_words() -> Vec<&'static str> {
+        Level::NAMES.iter().map(|(name, _)| *name).collect()
+    }
 
     #[test]
     fn a_misspelt_inline_preset_is_refused_and_lists_the_accepted_values() {
         let msg = assert_refused_naming("[lints]\nfile-size = \"eror\"\n", "file-size", &["eror"]);
-        for word in SEVERITY_WORDS {
+        for word in severity_words() {
             assert!(msg.contains(word), "lists `{word}`: {msg}");
         }
     }
 
     #[test]
     fn a_misspelt_severity_key_is_refused_and_names_the_key() {
-        assert_refused_naming(
-            "[lints.file-size]\nseverity = \"eror\"\n",
-            "file-size",
-            &["severity", "eror"],
-        );
+        assert_refused_naming("[lints.file-size]\nseverity = \"eror\"\n", "file-size", &[
+            "severity", "eror",
+        ]);
     }
 
     #[test]
@@ -1768,7 +1917,7 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
                 "file-size",
                 &[gate, "eror"],
             );
-            for word in ["pass", "off", "info", "warn", "error"] {
+            for word in gate_words() {
                 assert!(msg.contains(word), "lists the gate level `{word}`: {msg}");
             }
         }
@@ -1785,6 +1934,48 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
         assert_eq!(
             cfg.lint_overrides.base.get("file-size"),
             Some(&Severity::new(Level::Pass, Level::Warn, Level::Error))
+        );
+    }
+
+    /// The words a sentence of the usage guide puts in backticks, in order.
+    fn backticked(text: &str) -> Vec<String> {
+        text.split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The guide lists what is accepted, and a list nobody checks against the tables is a
+    /// comment with a type: it is read back here and compared to them.
+    #[test]
+    fn the_usage_guide_lists_every_spelling_the_tables_accept() {
+        let guide = include_str!("../docs/USAGE_GUIDE.md");
+        let from = guide
+            .find("A severity takes ")
+            .expect("the guide has to say what a severity takes");
+        let rest = &guide[from ..];
+        let (severity, gate) = rest
+            .split_once("; a gate key takes ")
+            .expect("and what a gate key takes, in the same sentence");
+        let (gate, _) = gate.split_once(". ").expect("the sentence ends");
+
+        let mut listed = backticked(severity);
+        let mut accepted: Vec<String> = severity_words().iter().map(|s| s.to_string()).collect();
+        listed.sort();
+        accepted.sort();
+        assert_eq!(
+            listed, accepted,
+            "the guide's severity list against `SEVERITY_NAMES`"
+        );
+
+        let mut listed = backticked(gate);
+        let mut accepted: Vec<String> = gate_words().iter().map(|s| s.to_string()).collect();
+        listed.sort();
+        accepted.sort();
+        assert_eq!(
+            listed, accepted,
+            "the guide's gate list against `Level::NAMES`"
         );
     }
 
@@ -1809,11 +2000,9 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
 
     #[test]
     fn an_array_of_tables_for_one_lint_is_refused() {
-        assert_refused_naming(
-            "[[lints.file-size]]\ncommit = \"error\"\n",
-            "file-size",
-            &["array of tables"],
-        );
+        assert_refused_naming("[[lints.file-size]]\ncommit = \"error\"\n", "file-size", &[
+            "array of tables",
+        ]);
     }
 
     #[test]
@@ -1837,7 +2026,126 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
             "file-size",
             &["exclude"],
         );
-        assert!(!msg.contains("untagged"), "serde's own wording is no help: {msg}");
+        assert!(
+            !msg.contains("untagged"),
+            "serde's own wording is no help: {msg}"
+        );
+    }
+
+    /// A value of the wrong shape is refused against the key it sits under and
+    /// never in serde's words for an enum nobody sees.
+    fn assert_refused_at_key(body: &str, key: &str) {
+        let msg = assert_refused_naming(body, "file-size", &[key]);
+        assert!(
+            !msg.contains("untagged"),
+            "serde's own wording is no help: {msg}"
+        );
+        assert!(
+            !msg.contains("data did not match"),
+            "nor is this one: {msg}"
+        );
+        assert!(
+            !msg.contains("StringOrOther"),
+            "nor the type behind it: {msg}"
+        );
+    }
+
+    #[test]
+    fn an_array_for_a_param_is_refused_and_names_the_param() {
+        assert_refused_at_key("[lints.file-size]\nmax_lines = [1, 2]\n", "max_lines");
+    }
+
+    #[test]
+    fn a_table_for_a_param_is_refused_and_names_the_param() {
+        assert_refused_at_key("[lints.file-size]\nmax_lines = { a = 1 }\n", "max_lines");
+    }
+
+    #[test]
+    fn a_non_string_finding_severity_is_refused_and_names_the_finding() {
+        assert_refused_at_key("[lints.file-size]\nfindings = { a = 5 }\n", "findings.a");
+    }
+
+    #[test]
+    fn findings_that_is_not_a_table_is_refused_and_names_findings() {
+        assert_refused_at_key("[lints.file-size]\nfindings = \"error\"\n", "findings");
+    }
+
+    #[test]
+    fn a_rule_value_of_the_wrong_type_is_refused_and_names_the_key() {
+        assert_refused_at_key(
+            "[lints.file-size.rule.core]\nscope = [\"a\"]\n",
+            "rule.core.scope",
+        );
+    }
+
+    #[test]
+    fn a_rule_that_is_not_a_table_is_refused_and_names_the_rule() {
+        assert_refused_at_key("[lints.file-size.rule]\ncore = \"x\"\n", "rule.core");
+    }
+
+    #[test]
+    fn an_inline_rule_with_no_reason_is_refused_and_names_the_missing_key() {
+        assert_refused_at_key(
+            "[lints.file-size]\nrules = [{ scope = \"a\", forbidden = \"b\" }]\n",
+            "rules[0].reason",
+        );
+    }
+
+    #[test]
+    fn an_inline_rule_value_of_the_wrong_type_is_refused_and_names_the_key() {
+        assert_refused_at_key(
+            "[lints.file-size]\nrules = [{ scope = \"a\", forbidden = 3, reason = \"c\" }]\n",
+            "rules[0].forbidden",
+        );
+        assert_refused_at_key(
+            "[lints.file-size]\nrules = [{ scope = \"a\", forbidden = \"b\", reason = \"c\", \
+             enabled = \"no\" }]\n",
+            "rules[0].enabled",
+        );
+    }
+
+    #[test]
+    fn rules_that_is_not_an_array_of_tables_is_refused_and_names_rules() {
+        assert_refused_at_key("[lints.file-size]\nrules = \"x\"\n", "rules");
+        assert_refused_at_key("[lints.file-size]\nrules = [\"x\"]\n", "rules[0]");
+    }
+
+    #[test]
+    fn a_scalar_key_of_the_wrong_type_is_refused_and_names_the_key() {
+        for key in ["severity", "commit", "build", "push"] {
+            assert_refused_at_key(&format!("[lints.file-size]\n{key} = 5\n"), key);
+        }
+        assert_refused_at_key("[lints.file-size]\ninclude = [1]\n", "include");
+        assert_refused_at_key("[lints.file-size]\ncrates = \"x\"\n", "crates");
+        assert_refused_at_key(
+            "[lints.file-size]\nexempt_crates = [true]\n",
+            "exempt_crates",
+        );
+    }
+
+    /// The control: every shape the arms above refuse has a sibling that loads,
+    /// so none of them is a refusal of the whole key.
+    #[test]
+    fn the_well_typed_siblings_of_those_shapes_load_to_what_they_say() {
+        let tmp = mock_dir_with_config(
+            "[lints.file-size]\nmax_lines = 400\nratio = 0.5\nstrict = true\nname = \"x\"\n\
+             findings = { a = \"warn\" }\n\
+             rules = [{ scope = \"s\", forbidden = \"f\", reason = \"r\" }]\n\
+             [lints.file-size.rule.core]\nscope = \"{prefix}-core\"\nlimit = 3\n",
+        );
+        let cfg = Config::from_dir(tmp.path());
+        let params = &cfg.lint_overrides.params["file-size"];
+        assert_eq!(params["max_lines"], "400");
+        assert_eq!(params["ratio"], "0.5");
+        assert_eq!(params["strict"], "true");
+        assert_eq!(params["name"], "x");
+        assert_eq!(params["rule.core.limit"], "3");
+        assert_eq!(params["rule.rule-0.reason"], "r");
+        assert_eq!(params["rule.core.scope"], "project-core");
+        assert_eq!(
+            cfg.lint_overrides.findings["file-size"]["a"],
+            Severity::ADVISORY
+        );
     }
 
     #[test]

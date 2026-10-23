@@ -272,15 +272,6 @@ pub enum Level {
 }
 
 impl Level {
-    pub fn label(self) -> &'static str {
-        match self {
-            Level::Pass => "pass",
-            Level::Info => "info",
-            Level::Warn => "warn",
-            Level::Error => "error",
-        }
-    }
-
     /// Every spelling `from_str_name` accepts, with the level it names. The one
     /// table both the parser and a refusal's list of accepted values read.
     pub const NAMES: &'static [(&'static str, Level)] = &[
@@ -292,10 +283,22 @@ impl Level {
         ("error", Level::Error),
     ];
 
+    pub fn label(self) -> &'static str {
+        match self {
+            Level::Pass => "pass",
+            Level::Info => "info",
+            Level::Warn => "warn",
+            Level::Error => "error",
+        }
+    }
+
     /// Parse a level from a string name, ignoring case and surrounding space.
     pub fn from_str_name(s: &str) -> Option<Self> {
         let s = s.trim().to_lowercase();
-        Self::NAMES.iter().find(|(name, _)| *name == s).map(|(_, level)| *level)
+        Self::NAMES
+            .iter()
+            .find(|(name, _)| *name == s)
+            .map(|(_, level)| *level)
     }
 }
 
@@ -942,6 +945,100 @@ pub fn parse_severity(s: &str) -> Option<Severity> {
         .iter()
         .find(|(name, _)| *name == s)
         .map(|(_, severity)| *severity)
+}
+
+#[cfg(test)]
+mod spelling_tests {
+    //! The spellings a configuration may use, pinned as a list written out here
+    //! rather than read from the tables, so deleting a spelling from either table
+    //! is a failure and not a table that agrees with itself.
+    use super::*;
+
+    const SEVERITY_SPELLINGS: &[(&str, Severity)] = &[
+        ("off", Severity::OFF),
+        ("error", Severity::HARD_ERROR),
+        ("hard-error", Severity::HARD_ERROR),
+        ("hard_error", Severity::HARD_ERROR),
+        ("build-gate", Severity::BUILD_GATE),
+        ("build_gate", Severity::BUILD_GATE),
+        ("push-gate", Severity::PUSH_GATE),
+        ("push_gate", Severity::PUSH_GATE),
+        ("advisory", Severity::ADVISORY),
+        ("warn", Severity::ADVISORY),
+        ("warning", Severity::ADVISORY),
+        ("info", Severity::INFO_ONLY),
+        ("info-only", Severity::INFO_ONLY),
+        ("info_only", Severity::INFO_ONLY),
+    ];
+
+    const LEVEL_SPELLINGS: &[(&str, Level)] = &[
+        ("pass", Level::Pass),
+        ("off", Level::Pass),
+        ("info", Level::Info),
+        ("warn", Level::Warn),
+        ("warning", Level::Warn),
+        ("error", Level::Error),
+    ];
+
+    #[test]
+    fn every_severity_spelling_parses_to_the_preset_it_names() {
+        assert_eq!(SEVERITY_SPELLINGS.len(), 14, "the list this test pins");
+        for (spelling, expected) in SEVERITY_SPELLINGS {
+            assert_eq!(parse_severity(spelling), Some(*expected), "`{spelling}`");
+        }
+    }
+
+    #[test]
+    fn the_severity_table_holds_exactly_those_spellings() {
+        let table: Vec<&str> = SEVERITY_NAMES.iter().map(|(name, _)| *name).collect();
+        let pinned: Vec<&str> = SEVERITY_SPELLINGS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            table, pinned,
+            "a spelling added or dropped has to be added or dropped here"
+        );
+    }
+
+    #[test]
+    fn every_level_spelling_parses_to_the_level_it_names() {
+        assert_eq!(LEVEL_SPELLINGS.len(), 6, "the list this test pins");
+        for (spelling, expected) in LEVEL_SPELLINGS {
+            assert_eq!(
+                Level::from_str_name(spelling),
+                Some(*expected),
+                "`{spelling}`"
+            );
+        }
+    }
+
+    #[test]
+    fn the_level_table_holds_exactly_those_spellings() {
+        let table: Vec<&str> = Level::NAMES.iter().map(|(name, _)| *name).collect();
+        let pinned: Vec<&str> = LEVEL_SPELLINGS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            table, pinned,
+            "a spelling added or dropped has to be added or dropped here"
+        );
+    }
+
+    #[test]
+    fn case_and_surrounding_space_are_ignored() {
+        assert_eq!(parse_severity("  Hard_Error "), Some(Severity::HARD_ERROR));
+        assert_eq!(parse_severity("WARN"), Some(Severity::ADVISORY));
+        assert_eq!(Level::from_str_name(" Warning\t"), Some(Level::Warn));
+        assert_eq!(Level::from_str_name("ERROR"), Some(Level::Error));
+    }
+
+    #[test]
+    fn a_spelling_outside_the_tables_is_rejected() {
+        for bad in ["eror", "", "hard error", "hard--error", "errors"] {
+            assert_eq!(parse_severity(bad), None, "severity `{bad}`");
+            assert_eq!(Level::from_str_name(bad), None, "level `{bad}`");
+        }
+        // `pass` is a gate level and not a severity preset.
+        assert_eq!(parse_severity("pass"), None);
+        // and the presets that are severities only are not levels.
+        assert_eq!(Level::from_str_name("advisory"), None);
+    }
 }
 
 // ---------------------------------------------------------------------------
