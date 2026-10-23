@@ -316,8 +316,8 @@ build flags you passed, and none that only shape a run). Where that listing cann
 had, a failing build for one, the run says so and drops nothing, and a record naming a
 deleted binary can still stop nextest until the build is mended. A `--features` run
 keeps its own flavour directory. A run writes and removes only the files of the members
-it ran, plus those of members the workspace no longer has, so a run for one member leaves
-every other member's file as it was, whatever it holds.
+it ran, in the flavour it ran in, plus those of members the workspace no longer has, so
+a run for one member leaves every other file as it was, whatever it holds.
 
 Two branches that both moved a member's file merge without a conflict: `.gitattributes`
 sends `<mock>/test-history/**/*.json` to the `mockspace-test-history` merge driver

@@ -34,9 +34,10 @@ would have kept is.
 
 ## What a run writes
 
-`cargo mock test` writes and removes only the files of the members it ran, and the files of members
-the workspace no longer has. A run for `-p one-member`, with or without `--cheap`, leaves every other
-member's file byte for byte as it found it: one a merge left blank (no green, no tests, no binaries),
+`cargo mock test` writes and removes only the files of the members it ran, in the flavour it ran in,
+and the files of members the workspace no longer has. A run for `-p one-member`, with or without
+`--cheap`, leaves every other file, including its own member's in the other flavours,
+byte for byte as it found it: one a merge left blank (no green, no tests, no binaries),
 one of an older or a newer version, one holding conflict markers. None of those is the run's to
 judge, so none is deleted, rewritten as the current version or read as a loss. A member the run
 covered and left with nothing to record loses its file, so a green a failure took away does not load

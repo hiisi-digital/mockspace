@@ -227,6 +227,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
             }
         }
         if let Err(e) = history.save(&cfg.mock_dir, &history::Scope {
+            flavour:   &flavour,
             ran:       &run_members,
             workspace: &graph.members,
         }) {

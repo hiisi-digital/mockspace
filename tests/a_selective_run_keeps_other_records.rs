@@ -226,3 +226,31 @@ fn a_record_goes_only_with_its_member() {
         "a member still in the workspace"
     );
 }
+
+/// The member that ran has files in other flavours too, from other runs, and a
+/// run in the default flavour leaves those as they are.
+#[test]
+fn a_run_leaves_its_own_members_files_in_other_flavours() {
+    let Some(tmp) = prepared() else { return };
+    let root = tmp.path();
+    let older = fs::read_to_string(record(root, "uses"))
+        .unwrap()
+        .replace("\"version\": 2", "\"version\": 1")
+        .replace("\"flavour\": \"\"", "\"flavour\": \"--features editor\"");
+    let editor = root.join("mock/test-history/features-editor/uses.json");
+    write(&editor, &older);
+    let release = root.join("mock/test-history/release/uses.json");
+    let empty = blank("uses").replace("\"flavour\": \"\"", "\"flavour\": \"--release\"");
+    write(&release, &empty);
+
+    let (ok, t) = mock(root, RUNS[0]);
+    assert!(ok, "{t}");
+    assert_eq!(
+        fs::read_to_string(&editor).ok().as_deref(),
+        Some(older.as_str())
+    );
+    assert_eq!(
+        fs::read_to_string(&release).ok().as_deref(),
+        Some(empty.as_str())
+    );
+}
