@@ -293,6 +293,9 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
+        if ok && t.members {
+            crate::suite::plain_passed(cfg, &inv);
+        }
         if !ok {
             failed.push(format!("{} at {}", t.what, t.dir.display()));
         }

@@ -343,7 +343,14 @@ const COMMANDS: &[Cmd] = &[
                   the rest, and the lean build stays beside it. A cargo \
                   config or CARGO_PROFILE_*_DEBUG that sets debug info is \
                   reported and overridden for the run, never edited; \
-                  `[test] lean = false` lets it stand.\n\n\
+                  `[test] lean = false` lets it stand. Dependencies are \
+                  lean too, one a manifest or a cargo config names for \
+                  itself included. Rustflags that give debug info, -g or \
+                  -C debuginfo= above none, in RUSTFLAGS, \
+                  CARGO_ENCODED_RUSTFLAGS or a cargo config, give it to \
+                  every crate and no profile setting undoes that: they \
+                  are reported and left, and the plan stops saying the \
+                  rest is lean.\n\n\
                   Everything else after `test` is forwarded to each cargo \
                   invocation, so `mock test --release` and `mock test -- \
                   --nocapture` both work. A filter after `--` or an -E runs, \

@@ -32,9 +32,21 @@ fn write(p: &Path, s: &str) {
     fs::write(p, s).unwrap();
 }
 
+/// What a fixture adds to the plain one: the `[test]` table, text for the
+/// manifest's profile tables and for the `CARGO_HOME` config, and `dep`, a crate
+/// outside the workspace that `base` depends on by path.
+#[derive(Default)]
+struct Variant<'a> {
+    test_table:     &'a str,
+    manifest_extra: &'a str,
+    home_extra:     &'a str,
+    dep:            bool,
+}
+
 /// `base`, `mid` depending on it, `top` depending on `mid`, and `alone`
 /// depending on nothing. `mid` fails while `crates/mid/fail` exists.
-fn fixture(root: &Path, test_table: &str) {
+fn fixture(root: &Path, v: &Variant) {
+    let test_table = v.test_table;
     write(
         &root.join("mockspace.toml"),
         &format!("project_name = \"fixture\"\nmock_dir = \"mock\"\n\n[test]\n{test_table}"),
@@ -42,9 +54,19 @@ fn fixture(root: &Path, test_table: &str) {
     write(&root.join(".gitignore"), "target/\n");
     write(
         &root.join("mock/Cargo.toml"),
-        "[workspace]\nresolver = \"2\"\nmembers = [\"crates/base\", \"crates/mid\", \"crates/top\", \"crates/alone\"]\n\n\
-         [profile.dev]\ndebug = 2\n\n[profile.test]\ndebug = 2\n",
+        &format!(
+            "[workspace]\nresolver = \"2\"\nmembers = [\"crates/base\", \"crates/mid\", \"crates/top\", \"crates/alone\"]\n\n\
+             [profile.dev]\ndebug = 2\n\n[profile.test]\ndebug = 2\n\n{}",
+            v.manifest_extra
+        ),
     );
+    if v.dep {
+        write(
+            &root.join("dep/Cargo.toml"),
+            "[package]\nname = \"dep\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n",
+        );
+        write(&root.join("dep/src/lib.rs"), "pub fn d() {}\n");
+    }
     let pkg = |name: &str, deps: &str| {
         format!(
             "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\n{deps}"
@@ -52,7 +74,11 @@ fn fixture(root: &Path, test_table: &str) {
     };
     let lib = |body: &str| format!("pub fn f() -> u32 {{ 1 }}\n#[test]\nfn t() {{ {body} }}\n");
     for (name, deps, body) in [
-        ("base", "", ""),
+        (
+            "base",
+            if v.dep { "dep = { path = \"../../../dep\" }\n" } else { "" },
+            "",
+        ),
         (
             "mid",
             "base = { path = \"../base\" }\n",
@@ -116,19 +142,32 @@ impl Run {
 
 impl Rig {
     fn new(test_table: &str) -> Rig {
+        Rig::with(&Variant {
+            test_table,
+            ..Variant::default()
+        })
+    }
+
+    fn with(v: &Variant) -> Rig {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().canonicalize().unwrap();
         let root = base.join("repo");
         let home = base.join("cargo-home");
         let shim = base.join("rustc-log");
         let log = base.join("rustc.log");
-        fixture(&root, test_table);
+        fixture(&root, v);
         // What a helper container carries: a cargo config under `CARGO_HOME` that
         // sets debug info for every build and silently beats the manifest.
         write(
             &home.join("config.toml"),
             "[profile.dev]\ndebug = \"line-tables-only\"\n\n[profile.test]\ndebug = \"line-tables-only\"\n",
         );
+        if !v.home_extra.is_empty() {
+            let mut t = fs::read_to_string(home.join("config.toml")).unwrap();
+            t.push('\n');
+            t.push_str(v.home_extra);
+            write(&home.join("config.toml"), &t);
+        }
         write(
             &shim,
             "#!/bin/sh\n\
@@ -157,9 +196,13 @@ impl Rig {
     }
 
     fn mock(&self, args: &[&str]) -> Run {
+        self.mock_env(args, &[])
+    }
+
+    fn mock_env(&self, args: &[&str], env: &[(&str, &str)]) -> Run {
         let _ = fs::remove_file(&self.log);
-        let o = Command::new(env!("CARGO_BIN_EXE_mockspace"))
-            .args(["--dir", "mock", "test"])
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_mockspace"));
+        cmd.args(["--dir", "mock", "test"])
             .args(args)
             .current_dir(&self.root)
             .env_remove("CARGO_TARGET_DIR")
@@ -170,9 +213,11 @@ impl Rig {
             .env("CARGO_BUILD_JOBS", "2")
             .env("CARGO_HOME", &self.home)
             .env("RUSTC_WRAPPER", &self.shim)
-            .env("MS_RUSTC_LOG", &self.log)
-            .output()
-            .unwrap();
+            .env("MS_RUSTC_LOG", &self.log);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let o = cmd.output().unwrap();
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&o.stdout),
@@ -189,7 +234,7 @@ impl Rig {
         }
         // Only the fixture's own crates: nothing else is compiled here, and a
         // wrapper line naming something else would be a probe the run made.
-        compiled.retain(|c, _| ["base", "mid", "top", "alone"].contains(&c.as_str()));
+        compiled.retain(|c, _| ["base", "mid", "top", "alone", "dep"].contains(&c.as_str()));
         Run {
             ok: o.status.success(),
             text,
@@ -348,4 +393,144 @@ fn a_clone_can_keep_its_own_debug_settings() {
         "{:?}",
         r.compiled
     );
+}
+
+/// A crate outside the workspace is lean too, whichever way a manifest or a
+/// cargo config asks for symbols on it: named for itself, or with `"*"`, which
+/// is every dependency. Each asks for full debug info and the run must still
+/// compile `dep` without.
+#[test]
+fn a_dependency_outside_the_workspace_stays_lean_whoever_asks_for_symbols_on_it() {
+    let named = "[profile.dev.package.dep]\ndebug = 2\n\n[profile.test.package.dep]\ndebug = 2\n";
+    let star =
+        "[profile.dev.package.\"*\"]\ndebug = 2\n\n[profile.test.package.\"*\"]\ndebug = 2\n";
+    for (what, manifest_extra, home_extra) in [
+        ("manifest names dep", named, ""),
+        ("manifest says *", star, ""),
+        ("cargo config names dep", "", named),
+        ("cargo config says *", "", star),
+    ] {
+        let rig = Rig::with(&Variant {
+            manifest_extra,
+            home_extra,
+            dep: true,
+            ..Variant::default()
+        });
+        let r = rig.mock(&["--plain"]);
+        assert!(r.ok, "{what}:\n{}", r.text);
+        assert_eq!(
+            r.lean(),
+            set(&["alone", "base", "dep", "mid", "top"]),
+            "{what}: {:?}",
+            r.compiled
+        );
+        assert!(r.symbols().is_empty(), "{what}: {:?}", r.compiled);
+    }
+}
+
+/// Rustflags are not cargo profile settings, so no `--config` of ours overrides
+/// them: they are reported, and the plan stops saying the rest is lean.
+#[test]
+fn rustflags_that_give_debug_info_are_reported_and_the_plan_stops_claiming_lean() {
+    let rig = Rig::new("");
+    // Env: `-g`, and the same spelled the long way.
+    for flags in ["-g", "-C debuginfo=2", "-Cdebuginfo=1"] {
+        let r = rig.mock_env(&["--plain", "-p", "alone", "--debug"], &[(
+            "RUSTFLAGS",
+            flags,
+        )]);
+        assert!(r.ok, "{flags}:\n{}", r.text);
+        assert!(
+            r.text.contains("RUSTFLAGS") && r.text.contains("every crate"),
+            "{flags}: the run names the variable:\n{}",
+            r.text
+        );
+        assert!(
+            r.text.contains("symbols for alone (asked for)"),
+            "{flags}:\n{}",
+            r.text
+        );
+        assert!(
+            !r.text
+                .contains("every other crate is built without debug info"),
+            "{flags}: the plan claims what rustflags undo:\n{}",
+            r.text
+        );
+    }
+    // The control: no flags, or flags that add none, and the claim stands.
+    for flags in [None, Some("-C debuginfo=0"), Some("-C opt-level=1")] {
+        let env: Vec<(&str, &str)> = flags.map(|f| ("RUSTFLAGS", f)).into_iter().collect();
+        let r = rig.mock_env(&["--plain", "-p", "alone", "--debug"], &env);
+        assert!(r.ok, "{flags:?}:\n{}", r.text);
+        assert!(
+            !r.text.contains("RUSTFLAGS"),
+            "{flags:?}: nothing to report:\n{}",
+            r.text
+        );
+        assert!(
+            r.text.contains(
+                "symbols for alone (asked for); every other crate is built without debug info"
+            ),
+            "{flags:?}:\n{}",
+            r.text
+        );
+    }
+}
+
+/// Rustflags in a cargo config are found wherever cargo reads them, `[build]`
+/// and `[target.*]` alike.
+#[test]
+fn rustflags_in_a_cargo_config_are_reported_by_file() {
+    for extra in [
+        "[build]\nrustflags = [\"-C\", \"debuginfo=2\"]\n",
+        "[build]\nrustflags = \"-g\"\n",
+        "[target.'cfg(unix)']\nrustflags = [\"-g\"]\n",
+    ] {
+        let rig = Rig::with(&Variant {
+            home_extra: extra,
+            ..Variant::default()
+        });
+        let r = rig.mock(&["--plain", "-p", "alone", "--debug"]);
+        assert!(r.ok, "{extra}:\n{}", r.text);
+        assert!(
+            r.text.contains("config.toml sets") && r.text.contains("rustflags"),
+            "{extra}:\n{}",
+            r.text
+        );
+        assert!(
+            !r.text
+                .contains("every other crate is built without debug info"),
+            "{extra}:\n{}",
+            r.text
+        );
+    }
+}
+
+/// A plain run reads no report, so it cannot say which test failed, but one
+/// that passes passed the whole tree: what the last nextest run recorded as
+/// failed is no longer.
+#[test]
+fn a_plain_run_that_passes_clears_what_failed() {
+    if !nextest_here() {
+        eprintln!("cargo-nextest is not installed; the nextest path is not exercised here");
+        return;
+    }
+    let rig = Rig::new("");
+    assert!(rig.mock(&[]).ok);
+    rig.fail_mid(true);
+    assert!(!rig.mock(&[]).ok);
+    // Recorded: the next run names it.
+    let r = rig.mock(&["--full"]);
+    assert!(
+        r.text.contains("symbols for mid (failed last run)"),
+        "{}",
+        r.text
+    );
+    // Mended, and passed by a plain run.
+    rig.fail_mid(false);
+    let r = rig.mock(&["--plain"]);
+    assert!(r.ok, "{}", r.text);
+    let r = rig.mock(&["--full"]);
+    assert!(r.ok, "{}", r.text);
+    assert!(!r.text.contains("symbols for"), "{}", r.text);
 }

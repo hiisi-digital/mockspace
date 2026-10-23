@@ -48,12 +48,32 @@ impl Failed {
         let path = Self::path(state);
         let mut text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         text.push('\n');
-        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+        // Beside itself and renamed over, so a run cut short leaves the earlier
+        // record and not half of one.
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
     }
 
     /// The members that failed last time in this flavour.
     pub fn of(&self, flavour: &str) -> BTreeSet<String> {
         self.flavours.get(flavour).cloned().unwrap_or_default()
+    }
+
+    /// Takes `members` off the record for this flavour: a plain run that passed
+    /// them, which reads no report and so cannot say which tests it ran, passed
+    /// the whole tree. Whether anything changed.
+    pub fn clear(&mut self, flavour: &str, members: &[String]) -> bool {
+        let Some(set) = self.flavours.get_mut(flavour) else {
+            return false;
+        };
+        let before = set.len();
+        set.retain(|m| !members.contains(m));
+        let changed = set.len() != before;
+        if set.is_empty() {
+            self.flavours.remove(flavour);
+        }
+        changed
     }
 
     /// What a run settled. A member that failed a test is recorded. A member

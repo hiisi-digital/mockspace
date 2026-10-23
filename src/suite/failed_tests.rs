@@ -139,3 +139,37 @@ fn a_flavour_with_nothing_failed_leaves_no_entry() {
     );
     assert_eq!(f, Failed::default());
 }
+
+#[test]
+fn a_plain_pass_takes_the_members_it_ran_off_the_record_and_no_others() {
+    let mut f = Failed::default();
+    f.settle(
+        "",
+        &names(&["a", "b", "c"]),
+        &[case("a", Outcome::Fail), case("b", Outcome::Fail)],
+        true,
+    );
+    assert!(f.clear("", &names(&["a", "c"])));
+    assert_eq!(f.of(""), set(&["b"]));
+    // Nothing to take off is no change, whichever way it is asked.
+    assert!(!f.clear("", &names(&["a", "c"])));
+    assert!(!f.clear("--features x", &names(&["b"])));
+    assert_eq!(f.of(""), set(&["b"]));
+    assert!(f.clear("", &names(&["b"])));
+    assert_eq!(f, Failed::default());
+}
+
+/// The write goes through a file beside it, which is gone once it lands.
+#[test]
+fn the_record_is_written_beside_itself_and_renamed_over() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = Failed::default();
+    f.settle("", &names(&["a"]), &[case("a", Outcome::Fail)], true);
+    f.save(dir.path()).unwrap();
+    f.save(dir.path()).unwrap();
+    let left: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, vec!["failed.json"]);
+}

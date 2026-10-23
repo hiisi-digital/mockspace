@@ -18,6 +18,8 @@ fn symbols(lean: bool, crates: &[(&str, Reason)]) -> Symbols {
         everywhere: false,
         off: false,
         crates: crates.iter().map(|(c, r)| (c.to_string(), *r)).collect(),
+        pinned: Default::default(),
+        rustflags: false,
     }
 }
 
@@ -225,10 +227,14 @@ fn an_unreadable_workspace_is_lean_profile_wide() {
         debug_of(&d, "dev", "b").as_deref(),
         Some("line-tables-only")
     );
-    assert!(
-        d["profile"]["dev"]["package"].as_table().unwrap().len() == 1,
-        "{t}"
-    );
+    // The one named, and the star for every dependency; no member is named.
+    let pkgs: Vec<&str> = d["profile"]["dev"]["package"]
+        .as_table()
+        .unwrap()
+        .iter()
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(pkgs, vec!["*", "b"], "{t}");
 }
 
 /// A bare `--debug` that met no workspace gives every crate symbols, and
@@ -250,5 +256,97 @@ fn symbols_everywhere_is_the_profile_wide_level() {
         Some("line-tables-only"),
         "{t}"
     );
-    assert!(d["profile"]["dev"].get("package").is_none(), "{t}");
+    // Nothing named but the star, at the same level: every crate has them.
+    let pkgs: Vec<&str> = d["profile"]["dev"]["package"]
+        .as_table()
+        .unwrap()
+        .iter()
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(pkgs, vec!["*"], "{t}");
+    assert_eq!(
+        d["profile"]["dev"]["package"]["*"]["debug"].as_str(),
+        Some("line-tables-only")
+    );
+}
+
+fn star_of(d: &toml_edit::DocumentMut, profile: &str) -> Option<String> {
+    let v = &d["profile"][profile]["package"]["*"]["debug"];
+    v.as_integer()
+        .map(|n| n.to_string())
+        .or_else(|| v.as_str().map(String::from))
+}
+
+/// Dependencies are crates too: a `"*"` of a manifest or a cargo config beats a
+/// profile-wide setting, so the lean build says it for every dependency.
+#[test]
+fn every_dependency_is_lean_through_a_star() {
+    let members = names(&["a", "b"]);
+    let y = symbols(true, &[("b", Reason::Named)]);
+    let t = render(&TestSettings::default(), "dev", Some(&members), Some(&y)).unwrap();
+    let d = doc(&t);
+    for p in ["dev", "test"] {
+        assert_eq!(star_of(&d, p).as_deref(), Some("0"), "{p}: {t}");
+    }
+    // The star is no member's, and a member named does not lose its own.
+    assert_eq!(
+        debug_of(&d, "dev", "b").as_deref(),
+        Some("line-tables-only")
+    );
+    assert_eq!(debug_of(&d, "dev", "a").as_deref(), Some("0"));
+}
+
+/// The controls: where nothing is lean there is no star, under a profile that
+/// is not `dev` or in a clone that handed the profile back.
+#[test]
+fn there_is_no_star_where_the_build_is_not_lean() {
+    let members = names(&["a", "b"]);
+    let y = symbols(false, &[("b", Reason::Named)]);
+    let t = render(&TestSettings::default(), "dev", Some(&members), Some(&y)).unwrap();
+    assert!(!t.contains("\"*\""), "{t}");
+    let y = symbols(true, &[("b", Reason::Named)]);
+    let t = render(
+        &TestSettings::default(),
+        "release",
+        Some(&members),
+        Some(&y),
+    )
+    .unwrap();
+    assert!(!t.contains("\"*\""), "{t}");
+    // And none in the text a fingerprint is taken over.
+    let s = levels(&[("a", "3")]);
+    assert!(
+        !render(&s, "dev", Some(&members), None)
+            .unwrap()
+            .contains("\"*\"")
+    );
+}
+
+/// A name beats a star, so a package outside the workspace that a manifest or a
+/// cargo config names is named lean in the file as well. A member of the same
+/// name is no such package.
+#[test]
+fn a_dependency_something_names_is_named_lean_too() {
+    let members = names(&["a"]);
+    let mut y = symbols(true, &[]);
+    y.pinned = ["dep".to_string(), "other@1.0.0".to_string()].into();
+    let t = render(&TestSettings::default(), "dev", Some(&members), Some(&y)).unwrap();
+    let d = doc(&t);
+    for p in ["dev", "test"] {
+        assert_eq!(debug_of(&d, p, "dep").as_deref(), Some("0"), "{p}: {t}");
+        assert_eq!(
+            debug_of(&d, p, "other@1.0.0").as_deref(),
+            Some("0"),
+            "{p}: {t}"
+        );
+        assert_eq!(star_of(&d, p).as_deref(), Some("0"));
+    }
+    // Symbols everywhere pins nothing: every crate has them.
+    y.everywhere = true;
+    let t = render(&TestSettings::default(), "dev", Some(&members), Some(&y)).unwrap();
+    assert!(!t.contains("\"dep\""), "{t}");
+    assert_eq!(
+        star_of(&doc(&t), "dev").as_deref(),
+        Some("line-tables-only")
+    );
 }

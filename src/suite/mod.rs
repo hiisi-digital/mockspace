@@ -129,13 +129,21 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
     let run_members: Vec<String> = plan.run.iter().map(|(n, _)| n.clone()).collect();
     let mut failed = failed::Failed::load(&state);
     let profile = nextest::build_profile(&inv.passed, "--cargo-profile");
-    let symbols = debug::decide(&cfg.test, &debug::Basis {
+    let mut symbols = debug::decide(&cfg.test, &debug::Basis {
         ask:      &inv.debug,
         packages: &inv.packages,
         members:  Some(&graph.members),
         running:  Some(&run_members),
         failed:   &failed.of(&flavour),
     });
+    let debug_notes = debug::inspect(
+        &cfg.test,
+        &cfg.mock_dir,
+        &profile,
+        &inv.passed,
+        Some(&graph.members),
+        &mut symbols,
+    );
     let cargo_config = if plan.run.is_empty() {
         None
     } else {
@@ -173,7 +181,7 @@ pub fn run(cfg: &Config, inv: &Invocation) -> Option<ExitCode> {
 
     report::plan(&plan, inv, &fp_or_empty, cfg);
     if !plan.run.is_empty() {
-        debug::report(&cfg.test, &cfg.mock_dir, &profile, &symbols, &inv.passed);
+        debug::print(&debug_notes, &symbols);
     }
     if plan.run.is_empty() {
         println!("mock test: nothing to run; every member asked for passed at what it is now");
@@ -285,17 +293,44 @@ pub fn plain_cargo_config(cfg: &Config, inv: &Invocation) -> Result<Option<PathB
     let profile = nextest::build_profile(&inv.passed, "--profile");
     let state = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test-state"]);
     note_unknown_opt_levels(cfg, members);
-    let symbols = debug::decide(&cfg.test, &debug::Basis {
+    let mut symbols = debug::decide(&cfg.test, &debug::Basis {
         ask: &inv.debug,
         packages: &inv.packages,
         members,
         running: None,
         failed: &failed::Failed::load(&state).of(&inv.flavour()),
     });
-    debug::report(&cfg.test, &cfg.mock_dir, &profile, &symbols, &inv.passed);
+    let notes = debug::inspect(
+        &cfg.test,
+        &cfg.mock_dir,
+        &profile,
+        &inv.passed,
+        members,
+        &mut symbols,
+    );
+    debug::print(&notes, &symbols);
     match cargo_config::render(&cfg.test, &profile, members, Some(&symbols)) {
         Some(text) => write_cargo_config(&state, &text).map(Some),
         None => Ok(None),
+    }
+}
+
+/// What a plain run that passed leaves on the record of what failed: the
+/// members it ran come off it. A run narrowed to some tests passed no member
+/// whole, and a plain run that failed says nothing of which one.
+pub fn plain_passed(cfg: &Config, inv: &Invocation) {
+    if inv.narrowed() {
+        return;
+    }
+    let Ok(graph) = graph::Graph::read(&cfg.mock_dir) else {
+        return;
+    };
+    let state = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-test-state"]);
+    let mut failed = failed::Failed::load(&state);
+    if failed.clear(&inv.flavour(), &candidates(&graph, inv))
+        && let Err(e) = failed.save(&state)
+    {
+        eprintln!("note: could not keep which members failed: {e}");
     }
 }
 

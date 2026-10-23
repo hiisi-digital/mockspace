@@ -68,6 +68,15 @@ pub fn render(
                     .debug
                     .get_or_insert_with(|| "0".to_string());
             }
+            // And so is a package outside the workspace that something names
+            // for itself, since a name beats the `"*"` below as well.
+            for m in &y.pinned {
+                entries
+                    .entry(m)
+                    .or_default()
+                    .debug
+                    .get_or_insert_with(|| "0".to_string());
+            }
         }
     }
     if !lean && entries.is_empty() {
@@ -93,6 +102,11 @@ pub fn render(
         };
         for p in debug_profiles {
             let _ = write!(t, "\n[profile.{p}]\ndebug = {top}\n");
+        }
+        // Every dependency too: a `"*"` in a manifest or a cargo config beats a
+        // profile-wide setting, and this one beats theirs.
+        for p in debug_profiles {
+            let _ = write!(t, "\n[profile.{p}.package.\"*\"]\ndebug = {top}\n");
         }
     }
     for (member, e) in &entries {

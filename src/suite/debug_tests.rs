@@ -326,3 +326,157 @@ fn a_config_of_the_callers_that_sets_debug_is_noticed_in_either_spelling() {
     assert!(!passes_own_debug(&words(&["--features", "profile.debug"])));
     assert!(!passes_own_debug(&words(&["--config"])));
 }
+
+/// A name beats a star and a profile-wide setting, so a package outside the
+/// workspace that a manifest or a cargo config names for itself is found, in
+/// either, under either profile. A member is not one, a star is not one, and a
+/// package table with no `debug` in it is not one: the controls.
+#[test]
+fn packages_outside_the_workspace_that_something_names_are_found() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("cfg");
+    write(
+        &dir.join("config.toml"),
+        "[profile.test.package.fromconfig]\ndebug = 2\n\
+         [profile.dev.package.\"*\"]\ndebug = 2\n\
+         [profile.dev.package.member]\ndebug = 2\n\
+         [profile.dev.package.noisy]\nopt-level = 3\n\
+         [profile.release.package.notbuilt]\ndebug = 2\n",
+    );
+    let manifest = tmp.path().join("Cargo.toml");
+    write(
+        &manifest,
+        "[workspace]\n[profile.dev.package.\"other@1.0.0\"]\ndebug = 1\n\
+         [profile.dev.package.frommanifest]\ndebug = 2\n",
+    );
+    let members = names(&["member"]);
+    let got = pinned_packages(
+        std::slice::from_ref(&dir),
+        &manifest,
+        &["dev", "test"],
+        Some(&members),
+    );
+    assert_eq!(got, set(&["fromconfig", "frommanifest", "other@1.0.0"]));
+    // Where the workspace could not be read, a member's name stays.
+    let got = pinned_packages(std::slice::from_ref(&dir), &manifest, &["dev"], None);
+    assert!(got.contains("member"), "{got:?}");
+    // No file anywhere is no name.
+    assert!(pinned_packages(&[], &tmp.path().join("none.toml"), &["dev"], None).is_empty());
+}
+
+fn env_of<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+    move |name: &str| {
+        vars.iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v.to_string())
+    }
+}
+
+/// `-g`, and `-C debuginfo=` at anything but none, in each spelling and each
+/// variable cargo reads; `-C debuginfo=0` and flags that are none of it are the
+/// controls.
+#[test]
+fn rustflags_that_give_debug_info_are_found_in_the_environment() {
+    for (var, value) in [
+        ("RUSTFLAGS", "-g"),
+        ("RUSTFLAGS", "-C opt-level=1 -C debuginfo=2"),
+        ("RUSTFLAGS", "-Cdebuginfo=1"),
+        ("RUSTFLAGS", "-C debuginfo=line-tables-only"),
+        ("CARGO_ENCODED_RUSTFLAGS", "-C\u{1f}debuginfo=2"),
+        ("CARGO_BUILD_RUSTFLAGS", "-g"),
+    ] {
+        let found = rustflags_with_debug(&[], &env_of(&[(var, value)]));
+        assert_eq!(found.len(), 1, "{var}={value}");
+        assert_eq!(found[0].key, var);
+        // The value is the environment's, and is never kept.
+        assert_eq!(found[0].value, None);
+        assert_eq!(found[0].file, None);
+    }
+    for (var, value) in [
+        ("RUSTFLAGS", ""),
+        ("RUSTFLAGS", "-C debuginfo=0"),
+        ("RUSTFLAGS", "-Cdebuginfo=none"),
+        ("RUSTFLAGS", "-C opt-level=1 --cfg x"),
+        ("RUSTFLAGS", "-Zdebug-info-for-profiling"),
+        ("CARGO_ENCODED_RUSTFLAGS", "-C\u{1f}debuginfo=0"),
+    ] {
+        assert!(
+            rustflags_with_debug(&[], &env_of(&[(var, value)])).is_empty(),
+            "{var}={value}"
+        );
+    }
+}
+
+/// Cargo takes one source, so a variable that is set says what the flags are
+/// and a config under it is not read: `RUSTFLAGS` with none of it hides a
+/// config that has `-g`, and the variable that wins is the one named.
+#[test]
+fn one_source_of_rustflags_wins_as_cargo_has_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("cfg");
+    write(&dir.join("config.toml"), "[build]\nrustflags = [\"-g\"]\n");
+    let dirs = std::slice::from_ref(&dir);
+    assert_eq!(rustflags_with_debug(dirs, &env_of(&[])).len(), 1);
+    assert!(rustflags_with_debug(dirs, &env_of(&[("RUSTFLAGS", "--cfg x")])).is_empty());
+    let found = rustflags_with_debug(
+        dirs,
+        &env_of(&[("RUSTFLAGS", "--cfg x"), ("CARGO_ENCODED_RUSTFLAGS", "-g")]),
+    );
+    assert_eq!(found[0].key, "CARGO_ENCODED_RUSTFLAGS");
+    assert_eq!(found.len(), 1);
+}
+
+#[test]
+fn rustflags_in_a_cargo_config_are_found_by_key_and_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("cfg");
+    write(
+        &dir.join("config.toml"),
+        "[build]\nrustflags = [\"-C\", \"debuginfo=2\"]\n\
+         [target.x86_64-unknown-linux-gnu]\nrustflags = \"-g -C opt-level=1\"\n\
+         [target.'cfg(unix)']\nrustflags = [\"-C\", \"debuginfo=0\"]\n\
+         [target.other]\nlinker = \"cc\"\n",
+    );
+    let found = rustflags_with_debug(std::slice::from_ref(&dir), &env_of(&[]));
+    let keys: Vec<&str> = found.iter().map(|f| f.key.as_str()).collect();
+    assert_eq!(keys, vec![
+        "build.rustflags",
+        "target.x86_64-unknown-linux-gnu.rustflags"
+    ]);
+    assert_eq!(
+        found[0].file.as_deref(),
+        Some(dir.join("config.toml").as_path())
+    );
+    let said = rustflag_notes(&found);
+    assert_eq!(said.len(), 1, "one note for the file: {said:?}");
+    assert!(said[0].contains("does not override rustflags"), "{said:?}");
+    assert!(said[0].contains("build.rustflags = ["), "{said:?}");
+}
+
+/// Under rustflags that give debug info the plan stops saying the rest is lean,
+/// whatever it says otherwise.
+#[test]
+fn the_plan_does_not_claim_lean_under_rustflags_that_give_debug_info() {
+    let mut s = decide(&TestSettings::default(), &Basis {
+        ask:      &parse(&["-p", "a", "--debug"]).debug,
+        packages: &names(&["a"]),
+        members:  Some(&names(&["a", "b"])),
+        running:  Some(&names(&["a"])),
+        failed:   &set(&[]),
+    });
+    let said = s.line().unwrap();
+    assert!(
+        said.contains("every other crate is built without debug info"),
+        "{said}"
+    );
+    s.rustflags = true;
+    let said = s.line().unwrap();
+    assert_eq!(said, "    debug    symbols for a (asked for)");
+    s.crates.clear();
+    assert_eq!(s.line().unwrap(), "    debug    no crate needs symbols");
+    s.off = true;
+    assert!(!s.line().unwrap().contains("a failed one included"));
+    // The same line in no rustflags says it all.
+    s.rustflags = false;
+    assert!(s.line().unwrap().contains("a failed one included"));
+}
