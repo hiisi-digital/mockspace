@@ -18,6 +18,7 @@ use mockspace_lint_rules::{
     PathFilter,
     PathFilters,
     Severity,
+    SEVERITY_NAMES,
     parse_severity,
 };
 use serde::Deserialize;
@@ -653,9 +654,9 @@ struct RawConfig {
     // because it contains heterogeneous values (strings and tables).
 }
 
-/// A lint entry can be either a preset string or a table with config.
-#[derive(Deserialize)]
-#[serde(untagged)]
+/// A lint entry is either a preset string or a table with config, told apart by
+/// the TOML type of the value, so a wrong value is reported against its own field
+/// and never as "did not match any variant".
 enum LintEntry {
     Preset(String),
     Config(LintTableConfig),
@@ -1124,32 +1125,74 @@ fn convert_color_section(
     }
     result
 }
-
-/// Refuse a `[lints.<name>]` entry that does not deserialise.
+/// Stop the load over a lint entry that cannot be read.
 ///
 /// `Config::from_dir` has no `Result` to return and every other configuration
 /// error in it (an unparsable file, a missing `src_dirs` entry, a bad `test`
 /// block) is a panic naming the file, so this is one too, in the same channel.
-/// The entry used to be skipped, which dropped the lint's whole table (severity,
-/// params, path and crate filters) over one wrong type, with nothing said.
+/// The entry used to be skipped or defaulted, which dropped the lint's table
+/// (severity, params, path and crate filters) or switched the lint off over one
+/// wrong value, with nothing said.
 fn refuse_lint_entry(source: &Path, lint_name: &str, why: &dyn std::fmt::Display) -> ! {
     panic!(
-        "{}: [lints.{lint_name}] does not deserialise, so nothing in it was read: {why}\n  \
+        "{}: [lints.{lint_name}] was not read: {}\n  \
          The lint would run on its defaults instead, which is a run that reports success over \
          a configuration it never applied. Fix the entry or remove it.",
         source.display(),
+        why.to_string().trim_end(),
     )
+}
+
+/// The same refusal for a value that parsed as TOML and is not a name the engine
+/// knows. `accepted` is the table the parser itself reads, so the list in the
+/// message is the set that loads.
+fn refuse_lint_value(
+    source: &Path,
+    lint_name: &str,
+    key: &str,
+    value: &str,
+    accepted: &[&str],
+) -> ! {
+    refuse_lint_entry(
+        source,
+        lint_name,
+        &format!(
+            "`{key}` is \"{value}\", which is not a level it knows. Accepted: {}",
+            accepted.join(", ")
+        ),
+    )
+}
+
+/// A gate key (`commit`, `build`, `push`) as the level it names, or the load stops.
+fn gate_level(source: &Path, lint_name: &str, key: &str, value: &Option<String>) -> Option<Level> {
+    value.as_deref().map(|s| {
+        Level::from_str_name(s).unwrap_or_else(|| {
+            let accepted: Vec<&str> = Level::NAMES.iter().map(|(name, _)| *name).collect();
+            refuse_lint_value(source, lint_name, key, s, &accepted)
+        })
+    })
+}
+
+/// A severity preset as the value it names, or the load stops.
+fn severity_preset(source: &Path, lint_name: &str, key: &str, value: &str) -> Severity {
+    parse_severity(value).unwrap_or_else(|| {
+        let accepted: Vec<&str> = SEVERITY_NAMES.iter().map(|(name, _)| *name).collect();
+        refuse_lint_value(source, lint_name, key, value, &accepted)
+    })
 }
 
 /// Parse the `[lints]` section from the TOML content using `toml_edit`'s
 /// document API to handle heterogeneous values (strings and tables).
 ///
-/// Each lint entry is extracted as a `toml_edit::Value` and then deserialized
-/// via `IntoDeserializer` into a `LintEntry` enum.
+/// Every entry is turned into a `toml_edit::Value` and deserialised through
+/// `IntoDeserializer`, so a type error is reported against the value and never
+/// against line and column numbers of a document that is not the file on disk.
+/// Nothing in here drops or defaults a value it cannot read: each such arm goes
+/// through `refuse_lint_entry`.
 fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Path) -> LintConfig {
     let doc = match toml_content.parse::<toml_edit::DocumentMut>() {
         Ok(d) => d,
-        Err(_) => return LintConfig::empty(),
+        Err(e) => panic!("{}: the file does not parse: {e}", source.display()),
     };
 
     let lints_item = match doc.get("lints") {
@@ -1157,9 +1200,15 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
         None => return LintConfig::empty(),
     };
 
-    let lints_table = match lints_item.as_table() {
+    // `[lints]` and `lints = { ... }` are both a table.
+    let lints_table = match lints_item.as_table_like() {
         Some(t) => t,
-        None => return LintConfig::empty(),
+        None => panic!(
+            "{}: `lints` is of type {}, and it has to be a table of lint names. Nothing under it was \
+             read, so every lint would run on its defaults.",
+            source.display(),
+            lints_item.type_name(),
+        ),
     };
 
     let mut base = HashMap::new();
@@ -1171,62 +1220,67 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
     for (lint_name, item) in lints_table.iter() {
         let lint_name = lint_name.to_string();
 
-        // Deserialize the lint entry.
-        // For inline values (strings, inline tables), use Value's IntoDeserializer.
-        // For standard tables ([lints.name] sections), serialize to a TOML
-        // fragment and re-parse via serde.
-        let entry: LintEntry = if let Some(v) = item.as_value() {
-            match LintEntry::deserialize(v.clone().into_deserializer()) {
-                Ok(e) => e,
-                Err(e) => refuse_lint_entry(source, &lint_name, &e),
-            }
-        } else if let Some(tbl) = item.as_table() {
-            // Build a mini TOML document with just this table's contents
-            let mut doc = toml_edit::DocumentMut::new();
-            for (k, v) in tbl.iter() {
-                doc[k] = v.clone();
-            }
-            match toml_edit::de::from_str::<LintTableConfig>(&doc.to_string()) {
-                Ok(cfg) => LintEntry::Config(cfg),
-                Err(e) => refuse_lint_entry(source, &lint_name, &e),
-            }
-        } else {
-            refuse_lint_entry(source, &lint_name, &"it is neither a value nor a table");
+        // Every form is read as a `Value`: a `[lints.name]` table becomes the
+        // equivalent inline table, and the deserialiser then reports an error
+        // against the field rather than against a made-up document.
+        let value = match item {
+            toml_edit::Item::Value(v) => v.clone(),
+            toml_edit::Item::Table(t) => {
+                toml_edit::Value::InlineTable(t.clone().into_inline_table())
+            },
+            toml_edit::Item::ArrayOfTables(_) => refuse_lint_entry(
+                source,
+                &lint_name,
+                &"it is an array of tables ([[lints.name]]), and a lint is one table or one name",
+            ),
+            toml_edit::Item::None => refuse_lint_entry(source, &lint_name, &"it has no value"),
+        };
+        let entry = match value {
+            toml_edit::Value::String(s) => LintEntry::Preset(s.into_value()),
+            toml_edit::Value::InlineTable(_) => {
+                match LintTableConfig::deserialize(value.into_deserializer()) {
+                    Ok(cfg) => LintEntry::Config(cfg),
+                    Err(e) => refuse_lint_entry(source, &lint_name, &e),
+                }
+            },
+            other => refuse_lint_entry(
+                source,
+                &lint_name,
+                &format!(
+                    "it is {}, and a lint is a severity name or a table",
+                    other.type_name()
+                ),
+            ),
         };
 
         match entry {
             LintEntry::Preset(s) => {
-                if let Some(severity) = parse_severity(&s) {
-                    base.insert(lint_name, severity);
-                }
+                let severity = severity_preset(source, &lint_name, "the value", &s);
+                base.insert(lint_name, severity);
             },
             LintEntry::Config(table) => {
                 // Determine base severity from "severity" key
                 if let Some(ref s) = table.severity {
-                    if let Some(severity) = parse_severity(s) {
-                        base.insert(lint_name.clone(), severity);
-                    }
+                    let severity = severity_preset(source, &lint_name, "severity", s);
+                    base.insert(lint_name.clone(), severity);
                 }
 
-                // Per-gate severity from commit/build/push keys
-                let has_gates =
-                    table.commit.is_some() || table.build.is_some() || table.push.is_some();
-                if has_gates {
+                // Per-gate severity from commit/build/push keys. Every key is
+                // read before the lint gets an entry, so a bad one cannot leave
+                // behind an all-`Pass` severity that switches the lint off.
+                let commit = gate_level(source, &lint_name, "commit", &table.commit);
+                let build = gate_level(source, &lint_name, "build", &table.build);
+                let push = gate_level(source, &lint_name, "push", &table.push);
+                if commit.is_some() || build.is_some() || push.is_some() {
                     let entry = base.entry(lint_name.clone()).or_insert(Severity::OFF);
-                    if let Some(ref s) = table.commit {
-                        if let Some(level) = Level::from_str_name(s) {
-                            entry.on_commit = level;
-                        }
+                    if let Some(level) = commit {
+                        entry.on_commit = level;
                     }
-                    if let Some(ref s) = table.build {
-                        if let Some(level) = Level::from_str_name(s) {
-                            entry.on_build = level;
-                        }
+                    if let Some(level) = build {
+                        entry.on_build = level;
                     }
-                    if let Some(ref s) = table.push {
-                        if let Some(level) = Level::from_str_name(s) {
-                            entry.on_push = level;
-                        }
+                    if let Some(level) = push {
+                        entry.on_push = level;
                     }
                 }
 
@@ -1234,9 +1288,8 @@ fn parse_lints_from_document(toml_content: &str, crate_prefix: &str, source: &Pa
                 if let Some(finding_map) = table.findings {
                     let entry = findings.entry(lint_name.clone()).or_default();
                     for (kind, val) in finding_map {
-                        if let Some(severity) = parse_severity(&val) {
-                            entry.insert(kind, severity);
-                        }
+                        let key = format!("findings.{kind}");
+                        entry.insert(kind, severity_preset(source, &lint_name, &key, &val));
                     }
                 }
 
@@ -1628,14 +1681,163 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
             "[lints.catalogue-ignore]\nseverity = \"error\"\nexclude = [\"fixtures/**\"]\n",
         );
         let cfg = Config::from_dir(tmp.path());
-        assert!(
-            cfg.lint_overrides.base.contains_key("catalogue-ignore"),
-            "the severity the table wrote has to reach the config"
+        assert_eq!(
+            cfg.lint_overrides.base.get("catalogue-ignore"),
+            Some(&Severity::HARD_ERROR),
+            "the severity the table wrote has to reach the config as the value it named"
         );
-        assert!(
-            cfg.lint_overrides.filter_for("catalogue-ignore").is_some(),
+        assert_eq!(
+            cfg.lint_overrides.filter_for("catalogue-ignore"),
+            Some(&PathFilter {
+                include: Vec::new(),
+                exclude: vec!["fixtures/**".to_string()],
+            }),
             "and so does the path filter, or the arm above passes on a table read as empty"
         );
+    }
+
+    /// What a load made of one lint's severity, for the failure message of a
+    /// test that expected a refusal and got a quiet load instead.
+    fn loaded_severity(body: &str, lint: &str) -> String {
+        let tmp = mock_dir_with_config(body);
+        let cfg = Config::from_dir(tmp.path());
+        format!("{:?}", cfg.lint_overrides.base.get(lint))
+    }
+
+    /// Asserts the load stops, and that the message names the lint, the file,
+    /// the offending value and the accepted ones, so the fix is in the message.
+    fn assert_refused_naming(body: &str, lint: &str, must_name: &[&str]) -> String {
+        let msg = refusal_of(body).unwrap_or_else(|| {
+            panic!(
+                "a bad value must stop the load, but it loaded and the lint became {}",
+                loaded_severity(body, lint)
+            )
+        });
+        assert!(msg.contains(lint), "names the lint: {msg}");
+        assert!(msg.contains("mockspace.toml"), "names the file: {msg}");
+        for needle in must_name {
+            assert!(msg.contains(needle), "names `{needle}`: {msg}");
+        }
+        msg
+    }
+
+    /// The accepted severity names as `parse_severity` defines them.
+    const SEVERITY_WORDS: &[&str] = &[
+        "off",
+        "error",
+        "hard-error",
+        "build-gate",
+        "push-gate",
+        "advisory",
+        "warn",
+        "info",
+    ];
+
+    #[test]
+    fn a_misspelt_inline_preset_is_refused_and_lists_the_accepted_values() {
+        let msg = assert_refused_naming("[lints]\nfile-size = \"eror\"\n", "file-size", &["eror"]);
+        for word in SEVERITY_WORDS {
+            assert!(msg.contains(word), "lists `{word}`: {msg}");
+        }
+    }
+
+    #[test]
+    fn a_misspelt_severity_key_is_refused_and_names_the_key() {
+        assert_refused_naming(
+            "[lints.file-size]\nseverity = \"eror\"\n",
+            "file-size",
+            &["severity", "eror"],
+        );
+    }
+
+    #[test]
+    fn a_misspelt_finding_severity_is_refused_and_names_the_finding() {
+        assert_refused_naming(
+            "[lints.file-size]\ncommit = \"error\"\n[lints.file-size.findings]\n\
+             too-long = \"eror\"\n",
+            "file-size",
+            &["findings", "too-long", "eror"],
+        );
+    }
+
+    #[test]
+    fn a_misspelt_gate_level_is_refused_for_each_of_the_three_gates() {
+        for gate in ["commit", "build", "push"] {
+            let msg = assert_refused_naming(
+                &format!("[lints.file-size]\n{gate} = \"eror\"\n"),
+                "file-size",
+                &[gate, "eror"],
+            );
+            for word in ["pass", "off", "info", "warn", "error"] {
+                assert!(msg.contains(word), "lists the gate level `{word}`: {msg}");
+            }
+        }
+    }
+
+    /// The control for the gate arm: every gate level a consumer writes loads
+    /// to the level it names, so the refusal is not a refusal of the whole key.
+    #[test]
+    fn the_gate_levels_in_use_load_to_the_level_they_name() {
+        let tmp = mock_dir_with_config(
+            "[lints.file-size]\ncommit = \"off\"\nbuild = \"warn\"\npush = \"error\"\n",
+        );
+        let cfg = Config::from_dir(tmp.path());
+        assert_eq!(
+            cfg.lint_overrides.base.get("file-size"),
+            Some(&Severity::new(Level::Pass, Level::Warn, Level::Error))
+        );
+    }
+
+    #[test]
+    fn a_lints_key_that_is_not_a_table_is_refused() {
+        let msg = refusal_of("lints = \"error\"\n")
+            .expect("`lints = \"error\"` is a section that was never read, and must say so");
+        assert!(msg.contains("mockspace.toml"), "names the file: {msg}");
+        assert!(msg.contains("lints"), "names the key: {msg}");
+    }
+
+    #[test]
+    fn a_lints_section_written_inline_is_read_rather_than_dropped() {
+        let tmp = mock_dir_with_config("lints = { file-size = \"error\" }\n");
+        let cfg = Config::from_dir(tmp.path());
+        assert_eq!(
+            cfg.lint_overrides.base.get("file-size"),
+            Some(&Severity::HARD_ERROR),
+            "an inline table is a table, and used to load as an empty config"
+        );
+    }
+
+    #[test]
+    fn an_array_of_tables_for_one_lint_is_refused() {
+        assert_refused_naming(
+            "[[lints.file-size]]\ncommit = \"error\"\n",
+            "file-size",
+            &["array of tables"],
+        );
+    }
+
+    #[test]
+    fn a_refusal_carries_no_coordinates_into_a_document_that_is_not_the_file() {
+        // `exclude` is on line 3 of the real file and line 2 of any fragment.
+        let msg = assert_refused_naming(
+            "# a comment\n[lints.file-size]\nexclude = \"x\"\n",
+            "file-size",
+            &["exclude"],
+        );
+        assert!(
+            !msg.contains("line ") && !msg.contains("column"),
+            "a line number here would point into a document that is not on disk: {msg}"
+        );
+    }
+
+    #[test]
+    fn an_inline_table_with_a_wrong_type_names_the_field_not_the_untagged_enum() {
+        let msg = assert_refused_naming(
+            "[lints]\nfile-size = { exclude = \"x\" }\n",
+            "file-size",
+            &["exclude"],
+        );
+        assert!(!msg.contains("untagged"), "serde's own wording is no help: {msg}");
     }
 
     #[test]

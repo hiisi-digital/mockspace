@@ -281,15 +281,21 @@ impl Level {
         }
     }
 
-    /// Parse a level from a string name.
+    /// Every spelling `from_str_name` accepts, with the level it names. The one
+    /// table both the parser and a refusal's list of accepted values read.
+    pub const NAMES: &'static [(&'static str, Level)] = &[
+        ("pass", Level::Pass),
+        ("off", Level::Pass),
+        ("info", Level::Info),
+        ("warn", Level::Warn),
+        ("warning", Level::Warn),
+        ("error", Level::Error),
+    ];
+
+    /// Parse a level from a string name, ignoring case and surrounding space.
     pub fn from_str_name(s: &str) -> Option<Self> {
-        match s.trim().to_lowercase().as_str() {
-            "pass" | "off" => Some(Level::Pass),
-            "info" => Some(Level::Info),
-            "warn" | "warning" => Some(Level::Warn),
-            "error" => Some(Level::Error),
-            _ => None,
-        }
+        let s = s.trim().to_lowercase();
+        Self::NAMES.iter().find(|(name, _)| *name == s).map(|(_, level)| *level)
     }
 }
 
@@ -908,21 +914,34 @@ mod line_lint_allowed_tests {
     }
 }
 
-/// Parse a severity preset from a string name.
-///
-/// Supports: "off", "error"/"hard-error", "build-gate", "push-gate",
-/// "advisory"/"warn", "info".
+/// Every spelling `parse_severity` accepts, with the preset it names. The one
+/// table both the parser and a refusal's list of accepted values read.
+pub const SEVERITY_NAMES: &[(&str, Severity)] = &[
+    ("off", Severity::OFF),
+    ("error", Severity::HARD_ERROR),
+    ("hard-error", Severity::HARD_ERROR),
+    ("hard_error", Severity::HARD_ERROR),
+    ("build-gate", Severity::BUILD_GATE),
+    ("build_gate", Severity::BUILD_GATE),
+    ("push-gate", Severity::PUSH_GATE),
+    ("push_gate", Severity::PUSH_GATE),
+    ("advisory", Severity::ADVISORY),
+    ("warn", Severity::ADVISORY),
+    ("warning", Severity::ADVISORY),
+    ("info", Severity::INFO_ONLY),
+    ("info-only", Severity::INFO_ONLY),
+    ("info_only", Severity::INFO_ONLY),
+];
+
+/// Parse a severity preset from a string name, ignoring case and surrounding
+/// space. Accepts exactly the spellings in `SEVERITY_NAMES`.
 #[must_use]
 pub fn parse_severity(s: &str) -> Option<Severity> {
-    match s.trim().to_lowercase().as_str() {
-        "off" => Some(Severity::OFF),
-        "error" | "hard-error" | "hard_error" => Some(Severity::HARD_ERROR),
-        "build-gate" | "build_gate" => Some(Severity::BUILD_GATE),
-        "push-gate" | "push_gate" => Some(Severity::PUSH_GATE),
-        "advisory" | "warn" | "warning" => Some(Severity::ADVISORY),
-        "info" | "info-only" | "info_only" => Some(Severity::INFO_ONLY),
-        _ => None,
-    }
+    let s = s.trim().to_lowercase();
+    SEVERITY_NAMES
+        .iter()
+        .find(|(name, _)| *name == s)
+        .map(|(_, severity)| *severity)
 }
 
 // ---------------------------------------------------------------------------

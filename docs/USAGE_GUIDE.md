@@ -371,7 +371,7 @@ Paths are the ones a lint would report, so crate-relative (`src/lib.rs`) rather 
 
 `include` and `exclude` apply to per-package and cross-package lints. **They are read and then ignored for repository lints**, whose dispatch has no file list to filter.
 
-A `[lints.<name>]` entry that does not deserialise, such as a string where `exclude` wants an array, stops the load with a message naming the lint, the file and the parse error. It is never skipped, since skipping one would run that lint on its defaults and report success over a configuration nobody applied.
+A `[lints]` section that cannot be read stops the load with a message naming the file, the lint and the field, and never loads partly. That covers a string where `exclude` wants an array, a severity or gate value that is not a name the engine knows (`file-size = "eror"`, `severity = "eror"`, `commit = "eror"`, a value under `findings`), a `lints` key that is not a table, and `[[lints.<name>]]`. The message for a misspelt value lists the accepted names. A severity takes `off`, `error`, `hard-error`, `build-gate`, `push-gate`, `advisory`, `warn`, `info` and the `_` spellings of the hyphenated ones; a gate key takes `pass`, `off`, `info`, `warn` or `error`. Skipping one would run that lint on its defaults, or switch it off, and report success over a configuration nobody applied.
 
 Which crates a lint binds, on the same table again:
 
