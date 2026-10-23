@@ -371,6 +371,8 @@ Paths are the ones a lint would report, so crate-relative (`src/lib.rs`) rather 
 
 `include` and `exclude` apply to per-package and cross-package lints. **They are read and then ignored for repository lints**, whose dispatch has no file list to filter.
 
+A `[lints]` section that cannot be read stops the load with a message naming the file, and the lint and the field at fault; a `lints` value that is not a table names only `lints`, since no lint is reached. It never loads partly. That covers a string where `exclude` wants an array, a param, `rule` or `rules` value of a type it does not take (the message names the key and the types it takes), a `rules` entry without `scope`, `forbidden` or `reason`, a severity or gate value that is not a name the engine knows (`file-size = "eror"`, `severity = "eror"`, `commit = "eror"`, a value under `findings`), a `lints` key that is not a table, and `[[lints.<name>]]`. The message for a misspelt value lists the accepted names. A severity takes `off`, `error`, `hard-error`, `hard_error`, `build-gate`, `build_gate`, `push-gate`, `push_gate`, `advisory`, `warn`, `warning`, `info`, `info-only` or `info_only`; a gate key takes `pass`, `off`, `info`, `warn`, `warning` or `error`. Case and surrounding space do not matter. Skipping one would run that lint on its defaults, or switch it off, and report success over a configuration nobody applied.
+
 Which crates a lint binds, on the same table again:
 
 ```toml
