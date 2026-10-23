@@ -271,10 +271,10 @@ fn a_changelist_naming_a_file_inside_a_longer_name_before_it_does_not_take_the_s
 
 #[test]
 fn a_name_character_before_a_file_name_means_the_file_is_not_named() {
-    // `a`, `_`, `-` and `.` before an occurrence each continue a longer name, so none of them
+    // `a`, `7`, `_`, `-` and `.` before an occurrence each continue a longer name, so none of them
     // names the file; a space, a backtick and an opening bracket do not, and are the controls
     let shorter = "202610230330_topic.named.md";
-    for before in ["a", "_", "-", "."] {
+    for before in ["a", "7", "_", "-", "."] {
         assert_eq!(
             left_of(&format!("Answers {before}{shorter}."), shorter),
             owned(&[shorter]),
@@ -291,10 +291,10 @@ fn a_name_character_before_a_file_name_means_the_file_is_not_named() {
 
 #[test]
 fn a_name_character_after_a_file_name_means_the_file_is_not_named() {
-    // `x`, `_`, `-` and `.x` after an occurrence each continue a longer name; a space, a backtick
-    // and a full stop do not, and are the controls
+    // `x`, `7`, `_`, `-` and `.x` after an occurrence each continue a longer name; a space, a
+    // backtick and a full stop do not, and are the controls
     let shorter = "202610230330_topic.named.md";
-    for after in ["x", "_", "-", ".x"] {
+    for after in ["x", "7", "_", "-", ".x"] {
         assert_eq!(
             left_of(&format!("Answers {shorter}{after}."), shorter),
             owned(&[shorter]),
