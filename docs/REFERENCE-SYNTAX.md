@@ -49,9 +49,10 @@ A row's whole identity is that pair, its key path. The files a registry is
 written in are no part of it: any number of `*.toml` files, under any names and
 in any directories under `registry/`, make one registry, and splitting,
 merging, renaming or moving a file changes nothing a reader, a check or a
-rendered page sees. A namespace lists its rows by key path rather than by the
-order of the files holding them, and a grouped table orders its groups by the
-group value. The same key path in two files is an error naming both, and a file
+rendered page sees, except `pathof`, whose answer is that file. A namespace
+lists its rows by key path rather than by the order of the files holding them,
+and a grouped table orders its groups by the group value, with rows that have
+no group value last under a heading of their own. The same key path in two files is an error naming both, and a file
 and line in a report is only a place to look.
 
 ## Roots

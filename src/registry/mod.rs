@@ -27,7 +27,8 @@
 //! The files a registry is written in are no part of it: any number of
 //! `*.toml` files under any names and directories make one registry, and
 //! splitting a file, merging two, renaming one or moving a row to another
-//! changes nothing a reader, a check or a relation sees. A namespace lists its
+//! changes nothing a reader, a check or a relation sees, except what `pathof`
+//! answers, which is that file. A namespace lists its
 //! rows by key path, never by the order of the files that hold them. One key
 //! path declared in two files is refused, with both files named, and where a
 //! row lives is only ever given as a place to look.
