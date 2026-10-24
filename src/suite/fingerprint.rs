@@ -312,8 +312,19 @@ fn hash_reaches(
 /// tracked, and untracked but not ignored, so an uncommitted new test is an
 /// input like a committed one and a build output is not.
 pub(crate) fn tracked_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
+    ls_files(repo_root, &["--cached", "--others", "--exclude-standard"])
+}
+
+/// The files in git's index, relative to the repository root: tracked or
+/// staged, and none that are merely untracked.
+pub(crate) fn committed_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
+    ls_files(repo_root, &["--cached"])
+}
+
+fn ls_files(repo_root: &Path, which: &[&str]) -> Result<Vec<PathBuf>, String> {
     let out = Command::new("git")
-        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+        .args(["ls-files", "-z"])
+        .args(which)
         .current_dir(repo_root)
         .output()
         .map_err(|e| format!("could not run git ls-files: {e}"))?;

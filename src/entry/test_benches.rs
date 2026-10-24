@@ -42,38 +42,80 @@ pub(crate) enum Verdict {
     Skip(Skip),
 }
 
-/// Directory names whose contents are build output or version control, at any
-/// depth, whether or not the repository ignores them.
-const OUTPUT_DIRS: [&str; 2] = ["target", ".git"];
+/// Directory names whose contents are build output, at any depth, whether or
+/// not the repository ignores them. Version control is not here: the file list
+/// is git's own, and git never lists `.git`.
+const OUTPUT_DIRS: [&str; 1] = ["target"];
 
 /// Directories at the bench root that `mock bench run` writes: output, never
 /// input.
 const GENERATED: [&str; 2] = ["results", "history"];
 
-/// The lockfile the bench build writes beside the tree it builds. Taken out of
-/// the digest so a run does not move the digest it recorded; the workspace's
-/// own lockfiles stay in it, through [`WORKSPACE_INPUTS`].
+/// The lockfile the bench build writes beside the tree it builds. One that git
+/// does not track is that output and is taken out of the digest, so a run does
+/// not move the digest it recorded. One a consumer committed is an input: it
+/// says which framework commit the arms are built at (`bench_rev`). The
+/// workspace's own lockfiles stay in either way, through [`WORKSPACE_INPUTS`].
 const BUILD_LOCKFILE: &str = "Cargo.lock";
+
+/// What the digest is made of, bumped when that changes so a record kept under
+/// the old makeup never equals one taken under the new.
+const SCHEME: &str = "1";
+
+/// A manifest or source `mock bench` generates under `target/`, which no file
+/// listing sees.
+pub(crate) struct Generated {
+    /// The directory the manifest is read from, for the dependencies it names.
+    dir:   Option<PathBuf>,
+    /// The entry name it is digested under.
+    label: String,
+    text:  String,
+}
 
 /// A digest of everything the benches tree is built from, or `None` when the
 /// inputs cannot be listed (not a git repository), which leaves the tree
 /// never shown green. See [`inputs`] for what counts.
 pub(crate) fn digest(repo_root: &Path, mock_dir: &Path, bench_dir: &Path) -> Option<String> {
-    let files = inputs(repo_root, mock_dir, bench_dir).ok()?;
-    let entries = files
+    entries(repo_root, mock_dir, bench_dir)
+        .ok()
+        .map(digest_entries)
+}
+
+/// The named byte strings the digest is taken over.
+pub(crate) fn entries(
+    repo_root: &Path,
+    mock_dir: &Path,
+    bench_dir: &Path,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let (files, generated) = inputs(repo_root, mock_dir, bench_dir)?;
+    let mut out: Vec<(String, Vec<u8>)> = files
         .iter()
         .map(|f| (label(repo_root, f), std::fs::read(f).unwrap_or_default()))
         .collect();
-    Some(digest_entries(entries))
+    out.extend(
+        generated
+            .into_iter()
+            .map(|g| (g.label, g.text.into_bytes())),
+    );
+    Ok(out)
 }
 
-/// The digest of named byte strings. Sorted by name first, so the order the
-/// files were listed in is not an input; each name and each body is closed off
-/// with a separator so the boundary between them cannot be shifted.
-pub(crate) fn digest_entries(mut entries: Vec<(String, Vec<u8>)>) -> String {
+/// The digest of named byte strings under the scheme this build uses.
+pub(crate) fn digest_entries(entries: Vec<(String, Vec<u8>)>) -> String {
+    digest_entries_under(SCHEME, entries)
+}
+
+/// The digest of named byte strings under `scheme`. Sorted by name first, so
+/// the order the files were listed in is not an input; each name and each body
+/// is closed off with a separator so the boundary between them cannot be
+/// shifted.
+pub(crate) fn digest_entries_under(scheme: &str, mut entries: Vec<(String, Vec<u8>)>) -> String {
     entries.sort();
     entries.dedup();
     let mut h = Sha256::new();
+    h.update(b"scheme\0");
+    h.update(scheme.as_bytes());
+    h.update([0u8]);
     for (name, bytes) in &entries {
         h.update(name.as_bytes());
         h.update([0u8]);
@@ -90,23 +132,29 @@ fn label(repo_root: &Path, f: &Path) -> String {
         .into_owned()
 }
 
-/// Every file the benches tree is built from:
+/// Everything the benches tree is built from, as the files and the generated
+/// texts:
 ///
 /// - the files git tracks or would track under `bench_dir`, the same list the
-///   members use, less `results/` and `history/` and the lockfile the build
-///   writes;
+///   members use, less `results/` and `history/` and any lockfile git does not
+///   track, which is the one the build writes;
 /// - the files of every local package a bench manifest reaches by `path`,
 ///   transitively, the generated arm manifests and the support crates among
 ///   them (a workspace-inherited path included), wherever in the repository
 ///   they sit;
 /// - the files every build in the workspace reads, which the members'
-///   fingerprints are salted with ([`WORKSPACE_INPUTS`]).
+///   fingerprints are salted with ([`WORKSPACE_INPUTS`]);
+/// - the text of what `mock bench` generates for a tree whose arms have no
+///   manifest: the arm manifests and the driver, which no file holds.
 pub(crate) fn inputs(
     repo_root: &Path,
     mock_dir: &Path,
     bench_dir: &Path,
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<(Vec<PathBuf>, Vec<Generated>), String> {
     let tracked = fingerprint::tracked_files(repo_root)?;
+    let committed: BTreeSet<PathBuf> = fingerprint::committed_files(repo_root)?
+        .into_iter()
+        .collect();
     let bench_rel = bench_dir
         .strip_prefix(repo_root)
         .map_err(|_| format!("{} is not under the repository", bench_dir.display()))?;
@@ -122,7 +170,8 @@ pub(crate) fn inputs(
                     && !under
                         .components()
                         .any(|c| OUTPUT_DIRS.iter().any(|o| c.as_os_str() == *o))
-                    && rel.file_name().is_none_or(|n| n != BUILD_LOCKFILE)
+                    && (rel.file_name().is_none_or(|n| n != BUILD_LOCKFILE)
+                        || committed.contains(rel))
             },
         }
     };
@@ -140,16 +189,12 @@ pub(crate) fn inputs(
         .filter(|f| f.file_name().is_some_and(|n| n == "Cargo.toml"))
         .filter_map(|f| Some((f.parent()?.to_path_buf(), std::fs::read_to_string(f).ok()?)))
         .collect();
-    if !bench_dir.join("Cargo.toml").is_file()
-        && let Ok(plan) = crate::bench_gen::plan(bench_dir)
-    {
-        let dep = crate::bench_gen::mockspace_dep(&plan.manifest);
-        for arm in plan.arms.iter().filter(|a| !a.has_manifest) {
-            if let Ok(text) = crate::bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
-                manifests.push((crate::bench_gen::arm_gen_dir(mock_dir, arm), text));
-            }
-        }
-    }
+    let generated = generated(mock_dir, bench_dir);
+    manifests.extend(
+        generated
+            .iter()
+            .filter_map(|g| Some((g.dir.clone()?, g.text.clone()))),
+    );
 
     let roots = [mock_dir.join("Cargo.toml"), repo_root.join("Cargo.toml")];
     let inherited: Vec<(PathBuf, String)> = roots
@@ -189,7 +234,46 @@ pub(crate) fn inputs(
             }
         }
     }
-    Ok(out.into_iter().collect())
+    Ok((out.into_iter().collect(), generated))
+}
+
+/// What `mock bench` writes under `target/` for a tree with no manifest at its
+/// root: a manifest for each arm that has none, and the driver's manifest and
+/// source. Digested as text because what they say depends on this build of
+/// mockspace as much as on any file the consumer keeps.
+fn generated(mock_dir: &Path, bench_dir: &Path) -> Vec<Generated> {
+    let mut out = Vec::new();
+    if bench_dir.join("Cargo.toml").is_file() {
+        return out;
+    }
+    let Ok(plan) = crate::bench_gen::plan(bench_dir) else {
+        return out;
+    };
+    let dep = crate::bench_gen::mockspace_dep(&plan.manifest);
+    for arm in plan.arms.iter().filter(|a| !a.has_manifest) {
+        if let Ok(text) = crate::bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
+            out.push(Generated {
+                dir: Some(crate::bench_gen::arm_gen_dir(mock_dir, arm)),
+                label: format!("generated/{}/{}/Cargo.toml", arm.bench, arm.arm),
+                text,
+            });
+        }
+    }
+    if let Ok(text) = crate::bench_gen::driver_cargo_toml(&dep, &plan.support) {
+        out.push(Generated {
+            dir: Some(crate::bench_gen::driver_gen_dir(mock_dir)),
+            label: "generated/driver/Cargo.toml".to_string(),
+            text,
+        });
+    }
+    if let Ok(text) = crate::bench_gen::driver_main_source(&plan.manifest, None) {
+        out.push(Generated {
+            dir: None,
+            label: "generated/driver/main.rs".to_string(),
+            text,
+        });
+    }
+    out
 }
 
 /// The directories a manifest depends on by `path`, in its `dependencies`,
@@ -258,9 +342,10 @@ fn normalise(p: &Path) -> PathBuf {
     out
 }
 
-/// The benches tree is a tree like the others: asked for, or run when its
-/// inputs moved, and never when the caller named crates with `-p` and did not
-/// ask. No record means it has never been shown green, so it runs.
+/// The benches tree is a tree like the others: asked for (see
+/// `Invocation::benches_asked`), or run when its inputs moved, and never when
+/// the caller named crates with `-p` and did not ask. No record means it has
+/// never been shown green, so it runs.
 pub(crate) fn decide(
     asked: bool,
     crates_named: bool,
@@ -277,6 +362,27 @@ pub(crate) fn decide(
         None => Verdict::Run(Run::NeverGreen),
         Some(r) if r == now => Verdict::Skip(Skip::Unchanged),
         Some(_) => Verdict::Run(Run::Moved),
+    }
+}
+
+/// [`decide`], reading the digest and the record only where the answer depends
+/// on them: asking, or naming crates, settles it before either is read, and
+/// taking the digest walks the tree.
+///
+/// A tree whose inputs cannot be listed has no digest, and with nothing to
+/// equal it has never been shown green whatever was recorded.
+pub(crate) fn verdict(
+    asked: bool,
+    crates_named: bool,
+    digest: impl FnOnce() -> Option<String>,
+    recorded: impl FnOnce() -> Option<String>,
+) -> Verdict {
+    if asked || crates_named {
+        return decide(asked, crates_named, "", None);
+    }
+    match digest() {
+        Some(now) => decide(asked, crates_named, &now, recorded().as_deref()),
+        None => decide(asked, crates_named, "", None),
     }
 }
 
@@ -311,6 +417,20 @@ pub(crate) fn summary(ran: usize, skipped: Option<Skip>) -> String {
         Some(why) => {
             format!(
                 "mock test: {ran} tree(s) green; benches not run ({})",
+                why.describe()
+            )
+        },
+    }
+}
+
+/// The closing line of a run in which a tree failed, naming the benches tree
+/// when it was left out, as [`summary`] does for one that passed.
+pub(crate) fn failure_summary(failed: usize, ran: usize, skipped: Option<Skip>) -> String {
+    match skipped {
+        None => format!("mock test: {failed} of {ran} tree(s) failed"),
+        Some(why) => {
+            format!(
+                "mock test: {failed} of {ran} tree(s) failed; benches not run ({})",
                 why.describe()
             )
         },
