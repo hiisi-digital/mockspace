@@ -270,7 +270,7 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name:    "test",
-        summary: "run the tests of every tree mockspace owns, the members only where something changed",
+        summary: "run the tests of every tree mockspace owns, the members and the benches only where something changed",
         args:    &[],
         help:    "Runs the tests of each tree separately: the mock \
                   workspace's own members, every tool crate under \
@@ -282,6 +282,24 @@ const COMMANDS: &[Cmd] = &[
                   with tests and run none of them while appearing to. A \
                   repository whose `members` list is empty runs nothing at \
                   all.\n\n\
+                  The benches tree is the most expensive of the four (every \
+                  arm is compiled on its own), so it runs only when its \
+                  inputs moved since it last passed, or when it is asked \
+                  for, with --benches or with --full or --no-cache, which \
+                  run every member whatever its record says. Beside a -p \
+                  naming crates it is left out unless --benches is given \
+                  too. Its inputs are the files git tracks or would track \
+                  under <mock>/benches/ (less results/ and history/, which \
+                  `mock bench run` writes, build output, and a lockfile \
+                  git does not track, which is the build's own), the files \
+                  of every local crate its manifests depend on by path, the \
+                  text of the manifests `mock bench` generates for arms \
+                  that have none, and what every build reads: the \
+                  workspace manifest, lockfile, toolchain pin, and cargo \
+                  and nextest configuration. A tree that has never passed \
+                  counts as moved, the record being kept under \
+                  <mock>/target. A run leaving it out says so, and so does \
+                  its last line, a failed run's included.\n\n\
                   The members run under cargo-nextest where it is installed, \
                   and under `cargo test` where it is not or with --plain. \
                   Under nextest a member runs only when its fingerprint moved \
@@ -317,7 +335,8 @@ const COMMANDS: &[Cmd] = &[
                   test that has passed before, running only new ones and ones \
                   that failed last time, and leaves the members it deferred \
                   for owing them. -p and --workspace choose members as in \
-                  cargo; with -p only the members tree runs. The record is \
+                  cargo; with -p only the members tree runs, bench tree aside \
+                  (--benches). The record is \
                   tracked, <mock>/test-history/<flavour>/<member>.json, \
                   committed with the work so a fresh clone starts warm; \
                   a test or binary that no longer exists is dropped from \

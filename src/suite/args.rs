@@ -27,6 +27,9 @@ pub struct Invocation {
     pub test_args: Vec<String>,
     /// Which crates the caller asked to be built with symbols.
     pub debug:     DebugAsk,
+    /// `--benches`: run the benches tree whether or not its inputs moved, and
+    /// beside a `-p`.
+    pub benches:   bool,
 }
 
 /// `--debug`, `--debug=<crate,...>` and `--no-debug`.
@@ -55,11 +58,25 @@ impl DebugAsk {
 pub fn is_own_flag(a: &str) -> bool {
     matches!(
         a,
-        "--full" | "--cheap" | "--no-cache" | "--plain" | "--debug" | "--no-debug"
+        "--full" | "--cheap" | "--no-cache" | "--plain" | "--debug" | "--no-debug" | "--benches"
     ) || a.starts_with("--debug=")
 }
 
 impl Invocation {
+    /// Whether the caller asked for the benches tree: with `--benches`, which
+    /// also holds beside a `-p`; or with what asks every member to run whatever
+    /// its record says, `--full` or `--no-cache`, when no crate was named.
+    ///
+    /// The benches tree is selected like the members, and a run of all of them
+    /// that ignores what stands has no record of the benches to honour either.
+    /// A named crate is about that crate, and a `--debug` that makes the run
+    /// full is about the crates it names, so neither reaches the benches. The
+    /// mode is read as it ends up, the last of `--full` and `--cheap`. `--plain`
+    /// chooses the runner, not what runs, and asks for nothing here.
+    pub fn benches_asked(&self) -> bool {
+        self.benches || (self.packages.is_empty() && (self.mode == Mode::Full || !self.cache))
+    }
+
     /// The flavour a run's history is kept under: the arguments that change
     /// what is compiled or how it runs, without the ones choosing packages.
     /// As written: sorting the words would make `--features a --target b`
@@ -94,6 +111,7 @@ pub fn parse(args: &[&str]) -> Invocation {
         passed:    Vec::new(),
         test_args: Vec::new(),
         debug:     DebugAsk::default(),
+        benches:   false,
     };
     let mut it = args.iter().copied();
     while let Some(a) = it.next() {
@@ -115,6 +133,7 @@ pub fn parse(args: &[&str]) -> Invocation {
             "--cheap" => inv.mode = Mode::Cheap,
             "--no-cache" => inv.cache = false,
             "--plain" => inv.plain = true,
+            "--benches" => inv.benches = true,
             "--debug" => {
                 inv.debug.bare = true;
                 inv.debug.off = false;
@@ -289,6 +308,45 @@ mod tests {
     }
 
     #[test]
+    fn benches_is_ours_and_is_off_unless_asked() {
+        assert!(!parse(&[]).benches);
+        assert!(parse(&["--benches"]).benches);
+        assert!(parse(&["-p", "x", "--benches"]).benches);
+        // After the separator it is the test binaries'.
+        assert!(!parse(&["--", "--benches"]).benches);
+    }
+
+    /// The benches tree is selected like the members: what turns the members'
+    /// selection or their cache off asks for it, and a named crate leaves it
+    /// to `--benches`.
+    #[test]
+    fn what_runs_every_member_asks_for_the_benches_too() {
+        assert!(!parse(&[]).benches_asked());
+        assert!(!parse(&["--cheap"]).benches_asked());
+        assert!(!parse(&["--plain"]).benches_asked());
+        assert!(!parse(&["--debug"]).benches_asked());
+        for a in [&["--benches"][..], &["--full"], &["--no-cache"], &["--full", "--no-cache"]] {
+            assert!(parse(a).benches_asked(), "{a:?}");
+        }
+        // The last of `--full` and `--cheap` wins, as it does for the members.
+        assert!(!parse(&["--full", "--cheap"]).benches_asked());
+        assert!(parse(&["--cheap", "--full"]).benches_asked());
+        // A named crate is about that crate, which `--debug` and `--full` do
+        // not change, and only `--benches` overrides.
+        for a in [
+            &["-p", "x", "--full"][..],
+            &["-p", "x", "--no-cache"],
+            &["-p", "x", "--debug"],
+            &["--debug=x"],
+        ] {
+            assert!(!parse(a).benches_asked(), "{a:?}");
+        }
+        assert!(parse(&["-p", "x", "--full", "--benches"]).benches_asked());
+        // After the separator they are the test binaries'.
+        assert!(!parse(&["--", "--full"]).benches_asked());
+    }
+
+    #[test]
     fn the_flags_read_here_are_the_flags_that_are_not_cargos() {
         for f in [
             "--full",
@@ -297,6 +355,7 @@ mod tests {
             "--plain",
             "--debug",
             "--no-debug",
+            "--benches",
             "--debug=a",
         ] {
             assert!(is_own_flag(f), "{f}");

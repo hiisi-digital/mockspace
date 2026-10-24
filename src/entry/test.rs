@@ -21,6 +21,12 @@
 //!
 //! So this runs all four, reports them separately, and fails if any fails.
 //!
+//! **The benches tree is selected like the members.** Compiling every arm is the
+//! one expensive step here, so [`test_benches`] runs it only when its inputs
+//! moved since it last passed, or when asked, with `--benches` or with
+//! `--full` or `--no-cache` as for the members, and never for a `-p` that names
+//! other crates unless `--benches` is given too.
+//!
 //! **The lint tree is the one that needed no new mechanism.** The generated
 //! cdylib already `#[path]`-includes every `mock/lints/*.rs`, so a
 //! `#[cfg(test)] mod tests` in a lint file compiles into it and `cargo test`
@@ -54,6 +60,7 @@ use std::process::ExitCode;
 
 use crate::build_dir::{inherited_target_dir, may_pass_target_dir as may_share};
 use crate::config::Config;
+use crate::entry::test_benches;
 
 /// One tree, its label, and where its manifest lives.
 struct Tree {
@@ -189,11 +196,30 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     // and reports it as nothing to run, which is the exact failure `bench.rs`
     // records having already fixed once.
     let bench_dir = cfg.mock_dir.join("benches");
-    let has_benches = !members_only
-        && bench_dir.exists()
+    let bench_tree = bench_dir.exists()
         && std::fs::read_dir(&bench_dir)
             .map(|mut d| d.next().is_some())
             .unwrap_or(false);
+    // A tree like the others: it runs when asked for or when its inputs moved
+    // since it last passed, and a `-p` naming crates is about those crates.
+    // A tree whose inputs cannot be listed has no digest, and with no record to
+    // equal it runs.
+    let verdict = bench_tree.then(|| {
+        test_benches::verdict(
+            inv.benches_asked(),
+            members_only,
+            || test_benches::digest(&cfg.repo_root, &cfg.mock_dir, &bench_dir),
+            || test_benches::recorded(&cfg.mock_dir),
+        )
+    });
+    let skipped_benches = match verdict {
+        Some(test_benches::Verdict::Skip(why)) => Some(why),
+        _ => None,
+    };
+    let has_benches = matches!(verdict, Some(test_benches::Verdict::Run(_)));
+    if let Some(test_benches::Verdict::Skip(why)) = verdict {
+        println!("\nbenches : not run ({})", why.describe());
+    }
 
     // The generated lint crate, which exists only after something generates it.
     // Not generated here: generating is the lint path's job and doing it from
@@ -232,7 +258,13 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         trees.retain(|t| t.members);
     }
 
-    if trees.is_empty() && !has_benches {
+    // A benches tree left out because it passed at these inputs is not an empty
+    // run: there was something to test and it stands.
+    let benches_stand = matches!(
+        verdict,
+        Some(test_benches::Verdict::Skip(test_benches::Skip::Unchanged))
+    );
+    if trees.is_empty() && !has_benches && !benches_stand {
         eprintln!(
             "mock test: no tree to test under {}",
             cfg.mock_dir.display()
@@ -246,14 +278,6 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     // `7 tree(s) green` on a run that tested eight, and `1 of 0` where the
     // only tree was benches.
     let ran = ran_count(trees.len(), has_benches);
-
-    if has_benches {
-        println!("\n=== benches : {} ===", bench_dir.display());
-        println!("    (compiled per arm with generated manifests, never a member)");
-        if crate::bench::cmd(cfg, &["test"]) != ExitCode::SUCCESS {
-            failed.push(format!("benches at {}", bench_dir.display()));
-        }
-    }
 
     let shared = shared_target_dir(cfg, &trees, args);
 
@@ -301,15 +325,38 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         }
     }
 
+    // Last, since building the members writes the workspace lockfile, which is
+    // one of the benches' inputs: the digest taken here is of the tree the arms
+    // are about to be built from, and the record is written only if it is the
+    // tree they were built from.
+    if has_benches {
+        let before = test_benches::digest(&cfg.repo_root, &cfg.mock_dir, &bench_dir);
+        println!("\n=== benches : {} ===", bench_dir.display());
+        println!("    (compiled per arm with generated manifests, never a member)");
+        if crate::bench::cmd(cfg, &["test"]) != ExitCode::SUCCESS {
+            failed.push(format!("benches at {}", bench_dir.display()));
+        } else {
+            let after = test_benches::digest(&cfg.repo_root, &cfg.mock_dir, &bench_dir);
+            if test_benches::recordable(before.as_deref(), after.as_deref())
+                && let Some(d) = after
+            {
+                test_benches::record_green(&cfg.mock_dir, &d);
+            }
+        }
+    }
+
     println!();
     if failed.is_empty() {
-        println!("mock test: {ran} tree(s) green");
+        println!("{}", test_benches::summary(ran, skipped_benches));
         ExitCode::SUCCESS
     } else {
         for f in &failed {
             eprintln!("mock test: FAILED {f}");
         }
-        eprintln!("mock test: {} of {ran} tree(s) failed", failed.len());
+        eprintln!(
+            "{}",
+            test_benches::failure_summary(failed.len(), ran, skipped_benches)
+        );
         ExitCode::FAILURE
     }
 }

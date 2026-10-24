@@ -311,9 +311,20 @@ fn hash_reaches(
 /// Every file git tracks or would track, relative to the repository root:
 /// tracked, and untracked but not ignored, so an uncommitted new test is an
 /// input like a committed one and a build output is not.
-fn tracked_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn tracked_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
+    ls_files(repo_root, &["--cached", "--others", "--exclude-standard"])
+}
+
+/// The files in git's index, relative to the repository root: tracked or
+/// staged, and none that are merely untracked.
+pub(crate) fn committed_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
+    ls_files(repo_root, &["--cached"])
+}
+
+fn ls_files(repo_root: &Path, which: &[&str]) -> Result<Vec<PathBuf>, String> {
     let out = Command::new("git")
-        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+        .args(["ls-files", "-z"])
+        .args(which)
         .current_dir(repo_root)
         .output()
         .map_err(|e| format!("could not run git ls-files: {e}"))?;
@@ -337,7 +348,7 @@ fn tracked_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// Every file under a directory outside the repository, skipping `target`
 /// and hidden directories, sorted.
-fn walk_outside(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn walk_outside(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
