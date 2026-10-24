@@ -311,7 +311,7 @@ fn hash_reaches(
 /// Every file git tracks or would track, relative to the repository root:
 /// tracked, and untracked but not ignored, so an uncommitted new test is an
 /// input like a committed one and a build output is not.
-fn tracked_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
+pub(crate) fn tracked_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
     let out = Command::new("git")
         .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
         .current_dir(repo_root)
@@ -337,7 +337,7 @@ fn tracked_files(repo_root: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// Every file under a directory outside the repository, skipping `target`
 /// and hidden directories, sorted.
-fn walk_outside(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn walk_outside(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {

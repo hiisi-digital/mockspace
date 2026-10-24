@@ -201,15 +201,26 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
             .unwrap_or(false);
     // A tree like the others: it runs when asked for or when its inputs moved
     // since it last passed, and a `-p` naming crates is about those crates.
-    let bench_now = bench_tree.then(|| test_benches::digest(&bench_dir));
-    let verdict = bench_now.as_deref().map(|now| {
+    // A tree whose inputs cannot be listed has no digest, and with no record to
+    // equal it runs.
+    let bench_now = if bench_tree {
+        test_benches::digest(&cfg.repo_root, &cfg.mock_dir, &bench_dir)
+    } else {
+        None
+    };
+    let verdict = bench_tree.then(|| {
+        let record = test_benches::recorded(&cfg.mock_dir);
         test_benches::decide(
             inv.benches,
             members_only,
-            now,
-            test_benches::recorded(&cfg.mock_dir).as_deref(),
+            bench_now.as_deref().unwrap_or(""),
+            bench_now.as_ref().and(record.as_deref()),
         )
     });
+    let skipped_benches = match verdict {
+        Some(test_benches::Verdict::Skip(why)) => Some(why),
+        _ => None,
+    };
     let has_benches = matches!(verdict, Some(test_benches::Verdict::Run(_)));
     if let Some(test_benches::Verdict::Skip(why)) = verdict {
         println!("\nbenches : not run ({})", why.describe());
@@ -273,19 +284,6 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     // only tree was benches.
     let ran = ran_count(trees.len(), has_benches);
 
-    if has_benches {
-        println!("\n=== benches : {} ===", bench_dir.display());
-        println!("    (compiled per arm with generated manifests, never a member)");
-        if crate::bench::cmd(cfg, &["test"]) != ExitCode::SUCCESS {
-            failed.push(format!("benches at {}", bench_dir.display()));
-        } else {
-            // Taken again after the run: building the arms writes lockfiles
-            // beside them, and a record of the tree as it was before would
-            // never match the tree as it is.
-            test_benches::record_green(&cfg.mock_dir, &test_benches::digest(&bench_dir));
-        }
-    }
-
     let shared = shared_target_dir(cfg, &trees, args);
 
     for t in &trees {
@@ -332,9 +330,29 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         }
     }
 
+    // Last, since building the members writes the workspace lockfile, which is
+    // one of the benches' inputs: the digest taken here is of the tree the arms
+    // are about to be built from, and the record is written only if it is the
+    // tree they were built from.
+    if has_benches {
+        let before = test_benches::digest(&cfg.repo_root, &cfg.mock_dir, &bench_dir);
+        println!("\n=== benches : {} ===", bench_dir.display());
+        println!("    (compiled per arm with generated manifests, never a member)");
+        if crate::bench::cmd(cfg, &["test"]) != ExitCode::SUCCESS {
+            failed.push(format!("benches at {}", bench_dir.display()));
+        } else {
+            let after = test_benches::digest(&cfg.repo_root, &cfg.mock_dir, &bench_dir);
+            if test_benches::recordable(before.as_deref(), after.as_deref())
+                && let Some(d) = after
+            {
+                test_benches::record_green(&cfg.mock_dir, &d);
+            }
+        }
+    }
+
     println!();
     if failed.is_empty() {
-        println!("mock test: {ran} tree(s) green");
+        println!("{}", test_benches::summary(ran, skipped_benches));
         ExitCode::SUCCESS
     } else {
         for f in &failed {

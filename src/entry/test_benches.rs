@@ -5,9 +5,12 @@
 
 //! Whether `mock test` runs the benches tree.
 
-use std::path::{Path, PathBuf};
+use std::collections::BTreeSet;
+use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
+
+use crate::suite::fingerprint::{self, WORKSPACE_INPUTS};
 
 /// Why the benches tree runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,47 +42,220 @@ pub(crate) enum Verdict {
     Skip(Skip),
 }
 
-/// Directory names whose contents are build output or version control, never
-/// an input of a bench.
+/// Directory names whose contents are build output or version control, at any
+/// depth, whether or not the repository ignores them.
 const OUTPUT_DIRS: [&str; 2] = ["target", ".git"];
 
-/// A digest of everything under `bench_dir` a bench is built from: each file's
-/// path relative to it, then its bytes, in path order. Build output
-/// ([`OUTPUT_DIRS`]) is left out, since the bench build writes it and counting
-/// it would move the digest on every run.
-pub(crate) fn digest(bench_dir: &Path) -> String {
-    let mut files = Vec::new();
-    collect(bench_dir, &mut files);
-    files.sort();
+/// Directories at the bench root that `mock bench run` writes: output, never
+/// input.
+const GENERATED: [&str; 2] = ["results", "history"];
+
+/// The lockfile the bench build writes beside the tree it builds. Taken out of
+/// the digest so a run does not move the digest it recorded; the workspace's
+/// own lockfiles stay in it, through [`WORKSPACE_INPUTS`].
+const BUILD_LOCKFILE: &str = "Cargo.lock";
+
+/// A digest of everything the benches tree is built from, or `None` when the
+/// inputs cannot be listed (not a git repository), which leaves the tree
+/// never shown green. See [`inputs`] for what counts.
+pub(crate) fn digest(repo_root: &Path, mock_dir: &Path, bench_dir: &Path) -> Option<String> {
+    let files = inputs(repo_root, mock_dir, bench_dir).ok()?;
+    let entries = files
+        .iter()
+        .map(|f| (label(repo_root, f), std::fs::read(f).unwrap_or_default()))
+        .collect();
+    Some(digest_entries(entries))
+}
+
+/// The digest of named byte strings. Sorted by name first, so the order the
+/// files were listed in is not an input; each name and each body is closed off
+/// with a separator so the boundary between them cannot be shifted.
+pub(crate) fn digest_entries(mut entries: Vec<(String, Vec<u8>)>) -> String {
+    entries.sort();
+    entries.dedup();
     let mut h = Sha256::new();
-    for f in &files {
-        let rel = f.strip_prefix(bench_dir).unwrap_or(f);
-        h.update(rel.to_string_lossy().as_bytes());
+    for (name, bytes) in &entries {
+        h.update(name.as_bytes());
         h.update([0u8]);
-        h.update(std::fs::read(f).unwrap_or_default());
-        h.update([0u8]);
+        h.update((bytes.len() as u64).to_le_bytes());
+        h.update(bytes);
     }
     format!("{:x}", h.finalize())
 }
 
-fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+fn label(repo_root: &Path, f: &Path) -> String {
+    f.strip_prefix(repo_root)
+        .unwrap_or(f)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Every file the benches tree is built from:
+///
+/// - the files git tracks or would track under `bench_dir`, the same list the
+///   members use, less `results/` and `history/` and the lockfile the build
+///   writes;
+/// - the files of every local package a bench manifest reaches by `path`,
+///   transitively, the generated arm manifests and the support crates among
+///   them (a workspace-inherited path included), wherever in the repository
+///   they sit;
+/// - the files every build in the workspace reads, which the members'
+///   fingerprints are salted with ([`WORKSPACE_INPUTS`]).
+pub(crate) fn inputs(
+    repo_root: &Path,
+    mock_dir: &Path,
+    bench_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let tracked = fingerprint::tracked_files(repo_root)?;
+    let bench_rel = bench_dir
+        .strip_prefix(repo_root)
+        .map_err(|_| format!("{} is not under the repository", bench_dir.display()))?;
+    let is_input = |rel: &Path| {
+        match rel.strip_prefix(bench_rel) {
+            Err(_) => true,
+            Ok(under) => {
+                let first = under
+                    .components()
+                    .next()
+                    .and_then(|c| c.as_os_str().to_str());
+                !first.is_some_and(|n| GENERATED.contains(&n))
+                    && !under
+                        .components()
+                        .any(|c| OUTPUT_DIRS.iter().any(|o| c.as_os_str() == *o))
+                    && rel.file_name().is_none_or(|n| n != BUILD_LOCKFILE)
+            },
+        }
     };
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            let skip = p
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| OUTPUT_DIRS.contains(&n));
-            if !skip {
-                collect(&p, out);
+
+    let mut out: BTreeSet<PathBuf> = tracked
+        .iter()
+        .filter(|f| f.starts_with(bench_rel) && is_input(f))
+        .map(|f| repo_root.join(f))
+        .collect();
+
+    // The manifests to read: those on disk under the bench tree, and the ones
+    // `mock bench` generates for arms that have none.
+    let mut manifests: Vec<(PathBuf, String)> = out
+        .iter()
+        .filter(|f| f.file_name().is_some_and(|n| n == "Cargo.toml"))
+        .filter_map(|f| Some((f.parent()?.to_path_buf(), std::fs::read_to_string(f).ok()?)))
+        .collect();
+    if !bench_dir.join("Cargo.toml").is_file()
+        && let Ok(plan) = crate::bench_gen::plan(bench_dir)
+    {
+        let dep = crate::bench_gen::mockspace_dep(&plan.manifest);
+        for arm in plan.arms.iter().filter(|a| !a.has_manifest) {
+            if let Ok(text) = crate::bench_gen::arm_cargo_toml(arm, &dep, &plan.support) {
+                manifests.push((crate::bench_gen::arm_gen_dir(mock_dir, arm), text));
             }
-        } else {
-            out.push(p);
         }
     }
+
+    let roots = [mock_dir.join("Cargo.toml"), repo_root.join("Cargo.toml")];
+    let inherited: Vec<(PathBuf, String)> = roots
+        .iter()
+        .filter_map(|m| Some((m.parent()?.to_path_buf(), std::fs::read_to_string(m).ok()?)))
+        .collect();
+
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut queue: Vec<(PathBuf, String)> = manifests;
+    while let Some((dir, text)) = queue.pop() {
+        for dep in path_dependencies(&text, &dir, &inherited) {
+            if !seen.insert(dep.clone()) {
+                continue;
+            }
+            match dep.strip_prefix(repo_root) {
+                Ok(rel) => {
+                    out.extend(
+                        tracked
+                            .iter()
+                            .filter(|f| f.starts_with(rel) && is_input(f))
+                            .map(|f| repo_root.join(f)),
+                    )
+                },
+                Err(_) => out.extend(fingerprint::walk_outside(&dep)),
+            }
+            if let Ok(t) = std::fs::read_to_string(dep.join("Cargo.toml")) {
+                queue.push((dep, t));
+            }
+        }
+    }
+
+    for base in [mock_dir, repo_root] {
+        for name in WORKSPACE_INPUTS {
+            let p = base.join(name);
+            if p.is_file() {
+                out.insert(p);
+            }
+        }
+    }
+    Ok(out.into_iter().collect())
+}
+
+/// The directories a manifest depends on by `path`, in its `dependencies`,
+/// `dev-dependencies` and `build-dependencies` and the same under
+/// `[target.*]`. A dependency written `name.workspace = true` is looked up in
+/// the `[workspace.dependencies]` of the manifests in `inherited`, and its path
+/// is relative to the manifest that declares it.
+fn path_dependencies(text: &str, dir: &Path, inherited: &[(PathBuf, String)]) -> Vec<PathBuf> {
+    let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
+        return Vec::new();
+    };
+    const KINDS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+    let mut tables: Vec<&toml_edit::Table> = Vec::new();
+    for k in KINDS {
+        tables.extend(doc.get(k).and_then(|i| i.as_table()));
+    }
+    for (_, t) in doc
+        .get("target")
+        .and_then(|t| t.as_table())
+        .into_iter()
+        .flat_map(|t| t.iter())
+    {
+        for k in KINDS {
+            tables.extend(t.get(k).and_then(|i| i.as_table()));
+        }
+    }
+    let path_of = |item: &toml_edit::Item| -> Option<String> {
+        item.get("path")?.as_str().map(str::to_string)
+    };
+    let mut out = Vec::new();
+    for table in tables {
+        for (name, item) in table {
+            if let Some(p) = path_of(item) {
+                out.push(normalise(&dir.join(p)));
+            } else if item.get("workspace").and_then(|w| w.as_bool()) == Some(true) {
+                for (root_dir, root_text) in inherited {
+                    let Ok(root) = root_text.parse::<toml_edit::DocumentMut>() else {
+                        continue;
+                    };
+                    let decl = root
+                        .get("workspace")
+                        .and_then(|w| w.get("dependencies"))
+                        .and_then(|d| d.get(name));
+                    if let Some(p) = decl.and_then(path_of) {
+                        out.push(normalise(&root_dir.join(p)));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `a/b/../c` as `a/c`, without touching the disk.
+fn normalise(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            },
+            Component::CurDir => {},
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// The benches tree is a tree like the others: asked for, or run when its
@@ -119,6 +295,26 @@ pub(crate) fn record_green(mock_dir: &Path, digest: &str) {
 
 fn record_path(mock_dir: &Path) -> PathBuf {
     crate::build_dir::ensure_under_target(mock_dir, &["mockspace-test"]).join("benches-green")
+}
+
+/// Whether a green run may be recorded: the tree was listed before it and
+/// after, and had not moved in between. An edit made while the arms were
+/// building was never tested, so it is not recorded as passed.
+pub(crate) fn recordable(before: Option<&str>, after: Option<&str>) -> bool {
+    matches!((before, after), (Some(b), Some(a)) if a == b)
+}
+
+/// The last line of a run, naming the benches tree when it was left out.
+pub(crate) fn summary(ran: usize, skipped: Option<Skip>) -> String {
+    match skipped {
+        None => format!("mock test: {ran} tree(s) green"),
+        Some(why) => {
+            format!(
+                "mock test: {ran} tree(s) green; benches not run ({})",
+                why.describe()
+            )
+        },
+    }
 }
 
 #[cfg(test)]
