@@ -284,17 +284,22 @@ const COMMANDS: &[Cmd] = &[
                   all.\n\n\
                   The benches tree is the most expensive of the four (every \
                   arm is compiled on its own), so it runs only when its \
-                  inputs moved since it last passed, or when --benches \
-                  asks for it, and never beside a -p naming other crates \
-                  unless --benches is given too. Its inputs are the files \
-                  git tracks or would track under <mock>/benches/ (less \
-                  results/ and history/, which `mock bench run` writes, and \
-                  build output), the files of every local crate its \
-                  manifests depend on by path, and the toolchain pin, \
-                  cargo configuration and lockfile every build reads. A \
-                  tree that has never passed counts as moved, the record \
-                  being kept under <mock>/target. A run leaving it out says \
-                  so, and so does its last line.\n\n\
+                  inputs moved since it last passed, or when it is asked \
+                  for, with --benches or with --full or --no-cache, which \
+                  run every member whatever its record says. Beside a -p \
+                  naming crates it is left out unless --benches is given \
+                  too. Its inputs are the files git tracks or would track \
+                  under <mock>/benches/ (less results/ and history/, which \
+                  `mock bench run` writes, build output, and a lockfile \
+                  git does not track, which is the build's own), the files \
+                  of every local crate its manifests depend on by path, the \
+                  text of the manifests `mock bench` generates for arms \
+                  that have none, and what every build reads: the \
+                  workspace manifest, lockfile, toolchain pin, and cargo \
+                  and nextest configuration. A tree that has never passed \
+                  counts as moved, the record being kept under \
+                  <mock>/target. A run leaving it out says so, and so does \
+                  its last line, a failed run's included.\n\n\
                   The members run under cargo-nextest where it is installed, \
                   and under `cargo test` where it is not or with --plain. \
                   Under nextest a member runs only when its fingerprint moved \

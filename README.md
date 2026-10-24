@@ -111,7 +111,7 @@ cargo mock --lint-only --commit  # lint at commit-gate severity, skip generation
 cargo mock --lint-only --strict  # lint at push-gate severity (used by pre-push hook)
 cargo mock lock                  # transition: DOC -> DRAFT, or IMPL -> CLOSED
 cargo mock close                 # archive a CLOSED round
-cargo mock test                  # cargo test across every tree mockspace owns, the benches when they moved (or --benches)
+cargo mock test                  # cargo test across every tree mockspace owns, the benches when they moved (or are asked for)
 cargo mock tools                 # every subcommand and project tool, with usage
 cargo mock lints                 # every lint, its severity here, and where the two disagree
 mock locate                      # where this repo keeps its mockspace, shell-assignable

@@ -23,8 +23,9 @@
 //!
 //! **The benches tree is selected like the members.** Compiling every arm is the
 //! one expensive step here, so [`test_benches`] runs it only when its inputs
-//! moved since it last passed, or when `--benches` asks, and never for a `-p`
-//! that names other crates.
+//! moved since it last passed, or when asked, with `--benches` or with
+//! `--full` or `--no-cache` as for the members, and never for a `-p` that names
+//! other crates unless `--benches` is given too.
 //!
 //! **The lint tree is the one that needed no new mechanism.** The generated
 //! cdylib already `#[path]`-includes every `mock/lints/*.rs`, so a
@@ -203,18 +204,12 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     // since it last passed, and a `-p` naming crates is about those crates.
     // A tree whose inputs cannot be listed has no digest, and with no record to
     // equal it runs.
-    let bench_now = if bench_tree {
-        test_benches::digest(&cfg.repo_root, &cfg.mock_dir, &bench_dir)
-    } else {
-        None
-    };
     let verdict = bench_tree.then(|| {
-        let record = test_benches::recorded(&cfg.mock_dir);
-        test_benches::decide(
-            inv.benches,
+        test_benches::verdict(
+            inv.benches_asked(),
             members_only,
-            bench_now.as_deref().unwrap_or(""),
-            bench_now.as_ref().and(record.as_deref()),
+            || test_benches::digest(&cfg.repo_root, &cfg.mock_dir, &bench_dir),
+            || test_benches::recorded(&cfg.mock_dir),
         )
     });
     let skipped_benches = match verdict {
@@ -358,7 +353,10 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         for f in &failed {
             eprintln!("mock test: FAILED {f}");
         }
-        eprintln!("mock test: {} of {ran} tree(s) failed", failed.len());
+        eprintln!(
+            "{}",
+            test_benches::failure_summary(failed.len(), ran, skipped_benches)
+        );
         ExitCode::FAILURE
     }
 }

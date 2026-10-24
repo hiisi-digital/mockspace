@@ -182,12 +182,13 @@ fn the_benches_tree_runs_when_it_moved_or_is_asked_and_not_otherwise() {
     let (_, t) = run(root, &[]);
     assert!(!t.contains(RAN), "{t}");
 
-    // The toolchain pin is an input to every build.
+    // The toolchain pin is an input to every build, and moving it is enough:
+    // nothing here asks for the benches.
     write(
         &root.join("rust-toolchain.toml"),
         "[toolchain]\nchannel = \"nightly\"\n",
     );
-    let (_, t) = run(root, &["--benches"]);
+    let (_, t) = run(root, &[]);
     assert!(t.contains(RAN), "{t}");
 
     // A named crate is about that crate.
@@ -198,10 +199,36 @@ fn the_benches_tree_runs_when_it_moved_or_is_asked_and_not_otherwise() {
     assert!(o.status.success(), "{t}");
     write(&root.join(DEP), DEP_FIXED);
 
+    // A named crate that fails fails the run, and the last line still says the
+    // benches were left out.
+    let member = root.join("mock/m/src/lib.rs");
+    write(&member, "#[test]\nfn red() {\n    assert!(false);\n}\n");
+    let (o, t) = run(root, &["-p", "a-member"]);
+    assert!(
+        !o.status.success(),
+        "the red member must fail the run:\n{t}"
+    );
+    assert!(
+        last_line(&t).contains("failed") && last_line(&t).contains("benches not run"),
+        "a failed run must name the skipped benches: {:?}",
+        last_line(&t)
+    );
+    write(&member, "");
+
     // Asking beats an unchanged record, alone and beside a named crate.
     let (_, t) = run(root, &["--benches"]);
     assert!(t.contains(RAN), "{t}");
     let (_, t) = run(root, &["-p", "a-member", "--benches"]);
     assert!(t.contains(RAN), "{t}");
     assert!(t.contains("workspace members"), "{t}");
+
+    // So does what runs every member: `--full` and `--no-cache`, with the
+    // record unchanged, but not beside a named crate.
+    for flag in ["--full", "--no-cache"] {
+        let (o, t) = run(root, &[flag]);
+        assert!(t.contains(RAN), "{flag} left the benches out:\n{t}");
+        assert!(o.status.success(), "{t}");
+        let (_, t) = run(root, &["-p", "a-member", flag]);
+        assert!(!t.contains(RAN), "{flag} beside -p ran the benches:\n{t}");
+    }
 }
