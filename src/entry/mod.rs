@@ -43,6 +43,7 @@ pub(crate) use nuke::*;
 mod panel;
 mod subcmd;
 mod test;
+mod test_benches;
 pub(crate) use subcmd::*;
 mod resolve;
 mod tool;

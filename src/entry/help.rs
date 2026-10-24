@@ -282,6 +282,14 @@ const COMMANDS: &[Cmd] = &[
                   with tests and run none of them while appearing to. A \
                   repository whose `members` list is empty runs nothing at \
                   all.\n\n\
+                  The benches tree is the most expensive of the four (every \
+                  arm is compiled on its own), so it runs only when its \
+                  inputs moved since it last passed, which is every file \
+                  under <mock>/benches/ but its build output, or when \
+                  --benches asks for it, and never beside a -p naming other \
+                  crates unless --benches is given too. A tree that has never \
+                  passed counts as moved, the record being kept under \
+                  <mock>/target. A run leaving it out says so.\n\n\
                   The members run under cargo-nextest where it is installed, \
                   and under `cargo test` where it is not or with --plain. \
                   Under nextest a member runs only when its fingerprint moved \
@@ -317,7 +325,7 @@ const COMMANDS: &[Cmd] = &[
                   test that has passed before, running only new ones and ones \
                   that failed last time, and leaves the members it deferred \
                   for owing them. -p and --workspace choose members as in \
-                  cargo; with -p only the members tree runs. The record is \
+                  cargo; with -p only the members tree runs, bench tree aside (--benches). The record is \
                   tracked, <mock>/test-history/<flavour>/<member>.json, \
                   committed with the work so a fresh clone starts warm; \
                   a test or binary that no longer exists is dropped from \

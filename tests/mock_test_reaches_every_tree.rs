@@ -272,10 +272,11 @@ fn it_says_there_is_nothing_when_there_is_nothing() {
 }
 
 /// `mock test` with the build directory the environment names, or none.
-fn run_building_into(root: &Path, target: Option<&Path>) -> Output {
+fn run_building_into(root: &Path, target: Option<&Path>, extra: &[&str]) -> Output {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut cmd = common::mockspace();
     cmd.args(["--dir", "mock", "test"])
+        .args(extra)
         .current_dir(root)
         .env("CARGO_BUILD_JOBS", "2")
         .env_remove("CARGO_TARGET_DIR")
@@ -301,7 +302,7 @@ fn the_bench_crates_build_into_the_target_dir_the_environment_chose() {
     let own = tmp.path().join("mock/target/mockspace-bench-test");
 
     let shared = tmp.path().join("shared-target");
-    let o = run_building_into(tmp.path(), Some(&shared));
+    let o = run_building_into(tmp.path(), Some(&shared), &[]);
     let t = text(&o);
     assert!(ok(&o), "{t}");
     assert!(
@@ -315,7 +316,9 @@ fn the_bench_crates_build_into_the_target_dir_the_environment_chose() {
 
     // The control: with nothing chosen, they share one of their own under
     // `target/`, which is what keeps ninety crates from each building a copy.
-    let o = run_building_into(tmp.path(), None);
+    // Asked for, since the first run left a green record and an unchanged
+    // tree is otherwise left out.
+    let o = run_building_into(tmp.path(), None, &["--benches"]);
     let t = text(&o);
     assert!(ok(&o), "{t}");
     assert!(

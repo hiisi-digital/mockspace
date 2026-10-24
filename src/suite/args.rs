@@ -27,6 +27,9 @@ pub struct Invocation {
     pub test_args: Vec<String>,
     /// Which crates the caller asked to be built with symbols.
     pub debug:     DebugAsk,
+    /// `--benches`: run the benches tree whether or not its inputs moved, and
+    /// beside a `-p`.
+    pub benches:   bool,
 }
 
 /// `--debug`, `--debug=<crate,...>` and `--no-debug`.
@@ -55,7 +58,7 @@ impl DebugAsk {
 pub fn is_own_flag(a: &str) -> bool {
     matches!(
         a,
-        "--full" | "--cheap" | "--no-cache" | "--plain" | "--debug" | "--no-debug"
+        "--full" | "--cheap" | "--no-cache" | "--plain" | "--debug" | "--no-debug" | "--benches"
     ) || a.starts_with("--debug=")
 }
 
@@ -94,6 +97,7 @@ pub fn parse(args: &[&str]) -> Invocation {
         passed:    Vec::new(),
         test_args: Vec::new(),
         debug:     DebugAsk::default(),
+        benches:   false,
     };
     let mut it = args.iter().copied();
     while let Some(a) = it.next() {
@@ -115,6 +119,7 @@ pub fn parse(args: &[&str]) -> Invocation {
             "--cheap" => inv.mode = Mode::Cheap,
             "--no-cache" => inv.cache = false,
             "--plain" => inv.plain = true,
+            "--benches" => inv.benches = true,
             "--debug" => {
                 inv.debug.bare = true;
                 inv.debug.off = false;
@@ -289,6 +294,15 @@ mod tests {
     }
 
     #[test]
+    fn benches_is_ours_and_is_off_unless_asked() {
+        assert!(!parse(&[]).benches);
+        assert!(parse(&["--benches"]).benches);
+        assert!(parse(&["-p", "x", "--benches"]).benches);
+        // After the separator it is the test binaries'.
+        assert!(!parse(&["--", "--benches"]).benches);
+    }
+
+    #[test]
     fn the_flags_read_here_are_the_flags_that_are_not_cargos() {
         for f in [
             "--full",
@@ -297,6 +311,7 @@ mod tests {
             "--plain",
             "--debug",
             "--no-debug",
+            "--benches",
             "--debug=a",
         ] {
             assert!(is_own_flag(f), "{f}");

@@ -265,6 +265,12 @@ opt out.
 `cargo mock test` runs the workspace members under cargo-nextest where it is installed,
 and selects which to run rather than running them all:
 
+- **The bench tree runs when its inputs moved, or when asked.** Compiling every arm is
+  the most expensive thing the command does, so it is left out when no file under
+  `<mock>/benches/` (build output aside) differs from the tree as it stood when the
+  benches last passed, which is recorded under `<mock>/target/`. A tree that never
+  passed counts as moved. `-p` names crates and so leaves it out; `--benches` runs it
+  whatever else holds, beside a `-p` too.
 - **A member runs when its fingerprint moved since its suite last passed.** The
   fingerprint is its own files (what git tracks or would track under its directory,
   shaders and fixtures kept there included), every path outside it that its sources
