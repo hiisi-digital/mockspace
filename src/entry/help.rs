@@ -270,7 +270,7 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name:    "test",
-        summary: "run the tests of every tree mockspace owns, the members only where something changed",
+        summary: "run the tests of every tree mockspace owns, the members and the benches only where something changed",
         args:    &[],
         help:    "Runs the tests of each tree separately: the mock \
                   workspace's own members, every tool crate under \
@@ -284,12 +284,17 @@ const COMMANDS: &[Cmd] = &[
                   all.\n\n\
                   The benches tree is the most expensive of the four (every \
                   arm is compiled on its own), so it runs only when its \
-                  inputs moved since it last passed, which is every file \
-                  under <mock>/benches/ but its build output, or when \
-                  --benches asks for it, and never beside a -p naming other \
-                  crates unless --benches is given too. A tree that has never \
-                  passed counts as moved, the record being kept under \
-                  <mock>/target. A run leaving it out says so.\n\n\
+                  inputs moved since it last passed, or when --benches \
+                  asks for it, and never beside a -p naming other crates \
+                  unless --benches is given too. Its inputs are the files \
+                  git tracks or would track under <mock>/benches/ (less \
+                  results/ and history/, which `mock bench run` writes, and \
+                  build output), the files of every local crate its \
+                  manifests depend on by path, and the toolchain pin, \
+                  cargo configuration and lockfile every build reads. A \
+                  tree that has never passed counts as moved, the record \
+                  being kept under <mock>/target. A run leaving it out says \
+                  so, and so does its last line.\n\n\
                   The members run under cargo-nextest where it is installed, \
                   and under `cargo test` where it is not or with --plain. \
                   Under nextest a member runs only when its fingerprint moved \
@@ -325,7 +330,8 @@ const COMMANDS: &[Cmd] = &[
                   test that has passed before, running only new ones and ones \
                   that failed last time, and leaves the members it deferred \
                   for owing them. -p and --workspace choose members as in \
-                  cargo; with -p only the members tree runs, bench tree aside (--benches). The record is \
+                  cargo; with -p only the members tree runs, bench tree aside \
+                  (--benches). The record is \
                   tracked, <mock>/test-history/<flavour>/<member>.json, \
                   committed with the work so a fresh clone starts warm; \
                   a test or binary that no longer exists is dropped from \

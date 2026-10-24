@@ -120,7 +120,7 @@ Those are the transitions. The subcommands that are not transitions:
 | `cargo mock check-message` | Lint one commit message, pull request body or comment against the configured policy, and for a commit with its author and committer (`--author`, `--committer`) |
 | `cargo mock query` | Query the registry |
 | `cargo mock bench` | Run the bench harness |
-| `cargo mock test` | Run the tests of every tree mockspace owns, the members only where something they depend on changed (`[test]` below) |
+| `cargo mock test` | Run the tests of every tree mockspace owns, the members and the benches only where something they depend on changed, or the benches when `--benches` asks (`[test]` below) |
 | `cargo mock panel` | Mint or consolidate a panel seat, or report a panel's state |
 | `cargo mock pdf` | Render the design documents to PDF |
 | `cargo mock clean` | Remove generated output |
@@ -266,11 +266,15 @@ opt out.
 and selects which to run rather than running them all:
 
 - **The bench tree runs when its inputs moved, or when asked.** Compiling every arm is
-  the most expensive thing the command does, so it is left out when no file under
-  `<mock>/benches/` (build output aside) differs from the tree as it stood when the
-  benches last passed, which is recorded under `<mock>/target/`. A tree that never
-  passed counts as moved. `-p` names crates and so leaves it out; `--benches` runs it
-  whatever else holds, beside a `-p` too.
+  the most expensive thing the command does, so it is left out when its inputs match
+  the tree as it stood when the benches last passed, which is recorded under
+  `<mock>/target/`. The inputs are the files git tracks or would track under
+  `<mock>/benches/` (less `results/` and `history/`, which `mock bench run` writes, and
+  build output), the files of every local crate a bench manifest depends on by `path`,
+  the generated arm manifests and support crates included, and the toolchain pin, cargo
+  configuration and lockfile every build reads. A tree that never passed counts as
+  moved. `-p` names crates and so leaves it out; `--benches` runs it whatever else
+  holds, beside a `-p` too. A run that leaves it out says so on its last line.
 - **A member runs when its fingerprint moved since its suite last passed.** The
   fingerprint is its own files (what git tracks or would track under its directory,
   shaders and fixtures kept there included), every path outside it that its sources
