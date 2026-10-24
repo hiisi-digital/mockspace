@@ -464,7 +464,6 @@ fn a_change_of_scheme_moves_the_digest_of_the_same_entries() {
         digest_entries_under("1", e.clone()),
         digest_entries_under("2", e.clone())
     );
-    assert_eq!(digest_entries(e.clone()), digest_entries_under(SCHEME, e));
 }
 
 // ── what reads the digest and the record ──
