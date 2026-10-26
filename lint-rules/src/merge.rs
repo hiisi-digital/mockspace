@@ -16,14 +16,14 @@
 //! side is byte-identical to that side, and nobody authored anything. A file
 //! git combined from both sides is what git's own three-way merge produces. A
 //! conflict settled by keeping lines of both sides holds only lines the parents
-//! carry and keeps every line they all carry. A file with a line neither parent
+//! carry, keeps every line they all carry, and keeps each side in its own order.
+//! A file with a line neither parent
 //! carries, or without a line every parent carries, was written or cut by
 //! somebody, and that IS an authored change which the gate should still hold.
 //!
 //! So the excuse is per file and is exactly those tests. It never fires outside
 //! a merge, and it never fires on a hand-written line.
 
-use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -87,9 +87,9 @@ impl Merge {
         !self.parents.is_empty()
     }
 
-    /// Whether the staged content of `file` is byte-identical to one of the
-    /// merge parents, and therefore came from the merge rather than from an
-    /// author.
+    /// Whether the staged content of `file` came from the merge rather than from
+    /// an author: it is byte-identical to a parent, is git's own combination of
+    /// two, or only recombines the lines the parents carry.
     ///
     /// `file` is relative to `dir`, matching what `git diff --relative` prints
     /// and what the gates carry around.
@@ -125,30 +125,21 @@ impl Merge {
     /// The tests above know two shapes of merge result: one parent whole, and
     /// git's own combination. A conflict settled the way the workspace settles
     /// them, by keeping both sides' lines, is neither, so it read as authored
-    /// and every phase refused it. Three helpers lost an hour each to exactly
-    /// that.
+    /// and every phase refused it.
     ///
     /// What a merge adds beyond its parents is the question, and it is asked of
-    /// the lines. Content counts as inherited when
-    ///
-    /// - every staged line is a line one of the parents carries, so nothing
-    ///   was typed, and
-    /// - every line ALL the parents carry is still staged, so nothing common
-    ///   was deleted. A line only some parents carry may go: dropping it is the
-    ///   choice between the sides a conflict asks for, and the side that lacks
-    ///   it is the one that removed it.
-    ///
-    /// **The perimeter is a set of lines, not a sequence.** Reordering lines,
-    /// or repeating one a parent carries, passes. That recombines parent
-    /// content and adds none, which is the thing the gates exist to hold; the
-    /// order of what two reviewed branches wrote is not a new edit.
+    /// the lines, counted and in sequence (see [`crate::merge_lines`] for the
+    /// tests and their bounds): nothing typed, no line every parent carries
+    /// deleted, no repeat beyond what the parents carry together, and each
+    /// parent's own order kept. A line only some parents carry may go: dropping
+    /// it is the choice between the sides a conflict asks for.
     ///
     /// It needs no merge base, so an octopus is served too. A path absent in
     /// the index is the deletion case, settled by the byte test above, and
     /// absent here (`has_staged` false) so that deleting a file every parent
     /// carries stays authored. A parent lacking the path carries no lines,
-    /// which empties the common set: the file was added on one side, and
-    /// nothing is then required to remain.
+    /// which empties the minimum: the file was added on one side, and nothing
+    /// is then required to remain.
     fn recombines_the_parents(&self, dir: &Path, file: &str, has_staged: bool) -> bool {
         if !has_staged {
             return false;
@@ -156,22 +147,15 @@ impl Merge {
         let Some(staged) = git_bytes(dir, &["show", &format!(":./{file}")]) else {
             return false;
         };
-        let lines_of = |body: &[u8]| -> HashSet<Vec<u8>> {
-            body.split(|b| *b == b'\n').map(<[u8]>::to_vec).collect()
-        };
-        let staged = lines_of(&staged);
-        let mut union: HashSet<Vec<u8>> = HashSet::new();
-        let mut common: Option<HashSet<Vec<u8>>> = None;
-        for parent in &self.parents {
-            let body = git_bytes(dir, &["show", &format!("{parent}:./{file}")]).unwrap_or_default();
-            let lines = lines_of(&body);
-            union.extend(lines.iter().cloned());
-            common = Some(match common {
-                None => lines,
-                Some(c) => c.intersection(&lines).cloned().collect(),
-            });
-        }
-        staged.is_subset(&union) && common.is_none_or(|c| c.is_subset(&staged))
+        let bodies: Vec<Vec<u8>> = self
+            .parents
+            .iter()
+            .map(|parent| {
+                git_bytes(dir, &["show", &format!("{parent}:./{file}")]).unwrap_or_default()
+            })
+            .collect();
+        let parents: Vec<Vec<&[u8]>> = bodies.iter().map(|b| lines_of(b)).collect();
+        crate::merge_lines::recombines(&lines_of(&staged), &parents)
     }
 
     /// Whether the staged content is exactly what git's own three-way merge
@@ -190,12 +174,9 @@ impl Merge {
     /// which is the whole point, and where it does not differ it *is* the auto
     /// merge and excusing it is right.
     ///
-    /// **Two parents only, and an octopus is therefore left with the weaker
-    /// coverage rather than served by it.** An octopus has no single merge
-    /// base, so there is nothing to reproduce from. The byte comparison above
-    /// still answers for a file that matches one parent whole; a file an
-    /// octopus auto-merged out of combined hunks stays reported as an authored
-    /// change there, which is exactly the case this function exists for.
+    /// **Two parents only.** An octopus has no single merge base, so there is
+    /// nothing to reproduce from; the byte comparison and the line test above
+    /// serve it instead.
     ///
     /// The reproduction is bare `git merge-file`, which knows none of the
     /// repository's merge configuration: a `.gitattributes` `merge=` driver,
@@ -286,6 +267,11 @@ impl Merge {
 }
 
 /// The object id `content` would have as a blob, without writing it.
+/// The lines of `body`, split on newlines, the last one empty after a final newline.
+fn lines_of(body: &[u8]) -> Vec<&[u8]> {
+    body.split(|b| *b == b'\n').collect()
+}
+
 fn git_hash_object(dir: &Path, content: &[u8]) -> Option<String> {
     let mut child = Command::new("git")
         .args(["hash-object", "--stdin"])
@@ -707,6 +693,116 @@ mod tests {
         assert!(
             !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
             "a line both parents carried was deleted by hand"
+        );
+    }
+
+
+    /// Like `conflicted_on_one_line`, with the three bodies given.
+    fn conflicted_with(r: &Repo, base: &str, branch: &str, trunk: &str) {
+        r.write("crates/foo/src/lib.rs", base);
+        r.commit("base");
+        r.git(&["switch", "-q", "-c", "feature"]);
+        r.write("crates/foo/src/lib.rs", branch);
+        r.commit("on the branch");
+        r.git(&["switch", "-q", "trunk"]);
+        r.write("crates/foo/src/lib.rs", trunk);
+        r.commit("on trunk");
+        r.git(&["switch", "-q", "feature"]);
+        assert!(
+            !r.git_may_fail(&["merge", "--no-commit", "--no-ff", "trunk"]),
+            "the fixture was meant to conflict"
+        );
+    }
+
+    fn staged_is_inherited(r: &Repo, resolution: &str) -> bool {
+        r.write("crates/foo/src/lib.rs", resolution);
+        r.git(&["add", "mock/crates/foo/src/lib.rs"]);
+        Merge::detect(&r.mock()).inherited(&r.mock(), "crates/foo/src/lib.rs")
+    }
+
+    #[test]
+    fn deleting_one_of_two_identical_lines_every_parent_carries_is_not_inherited() {
+        let r = Repo::new("dup-deleted");
+        conflicted_with(
+            &r,
+            "one\ntwo\ntwo\nthree\n",
+            "one\ntwo\ntwo\nBRANCH\n",
+            "one\ntwo\ntwo\nTRUNK\n",
+        );
+        assert!(
+            !staged_is_inherited(&r, "one\ntwo\nBRANCH\nTRUNK\n"),
+            "a copy both parents carry twice was deleted by hand"
+        );
+    }
+
+    #[test]
+    fn repeating_a_line_beyond_what_the_parents_carry_is_not_inherited() {
+        let r = Repo::new("dup-added");
+        conflicted_with(
+            &r,
+            "one\ntwo\nthree\n",
+            "one\nBRANCH\nthree\n",
+            "one\nTRUNK\nthree\n",
+        );
+        assert!(
+            !staged_is_inherited(&r, "one\nBRANCH\nBRANCH\nTRUNK\nthree\n"),
+            "a line one parent carries once appears twice"
+        );
+    }
+
+    #[test]
+    fn a_third_copy_of_a_line_both_parents_carry_once_is_not_inherited() {
+        let r = Repo::new("dup-third");
+        conflicted_with(
+            &r,
+            "one\ntwo\nthree\n",
+            "one\nBRANCH\nthree\n",
+            "one\nTRUNK\nthree\n",
+        );
+        assert!(
+            !staged_is_inherited(&r, "one\nBRANCH\nTRUNK\nthree\nthree\nthree\n"),
+            "a line both parents carry once appears three times"
+        );
+    }
+
+    #[test]
+    fn swapping_two_lines_of_one_parent_is_not_inherited() {
+        let r = Repo::new("swapped");
+        conflicted_with(
+            &r,
+            "one\ntwo\nthree\nfour\n",
+            "one\ntwo\nthree\nBRANCH\n",
+            "one\ntwo\nthree\nTRUNK\n",
+        );
+        assert!(
+            !staged_is_inherited(&r, "one\nthree\ntwo\nBRANCH\nTRUNK\n"),
+            "two lines of one parent traded places, which no side wrote"
+        );
+    }
+
+    #[test]
+    fn the_two_sides_sections_in_either_order_are_inherited() {
+        let r = Repo::new("sections-trunk-first");
+        conflicted_with(
+            &r,
+            "head\n",
+            "head\nbranch one\nbranch two\n",
+            "head\ntrunk one\ntrunk two\n",
+        );
+        assert!(
+            staged_is_inherited(&r, "head\ntrunk one\ntrunk two\nbranch one\nbranch two\n"),
+            "each side's lines in their own order, one side after the other"
+        );
+        let r = Repo::new("sections-branch-first");
+        conflicted_with(
+            &r,
+            "head\n",
+            "head\nbranch one\nbranch two\n",
+            "head\ntrunk one\ntrunk two\n",
+        );
+        assert!(
+            staged_is_inherited(&r, "head\nbranch one\nbranch two\ntrunk one\ntrunk two\n"),
+            "the same sides the other way round"
         );
     }
 

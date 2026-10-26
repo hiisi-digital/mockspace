@@ -80,26 +80,42 @@ pub(crate) fn append_attribute_lines(
     lines
 }
 
-/// `existing` with the note and every line of `lines` it does not already hold
-/// at the end. Whatever else the file holds is left exactly as it was.
+/// `existing` with the append driver's block holding exactly `lines`: the note,
+/// then each line, at the end. Whatever else the file holds is left as it was.
+///
+/// The block is whatever lines name [`APPEND_DRIVER`] and the note above them,
+/// wherever they sit. It is replaced as a whole, so a pattern added to the
+/// declaration joins the one note and a pattern taken out of it leaves the file;
+/// an empty `lines` removes the block. A block that is already right comes back
+/// byte for byte.
 pub(crate) fn with_lines(existing: &str, note: &str, lines: &[String]) -> String {
-    let missing: Vec<&String> = lines
-        .iter()
-        .filter(|l| !existing.lines().any(|e| e == l.as_str()))
-        .collect();
-    if missing.is_empty() {
+    let driver = format!("merge={APPEND_DRIVER}");
+    let managed = |l: &str| l.split_whitespace().last() == Some(driver.as_str());
+    let current: Vec<&str> = existing.lines().filter(|l| managed(l)).collect();
+    if current.len() == lines.len() && lines.iter().all(|l| current.contains(&l.as_str())) {
         return existing.to_string();
     }
-    let mut text = existing.to_string();
-    if !text.is_empty() && !text.ends_with('\n') {
+    let mut kept: Vec<&str> = existing
+        .lines()
+        .filter(|l| !managed(l) && *l != note)
+        .collect();
+    while kept.last().is_some_and(|l| l.is_empty()) {
+        kept.pop();
+    }
+    let mut text = String::new();
+    for line in kept {
+        text.push_str(line);
         text.push('\n');
+    }
+    if lines.is_empty() {
+        return text;
     }
     if !text.is_empty() {
         text.push('\n');
     }
     text.push_str(note);
     text.push('\n');
-    for line in missing {
+    for line in lines {
         text.push_str(line);
         text.push('\n');
     }
@@ -175,13 +191,35 @@ mod tests {
             once,
             "a second pass changes nothing"
         );
-        // a line added later is appended without a second note
-        let more = vec![lines[0].clone(), format!("/c merge={APPEND_DRIVER}")];
+        // a pattern added later joins the one block: one note, no extra blank
+        // line, and the earlier lines kept
+        let more = vec![lines[0].clone(), lines[1].clone(), format!("/c merge={APPEND_DRIVER}")];
         let grown = with_lines(&once, APPEND_NOTE, &more);
-        assert!(
-            grown.ends_with(&format!("{APPEND_NOTE}\n/c merge={APPEND_DRIVER}\n")),
-            "{grown}"
+        assert_eq!(
+            grown,
+            format!(
+                "*.png binary\n\n{APPEND_NOTE}\n/a merge={APPEND_DRIVER}\n/b merge={APPEND_DRIVER}\n\
+                 /c merge={APPEND_DRIVER}\n"
+            )
         );
+        assert_eq!(grown.matches(APPEND_NOTE).count(), 1, "{grown}");
+        assert_eq!(grown.matches("\n\n").count(), 1, "one blank line: {grown}");
+        assert_eq!(with_lines(&grown, APPEND_NOTE, &more), grown);
+    }
+
+    #[test]
+    fn taking_an_entry_out_takes_its_attribute_line_out_and_the_rest_stays() {
+        let a = format!("/a merge={APPEND_DRIVER}");
+        let b = format!("/b merge={APPEND_DRIVER}");
+        let both = with_lines("*.png binary\n*.lock -diff\n", APPEND_NOTE, &[a.clone(), b.clone()]);
+        let one = with_lines(&both, APPEND_NOTE, &[a.clone()]);
+        assert!(!one.contains("/b "), "{one}");
+        assert!(one.contains(&a), "{one}");
+        assert_eq!(one.matches(APPEND_NOTE).count(), 1, "{one}");
+        assert!(one.starts_with("*.png binary\n*.lock -diff\n\n"), "{one}");
+        let none = with_lines(&one, APPEND_NOTE, &[]);
+        assert_eq!(none, "*.png binary\n*.lock -diff\n", "no entry leaves no block");
+        assert_eq!(with_lines(&none, APPEND_NOTE, &[]), none);
     }
 
     #[test]
