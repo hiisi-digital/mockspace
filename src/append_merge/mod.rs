@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0     https://mozilla.org/MPL/2.0        contact@hiisi.digital
 //--------------------------------------------------------------------------------------------------
 
-//! `mock merge-append`: the merge driver for files that only ever grow.
+//! `mock merge-additions`: the merge driver for files that only ever grow.
 //!
 //! An index of results, a list of `mod` lines, a table of strings, a log of
 //! known gaps: each is a file that changes by someone adding to it and by
@@ -11,7 +11,7 @@
 //! same spot touch the same lines and conflict as text, though they agree on
 //! everything that matters. This driver keeps both additions.
 //!
-//! Git calls it as `mock merge-append %O %A %B %P %L`: base, ours, theirs, the
+//! Git calls it as `mock merge-additions %O %A %B %P %L`: base, ours, theirs, the
 //! path and the conflict marker length, and reads the result from `%A`. Exit 0
 //! is a clean merge, exit 1 a conflict with markers in `%A`.
 //!
@@ -36,6 +36,13 @@
 //! interchangeable in the base, so an insertion made next to one of several
 //! equal lines may land beside another of them. The text is the same; it is
 //! named so a reader of a diff is not surprised.
+//!
+//! **A line both sides added, at two different spots, stays twice.** The share
+//! test is made per spot, so a line one side put in one gap and the other side
+//! put in another is not seen as the same addition, and the file holds it at
+//! both. That is what git's own merge does with it, and the driver does not
+//! second-guess two gaps it cannot tell apart from two intended lines; a
+//! duplicate this makes is for the compiler or a lint of the file's kind to name.
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -133,6 +140,20 @@ fn read(path: &str) -> Result<Vec<u8>, String> {
     }
 }
 
+/// The status this driver exits with for what `git merge-file` exited with: 0
+/// clean, 1 a conflict, 2 an error.
+///
+/// `merge-file` exits with the number of conflicts (at most 127), and with 255
+/// on an error of its own. Reporting that error as a conflict would hand git a
+/// file nobody merged.
+fn driver_status(merge_file: Option<i32>) -> u8 {
+    match merge_file {
+        Some(0) => 0,
+        Some(1 ..= 127) => 1,
+        _ => 2,
+    }
+}
+
 /// What git does with no driver: a line-based merge into `ours`, whose markers
 /// and exit status are the result.
 fn text_merge(base: &str, ours: &str, theirs: &str, marker: usize) -> ExitCode {
@@ -141,20 +162,18 @@ fn text_merge(base: &str, ours: &str, theirs: &str, marker: usize) -> ExitCode {
         .arg(format!("--marker-size={marker}"))
         .args(["-L", "ours", "-L", "base", "-L", "theirs", ours, base, theirs])
         .status();
-    match status {
-        Ok(s) if s.success() => ExitCode::SUCCESS,
-        Ok(s) if s.code().is_some_and(|c| c > 0) => ExitCode::from(1),
-        Ok(_) | Err(_) => {
-            eprintln!("mock merge-append: could not run git merge-file");
-            ExitCode::from(2)
-        },
+    let code = status.as_ref().ok().and_then(|s| s.code());
+    let exit = driver_status(code);
+    if exit == 2 {
+        eprintln!("mock merge-additions: git merge-file failed ({status:?})");
     }
+    ExitCode::from(exit)
 }
 
 /// `args` are what follows the subcommand: `%O %A %B %P [%L]`, the marker size being git's `%L`.
 pub(crate) fn run(args: &[&str]) -> ExitCode {
     let [base, ours, theirs, path, rest @ ..] = args else {
-        eprintln!("usage: mock merge-append <base> <ours> <theirs> <path> [<marker size>]");
+        eprintln!("usage: mock merge-additions <base> <ours> <theirs> <path> [<marker size>]");
         return ExitCode::from(2);
     };
     let marker = rest
@@ -168,20 +187,20 @@ pub(crate) fn run(args: &[&str]) -> ExitCode {
             .into_iter()
             .flatten()
             .next();
-        eprintln!("mock merge-append: {}", err.unwrap_or_default());
+        eprintln!("mock merge-additions: {}", err.unwrap_or_default());
         return text_merge(base, ours, theirs, marker);
     };
     match merge_bytes(&b, &o, &t) {
         Ok(merged) => {
             if let Err(e) = std::fs::write(Path::new(ours), merged) {
-                eprintln!("mock merge-append: could not write {ours}: {e}");
+                eprintln!("mock merge-additions: could not write {ours}: {e}");
                 return ExitCode::from(2);
             }
             ExitCode::SUCCESS
         },
         Err(why) => {
             eprintln!(
-                "mock merge-append: {path}: {}, merging as text",
+                "mock merge-additions: {path}: {}, merging as text",
                 why.describe()
             );
             text_merge(base, ours, theirs, marker)
@@ -276,6 +295,28 @@ mod tests {
             merged("a\n", "a\nb", "a\nc\n"),
             Err(Fallback::NotAppendShaped)
         );
+    }
+
+    #[test]
+    fn a_merge_file_error_is_an_error_and_a_count_of_conflicts_is_a_conflict() {
+        assert_eq!(driver_status(Some(0)), 0);
+        assert_eq!(driver_status(Some(1)), 1);
+        assert_eq!(driver_status(Some(127)), 1);
+        assert_eq!(driver_status(Some(255)), 2, "merge-file's own error");
+        assert_eq!(driver_status(None), 2, "killed by a signal, or not run");
+    }
+
+    /// Pinned, not endorsed: the share test is per spot, so a line added at two
+    /// different spots stays twice, as git's own merge leaves it. See the module
+    /// perimeter.
+    #[test]
+    fn the_same_line_added_at_two_different_spots_stays_at_both() {
+        let out = merged(
+            "mod a;\nmod c;\n",
+            "mod a;\nmod b;\nmod c;\n",
+            "mod a;\nmod c;\nmod b;\n",
+        );
+        assert_eq!(out.unwrap(), "mod a;\nmod b;\nmod c;\nmod b;\n");
     }
 
     #[test]

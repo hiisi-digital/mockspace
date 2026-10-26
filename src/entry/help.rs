@@ -205,12 +205,12 @@ const COMMANDS: &[Cmd] = &[
                   project and installs nothing: the wiring is done by `cargo mock`.",
     },
     Cmd {
-        name:    "merge-append",
+        name:    "merge-additions",
         summary: "merge a file that only grows, as git's merge driver",
         args:    &[],
         help:    "The merge driver `cargo mock` installs for the files `append_only` in \
                   mockspace.toml names (and each crate's SHAME and BACKLOG templates); git \
-                  calls it as `merge-append %O %A %B %P %L` and reads the result from the \
+                  calls it as `merge-additions %O %A %B %P %L` and reads the result from the \
                   second. When neither side changed or removed a line of the base, both \
                   sides' additions are kept as they are, each in the spot it was made in, \
                   ours before theirs where both added to one spot. When either side \

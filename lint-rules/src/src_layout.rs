@@ -429,10 +429,9 @@ mod merge_walk_tests {
         r.git(&["add", "mock/crates/foo/src/lib.rs", "mock/crates/foo/DESIGN.md.tmpl"]);
     }
 
-    /// The case three helpers lost an hour each to: a merge of trunk into a
-    /// branch, stopping on a design and on source, settled by keeping both
-    /// sides. The result is no parent's and is not git's markers, and it
-    /// authored nothing.
+    /// A merge of trunk into a branch, stopping on a design and on source,
+    /// settled by keeping both sides. The result is no parent's and is not
+    /// git's markers, and it authored nothing.
     #[test]
     fn a_conflict_settled_from_both_sides_in_a_design_and_in_source_reports_neither() {
         let r = Repo::new("settled");

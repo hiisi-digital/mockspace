@@ -241,8 +241,8 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     }
 
     // The same for the driver that keeps both sides' additions to a file that only grows.
-    if first_positional(&args) == Some("merge-append") {
-        return crate::append_merge::run(&subcommand_args(&args, "merge-append"));
+    if first_positional(&args) == Some("merge-additions") {
+        return crate::append_merge::run(&subcommand_args(&args, "merge-additions"));
     }
 
     // The same for the driver that refuses two closed rounds sharing an id.

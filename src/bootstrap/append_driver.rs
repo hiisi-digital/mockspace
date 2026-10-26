@@ -7,7 +7,7 @@
 //!
 //! A list of `mod` lines, a table of strings, a log of known gaps: two branches
 //! that each add to the same spot touch the same lines and conflict as text.
-//! `mock merge-append` (see [`crate::append_merge`]) keeps both when neither side
+//! `mock merge-additions` (see [`crate::append_merge`]) keeps both when neither side
 //! touched a line already there, and leaves the file to git's own merge when
 //! either did. This wires git to call it, the way [`super::registry_driver`]
 //! wires the registry's: attribute lines that are the same text on every
@@ -124,7 +124,7 @@ pub(crate) fn with_lines(existing: &str, note: &str, lines: &[String]) -> String
 
 /// What git runs for an append-only file both sides changed.
 pub(crate) fn append_driver_command(launcher: &str) -> String {
-    engine_driver_command(launcher, "merge-append")
+    engine_driver_command(launcher, "merge-additions")
 }
 
 /// Register the driver in the clone's config. Idempotent.
@@ -237,7 +237,7 @@ mod tests {
             String::from_utf8_lossy(&out.stderr)
         );
         assert!(
-            cmd.contains("cargo mock merge-append %O %A %B %P %L"),
+            cmd.contains("cargo mock merge-additions %O %A %B %P %L"),
             "{cmd}"
         );
         assert!(

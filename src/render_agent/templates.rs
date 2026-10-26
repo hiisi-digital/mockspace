@@ -303,7 +303,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
             apply_to: vec![format!("{mock_rel}/registry/**/*.toml")],
             body:     substitute_builtin_vars(
                 concat!(
-                    "Registry rows merge by `[[namespace]]` and `id`: additions on both sides stay, only a row changed two ways conflicts. See the `reference-syntax` skill. Merge commits and files that only grow: the `merging` skill.",
+                    "Registry rows merge by `[[namespace]]` and `id`: additions on both sides stay, only a row changed two ways conflicts. See the `reference-syntax` skill. Merges: the `merging` skill.",
                 ),
                 &mock_rel,
                 project_name,
@@ -351,6 +351,7 @@ pub(crate) fn generate_builtin_templates(cfg: &Config, pack: &LintPack) -> Built
                     "### Rules\n",
                     "- Every crate must have `src/lib.rs` and `README.md.tmpl`\n",
                     "- Dependencies in `Cargo.toml` must match the target architecture layers\n",
+                    "- A merge that conflicts or a gate refuses: the `merging` skill\n",
                     "\n",
                     "Fires when changing framework design, adding or modifying a type or a crate, or editing anything under `{mock_dir}/`.\n",
                     "\n",

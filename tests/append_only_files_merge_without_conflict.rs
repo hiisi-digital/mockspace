@@ -9,7 +9,7 @@
 //! that `cargo mock` has wired, with `cargo mock` shimmed to this build, so what
 //! is asserted is what a consumer's clone does at `git merge`: the
 //! `.gitattributes` lines, the driver in the clone's config, and the
-//! `merge-append` subcommand git calls through it.
+//! `merge-additions` subcommand git calls through it.
 //!
 //! The control carries the rest. With the driver's config removed the same two
 //! branches conflict as text, which is what shows the fixture makes a conflict
@@ -74,7 +74,7 @@ fn the_wiring_names_each_file_and_no_directory_and_is_written_once() {
     }
     let driver = r.git(&["config", "--local", "merge.mockspace-append.driver"]);
     assert!(
-        driver.contains("cargo mock merge-append %O %A %B %P %L"),
+        driver.contains("cargo mock merge-additions %O %A %B %P %L"),
         "{driver}"
     );
     r.generate();
@@ -176,23 +176,28 @@ fn one_side_editing_a_base_line_still_conflicts_and_keeps_both_texts() {
     );
 }
 
+/// Both sides change the file, so git does call the driver: `a` edits the first
+/// line and `dev` appends past the second, in hunks that do not touch. The
+/// driver leaves it to the text merge, which takes both as git would.
 #[test]
-fn an_edit_on_one_side_alone_is_taken_as_git_would() {
+fn an_edit_and_an_append_in_apart_hunks_are_taken_as_git_would() {
     let r = repo();
     r.git(&["switch", "-q", "-c", "a"]);
     let path = r.root.join(DECLARED);
     let base = fs::read_to_string(&path).unwrap();
-    fs::write(&path, base.replace("\"two\"", "\"two, edited on a\"")).unwrap();
+    fs::write(&path, base.replace("\"one\"", "\"one, edited on a\"")).unwrap();
     r.git(&["commit", "-q", "--no-verify", "-am", "chore: edit on a"]);
     r.git(&["switch", "-q", "dev"]);
-    write(&r.root.join("elsewhere.txt"), "dev moved something else\n");
-    r.git(&["add", "-A"]);
-    r.git(&["commit", "-q", "--no-verify", "-m", "chore: move something else"]);
+    append(&r, DECLARED, "dev", "\"from-dev\" = \"y\"\n");
     let merged = merge(&r);
     assert!(merged.status.success(), "{}", Repo::failure(&merged));
+    let stderr = String::from_utf8_lossy(&merged.stderr);
     assert!(
-        fs::read_to_string(&path)
-            .unwrap()
-            .contains("two, edited on a")
+        stderr.contains("a side changed a line that was already there"),
+        "the driver was not called: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "\"a\" = \"one, edited on a\"\n\"b\" = \"two\"\n\"from-dev\" = \"y\"\n"
     );
 }
