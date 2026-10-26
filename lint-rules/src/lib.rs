@@ -65,6 +65,7 @@ mod file_size;
 pub mod fmt_only;
 mod forbidden_imports;
 pub mod merge;
+mod merge_lines;
 #[cfg(test)]
 mod message_context_tests;
 mod no_adhoc_error_enum;

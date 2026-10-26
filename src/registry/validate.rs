@@ -245,6 +245,7 @@ pub(crate) const ROOT_KEYS: &[&str] = &[
     "crate_prefix",
     "abi_version",
     "src_dirs",
+    "append_only",
     "proc_macro_crates",
     "lint_proc_macro_source",
     "module_crates",

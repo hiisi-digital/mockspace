@@ -170,6 +170,14 @@ fn get_modified_in_design_rounds(workspace_root: &Path) -> Vec<(String, String)>
         collect_non_additions(&output, "unstaged", &mut files);
     }
 
+    // A changelist a merge carried in whole or recombined from its parents is
+    // not an edit of this round; `src_layout::changed_files` excuses the same
+    // staged entries for the phase gates, and this walk does not go through it.
+    let merge = crate::merge::Merge::detect(workspace_root);
+    if merge.in_progress() {
+        files.retain(|(file, source)| source != "staged" || !merge.inherited(workspace_root, file));
+    }
+
     files
 }
 
@@ -412,6 +420,94 @@ mod tests {
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "design_rounds/existing.doc.md");
+    }
+
+    /// A merge in flight over a changelist both sides edited on the same line.
+    mod in_a_merge {
+        use std::path::Path;
+        use std::process::Command;
+
+        use super::super::get_modified_in_design_rounds;
+
+        const CL: &str = "design_rounds/r.doc.md";
+
+        fn git(dir: &Path, args: &[&str]) -> bool {
+            Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+                .status
+                .success()
+        }
+
+        fn must(dir: &Path, args: &[&str]) {
+            assert!(git(dir, args), "git {args:?} failed");
+        }
+
+        fn write(mock: &Path, body: &str) {
+            std::fs::create_dir_all(mock.join("design_rounds")).unwrap();
+            std::fs::write(mock.join(CL), body).unwrap();
+        }
+
+        /// The mock directory of a repo mid-merge, the changelist conflicted.
+        fn conflicted() -> (tempfile::TempDir, std::path::PathBuf) {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            let mock = root.join("mock");
+            must(root, &["init", "-q", "-b", "trunk"]);
+            must(root, &["config", "user.email", "t@example.com"]);
+            must(root, &["config", "user.name", "t"]);
+            must(root, &["config", "commit.gpgsign", "false"]);
+            write(&mock, "one\ntwo\nthree\n");
+            must(root, &["add", "-A"]);
+            must(root, &["commit", "-q", "-m", "base"]);
+            must(root, &["switch", "-q", "-c", "feature"]);
+            write(&mock, "one\nBRANCH\nthree\n");
+            must(root, &["commit", "-q", "-am", "branch"]);
+            must(root, &["switch", "-q", "trunk"]);
+            write(&mock, "one\nTRUNK\nthree\n");
+            must(root, &["commit", "-q", "-am", "trunk"]);
+            must(root, &["switch", "-q", "feature"]);
+            assert!(
+                !git(root, &["merge", "--no-commit", "--no-ff", "trunk"]),
+                "the fixture was meant to conflict"
+            );
+            (tmp, mock)
+        }
+
+        #[test]
+        fn a_changelist_recombined_from_both_sides_in_a_merge_is_not_reported() {
+            let (_tmp, mock) = conflicted();
+            write(&mock, "one\nBRANCH\nTRUNK\nthree\n");
+            must(&mock, &["add", CL]);
+            assert!(get_modified_in_design_rounds(&mock).is_empty());
+        }
+
+        #[test]
+        fn a_changelist_with_a_line_smuggled_into_a_merge_is_reported() {
+            let (_tmp, mock) = conflicted();
+            write(&mock, "one\nBRANCH\nTRUNK\nSMUGGLED\nthree\n");
+            must(&mock, &["add", CL]);
+            let files = get_modified_in_design_rounds(&mock);
+            assert_eq!(files, vec![(CL.to_string(), "staged".to_string())]);
+        }
+
+        #[test]
+        fn the_same_edit_with_no_merge_in_flight_is_reported() {
+            let tmp = tempfile::tempdir().unwrap();
+            let (root, mock) = (tmp.path(), tmp.path().join("mock"));
+            must(root, &["init", "-q", "-b", "trunk"]);
+            must(root, &["config", "user.email", "t@example.com"]);
+            must(root, &["config", "user.name", "t"]);
+            must(root, &["config", "commit.gpgsign", "false"]);
+            write(&mock, "one\ntwo\n");
+            must(root, &["add", "-A"]);
+            must(root, &["commit", "-q", "-m", "base"]);
+            write(&mock, "one\ntwo\nthree\n");
+            must(&mock, &["add", CL]);
+            assert_eq!(get_modified_in_design_rounds(&mock).len(), 1);
+        }
     }
 }
 

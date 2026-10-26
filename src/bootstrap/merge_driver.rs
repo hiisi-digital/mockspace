@@ -111,13 +111,15 @@ pub(crate) fn with_note_line(existing: &str, note: &str, line: &str) -> String {
 /// directory always, the registry directory once it exists, and the test-history
 /// directory always: its first file is written by a test run on any branch, and the
 /// line is the same text whether or not that has happened yet. The design rounds
-/// directory is always written too, for the same reason.
+/// directory is always written too, for the same reason, and so are the append-only
+/// files' lines, each naming one file or one narrow pattern.
 /// Returns whether the file changed.
 pub(crate) fn write_gitattributes(
     repo_root: &Path,
     docs_dir: &Path,
     registry_dir: &Path,
     history_dir: &Path,
+    append_lines: &[String],
 ) -> bool {
     let Some(line) = attributes_line(repo_root, docs_dir) else {
         return false;
@@ -139,6 +141,7 @@ pub(crate) fn write_gitattributes(
     if let Some(line) = history_attributes_line(repo_root, history_dir) {
         next = with_note_line(&next, HISTORY_NOTE, &line);
     }
+    next = with_lines(&next, APPEND_NOTE, append_lines);
     if next == existing {
         return false;
     }
