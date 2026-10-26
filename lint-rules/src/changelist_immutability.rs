@@ -170,6 +170,14 @@ fn get_modified_in_design_rounds(workspace_root: &Path) -> Vec<(String, String)>
         collect_non_additions(&output, "unstaged", &mut files);
     }
 
+    // A changelist a merge carried in whole or recombined from its parents is
+    // not an edit of this round; `src_layout::changed_files` excuses the same
+    // staged entries for the phase gates, and this walk does not go through it.
+    let merge = crate::merge::Merge::detect(workspace_root);
+    if merge.in_progress() {
+        files.retain(|(file, source)| source != "staged" || !merge.inherited(workspace_root, file));
+    }
+
     files
 }
 

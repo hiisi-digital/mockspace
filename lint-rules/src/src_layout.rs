@@ -402,6 +402,65 @@ mod merge_walk_tests {
         );
     }
 
+    /// Both sides moved a design and a source file, in the same places, so the
+    /// merge stops on both and each is settled by keeping both sides' lines.
+    fn conflicted_design_and_source(r: &Repo) {
+        r.write("crates/foo/src/lib.rs", "pub fn a() {}\n// slot\n");
+        r.write("crates/foo/DESIGN.md.tmpl", "base\nslot\n");
+        r.commit("base");
+        r.git(&["switch", "-q", "-c", "feature"]);
+        r.write("crates/foo/src/lib.rs", "pub fn a() {}\npub fn branch() {}\n");
+        r.write("crates/foo/DESIGN.md.tmpl", "base\nbranch design\n");
+        r.commit("on the branch");
+        r.git(&["switch", "-q", "trunk"]);
+        r.write("crates/foo/src/lib.rs", "pub fn a() {}\npub fn trunk() {}\n");
+        r.write("crates/foo/DESIGN.md.tmpl", "base\ntrunk design\n");
+        r.commit("on trunk");
+        r.git(&["switch", "-q", "feature"]);
+        r.git(&["merge", "--no-commit", "--no-ff", "trunk"]);
+        r.write(
+            "crates/foo/src/lib.rs",
+            "pub fn a() {}\npub fn branch() {}\npub fn trunk() {}\n",
+        );
+        r.write(
+            "crates/foo/DESIGN.md.tmpl",
+            "base\nbranch design\ntrunk design\n",
+        );
+        r.git(&["add", "mock/crates/foo/src/lib.rs", "mock/crates/foo/DESIGN.md.tmpl"]);
+    }
+
+    /// The case three helpers lost an hour each to: a merge of trunk into a
+    /// branch, stopping on a design and on source, settled by keeping both
+    /// sides. The result is no parent's and is not git's markers, and it
+    /// authored nothing.
+    #[test]
+    fn a_conflict_settled_from_both_sides_in_a_design_and_in_source_reports_neither() {
+        let r = Repo::new("settled");
+        conflicted_design_and_source(&r);
+
+        let files = r.walk();
+        assert!(
+            files.is_empty(),
+            "keeping both parents' lines is not an edit, yet the walk reported {files:?}"
+        );
+    }
+
+    /// The negative beside it: one hand-written source line beyond both parents
+    /// is still reported, and the design that added none still is not.
+    #[test]
+    fn one_hand_written_source_line_beyond_both_parents_is_still_reported() {
+        let r = Repo::new("settled-plus-one");
+        conflicted_design_and_source(&r);
+        r.write(
+            "crates/foo/src/lib.rs",
+            "pub fn a() {}\npub fn branch() {}\npub fn trunk() {}\npub fn mine() {}\n",
+        );
+        r.git(&["add", "mock/crates/foo/src/lib.rs"]);
+
+        let names: Vec<String> = r.walk().into_iter().map(|(f, _)| f).collect();
+        assert_eq!(names, vec!["crates/foo/src/lib.rs".to_string()]);
+    }
+
     /// And off a merge the walk is exactly what it always was, so the filter
     /// cannot be excusing anything in an ordinary commit.
     #[test]

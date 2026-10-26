@@ -14,12 +14,16 @@
 //!
 //! What separates the two is content. A file the merge resolved by taking one
 //! side is byte-identical to that side, and nobody authored anything. A file
-//! somebody resolved by hand matches neither parent, and that IS an authored
-//! change which the gate should still hold.
+//! git combined from both sides is what git's own three-way merge produces. A
+//! conflict settled by keeping lines of both sides holds only lines the parents
+//! carry and keeps every line they all carry. A file with a line neither parent
+//! carries, or without a line every parent carries, was written or cut by
+//! somebody, and that IS an authored change which the gate should still hold.
 //!
-//! So the excuse is per file and is exactly that test. It never fires outside a
-//! merge, and it never fires on a hand resolution.
+//! So the excuse is per file and is exactly those tests. It never fires outside
+//! a merge, and it never fires on a hand-written line.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -113,6 +117,61 @@ impl Merge {
             return true;
         }
         self.is_the_auto_merge(dir, file, staged.as_deref())
+            || self.recombines_the_parents(dir, file, staged.is_some())
+    }
+
+    /// Whether the staged content only recombines what the parents carried.
+    ///
+    /// The tests above know two shapes of merge result: one parent whole, and
+    /// git's own combination. A conflict settled the way the workspace settles
+    /// them, by keeping both sides' lines, is neither, so it read as authored
+    /// and every phase refused it. Three helpers lost an hour each to exactly
+    /// that.
+    ///
+    /// What a merge adds beyond its parents is the question, and it is asked of
+    /// the lines. Content counts as inherited when
+    ///
+    /// - every staged line is a line one of the parents carries, so nothing
+    ///   was typed, and
+    /// - every line ALL the parents carry is still staged, so nothing common
+    ///   was deleted. A line only some parents carry may go: dropping it is the
+    ///   choice between the sides a conflict asks for, and the side that lacks
+    ///   it is the one that removed it.
+    ///
+    /// **The perimeter is a set of lines, not a sequence.** Reordering lines,
+    /// or repeating one a parent carries, passes. That recombines parent
+    /// content and adds none, which is the thing the gates exist to hold; the
+    /// order of what two reviewed branches wrote is not a new edit.
+    ///
+    /// It needs no merge base, so an octopus is served too. A path absent in
+    /// the index is the deletion case, settled by the byte test above, and
+    /// absent here (`has_staged` false) so that deleting a file every parent
+    /// carries stays authored. A parent lacking the path carries no lines,
+    /// which empties the common set: the file was added on one side, and
+    /// nothing is then required to remain.
+    fn recombines_the_parents(&self, dir: &Path, file: &str, has_staged: bool) -> bool {
+        if !has_staged {
+            return false;
+        }
+        let Some(staged) = git_bytes(dir, &["show", &format!(":./{file}")]) else {
+            return false;
+        };
+        let lines_of = |body: &[u8]| -> HashSet<Vec<u8>> {
+            body.split(|b| *b == b'\n').map(<[u8]>::to_vec).collect()
+        };
+        let staged = lines_of(&staged);
+        let mut union: HashSet<Vec<u8>> = HashSet::new();
+        let mut common: Option<HashSet<Vec<u8>>> = None;
+        for parent in &self.parents {
+            let body = git_bytes(dir, &["show", &format!("{parent}:./{file}")]).unwrap_or_default();
+            let lines = lines_of(&body);
+            union.extend(lines.iter().cloned());
+            common = Some(match common {
+                None => lines,
+                Some(c) => c.intersection(&lines).cloned().collect(),
+            });
+        }
+        staged.is_subset(&union) && common.is_none_or(|c| c.is_subset(&staged))
     }
 
     /// Whether the staged content is exactly what git's own three-way merge
@@ -493,18 +552,13 @@ mod tests {
     }
 
     #[test]
-    fn an_octopus_does_not_reach_the_reproduction_and_keeps_the_weaker_answer() {
-        // Pins the two-parent restriction, and records what it costs. An
-        // octopus has no single merge base, so there is nothing to reproduce
-        // from and only the byte comparison answers. A file it combined out of
-        // hunks from two parents matches none of them and is therefore reported
-        // as an authored change, which is the very case the reproduction
-        // exists to stop reporting.
-        //
-        // The assertion is the current limitation rather than the wanted
-        // behaviour, deliberately: without it, dropping the restriction and
-        // feeding an octopus its first two parents leaves every test green,
-        // and that is a merge base nobody chose.
+    fn an_octopus_is_served_by_the_line_test_and_not_by_the_reproduction() {
+        // An octopus has no single merge base, so the three-way reproduction
+        // does not run for it and only the byte comparison and the line test
+        // answer. A file it combined out of hunks from two parents matches none
+        // of them byte for byte, and is inherited because every line it holds
+        // is a parent's and every line all three parents carry is still there.
+        // The negative beside it adds one line no parent carries.
         let r = Repo::new("octopus-hunks");
         r.write(
             "crates/foo/src/lib.rs",
@@ -535,8 +589,18 @@ mod tests {
         let m = Merge::detect(&r.mock());
         assert_eq!(m.parents.len(), 3, "HEAD plus both merged heads");
         assert!(
+            m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            "an octopus combined parent lines and wrote none"
+        );
+
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\nONE\nthree\nfour\nfive\nsix\nTWO\nSMUGGLED\n",
+        );
+        r.git(&["add", "mock/crates/foo/src/lib.rs"]);
+        assert!(
             !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
-            "an octopus reached the two-parent reproduction, which has no base to stand on"
+            "a line no parent of the octopus carried rode in"
         );
     }
 
@@ -577,6 +641,72 @@ mod tests {
         assert!(
             !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
             "a line nobody committed on either side rode in under a merge"
+        );
+    }
+
+    /// A conflict consolidated by keeping both sides' lines: the way the
+    /// workspace's rule says a conflict is settled, and the way no byte test can
+    /// excuse, since the result matches neither parent and is not git's markers.
+    fn conflicted_on_one_line(r: &Repo) {
+        r.write("crates/foo/src/lib.rs", "one\ntwo\nthree\n");
+        r.commit("base");
+        r.git(&["switch", "-q", "-c", "feature"]);
+        r.write("crates/foo/src/lib.rs", "one\nBRANCH\nthree\n");
+        r.commit("on the branch");
+        r.git(&["switch", "-q", "trunk"]);
+        r.write("crates/foo/src/lib.rs", "one\nTRUNK\nthree\n");
+        r.commit("on trunk");
+        r.git(&["switch", "-q", "feature"]);
+        assert!(
+            !r.git_may_fail(&["merge", "--no-commit", "--no-ff", "trunk"]),
+            "the fixture was meant to conflict"
+        );
+    }
+
+    #[test]
+    fn a_conflict_consolidated_from_both_sides_lines_is_inherited() {
+        let r = Repo::new("consolidated");
+        conflicted_on_one_line(&r);
+        r.write("crates/foo/src/lib.rs", "one\nBRANCH\nTRUNK\nthree\n");
+        r.git(&["add", "mock/crates/foo/src/lib.rs"]);
+
+        let m = Merge::detect(&r.mock());
+        assert!(
+            m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            "keeping both parents' lines authors nothing, and a round could not carry it"
+        );
+    }
+
+    #[test]
+    fn a_consolidation_with_one_line_beyond_both_parents_is_not_inherited() {
+        let r = Repo::new("consolidated-plus-one");
+        conflicted_on_one_line(&r);
+        r.write(
+            "crates/foo/src/lib.rs",
+            "one\nBRANCH\nTRUNK\nSMUGGLED\nthree\n",
+        );
+        r.git(&["add", "mock/crates/foo/src/lib.rs"]);
+
+        let m = Merge::detect(&r.mock());
+        assert!(
+            !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            "a line neither parent carried rode in with the consolidation"
+        );
+    }
+
+    #[test]
+    fn a_consolidation_that_drops_a_line_every_parent_carries_is_not_inherited() {
+        // no side removed `three`, so removing it is an edit and not a choice
+        // between the sides.
+        let r = Repo::new("consolidated-minus-one");
+        conflicted_on_one_line(&r);
+        r.write("crates/foo/src/lib.rs", "one\nBRANCH\nTRUNK\n");
+        r.git(&["add", "mock/crates/foo/src/lib.rs"]);
+
+        let m = Merge::detect(&r.mock());
+        assert!(
+            !m.inherited(&r.mock(), "crates/foo/src/lib.rs"),
+            "a line both parents carried was deleted by hand"
         );
     }
 
