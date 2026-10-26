@@ -452,3 +452,49 @@ fn a_round_directory_is_a_stamp_with_at_most_a_numeric_suffix() {
         assert!(!is_round_dir(name), "{name:?}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// A merge in flight
+// ---------------------------------------------------------------------------
+
+/// The seal reads the state of the round, off the tree and `HEAD`, and not the
+/// staged difference, so it has no staged-change walk for the merge filter to
+/// apply to: a merge that recombines a changelist is judged on the result like
+/// any other, and passes while the result is sound. Pinned so a change that
+/// starts to read the index finds this.
+#[test]
+fn a_changelist_recombined_in_a_merge_is_judged_on_what_it_holds() {
+    let dir = repo();
+    let root = dir.path();
+    let cl = "202609181236_changelist.src.md";
+    put(root, cl, "# src changelist\n\n## CHANGE: one\n\n## CHANGE: two\n");
+    commit_all(root);
+    git(root, &["branch", "-M", "trunk"]);
+    git(root, &["switch", "-q", "-c", "feature"]);
+    put(root, cl, "# src changelist\n\n## CHANGE: one\n\n## CHANGE: BRANCH\n");
+    git(root, &["commit", "-q", "-am", "branch", "--no-gpg-sign"]);
+    git(root, &["switch", "-q", "trunk"]);
+    put(root, cl, "# src changelist\n\n## CHANGE: one\n\n## CHANGE: TRUNK\n");
+    git(root, &["commit", "-q", "-am", "trunk", "--no-gpg-sign"]);
+    git(root, &["switch", "-q", "feature"]);
+    let merged = Command::new("git")
+        .args(["merge", "--no-commit", "--no-ff", "trunk"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(!merged.status.success(), "the fixture was meant to conflict");
+
+    put(
+        root,
+        cl,
+        "# src changelist\n\n## CHANGE: one\n\n## CHANGE: BRANCH\n\n## CHANGE: TRUNK\n",
+    );
+    git(root, &["add", "-A"]);
+    assert!(check(root).is_empty(), "{:?}", check(root));
+
+    // and a changelist the merge left holding nothing is still refused: the
+    // seal is not excused by the merge, it never needed to be
+    put(root, "202609181237_changelist.src.lock.md", TEMPLATE);
+    git(root, &["add", "-A"]);
+    assert!(!check(root).is_empty());
+}

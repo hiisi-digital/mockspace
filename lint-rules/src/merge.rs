@@ -29,6 +29,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::merge_lines::Verdict;
+
 /// The parents of a merge in progress, or nothing when no merge is in flight.
 ///
 /// Cheap to construct and constructed once per lint run, because every query
@@ -155,7 +157,31 @@ impl Merge {
             })
             .collect();
         let parents: Vec<Vec<&[u8]>> = bodies.iter().map(|b| lines_of(b)).collect();
-        crate::merge_lines::recombines(&lines_of(&staged), &parents)
+        // The merge base of all the parents, which bounds how often a line may
+        // repeat. Without one (unrelated histories) the file counts as added.
+        let base = self.base_body(dir, file);
+        match crate::merge_lines::recombines(&lines_of(&staged), &parents, &lines_of(&base)) {
+            Verdict::Recombines => true,
+            Verdict::Authored => false,
+            Verdict::TooLarge => {
+                eprintln!(
+                    "mockspace: {file} is too large for the merge line test to check in time, so \
+                     the merge is not excused for it and it is gated as an authored change"
+                );
+                false
+            },
+        }
+    }
+
+    /// The content of `file` at the merge base of every parent, empty where there
+    /// is none or the path is absent there.
+    fn base_body(&self, dir: &Path, file: &str) -> Vec<u8> {
+        let mut args = vec!["merge-base", "--octopus"];
+        args.extend(self.parents.iter().map(String::as_str));
+        let Some(base) = git(dir, &args) else {
+            return Vec::new();
+        };
+        git_bytes(dir, &["show", &format!("{}:./{file}", base.trim())]).unwrap_or_default()
     }
 
     /// Whether the staged content is exactly what git's own three-way merge
@@ -266,12 +292,16 @@ impl Merge {
     }
 }
 
-/// The object id `content` would have as a blob, without writing it.
 /// The lines of `body`, split on newlines, the last one empty after a final newline.
+/// No lines at all for an empty body, which is a path a side does not have.
 fn lines_of(body: &[u8]) -> Vec<&[u8]> {
+    if body.is_empty() {
+        return Vec::new();
+    }
     body.split(|b| *b == b'\n').collect()
 }
 
+/// The object id `content` would have as a blob, without writing it.
 fn git_hash_object(dir: &Path, content: &[u8]) -> Option<String> {
     let mut child = Command::new("git")
         .args(["hash-object", "--stdin"])
@@ -696,7 +726,6 @@ mod tests {
         );
     }
 
-
     /// Like `conflicted_on_one_line`, with the three bodies given.
     fn conflicted_with(r: &Repo, base: &str, branch: &str, trunk: &str) {
         r.write("crates/foo/src/lib.rs", base);
@@ -763,6 +792,50 @@ mod tests {
             !staged_is_inherited(&r, "one\nBRANCH\nTRUNK\nthree\nthree\nthree\n"),
             "a line both parents carry once appears three times"
         );
+    }
+
+    #[test]
+    fn a_hand_typed_copy_of_a_line_both_parents_carry_once_is_not_inherited() {
+        // the base has `x += 1;` once and neither side added a second copy, so
+        // a second one anywhere is typed, whichever side's lines it sits near
+        let probe = |name: &str, resolution: &str| {
+            let r = Repo::new(name);
+            conflicted_with(
+                &r,
+                "head\nx += 1;\nmid\ntail\n",
+                "head\nx += 1;\nours\ntail\n",
+                "head\nx += 1;\ntheirs\ntail\n",
+            );
+            staged_is_inherited(&r, resolution)
+        };
+        assert!(
+            probe("probe-control", "head\nx += 1;\nours\ntheirs\ntail\n"),
+            "the control: both sides' lines, nothing else"
+        );
+        assert!(
+            !probe("probe-before", "head\nx += 1;\nx += 1;\nours\ntheirs\ntail\n"),
+            "a copy typed beside the original"
+        );
+        assert!(
+            !probe("probe-between", "head\nx += 1;\nours\nx += 1;\ntheirs\ntail\n"),
+            "a copy typed between the sides' lines"
+        );
+    }
+
+    #[test]
+    fn a_blank_separator_each_side_added_may_both_stand() {
+        // the base has no blank line; each side added one before its section
+        let r = Repo::new("blank-each");
+        conflicted_with(
+            &r,
+            "head\n",
+            "head\n\nbranch section\n",
+            "head\n\ntrunk section\n",
+        );
+        assert!(staged_is_inherited(
+            &r,
+            "head\n\nbranch section\n\ntrunk section\n"
+        ));
     }
 
     #[test]

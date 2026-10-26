@@ -10,9 +10,13 @@
 //!
 //! Four tests, all of which must hold:
 //!
-//! - **Counted at the top.** A line may appear at most as many times as the
-//!   parents carry it together. A third copy, or a copy of a line only one
-//!   parent had once, was typed.
+//! - **Counted at the top, by the base.** A line may appear at most
+//!   `base + Σ(parent − base)` times, never fewer than the most any one parent
+//!   carries: each side's additions to the base count once. Two sides that each
+//!   add a blank separator line both stand, and a hand-typed second copy of a
+//!   line both parents carry once does not, since neither side added it. With
+//!   no base (a file added on both sides) the base counts are zero and the bound
+//!   is the sum of the parents.
 //! - **Counted at the bottom.** A line appears at least as many times as the
 //!   parent that carries it least. Deleting one of two identical lines every
 //!   parent carries twice is an edit, where deleting a line only some parents
@@ -28,59 +32,93 @@
 //!   them. The interleaving above alone cannot see a swap of two lines the
 //!   parents share, because either parent could be said to have supplied either.
 //!
-//! **Bounds of the sequence test.** It is a greedy longest-common-subsequence
-//! partition tried from every starting parent, so it can refuse a rare
-//! consolidation that only a different partition explains; refusing is the safe
-//! direction and the gate says so. It is tried for up to four parents, and for
-//! a middle section (after the shared prefix and suffix are stripped) of at most
-//! [`CELL_CAP`] cells per parent; past either bound only the two counted tests
-//! apply.
+//! **Bounds of the sequence test, and none of them lets a file through
+//! unchecked.** It is a greedy longest-common-subsequence split (linear space,
+//! quadratic time) tried from every starting parent, so it can refuse a rare
+//! consolidation that only a different split explains; refusing is the safe
+//! direction. With up to four parents every ordering of the parents is tried
+//! (24 for four); with more only the given order and its reverse are, so a
+//! larger octopus is refused where another order would explain it. A file whose
+//! stripped middle is past [`TIME_CAP`] cells for one parent is not skipped but
+//! reported [`Verdict::TooLarge`], which the caller refuses with a message
+//! saying why.
 
 use std::collections::HashMap;
 
-/// The largest dynamic-programming table the sequence test builds, in cells.
-const CELL_CAP: usize = 4_000_000;
+/// The most cells (lines of the staged middle times lines of the parent's) one
+/// longest-common-subsequence pass will work through. The time is the bound,
+/// since the space is linear: measured at about half a second in a release build
+/// (several in a debug one), and past it the file is refused rather than passed
+/// unchecked.
+const TIME_CAP: usize = 100_000_000;
 
-/// The most parents whose orders are tried; an octopus beyond it gets the
-/// counted tests only.
-const MAX_ORDERED_PARENTS: usize = 4;
+/// The most parents whose every ordering is tried.
+const MAX_PERMUTED_PARENTS: usize = 4;
+
+/// What the line tests found.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// Nothing the parents did not carry, in order.
+    Recombines,
+    /// A line was typed, repeated, deleted or moved.
+    Authored,
+    /// The order test would take longer than [`TIME_CAP`] allows, so the file
+    /// is not judged inherited.
+    TooLarge,
+}
 
 /// Whether `staged` only recombines the lines of `parents`, per the module doc.
-pub(crate) fn recombines<'a>(staged: &[&'a [u8]], parents: &[Vec<&'a [u8]>]) -> bool {
+/// `base` is the merge base's lines, empty where there is none.
+pub(crate) fn recombines<'a>(
+    staged: &[&'a [u8]],
+    parents: &[Vec<&'a [u8]>],
+    base: &[&'a [u8]],
+) -> Verdict {
     let mut ids: HashMap<&'a [u8], u32> = HashMap::new();
     let mut id_of = |line: &'a [u8]| -> u32 {
         let next = ids.len() as u32;
         *ids.entry(line).or_insert(next)
     };
     let staged: Vec<u32> = staged.iter().map(|l| id_of(*l)).collect();
+    let base: Vec<u32> = base.iter().map(|l| id_of(*l)).collect();
     let parents: Vec<Vec<u32>> = parents
         .iter()
         .map(|p| p.iter().map(|l| id_of(*l)).collect())
         .collect();
-    counted(&staged, &parents)
-        && anchors_keep_their_order(&staged, &parents)
-        && in_sequence(&staged, &parents)
+    if !counted(&staged, &parents, &base) || !anchors_keep_their_order(&staged, &parents) {
+        return Verdict::Authored;
+    }
+    match in_sequence(&staged, &parents) {
+        Ok(true) => Verdict::Recombines,
+        Ok(false) => Verdict::Authored,
+        Err(TooLarge) => Verdict::TooLarge,
+    }
+}
+
+fn tally(lines: &[u32]) -> HashMap<u32, usize> {
+    let mut t: HashMap<u32, usize> = HashMap::new();
+    for l in lines {
+        *t.entry(*l).or_default() += 1;
+    }
+    t
 }
 
 /// The tests that only count.
-fn counted(staged: &[u32], parents: &[Vec<u32>]) -> bool {
-    let tally = |lines: &[u32]| {
-        let mut t: HashMap<u32, usize> = HashMap::new();
-        for l in lines {
-            *t.entry(*l).or_default() += 1;
-        }
-        t
-    };
-    let staged = tally(staged);
+fn counted(staged: &[u32], parents: &[Vec<u32>], base: &[u32]) -> bool {
+    let (staged, base) = (tally(staged), tally(base));
     let parents: Vec<HashMap<u32, usize>> = parents.iter().map(|p| tally(p)).collect();
-    let carried = |id: u32| parents.iter().map(move |p| p.get(&id).copied().unwrap_or(0));
-    staged
-        .iter()
-        .all(|(id, n)| *n <= carried(*id).sum::<usize>())
+    let in_parent = |id: u32| parents.iter().map(move |p| p.get(&id).copied().unwrap_or(0));
+    let top = |id: u32| -> usize {
+        let b = base.get(&id).copied().unwrap_or(0) as i64;
+        let added: i64 = in_parent(id).map(|n| n as i64 - b).sum();
+        let by_base = (b + added).max(0) as usize;
+        by_base.max(in_parent(id).max().unwrap_or(0))
+    };
+    staged.iter().all(|(id, n)| *n <= top(*id))
         && parents
             .iter()
             .flat_map(|p| p.keys())
-            .all(|id| staged.get(id).copied().unwrap_or(0) >= carried(*id).min().unwrap_or(0))
+            .all(|id| staged.get(id).copied().unwrap_or(0) >= in_parent(*id).min().unwrap_or(0))
 }
 
 /// Whether the lines every parent and the staged content carry exactly once
@@ -89,10 +127,7 @@ fn counted(staged: &[u32], parents: &[Vec<u32>]) -> bool {
 /// either line.
 fn anchors_keep_their_order(staged: &[u32], parents: &[Vec<u32>]) -> bool {
     let once = |lines: &[u32]| {
-        let mut t: HashMap<u32, usize> = HashMap::new();
-        for l in lines {
-            *t.entry(*l).or_default() += 1;
-        }
+        let mut t = tally(lines);
         t.retain(|_, n| *n == 1);
         t
     };
@@ -108,78 +143,99 @@ fn anchors_keep_their_order(staged: &[u32], parents: &[Vec<u32>]) -> bool {
     parents.iter().all(|p| ordered(p) == spine)
 }
 
+/// The sequence test would pass [`TIME_CAP`].
+struct TooLarge;
+
 /// Whether the staged lines split into one subsequence per parent.
-fn in_sequence(staged: &[u32], parents: &[Vec<u32>]) -> bool {
-    if parents.len() > MAX_ORDERED_PARENTS {
-        return true;
-    }
+fn in_sequence(staged: &[u32], parents: &[Vec<u32>]) -> Result<bool, TooLarge> {
     let mut order: Vec<usize> = (0..parents.len()).collect();
-    let mut verdict = false;
+    if parents.len() > MAX_PERMUTED_PARENTS {
+        let given = leaves_nothing(staged, parents, &order)?;
+        order.reverse();
+        return Ok(given || leaves_nothing(staged, parents, &order)?);
+    }
+    let mut verdict: Result<bool, TooLarge> = Ok(false);
     permute(&mut order, 0, &mut |order| {
-        if !verdict {
-            verdict = leaves_nothing(staged, parents, order);
+        if !matches!(verdict, Ok(false)) {
+            return;
         }
+        verdict = leaves_nothing(staged, parents, order);
     });
     verdict
 }
 
 /// Takes each parent's longest common subsequence out of what remains, in
-/// `order`, and reports whether nothing is left. `true` where the table would
-/// pass [`CELL_CAP`], because the sequence test is then not run.
-fn leaves_nothing(staged: &[u32], parents: &[Vec<u32>], order: &[usize]) -> bool {
+/// `order`, and reports whether nothing is left.
+fn leaves_nothing(staged: &[u32], parents: &[Vec<u32>], order: &[usize]) -> Result<bool, TooLarge> {
     let mut remaining: Vec<u32> = staged.to_vec();
     for &p in order {
-        match take_common(&remaining, &parents[p]) {
-            Some(rest) => remaining = rest,
-            None => return true,
-        }
+        remaining = take_common(&remaining, &parents[p])?;
     }
-    remaining.is_empty()
+    Ok(remaining.is_empty())
 }
 
-/// `lines` without a longest common subsequence of `lines` and `with`, or
-/// `None` past the cell cap.
-fn take_common(lines: &[u32], with: &[u32]) -> Option<Vec<u32>> {
+/// `lines` without a longest common subsequence of `lines` and `with`.
+fn take_common(lines: &[u32], with: &[u32]) -> Result<Vec<u32>, TooLarge> {
     let head = lines.iter().zip(with).take_while(|(a, b)| a == b).count();
-    let tail = lines[head..]
+    let tail = lines[head ..]
         .iter()
         .rev()
-        .zip(with[head..].iter().rev())
+        .zip(with[head ..].iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
-    let a = &lines[head..lines.len() - tail];
-    let b = &with[head..with.len() - tail];
+    let a = &lines[head .. lines.len() - tail];
+    let b = &with[head .. with.len() - tail];
     if a.is_empty() || b.is_empty() {
-        return Some(a.to_vec());
+        return Ok(a.to_vec());
     }
-    let width = b.len() + 1;
-    if (a.len() + 1).saturating_mul(width) > CELL_CAP {
-        return None;
+    if a.len().saturating_mul(b.len()) > TIME_CAP {
+        return Err(TooLarge);
     }
-    let mut table = vec![0u32; (a.len() + 1) * width];
-    for i in (0..a.len()).rev() {
-        for j in (0..b.len()).rev() {
-            table[i * width + j] = if a[i] == b[j] {
-                table[(i + 1) * width + j + 1] + 1
-            } else {
-                table[(i + 1) * width + j].max(table[i * width + j + 1])
-            };
+    let mut matched = vec![false; a.len()];
+    mark_common(a, b, 0, &mut matched);
+    Ok(a.iter()
+        .zip(&matched)
+        .filter(|(_, m)| !**m)
+        .map(|(l, _)| *l)
+        .collect())
+}
+
+/// The last row of the longest-common-subsequence table of `a` against every
+/// prefix of `b`: `row[j]` is the length for `b[.. j]`.
+fn lcs_row(a: &[u32], b: impl Iterator<Item = u32> + Clone) -> Vec<u32> {
+    let width = b.clone().count() + 1;
+    let mut row = vec![0u32; width];
+    for x in a {
+        let mut diagonal = 0;
+        for (j, y) in b.clone().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = if *x == y { diagonal + 1 } else { above.max(row[j]) };
+            diagonal = above;
         }
     }
-    let (mut i, mut j) = (0, 0);
-    let mut rest = Vec::new();
-    while i < a.len() {
-        if j < b.len() && a[i] == b[j] {
-            i += 1;
-            j += 1;
-        } else if j < b.len() && table[i * width + j + 1] >= table[(i + 1) * width + j] {
-            j += 1;
-        } else {
-            rest.push(a[i]);
-            i += 1;
-        }
+    row
+}
+
+/// Hirschberg's split: marks in `matched` (offset by `at`) the entries of `a`
+/// that make up one longest common subsequence with `b`, in space linear in the
+/// two.
+fn mark_common(a: &[u32], b: &[u32], at: usize, matched: &mut [bool]) {
+    if a.is_empty() || b.is_empty() {
+        return;
     }
-    Some(rest)
+    if a.len() == 1 {
+        matched[at] = b.contains(&a[0]);
+        return;
+    }
+    let mid = a.len() / 2;
+    let upper = lcs_row(&a[.. mid], b.iter().copied());
+    let lower_a: Vec<u32> = a[mid ..].iter().rev().copied().collect();
+    let lower = lcs_row(&lower_a, b.iter().rev().copied());
+    let split = (0 ..= b.len())
+        .max_by_key(|j| upper[*j] + lower[b.len() - *j])
+        .unwrap_or(0);
+    mark_common(&a[.. mid], &b[.. split], at, matched);
+    mark_common(&a[mid ..], &b[split ..], at + mid, matched);
 }
 
 /// Every ordering of `items[from..]`, handed to `visit`.
@@ -188,7 +244,7 @@ fn permute(items: &mut Vec<usize>, from: usize, visit: &mut impl FnMut(&[usize])
         visit(items);
         return;
     }
-    for i in from..items.len() {
+    for i in from .. items.len() {
         items.swap(from, i);
         permute(items, from + 1, visit);
         items.swap(from, i);
@@ -200,47 +256,132 @@ mod tests {
     use super::*;
 
     fn split(s: &str) -> Vec<&[u8]> {
+        if s.is_empty() {
+            return Vec::new();
+        }
         s.split('\n').map(str::as_bytes).collect()
     }
 
-    fn ok(staged: &str, parents: &[&str]) -> bool {
+    fn verdict(staged: &str, base: &str, parents: &[&str]) -> Verdict {
         let parents: Vec<Vec<&[u8]>> = parents.iter().map(|p| split(p)).collect();
-        recombines(&split(staged), &parents)
+        recombines(&split(staged), &parents, &split(base))
+    }
+
+    fn ok(staged: &str, base: &str, parents: &[&str]) -> bool {
+        verdict(staged, base, parents) == Verdict::Recombines
     }
 
     #[test]
     fn a_blank_line_each_side_brought_may_both_stand() {
-        // two appended sections, each with its own separator
+        // two appended sections, each with its own separator, over a base with
+        // none: the control for the base bound
         assert!(ok(
             "x\n\n## A\nbody\n\n## B\nbody\n",
+            "x\n",
             &["x\n\n## A\nbody\n", "x\n\n## B\nbody\n"],
         ));
     }
 
     #[test]
-    fn an_octopus_may_repeat_a_line_as_often_as_the_parents_carry_it_together() {
-        let parents = ["h\nx\n", "h\nx\n", "h\nx\n"];
-        assert!(ok("h\nx\nx\nx\n", &parents));
-        assert!(!ok("h\nx\nx\nx\nx\n", &parents));
+    fn a_hand_typed_copy_of_a_line_both_parents_carry_once_is_refused_at_either_spot() {
+        // the base has the line once and neither side added a second
+        let base = "head\nx += 1;\nmid\ntail\n";
+        let parents = ["head\nx += 1;\nours\ntail\n", "head\nx += 1;\ntheirs\ntail\n"];
+        assert!(ok("head\nx += 1;\nours\ntheirs\ntail\n", base, &parents), "the control");
+        assert!(!ok("head\nx += 1;\nx += 1;\nours\ntheirs\ntail\n", base, &parents));
+        assert!(!ok("head\nx += 1;\nours\nx += 1;\ntheirs\ntail\n", base, &parents));
     }
 
     #[test]
-    fn five_parents_get_the_counted_tests_only() {
+    fn a_line_both_sides_added_may_stand_twice_but_not_three_times() {
+        // each side added its own copy to a base without it, as git's merge
+        // would leave them
+        let parents = ["h\nx\n", "h\nx\n"];
+        assert!(ok("h\nx\nx\n", "h\n", &parents));
+        assert!(!ok("h\nx\nx\nx\n", "h\n", &parents));
+    }
+
+    #[test]
+    fn an_octopus_is_bounded_by_the_base_and_what_each_parent_added() {
+        let parents = ["h\nx\n", "h\nx\n", "h\nx\n"];
+        assert!(ok("h\nx\nx\nx\n", "h\n", &parents));
+        assert!(!ok("h\nx\nx\nx\nx\n", "h\n", &parents));
+        // the base already carried it once, so the parents added nothing
+        assert!(!ok("h\nx\nx\n", "h\nx\n", &parents));
+    }
+
+    #[test]
+    fn with_no_base_the_bound_is_what_the_parents_carry_together() {
+        assert!(ok("h\nx\nx\n", "", &["h\nx\n", "h\nx\n"]));
+        assert!(!ok("h\nx\nx\nx\n", "", &["h\nx\n", "h\nx\n"]));
+    }
+
+    #[test]
+    fn more_than_four_parents_are_tried_in_the_given_order_and_its_reverse_only() {
         let first = "x\na\na\nb\nb\n";
         let swapped = "x\nb\nb\na\na\n";
-        // repeats put in the other order, which the sequence test refuses,
-        // pass past its bound
-        assert!(!ok(swapped, &[first, "y"]));
-        assert!(ok(swapped, &[first, "y", "y", "y", "y"]));
-        assert!(!ok("x\nb\nb\na\na\nzzz\n", &[first, "y", "y", "y", "y"]));
+        let five = [first, "y", "y", "y", "y"];
+        assert!(!ok(swapped, "", &[first, "y"]));
+        assert!(!ok(swapped, "", &five), "no ordering explains the swap, and no fail-open");
+        // a consolidation with one line from each parent, in the given order or not
+        let each = ["h\n1\n", "h\n2\n", "h\n3\n", "h\n4\n", "h\n5\n"];
+        assert!(ok("h\n1\n2\n3\n4\n5\n", "h\n", &each));
+        assert!(ok("h\n5\n4\n3\n2\n1\n", "h\n", &each));
+        // and a line moved within the one parent that has several is refused
+        let two = ["h\n1\n2\n", "h\n3\n", "h\n4\n", "h\n5\n", "h\n6\n"];
+        assert!(ok("h\n1\n2\n3\n4\n5\n6\n", "h\n", &two));
+        assert!(!ok("h\n2\n1\n3\n4\n5\n6\n", "h\n", &two));
     }
 
     #[test]
-    fn a_table_past_the_cap_is_left_to_the_counted_tests() {
-        let side = |tag: &str| -> String { (0..2100).map(|i| format!("{tag}{i}\n")).collect() };
+    fn four_parents_try_every_ordering() {
+        let each = ["h\n1\n", "h\n2\n", "h\n3\n", "h\n4\n"];
+        assert!(ok("h\n3\n1\n4\n2\n", "h\n", &each));
+    }
+
+    #[test]
+    fn a_table_past_the_time_cap_is_refused_and_not_passed() {
+        let side = |tag: &str| -> String { (0 .. 25_000).map(|i| format!("{tag}{i}\n")).collect() };
         let (a, b) = (side("a"), side("b"));
+        // the first side reversed puts nothing in the first side's order
         let reversed: String = a.lines().rev().map(|l| format!("{l}\n")).collect();
-        assert!(take_common(&[1; 2100], &[2; 2100]).is_none());
-        assert!(ok(&format!("{reversed}{b}"), &[&a, &b]));
+        assert_eq!(
+            verdict(&format!("{reversed}{b}"), "", &[&a, &b]),
+            Verdict::TooLarge
+        );
+    }
+
+    #[test]
+    fn the_split_longest_common_subsequence_is_one_and_a_longest() {
+        // against a plain table, over many small inputs from a fixed generator
+        let mut seed = 0x2545_f491_u64;
+        let mut next = move |m: u64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) % m
+        };
+        for _ in 0 .. 400 {
+            let a: Vec<u32> = (0 .. next(14)).map(|_| next(4) as u32).collect();
+            let b: Vec<u32> = (0 .. next(14)).map(|_| next(4) as u32).collect();
+            let mut table = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+            for i in 0 .. a.len() {
+                for j in 0 .. b.len() {
+                    table[i + 1][j + 1] = if a[i] == b[j] {
+                        table[i][j] + 1
+                    } else {
+                        table[i][j + 1].max(table[i + 1][j])
+                    };
+                }
+            }
+            let mut matched = vec![false; a.len()];
+            mark_common(&a, &b, 0, &mut matched);
+            let taken: Vec<u32> = a.iter().zip(&matched).filter(|(_, m)| **m).map(|(x, _)| *x).collect();
+            assert_eq!(taken.len(), table[a.len()][b.len()], "{a:?} against {b:?}");
+            let mut rest = b.iter();
+            assert!(
+                taken.iter().all(|x| rest.any(|y| y == x)),
+                "{taken:?} is not a subsequence of {b:?}"
+            );
+        }
     }
 }
+

@@ -110,6 +110,18 @@ impl RepoLint for CanonNotWhilePanelOpen {
                 Severity::ADVISORY,
             )];
         };
+        // A merge brings in canon somebody else admitted, and a recombined
+        // conflict in it authors nothing: the panel did not write those
+        // lines. Only what the merge itself did not bring in is the panel's.
+        let merge = crate::merge::Merge::detect(ctx.repo_root);
+        let staged: Vec<String> = if merge.in_progress() {
+            staged
+                .into_iter()
+                .filter(|file| !merge.inherited(ctx.repo_root, file))
+                .collect()
+        } else {
+            staged
+        };
         let Some(hits) = canon_violation(&staged, ctx.canon_paths, true) else {
             return Vec::new();
         };
@@ -124,5 +136,112 @@ impl RepoLint for CanonNotWhilePanelOpen {
                 hits.join(", ")
             ),
         )]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::path::Path;
+    use std::process::Command;
+
+    use super::*;
+
+    const CANON: &str = "mock/canon/a.md";
+
+    fn git(root: &Path, args: &[&str]) -> bool {
+        Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+            .status
+            .success()
+    }
+
+    fn must(root: &Path, args: &[&str]) {
+        assert!(git(root, args), "git {args:?} failed");
+    }
+
+    fn write(root: &Path, body: &str) {
+        std::fs::create_dir_all(root.join("mock/canon")).unwrap();
+        std::fs::write(root.join(CANON), body).unwrap();
+    }
+
+    fn init() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        must(tmp.path(), &["init", "-q", "-b", "trunk"]);
+        must(tmp.path(), &["config", "user.email", "t@example.com"]);
+        must(tmp.path(), &["config", "user.name", "t"]);
+        must(tmp.path(), &["config", "commit.gpgsign", "false"]);
+        tmp
+    }
+
+    /// A merge in flight over a canon file both sides edited on one line.
+    fn conflicted() -> tempfile::TempDir {
+        let tmp = init();
+        let root = tmp.path();
+        write(root, "one\ntwo\nthree\n");
+        must(root, &["add", "-A"]);
+        must(root, &["commit", "-q", "-m", "base"]);
+        must(root, &["switch", "-q", "-c", "feature"]);
+        write(root, "one\nBRANCH\nthree\n");
+        must(root, &["commit", "-q", "-am", "branch"]);
+        must(root, &["switch", "-q", "trunk"]);
+        write(root, "one\nTRUNK\nthree\n");
+        must(root, &["commit", "-q", "-am", "trunk"]);
+        must(root, &["switch", "-q", "feature"]);
+        assert!(
+            !git(root, &["merge", "--no-commit", "--no-ff", "trunk"]),
+            "the fixture was meant to conflict"
+        );
+        tmp
+    }
+
+    fn findings(root: &Path) -> Vec<LintError> {
+        let (crates, canon, panels) = (
+            BTreeSet::new(),
+            vec!["mock/canon/**".to_string()],
+            vec!["a-panel".to_string()],
+        );
+        CanonNotWhilePanelOpen.check_repo(&RepoContext {
+            mock_dir:    &root.join("mock"),
+            repo_root:   root,
+            all_crates:  &crates,
+            src_dirs:    &[],
+            invocation:  None,
+            canon_paths: &canon,
+            open_panels: &panels,
+            registry:    &Default::default(),
+        })
+    }
+
+    #[test]
+    fn canon_recombined_from_both_sides_in_a_merge_is_not_the_panels() {
+        let tmp = conflicted();
+        write(tmp.path(), "one\nBRANCH\nTRUNK\nthree\n");
+        must(tmp.path(), &["add", CANON]);
+        assert!(findings(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn canon_with_a_line_smuggled_into_a_merge_is_still_refused() {
+        let tmp = conflicted();
+        write(tmp.path(), "one\nBRANCH\nTRUNK\nSMUGGLED\nthree\n");
+        must(tmp.path(), &["add", CANON]);
+        let found = findings(tmp.path());
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].message.contains(CANON), "{}", found[0].message);
+    }
+
+    #[test]
+    fn the_same_edit_with_no_merge_in_flight_is_refused() {
+        let tmp = init();
+        write(tmp.path(), "one\n");
+        must(tmp.path(), &["add", "-A"]);
+        must(tmp.path(), &["commit", "-q", "-m", "base"]);
+        write(tmp.path(), "one\ntwo\n");
+        must(tmp.path(), &["add", CANON]);
+        assert_eq!(findings(tmp.path()).len(), 1);
     }
 }

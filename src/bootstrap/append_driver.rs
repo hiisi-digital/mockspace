@@ -33,11 +33,15 @@ pub(crate) const APPEND_NOTE: &str =
 const PACKAGE_TEMPLATES: [&str; 2] = ["SHAME.md.tmpl", "BACKLOG.md.tmpl"];
 
 /// Whether `declared` can be written as an attribute pattern: no whitespace
-/// (it would end the pattern), not a comment or negation, and no `..`.
+/// (it would end the pattern), not a comment or negation, no `..`, and no
+/// trailing `/`. A pattern ending in a slash matches a directory, and
+/// attributes are not inherited by what is inside one, so the line would govern
+/// nothing (`git check-attr` gives `unspecified` for every file in it).
 fn writable(declared: &str) -> bool {
     !declared.is_empty()
         && !declared.contains(char::is_whitespace)
         && !declared.starts_with(['#', '!'])
+        && !declared.ends_with('/')
         && !declared.split('/').any(|part| part == "..")
 }
 
@@ -71,7 +75,7 @@ pub(crate) fn append_attribute_lines(
         } else {
             eprintln!(
                 "warning: mockspace.toml `append_only` entry {entry:?} cannot be a merge attribute \
-                 (no whitespace, no leading # or !, no ..), so it governs nothing"
+                 (no whitespace, no leading # or !, no .., no trailing /), so it governs nothing"
             );
         }
     }
@@ -88,6 +92,12 @@ pub(crate) fn append_attribute_lines(
 /// declaration joins the one note and a pattern taken out of it leaves the file;
 /// an empty `lines` removes the block. A block that is already right comes back
 /// byte for byte.
+///
+/// **A line is the driver's by what it ends in, not by who wrote it.** Any line
+/// ending `merge=mockspace-append` is part of the block, a hand-written one
+/// included: it is removed when the declaration does not name it and rewritten
+/// into the block when it does. The driver's name is this tool's, so a line
+/// carrying it is not somebody else's to keep.
 pub(crate) fn with_lines(existing: &str, note: &str, lines: &[String]) -> String {
     let driver = format!("merge={APPEND_DRIVER}");
     let managed = |l: &str| l.split_whitespace().last() == Some(driver.as_str());
@@ -172,6 +182,15 @@ mod tests {
     }
 
     #[test]
+    fn a_directory_pattern_is_dropped_because_it_governs_nothing() {
+        let root = Path::new("/r");
+        let declared = ["content/", "content/x.toml"].map(String::from);
+        assert_eq!(append_attribute_lines(root, &[], &declared), vec![format!(
+            "/content/x.toml merge={APPEND_DRIVER}"
+        )]);
+    }
+
+    #[test]
     fn a_pattern_that_cannot_be_written_is_dropped_and_the_rest_stand() {
         let root = Path::new("/r");
         let declared = ["a b", "#c", "!d", "../e", "", "ok.md"].map(String::from);
@@ -220,6 +239,23 @@ mod tests {
         let none = with_lines(&one, APPEND_NOTE, &[]);
         assert_eq!(none, "*.png binary\n*.lock -diff\n", "no entry leaves no block");
         assert_eq!(with_lines(&none, APPEND_NOTE, &[]), none);
+    }
+
+    #[test]
+    fn a_hand_written_line_naming_the_driver_is_the_blocks_to_remove_and_to_rewrite() {
+        let mine = format!("/kept merge={APPEND_DRIVER}");
+        let theirs = format!("/hand merge={APPEND_DRIVER}");
+        let existing = format!("*.png binary\n{theirs}\n");
+        // declared: the hand-written line moves into the one block
+        let with = with_lines(&existing, APPEND_NOTE, &[theirs.clone(), mine.clone()]);
+        assert_eq!(
+            with,
+            format!("*.png binary\n\n{APPEND_NOTE}\n{theirs}\n{mine}\n")
+        );
+        // not declared: it is removed, and the unrelated line stays
+        let without = with_lines(&existing, APPEND_NOTE, &[mine.clone()]);
+        assert_eq!(without, format!("*.png binary\n\n{APPEND_NOTE}\n{mine}\n"));
+        assert!(!without.contains("/hand"), "{without}");
     }
 
     #[test]

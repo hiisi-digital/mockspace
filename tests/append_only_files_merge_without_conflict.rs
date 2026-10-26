@@ -14,7 +14,7 @@
 //! The control carries the rest. With the driver's config removed the same two
 //! branches conflict as text, which is what shows the fixture makes a conflict
 //! at all. And the negative the whole rule rests on: a side that edited a line
-//! already there is not an append, and the file conflicts with git's markers.
+//! already there is not an append, and the file conflicts with conflict markers.
 
 mod common;
 
@@ -153,7 +153,7 @@ fn a_file_no_pattern_names_still_conflicts() {
 }
 
 /// The negative: a side that edited a line already there is not an append, so
-/// the file is git's to merge, with git's markers and nothing selected.
+/// the file is git's to merge, with conflict markers and nothing selected.
 #[test]
 fn one_side_editing_a_base_line_still_conflicts_and_keeps_both_texts() {
     let r = repo();

@@ -23,7 +23,8 @@
 //! in its own order. The moment either side edited or removed a base line, or
 //! the two sides' insertions into one gap share a line (which reads as the same
 //! thing added twice, and keeping both would duplicate it), the file is merged
-//! by `git merge-file` with the same markers git would have written. It never
+//! by `git merge-file`, which writes its conflict markers labelled `ours` and
+//! `theirs` (git's own merge would label them with the branch names). It never
 //! selects a side.
 //!
 //! A file with no base (added on both sides), or one that does not end in a
@@ -43,6 +44,12 @@
 //! both. That is what git's own merge does with it, and the driver does not
 //! second-guess two gaps it cannot tell apart from two intended lines; a
 //! duplicate this makes is for the compiler or a lint of the file's kind to name.
+//!
+//! **The driver reads lines, not keys.** Two sides that each add a line giving
+//! the same TOML key a different value share no line, so both are kept, and the
+//! file then holds the key twice, which is not valid TOML. That is again what
+//! git's own merge produces, and it is for the parser of the file's kind to
+//! refuse; the driver has no notion of a key to refuse it with.
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -317,6 +324,15 @@ mod tests {
             "mod a;\nmod c;\nmod b;\n",
         );
         assert_eq!(out.unwrap(), "mod a;\nmod b;\nmod c;\nmod b;\n");
+    }
+
+    /// Pinned, not endorsed: lines are compared whole, so one key given two
+    /// values by the two sides stays twice and the file is no longer valid TOML.
+    #[test]
+    fn the_same_key_given_two_values_stays_twice_and_is_not_valid_toml() {
+        let out = merged("[t]\n", "[t]\nk = 1\n", "[t]\nk = 2\n").unwrap();
+        assert_eq!(out, "[t]\nk = 1\nk = 2\n");
+        assert!(out.parse::<toml_edit::DocumentMut>().is_err(), "the file would have parsed");
     }
 
     #[test]
