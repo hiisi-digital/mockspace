@@ -91,6 +91,21 @@ pub fn canon_violation(
     (!hits.is_empty()).then_some(hits)
 }
 
+/// The canon paths in `staged` that `inherited` does not excuse, or `None`.
+///
+/// `inherited` is asked about the canon hits only, and in their order, after
+/// [`canon_violation`] has chosen them. It is a closure so that the test can
+/// see which paths it was asked about.
+fn authored_canon(
+    staged: &[String],
+    canon_paths: &[String],
+    mut inherited: impl FnMut(&str) -> bool,
+) -> Option<Vec<String>> {
+    let hits = canon_violation(staged, canon_paths, true)?;
+    let authored: Vec<String> = hits.into_iter().filter(|file| !inherited(file)).collect();
+    (!authored.is_empty()).then_some(authored)
+}
+
 impl RepoLint for CanonNotWhilePanelOpen {
     fn check_repo(&self, ctx: &RepoContext) -> Vec<LintError> {
         if ctx.canon_paths.is_empty() || ctx.open_panels.is_empty() {
@@ -113,16 +128,14 @@ impl RepoLint for CanonNotWhilePanelOpen {
         // A merge brings in canon somebody else admitted, and a recombined
         // conflict in it authors nothing: the panel did not write those
         // lines. Only what the merge itself did not bring in is the panel's.
+        // The merge filter runs on the canon hits alone, since it spawns git
+        // for every path it is asked about and the rest of the index is none
+        // of this lint's business.
         let merge = crate::merge::Merge::detect(ctx.repo_root);
-        let staged: Vec<String> = if merge.in_progress() {
-            staged
-                .into_iter()
-                .filter(|file| !merge.inherited(ctx.repo_root, file))
-                .collect()
-        } else {
-            staged
-        };
-        let Some(hits) = canon_violation(&staged, ctx.canon_paths, true) else {
+        let in_merge = merge.in_progress();
+        let Some(hits) = authored_canon(&staged, ctx.canon_paths, |file| {
+            in_merge && merge.inherited(ctx.repo_root, file)
+        }) else {
             return Vec::new();
         };
         vec![LintError::error(
@@ -232,6 +245,32 @@ mod tests {
         let found = findings(tmp.path());
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].message.contains(CANON), "{}", found[0].message);
+    }
+
+    #[test]
+    fn the_merge_filter_is_asked_about_canon_paths_only() {
+        let staged: Vec<String> = ["src/lib.rs", CANON, "docs/a.md", "mock/canon/b.md"]
+            .map(String::from)
+            .to_vec();
+        let canon = vec!["mock/canon/**".to_string()];
+        let mut asked: Vec<String> = Vec::new();
+        let authored = authored_canon(&staged, &canon, |file| {
+            asked.push(file.to_string());
+            file == CANON
+        });
+        assert_eq!(asked, ["mock/canon/a.md", "mock/canon/b.md"]);
+        assert_eq!(authored, Some(vec!["mock/canon/b.md".to_string()]));
+    }
+
+    #[test]
+    fn canon_the_merge_brought_in_leaves_nothing_to_refuse() {
+        let staged = vec![CANON.to_string(), "src/lib.rs".to_string()];
+        let canon = vec!["mock/canon/**".to_string()];
+        assert_eq!(authored_canon(&staged, &canon, |_| true), None);
+        assert_eq!(
+            authored_canon(&staged, &canon, |_| false),
+            Some(vec![CANON.to_string()])
+        );
     }
 
     #[test]
