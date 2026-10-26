@@ -240,6 +240,11 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         return crate::registry_merge::run(&subcommand_args(&args, "merge-registry"));
     }
 
+    // The same for the driver that keeps both sides' additions to a file that only grows.
+    if first_positional(&args) == Some("merge-append") {
+        return crate::append_merge::run(&subcommand_args(&args, "merge-append"));
+    }
+
     // The same for the driver that refuses two closed rounds sharing an id.
     if first_positional(&args) == Some("merge-round-meta") {
         return crate::design_round::round_merge::run(&subcommand_args(&args, "merge-round-meta"));
@@ -1424,6 +1429,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         &cfg.docs_dir,
         &cfg.mock_dir.join("registry"),
         &crate::suite::history::History::dir(&cfg.mock_dir),
+        &bootstrap::append_attribute_lines(&cfg.repo_root, &cfg.src_dirs, &cfg.append_only),
         &generated,
         commit_regenerated,
         stage_generated,

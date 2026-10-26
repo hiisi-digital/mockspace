@@ -109,6 +109,18 @@ All transition subcommands accept `--auto-commit`, which commits only the rename
 
 The "## Comparison to deprecated changelist" section of the active CL plus `BACKLOG.md.tmpl` together are the repository's memory of decisions not yet implemented.
 
+### Merging inside a round
+
+The phase gates judge what somebody wrote, so a merge commit is judged by what it adds beyond its parents. A file the merge took whole from one parent, a file git combined from both, and a conflict settled by keeping lines of both sides add nothing, and they pass in every phase, designs and source together. A file with a line neither parent carries, or without a line every parent carries, was written or cut by hand and stays gated as an edit. The test is on lines: every staged line is a line some parent has, and every line all the parents have is still there. Reordering what the parents wrote is not an edit; typing a new line is.
+
+Two merge drivers cut conflicts off before they reach that point. Files that only ever grow, a list of `mod` lines, a table of strings, a log, a package's `SHAME.md.tmpl` and `BACKLOG.md.tmpl`, go to the `mockspace-append` driver (`cargo mock merge-append`). When neither side changed or removed a line of the base, both sides' additions stay, each where it was made and ours before theirs where both added at one spot. When either side edited a base line, or both added the same line at one spot, the file is merged as text with git's own markers: the driver never selects a side. A project names its own files in `mockspace.toml`:
+
+```toml
+append_only = ["content/strings/en.toml", "mock/crates/*/src/tests/mod.rs"]
+```
+
+Each entry is a `.gitattributes` pattern relative to the repository root, kept as narrow as the file it names. `cargo mock` writes the lines and registers the driver in the clone.
+
 ### The rest of the surface
 
 Those are the transitions. The subcommands that are not transitions:
@@ -180,6 +192,7 @@ unprefixed_crates = ["core"]          # crates that don't use the prefix
 primary_domain_macro = "<macro>"      # tracked per-crate in STRUCTURE.md
 primary_domain_label = "<Label>"
 layers = ["Layer0", "Layer1", ...]    # labels by depth index for the graph
+append_only = ["<path-or-pattern>"]   # files that only grow, merged by keeping both sides' additions
 
 install_git_hooks = "replace"
 install_cargo_config = "merge-append"

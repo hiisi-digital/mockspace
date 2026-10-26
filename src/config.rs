@@ -77,6 +77,8 @@ pub struct Config {
     /// One entry for an ordinary project. Several for a grouped one, where the
     /// groups are independent and a package belongs to exactly one.
     pub src_dirs:               Vec<PathBuf>,
+    /// The `append_only` patterns of `mockspace.toml`, as written.
+    pub append_only:            Vec<String>,
     pub repo_root:              PathBuf,
     pub docs_dir:               PathBuf,
     pub project_name:           String,
@@ -580,6 +582,11 @@ struct RawConfig {
     /// names, so a project keeps whatever nesting it already had.
     #[serde(default)]
     src_dirs:               Vec<String>,
+    /// Files that only ever grow, as `.gitattributes` patterns relative to the
+    /// repository root. Each is sent to the `mockspace-append` merge driver, which
+    /// keeps both sides' additions when neither side touched a line already there.
+    #[serde(default)]
+    append_only:            Vec<String>,
     proc_macro_crates:      Vec<String>,
     #[serde(default)]
     lint_proc_macro_source: Option<bool>,
@@ -1063,6 +1070,7 @@ impl Config {
             mock_dir,
             crates_dir,
             src_dirs,
+            append_only: raw.append_only.clone(),
             repo_root,
             docs_dir,
             config_path: toml_path,

@@ -169,6 +169,7 @@ pub(crate) fn finish_generation(
     docs_dir: &Path,
     registry_dir: &Path,
     history_dir: &Path,
+    append_lines: &[String],
     generated: &[PathBuf],
     commit: Option<&str>,
     stage_it: bool,
@@ -176,7 +177,7 @@ pub(crate) fn finish_generation(
     // Asked first: afterwards the file differs from HEAD by our line, whoever
     // else had edited it, and an edit of somebody's own is theirs to commit.
     let was_clean = attributes_clean(repo_root);
-    if write_gitattributes(repo_root, docs_dir, registry_dir, history_dir) {
+    if write_gitattributes(repo_root, docs_dir, registry_dir, history_dir, append_lines) {
         eprintln!("  wrote the merge attributes");
     }
     let written = was_clean
