@@ -15,8 +15,10 @@
 //!   carries: each side's additions to the base count once. Two sides that each
 //!   add a blank separator line both stand, and a hand-typed second copy of a
 //!   line both parents carry once does not, since neither side added it. With
-//!   no base (a file added on both sides) the base counts are zero and the bound
-//!   is the sum of the parents.
+//!   the path absent at the base (a file added on both sides) the base counts are
+//!   zero and the bound is the sum of the parents. A merge base that cannot be
+//!   found at all is not that case: the caller refuses the file before it gets
+//!   here.
 //! - **Counted at the bottom.** A line appears at least as many times as the
 //!   parent that carries it least. Deleting one of two identical lines every
 //!   parent carries twice is an edit, where deleting a line only some parents
@@ -38,18 +40,23 @@
 //! consolidation that only a different split explains; refusing is the safe
 //! direction. With up to four parents every ordering of the parents is tried
 //! (24 for four); with more only the given order and its reverse are, so a
-//! larger octopus is refused where another order would explain it. A file whose
+//! larger octopus is refused where another order would explain it.
+//!
+//! The time is capped per comparison, not per file: a comparison whose
 //! stripped middle is past [`TIME_CAP`] cells for one parent is not skipped but
 //! reported [`Verdict::TooLarge`], which the caller refuses with a message
-//! saying why.
+//! saying why. One file can run several comparisons, one per parent for each
+//! ordering tried and each pass of the check, so the cap bounds each of them
+//! and not the time the file as a whole takes.
 
 use std::collections::HashMap;
 
 /// The most cells (lines of the staged middle times lines of the parent's) one
 /// longest-common-subsequence pass will work through. The time is the bound,
-/// since the space is linear: measured at about half a second in a release build
-/// (several in a debug one), and past it the file is refused rather than passed
-/// unchecked.
+/// since the space is linear. It is a cap per comparison: a file that fails the
+/// check can run up to two parents times two orders times the passes of each,
+/// or 24 orderings of four parents times the passes of each, and past the cap
+/// the file is refused rather than passed unchecked.
 const TIME_CAP: usize = 100_000_000;
 
 /// The most parents whose every ordering is tried.

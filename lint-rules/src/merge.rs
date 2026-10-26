@@ -136,9 +136,10 @@ impl Merge {
     /// parent's own order kept. A line only some parents carry may go: dropping
     /// it is the choice between the sides a conflict asks for.
     ///
-    /// It needs no merge base, so an octopus is served too. A path absent in
-    /// the index is the deletion case, settled by the byte test above, and
-    /// absent here (`has_staged` false) so that deleting a file every parent
+    /// It serves an octopus too, bounding repeats by the merge base of all the
+    /// parents (see `base_body`), and refuses the file where no such base is
+    /// found. A path absent in the index is the deletion case, settled by the
+    /// byte test above, and absent here (`has_staged` false) so that deleting a file every parent
     /// carries stays authored. A parent lacking the path carries no lines,
     /// which empties the minimum: the file was added on one side, and nothing
     /// is then required to remain.
@@ -158,8 +159,18 @@ impl Merge {
             .collect();
         let parents: Vec<Vec<&[u8]>> = bodies.iter().map(|b| lines_of(b)).collect();
         // The merge base of all the parents, which bounds how often a line may
-        // repeat. Without one (unrelated histories) the file counts as added.
-        let base = self.base_body(dir, file);
+        // repeat. Without one the bound would fall back to the sum over the
+        // parents, which lets a copy of a line both carry once stand, so the
+        // file is not inherited and the gate judges it as authored.
+        let Some(base) = self.base_body(dir, file) else {
+            eprintln!(
+                "mockspace: no merge base could be found for the parents of this merge \
+                 (unrelated histories, or a shallow clone that cut it off), so {file} cannot be \
+                 bounded against it, the merge is not excused for it and it is gated as an \
+                 authored change"
+            );
+            return false;
+        };
         match crate::merge_lines::recombines(&lines_of(&staged), &parents, &lines_of(&base)) {
             Verdict::Recombines => true,
             Verdict::Authored => false,
@@ -173,15 +184,16 @@ impl Merge {
         }
     }
 
-    /// The content of `file` at the merge base of every parent, empty where there
-    /// is none or the path is absent there.
-    fn base_body(&self, dir: &Path, file: &str) -> Vec<u8> {
+    /// The content of `file` at the merge base of every parent, empty where the
+    /// path is absent there, and `None` where no merge base is found at all:
+    /// unrelated histories, or a shallow clone that cut the base off. Those two
+    /// are different answers, since an absent path is a file both sides added
+    /// and a missing base is a bound that cannot be computed.
+    fn base_body(&self, dir: &Path, file: &str) -> Option<Vec<u8>> {
         let mut args = vec!["merge-base", "--octopus"];
         args.extend(self.parents.iter().map(String::as_str));
-        let Some(base) = git(dir, &args) else {
-            return Vec::new();
-        };
-        git_bytes(dir, &["show", &format!("{}:./{file}", base.trim())]).unwrap_or_default()
+        let base = git(dir, &args)?;
+        Some(git_bytes(dir, &["show", &format!("{}:./{file}", base.trim())]).unwrap_or_default())
     }
 
     /// Whether the staged content is exactly what git's own three-way merge
@@ -747,6 +759,56 @@ mod tests {
         r.write("crates/foo/src/lib.rs", resolution);
         r.git(&["add", "mock/crates/foo/src/lib.rs"]);
         Merge::detect(&r.mock()).inherited(&r.mock(), "crates/foo/src/lib.rs")
+    }
+
+    /// Two histories with no common ancestor, merged with both sides adding the
+    /// same file. `git merge-base` fails there, as it does in a shallow clone
+    /// that cut the base off, and a missing base must not read as a base with
+    /// nothing in it: that made the bound the sum over the parents, which lets
+    /// a copy of a line that both parents carry once stand.
+    fn unrelated_and_conflicted(r: &Repo) {
+        r.write("crates/foo/src/lib.rs", "one\ntwo\n");
+        r.commit("trunk root");
+        r.git(&["switch", "-q", "--orphan", "feature"]);
+        r.write("crates/foo/src/lib.rs", "one\nthree\n");
+        r.commit("feature root");
+        assert!(
+            !r.git_may_fail(&["merge", "--no-commit", "--no-ff", "--allow-unrelated-histories", "trunk"]),
+            "the fixture was meant to conflict"
+        );
+    }
+
+    #[test]
+    fn a_missing_merge_base_refuses_a_file_that_would_pass_with_one() {
+        let r = Repo::new("nobase");
+        unrelated_and_conflicted(&r);
+        assert!(
+            !r.git_may_fail(&["merge-base", "HEAD", "MERGE_HEAD"]),
+            "the fixture was meant to have no merge base"
+        );
+        // `one` is in both parents once, so a second copy is one more than the
+        // parents carry each, which the sum over the parents (two) still allows.
+        assert!(
+            !staged_is_inherited(&r, "one\none\ntwo\nthree\n"),
+            "a repeated line stood with no merge base to bound it"
+        );
+    }
+
+    #[test]
+    fn a_missing_merge_base_refuses_even_a_clean_consolidation() {
+        let r = Repo::new("nobase-clean");
+        unrelated_and_conflicted(&r);
+        assert!(
+            !staged_is_inherited(&r, "one\nthree\ntwo\n"),
+            "the file was judged inherited though its base could not be found"
+        );
+    }
+
+    #[test]
+    fn a_missing_merge_base_still_excuses_a_file_taken_whole_from_one_parent() {
+        let r = Repo::new("nobase-whole");
+        unrelated_and_conflicted(&r);
+        assert!(staged_is_inherited(&r, "one\nthree\n"));
     }
 
     #[test]
