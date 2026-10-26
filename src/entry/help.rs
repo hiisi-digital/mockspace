@@ -205,6 +205,22 @@ const COMMANDS: &[Cmd] = &[
                   project and installs nothing: the wiring is done by `cargo mock`.",
     },
     Cmd {
+        name:    "merge-additions",
+        summary: "merge a file that only grows, as git's merge driver",
+        args:    &[],
+        help:    "The merge driver `cargo mock` installs for the files `append_only` in \
+                  mockspace.toml names (and each crate's SHAME and BACKLOG templates); git \
+                  calls it as `merge-additions %O %A %B %P %L` and reads the result from the \
+                  second. When neither side changed or removed a line of the base, both \
+                  sides' additions are kept as they are, each in the spot it was made in, \
+                  ours before theirs where both added to one spot. When either side \
+                  edited or removed a base line, or both added the same line to one spot, \
+                  or the file has no base or no final newline, the file is merged as \
+                  text, as git would without it, conflict markers and exit status 1 \
+                  included. It never picks a side. It needs no project and installs \
+                  nothing: the wiring is done by `cargo mock`.",
+    },
+    Cmd {
         name:    "merge-test-history",
         summary: "merge a member's test-history file, as git's merge driver",
         args:    &[],
