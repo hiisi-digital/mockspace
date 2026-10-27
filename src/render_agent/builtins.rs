@@ -692,16 +692,20 @@ _gate_intact() {
     [ -x "$validator" ] || return 1
     local hp
     hp=$(git -C "$root" config --local core.hooksPath 2>/dev/null || true)
+    # git-shook holds the key: the gate is intact where it is registered there
+    # as an entry. Asked before the glob below, since a clone whose own path
+    # contains "mockspace" would otherwise pass on the spelling of git-shook's
+    # directory with nothing registered
+    local common
+    common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    if [ -n "$common" ] && [ "$hp" = "$common/shook/hooks" ]; then
+        [ -f "$common/shook/entries/pre-commit/00-mockspace" ]
+        return
+    fi
     case "$hp" in
         *mockspace*|*target/hooks*) return 0 ;;
     esac
-    # git-shook holds the key: the gate is intact where it is registered there
-    # as an entry, and the path says nothing about mockspace
-    local common
-    common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-    [ -n "$common" ] || return 1
-    [ "$hp" = "$common/shook/hooks" ] || return 1
-    [ -f "$common/shook/entries/pre-commit/00-mockspace" ]
+    return 1
 }
 
 if _gate_intact; then allow; fi

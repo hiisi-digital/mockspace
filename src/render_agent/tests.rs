@@ -276,9 +276,11 @@ fn gate_intact_in(clone: &std::path::Path) -> bool {
 }
 
 #[test]
-fn the_agent_gate_holds_where_git_shook_has_the_key_and_the_path_names_no_mockspace() {
+fn the_agent_gate_holds_where_git_shook_has_the_key_registered_whatever_the_path_spells() {
     let base = std::env::temp_dir().join(format!("gate-intact-{}", std::process::id()));
-    let clone = base.join("work").join("somerepo");
+    // the clone's own path spells "mockspace", as this repository's does: the
+    // unregistered control must still fail
+    let clone = base.join("work").join("mockspace-clone");
     std::fs::create_dir_all(clone.join("mock/target/hooks")).unwrap();
     let git = |args: &[&str]| {
         assert!(
