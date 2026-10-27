@@ -107,13 +107,19 @@ A type naming neither a builtin nor a declared namespace is reported. It used to
 become a plain string, so a misspelled type, or one naming a namespace that was
 never declared, produced a field that read as constrained and was not.
 
-A field may also say which values it takes. `values` lists a closed set, which
-the generated schema makes an `enum`, so a value outside it is refused where it is
-typed. On an `integer`, `min` and `max` give its range, each optional, which the
-schema makes `minimum` and `maximum`. A bound on any other type, or a `min` above
-its `max`, is reported at the declaration, since the schema would carry nothing
-and the field would read as held while nothing held it. An editor drawing the
-registry reads the same keys: a closed set is a choice, and a range a slider.
+A field may also say which values it takes. `values` lists a closed set, written
+as strings and held in the field's own type: the generated schema makes it an
+`enum` of strings on a string field, of numbers on an `integer` and of `true` and
+`false` on a `boolean`, so a value outside it is refused where it is typed. On an
+`integer`, `min` and `max` give its range, each optional, which the schema makes
+`minimum` and `maximum`; with `values` beside them, both hold. Each of these is
+reported at the declaration where the schema could not hold it: a bound on any
+other type, a `min` above its `max`, and a listed value that does not read as its
+field's type or lies outside the field's own range. Left to the rows, each would
+fail at every row naming the row rather than the declaration, or read as held
+while nothing held it. An editor drawing the registry reads the same keys: a
+closed set is a choice, whatever its type, and an integer with a range and no
+closed set a slider.
 
 ```toml
 [[registry.namespace.field]]

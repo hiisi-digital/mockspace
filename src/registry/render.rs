@@ -72,7 +72,7 @@ pub fn generate_schemas(
                     "\"enum\": [{}]",
                     f.values
                         .iter()
-                        .map(|v| json_string(v))
+                        .map(|v| enum_member(&f.r#type, v))
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
@@ -208,6 +208,18 @@ pub fn generate_schemas(
         }
     }
     written
+}
+
+/// The schema `enum` member a closed set's `value` is on a field of type `ty`: a bare
+/// number on an `integer`, a bare `true` or `false` on a `boolean`, and a string on
+/// anything else, including a value that does not read as its type, which `unfit_values`
+/// refuses at the declaration.
+fn enum_member(ty: &str, value: &str) -> String {
+    match ty {
+        "integer" if value.parse::<i64>().is_ok() => value.to_string(),
+        "boolean" if value == "true" || value == "false" => value.to_string(),
+        _ => json_string(value),
+    }
 }
 
 /// Minimal JSON string escaping. The registry's descriptions are prose written
@@ -596,18 +608,24 @@ mod closed_value_set_placement {
 
     #[test]
     fn an_arrays_enum_constrains_its_members_and_a_scalars_constrains_itself() {
-        for (ty, json) in [
-            ("string", "\"type\": \"string\""),
-            ("integer", "\"type\": \"integer\""),
-            ("boolean", "\"type\": \"boolean\""),
+        // each member in the field's own type: an integer's or a boolean's written as a
+        // string would match no value of that type, and every row would fail
+        for (ty, json, values, members) in [
+            ("string", "\"type\": \"string\"", ["a", "b"], "\"a\", \"b\""),
+            ("integer", "\"type\": \"integer\"", ["1", "-2"], "1, -2"),
+            ("boolean", "\"type\": \"boolean\"", ["true", "false"], "true, false"),
         ] {
-            let p = property(&schema_for(ty, &["a", "b"]));
+            let p = property(&schema_for(ty, &values));
             assert_eq!(
                 p,
-                format!("\"f\": {{\n          {json},\n          \"enum\": [\"a\", \"b\"]"),
-                "{ty}: a scalar's enum sits on the property"
+                format!("\"f\": {{\n          {json},\n          \"enum\": [{members}]"),
+                "{ty}: a scalar's enum sits on the property, in its type"
             );
         }
+        assert!(
+            property(&schema_for("string", &["3", "true"])).ends_with("\"enum\": [\"3\", \"true\"]"),
+            "a string's members stay strings, however they read"
+        );
         for ty in ["string[]", "ref[]"] {
             let p = property(&schema_for(ty, &["a", "b"]));
             assert_eq!(

@@ -4,8 +4,8 @@
 //--------------------------------------------------------------------------------------------------
 
 //! An integer field's `min` and `max` reach the generated schema, and taplo enforces
-//! them, as it enforces a closed value set; a bound declared where it cannot hold is
-//! refused at the declaration.
+//! them, as it enforces a closed value set, which holds values of the field's own type; a
+//! bound or a listed value declared where it cannot hold is refused at the declaration.
 
 mod common;
 
@@ -95,10 +95,37 @@ fn a_value_at_either_end_passes() {
 }
 
 #[test]
-fn a_value_one_past_either_end_is_refused() {
-    for v in ["0", "6"] {
+fn a_value_one_past_either_end_is_refused_for_the_range() {
+    for (v, cause) in [("0", "0 is less than the minimum of 1"), ("6", "6 is greater than the maximum of 5")] {
         let (ok, err) = outcome(RANGED, v);
-        assert!(!ok, "{v} is outside 1 to 5 and must not pass:\n{err}");
+        assert!(!ok && err.contains(cause), "{v} is outside 1 to 5 and must be refused for it:\n{err}");
+    }
+}
+
+/// A closed set on an integer or a boolean holds values of that type, so a row holding a
+/// listed one passes and one holding another is refused for not being one of them.
+#[test]
+fn a_closed_set_of_integers_or_booleans_holds_its_own_type() {
+    let ints = "type = \"integer\"\nvalues = [\"1\", \"2\"]";
+    for v in ["1", "2"] {
+        let (ok, err) = outcome(ints, v);
+        assert!(ok, "{v} is listed:\n{err}");
+    }
+    let (ok, err) = outcome(ints, "3");
+    assert!(!ok && err.contains("3 is not one of [1,2]"), "3 is not listed:\n{err}");
+    let (ok, err) = outcome("type = \"boolean\"\nvalues = [\"true\"]", "true");
+    assert!(ok, "true is listed:\n{err}");
+}
+
+#[test]
+fn a_listed_value_no_row_can_hold_is_refused_at_the_declaration() {
+    for field in [
+        "type = \"integer\"\nvalues = [\"one\"]",
+        "type = \"integer\"\nmin = 1\nmax = 5\nvalues = [\"9\"]",
+        "type = \"boolean\"\nvalues = [\"yes\"]",
+    ] {
+        let (ok, err) = outcome(field, "1");
+        assert!(!ok && err.contains("unfit-field-value"), "{field}:\n{err}");
     }
 }
 

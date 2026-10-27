@@ -176,6 +176,7 @@ pub const FINDING_KINDS: &[&str] = &[
     "namespace-shadows-type",
     "row-reference-to-a-value-namespace",
     "misplaced-field-bound",
+    "unfit-field-value",
     // The three produced by `namespace_root_collisions`, which is called from
     // the same place as `validate` and whose kinds were absent from this list
     // with nothing reporting that. The comment below used to say two were
