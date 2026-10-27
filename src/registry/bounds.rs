@@ -33,7 +33,9 @@ pub fn misplaced_bounds(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding
             } else if let (Some(lo), Some(hi)) = (f.min, f.max)
                 && lo > hi
             {
-                Some(format!("has `min` {lo} above `max` {hi}, and no value satisfies both"))
+                Some(format!(
+                    "has `min` {lo} above `max` {hi}, and no value satisfies both"
+                ))
             } else {
                 None
             };
@@ -53,21 +55,30 @@ pub fn misplaced_bounds(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding
 }
 
 /// A member of a field's `values` that no row could hold: one that does not read as an
-/// `integer` or a `boolean` on a field of that type, an integer not written plainly, or an integer outside the field's
-/// own `min` and `max`.
+/// `integer` or a `boolean` on a field of that type, an integer not written plainly, or
+/// an integer outside the field's own `min` and `max`.
 pub fn unfit_values(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding> {
     let mut out = Vec::new();
     for ns in namespaces {
         for f in &ns.fields {
             for v in &f.values {
                 let problem = match f.r#type.as_str() {
-                    "integer" => match v.parse::<i64>() {
-                        Err(_) => Some(format!("`{v}` does not read as an integer")),
-                        Ok(n) if n.to_string() != *v => Some(format!("`{v}` is the integer {n} written another way, and a row holds it as `{n}`")),
-                        Ok(n) if f.min.is_some_and(|lo| n < lo) || f.max.is_some_and(|hi| n > hi) => {
-                            Some(format!("{n} lies outside the field's own `min` and `max`"))
-                        },
-                        Ok(_) => None,
+                    "integer" => {
+                        match v.parse::<i64>() {
+                            Err(_) => Some(format!("`{v}` does not read as an integer")),
+                            Ok(n) if n.to_string() != *v => {
+                                Some(format!(
+                                    "`{v}` is the integer {n} written another way, and a row holds it as `{n}`"
+                                ))
+                            },
+                            Ok(n)
+                                if f.min.is_some_and(|lo| n < lo)
+                                    || f.max.is_some_and(|hi| n > hi) =>
+                            {
+                                Some(format!("{n} lies outside the field's own `min` and `max`"))
+                            },
+                            Ok(_) => None,
+                        }
                     },
                     "boolean" if v != "true" && v != "false" => {
                         Some(format!("`{v}` is neither `true` nor `false`"))
@@ -94,14 +105,20 @@ pub fn unfit_values(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding> {
 mod tests {
     use super::*;
 
-    fn field(i: usize, ty: &str, values: &[&str], min: Option<i64>, max: Option<i64>) -> RegistryField {
+    fn field(
+        i: usize,
+        ty: &str,
+        values: &[&str],
+        min: Option<i64>,
+        max: Option<i64>,
+    ) -> RegistryField {
         RegistryField {
-            name:        format!("f{i}"),
-            r#type:      ty.into(),
-            required:    false,
+            name: format!("f{i}"),
+            r#type: ty.into(),
+            required: false,
             description: None,
-            visibility:  FieldVisibility::Public,
-            values:      values.iter().map(|v| (*v).to_string()).collect(),
+            visibility: FieldVisibility::Public,
+            values: values.iter().map(|v| (*v).to_string()).collect(),
             min,
             max,
         }
@@ -109,18 +126,22 @@ mod tests {
 
     fn ns(fields: Vec<RegistryField>) -> Vec<RegistryNamespace> {
         vec![RegistryNamespace {
-            key:         "probe".into(),
-            title:       None,
+            key: "probe".into(),
+            title: None,
             description: None,
             value_field: None,
-            render:      RenderMode::Page,
-            group_by:    None,
+            render: RenderMode::Page,
+            group_by: None,
             fields,
         }]
     }
 
     fn bounded(fields: &[(&str, Option<i64>, Option<i64>)]) -> Vec<RegistryNamespace> {
-        ns(fields.iter().enumerate().map(|(i, (ty, min, max))| field(i, ty, &[], *min, *max)).collect())
+        ns(fields
+            .iter()
+            .enumerate()
+            .map(|(i, (ty, min, max))| field(i, ty, &[], *min, *max))
+            .collect())
     }
 
     #[test]
@@ -145,7 +166,10 @@ mod tests {
             .chain(["claim", "claim[]"])
             .collect();
         let found = misplaced_bounds(&bounded(
-            &others.iter().map(|t| (*t, Some(0), None)).collect::<Vec<_>>(),
+            &others
+                .iter()
+                .map(|t| (*t, Some(0), None))
+                .collect::<Vec<_>>(),
         ));
         assert_eq!(found.len(), others.len(), "{found:?}");
         for (f, ty) in found.iter().zip(&others) {
@@ -158,7 +182,11 @@ mod tests {
     fn a_min_above_its_max_is_refused() {
         let found = misplaced_bounds(&bounded(&[("integer", Some(3), Some(2))]));
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].message.contains("`f0`") && found[0].message.contains("above"), "{}", found[0].message);
+        assert!(
+            found[0].message.contains("`f0`") && found[0].message.contains("above"),
+            "{}",
+            found[0].message
+        );
     }
 
     #[test]

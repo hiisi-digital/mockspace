@@ -212,13 +212,15 @@ pub fn generate_schemas(
 
 /// The schema `enum` member a closed set's `value` is on a field of type `ty`: the parsed
 /// number on an `integer`, so `+5` is written `5`, a bare `true` or `false` on a
-/// `boolean`, and a string on anything else, including a value that does not read as its type, which `unfit_values`
-/// refuses at the declaration.
+/// `boolean`, and a string on anything else, including a value that does not read as its
+/// type, which `unfit_values` refuses at the declaration.
 fn enum_member(ty: &str, value: &str) -> String {
     match ty {
-        "integer" => match value.parse::<i64>() {
-            Ok(n) => n.to_string(),
-            Err(_) => json_string(value),
+        "integer" => {
+            match value.parse::<i64>() {
+                Ok(n) => n.to_string(),
+                Err(_) => json_string(value),
+            }
         },
         "boolean" if value == "true" || value == "false" => value.to_string(),
         _ => json_string(value),
@@ -573,12 +575,12 @@ mod closed_value_set_placement {
             render:      RenderMode::Page,
             group_by:    None,
             fields:      vec![RegistryField {
-                name:        "f".into(),
-                r#type:      ty.into(),
-                required:    false,
+                name: "f".into(),
+                r#type: ty.into(),
+                required: false,
                 description: None,
-                visibility:  FieldVisibility::Public,
-                values:      values.iter().map(|s| s.to_string()).collect(),
+                visibility: FieldVisibility::Public,
+                values: values.iter().map(|s| s.to_string()).collect(),
                 min,
                 max,
             }],
@@ -617,7 +619,12 @@ mod closed_value_set_placement {
             ("string", "\"type\": \"string\"", ["a", "b"], "\"a\", \"b\""),
             ("integer", "\"type\": \"integer\"", ["1", "-2"], "1, -2"),
             ("integer", "\"type\": \"integer\"", ["+5", "05"], "5, 5"),
-            ("boolean", "\"type\": \"boolean\"", ["true", "false"], "true, false"),
+            (
+                "boolean",
+                "\"type\": \"boolean\"",
+                ["true", "false"],
+                "true, false",
+            ),
         ] {
             let p = property(&schema_for(ty, &values));
             assert_eq!(
@@ -627,7 +634,8 @@ mod closed_value_set_placement {
             );
         }
         assert!(
-            property(&schema_for("string", &["3", "true"])).ends_with("\"enum\": [\"3\", \"true\"]"),
+            property(&schema_for("string", &["3", "true"]))
+                .ends_with("\"enum\": [\"3\", \"true\"]"),
             "a string's members stay strings, however they read"
         );
         for ty in ["string[]", "ref[]"] {

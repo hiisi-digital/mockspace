@@ -96,9 +96,15 @@ fn a_value_at_either_end_passes() {
 
 #[test]
 fn a_value_one_past_either_end_is_refused_for_the_range() {
-    for (v, cause) in [("0", "0 is less than the minimum of 1"), ("6", "6 is greater than the maximum of 5")] {
+    for (v, cause) in [
+        ("0", "0 is less than the minimum of 1"),
+        ("6", "6 is greater than the maximum of 5"),
+    ] {
         let (ok, err) = outcome(RANGED, v);
-        assert!(!ok && err.contains(cause), "{v} is outside 1 to 5 and must be refused for it:\n{err}");
+        assert!(
+            !ok && err.contains(cause),
+            "{v} is outside 1 to 5 and must be refused for it:\n{err}"
+        );
     }
 }
 
@@ -112,11 +118,17 @@ fn a_closed_set_of_integers_or_booleans_holds_its_own_type() {
         assert!(ok, "{v} is listed:\n{err}");
     }
     let (ok, err) = outcome(ints, "3");
-    assert!(!ok && err.contains("3 is not one of [1,2]"), "3 is not listed:\n{err}");
+    assert!(
+        !ok && err.contains("3 is not one of [1,2]"),
+        "3 is not listed:\n{err}"
+    );
     let (ok, err) = outcome("type = \"boolean\"\nvalues = [\"true\"]", "true");
     assert!(ok, "true is listed:\n{err}");
     let (ok, err) = outcome("type = \"boolean\"\nvalues = [\"true\"]", "false");
-    assert!(!ok && err.contains("false is not one of [true]"), "false is not listed:\n{err}");
+    assert!(
+        !ok && err.contains("false is not one of [true]"),
+        "false is not listed:\n{err}"
+    );
 }
 
 #[test]
