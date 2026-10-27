@@ -181,6 +181,67 @@ fn adopting_shook_in_a_gated_repo_runs_the_gate_once() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A repository with the real durable hooks, git-shook adopted and the gate
+/// registered, and the repository's own `pre-commit` written by `own_hook`
+/// before or after the adoption. Returns the log the hook appends to.
+fn adopted_with_own_hook(tag: &str, own_before_adoption: bool) -> (PathBuf, PathBuf) {
+    let dir = repo(tag);
+    let log = dir.join("user.log");
+    let hooks = dir.join("durable");
+    let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
+    let own = dir.join(".git/hooks/pre-commit");
+    let write_own = || {
+        fs::write(&own, format!("#!/bin/sh\necho USER >> {}\n", log.display())).unwrap();
+        fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    if own_before_adoption {
+        write_own();
+    }
+    fs::write(dir.join("shook.toml"), "[hooks.pre-commit]\nrun = [\"true\"]\n").unwrap();
+    git(&dir, &["add", "shook.toml"]);
+    git(&dir, &["shook", "install", "--yes"]);
+    register(&dir, &hooks).unwrap();
+    if !own_before_adoption {
+        write_own();
+    }
+    fs::write(dir.join("f.txt"), "x").unwrap();
+    git(&dir, &["add", "f.txt"]);
+    git(&dir, &["commit", "-q", "-m", "init"]);
+    (dir, log)
+}
+
+#[test]
+fn a_hook_git_shook_kept_is_not_also_chained_to_by_the_gate() {
+    if !have_shook() {
+        eprintln!("SKIPPED: git shook is not on the path");
+        return;
+    }
+    let (dir, log) = adopted_with_own_hook("keptonce", true);
+    assert!(
+        shook_dir(&dir).join("entries/pre-commit/00-existing").is_file(),
+        "control: git-shook kept the repository's own hook as an entry"
+    );
+    let ran = fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(ran.lines().filter(|l| *l == "USER").count(), 1, "{ran}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_hook_that_arrived_after_the_adoption_is_still_reached_by_the_chain() {
+    if !have_shook() {
+        eprintln!("SKIPPED: git shook is not on the path");
+        return;
+    }
+    let (dir, log) = adopted_with_own_hook("lateonce", false);
+    assert!(
+        !shook_dir(&dir).join("entries/pre-commit/00-existing").exists(),
+        "control: nothing was kept, so the chain is the only way to it"
+    );
+    let ran = fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(ran.lines().filter(|l| *l == "USER").count(), 1, "{ran}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_kept_hook_that_is_not_ours_survives_registration() {
     if !have_shook() {

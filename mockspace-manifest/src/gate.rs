@@ -182,7 +182,8 @@ cfgrel="${cfg#"$root"/}"
 #[must_use]
 pub fn chain_tail(name: &str, stdin_replay: &str) -> String {
     format!(
-        r##"# The repository's own hook, once the gate has passed: what another tool
+        r##"{SHOOK_KEEPS}
+# The repository's own hook, once the gate has passed: what another tool
 # installed under .git/hooks, which git does not read while core.hooksPath
 # points elsewhere. Same arguments, same stdin, its exit status.
 ms_chain() {{
@@ -193,6 +194,7 @@ ms_chain() {{
         exit 1
     }}
     case "$gitdir" in /*) ;; *) gitdir="$root/$gitdir" ;; esac
+    ms_shook_keeps "$gitdir" {name} && exit 0
     own="$gitdir/hooks/{name}"
     [ -x "$own" ] || exit 0
     {stdin_replay}"$own" "$@"
@@ -201,6 +203,19 @@ ms_chain() {{
 "##
     )
 }
+
+/// The shell function every chain defines: whether git-shook's dispatcher is
+/// the hooks path and holds the repository's own hook as its `00-existing`
+/// entry, which it keeps a copy of when it adopts a clone. Then that entry
+/// already runs the hook, and chaining to the original as well would run it
+/// twice. Where no copy was kept, because the hook arrived after the adoption,
+/// the chain is the only thing that runs it and stays.
+pub const SHOOK_KEEPS: &str = r##"ms_shook_keeps() { # <git-common-dir> <hook>
+    hp=$(git config --get core.hooksPath 2>/dev/null) || return 1
+    [ -n "$hp" ] || return 1
+    [ "$(cd "$hp" 2>/dev/null && pwd -P)" = "$(cd "$1/shook/hooks" 2>/dev/null && pwd -P)" ] || return 1
+    [ -f "$1/shook/entries/$2/00-existing" ]
+}"##;
 
 /// The full script for one durable hook.
 ///

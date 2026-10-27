@@ -37,7 +37,8 @@ git-shook as one entry, a `00-mockspace.toml` manifest in the clone's
 `<git-dir>/shook/manifests/` naming the durable hooks, registered with
 `git shook install --yes --only 00-mockspace`, and `core.hooksPath` is left
 alone. The `00-` sorts the gate ahead of the other entries. The hook still ends
-in `.git/hooks/<event>`. `mock deactivate` removes that entry and touches
+in `.git/hooks/<event>`, except for an event where git-shook kept that hook as
+its `00-existing` entry, which already runs it. `mock deactivate` removes that entry and touches
 neither `core.hooksPath` nor a saved previous value.
 
 **Deleting `target/` does not uninstall anything.** The durable hooks and
