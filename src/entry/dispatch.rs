@@ -1912,7 +1912,8 @@ fn registry_gate(
         .chain(registry::namespace_type_collisions(
             &cfg.registry_namespaces,
         ))
-        .chain(registry::value_field_targets(&cfg.registry_namespaces));
+        .chain(registry::value_field_targets(&cfg.registry_namespaces))
+        .chain(registry::misplaced_bounds(&cfg.registry_namespaces));
     for f in declarations.chain(registry::validate_row_references(
         registry,
         &cfg.registry_namespaces,

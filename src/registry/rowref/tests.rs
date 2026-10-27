@@ -29,6 +29,8 @@ pub(super) fn ns(key: &str, fields: &[(&str, &str)]) -> RegistryNamespace {
                     description: None,
                     visibility:  FieldVisibility::Public,
                     values:      Vec::new(),
+                    min:         None,
+                    max:         None,
                 }
             })
             .collect(),

@@ -105,7 +105,9 @@ pub fn generate_schemas(
                 (Some((_, false)), _) => {
                     scalar("\"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\"")
                 },
-                (None, "integer") => scalar("\"type\": \"integer\""),
+                // A bound is only ever on an integer; on any other type it is refused
+                // by `misplaced_bounds` rather than emitted where it would mean nothing.
+                (None, "integer") => scalar(&integer_with_bounds(f.min, f.max)),
                 (None, "boolean") => scalar("\"type\": \"boolean\""),
                 // A citation is a string on the wire. The type exists to say what
                 // the string means, so validation can find it without knowing
@@ -517,6 +519,19 @@ pub fn format_citation(row: &RegistryRow) -> String {
     out
 }
 
+/// An integer property's type, with `minimum` and `maximum` where the field declares
+/// them.
+fn integer_with_bounds(min: Option<i64>, max: Option<i64>) -> String {
+    let mut out = "\"type\": \"integer\"".to_string();
+    if let Some(n) = min {
+        out.push_str(&format!(", \"minimum\": {n}"));
+    }
+    if let Some(n) = max {
+        out.push_str(&format!(", \"maximum\": {n}"));
+    }
+    out
+}
+
 #[cfg(test)]
 mod closed_value_set_placement {
     //! Where a `values` list lands in the emitted schema, for every field type
@@ -531,6 +546,10 @@ mod closed_value_set_placement {
     use crate::registry::{FieldVisibility, RegistryField, RegistryNamespace, RenderMode};
 
     fn schema_for(ty: &str, values: &[&str]) -> String {
+        schema_with(ty, values, None, None)
+    }
+
+    fn schema_with(ty: &str, values: &[&str], min: Option<i64>, max: Option<i64>) -> String {
         let ns = RegistryNamespace {
             key:         "probe".into(),
             title:       None,
@@ -545,6 +564,8 @@ mod closed_value_set_placement {
                 description: None,
                 visibility:  FieldVisibility::Public,
                 values:      values.iter().map(|s| s.to_string()).collect(),
+                min,
+                max,
             }],
         };
         let tmp = tempfile::tempdir().unwrap();
@@ -596,6 +617,22 @@ mod closed_value_set_placement {
                  never beside `type: array` where no array value can satisfy it"
             );
         }
+    }
+
+    #[test]
+    fn an_integers_bounds_sit_on_its_type_and_one_without_has_none() {
+        assert_eq!(
+            property(&schema_with("integer", &[], Some(0), Some(10))),
+            "\"f\": {\n          \"type\": \"integer\", \"minimum\": 0, \"maximum\": 10"
+        );
+        assert_eq!(
+            property(&schema_with("integer", &[], None, Some(-3))),
+            "\"f\": {\n          \"type\": \"integer\", \"maximum\": -3"
+        );
+        assert_eq!(
+            property(&schema_for("integer", &[])),
+            "\"f\": {\n          \"type\": \"integer\""
+        );
     }
 
     #[test]

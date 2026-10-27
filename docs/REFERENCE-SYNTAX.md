@@ -107,6 +107,23 @@ A type naming neither a builtin nor a declared namespace is reported. It used to
 become a plain string, so a misspelled type, or one naming a namespace that was
 never declared, produced a field that read as constrained and was not.
 
+A field may also say which values it takes. `values` lists a closed set, which
+the generated schema makes an `enum`, so a value outside it is refused where it is
+typed. On an `integer`, `min` and `max` give its range, each optional, which the
+schema makes `minimum` and `maximum`. A bound on any other type, or a `min` above
+its `max`, is reported at the declaration, since the schema would carry nothing
+and the field would read as held while nothing held it. An editor drawing the
+registry reads the same keys: a closed set is a choice, and a range a slider.
+
+```toml
+[[registry.namespace.field]]
+name = "priority"
+type = "integer"
+min = 1
+max = 5
+description = "How soon, from 1, now, to 5, whenever."
+```
+
 **Name the field whatever the subject calls it.** Reference validation was once
 keyed on the literal name `provenance`, which checked one field for one consumer
 and silently ignored every other reference-bearing field a project declared. A

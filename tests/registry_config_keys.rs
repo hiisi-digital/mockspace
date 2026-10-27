@@ -255,6 +255,8 @@ fn every_field_a_real_instance_carries_is_a_known_key() {
             description: Some("the law".into()),
             visibility:  mockspace::registry::FieldVisibility::Public,
             values:      Vec::new(),
+            min:         None,
+            max:         None,
         }],
     };
 

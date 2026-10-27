@@ -175,6 +175,7 @@ pub const FINDING_KINDS: &[&str] = &[
     "unknown-field-type",
     "namespace-shadows-type",
     "row-reference-to-a-value-namespace",
+    "misplaced-field-bound",
     // The three produced by `namespace_root_collisions`, which is called from
     // the same place as `validate` and whose kinds were absent from this list
     // with nothing reporting that. The comment below used to say two were
@@ -211,7 +212,8 @@ const NAMESPACE_KEYS: &[&str] =
     &["key", "title", "description", "value_field", "render", "group_by", "field"];
 
 /// Keys a `[[registry.namespace.field]]` table may carry. Mirrors `RegistryField`.
-const FIELD_KEYS: &[&str] = &["name", "type", "required", "description", "visibility", "values"];
+const FIELD_KEYS: &[&str] =
+    &["name", "type", "required", "description", "visibility", "values", "min", "max"];
 
 /// Keys a `[ref.roots.<name>]` table may carry. Mirrors `RawRefRoot`.
 ///
