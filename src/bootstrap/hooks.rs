@@ -289,8 +289,6 @@ pub(crate) fn chain_user_hook(user_hook: &Path, replay_stdin: bool) -> String {
 # same stdin, its exit status. Absent or not executable, the pass stands.
 USER_HOOK="{path}"
 ms_chain() {{
-    # run as a git-shook entry, the dispatcher runs the rest of the event
-    [ -z "${{MOCKSPACE_UNDER_SHOOK:-}}" ] || exit 0
     [ -x "$USER_HOOK" ] || exit 0
     {replay}"$USER_HOOK" "$@"
     exit $?

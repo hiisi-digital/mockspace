@@ -188,9 +188,6 @@ pub fn chain_tail(name: &str, stdin_replay: &str) -> String {
 ms_chain() {{
     # a probe asks only whether a generated hook would run, and runs nothing
     [ -z "${{MOCKSPACE_PROBE:-}}" ] || exit 1
-    # run as a git-shook entry, the dispatcher runs everything else registered
-    # at this event itself, and chaining here would run it a second time
-    [ -z "${{MOCKSPACE_UNDER_SHOOK:-}}" ] || exit 0
     gitdir=$(git -C "$root" rev-parse --git-common-dir) || {{
         echo "mockspace gate: cannot find the repository's git directory" >&2
         exit 1

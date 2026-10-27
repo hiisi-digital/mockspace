@@ -17,12 +17,12 @@ use mockspace_manifest::gate::{FOLLOW_UP_HOOKS, HOOK_NAMES};
 
 use super::*;
 
-/// The name the manifest, and so each registered entry, answers to.
-const NAME: &str = "mockspace";
-
-/// The variable the durable and generated hooks read to skip their own chain
-/// to `.git/hooks/<event>` when git-shook is what ran them.
-const UNDER_SHOOK: &str = "MOCKSPACE_UNDER_SHOOK";
+/// The name the manifest, and so each registered entry, answers to. It leads
+/// with `00-` because git-shook runs an event's entries sorted by name and stops
+/// at the first refusal, and the gate is meant to refuse before any other tool's
+/// entry has run: an entry named `homma` posting a status would otherwise go
+/// first. Only `00-existing`, a hook git-shook kept, sorts ahead of it.
+const NAME: &str = "00-mockspace";
 
 /// Whether a recorded `core.hooksPath` is this clone's own git-shook hooks
 /// directory, the exact `<common-git-dir>/shook/hooks` git-shook writes. A
@@ -57,10 +57,8 @@ pub(crate) fn manifest_text(hooks_dir: &Path) -> String {
     let mut out = format!("name = {}\n", quote(NAME));
     for event in events() {
         let hook = hooks_dir.join(event);
-        // `env` marks the run as an entry, so the hook does not chain to
-        // `.git/hooks/<event>` itself: the dispatcher runs what else is registered
         out.push_str(&format!(
-            "\n[hooks.{event}]\nrun = [\"env\", \"{UNDER_SHOOK}=1\", {}]\n",
+            "\n[hooks.{event}]\nrun = [{}]\n",
             quote(&hook.to_string_lossy())
         ));
     }
@@ -115,7 +113,11 @@ pub(crate) fn register(repo_root: &Path, hooks_dir: &Path) -> Result<(), String>
     fs::write(&path, manifest_text(hooks_dir))
         .map_err(|e| format!("could not write {}: {e}", path.display()))?;
     let out = Command::new("git")
-        .args(["shook", "install", "--yes"])
+        // `--only`, so the `--yes` is consent for the gate's own manifest and
+        // not for a tracked `shook.toml` that arrived through a merge and has
+        // not been looked at; this runs on any `cargo mock`, not on a person's
+        // say-so
+        .args(["shook", "install", "--yes", "--only", NAME])
         .current_dir(repo_root)
         .output()
         .map_err(|e| format!("git shook could not run: {e}"))?;

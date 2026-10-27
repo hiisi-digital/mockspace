@@ -128,19 +128,25 @@ const PREVIOUS_HOOKS_PATH: &str = "mockspace.previousHooksPath";
 /// the documentation said deactivation was reversible and git then fell back to
 /// whatever the user already had.
 pub fn deactivate(repo_root: &Path) -> Result<(), String> {
-    // A gate registered with git-shook is one entry among others: remove it and
-    // leave `core.hooksPath` to git-shook, which owns it.
-    // Only where git-shook still holds the key. A manifest left behind after
-    // `git shook uninstall` is removed too, and then the ordinary path below
-    // takes `core.hooksPath` off the gate, which is what is still pointing at it.
+    // Where git-shook holds the key the gate is one entry among others and the
+    // key is not ours to touch, whether or not the entry is still there: run
+    // twice, or with a previous hooks path saved from before, the ordinary path
+    // below would unset git-shook's key or write another tool's over it.
     let held = local_config(repo_root, "core.hooksPath")
         .is_some_and(|p| shook::is_shook_path(repo_root, &p));
+    if held {
+        if shook::has_manifest(repo_root) {
+            shook::unregister(repo_root)?;
+            eprintln!("--- gate: removed from git-shook ---");
+        }
+        return Ok(());
+    }
+    // A manifest left behind after `git shook uninstall` is removed too, and the
+    // ordinary path below takes `core.hooksPath` off the gate, which is what is
+    // still pointing at it.
     if shook::has_manifest(repo_root) {
         shook::unregister(repo_root)?;
         eprintln!("--- gate: removed from git-shook ---");
-        if held {
-            return Ok(());
-        }
     }
     if let Some(previous) = local_config(repo_root, PREVIOUS_HOOKS_PATH) {
         if !previous.is_empty() {

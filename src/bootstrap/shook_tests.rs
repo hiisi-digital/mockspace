@@ -54,24 +54,35 @@ fn only_gitshooks_own_directory_is_recognised() {
 }
 
 #[test]
-fn a_hook_chains_to_the_repositorys_own_unless_it_runs_as_a_shook_entry() {
-    // the control: the same generated text chains without the variable
-    let generated = crate::bootstrap::chain_user_hook(Path::new("/r/.git/hooks/pre-commit"), false);
-    let guard = generated.find(UNDER_SHOOK).expect("the generated chain reads the variable");
-    let executable_check = generated.find("[ -x \"$USER_HOOK\" ]").expect("and still chains");
-    assert!(guard < executable_check, "the variable is read before anything chains");
-    let durable = mockspace_manifest::gate::chain_tail("pre-commit", "");
-    assert!(durable.contains(UNDER_SHOOK), "the durable hook reads it too");
+fn deactivating_while_shook_holds_the_key_never_touches_the_key() {
+    let dir = repo("held");
+    let sd = shook_dir(&dir);
+    fs::create_dir_all(sd.join("hooks")).unwrap();
+    let key = sd.join("hooks").to_string_lossy().to_string();
+    git(&dir, &["config", "--local", "core.hooksPath", &key]);
+    // the gate has no manifest here, and an earlier activation saved another
+    // tool's path: the ordinary restore would write it over git-shook's key
+    git(&dir, &["config", "--local", "mockspace.previousHooksPath", ".husky"]);
+
+    deactivate(&dir).unwrap();
+    deactivate(&dir).unwrap();
+
+    assert_eq!(
+        git(&dir, &["config", "--local", "core.hooksPath"]),
+        key,
+        "twice over, with a saved path, and the key is still git-shook's"
+    );
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn the_manifest_names_every_durable_hook_and_quotes_the_path() {
     let text = manifest_text(Path::new("/h/a \"b\"/hooks-v3"));
-    assert!(text.starts_with("name = \"mockspace\"\n"), "{text}");
+    assert!(text.starts_with("name = \"00-mockspace\"\n"), "{text}");
     for event in events() {
         assert!(
             text.contains(&format!(
-                "[hooks.{event}]\nrun = [\"env\", \"MOCKSPACE_UNDER_SHOOK=1\", \"/h/a \\\"b\\\"/hooks-v3/{event}\"]"
+                "[hooks.{event}]\nrun = [\"/h/a \\\"b\\\"/hooks-v3/{event}\"]"
             )),
             "{event}: {text}"
         );
@@ -138,18 +149,15 @@ fn adopting_shook_in_a_gated_repo_runs_the_gate_once() {
         return;
     }
     let dir = repo("once");
-    let log = dir.join("gate.log");
+    let log = dir.join("user.log");
+    // the real durable hooks, which in a repository that is not a mockspace
+    // project pass and chain to the repository's own hook: the chain is what a
+    // second copy of the gate would run twice
     let hooks = dir.join("durable");
-    fs::create_dir_all(&hooks).unwrap();
-    for event in events() {
-        let p = hooks.join(event);
-        fs::write(
-            &p,
-            format!("#!/bin/sh\n{MANAGED_MARKER}\necho {event} >> {}\n", log.display()),
-        )
-        .unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
+    let own = dir.join(".git/hooks/pre-commit");
+    fs::write(&own, format!("#!/bin/sh\necho USER >> {}\n", log.display())).unwrap();
+    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
     // the repository is gated the old way, by core.hooksPath on the durable dir
     git(&dir, &["config", "--local", "core.hooksPath", hooks.to_str().unwrap()]);
     fs::write(dir.join("shook.toml"), "[hooks.pre-commit]\nrun = [\"true\"]\n").unwrap();
@@ -165,8 +173,11 @@ fn adopting_shook_in_a_gated_repo_runs_the_gate_once() {
     fs::write(dir.join("f.txt"), "x").unwrap();
     git(&dir, &["add", "f.txt"]);
     git(&dir, &["commit", "-q", "-m", "init"]);
+    // once: the gate's chain reaches the repository's own hook, and the kept
+    // copy of the gate is gone so it does not reach it a second time. Without
+    // `drop_own_kept_hooks` this reads twice.
     let ran = fs::read_to_string(&log).unwrap_or_default();
-    assert_eq!(ran.lines().filter(|l| *l == "pre-commit").count(), 1, "{ran}");
+    assert_eq!(ran.lines().filter(|l| *l == "USER").count(), 1, "{ran}");
     let _ = fs::remove_dir_all(&dir);
 }
 
