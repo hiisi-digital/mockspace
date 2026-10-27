@@ -451,3 +451,39 @@ fn the_gate_entry_runs_before_an_entry_named_homma() {
     assert_eq!(ran, ["USER", "HOMMA"], "the gate's entry, and the hook it ends in, go first");
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_tool_run_by_a_manifest_and_by_the_hook_in_git_hooks_runs_once_after_the_gate_held_the_key() {
+    if !have_shook() {
+        eprintln!("SKIPPED: git shook is not on the path");
+        return;
+    }
+    // the order a gated repository meets: the gate holds `core.hooksPath`, the
+    // tool's entrypoint sits in `.git/hooks`, a tracked manifest declares the
+    // same tool, and then git-shook is installed and the gate registered
+    let dir = repo("gateheld");
+    let log = dir.join("tool.log");
+    let tool = dir.join("tool");
+    fs::write(&tool, format!("#!/bin/sh\necho TOOL >> {}\n", log.display())).unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    let own = dir.join(".git/hooks/pre-commit");
+    fs::write(&own, format!("#!/bin/sh\nexec {} \"$@\"\n", tool.display())).unwrap();
+    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        dir.join("shook.toml"),
+        format!("[hooks.pre-commit]\nrun = [\"{}\"]\n", tool.display()),
+    )
+    .unwrap();
+    git(&dir, &["add", "shook.toml"]);
+    let hooks = dir.join("durable");
+    let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
+    git(&dir, &["config", "core.hooksPath", hooks.to_str().unwrap()]);
+    git(&dir, &["shook", "install", "--yes"]);
+    register(&dir, &hooks).unwrap();
+    fs::write(dir.join("f.txt"), "x").unwrap();
+    git(&dir, &["add", "f.txt"]);
+    git(&dir, &["commit", "-q", "-m", "init"]);
+    let ran = fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(ran.lines().filter(|l| *l == "TOOL").count(), 1, "{ran}");
+    let _ = fs::remove_dir_all(&dir);
+}
