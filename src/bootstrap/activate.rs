@@ -32,6 +32,21 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
     // never disagree. `generated` remains the guaranteed floor.
     let hooks_dir = hooks_path_target(mock_dir);
 
+    // Where git-shook already holds `core.hooksPath` the gate joins it as an
+    // entry and the key stays as it is, so nothing chained on it is dropped.
+    let shook_held = local_config(repo_root, "core.hooksPath")
+        .is_some_and(|existing| shook::is_shook_path(repo_root, &existing));
+    if shook_held {
+        shook::register(repo_root, &hooks_dir)?;
+        eprintln!("--- gate: registered with git-shook, core.hooksPath left as it is ---");
+        return record_mock_dir(repo_root, mock_dir);
+    }
+    // git-shook gave the key up (`git shook uninstall` keeps the manifest): the
+    // stale registration goes, the gate takes the key below
+    if shook::has_manifest(repo_root) {
+        shook::unregister(repo_root)?;
+    }
+
     // Whatever the repository had before this, kept so `deactivate` can put it
     // back. Without it, activating in a repository already on husky, lefthook or
     // pre-commit destroys that setting and nothing anywhere remembers what it
@@ -73,6 +88,10 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
         return Err("git config core.hooksPath failed".into());
     }
 
+    record_mock_dir(repo_root, mock_dir)
+}
+
+fn record_mock_dir(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
     // Record where this repo's mock workspace lives so the agent hook can
     // locate the live validator at `<root>/<mockdir>/target/hooks`. The hook
     // reads it with a `mock` fallback, so only non-default layouts need it;
@@ -109,6 +128,26 @@ const PREVIOUS_HOOKS_PATH: &str = "mockspace.previousHooksPath";
 /// the documentation said deactivation was reversible and git then fell back to
 /// whatever the user already had.
 pub fn deactivate(repo_root: &Path) -> Result<(), String> {
+    // Where git-shook holds the key the gate is one entry among others and the
+    // key is not ours to touch, whether or not the entry is still there: run
+    // twice, or with a previous hooks path saved from before, the ordinary path
+    // below would unset git-shook's key or write another tool's over it.
+    let held = local_config(repo_root, "core.hooksPath")
+        .is_some_and(|p| shook::is_shook_path(repo_root, &p));
+    if held {
+        if shook::has_manifest(repo_root) {
+            shook::unregister(repo_root)?;
+            eprintln!("--- gate: removed from git-shook ---");
+        }
+        return Ok(());
+    }
+    // A manifest left behind after `git shook uninstall` is removed too, and the
+    // ordinary path below takes `core.hooksPath` off the gate, which is what is
+    // still pointing at it.
+    if shook::has_manifest(repo_root) {
+        shook::unregister(repo_root)?;
+        eprintln!("--- gate: removed from git-shook ---");
+    }
     if let Some(previous) = local_config(repo_root, PREVIOUS_HOOKS_PATH) {
         if !previous.is_empty() {
             let status = std::process::Command::new("git")
@@ -161,6 +200,9 @@ fn local_config(repo_root: &Path, key: &str) -> Option<String> {
 
 /// Check if mockspace hooks are currently active.
 pub fn is_active(repo_root: &Path) -> bool {
+    if shook::is_live(repo_root, local_config(repo_root, "core.hooksPath").as_deref()) {
+        return true;
+    }
     let output = std::process::Command::new("git")
         .args(["config", "--local", "core.hooksPath"])
         .current_dir(repo_root)

@@ -283,12 +283,15 @@ ms_chain "$@"
 /// past a refusal.
 pub(crate) fn chain_user_hook(user_hook: &Path, replay_stdin: bool) -> String {
     let path = user_hook.display();
+    let keeps = mockspace_manifest::gate::SHOOK_KEEPS;
     let replay = if replay_stdin { "printf '%s\\n' \"$PREPUSH_STDIN\" | " } else { "" };
     format!(
-        r#"# The repository's own hook, once validation has passed: same arguments,
+        r#"{keeps}
+# The repository's own hook, once validation has passed: same arguments,
 # same stdin, its exit status. Absent or not executable, the pass stands.
 USER_HOOK="{path}"
 ms_chain() {{
+    ms_shook_keeps "$(dirname "$(dirname "$USER_HOOK")")" "$(basename "$USER_HOOK")" && exit 0
     [ -x "$USER_HOOK" ] || exit 0
     {replay}"$USER_HOOK" "$@"
     exit $?

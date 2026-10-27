@@ -256,6 +256,67 @@ fn agent_gate_hook_self_heals_then_blocks() {
     assert!(hook.contains("_scope_or_allow"));
 }
 
+/// Runs the gate hook's own `_gate_intact` against a clone and returns whether
+/// it held. The function is cut out of the generated hook text, so what runs is
+/// what ships.
+fn gate_intact_in(clone: &std::path::Path) -> bool {
+    let hook = builtin_mockspace_gate();
+    let start = hook.find("_gate_intact() {").expect("the check is defined");
+    let end = hook[start..].find("\n}\n").expect("the check ends") + start + 3;
+    let script = format!(
+        "root='{}'\nvalidator=\"$root/mock/target/hooks/pre-commit\"\n{}\n_gate_intact\n",
+        clone.display(),
+        &hook[start..end]
+    );
+    std::process::Command::new("bash")
+        .args(["-c", &script])
+        .status()
+        .expect("bash runs")
+        .success()
+}
+
+#[test]
+fn the_agent_gate_holds_where_git_shook_has_the_key_registered_whatever_the_path_spells() {
+    let base = std::env::temp_dir().join(format!("gate-intact-{}", std::process::id()));
+    // the clone's own path spells "mockspace", as this repository's does: the
+    // unregistered control must still fail
+    let clone = base.join("work").join("mockspace-clone");
+    std::fs::create_dir_all(clone.join("mock/target/hooks")).unwrap();
+    let git = |args: &[&str]| {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&clone)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    git(&["init", "-q"]);
+    let validator = clone.join("mock/target/hooks/pre-commit");
+    std::fs::write(&validator, "#!/bin/sh\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&validator, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let common = clone.canonicalize().unwrap().join(".git");
+    let hooks = common.join("shook/hooks");
+    git(&["config", "--local", "core.hooksPath", hooks.to_str().unwrap()]);
+
+    // the key is git-shook's and the gate is not registered with it: broken
+    assert!(!gate_intact_in(&clone), "control: nothing registered");
+    // registered as an entry: intact, though the path names no mockspace
+    let entry = common.join("shook/entries/pre-commit/00-mockspace");
+    std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+    std::fs::write(&entry, "x").unwrap();
+    assert!(gate_intact_in(&clone), "registered with git-shook");
+    // and a hooks path that is somebody else's is still broken
+    git(&["config", "--local", "core.hooksPath", "/elsewhere/hooks"]);
+    assert!(!gate_intact_in(&clone), "control: another tool's path");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn canon_design_code_chain_is_a_generated_builtin() {
     // A project that HAS a canon, which is what the rest of this test is about,
