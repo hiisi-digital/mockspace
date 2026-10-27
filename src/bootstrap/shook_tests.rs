@@ -76,6 +76,22 @@ fn deactivating_while_shook_holds_the_key_never_touches_the_key() {
 }
 
 #[test]
+fn a_failed_registration_gives_the_manifest_back_as_it_was() {
+    let dir = repo("restore");
+    let path = manifest_path(&dir);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // there before: the same text again
+    fs::write(&path, "old").unwrap();
+    fs::write(&path, "new").unwrap();
+    restore(&path, Some(b"old".to_vec()));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "old");
+    // not there before: gone again
+    restore(&path, None);
+    assert!(!path.exists());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn the_manifest_names_every_durable_hook_and_quotes_the_path() {
     let text = manifest_text(Path::new("/h/a \"b\"/hooks-v3"));
     assert!(text.starts_with("name = \"00-mockspace\"\n"), "{text}");

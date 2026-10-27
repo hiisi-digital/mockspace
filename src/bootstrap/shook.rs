@@ -104,13 +104,36 @@ fn drop_own_kept_hooks(repo_root: &Path) {
     }
 }
 
-/// Write the manifest and have git-shook register it.
+/// Write the manifest and have git-shook register it. A registration that
+/// fails leaves the manifest as it was before the call, so a refusal does not
+/// leave a file behind for every later run to trip over.
 pub(crate) fn register(repo_root: &Path, hooks_dir: &Path) -> Result<(), String> {
     let path = manifest_path(repo_root);
+    let prior = fs::read(&path).ok();
+    let registered = register_inner(repo_root, hooks_dir, &path);
+    if registered.is_err() {
+        restore(&path, prior);
+    }
+    registered
+}
+
+/// Put the manifest back as it was: the text it had, or absent if it had none.
+pub(crate) fn restore(path: &Path, prior: Option<Vec<u8>>) {
+    match prior {
+        Some(text) => {
+            let _ = fs::write(path, text);
+        },
+        None => {
+            let _ = fs::remove_file(path);
+        },
+    }
+}
+
+fn register_inner(repo_root: &Path, hooks_dir: &Path, path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("could not create {}: {e}", parent.display()))?;
     }
-    fs::write(&path, manifest_text(hooks_dir))
+    fs::write(path, manifest_text(hooks_dir))
         .map_err(|e| format!("could not write {}: {e}", path.display()))?;
     let out = Command::new("git")
         // `--only`, so the `--yes` is consent for the gate's own manifest and
