@@ -36,8 +36,9 @@ rather than left to fail at every row:
 
 - **A bound on a field that is not an `integer`**, or a `min` above its `max`,
   as `misplaced-field-bound`.
-- **A listed value no row can hold**, one that does not read as its field's type
-  or lies outside the field's own range, as `unfit-field-value`.
+- **A listed value no row can hold**, one that does not read as its field's type,
+  an integer not written plainly (`+5`, `05`), or one outside the field's own
+  range, as `unfit-field-value`.
 
 ## The three functions
 

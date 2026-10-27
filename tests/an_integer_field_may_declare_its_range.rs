@@ -115,6 +115,8 @@ fn a_closed_set_of_integers_or_booleans_holds_its_own_type() {
     assert!(!ok && err.contains("3 is not one of [1,2]"), "3 is not listed:\n{err}");
     let (ok, err) = outcome("type = \"boolean\"\nvalues = [\"true\"]", "true");
     assert!(ok, "true is listed:\n{err}");
+    let (ok, err) = outcome("type = \"boolean\"\nvalues = [\"true\"]", "false");
+    assert!(!ok && err.contains("false is not one of [true]"), "false is not listed:\n{err}");
 }
 
 #[test]
@@ -123,6 +125,8 @@ fn a_listed_value_no_row_can_hold_is_refused_at_the_declaration() {
         "type = \"integer\"\nvalues = [\"one\"]",
         "type = \"integer\"\nmin = 1\nmax = 5\nvalues = [\"9\"]",
         "type = \"boolean\"\nvalues = [\"yes\"]",
+        "type = \"integer\"\nvalues = [\"+5\"]",
+        "type = \"integer\"\nvalues = [\"05\"]",
     ] {
         let (ok, err) = outcome(field, "1");
         assert!(!ok && err.contains("unfit-field-value"), "{field}:\n{err}");

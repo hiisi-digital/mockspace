@@ -53,7 +53,7 @@ pub fn misplaced_bounds(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding
 }
 
 /// A member of a field's `values` that no row could hold: one that does not read as an
-/// `integer` or a `boolean` on a field of that type, or an integer outside the field's
+/// `integer` or a `boolean` on a field of that type, an integer not written plainly, or an integer outside the field's
 /// own `min` and `max`.
 pub fn unfit_values(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding> {
     let mut out = Vec::new();
@@ -63,6 +63,7 @@ pub fn unfit_values(namespaces: &[RegistryNamespace]) -> Vec<RegistryFinding> {
                 let problem = match f.r#type.as_str() {
                     "integer" => match v.parse::<i64>() {
                         Err(_) => Some(format!("`{v}` does not read as an integer")),
+                        Ok(n) if n.to_string() != *v => Some(format!("`{v}` is the integer {n} written another way, and a row holds it as `{n}`")),
                         Ok(n) if f.min.is_some_and(|lo| n < lo) || f.max.is_some_and(|hi| n > hi) => {
                             Some(format!("{n} lies outside the field's own `min` and `max`"))
                         },
@@ -179,10 +180,12 @@ mod tests {
             field(1, "integer", &["6"], Some(1), Some(5)),
             field(2, "integer", &["0"], Some(1), None),
             field(3, "boolean", &["yes"], None, None),
+            field(4, "integer", &["+5"], None, None),
+            field(5, "integer", &["05"], None, None),
         ]));
-        assert_eq!(found.len(), 4, "{found:?}");
+        assert_eq!(found.len(), 6, "{found:?}");
         assert!(found.iter().all(|f| f.kind == "unfit-field-value"));
-        for (f, name) in found.iter().zip(["f0", "f1", "f2", "f3"]) {
+        for (f, name) in found.iter().zip(["f0", "f1", "f2", "f3", "f4", "f5"]) {
             assert!(f.message.contains(&format!("`{name}`")), "{}", f.message);
         }
     }

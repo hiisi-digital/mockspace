@@ -115,7 +115,8 @@ as strings and held in the field's own type: the generated schema makes it an
 `minimum` and `maximum`; with `values` beside them, both hold. Each of these is
 reported at the declaration where the schema could not hold it: a bound on any
 other type, a `min` above its `max`, and a listed value that does not read as its
-field's type or lies outside the field's own range. Left to the rows, each would
+field's type, an integer not written plainly (`+5`, `05`), or one outside the
+field's own range. Left to the rows, each would
 fail at every row naming the row rather than the declaration, or read as held
 while nothing held it. An editor drawing the registry reads the same keys: a
 closed set is a choice, whatever its type, and an integer with a range and no

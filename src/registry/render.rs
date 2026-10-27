@@ -210,13 +210,16 @@ pub fn generate_schemas(
     written
 }
 
-/// The schema `enum` member a closed set's `value` is on a field of type `ty`: a bare
-/// number on an `integer`, a bare `true` or `false` on a `boolean`, and a string on
-/// anything else, including a value that does not read as its type, which `unfit_values`
+/// The schema `enum` member a closed set's `value` is on a field of type `ty`: the parsed
+/// number on an `integer`, so `+5` is written `5`, a bare `true` or `false` on a
+/// `boolean`, and a string on anything else, including a value that does not read as its type, which `unfit_values`
 /// refuses at the declaration.
 fn enum_member(ty: &str, value: &str) -> String {
     match ty {
-        "integer" if value.parse::<i64>().is_ok() => value.to_string(),
+        "integer" => match value.parse::<i64>() {
+            Ok(n) => n.to_string(),
+            Err(_) => json_string(value),
+        },
         "boolean" if value == "true" || value == "false" => value.to_string(),
         _ => json_string(value),
     }
@@ -613,6 +616,7 @@ mod closed_value_set_placement {
         for (ty, json, values, members) in [
             ("string", "\"type\": \"string\"", ["a", "b"], "\"a\", \"b\""),
             ("integer", "\"type\": \"integer\"", ["1", "-2"], "1, -2"),
+            ("integer", "\"type\": \"integer\"", ["+5", "05"], "5, 5"),
             ("boolean", "\"type\": \"boolean\"", ["true", "false"], "true, false"),
         ] {
             let p = property(&schema_for(ty, &values));
