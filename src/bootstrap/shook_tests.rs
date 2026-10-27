@@ -328,3 +328,41 @@ fn a_repository_without_shook_is_not_reported_active_by_the_shook_path() {
     assert!(!has_manifest(&dir));
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_hook_git_shook_declined_because_a_manifest_runs_it_is_not_chained_to_either() {
+    if !have_shook() {
+        eprintln!("SKIPPED: git shook is not on the path");
+        return;
+    }
+    let dir = repo("declined");
+    let log = dir.join("tool.log");
+    let tool = dir.join("tool");
+    fs::write(&tool, format!("#!/bin/sh\necho TOOL >> {}\n", log.display())).unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    // the repository's own hook does nothing but run what the manifest declares
+    let own = dir.join(".git/hooks/pre-commit");
+    fs::write(&own, format!("#!/bin/sh\nexec {} \"$@\"\n", tool.display())).unwrap();
+    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        dir.join("shook.toml"),
+        format!("[hooks.pre-commit]\nrun = [\"{}\"]\n", tool.display()),
+    )
+    .unwrap();
+    git(&dir, &["add", "shook.toml"]);
+    let hooks = dir.join("durable");
+    let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
+    git(&dir, &["shook", "install", "--yes"]);
+    register(&dir, &hooks).unwrap();
+    assert!(
+        !shook_dir(&dir).join("entries/pre-commit/00-existing").exists(),
+        "control: git-shook declined to keep it, and left the file where it was"
+    );
+    assert!(own.is_file(), "control: the original is still in `.git/hooks`");
+    fs::write(dir.join("f.txt"), "x").unwrap();
+    git(&dir, &["add", "f.txt"]);
+    git(&dir, &["commit", "-q", "-m", "init"]);
+    let ran = fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(ran.lines().filter(|l| *l == "TOOL").count(), 1, "{ran}");
+    let _ = fs::remove_dir_all(&dir);
+}
