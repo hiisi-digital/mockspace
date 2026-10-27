@@ -692,15 +692,26 @@ _gate_intact() {
     [ -x "$validator" ] || return 1
     local hp
     hp=$(git -C "$root" config --local core.hooksPath 2>/dev/null || true)
+    # git-shook holds the key: the gate is intact where it is registered there
+    # as an entry. Asked before the glob below, since a clone whose own path
+    # contains "mockspace" would otherwise pass on the spelling of git-shook's
+    # directory with nothing registered
+    local common
+    common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    if [ -n "$common" ] && [ "$hp" = "$common/shook/hooks" ]; then
+        [ -f "$common/shook/entries/pre-commit/00-mockspace" ]
+        return
+    fi
     case "$hp" in
         *mockspace*|*target/hooks*) return 0 ;;
-        *) return 1 ;;
     esac
+    return 1
 }
 
 if _gate_intact; then allow; fi
 
-# Gate broken: validator cleaned away, or core.hooksPath not wired.
+# Gate broken: validator cleaned away, or neither core.hooksPath wired to
+# mockspace nor the gate registered as an entry where git-shook holds the key.
 #
 # Try the narrow repair first. `activate` only ensures the durable hooks and
 # points core.hooksPath; it writes nothing else in the tree, which matters
@@ -712,7 +723,7 @@ if _gate_intact; then allow; fi
 ( cd "$root" && cargo mock ) >/dev/null 2>&1 || true
 if _gate_intact; then allow; fi
 
-deny "mockspace gate is broken and self-heal failed: the git validator at $validator is missing or core.hooksPath is not wired to mockspace. Agent commits and pushes are blocked until it is restored. Run 'cargo mock' from $root, then retry."
+deny "mockspace gate is broken and self-heal failed: the git validator at $validator is missing, or core.hooksPath is not wired to mockspace and, where git-shook holds it, the gate is not registered with it. Agent commits and pushes are blocked until it is restored. Run 'cargo mock' from $root, then retry."
 "##
     .to_string()
 }
