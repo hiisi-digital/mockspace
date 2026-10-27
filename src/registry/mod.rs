@@ -62,6 +62,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod bounds;
 mod load;
 mod model;
 mod refs;
@@ -71,6 +72,7 @@ mod resolved;
 mod rowref;
 pub(crate) mod validate;
 
+pub use bounds::*;
 pub use load::*;
 pub use model::*;
 pub use refs::*;
@@ -445,6 +447,8 @@ mod tests {
             description: None,
             visibility:  vis,
             values:      Vec::new(),
+            min:         None,
+            max:         None,
         }
     }
 
@@ -471,6 +475,8 @@ mod tests {
             description: None,
             visibility:  FieldVisibility::Public,
             values:      Vec::new(),
+            min:         None,
+            max:         None,
         }];
         let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -502,6 +508,8 @@ mod tests {
             description: None,
             visibility:  FieldVisibility::Public,
             values:      Vec::new(),
+            min:         None,
+            max:         None,
         }];
         let reg = reg_with("seam", "law", &[("derives_from", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -534,6 +542,8 @@ mod tests {
             description: None,
             visibility:  FieldVisibility::Public,
             values:      Vec::new(),
+            min:         None,
+            max:         None,
         }];
         let reg = reg_with("seam", "law", &[("provenance", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -570,6 +580,8 @@ mod tests {
             description: None,
             visibility:  FieldVisibility::Public,
             values:      Vec::new(),
+            min:         None,
+            max:         None,
         }];
         let reg = reg_with("seam", "law", &[("rests_on", "nosuchroot::DESIGN::1")]);
         let found = validate::validate_provenance(
@@ -1201,6 +1213,8 @@ mod tests {
                 description: None,
                 visibility:  FieldVisibility::Public,
                 values:      Vec::new(),
+                min:         None,
+                max:         None,
             },
             RegistryField {
                 name:        "crates".into(),
@@ -1209,6 +1223,8 @@ mod tests {
                 description: None,
                 visibility:  FieldVisibility::Public,
                 values:      Vec::new(),
+                min:         None,
+                max:         None,
             },
         ];
         for (slug, name, crates) in [

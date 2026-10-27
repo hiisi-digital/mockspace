@@ -26,6 +26,20 @@ Three things are reported rather than passed:
 - **A target declaring `value_field`**, which renders a value rather than a link
   and so cannot carry a relation.
 
+## The values a field takes
+
+`values` lists a closed set, as strings, held in the field's own type: the schema
+makes an `enum` of strings, of numbers on an `integer` and of `true` and `false`
+on a `boolean`. On an `integer`, `min` and `max` give its range, each optional;
+with `values` beside them, both hold. These are reported at the declaration
+rather than left to fail at every row:
+
+- **A bound on a field that is not an `integer`**, or a `min` above its `max`,
+  as `misplaced-field-bound`.
+- **A listed value no row can hold**, one that does not read as its field's type,
+  an integer not written plainly (`+5`, `05`), or one outside the field's own
+  range, as `unfit-field-value`.
+
 ## The three functions
 
 Each answers a question about a thing rather than rendering it.

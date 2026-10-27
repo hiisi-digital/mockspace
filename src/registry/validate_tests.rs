@@ -18,8 +18,9 @@ use super::{FIELD_KEYS, FINDING_KINDS, NAMESPACE_KEYS};
 const MODEL: &str = include_str!("model.rs");
 
 /// Every file that emits a registry finding kind, as source.
-const PRODUCERS: [&str; 4] = [
+const PRODUCERS: [&str; 5] = [
     include_str!("validate.rs"),
+    include_str!("bounds.rs"),
     include_str!("resolve.rs"),
     include_str!("rowref/mod.rs"),
     include_str!("../entry/dispatch.rs"),

@@ -72,7 +72,7 @@ pub fn generate_schemas(
                     "\"enum\": [{}]",
                     f.values
                         .iter()
-                        .map(|v| json_string(v))
+                        .map(|v| enum_member(&f.r#type, v))
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
@@ -105,7 +105,9 @@ pub fn generate_schemas(
                 (Some((_, false)), _) => {
                     scalar("\"type\": \"string\", \"pattern\": \"^[a-z][a-z0-9_]*$\"")
                 },
-                (None, "integer") => scalar("\"type\": \"integer\""),
+                // A bound is only ever on an integer; on any other type it is refused
+                // by `misplaced_bounds` rather than emitted where it would mean nothing.
+                (None, "integer") => scalar(&integer_with_bounds(f.min, f.max)),
                 (None, "boolean") => scalar("\"type\": \"boolean\""),
                 // A citation is a string on the wire. The type exists to say what
                 // the string means, so validation can find it without knowing
@@ -206,6 +208,23 @@ pub fn generate_schemas(
         }
     }
     written
+}
+
+/// The schema `enum` member a closed set's `value` is on a field of type `ty`: the parsed
+/// number on an `integer`, so `+5` is written `5`, a bare `true` or `false` on a
+/// `boolean`, and a string on anything else, including a value that does not read as its
+/// type, which `unfit_values` refuses at the declaration.
+fn enum_member(ty: &str, value: &str) -> String {
+    match ty {
+        "integer" => {
+            match value.parse::<i64>() {
+                Ok(n) => n.to_string(),
+                Err(_) => json_string(value),
+            }
+        },
+        "boolean" if value == "true" || value == "false" => value.to_string(),
+        _ => json_string(value),
+    }
 }
 
 /// Minimal JSON string escaping. The registry's descriptions are prose written
@@ -517,6 +536,19 @@ pub fn format_citation(row: &RegistryRow) -> String {
     out
 }
 
+/// An integer property's type, with `minimum` and `maximum` where the field declares
+/// them.
+fn integer_with_bounds(min: Option<i64>, max: Option<i64>) -> String {
+    let mut out = "\"type\": \"integer\"".to_string();
+    if let Some(n) = min {
+        out.push_str(&format!(", \"minimum\": {n}"));
+    }
+    if let Some(n) = max {
+        out.push_str(&format!(", \"maximum\": {n}"));
+    }
+    out
+}
+
 #[cfg(test)]
 mod closed_value_set_placement {
     //! Where a `values` list lands in the emitted schema, for every field type
@@ -531,6 +563,10 @@ mod closed_value_set_placement {
     use crate::registry::{FieldVisibility, RegistryField, RegistryNamespace, RenderMode};
 
     fn schema_for(ty: &str, values: &[&str]) -> String {
+        schema_with(ty, values, None, None)
+    }
+
+    fn schema_with(ty: &str, values: &[&str], min: Option<i64>, max: Option<i64>) -> String {
         let ns = RegistryNamespace {
             key:         "probe".into(),
             title:       None,
@@ -539,12 +575,14 @@ mod closed_value_set_placement {
             render:      RenderMode::Page,
             group_by:    None,
             fields:      vec![RegistryField {
-                name:        "f".into(),
-                r#type:      ty.into(),
-                required:    false,
+                name: "f".into(),
+                r#type: ty.into(),
+                required: false,
                 description: None,
-                visibility:  FieldVisibility::Public,
-                values:      values.iter().map(|s| s.to_string()).collect(),
+                visibility: FieldVisibility::Public,
+                values: values.iter().map(|s| s.to_string()).collect(),
+                min,
+                max,
             }],
         };
         let tmp = tempfile::tempdir().unwrap();
@@ -575,18 +613,31 @@ mod closed_value_set_placement {
 
     #[test]
     fn an_arrays_enum_constrains_its_members_and_a_scalars_constrains_itself() {
-        for (ty, json) in [
-            ("string", "\"type\": \"string\""),
-            ("integer", "\"type\": \"integer\""),
-            ("boolean", "\"type\": \"boolean\""),
+        // each member in the field's own type: an integer's or a boolean's written as a
+        // string would match no value of that type, and every row would fail
+        for (ty, json, values, members) in [
+            ("string", "\"type\": \"string\"", ["a", "b"], "\"a\", \"b\""),
+            ("integer", "\"type\": \"integer\"", ["1", "-2"], "1, -2"),
+            ("integer", "\"type\": \"integer\"", ["+5", "05"], "5, 5"),
+            (
+                "boolean",
+                "\"type\": \"boolean\"",
+                ["true", "false"],
+                "true, false",
+            ),
         ] {
-            let p = property(&schema_for(ty, &["a", "b"]));
+            let p = property(&schema_for(ty, &values));
             assert_eq!(
                 p,
-                format!("\"f\": {{\n          {json},\n          \"enum\": [\"a\", \"b\"]"),
-                "{ty}: a scalar's enum sits on the property"
+                format!("\"f\": {{\n          {json},\n          \"enum\": [{members}]"),
+                "{ty}: a scalar's enum sits on the property, in its type"
             );
         }
+        assert!(
+            property(&schema_for("string", &["3", "true"]))
+                .ends_with("\"enum\": [\"3\", \"true\"]"),
+            "a string's members stay strings, however they read"
+        );
         for ty in ["string[]", "ref[]"] {
             let p = property(&schema_for(ty, &["a", "b"]));
             assert_eq!(
@@ -596,6 +647,22 @@ mod closed_value_set_placement {
                  never beside `type: array` where no array value can satisfy it"
             );
         }
+    }
+
+    #[test]
+    fn an_integers_bounds_sit_on_its_type_and_one_without_has_none() {
+        assert_eq!(
+            property(&schema_with("integer", &[], Some(0), Some(10))),
+            "\"f\": {\n          \"type\": \"integer\", \"minimum\": 0, \"maximum\": 10"
+        );
+        assert_eq!(
+            property(&schema_with("integer", &[], None, Some(-3))),
+            "\"f\": {\n          \"type\": \"integer\", \"maximum\": -3"
+        );
+        assert_eq!(
+            property(&schema_for("integer", &[])),
+            "\"f\": {\n          \"type\": \"integer\""
+        );
     }
 
     #[test]
