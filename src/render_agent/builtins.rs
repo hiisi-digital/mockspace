@@ -706,7 +706,8 @@ _gate_intact() {
 
 if _gate_intact; then allow; fi
 
-# Gate broken: validator cleaned away, or core.hooksPath not wired.
+# Gate broken: validator cleaned away, or neither core.hooksPath wired to
+# mockspace nor the gate registered as an entry where git-shook holds the key.
 #
 # Try the narrow repair first. `activate` only ensures the durable hooks and
 # points core.hooksPath; it writes nothing else in the tree, which matters
@@ -718,7 +719,7 @@ if _gate_intact; then allow; fi
 ( cd "$root" && cargo mock ) >/dev/null 2>&1 || true
 if _gate_intact; then allow; fi
 
-deny "mockspace gate is broken and self-heal failed: the git validator at $validator is missing or core.hooksPath is not wired to mockspace. Agent commits and pushes are blocked until it is restored. Run 'cargo mock' from $root, then retry."
+deny "mockspace gate is broken and self-heal failed: the git validator at $validator is missing, or core.hooksPath is not wired to mockspace and, where git-shook holds it, the gate is not registered with it. Agent commits and pushes are blocked until it is restored. Run 'cargo mock' from $root, then retry."
 "##
     .to_string()
 }

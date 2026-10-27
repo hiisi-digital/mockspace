@@ -32,17 +32,6 @@ durable hooks that delegate to it, and points `core.hooksPath` at them. The
 durable hooks live outside the repository, in the user config home; the
 per-repository validator lives under the mock directory's `target/`.
 
-**Where `core.hooksPath` is git-shook's, the gate does not take it.** It joins
-git-shook as one entry, a `00-mockspace.toml` manifest in the clone's
-`<git-dir>/shook/manifests/` naming the durable hooks, registered with
-`git shook install --yes --only 00-mockspace`, and `core.hooksPath` is left
-alone. The `00-` sorts the gate ahead of the other entries. The hook still ends
-in `.git/hooks/<event>`, except for an event where git-shook kept that hook as
-its `00-existing` entry, which already runs it. The agent commit guard counts
-the gate as intact where `core.hooksPath` is git-shook's and the entry is
-registered, whatever the clone's path is called. `mock deactivate` removes that entry and touches
-neither `core.hooksPath` nor a saved previous value.
-
 **Deleting `target/` does not uninstall anything.** The durable hooks and
 `core.hooksPath` survive it. What goes is the generated validator, and the hook
 then blocks and says to run `cargo mock`.
@@ -60,8 +49,7 @@ subcommand writes the bookkeeping that goes with it. `phases.md` and `verbs.md`
 carry the state machine.
 
 **Gate control** points `core.hooksPath` at the mockspace gate, or restores
-git's default; under git-shook it registers or removes the gate's entry
-instead.
+git's default.
 
 **Reports** answer a question and change nothing: the readiness report, the
 round's current phase, the registry query, the tool listing.
