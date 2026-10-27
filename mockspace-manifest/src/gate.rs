@@ -216,7 +216,12 @@ pub const SHOOK_KEEPS: &str = r##"ms_shook_keeps() { # <git-common-dir> <hook>
     hp=$(git config --get core.hooksPath 2>/dev/null) || return 1
     [ -n "$hp" ] || return 1
     [ "$(cd "$hp" 2>/dev/null && pwd -P)" = "$(cd "$1/shook/hooks" 2>/dev/null && pwd -P)" ] || return 1
-    [ -f "$1/shook/entries/$2/00-existing" ] && return 0
+    # the kept copy runs as the entry, so it stands for the original only while
+    # it still equals it: a hook adopted from another directory, or edited since,
+    # is a different file and the chain is what runs the current one
+    if [ -f "$1/shook/entries/$2/00-existing" ] && cmp -s "$1/shook/kept/$2" "$1/hooks/$2"; then
+        return 0
+    fi
     # a hook git-shook left in place because a manifest registers what it does:
     # the copy it recorded equal to the file means the entry already runs it
     [ -f "$1/shook/declined/$2" ] && cmp -s "$1/shook/declined/$2" "$1/hooks/$2"

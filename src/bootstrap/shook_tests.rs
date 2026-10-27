@@ -366,3 +366,88 @@ fn a_hook_git_shook_declined_because_a_manifest_runs_it_is_not_chained_to_either
     assert_eq!(ran.lines().filter(|l| *l == "TOOL").count(), 1, "{ran}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_hook_edited_after_git_shook_kept_a_copy_is_still_reached_by_the_chain() {
+    if !have_shook() {
+        eprintln!("SKIPPED: git shook is not on the path");
+        return;
+    }
+    let (dir, log) = adopted_with_own_hook("editedafter", true);
+    assert!(
+        shook_dir(&dir).join("entries/pre-commit/00-existing").is_file(),
+        "control: git-shook kept a copy as an entry"
+    );
+    let own = dir.join(".git/hooks/pre-commit");
+    fs::write(&own, format!("#!/bin/sh\necho EDITED >> {}\n", log.display())).unwrap();
+    fs::write(dir.join("g.txt"), "y").unwrap();
+    git(&dir, &["add", "g.txt"]);
+    git(&dir, &["commit", "-q", "-m", "second"]);
+    let ran = fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        ran.lines().filter(|l| *l == "EDITED").count(),
+        1,
+        "the current file runs through the chain, the stale copy being the entry's: {ran}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_hook_adopted_from_another_hooks_directory_leaves_git_hooks_to_the_chain() {
+    if !have_shook() {
+        eprintln!("SKIPPED: git shook is not on the path");
+        return;
+    }
+    let dir = repo("otherdir");
+    let log = dir.join("user.log");
+    let hooks = dir.join("durable");
+    let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
+    // the old hooks path holds one hook, and `.git/hooks` another
+    fs::create_dir_all(dir.join(".githooks")).unwrap();
+    let old = dir.join(".githooks/pre-commit");
+    fs::write(&old, format!("#!/bin/sh\necho OLDDIR >> {}\n", log.display())).unwrap();
+    fs::set_permissions(&old, fs::Permissions::from_mode(0o755)).unwrap();
+    git(&dir, &["config", "core.hooksPath", ".githooks"]);
+    let own = dir.join(".git/hooks/pre-commit");
+    fs::write(&own, format!("#!/bin/sh\necho GITDIR >> {}\n", log.display())).unwrap();
+    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(dir.join("shook.toml"), "[hooks.pre-commit]\nrun = [\"true\"]\n").unwrap();
+    git(&dir, &["add", "shook.toml"]);
+    git(&dir, &["shook", "install", "--yes"]);
+    register(&dir, &hooks).unwrap();
+    fs::write(dir.join("f.txt"), "x").unwrap();
+    git(&dir, &["add", "f.txt"]);
+    git(&dir, &["commit", "-q", "-m", "init"]);
+    let ran = fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(ran.lines().filter(|l| *l == "OLDDIR").count(), 1, "{ran}");
+    assert_eq!(ran.lines().filter(|l| *l == "GITDIR").count(), 1, "{ran}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_gate_entry_runs_before_an_entry_named_homma() {
+    if !have_shook() {
+        eprintln!("SKIPPED: git shook is not on the path");
+        return;
+    }
+    // the repository's own hook arrives after the adoption, so it runs only as
+    // the tail of the gate's entry, which makes it the mark of the gate's turn
+    let (dir, log) = adopted_with_own_hook("order", false);
+    let tool = dir.join("homma-stand-in");
+    fs::write(&tool, format!("#!/bin/sh\necho HOMMA >> {}\n", log.display())).unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    let manifests = shook_dir(&dir).join("manifests");
+    fs::write(
+        manifests.join("homma.toml"),
+        format!("name = \"homma\"\n\n[hooks.pre-commit]\nrun = [\"{}\"]\n", tool.display()),
+    )
+    .unwrap();
+    git(&dir, &["shook", "install", "--yes", "--only", "homma"]);
+    fs::write(&log, "").unwrap();
+    fs::write(dir.join("g.txt"), "y").unwrap();
+    git(&dir, &["add", "g.txt"]);
+    git(&dir, &["commit", "-q", "-m", "second"]);
+    let ran: Vec<String> = fs::read_to_string(&log).unwrap_or_default().lines().map(String::from).collect();
+    assert_eq!(ran, ["USER", "HOMMA"], "the gate's entry, and the hook it ends in, go first");
+    let _ = fs::remove_dir_all(&dir);
+}
