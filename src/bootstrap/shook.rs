@@ -108,34 +108,50 @@ fn drop_own_kept_hooks(repo_root: &Path) {
 /// fails leaves the manifest as it was before the call, so a refusal does not
 /// leave a file behind for every later run to trip over.
 pub(crate) fn register(repo_root: &Path, hooks_dir: &Path) -> Result<(), String> {
+    register_with(repo_root, hooks_dir, None)
+}
+
+/// [`register`], with `on_path` put at the front of the child's `PATH`.
+pub(crate) fn register_with(
+    repo_root: &Path,
+    hooks_dir: &Path,
+    on_path: Option<&Path>,
+) -> Result<(), String> {
     let path = manifest_path(repo_root);
     let prior = fs::read(&path).ok();
-    let registered = register_inner(repo_root, hooks_dir, &path);
+    let registered = register_inner(repo_root, hooks_dir, &path, on_path);
     if registered.is_err() {
-        restore(&path, prior);
+        match prior {
+            Some(text) => {
+                let _ = fs::write(&path, text);
+            },
+            None => {
+                let _ = fs::remove_file(&path);
+            },
+        }
     }
     registered
 }
 
-/// Put the manifest back as it was: the text it had, or absent if it had none.
-pub(crate) fn restore(path: &Path, prior: Option<Vec<u8>>) {
-    match prior {
-        Some(text) => {
-            let _ = fs::write(path, text);
-        },
-        None => {
-            let _ = fs::remove_file(path);
-        },
-    }
-}
-
-fn register_inner(repo_root: &Path, hooks_dir: &Path, path: &Path) -> Result<(), String> {
+fn register_inner(
+    repo_root: &Path,
+    hooks_dir: &Path,
+    path: &Path,
+    on_path: Option<&Path>,
+) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("could not create {}: {e}", parent.display()))?;
     }
     fs::write(path, manifest_text(hooks_dir))
         .map_err(|e| format!("could not write {}: {e}", path.display()))?;
-    let out = Command::new("git")
+    let mut git = Command::new("git");
+    if let Some(dir) = on_path {
+        let mut joined = std::ffi::OsString::from(dir);
+        joined.push(":");
+        joined.push(std::env::var_os("PATH").unwrap_or_default());
+        git.env("PATH", joined);
+    }
+    let out = git
         // `--only`, so the `--yes` is consent for the gate's own manifest and
         // not for a tracked `shook.toml` that arrived through a merge and has
         // not been looked at; this runs on any `cargo mock`, not on a person's

@@ -76,18 +76,25 @@ fn deactivating_while_shook_holds_the_key_never_touches_the_key() {
 }
 
 #[test]
-fn a_failed_registration_gives_the_manifest_back_as_it_was() {
-    let dir = repo("restore");
+fn a_refused_registration_gives_the_manifest_back_as_it_was() {
+    let dir = repo("refused");
+    let bin = dir.join("fakebin");
+    fs::create_dir_all(&bin).unwrap();
+    let shook = bin.join("git-shook");
+    fs::write(&shook, "#!/bin/sh\necho no >&2\nexit 1\n").unwrap();
+    fs::set_permissions(&shook, fs::Permissions::from_mode(0o755)).unwrap();
+    let hooks = dir.join("durable");
     let path = manifest_path(&dir);
+
+    // none before: none after
+    assert!(register_with(&dir, &hooks, Some(&bin)).is_err());
+    assert!(!path.exists(), "a refusal left a manifest where there was none");
+
+    // one before: the same text after
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    // there before: the same text again
-    fs::write(&path, "old").unwrap();
-    fs::write(&path, "new").unwrap();
-    restore(&path, Some(b"old".to_vec()));
-    assert_eq!(fs::read_to_string(&path).unwrap(), "old");
-    // not there before: gone again
-    restore(&path, None);
-    assert!(!path.exists());
+    fs::write(&path, "name = \"00-mockspace\"\n# old\n").unwrap();
+    assert!(register_with(&dir, &hooks, Some(&bin)).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "name = \"00-mockspace\"\n# old\n");
     let _ = fs::remove_dir_all(&dir);
 }
 
