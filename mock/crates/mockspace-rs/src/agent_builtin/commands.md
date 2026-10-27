@@ -35,8 +35,10 @@ per-repository validator lives under the mock directory's `target/`.
 **Where `core.hooksPath` is git-shook's, the gate does not take it.** It joins
 git-shook as one entry, a `mockspace.toml` manifest in the clone's
 `<git-dir>/shook/manifests/` naming the durable hooks, registered with
-`git shook install --yes`, and `core.hooksPath` is left alone. `mock deactivate`
-removes that entry and nothing else.
+`git shook install --yes`, and `core.hooksPath` is left alone. The entry runs
+with `MOCKSPACE_UNDER_SHOOK` set, which makes the hook skip its own chain to
+`.git/hooks/<event>`, since git-shook runs the rest of the event. `mock
+deactivate` removes that entry and nothing else.
 
 **Deleting `target/` does not uninstall anything.** The durable hooks and
 `core.hooksPath` survive it. What goes is the generated validator, and the hook

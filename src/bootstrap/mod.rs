@@ -155,11 +155,14 @@ pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    if current.as_deref().is_some_and(shook::is_shook_path) {
+    if current.as_deref().is_some_and(|p| shook::is_shook_path(repo_root, p)) {
         // git-shook holds the key: the gate is an entry of its, current when the
         // manifest names this run's hooks and the entries exist
         if !shook::is_registered(repo_root, &target) {
-            let _ = activate(repo_root, mock_dir);
+            // said, not dropped: a failed registration leaves the clone ungated
+            if let Err(e) = activate(repo_root, mock_dir) {
+                eprintln!("--- gate: NOT registered with git-shook, this clone is ungated: {e} ---");
+            }
         } else {
             ensure_durable_hooks(&mut actions);
         }

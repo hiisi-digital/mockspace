@@ -35,11 +35,16 @@ pub fn activate(repo_root: &Path, mock_dir: &Path) -> Result<(), String> {
     // Where git-shook already holds `core.hooksPath` the gate joins it as an
     // entry and the key stays as it is, so nothing chained on it is dropped.
     let shook_held = local_config(repo_root, "core.hooksPath")
-        .is_some_and(|existing| shook::is_shook_path(&existing));
+        .is_some_and(|existing| shook::is_shook_path(repo_root, &existing));
     if shook_held {
         shook::register(repo_root, &hooks_dir)?;
         eprintln!("--- gate: registered with git-shook, core.hooksPath left as it is ---");
         return record_mock_dir(repo_root, mock_dir);
+    }
+    // git-shook gave the key up (`git shook uninstall` keeps the manifest): the
+    // stale registration goes, the gate takes the key below
+    if shook::has_manifest(repo_root) {
+        shook::unregister(repo_root)?;
     }
 
     // Whatever the repository had before this, kept so `deactivate` can put it
@@ -125,10 +130,17 @@ const PREVIOUS_HOOKS_PATH: &str = "mockspace.previousHooksPath";
 pub fn deactivate(repo_root: &Path) -> Result<(), String> {
     // A gate registered with git-shook is one entry among others: remove it and
     // leave `core.hooksPath` to git-shook, which owns it.
+    // Only where git-shook still holds the key. A manifest left behind after
+    // `git shook uninstall` is removed too, and then the ordinary path below
+    // takes `core.hooksPath` off the gate, which is what is still pointing at it.
+    let held = local_config(repo_root, "core.hooksPath")
+        .is_some_and(|p| shook::is_shook_path(repo_root, &p));
     if shook::has_manifest(repo_root) {
         shook::unregister(repo_root)?;
         eprintln!("--- gate: removed from git-shook ---");
-        return Ok(());
+        if held {
+            return Ok(());
+        }
     }
     if let Some(previous) = local_config(repo_root, PREVIOUS_HOOKS_PATH) {
         if !previous.is_empty() {
@@ -182,9 +194,7 @@ fn local_config(repo_root: &Path, key: &str) -> Option<String> {
 
 /// Check if mockspace hooks are currently active.
 pub fn is_active(repo_root: &Path) -> bool {
-    if shook::has_manifest(repo_root)
-        && local_config(repo_root, "core.hooksPath").is_some_and(|p| shook::is_shook_path(&p))
-    {
+    if shook::is_live(repo_root, local_config(repo_root, "core.hooksPath").as_deref()) {
         return true;
     }
     let output = std::process::Command::new("git")

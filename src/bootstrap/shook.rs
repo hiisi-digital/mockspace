@@ -20,9 +20,19 @@ use super::*;
 /// The name the manifest, and so each registered entry, answers to.
 const NAME: &str = "mockspace";
 
-/// Whether a recorded `core.hooksPath` is git-shook's own hooks directory.
-pub(crate) fn is_shook_path(path: &str) -> bool {
-    path.trim().trim_end_matches('/').ends_with("shook/hooks")
+/// The variable the durable and generated hooks read to skip their own chain
+/// to `.git/hooks/<event>` when git-shook is what ran them.
+const UNDER_SHOOK: &str = "MOCKSPACE_UNDER_SHOOK";
+
+/// Whether a recorded `core.hooksPath` is this clone's own git-shook hooks
+/// directory, the exact `<common-git-dir>/shook/hooks` git-shook writes. A
+/// spelling that merely ends the same way, a tracked `tools/shook/hooks` or
+/// another clone's, is somebody else's key and is not claimed.
+pub(crate) fn is_shook_path(repo_root: &Path, path: &str) -> bool {
+    let recorded = Path::new(path.trim().trim_end_matches('/'));
+    let ours = shook_dir(repo_root).join("hooks");
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    recorded.is_absolute() && canon(recorded) == canon(&ours)
 }
 
 fn shook_dir(repo_root: &Path) -> PathBuf {
@@ -47,8 +57,10 @@ pub(crate) fn manifest_text(hooks_dir: &Path) -> String {
     let mut out = format!("name = {}\n", quote(NAME));
     for event in events() {
         let hook = hooks_dir.join(event);
+        // `env` marks the run as an entry, so the hook does not chain to
+        // `.git/hooks/<event>` itself: the dispatcher runs what else is registered
         out.push_str(&format!(
-            "\n[hooks.{event}]\nrun = [{}]\n",
+            "\n[hooks.{event}]\nrun = [\"env\", \"{UNDER_SHOOK}=1\", {}]\n",
             quote(&hook.to_string_lossy())
         ));
     }
@@ -64,9 +76,34 @@ pub(crate) fn is_registered(repo_root: &Path, hooks_dir: &Path) -> bool {
         && events().all(|e| shook_dir(repo_root).join("entries").join(e).join(NAME).is_file())
 }
 
-/// Whether the gate is registered at all, whichever hooks it names.
+/// Whether the gate has a manifest in this clone, whichever hooks it names.
 pub(crate) fn has_manifest(repo_root: &Path) -> bool {
     manifest_path(repo_root).is_file()
+}
+
+/// Whether the gate is registered and git-shook holds the key: the manifest is
+/// there, `core.hooksPath` is git-shook's, and an entry exists for every event.
+/// A manifest alone is a declaration, not a gate.
+pub(crate) fn is_live(repo_root: &Path, hooks_path: Option<&str>) -> bool {
+    has_manifest(repo_root)
+        && hooks_path.is_some_and(|p| is_shook_path(repo_root, p))
+        && events().all(|e| shook_dir(repo_root).join("entries").join(e).join(NAME).is_file())
+}
+
+/// The durable hook git-shook kept as `00-existing` when it first took the key,
+/// which is the gate itself and would run beside its own entry. Removed, with
+/// the copy under `kept/`; a kept hook that is anybody else's stays.
+fn drop_own_kept_hooks(repo_root: &Path) {
+    let sd = shook_dir(repo_root);
+    for event in events() {
+        let entry = sd.join("entries").join(event).join("00-existing");
+        let kept = sd.join("kept").join(event);
+        let ours = fs::read_to_string(&kept).is_ok_and(|t| t.contains(MANAGED_MARKER));
+        if ours {
+            let _ = fs::remove_file(&entry);
+            let _ = fs::remove_file(&kept);
+        }
+    }
 }
 
 /// Write the manifest and have git-shook register it.
@@ -88,6 +125,7 @@ pub(crate) fn register(repo_root: &Path, hooks_dir: &Path) -> Result<(), String>
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
+    drop_own_kept_hooks(repo_root);
     if !is_registered(repo_root, hooks_dir) {
         return Err(format!(
             "git shook install ran and the gate is still not registered; see `git shook doctor`"
