@@ -38,7 +38,9 @@ git-shook as one entry, a `00-mockspace.toml` manifest in the clone's
 `git shook install --yes --only 00-mockspace`, and `core.hooksPath` is left
 alone. The `00-` sorts the gate ahead of the other entries. The hook still ends
 in `.git/hooks/<event>`, except for an event where git-shook kept that hook as
-its `00-existing` entry, which already runs it. `mock deactivate` removes that entry and touches
+its `00-existing` entry, which already runs it. The agent commit guard counts
+the gate as intact where `core.hooksPath` is git-shook's and the entry is
+registered, whatever the clone's path is called. `mock deactivate` removes that entry and touches
 neither `core.hooksPath` nor a saved previous value.
 
 **Deleting `target/` does not uninstall anything.** The durable hooks and

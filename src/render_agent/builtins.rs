@@ -694,8 +694,14 @@ _gate_intact() {
     hp=$(git -C "$root" config --local core.hooksPath 2>/dev/null || true)
     case "$hp" in
         *mockspace*|*target/hooks*) return 0 ;;
-        *) return 1 ;;
     esac
+    # git-shook holds the key: the gate is intact where it is registered there
+    # as an entry, and the path says nothing about mockspace
+    local common
+    common=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+    [ -n "$common" ] || return 1
+    [ "$hp" = "$common/shook/hooks" ] || return 1
+    [ -f "$common/shook/entries/pre-commit/00-mockspace" ]
 }
 
 if _gate_intact; then allow; fi
