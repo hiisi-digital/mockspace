@@ -51,6 +51,7 @@ mod merge_driver;
 pub(crate) use merge_driver::*;
 mod gitignore;
 pub(crate) use gitignore::*;
+mod shook;
 mod activate;
 pub use activate::{activate, deactivate, is_active};
 mod lints;
@@ -154,7 +155,15 @@ pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    if current.as_deref() != Some(want.as_ref()) {
+    if current.as_deref().is_some_and(shook::is_shook_path) {
+        // git-shook holds the key: the gate is an entry of its, current when the
+        // manifest names this run's hooks and the entries exist
+        if !shook::is_registered(repo_root, &target) {
+            let _ = activate(repo_root, mock_dir);
+        } else {
+            ensure_durable_hooks(&mut actions);
+        }
+    } else if current.as_deref() != Some(want.as_ref()) {
         // not pointing at the durable gate yet: activate (also (re)writes the
         // durable hooks and records the mock-dir locator).
         let _ = activate(repo_root, mock_dir);
