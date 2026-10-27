@@ -60,6 +60,19 @@ pub struct RegistryField {
     /// kinds, four owners.
     #[serde(default)]
     pub values:      Vec<String>,
+    /// The least an `integer` field may hold, where it has a floor.
+    ///
+    /// Becomes `minimum` in the generated schema, so a value below it is refused
+    /// where it is typed, as an unlisted member of `values` is. A bound is a
+    /// contract an editor can draw as well: a field bounded at both ends is a
+    /// range, and a tool offering a slider has its ends to give it. Declared on
+    /// any other type, or above `max`, it is refused by `misplaced_bounds`.
+    #[serde(default)]
+    pub min:         Option<i64>,
+    /// The most an `integer` field may hold, where it has a ceiling; `maximum`
+    /// in the generated schema, as `min` is `minimum`.
+    #[serde(default)]
+    pub max:         Option<i64>,
 }
 
 /// Whether a field's values are for readers or only for the project itself.
@@ -255,6 +268,8 @@ pub fn builtin_vocab() -> RegistryNamespace {
             description: Some(description.to_string()),
             visibility: FieldVisibility::Public,
             values: Vec::new(),
+            min: None,
+            max: None,
         }
     };
     RegistryNamespace {
@@ -286,6 +301,8 @@ pub fn builtin_vocab() -> RegistryNamespace {
                 ),
                 visibility: FieldVisibility::Public,
             values: Vec::new(),
+            min: None,
+            max: None,
             },
         ],
     }
@@ -307,6 +324,8 @@ pub fn builtin_reference() -> RegistryNamespace {
             description: Some(description.to_string()),
             visibility: FieldVisibility::Public,
             values: Vec::new(),
+            min: None,
+            max: None,
         }
     };
     RegistryNamespace {
