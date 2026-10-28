@@ -434,6 +434,13 @@ elif [ -n "$CHANGED_CRATES" ]; then
 else
     echo "  infrastructure-only (no crate files staged)"
     ARGS+=(--scope infra)
+    # Registry rows and nothing else under the mock directory: no source is staged, so the
+    # repo lints' source half has nothing to look at, and the engine checks that claim
+    # against the same layout. Without the flag every repo lint reads every source file.
+    STAGED_NON_REGISTRY=$(printf '%s\n' "$STAGED" | grep -v -e '^$' -e "^$MOCK_DIR/registry/" || true)
+    if [ -z "$STAGED_NON_REGISTRY" ]; then
+        ARGS+=(--doc-only)
+    fi
 fi
 
 if ! cargo mock "${{ARGS[@]}}" 2>&1; then
@@ -568,7 +575,7 @@ if ms_nuked; then
     ARGS=(--lint-only --strict --doc-only)
 elif [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] && [ -n "$PUSH_REPO_ONLY" ] && [ -z "$PUSH_NOT_REGISTRY" ]; then
     echo "  scope: repo lints only (the push changes nothing a crate's lints read)"
-    ARGS=(--lint-only --strict --scope infra)
+    ARGS=(--lint-only --strict --scope infra --doc-only)
 elif [ -n "$FULL_REASON" ] || [ -z "$CHANGED_CRATES" ]; then
     echo "  scope: full project (${{FULL_REASON:-no crate changes}})"
     ARGS=(--lint-only --strict)

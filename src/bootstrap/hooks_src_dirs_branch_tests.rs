@@ -52,7 +52,7 @@ fn the_commit_branches_pass_these_arguments() {
         (
             "registry row alone: the repo lints and no crate's",
             &[("mock/registry/tenets.toml", "x = 1\n")],
-            "mock --lint-only --commit --scope infra",
+            "mock --lint-only --commit --scope infra --doc-only",
         ),
         (
             "registry rows alone, a ticket and its page under docs",
@@ -60,6 +60,11 @@ fn the_commit_branches_pass_these_arguments() {
                 ("mock/registry/ticket/items/a.toml", "x = 1\n"),
                 ("docs/TICKET-MOVE.md", "x\n"),
             ],
+            "mock --lint-only --commit --scope infra --doc-only",
+        ),
+        (
+            "registry row beside a note: infra, and no claim that nothing else is staged",
+            &[("mock/registry/tenets.toml", "x = 1\n"), ("mock/notes.md", "x\n")],
             "mock --lint-only --commit --scope infra",
         ),
         (
@@ -100,7 +105,7 @@ fn the_push_branches_pass_these_arguments() {
         (
             "registry row alone: the repo lints and no crate's",
             &[("mock/registry/tenets.toml", "x = 1\n")],
-            "mock --lint-only --strict --scope infra",
+            "mock --lint-only --strict --scope infra --doc-only",
         ),
         (
             "registry rows alone, a ticket and its page under docs",
@@ -108,7 +113,12 @@ fn the_push_branches_pass_these_arguments() {
                 ("mock/registry/ticket/items/a.toml", "x = 1\n"),
                 ("docs/TICKET-MOVE.md", "x\n"),
             ],
-            "mock --lint-only --strict --scope infra",
+            "mock --lint-only --strict --scope infra --doc-only",
+        ),
+        (
+            "registry row beside a note: the full run a push of anything else has",
+            &[("mock/registry/tenets.toml", "x = 1\n"), ("mock/notes.md", "x\n")],
+            "mock --lint-only --strict",
         ),
         (
             "project lint alone: every crate",
