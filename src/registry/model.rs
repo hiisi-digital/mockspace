@@ -104,7 +104,9 @@ fn default_field_type() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RenderMode {
-    /// A generated page per namespace. Row references link to it.
+    /// A generated page per namespace, with row references linking to it, once
+    /// [`REGISTRY_PAGES_ENABLED`] is on. While it is off this renders no page and a
+    /// reference is its slug, exactly as under `Embed`.
     #[default]
     Page,
     /// No standalone page. The project embeds the table where it wants with
@@ -113,9 +115,19 @@ pub enum RenderMode {
     Embed,
 }
 
+/// Whether the registry renders any document at all.
+///
+/// Off by decision of the lead designer on 2026-10-28: the registry writes no
+/// generated pages until a sensible way for that to work is settled. The rows stay
+/// the one source and every tool reading them is untouched; only the rendered
+/// document goes. This is the one switch. [`RenderMode::has_page`] reads it, and
+/// both the page planner and the row-link target ask `has_page`, so no path renders a
+/// page or links to one while it is off.
+pub const REGISTRY_PAGES_ENABLED: bool = false;
+
 impl RenderMode {
-    pub fn has_page(self) -> bool {
-        matches!(self, RenderMode::Page)
+    pub const fn has_page(self) -> bool {
+        REGISTRY_PAGES_ENABLED && matches!(self, RenderMode::Page)
     }
 }
 

@@ -129,10 +129,10 @@ mod tests {
     }
 
     #[test]
-    fn a_row_reference_becomes_a_link() {
+    fn a_row_reference_is_the_slug_while_pages_are_off() {
         let reg = reg_with("xpbd", "vocab", &[]);
         let out = r_all("see {{ reg::vocab::xpbd }} now", &[ns("vocab", None)], &reg);
-        assert_eq!(out, "see [xpbd](VOCAB.md#xpbd) now");
+        assert_eq!(out, "see xpbd now");
     }
 
     #[test]
@@ -214,7 +214,7 @@ mod tests {
                 &cfg,
             )
         };
-        assert_eq!(r("{{ reg::vocab::xpbd }}"), "[xpbd](VOCAB.md#xpbd)");
+        assert_eq!(r("{{ reg::vocab::xpbd }}"), "xpbd");
         assert_eq!(r("{{ reg::vocab::xpbd::what }}"), "constraint projection");
         // The id cell carries the row's anchor inline, so a reference lands on
         // the row itself rather than on a restatement of it below the table.
@@ -417,7 +417,7 @@ mod tests {
         // others, and the full form is one click away.
         assert_eq!(
             r_all("{{ reference::burns_hunt }}", &with_builtins(&[]), &reg),
-            "[Burns and Hunt 2013](REFERENCE.md#burns-hunt)"
+            "Burns and Hunt 2013"
         );
         // The full form on request, for prose that wants the title.
         assert_eq!(
@@ -426,7 +426,7 @@ mod tests {
                 &with_builtins(&[]),
                 &reg
             ),
-            "[Burns and Hunt, The Visibility Buffer (JCGT 2013)](REFERENCE.md#burns-hunt)"
+            "Burns and Hunt, The Visibility Buffer (JCGT 2013)"
         );
         // A real field is still a real field.
         assert_eq!(
@@ -766,7 +766,7 @@ mod tests {
             !out.contains("{{ reg::law::keys }}"),
             "the reference rendered literally: {out}"
         );
-        assert!(out.contains("LAW.md#keys"), "no link to the row: {out}");
+        assert!(out.contains("Bound by keys."), "the row did not render as its slug: {out}");
     }
 
     #[test]
@@ -914,9 +914,13 @@ mod tests {
             .get("law::derived")
             .and_then(|r| r.fields.get("statement"))
             .unwrap();
-        assert!(
-            got.contains("902_LAW.md#keys"),
-            "row data resolved against an empty index: {got}"
+        // No page exists to name, so the row is its slug. What this test pinned, a row
+        // linking `902_LAW.md` where the fallback would say `LAW.md`, cannot occur while
+        // `REGISTRY_PAGES_ENABLED` is off, and a crate document's link still goes through
+        // the same index (`a_crate_reference_resolves_before_its_document_is_written`).
+        assert_eq!(
+            got, "see keys",
+            "row data kept a link to a page nobody writes: {got}"
         );
     }
 

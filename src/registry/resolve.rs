@@ -712,9 +712,12 @@ pub fn resolve_typed(
                 // title. Default to the form that fits everywhere.
                 let text =
                     if parts.len() == 4 { format_citation(row) } else { short_citation(row) };
+                // An empty target is a namespace with no page, which is every namespace
+                // while the registry writes none: the citation is then its text alone,
+                // never `[text]()`.
                 Some(Resolved::Citation {
                     text,
-                    link: Some(target),
+                    link: Some(target).filter(|t| !t.is_empty()),
                 })
             },
             3 | 4 => {

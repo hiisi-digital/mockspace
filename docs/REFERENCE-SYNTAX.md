@@ -9,14 +9,15 @@ documents are generated.
 
 | Written | Refers to | Renders as |
 |---|---|---|
-| `{{ reg::spike::foo }}` | a registry row | a link to it |
+| `{{ reg::spike::foo }}` | a registry row | its slug, as plain text |
 | `{{ reg::spike::foo::question }}` | one field of a row | that field's value |
 | `{{ reg::spike }}` | a whole namespace | its table, inline |
 
-A namespace rendering as a page writes `<KEY>.md` into the docs directory:
-`vocab` becomes `VOCAB.md`. There is no prefix, because the namespace name is
-already the document's subject. A namespace whose page would overwrite a
-document rendered from a template is reported rather than silently winning.
+The registry writes no pages for now. A namespace declared `render = "page"` is
+read, validated and queried like any other, but no `<KEY>.md` is written into the
+docs directory, so a row reference has no document to link to and renders as its
+slug. A page an earlier run wrote is removed by the sweep of `docs/`. The switch is
+`REGISTRY_PAGES_ENABLED` in `src/registry/model.rs`, and nothing but it decides.
 | `{{ seed::DESIGN::844 }}` | a place in a file | a line link |
 
 The braces are required, and they are not ceremony. They make a reference
@@ -191,8 +192,9 @@ wrong for a relation: the reference exists to link, and the text arrives in a ta
 cell after the cell's own escaping has run, so a value carrying a pipe ends the
 column early.
 
-**A target rendered with `render = "embed"` has no page**, so a reference into it is
-the slug as plain text rather than a link. That holds for a table cell and for a
+**A target with no page**, which is every namespace while the registry writes none and
+a namespace rendered with `render = "embed"` in any case, gets the slug as plain text
+from a reference rather than a link. That holds for a table cell and for a
 `{{ ns::slug }}` in prose alike.
 
 ### Asking what points at a row

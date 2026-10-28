@@ -874,6 +874,27 @@ mod tests {
         )];
         assert!(DocIndex::build(&planned, &cfg).is_empty());
     }
+
+    /// The registry plans no page for a namespace declared `render = "page"` that holds
+    /// rows. The case that fails with `REGISTRY_PAGES_ENABLED` on: one `SPIKE.md` is planned.
+    #[test]
+    fn a_page_namespace_with_rows_plans_no_page() {
+        let ns = crate::registry::RegistryNamespace {
+            key:         "spike".into(),
+            title:       None,
+            description: None,
+            value_field: None,
+            render:      crate::registry::RenderMode::Page,
+            group_by:    None,
+            fields:      Vec::new(),
+        };
+        let mut reg = crate::registry::Registry::default();
+        reg.by_namespace.insert("spike".into(), vec!["spike::first".into()]);
+        let cfg = cfg_ordered();
+        let mut plan = Vec::new();
+        plan_registry_pages(&mut plan, &[ns], &reg, Path::new("/nowhere"), &cfg);
+        assert!(plan.is_empty(), "a registry page was planned: {} document(s)", plan.len());
+    }
 }
 
 /// Every markdown document a run will produce, before any is rendered.
