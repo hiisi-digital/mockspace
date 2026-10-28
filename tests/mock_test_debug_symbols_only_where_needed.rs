@@ -534,3 +534,7 @@ fn a_plain_run_that_passes_clears_what_failed() {
     assert!(r.ok, "{}", r.text);
     assert!(!r.text.contains("symbols for"), "{}", r.text);
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

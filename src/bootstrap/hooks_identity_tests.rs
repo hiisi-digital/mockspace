@@ -71,9 +71,8 @@ fn make_executable(path: &Path) {
 }
 
 /// The scrubs of a child's environment, from the one file the integration tests
-/// include too (`tests/common/ambient.rs`; see its header for why not a module).
-#[path = "../../tests/common/ambient.rs"]
-mod ambient;
+/// include too (`tests/common/ambient.rs`), compiled once for the lib tests.
+use crate::test_ambient as ambient;
 pub(super) use ambient::clean_of_the_machine;
 
 /// Git with the machine's own config out of the way, so a global identity on

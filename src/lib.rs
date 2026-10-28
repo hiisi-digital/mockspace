@@ -50,6 +50,12 @@ pub mod render_md;
 pub mod suite;
 pub mod tool_catalogue;
 
+/// What the lib tests take out of the environment before they run, from the one file
+/// the integration tests include too.
+#[cfg(test)]
+#[path = "../tests/common/ambient.rs"]
+mod test_ambient;
+
 /// Path to the mockspace source directory, captured at compile time.
 ///
 /// Resolves to wherever cargo placed the source: a git checkout, a local

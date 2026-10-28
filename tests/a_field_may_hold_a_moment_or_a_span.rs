@@ -213,3 +213,7 @@ fn a_toml_date_in_a_string_field_is_left_alone() {
     let (ok, err) = outcome_literal("string", "2026-10-28");
     assert!(ok, "{err}");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

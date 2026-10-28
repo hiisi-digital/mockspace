@@ -190,3 +190,7 @@ fn cdylibs_under(root: &Path) -> usize {
     walk(root, &mut n);
     n
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

@@ -502,3 +502,7 @@ fn the_binary_touches_no_generated_file_the_second_time() {
         "a second generation on an unchanged tree rewrote: {touched:?}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

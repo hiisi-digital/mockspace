@@ -246,3 +246,7 @@ fn the_check_recognises_both_shapes_it_is_for() {
         "a path dep with a version is not stripped"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

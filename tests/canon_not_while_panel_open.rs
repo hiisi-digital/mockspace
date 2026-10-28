@@ -137,3 +137,7 @@ fn an_unstaged_canon_change_passes_the_commit_gate() {
         "nothing of the canon is staged, so the commit does not carry it: {t}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

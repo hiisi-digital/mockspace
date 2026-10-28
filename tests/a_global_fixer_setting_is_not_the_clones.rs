@@ -68,3 +68,7 @@ fn a_setting_in_the_global_config_is_not_read() {
         "a global setting reached the clone"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

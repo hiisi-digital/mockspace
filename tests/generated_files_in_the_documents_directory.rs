@@ -144,3 +144,7 @@ fn a_strategy_option_decides_a_hand_written_file_in_the_documents_directory() {
         "one\ntwo, on a\nthree\n"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

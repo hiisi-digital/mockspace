@@ -326,3 +326,7 @@ fn the_bench_crates_build_into_the_target_dir_the_environment_chose() {
         "with no target directory chosen, none was made:\n{t}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

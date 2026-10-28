@@ -417,3 +417,7 @@ fn an_uncommitted_gitattributes_edit_stays_out_of_a_squash_commit() {
     assert!(!r.git(&["show", "HEAD:.gitattributes"]).contains("*.bin"));
     assert_eq!(r.status(), " M .gitattributes\n");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

@@ -175,3 +175,7 @@ fn a_consumer_rule_is_never_swept() {
         "the sweep must only ever touch files it generated"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

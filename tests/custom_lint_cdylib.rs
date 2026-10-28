@@ -226,3 +226,7 @@ fn two_tables_naming_one_source_is_refused_which_is_why_they_are_deduped() {
          nothing and this file's other case proves less than it says"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

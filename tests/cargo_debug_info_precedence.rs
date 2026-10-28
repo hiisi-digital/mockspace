@@ -317,3 +317,7 @@ fn rustflags_are_beyond_any_profile_setting() {
     let line = t.lines().find(|l| l.contains("--crate-name b")).unwrap();
     assert!(line.contains(" -g"), "{line}");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

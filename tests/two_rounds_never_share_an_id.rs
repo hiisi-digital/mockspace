@@ -222,3 +222,7 @@ fn an_abandoned_round_with_a_count_is_renamed_and_stays_abandoned() {
     assert!(!dirs[0].ends_with("-abandoned-2"), "{dirs:?}");
     assert_eq!(r.status(), "");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

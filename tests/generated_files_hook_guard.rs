@@ -196,3 +196,7 @@ fn a_merge_on_a_branch_with_another_mock_directory_conflicts_as_plain_git_does()
     );
     assert!(!r.kept_ours().exists(), "nothing was promised");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

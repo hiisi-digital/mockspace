@@ -165,3 +165,7 @@ fn a_bound_on_a_string_or_a_min_above_its_max_is_refused() {
         "min above max:\n{err}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;
