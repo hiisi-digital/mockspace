@@ -100,25 +100,6 @@ fn default_field_type() -> String {
     "string".to_string()
 }
 
-/// Where a namespace's table appears in the generated documentation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RenderMode {
-    /// A generated page per namespace. Row references link to it.
-    #[default]
-    Page,
-    /// No standalone page. The project embeds the table where it wants with
-    /// `{{registry:<key>}}`, and row references render as plain text, because
-    /// a link needs a target.
-    Embed,
-}
-
-impl RenderMode {
-    pub fn has_page(self) -> bool {
-        matches!(self, RenderMode::Page)
-    }
-}
-
 /// A declared namespace: one kind of thing the registry holds.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RegistryNamespace {
@@ -129,12 +110,10 @@ pub struct RegistryNamespace {
     pub title:       Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    /// When set, a bare row reference renders this field's value instead of a
-    /// link, so a constant is stated once and every mention stays current.
+    /// When set, a bare row reference renders this field's value instead of the
+    /// row's slug, so a constant is stated once and every mention stays current.
     #[serde(default)]
     pub value_field: Option<String>,
-    #[serde(default)]
-    pub render:      RenderMode,
     /// Render the table in sections, one per distinct value of this field.
     ///
     /// A flat table of every row is the wrong shape for a namespace whose rows
@@ -151,19 +130,6 @@ pub struct RegistryNamespace {
 impl RegistryNamespace {
     pub fn title(&self) -> String {
         self.title.clone().unwrap_or_else(|| self.key.clone())
-    }
-
-    /// The generated page's filename, matching the uppercase convention every
-    /// other generated document here follows.
-    ///
-    /// No prefix: a namespace's name is already the document's subject, and
-    /// `VOCAB.md` reads better than `REGISTRY-VOCAB.md` beside `DESIGN.md` and
-    /// `CATALOGUE.md`. The prefix was implicitly preventing a namespace from
-    /// colliding with a hand-authored document, which `render_pages` now checks
-    /// for directly. Padding every name to avoid a collision hides it; checking
-    /// reports it.
-    pub fn page_name(&self) -> String {
-        format!("{}.md", self.key.to_uppercase().replace('_', "-"))
     }
 }
 
@@ -301,7 +267,6 @@ pub fn builtin_vocab() -> RegistryNamespace {
                 .to_string(),
         ),
         value_field: None,
-        render: RenderMode::Page,
         // Vocab is the case that motivates grouping: its rows belong to
         // several unrelated closed sets and a flat table mixes them.
         group_by: Some("kind".to_string()),
@@ -357,7 +322,6 @@ pub fn builtin_reference() -> RegistryNamespace {
                 .to_string(),
         ),
         value_field: None,
-        render: RenderMode::Page,
         group_by: Some("kind".to_string()),
         fields: vec![
             f("title", true, "The work's own title, as published."),

@@ -15,7 +15,8 @@
 use super::tests::*;
 use super::*;
 
-/// A row-reference cell renders as a link to the row it names.
+/// A row-reference cell renders as the slug of the row it names, and no link, because
+/// the registry writes no pages and a link needs a target.
 ///
 /// Rendered through the whole pipeline rather than by inspecting the cell,
 /// because the cell emits a reference and something else turns it into a
@@ -23,7 +24,7 @@ use super::*;
 /// shipped `{{ slot::display }}` as literal text, which is the failure this
 /// test exists for.
 #[test]
-fn a_row_reference_cell_becomes_a_link() {
+fn a_row_reference_cell_is_its_slug() {
     let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
@@ -39,8 +40,8 @@ fn a_row_reference_cell_becomes_a_link() {
         &cfg,
     );
     assert!(
-        rendered.contains("[display](SLOT.md#display)"),
-        "a row-reference cell did not become a link: {rendered}"
+        rendered.contains("| display |") && !rendered.contains("SLOT.md"),
+        "a row-reference cell linked to a page, or lost its slug: {rendered}"
     );
     assert!(
         !rendered.contains("{{"),
@@ -95,7 +96,7 @@ fn refsto_names_what_answers_a_row() {
     let (nss, r) = answered();
     assert_eq!(
         resolved("{{ refsto(slot::display) }}", &nss, &r),
-        "[niri](ANSWER.md#niri), [wlr](ANSWER.md#wlr)"
+        "niri, wlr"
     );
 }
 
@@ -122,54 +123,29 @@ fn refsto_on_a_row_that_does_not_exist_does_not_resolve() {
     );
 }
 
-/// A field reference and that field's table cell must agree. They are two
-/// renderings of one value, and the first version of this had the cell
-/// linking while the reference showed bare slugs.
+/// A row-reference field names rows, so a slug in it that names no row keeps its
+/// reference form for the unresolved-token scan to report. The control is an ordinary
+/// string field holding the same text, which is just text and is never reported.
 #[test]
-fn a_reference_to_a_row_reference_field_renders_links() {
-    let (nss, r) = answered();
-    assert_eq!(
-        resolved("{{ answer::niri::slot }}", &nss, &r),
-        "[display](SLOT.md#display)"
-    );
+fn a_row_reference_field_keeps_a_slug_that_names_no_row() {
+    let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot"), ("note", "string")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("answer", "niri", &[("slot", "nosuch"), ("note", "nosuch")]),
+    ]);
+    assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "{{ slot::nosuch }}");
+    assert_eq!(resolved("{{ answer::niri::note }}", &nss, &r), "nosuch");
 }
 
-/// The control: an ordinary field holding the same text renders as text.
+/// The registry writes no page, so a reference into any namespace has nothing to link to
+/// and is the row's slug. The case that fails: a renderer still building a link to a file
+/// nobody writes would give `[display](SLOT.md#display)`.
 #[test]
-fn a_reference_to_an_ordinary_field_renders_its_value() {
-    let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "string")])];
-    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
-    assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "display");
-}
-
-fn embed(key: &str, fields: &[(&str, &str)]) -> RegistryNamespace {
-    let mut n = ns(key, fields);
-    n.render = RenderMode::Embed;
-    n
-}
-
-/// A namespace with no page has nothing to link to, so a reference into it
-/// is the slug. Before this, it produced a link to a file the generator
-/// never writes, and the comment above the cell renderer claimed the case
-/// was handled.
-#[test]
-fn a_reference_into_an_embed_namespace_is_plain_text() {
-    let nss = vec![embed("slot", &[]), ns("answer", &[("slot", "slot")])];
+fn a_reference_into_a_namespace_is_plain_text() {
+    let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot")])];
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
     assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "display");
     assert_eq!(resolved("{{ slot::display }}", &nss, &r), "display");
-}
-
-/// The control: the same shape with a page renders a link, so the test
-/// above is not equally consistent with a renderer that never links.
-#[test]
-fn a_reference_into_a_page_namespace_is_a_link() {
-    let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot")])];
-    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
-    assert_eq!(
-        resolved("{{ answer::niri::slot }}", &nss, &r),
-        "[display](SLOT.md#display)"
-    );
 }
 
 /// A slug that resolves to nothing keeps its reference form, so the
@@ -181,7 +157,7 @@ fn a_field_reference_to_a_missing_row_keeps_its_reference() {
     let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display, nosuch")])]);
     assert_eq!(
         resolved("{{ answer::niri::slot }}", &nss, &r),
-        "[display](SLOT.md#display), {{ slot::nosuch }}"
+        "display, {{ slot::nosuch }}"
     );
 }
 

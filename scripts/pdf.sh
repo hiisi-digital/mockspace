@@ -151,38 +151,6 @@ for crate_node in "${ordered_crates[@]}"; do
     done
 done
 
-# The registry's own documents.
-#
-# A project whose canon is a typed registry keeps it in these, and the selection
-# above knows only about crates, so without this the generated book contains
-# every crate's documentation and none of the canon.
-#
-# Two passes, because neither source is complete on its own. The config says
-# which namespaces the project declares and in what order, and that order is
-# worth keeping. It does not say which namespaces mockspace supplies itself,
-# and those pages are canon too: reading only the config left the reference
-# namespace out of the book, which is the same defect this whole section
-# exists to fix, one namespace narrower.
-CONFIG="$REPO_ROOT/mockspace.toml"
-if [[ -f "$CONFIG" ]]; then
-    while IFS= read -r ns; do
-        [[ -z "$ns" ]] && continue
-        upper="$(printf '%s' "$ns" | tr '[:lower:]' '[:upper:]')"
-        [[ -f "$DOCS_DIR/${upper}.md" ]] && files+=("$DOCS_DIR/${upper}.md")
-    done < <(sed -n 's/^[[:space:]]*key[[:space:]]*=[[:space:]]*"\([a-z_]*\)"[[:space:]]*$/\1/p' "$CONFIG")
-fi
-
-# Then every registry page the pass above did not name, recognised by the line
-# each one carries and no other document does. Which namespaces are builtin is
-# mockspace's to decide and changes without any project's config changing, so a
-# list of them here would be a second copy that goes stale silently: the book
-# would simply stop carrying a chapter and nothing would say so. The dedup below
-# drops the ones already picked up, keeping the declared order for those.
-for page in "$DOCS_DIR"/*.md; do
-    [[ -f "$page" ]] || continue
-    grep -q '^[0-9][0-9]* rows\. Identifiers are permanent:' "$page" && files+=("$page")
-done
-
 # Reference appendices
 for footer in STRUCTURE.md DESIGN-DEEP-DIVES.md; do
     [[ -f "$DOCS_DIR/$footer" ]] && files+=("$DOCS_DIR/$footer")
