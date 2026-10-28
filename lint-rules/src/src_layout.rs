@@ -35,6 +35,41 @@ use std::process::Command;
 
 use crate::merge;
 
+/// Why a `src_dirs` entry is not written the way git reports a path, or `None`
+/// when it is.
+///
+/// The accepted spelling is plain components joined by single `/`, relative to
+/// the mock directory, with a trailing `/` tolerated. Anything else matches no
+/// git path: `.` and `""` name the mock directory itself, `a/./b` and `a//b`
+/// are kept as written by `strip_prefix`, `..` leaves the spelling git uses,
+/// and an absolute entry replaces the mock directory when joined onto it.
+/// `Path::components` folds `//` and an inner `.` away, so the check compares
+/// the entry with its own components joined, which is what catches them.
+pub fn src_dir_fault(entry: &str) -> Option<&'static str> {
+    use std::path::Component;
+    let body = entry.trim_end_matches('/');
+    if body.is_empty() && !entry.is_empty() {
+        return Some("is an absolute path");
+    }
+    let path = Path::new(body);
+    let mut joined = Vec::new();
+    for c in path.components() {
+        match c {
+            Component::Normal(n) => joined.push(n.to_string_lossy().into_owned()),
+            Component::ParentDir => return Some("has `..` in it"),
+            Component::CurDir => return Some("is or starts with `.`"),
+            Component::RootDir | Component::Prefix(_) => return Some("is an absolute path"),
+        }
+    }
+    if joined.is_empty() {
+        return Some("is empty, and names the mock dir itself");
+    }
+    if joined.join("/") != body {
+        return Some("has an empty or `.` component, written as `//` or `/./`");
+    }
+    None
+}
+
 /// The source directories a project declares, relative to its mock directory.
 ///
 /// Relative because that is what git wants as a pathspec under `--relative`, and
@@ -58,7 +93,14 @@ impl SrcLayout {
                 Ok(rel) => {
                     let s = rel.to_string_lossy().replace('\\', "/");
                     let s = s.trim_end_matches('/').to_string();
-                    if !s.is_empty() {
+                    if let Some(why) = src_dir_fault(&s) {
+                        eprintln!(
+                            "  [lint-config] source directory `{}` {why}, so it is not \
+                             the path git reports and the phase gates will not guard \
+                             what is in it.",
+                            d.display(),
+                        );
+                    } else {
                         dirs.push(s);
                     }
                 },
@@ -612,5 +654,35 @@ mod tests {
             is_source_today("src/main.zig"),
             "a zig project's source is not guarded, and the gate reports cleanly"
         );
+    }
+}
+
+#[cfg(test)]
+mod spelling_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_path_git_reports_is_a_plain_entry() {
+        for ok in ["crates", "a/b", "crates/", "a/b/"] {
+            assert_eq!(src_dir_fault(ok), None, "{ok:?}");
+        }
+        for bad in [
+            "", ".", "./a", "a/./b", "a//b", "../a", "a/../b", "/a", "/",
+        ] {
+            assert!(src_dir_fault(bad).is_some(), "{bad:?} was accepted");
+        }
+    }
+
+    /// The layout is built from `mock_dir.join(entry)`, where `strip_prefix`
+    /// keeps the spelling, so a misspelt entry must not reach the pathspecs.
+    #[test]
+    fn a_misspelt_entry_never_reaches_the_pathspecs() {
+        let mock = Path::new("/m");
+        let abs: Vec<PathBuf> = ["crates", "x/./y", "z//w", ".", ""]
+            .iter()
+            .map(|d| mock.join(d))
+            .collect();
+        let l = SrcLayout::new(mock, &abs);
+        assert_eq!(l.pathspecs(), vec!["crates/"]);
     }
 }

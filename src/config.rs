@@ -940,34 +940,33 @@ impl Config {
         let project_name = raw.project_name.unwrap_or_else(|| "project".into());
         let crate_prefix = raw.crate_prefix.unwrap_or_else(|| project_name.clone());
 
-        // An entry with a `..` in it is refused, whether it leaves the mock
-        // directory or only wanders inside it. The entry is used verbatim as a
-        // path under the mock directory, which is how the generated hooks and the
-        // phase gates address a directory, and a path with `..` in it matches no
-        // git path. Kept, the source under it would be scoped to `infra` with
-        // nothing saying so.
-        let with_parent: Vec<&String> = raw
+        // An entry is refused unless it is written the way git reports a path:
+        // plain components joined by `/`, relative to the mock directory. The
+        // entry is used verbatim as a path under the mock directory, which is how
+        // the generated hooks and the phase gates address a directory, and any
+        // other spelling matches no git path. Kept, the source under it would be
+        // scoped to `infra` with nothing saying so, and `.` or an empty entry
+        // would make discovery treat every directory under the mock dir as a
+        // package. Refusing here, rather than folding the spelling in `SrcLayout`,
+        // keeps discovery, the renderers and the hooks reading one string.
+        let misspelt: Vec<String> = raw
             .src_dirs
             .iter()
-            .filter(|d| {
-                std::path::Path::new(d.as_str())
-                    .components()
-                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            .filter_map(|d| {
+                mockspace_lint_rules::src_layout::src_dir_fault(d)
+                    .map(|why| format!("{d:?} ({why})"))
             })
             .collect();
         assert!(
-            with_parent.is_empty(),
-            "mockspace.toml names src_dirs with `..` in them: {}\n  \
+            misspelt.is_empty(),
+            "mockspace.toml names src_dirs that are not a plain relative path: {}\n  \
              Every entry is relative to the mock dir ({}) and is written as the \
-             path of a directory under it. The hooks and the phase gates match \
-             a directory by that path, and a path with `..` in it matches none, \
-             so the entry would guard nothing. Write it without `..`, and move \
-             the packages under the mock dir if they are outside it.",
-            with_parent
-                .iter()
-                .map(|d| format!("{d:?}"))
-                .collect::<Vec<_>>()
-                .join(", "),
+             path of a directory under it, with plain components joined by `/`. \
+             The hooks and the phase gates match a directory by that path, and \
+             any other spelling matches none, so the entry would guard nothing. \
+             Write it that way, and move the packages under the mock dir if they \
+             are outside it.",
+            misspelt.join(", "),
             mock_dir.display(),
         );
         // A declared list rather than a walked tree, because a walk cannot tell

@@ -71,3 +71,36 @@ fn a_nested_directory_under_the_mock_directory_loads() {
     let tmp = repo_declaring("\"crates\", \"a/b\"");
     assert_eq!(refusal_of(&tmp.path().join("repo/mock")), None);
 }
+
+/// Every spelling that is not the path git reports is refused at load, each
+/// with the reason that applies, and an absolute path is one of them: joined
+/// onto the mock dir it replaces it, so the source would sit outside the tree
+/// the hooks scope.
+#[test]
+fn a_spelling_git_would_not_report_is_refused_and_says_which() {
+    let cases = [
+        ("\"./crates\"", "starts with `.`"),
+        ("\"crates\", \"a/./b\"", "`//` or `/./`"),
+        ("\"crates//x\"", "`//` or `/./`"),
+        ("\".\"", "starts with `.`"),
+        ("\"\"", "is empty"),
+        ("\"/tmp/elsewhere\"", "absolute path"),
+        ("\"/\"", "absolute path"),
+    ];
+    for (entry, reason) in cases {
+        let tmp = repo_declaring(entry);
+        let msg = refusal_of(&tmp.path().join("repo/mock"))
+            .unwrap_or_else(|| panic!("{entry} loaded, and git reports no such path"));
+        assert!(msg.contains("src_dirs"), "{entry}: names the key: {msg}");
+        assert!(msg.contains(reason), "{entry}: says {reason:?}: {msg}");
+        assert!(msg.contains("matches none"), "{entry}: says why: {msg}");
+    }
+}
+
+/// The control: a trailing slash is the one tolerated variation, since every
+/// consumer already trims it.
+#[test]
+fn a_trailing_slash_still_loads() {
+    let tmp = repo_declaring("\"crates/\", \"a/b/\"");
+    assert_eq!(refusal_of(&tmp.path().join("repo/mock")), None);
+}
