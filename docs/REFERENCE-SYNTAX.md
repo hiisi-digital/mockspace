@@ -97,11 +97,11 @@ required = true
 description = "The question the spike answers, in one line."
 ```
 
-A field's `type` is `string`, `integer`, `boolean`, `string[]`, **`ref` and
-`ref[]` for a field that holds citations**, or **the name of a namespace, for a
-field that holds rows of it**. A citation and a row reference are both strings on
-the wire, so both validate as strings; what the type adds is meaning, and it is
-what makes the field get checked at all.
+A field's `type` is `string`, `integer`, `boolean`, `string[]`, `date`, `time`,
+`datetime`, `span`, **`ref` and `ref[]` for a field that holds citations**, or
+**the name of a namespace, for a field that holds rows of it**. A citation and a
+row reference are both strings on the wire, so both validate as strings; what the
+type adds is meaning, and it is what makes the field get checked at all.
 
 Four builtins hold a moment or a length of time, each a string held to one form,
 which the generated schema carries and the gate enforces on every row: `date` as
