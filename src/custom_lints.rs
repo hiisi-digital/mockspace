@@ -1162,3 +1162,21 @@ mod tests {
         assert!(patch_section("{ path = \"../lint-rules\" }", tmp.path()).is_none());
     }
 }
+
+/// Where the generated lint crate's manifest goes for this run.
+// STUB: the per-worktree path this replaces, kept so the test below can be
+// shown failing against it.
+#[allow(dead_code)]
+pub(crate) fn lints_manifest_path(
+    _base: &Path,
+    cfg: &Config,
+    _lint_rules_dep: &str,
+    _packs: &[(String, String)],
+    _resolve: &dyn Fn(&str, &str) -> Result<String, String>,
+) -> PathBuf {
+    crate::build_dir::lint_crate_dir(&cfg.mock_dir).join("Cargo.toml")
+}
+
+#[cfg(test)]
+#[path = "custom_lints_share_tests.rs"]
+mod share_tests;
