@@ -32,7 +32,7 @@ Three things are reported rather than passed:
 - **A type naming neither a builtin nor a namespace**, rather than quietly
   becoming a string field that constrains nothing.
 - **A target declaring `value_field`**, which renders a value rather than a link
-  and so cannot carry a relation.
+  (once pages are written again) and so cannot carry a relation.
 
 ## The values a field takes
 

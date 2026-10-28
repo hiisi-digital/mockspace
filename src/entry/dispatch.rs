@@ -1314,7 +1314,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // The row text of a namespace declared `render = "page"` used to reach `docs/` through its
     // page, and the scan of the output below caught a reference in it that resolved to nothing.
     // With no page written that text reaches no document, so the resolved rows are read here
-    // instead. A row embedded into a template is still scanned in the document it lands in.
+    // instead. A row embedded into a template is still scanned in the document it lands in, so a
+    // reference in a row that is also embedded is reported twice, once per place.
+    // FIXME: drop this scan when pages are written again, since the page scan then covers it.
     registry_errors += dangling_in_page_rows(&cfg, &registry);
 
     // --- Every markdown document, through one pipeline ---
@@ -1850,7 +1852,7 @@ fn dangling_in_page_rows(cfg: &Config, registry: &registry::Registry) -> usize {
     let page_namespaces: std::collections::BTreeSet<&str> = cfg
         .registry_namespaces
         .iter()
-        .filter(|n| matches!(n.render, registry::RenderMode::Page))
+        .filter(|n| matches!(n.render, registry::RenderMode::Page) && !n.render.has_page())
         .map(|n| n.key.as_str())
         .collect();
     let mut errors = 0usize;
