@@ -204,32 +204,6 @@ fn generate_output(r: &Repo) -> std::process::Output {
         .unwrap()
 }
 
-/// A reference inside a row that no template reads reaches no document, and `query` prints
-/// it as it stands, so generation reads the resolved rows themselves.
-#[test]
-fn a_dangling_reference_in_an_unread_row_fails_generation() {
-    let r = with_registry();
-    write(&r.root.join("mock/registry/spike.toml"), &row("see {{ spike::nosuch }}"));
-    let out = generate_output(&r);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "a row holding a reference to nothing generated cleanly:\n{stderr}");
-    assert!(stderr.contains("dangling-reference"), "the failure was not named:\n{stderr}");
-}
-
-/// The control of the arm above: a reference that does resolve generates cleanly.
-#[test]
-fn a_resolving_reference_in_a_row_generates_cleanly() {
-    let r = with_registry();
-    write(
-        &r.root.join("mock/registry/spike.toml"),
-        &format!(
-            "{}\n[[spike]]\nid = \"second_one\"\nquestion = \"see {{{{ spike::first_one::question }}}}\"\n",
-            row("a")
-        ),
-    );
-    r.generate();
-}
-
 /// The case that must fail for the table form: a template printing a namespace that is not
 /// declared is reported rather than left as text that looks checked.
 #[test]

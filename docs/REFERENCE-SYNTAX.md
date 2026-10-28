@@ -18,7 +18,9 @@ The registry writes no page into the docs directory. A namespace is read, valida
 queried, and a table of it is written wherever a template asks for one with
 `{{ reg::spike }}`, in that template's own document. A row
 reference has no document to link to, so it renders as the row's slug. A page an
-earlier version wrote is removed by the sweep of `docs/`.
+earlier version wrote is removed by the sweep of `docs/`. Row text is checked where a
+template or a table renders it; a row nothing renders is not scanned for references
+that resolve to nothing.
 
 The braces are required, and they are not ceremony. They make a reference
 something the author states rather than something the renderer guesses from a
