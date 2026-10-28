@@ -16,7 +16,7 @@ documents are generated.
 
 The registry writes no page into the docs directory. A namespace is read, validated and
 queried, and a table of it is written wherever a template asks for one with
-`{{ reg::spike }}` or `{{registry:spike}}`, in that template's own document. A row
+`{{ reg::spike }}`, in that template's own document. A row
 reference has no document to link to, so it renders as the row's slug. A page an
 earlier version wrote is removed by the sweep of `docs/`.
 

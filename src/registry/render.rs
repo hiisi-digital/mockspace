@@ -497,31 +497,12 @@ fn render_rows(
     out
 }
 
-/// Expand `{{registry:<key>}}` placeholders into that namespace's table.
-///
-/// A project drops the placeholder in whatever document the table belongs in. The
-/// registry writes no page of its own for a table to live on.
-pub fn expand_embeds(
-    text: &str,
-    namespaces: &[RegistryNamespace],
-    reg: &Registry,
-    cfg: &crate::config::Config,
-) -> String {
-    let mut out = text.to_string();
-    for ns in namespaces {
-        let token = format!("{{{{registry:{}}}}}", ns.key);
-        if out.contains(&token) {
-            out = out.replace(&token, &render_table(ns, reg, cfg));
-        }
-    }
-    out
-}
 
 /// The short form: who and when, enough to recognise the work.
 ///
 /// What a reader needs at a glance, and what fits in a table cell beside four
-/// hundred others. The full citation is one click away, which is the whole
-/// reason the short form is safe.
+/// hundred others. The full citation is one reference away, `::citation`, which is
+/// the whole reason the short form is safe.
 pub fn short_citation(row: &RegistryRow) -> String {
     let f = |k: &str| row.fields.get(k).filter(|v| !v.is_empty()).cloned();
     match (f("authors"), f("year")) {

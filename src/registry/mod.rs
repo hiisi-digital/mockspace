@@ -413,7 +413,7 @@ mod tests {
             .insert("reference".into(), vec![row.qualified()]);
         reg.rows.insert(row.qualified(), row);
         // Short by default: it has to fit a table cell beside hundreds of
-        // others, and the full form is one click away.
+        // others, and the full form is one reference away.
         assert_eq!(
             r_all("{{ reference::burns_hunt }}", &with_builtins(&[]), &reg),
             "Burns and Hunt 2013"

@@ -50,10 +50,10 @@ _fixture() {
     } > "$root/docs/STRUCTURE.GRAPH.dot"
 }
 
-# _page <root> <NAME> <rows> -> a registry page as an earlier version wrote it
 #
-# The row-count sentence is what mockspace puts on every registry page and on no
-# other document, so it is what the script recognises them by. Written out here
+# _page <root> <NAME> <rows> -> a registry page as an earlier version wrote it
+# The row-count sentence is what an earlier version put on every registry page and on no
+# other document, so it is what the old selection recognised them by. Written out here
 # rather than referred to, because a test that generated its fixture with the
 # same code it is testing would agree with any mistake in it.
 _page() {

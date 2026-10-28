@@ -196,6 +196,51 @@ fn a_query_for_nothing_prints_no_table() {
     assert!(!stdout.contains("rows in"), "a table was printed for nothing:\n{stdout}");
 }
 
+fn generate_output(r: &Repo) -> std::process::Output {
+    r.cmd(common::BIN)
+        .current_dir(r.root.join("mock"))
+        .arg("--generate-only")
+        .output()
+        .unwrap()
+}
+
+/// A reference inside a row that no template reads reaches no document, and `query` prints
+/// it as it stands, so generation reads the resolved rows themselves.
+#[test]
+fn a_dangling_reference_in_an_unread_row_fails_generation() {
+    let r = with_registry();
+    write(&r.root.join("mock/registry/spike.toml"), &row("see {{ spike::nosuch }}"));
+    let out = generate_output(&r);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a row holding a reference to nothing generated cleanly:\n{stderr}");
+    assert!(stderr.contains("dangling-reference"), "the failure was not named:\n{stderr}");
+}
+
+/// The control of the arm above: a reference that does resolve generates cleanly.
+#[test]
+fn a_resolving_reference_in_a_row_generates_cleanly() {
+    let r = with_registry();
+    write(
+        &r.root.join("mock/registry/spike.toml"),
+        &format!(
+            "{}\n[[spike]]\nid = \"second_one\"\nquestion = \"see {{{{ spike::first_one::question }}}}\"\n",
+            row("a")
+        ),
+    );
+    r.generate();
+}
+
+/// The case that must fail for the table form: a template printing a namespace that is not
+/// declared is reported rather than left as text that looks checked.
+#[test]
+fn a_template_printing_a_missing_namespace_fails_generation() {
+    let r = with_registry();
+    write(&r.root.join("mock/ALPHA.md.tmpl"), "{{ reg::nosuch }}\n");
+    let out = generate_output(&r);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a table of nothing generated cleanly:\n{stderr}");
+}
+
 /// Takes the machine's git environment out of this process before `main`.
 #[path = "common/ambient.rs"]
 mod ambient;

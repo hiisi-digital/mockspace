@@ -1303,6 +1303,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
 
     // Printed and counted by one function, shared with the commit gate.
     registry_errors += registry_gate(&cfg, &registry, &cycle_findings, mode);
+    registry_errors += dangling_in_rows(&registry);
 
     // --- Every markdown document, through one pipeline ---
     //
@@ -1826,6 +1827,34 @@ mod auto_commit_tests {
         assert!(auto_commit_wanted(&args(&["mock", "lock"])));
         assert!(!auto_commit_wanted(&args(&["mock", "lock", "--no-commit"])));
     }
+}
+
+/// References that resolved to nothing inside the resolved fields of any row, printed and
+/// counted.
+///
+/// Row text reaches a document only through a template that reads it, and `query` prints it
+/// as it stands, so the scan of the generated output cannot see a reference in a row nothing
+/// embeds. Only generation resolves, so the commit gate cannot run this: a template read
+/// unresolved would report every reference as dangling. A reference in a row that is also
+/// embedded is reported twice, once per place.
+fn dangling_in_rows(registry: &registry::Registry) -> usize {
+    let mut errors = 0usize;
+    for row in registry.rows.values() {
+        for (field, value) in &row.fields {
+            for found in registry::unresolved_in_generated(value) {
+                if found.trim_matches(|c| c == '{' || c == '}').contains("::") {
+                    errors += 1;
+                    eprintln!(
+                        "  ERROR [dangling-reference]: `{}` field `{field}` holds `{found}`, which \
+                         resolved to nothing. A reference that resolves to nothing is worse than \
+                         prose, because it looks checked.",
+                        row.qualified()
+                    );
+                }
+            }
+        }
+    }
+    errors
 }
 
 /// Every registry finding, printed, counted, and returned as an error count.

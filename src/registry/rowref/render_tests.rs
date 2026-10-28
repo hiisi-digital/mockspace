@@ -123,24 +123,18 @@ fn refsto_on_a_row_that_does_not_exist_does_not_resolve() {
     );
 }
 
-/// A field reference and that field's table cell must agree. They are two
-/// renderings of one value, and the first version of this had the cell
-/// linking while the reference showed bare slugs.
+/// A row-reference field names rows, so a slug in it that names no row keeps its
+/// reference form for the unresolved-token scan to report. The control is an ordinary
+/// string field holding the same text, which is just text and is never reported.
 #[test]
-fn a_reference_to_a_row_reference_field_renders_the_slug() {
-    let (nss, r) = answered();
-    assert_eq!(
-        resolved("{{ answer::niri::slot }}", &nss, &r),
-        "display"
-    );
-}
-
-/// The control: an ordinary field holding the same text renders as text.
-#[test]
-fn a_reference_to_an_ordinary_field_renders_its_value() {
-    let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "string")])];
-    let r = reg(&[("slot", "display", &[]), ("answer", "niri", &[("slot", "display")])]);
-    assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "display");
+fn a_row_reference_field_keeps_a_slug_that_names_no_row() {
+    let nss = vec![ns("slot", &[]), ns("answer", &[("slot", "slot"), ("note", "string")])];
+    let r = reg(&[
+        ("slot", "display", &[]),
+        ("answer", "niri", &[("slot", "nosuch"), ("note", "nosuch")]),
+    ]);
+    assert_eq!(resolved("{{ answer::niri::slot }}", &nss, &r), "{{ slot::nosuch }}");
+    assert_eq!(resolved("{{ answer::niri::note }}", &nss, &r), "nosuch");
 }
 
 /// The registry writes no page, so a reference into any namespace has nothing to link to
