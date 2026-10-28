@@ -4,7 +4,7 @@
 //--------------------------------------------------------------------------------------------------
 
 //! A `src_dirs` entry names a directory under the mock directory, and one that
-//! leaves it is refused when the config is read.
+//! has a `..` in it is refused when the config is read.
 
 use std::path::Path;
 
@@ -43,7 +43,7 @@ fn repo_declaring(entries: &str) -> tempfile::TempDir {
 }
 
 #[test]
-fn a_directory_that_leaves_the_mock_directory_is_refused() {
+fn a_directory_with_a_parent_segment_is_refused() {
     for entry in ["\"../../outside\"", "\"crates\", \"../x\"", "\"a/../crates\""] {
         let tmp = repo_declaring(entry);
         let msg = refusal_of(&tmp.path().join("repo/mock"))
@@ -51,6 +51,16 @@ fn a_directory_that_leaves_the_mock_directory_is_refused() {
         assert!(msg.contains("src_dirs"), "{entry}: names the key: {msg}");
         assert!(msg.contains(".."), "{entry}: names the offence: {msg}");
         assert!(msg.contains("relative to the mock dir"), "{entry}: says the fix: {msg}");
+        assert!(msg.contains("matches none"), "{entry}: says why: {msg}");
+        // `a/../crates` stays inside the mock dir, so the message cannot say the
+        // entry leaves it.
+        assert!(!msg.contains("climb"), "{entry}: claims a climb: {msg}");
+        // The continuations are escaped, so no line is blank or carries a
+        // trailing space.
+        for line in msg.lines() {
+            assert!(!line.trim().is_empty(), "{entry}: blank line in: {msg:?}");
+            assert_eq!(line, line.trim_end(), "{entry}: trailing space in: {msg:?}");
+        }
     }
 }
 

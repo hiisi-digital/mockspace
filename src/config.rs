@@ -940,16 +940,13 @@ impl Config {
         let project_name = raw.project_name.unwrap_or_else(|| "project".into());
         let crate_prefix = raw.crate_prefix.unwrap_or_else(|| project_name.clone());
 
-        // A declared list rather than a walked tree, because a walk cannot tell
-        // an empty group from a directory that is not a group, and this project
-        // has already shipped one silent-empty discovery. A named directory that
-        // is missing is a configuration error and says so; an absent
-        // subdirectory in a walk says nothing at all.
-        // An entry that climbs out of the mock directory cannot be written as a
-        // path under it, which is how the generated hooks and the phase gates
-        // address a directory. Kept, it would match no git path and the source in
-        // it would be scoped to `infra` with nothing saying so, so it is refused.
-        let leaving: Vec<&String> = raw
+        // An entry with a `..` in it is refused, whether it leaves the mock
+        // directory or only wanders inside it. The entry is used verbatim as a
+        // path under the mock directory, which is how the generated hooks and the
+        // phase gates address a directory, and a path with `..` in it matches no
+        // git path. Kept, the source under it would be scoped to `infra` with
+        // nothing saying so.
+        let with_parent: Vec<&String> = raw
             .src_dirs
             .iter()
             .filter(|d| {
@@ -959,21 +956,30 @@ impl Config {
             })
             .collect();
         assert!(
-            leaving.is_empty(),
-            "mockspace.toml names src_dirs that climb out of the mock dir with `..`: {}
-  
-             Every entry is relative to the mock dir ({}) and names a directory under 
-             it. The hooks and the phase gates address a directory by its path under 
-             the mock dir, so one outside it would guard nothing. Move the packages 
-             under the mock dir, or write the entry without `..`.",
-            leaving.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>().join(", "),
+            with_parent.is_empty(),
+            "mockspace.toml names src_dirs with `..` in them: {}\n  \
+             Every entry is relative to the mock dir ({}) and is written as the \
+             path of a directory under it. The hooks and the phase gates match \
+             a directory by that path, and a path with `..` in it matches none, \
+             so the entry would guard nothing. Write it without `..`, and move \
+             the packages under the mock dir if they are outside it.",
+            with_parent
+                .iter()
+                .map(|d| format!("{d:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
             mock_dir.display(),
         );
+        // A declared list rather than a walked tree, because a walk cannot tell
+        // an empty group from a directory that is not a group, and this project
+        // has already shipped one silent-empty discovery.
         let src_dirs: Vec<PathBuf> = if raw.src_dirs.is_empty() {
             vec![mock_dir.join("crates")]
         } else {
             raw.src_dirs.iter().map(|d| mock_dir.join(d)).collect()
         };
+        // A named directory that is missing is a configuration error and says
+        // so; an absent subdirectory in a walk says nothing at all.
         if raw.src_dirs.is_empty() {
             // The default is allowed not to exist: a project with no packages
             // yet is ordinary, and discovery yields nothing without complaint.
