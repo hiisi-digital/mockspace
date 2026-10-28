@@ -36,7 +36,7 @@ use mockspace_lint_rules::src_layout::SrcLayout;
 /// become a reason a commit fails.
 fn staged_paths(repo_root: &Path, mock_rel: &str) -> Vec<String> {
     let out = Command::new("git")
-        .args(["diff", "--cached", "--name-only", "--", mock_rel])
+        .args(["diff", "--cached", "--name-only", "--no-renames", "--", mock_rel])
         .current_dir(repo_root)
         .output();
     match out {

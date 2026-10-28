@@ -368,7 +368,7 @@ if ! git diff --cached --quiet -- "$MOCK_DIR/test-history" 2>/dev/null; then
 fi
 
 # Only run mockspace validation when staged files touch the design surface.
-STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
+STAGED=$(git diff --cached --name-only --no-renames -- "$MOCK_DIR" 2>/dev/null || true)
 
 # The config counts as the surface, wherever it sits. `mockspace.toml` may live
 # at the repository root rather than inside the mock directory, and that is its
@@ -377,7 +377,7 @@ STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
 # every row in the registry at once, and it was the one commit that ran no
 # validation at all. The durable hook already checked both; this one did not.
 if [ -z "$STAGED" ]; then
-    STAGED=$(git diff --cached --name-only -- '*mockspace.toml' ${{MS_PACKS[@]+"${{MS_PACKS[@]}}"}} 2>/dev/null || true)
+    STAGED=$(git diff --cached --name-only --no-renames -- '*mockspace.toml' ${{MS_PACKS[@]+"${{MS_PACKS[@]}}"}} 2>/dev/null || true)
 fi
 
 [ -z "$STAGED" ] && ms_chain "$@"
@@ -527,7 +527,7 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
         FULL_REASON="shared input"
         break
     fi
-    PUSH_FILES=$(git diff --name-only "$remote_sha".."$local_sha" -- "$MOCK_DIR/" 2>/dev/null || true)
+    PUSH_FILES=$(git diff --name-only --no-renames "$remote_sha".."$local_sha" -- "$MOCK_DIR/" 2>/dev/null || true)
     PUSH_CHANGED=$(ms_union "$(ms_crates_of "$PUSH_FILES")" "$(ms_ws_crates_of "$PUSH_FILES")")
     if [ -z "$PUSH_CHANGED" ]; then
         continue

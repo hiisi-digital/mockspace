@@ -282,9 +282,9 @@ if [ "$scope" != "all" ]; then
     # `surface` scope: only changes to the design surface are the gate's
     # business. Work elsewhere in the repo passes untouched.
     surface=""
-    [ -n "$mockrel" ] && surface=$(git diff --cached --name-only -- "$mockrel" 2>/dev/null || true)
+    [ -n "$mockrel" ] && surface=$(git diff --cached --name-only --no-renames -- "$mockrel" 2>/dev/null || true)
     if [ -z "$surface" ] && [ -n "$cfgrel" ]; then
-        surface=$(git diff --cached --name-only -- "$cfgrel" 2>/dev/null || true)
+        surface=$(git diff --cached --name-only --no-renames -- "$cfgrel" 2>/dev/null || true)
     fi
     [ -z "$surface" ] && ms_chain "$@"
 fi
