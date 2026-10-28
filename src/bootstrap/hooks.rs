@@ -508,7 +508,7 @@ echo "pre-push: running mockspace validation..."
 # Empty stdin (no refs piped, rare with `push --tags` variants on some
 # git versions) → the loop simply does not run; the post-loop fall-
 # through handles full-scope correctly.
-NEW_BRANCH=0
+FULL_REASON=""
 CHANGED_CRATES=""
 while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     if [ -z "$local_sha" ]; then
@@ -519,7 +519,7 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
         continue
     fi
     if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
-        NEW_BRANCH=1
+        FULL_REASON="new branch"
         break
     fi
     # Unknown remote_sha (we never fetched the remote, or it's a stale
@@ -527,13 +527,13 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     # Treat as new-branch-equivalent and force full scope; otherwise
     # `git diff` would fail closed and silently drop this ref's changes.
     if ! git cat-file -e "$remote_sha" 2>/dev/null; then
-        NEW_BRANCH=1
+        FULL_REASON="remote sha not fetched"
         break
     fi
     # A pushed shared input (the registry, the project lints, the config) reaches
-    # every crate, so it forces the full scope exactly as a new branch does.
+    # every crate, so it forces the full scope, under its own reason.
     if ! git diff --quiet "$remote_sha".."$local_sha" -- "${{MS_SHARED[@]}}" 2>/dev/null; then
-        NEW_BRANCH=1
+        FULL_REASON="shared input"
         break
     fi
     PUSH_FILES=$(git diff --name-only "$remote_sha".."$local_sha" -- "$MOCK_DIR/" 2>/dev/null || true)
@@ -562,8 +562,8 @@ fi
 if ms_nuked; then
     echo "  nuked workspace: skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
-elif [ "$NEW_BRANCH" = "1" ] || [ -z "$CHANGED_CRATES" ]; then
-    echo "  scope: full project ($([ "$NEW_BRANCH" = "1" ] && echo "new branch" || echo "no crate changes"))"
+elif [ -n "$FULL_REASON" ] || [ -z "$CHANGED_CRATES" ]; then
+    echo "  scope: full project (${{FULL_REASON:-no crate changes}})"
     ARGS=(--lint-only --strict)
 else
     echo "  scope: $CHANGED_CRATES"
