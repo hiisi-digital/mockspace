@@ -43,7 +43,7 @@ fn gen_pre_push_passes_bash_syntax_check() {
 
 #[test]
 fn gen_pre_push_includes_scope_branch() {
-    // Sanity check: the generated script names the new-branch /
+    // Sanity check: the generated script names the full-scope reason /
     // changed-crates scopes the way the hook expects.
     let script = gen_pre_push("mock", &HookLayout::of(&["crates"]), Path::new("/dev/null"));
     assert!(
@@ -51,8 +51,8 @@ fn gen_pre_push_includes_scope_branch() {
         "expected CHANGED_CRATES var in generated pre-push hook"
     );
     assert!(
-        script.contains("NEW_BRANCH"),
-        "expected NEW_BRANCH var in generated pre-push hook"
+        script.contains("FULL_REASON"),
+        "expected FULL_REASON var in generated pre-push hook"
     );
     assert!(
         script.contains("--scope"),
