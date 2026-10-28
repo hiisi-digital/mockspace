@@ -75,7 +75,7 @@ fn make_executable(path: &Path) {
 /// override beats the repository's `user.name` the test sets, so a test about
 /// which identity reaches the gate would be measuring the machine's instead.
 /// Applied before the test's own variables, which are the ones meant to count.
-fn without_ambient_identity(c: &mut Command) -> &mut Command {
+pub(super) fn without_ambient_identity(c: &mut Command) -> &mut Command {
     for k in [
         "GIT_AUTHOR_NAME",
         "GIT_AUTHOR_EMAIL",
@@ -94,7 +94,7 @@ fn without_ambient_identity(c: &mut Command) -> &mut Command {
 
 /// Git with the machine's own config out of the way, so a global identity on
 /// whatever runs this cannot stand in for the one under test.
-fn git_command(repo: &Path, path: &str, envs: &[(&str, &str)], args: &[&str]) -> Command {
+pub(super) fn git_command(repo: &Path, path: &str, envs: &[(&str, &str)], args: &[&str]) -> Command {
     let mut c = Command::new("git");
     c.current_dir(repo)
         .args(args)

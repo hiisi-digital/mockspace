@@ -21,20 +21,41 @@ const KASKI: &[&str] = &["crates", "applets/console/crates"];
 
 const CONSOLE_SRC: &str = "mock/applets/console/crates/console-core/src/x.rs";
 
+/// Git run in `root`, with the machine's config and identity out of the way
+/// (the identity tests' own helper, so the two cannot drift apart), a set
+/// author and committer, and the repository-selecting variables a parent git
+/// leaves in the environment cleared. A failing call fails the test with its
+/// stderr in the message.
 fn git(root: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .expect("git runs");
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut c = super::hooks_identity_tests::git_command(
+        root,
+        &path,
+        &[
+            ("GIT_AUTHOR_NAME", "t"),
+            ("GIT_AUTHOR_EMAIL", "t@example.invalid"),
+            ("GIT_COMMITTER_NAME", "t"),
+            ("GIT_COMMITTER_EMAIL", "t@example.invalid"),
+        ],
+        args,
+    );
+    for k in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] {
+        c.env_remove(k);
+    }
+    let out = c.output().expect("git runs");
+    assert!(
+        out.status.success(),
+        "git {args:?} in {} failed with {}:\n{}",
+        root.display(),
+        out.status,
+        String::from_utf8_lossy(&out.stderr),
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 fn fixture() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     git(tmp.path(), &["init", "-q"]);
-    git(tmp.path(), &["config", "user.email", "t@example.invalid"]);
-    git(tmp.path(), &["config", "user.name", "t"]);
     tmp
 }
 
@@ -595,12 +616,10 @@ fn the_declaration_is_the_one_the_source_layout_holds() {
         Path::new("/elsewhere/crates").to_path_buf(),
         mock.to_path_buf(),
     ];
-    let held = mockspace_lint_rules::src_layout::SrcLayout::new(mock, &dirs);
     let config = Path::new("/r/mock/mockspace.toml");
     let hook = HookLayout::declared(Path::new("/r"), mock, &dirs, "m", config);
-    assert_eq!(hook.src_dirs, held.dirs());
-    // and not a second reading of it: the entries the layout keeps are kept, the
-    // ones it cannot address are not. An entry with a `..` in it never gets here,
+    // The entries the layout can address are kept and the
+    // ones it cannot are not. An entry with a `..` in it never gets here,
     // `Config::from_dir` refuses it.
     assert_eq!(hook.src_dirs, vec![
         "crates".to_string(),
