@@ -141,10 +141,28 @@ fn run(hook_text: &str, root: &Path, stdin: &str) -> String {
 /// What the pre-commit hook for `src_dirs` prints with `files` staged, and the
 /// arguments it passes to `cargo mock`.
 fn commit_run(src_dirs: &[&str], files: &[(&str, &str)]) -> (String, String) {
+    commit_run_on(src_dirs, &[], files)
+}
+
+/// As `commit_run`, with `base` already committed, so its files are on disk and
+/// in the tree without being among the staged ones.
+fn commit_run_on(
+    src_dirs: &[&str],
+    base: &[(&str, &str)],
+    files: &[(&str, &str)],
+) -> (String, String) {
     let tmp = fixture();
+    if !base.is_empty() {
+        stage(tmp.path(), base);
+        git(tmp.path(), &["commit", "-q", "-m", "base"]);
+    }
     stage(tmp.path(), files);
     let (printed, calls) = run_full(
-        &gen_pre_commit("mock", src_dirs, &tmp.path().join("no-user-hook")),
+        &gen_pre_commit(
+            "mock",
+            &HookLayout::of(src_dirs),
+            &tmp.path().join("no-user-hook"),
+        ),
         tmp.path(),
         "",
     );
@@ -158,9 +176,19 @@ fn commit_says(src_dirs: &[&str], files: &[(&str, &str)]) -> String {
 /// What the pre-push hook for `src_dirs` prints for a push of `files` on top of
 /// a base commit, and the arguments it passes to `cargo mock`.
 fn push_run(src_dirs: &[&str], files: &[(&str, &str)]) -> (String, String) {
+    push_run_on(src_dirs, &[], files)
+}
+
+/// As `push_run`, with `base` part of the commit the push is measured against.
+fn push_run_on(
+    src_dirs: &[&str],
+    base: &[(&str, &str)],
+    files: &[(&str, &str)],
+) -> (String, String) {
     let tmp = fixture();
     let root = tmp.path();
     stage(root, &[("README", "base\n")]);
+    stage(root, base);
     git(root, &["commit", "-q", "-m", "base"]);
     let base = git(root, &["rev-parse", "HEAD"]);
     stage(root, files);
@@ -168,7 +196,11 @@ fn push_run(src_dirs: &[&str], files: &[(&str, &str)]) -> (String, String) {
     let head = git(root, &["rev-parse", "HEAD"]);
     let line = format!("refs/heads/m {head} refs/heads/m {base}\n");
     let (printed, calls) = run_full(
-        &gen_pre_push("mock", src_dirs, &root.join("no-user-hook")),
+        &gen_pre_push(
+            "mock",
+            &HookLayout::of(src_dirs),
+            &root.join("no-user-hook"),
+        ),
         root,
         &line,
     );
@@ -272,8 +304,8 @@ fn a_staged_registry_row_alone_runs_everything_and_not_infra() {
 }
 
 #[test]
-fn the_workspace_manifest_and_lockfile_and_both_configs_are_shared_inputs() {
-    for path in ["mock/Cargo.toml", "mock/Cargo.lock", "mock/mockspace.toml", "mockspace.toml"] {
+fn both_configs_are_shared_inputs() {
+    for path in ["mock/mockspace.toml", "mockspace.toml"] {
         let out = commit_says(KASKI, &[(CONSOLE_SRC, "fn x() {}\n"), (path, "x = 1\n")]);
         assert!(
             out.contains("shared inputs staged: full scope"),
@@ -320,13 +352,187 @@ fn a_push_with_a_registry_row_beside_a_crate_runs_the_full_scope() {
     assert!(!out.contains("scope: console-core"), "hook said:\n{out}");
 }
 
+const NUKED: &str = "// Nuked by `cargo mock --nuke`\n";
+
+/// Whether the push hook and the engine each call the workspace nuked, over the
+/// same tree: `lib_rs` is every crate's `src/lib.rs` body, by path.
+fn nuke_verdicts(lib_rs: &[(&str, &str)]) -> (bool, bool) {
+    let (out, _) = push_run(KASKI, lib_rs);
+    let hook = out.contains("nuked workspace");
+
+    let tmp = fixture();
+    for (path, body) in lib_rs {
+        let p = tmp.path().join(path);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, body).unwrap();
+    }
+    let mock = tmp.path().join("mock");
+    let mut cfg = crate::config::Config::from_dir(&mock);
+    cfg.src_dirs = vec![mock.join("crates"), mock.join("applets/console/crates")];
+    let engine = crate::entry::detect_nuked_workspace(&cfg);
+    (hook, engine)
+}
+
+const ENGINE_LIB: &str = "mock/crates/kaski-sim/src/lib.rs";
+const CONSOLE_LIB: &str = "mock/applets/console/crates/console-core/src/lib.rs";
+
 #[test]
-fn a_nuked_crate_under_the_second_directory_is_found_by_the_push_hook() {
-    let out = push_says(KASKI, &[(
-        "mock/applets/console/crates/console-core/src/lib.rs",
-        "// Nuked by a design round\n",
-    )]);
+fn a_workspace_with_every_crate_nuked_is_nuked_for_the_hook_and_the_engine() {
+    let (hook, engine) = nuke_verdicts(&[(ENGINE_LIB, NUKED), (CONSOLE_LIB, NUKED)]);
+    assert!(engine, "the engine calls it nuked");
+    assert_eq!(hook, engine, "the hook and the engine disagree");
+}
+
+/// One nuked console crate beside a live engine crate is not a nuked workspace.
+/// The hook took any crate for all, and turned the source lints off for the live
+/// engine crate.
+#[test]
+fn one_nuked_crate_beside_a_live_one_is_not_nuked_for_the_hook_or_the_engine() {
+    let (hook, engine) = nuke_verdicts(&[(ENGINE_LIB, "fn s() {}\n"), (CONSOLE_LIB, NUKED)]);
+    assert!(!engine, "the engine calls it live");
+    assert_eq!(hook, engine, "the hook and the engine disagree");
+}
+
+#[test]
+fn the_nuke_marker_is_the_configured_one() {
+    let root = fixture();
+    stage(root.path(), &[
+        ("README", "base\n"),
+        (CONSOLE_LIB, "// Nuked by a design round\n"),
+    ]);
+    git(root.path(), &["commit", "-q", "-m", "base"]);
+    let base = git(root.path(), &["rev-parse", "HEAD"]);
+    let line = format!("refs/heads/m {base} refs/heads/m {}\n", "1".repeat(40));
+    let layout = HookLayout {
+        src_dirs:    vec!["applets/console/crates".to_string()],
+        nuke_marker: "Nuked by a design round".to_string(),
+    };
+    let (out, _) = run_full(
+        &gen_pre_push("mock", &layout, &root.path().join("no-user-hook")),
+        root.path(),
+        &line,
+    );
     assert!(out.contains("nuked workspace"), "hook said:\n{out}");
+    // the same tree under the default marker is live
+    let (out, _) = run_full(
+        &gen_pre_push(
+            "mock",
+            &HookLayout::of(&["applets/console/crates"]),
+            &root.path().join("no-user-hook"),
+        ),
+        root.path(),
+        &line,
+    );
+    assert!(!out.contains("nuked workspace"), "hook said:\n{out}");
+}
+
+/// The kaski shape on disk: the mock workspace and the console workspace, each
+/// with its manifest and lockfile and its own crates.
+const KASKI_TREE: &[(&str, &str)] = &[
+    ("mock/Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n"),
+    ("mock/Cargo.lock", "# lock 1\n"),
+    ("mock/crates/kaski-sim/src/lib.rs", "fn s() {}\n"),
+    ("mock/crates/kaski-ui/src/lib.rs", "fn u() {}\n"),
+    (
+        "mock/applets/console/Cargo.toml",
+        "[workspace]\nmembers = [\"crates/*\"]\n",
+    ),
+    ("mock/applets/console/Cargo.lock", "# lock 1\n"),
+    (
+        "mock/applets/console/crates/console-core/src/lib.rs",
+        "fn c() {}\n",
+    ),
+    (
+        "mock/applets/console/crates/console-serve/src/lib.rs",
+        "fn v() {}\n",
+    ),
+    (
+        "mock/applets/console/crates/console-app/src/lib.rs",
+        "fn a() {}\n",
+    ),
+];
+
+const CONSOLE_SCOPE: &str = "console-app,console-core,console-serve";
+
+#[test]
+fn the_console_lockfile_alone_scopes_to_the_console_crates() {
+    let staged = [("mock/applets/console/Cargo.lock", "# lock 2\n")];
+    let (out, args) = commit_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(
+        args,
+        format!("mock --lint-only --commit --scope {CONSOLE_SCOPE}"),
+        "{out}"
+    );
+    let (out, args) = push_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(
+        args,
+        format!("mock --lint-only --strict --scope {CONSOLE_SCOPE}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_console_manifest_alone_scopes_to_the_console_crates() {
+    let staged = [(
+        "mock/applets/console/Cargo.toml",
+        "[workspace]\nmembers = []\n",
+    )];
+    let (out, args) = commit_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(
+        args,
+        format!("mock --lint-only --commit --scope {CONSOLE_SCOPE}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn console_source_and_its_lockfile_scope_to_all_three_crates() {
+    let staged = [
+        ("mock/applets/console/Cargo.lock", "# lock 2\n"),
+        (
+            "mock/applets/console/crates/console-core/src/x.rs",
+            "fn x() {}\n",
+        ),
+    ];
+    let (out, args) = commit_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(
+        args,
+        format!("mock --lint-only --commit --scope {CONSOLE_SCOPE}"),
+        "{out}"
+    );
+    let (out, args) = push_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(
+        args,
+        format!("mock --lint-only --strict --scope {CONSOLE_SCOPE}"),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_mock_lockfile_scopes_to_the_mock_workspace_and_not_the_console() {
+    let staged = [("mock/Cargo.lock", "# lock 2\n")];
+    let (out, args) = commit_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(
+        args, "mock --lint-only --commit --scope kaski-sim,kaski-ui",
+        "{out}"
+    );
+    let (out, args) = push_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(
+        args, "mock --lint-only --strict --scope kaski-sim,kaski-ui",
+        "{out}"
+    );
+}
+
+/// The control for the arms above: a crate's own lockfile is not a workspace root,
+/// so it is that crate's file and moves no other (a non-source file, so doc-only).
+#[test]
+fn a_crates_own_lockfile_moves_no_workspace() {
+    let staged = [("mock/crates/kaski-sim/Cargo.lock", "# lock 2\n")];
+    let (out, args) = commit_run_on(KASKI, KASKI_TREE, &staged);
+    assert_eq!(
+        args, "mock --lint-only --commit --scope kaski-sim --doc-only",
+        "{out}"
+    );
 }
 
 #[test]
@@ -345,7 +551,7 @@ fn a_directory_with_a_quote_in_it_cannot_break_the_script() {
 }
 
 #[test]
-fn the_declaration_is_written_relative_to_the_mock_directory() {
+fn the_declaration_is_the_one_the_source_layout_holds() {
     let mock = Path::new("/r/mock");
     let dirs = [
         mock.join("crates"),
@@ -354,9 +560,15 @@ fn the_declaration_is_written_relative_to_the_mock_directory() {
         Path::new("/elsewhere/crates").to_path_buf(),
         mock.to_path_buf(),
     ];
-    assert_eq!(src_dirs_relative(mock, &dirs), vec![
+    let held = mockspace_lint_rules::src_layout::SrcLayout::new(mock, &dirs);
+    let hook = HookLayout::declared(mock, &dirs, "m");
+    assert_eq!(hook.src_dirs, held.dirs());
+    // and not a second reading of it: the entries the layout keeps are kept, the
+    // ones it cannot address are not
+    assert_eq!(hook.src_dirs, vec![
         "crates".to_string(),
-        "applets/console/crates".to_string()
+        "applets/console/crates".to_string(),
+        "../outside".to_string()
     ]);
 }
 
@@ -364,8 +576,8 @@ fn the_declaration_is_written_relative_to_the_mock_directory() {
 fn the_generated_files_follow_the_declaration() {
     // The fingerprint guard skips a rewrite when the content is unchanged, so a
     // declaration that changes must change the content or the old hook stays.
-    let a = gen_pre_commit("mock", &["crates"], Path::new("/dev/null"));
-    let b = gen_pre_commit("mock", KASKI, Path::new("/dev/null"));
+    let a = gen_pre_commit("mock", &HookLayout::of(&["crates"]), Path::new("/dev/null"));
+    let b = gen_pre_commit("mock", &HookLayout::of(KASKI), Path::new("/dev/null"));
     assert_ne!(content_fingerprint(&a), content_fingerprint(&b));
 }
 
@@ -381,6 +593,7 @@ fn ensure_generated_hooks_writes_the_declared_directories() {
         root,
         &mock,
         &[mock.join("crates"), mock.join("applets/console/crates")],
+        crate::config::DEFAULT_NUKE_MARKER,
         &mut actions,
     );
     let hook = fs::read_to_string(generated_hooks_dir(&mock).join("pre-commit")).unwrap();

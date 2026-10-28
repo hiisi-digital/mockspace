@@ -44,6 +44,12 @@ impl InstallMode {
     }
 }
 
+/// The text a nuked crate's `lib.rs` carries unless the config names another.
+///
+/// The engine's nuke detection and the generated hooks both read the marker the
+/// config resolves to, and this is the one place the default is spelled.
+pub const DEFAULT_NUKE_MARKER: &str = "Nuked by `cargo mock --nuke`";
+
 /// Mockspace workspace configuration.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -1083,7 +1089,7 @@ impl Config {
             module_crates: raw.module_crates,
             unprefixed_crates: raw.unprefixed_crates,
             abi_version: raw.abi_version.unwrap_or(1),
-            nuke_marker: "Nuked by `cargo mock --nuke`".to_string(),
+            nuke_marker: DEFAULT_NUKE_MARKER.to_string(),
             registry_namespaces: crate::registry::with_builtins(
                 &raw.registry.map(|r| r.namespace).unwrap_or_default(),
             ),

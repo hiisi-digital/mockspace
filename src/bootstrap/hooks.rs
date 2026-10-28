@@ -22,11 +22,11 @@ pub(crate) fn ensure_generated_hooks(
     repo_root: &Path,
     mock_dir: &Path,
     src_dirs: &[PathBuf],
+    nuke_marker: &str,
     actions: &mut Vec<String>,
 ) {
     let out_dir = crate::build_dir::ensure_under_target(mock_dir, &["hooks"]);
-    let src_rel = src_dirs_relative(mock_dir, src_dirs);
-    let src_rel: Vec<&str> = src_rel.iter().map(String::as_str).collect();
+    let layout = HookLayout::declared(mock_dir, src_dirs, nuke_marker);
 
     let mock_rel = mock_dir
         .strip_prefix(repo_root)
@@ -42,7 +42,7 @@ pub(crate) fn ensure_generated_hooks(
         let path = out_dir.join(hook_name);
         let user_hook = user_hooks_dir.join(hook_name);
 
-        let content = gen_hook(hook_name, &mock_rel, &src_rel, &user_hook);
+        let content = gen_hook(hook_name, &mock_rel, &layout, &user_hook);
         let fingerprint = content_fingerprint(&content);
         let fp_line = format!("{MANAGED_MARKER} v{HOOK_VERSION} fp:{fingerprint:016x}");
 
@@ -75,26 +75,37 @@ pub(crate) fn ensure_generated_hooks(
     }
 }
 
-/// The declared source directories as the hooks address them: relative to the
-/// mock directory, forward-slashed, no trailing slash.
+/// What the generated hooks are told about the project: where its source lives
+/// and what a nuked crate carries.
 ///
-/// An entry that does not sit under the mock directory, or climbs out of it with
-/// `..`, cannot be matched against the repo-relative paths git reports, so it is
-/// left out rather than written as a pattern that never matches. `SrcLayout::new`
-/// treats the first kind the same way and says so; the engine's own scope check
-/// is where such an entry is reported.
-pub(crate) fn src_dirs_relative(mock_dir: &Path, src_dirs: &[PathBuf]) -> Vec<String> {
-    src_dirs
-        .iter()
-        .filter_map(|d| d.strip_prefix(mock_dir).ok())
-        .filter(|rel| {
-            rel.components()
-                .all(|c| matches!(c, std::path::Component::Normal(_)))
-        })
-        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
-        .map(|s| s.trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
+/// Both come from the same places the engine reads them. The directories are
+/// those `SrcLayout` holds, so a hook and a lint address a crate by one
+/// definition, and the marker is the config's `nuke_marker`, the text the
+/// engine's own nuke detection looks for.
+pub(crate) struct HookLayout {
+    pub(crate) src_dirs: Vec<String>,
+    pub(crate) nuke_marker: String,
+}
+
+impl HookLayout {
+    /// From the absolute directories the config carries, as `SrcLayout` reads them.
+    pub(crate) fn declared(mock_dir: &Path, src_dirs: &[PathBuf], nuke_marker: &str) -> Self {
+        let layout = mockspace_lint_rules::src_layout::SrcLayout::new(mock_dir, src_dirs);
+        Self {
+            src_dirs: layout.dirs().to_vec(),
+            nuke_marker: nuke_marker.to_string(),
+        }
+    }
+
+    /// From directories already relative to the mock directory, with the
+    /// marker the config defaults to.
+    #[cfg(test)]
+    pub(crate) fn of(src_dirs: &[&str]) -> Self {
+        Self {
+            src_dirs: src_dirs.iter().map(|d| d.to_string()).collect(),
+            nuke_marker: crate::config::DEFAULT_NUKE_MARKER.to_string(),
+        }
+    }
 }
 
 /// Single-quote a word for bash.
@@ -106,14 +117,18 @@ fn sh_quote(word: &str) -> String {
 ///
 /// Written after `MOCK_DIR` is set. `SRC_DIRS` is the declaration, and the
 /// functions are the only places a hook decides where a crate lives: which
-/// crate a path belongs to, whether a path is source, whether any crate is
-/// nuked, and the pathspecs to hand git. An empty declaration means no path is
-/// source and no crate exists, which is what a documentation repository is.
-pub(crate) fn src_layout_shell(src_dirs: &[&str]) -> String {
-    let words: Vec<String> = src_dirs.iter().map(|d| sh_quote(d)).collect();
+/// crate a path belongs to, whether a path is source, which workspace a
+/// manifest or lockfile belongs to, whether the workspace is nuked, and the
+/// pathspecs to hand git. An empty declaration means no path is source and no
+/// crate exists, which is what a documentation repository is.
+pub(crate) fn src_layout_shell(layout: &HookLayout) -> String {
+    let words: Vec<String> = layout.src_dirs.iter().map(|d| sh_quote(d)).collect();
     format!(
         r##"# The declared source directories, relative to the mock directory.
 SRC_DIRS=({dirs})
+
+# What a nuked crate's `lib.rs` carries, as the config names it.
+NUKE_MARKER={marker}
 
 # The crates, comma-joined and sorted, that the newline-separated paths in $1
 # belong to: the directory directly under whichever source directory holds the
@@ -133,6 +148,44 @@ ms_crates_of() {{
     done <<< "$1" | sort -u | tr '\n' ',' | sed 's/,$//'
 }}
 
+# The directory of the Cargo workspace that holds source directory $1: the
+# nearest one at or above it, up to the mock directory, whose Cargo.toml has a
+# `[workspace]` table. The mock directory is the answer when none does.
+ms_ws_root_of() {{
+    local w="$MOCK_DIR/$1"
+    while [ "$w" != "$MOCK_DIR" ] && [ "$w" != "." ] && [ "$w" != "/" ]; do
+        if grep -q '^\[workspace' "$w/Cargo.toml" 2>/dev/null; then
+            printf '%s\n' "$w"
+            return 0
+        fi
+        w="$(dirname "$w")"
+    done
+    printf '%s\n' "$MOCK_DIR"
+}}
+
+# The crates, comma-joined and sorted, of every workspace whose manifest or
+# lockfile is among the newline-separated paths in $1: all the crates under the
+# source directories that workspace holds. A lockfile moves every crate in its
+# own workspace and none in another.
+ms_ws_crates_of() {{
+    local d w c
+    for d in ${{SRC_DIRS[@]+"${{SRC_DIRS[@]}}"}}; do
+        w="$(ms_ws_root_of "$d")"
+        if grep -qxF -e "$w/Cargo.toml" -e "$w/Cargo.lock" <<< "$1"; then
+            for c in "$MOCK_DIR/$d/"*/; do
+                if [ -d "$c" ]; then
+                    basename "$c"
+                fi
+            done
+        fi
+    done | sort -u | tr '\n' ',' | sed 's/,$//'
+}}
+
+# The comma-joined crate lists in the arguments as one sorted list, no repeats.
+ms_union() {{
+    printf '%s\n' "$@" | tr ',' '\n' | sed '/^$/d' | sort -u | tr '\n' ',' | sed 's/,$//'
+}}
+
 # The newline-separated paths in $1 that sit under a source directory and end in $2.
 ms_src_files_of() {{
     local p d
@@ -146,33 +199,47 @@ ms_src_files_of() {{
     done <<< "$1"
 }}
 
-# Whether any crate under a source directory carries the nuke marker.
+# Whether every crate under the source directories carries the nuke marker, and
+# there is at least one. The engine's `detect_nuked_workspace` is the same
+# question: one live crate anywhere means the workspace is not nuked.
 ms_nuked() {{
-    local d
+    local d c any=1
     for d in ${{SRC_DIRS[@]+"${{SRC_DIRS[@]}}"}}; do
-        if grep -q "Nuked by" "$MOCK_DIR/$d/"*/src/lib.rs 2>/dev/null; then
-            return 0
-        fi
+        for c in "$MOCK_DIR/$d/"*/; do
+            if [ -d "$c" ]; then
+                any=0
+                if ! grep -qF -- "$NUKE_MARKER" "${{c}}src/lib.rs" 2>/dev/null; then
+                    return 1
+                fi
+            fi
+        done
     done
-    return 1
+    return $any
 }}
 
-# The inputs every crate shares: the registry, the project lints, the config,
-# and the mock workspace's manifest and lockfile. A change to one reaches all of
-# them, so it is never bounded to the crates a commit or push also touches. The
-# config is named at the two places it lives, the repo root and the mock
-# directory, and nowhere deeper: a fixture of that name under a source
-# directory belongs to its crate.
-MS_SHARED=("$MOCK_DIR/registry/" "$MOCK_DIR/lints/" "$MOCK_DIR/Cargo.toml" "$MOCK_DIR/Cargo.lock" "mockspace.toml" "$MOCK_DIR/mockspace.toml")
+# The inputs every crate shares: the registry, the project lints and the
+# config. A change to one reaches all of them, so it is never bounded to the
+# crates a commit or push also touches. The config is named at the two places
+# it lives, the repo root and the mock directory, and nowhere deeper: a fixture
+# of that name under a source directory belongs to its crate. A manifest or
+# lockfile is not here: it reaches the crates of its own workspace, which
+# `ms_ws_crates_of` answers.
+MS_SHARED=("$MOCK_DIR/registry/" "$MOCK_DIR/lints/" "mockspace.toml" "$MOCK_DIR/mockspace.toml")
 "##,
         dirs = words.join(" "),
+        marker = sh_quote(&layout.nuke_marker),
     )
 }
 
-pub(crate) fn gen_hook(name: &str, mock_rel: &str, src_dirs: &[&str], user_hook: &Path) -> String {
+pub(crate) fn gen_hook(
+    name: &str,
+    mock_rel: &str,
+    layout: &HookLayout,
+    user_hook: &Path,
+) -> String {
     match name {
-        "pre-commit" => gen_pre_commit(mock_rel, src_dirs, user_hook),
-        "pre-push" => gen_pre_push(mock_rel, src_dirs, user_hook),
+        "pre-commit" => gen_pre_commit(mock_rel, layout, user_hook),
+        "pre-push" => gen_pre_push(mock_rel, layout, user_hook),
         "commit-msg" => gen_commit_msg(user_hook),
         "post-merge" => gen_post_merge(user_hook),
         "post-rewrite" => gen_post_rewrite(user_hook),
@@ -407,9 +474,9 @@ ms_chain() {{
     )
 }
 
-pub(crate) fn gen_pre_commit(mock_rel: &str, src_dirs: &[&str], user_hook: &Path) -> String {
+pub(crate) fn gen_pre_commit(mock_rel: &str, layout: &HookLayout, user_hook: &Path) -> String {
     let chain = chain_user_hook(user_hook, false);
-    let layout = src_layout_shell(src_dirs);
+    let layout = src_layout_shell(layout);
 
     format!(
         r##"#!/usr/bin/env bash
@@ -480,11 +547,15 @@ echo "pre-commit: mockspace changes detected, running validation..."
 
 # Extract changed crate names from staged paths, under whichever source
 # directories the project declares.
-CHANGED_CRATES=$(ms_crates_of "$STAGED")
+SRC_CRATES=$(ms_crates_of "$STAGED")
+# A staged manifest or lockfile reaches the crates of its own workspace, and a
+# changed dependency is code the run has to compile, so it counts as source.
+WS_CRATES=$(ms_ws_crates_of "$STAGED")
+CHANGED_CRATES=$(ms_union "$SRC_CRATES" "$WS_CRATES")
 STAGED_RS=$(ms_src_files_of "$STAGED" ".rs")
 
-# A staged shared input (the registry, the config, the mock workspace's manifest
-# or lockfile) reaches every crate, so it is never bounded to the crates also
+# A staged shared input (the registry, the project lints, the config)
+# reaches every crate, so it is never bounded to the crates also
 # staged. Asked of the whole index, since the config may sit at the repo root.
 SHARED_STAGED=0
 if ! git diff --cached --quiet -- "${{MS_SHARED[@]}}" 2>/dev/null; then
@@ -500,11 +571,11 @@ if [ "$SHARED_STAGED" = "1" ]; then
     echo "  shared inputs staged: full scope"
     # A staged project lint is code the run has to compile and run, which
     # `--doc-only` would skip, so it keeps the flag off.
-    if [ -z "$STAGED_RS" ] && git diff --cached --quiet -- "$MOCK_DIR/lints/" 2>/dev/null; then
+    if [ -z "$STAGED_RS" ] && [ -z "$WS_CRATES" ] && git diff --cached --quiet -- "$MOCK_DIR/lints/" 2>/dev/null; then
         ARGS+=(--doc-only)
     fi
 elif [ -n "$CHANGED_CRATES" ]; then
-    if [ -z "$STAGED_RS" ]; then
+    if [ -z "$STAGED_RS" ] && [ -z "$WS_CRATES" ]; then
         echo "  crates: $CHANGED_CRATES (doc-only)"
         ARGS+=(--scope "$CHANGED_CRATES" --doc-only)
     else
@@ -528,9 +599,9 @@ ms_chain "$@"
     )
 }
 
-pub(crate) fn gen_pre_push(mock_rel: &str, src_dirs: &[&str], user_hook: &Path) -> String {
+pub(crate) fn gen_pre_push(mock_rel: &str, layout: &HookLayout, user_hook: &Path) -> String {
     let chain = chain_user_hook(user_hook, true);
-    let layout = src_layout_shell(src_dirs);
+    let layout = src_layout_shell(layout);
     let byline = message_prepush_scan_body();
 
     format!(
@@ -603,14 +674,14 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
         NEW_BRANCH=1
         break
     fi
-    # A pushed shared input (the registry, the config, the mock workspace's
-    # manifest or lockfile) reaches every crate, so it forces the full scope
-    # exactly as a new branch does.
+    # A pushed shared input (the registry, the project lints, the config) reaches
+    # every crate, so it forces the full scope exactly as a new branch does.
     if ! git diff --quiet "$remote_sha".."$local_sha" -- "${{MS_SHARED[@]}}" 2>/dev/null; then
         NEW_BRANCH=1
         break
     fi
-    PUSH_CHANGED=$(ms_crates_of "$(git diff --name-only "$remote_sha".."$local_sha" -- "$MOCK_DIR/" 2>/dev/null || true)")
+    PUSH_FILES=$(git diff --name-only "$remote_sha".."$local_sha" -- "$MOCK_DIR/" 2>/dev/null || true)
+    PUSH_CHANGED=$(ms_union "$(ms_crates_of "$PUSH_FILES")" "$(ms_ws_crates_of "$PUSH_FILES")")
     if [ -z "$PUSH_CHANGED" ]; then
         continue
     fi
@@ -1119,7 +1190,7 @@ mod byline_hook_tests {
         // nothing on the design surface leaves; the own hook runs there too.
         let (repo, _) = repo_with_commit("fix: whatever");
         let own = plant_own_hook(&repo, "pre-commit", 42);
-        let hook = gen_pre_commit("mock", &["crates"], &own);
+        let hook = gen_pre_commit("mock", &HookLayout::of(&["crates"]), &own);
         let code = run_script(&hook, &[], "", Some(&repo), Some(&launcher_free_path()));
         assert_eq!(code, 42, "the own hook's exit is the commit's");
         assert!(
@@ -1178,7 +1249,7 @@ mod byline_hook_tests {
         let (repo, sha) = repo_with_commit("fix: whatever");
         std::fs::write(repo.join("mockspace.toml"), "mock_dir = \"mock\"\n").unwrap();
         let own = plant_own_hook(&repo, "pre-push", 0);
-        let hook = gen_pre_push("mock", &["crates"], &own);
+        let hook = gen_pre_push("mock", &HookLayout::of(&["crates"]), &own);
         let path = stubbed_path(&repo);
         let code = run_script(&hook, &[], &refs_line(&sha), Some(&repo), Some(&path));
         let log = own_log(&repo).unwrap_or_default();
@@ -1221,7 +1292,7 @@ mod byline_hook_tests {
     fn the_generated_pre_push_hook_pipes_messages_to_the_launcher() {
         // Asserted on the generated text rather than by running it: the body
         // needs a real repo with pushable refs, which the durable tests cover.
-        let h = gen_pre_push("mock", &["crates"], std::path::Path::new("/dev/null"));
+        let h = gen_pre_push("mock", &HookLayout::of(&["crates"]), std::path::Path::new("/dev/null"));
         assert!(h.contains("check-message"));
         assert!(h.contains("--domain commit-message"));
         assert!(h.contains("--gate push"));
@@ -1471,7 +1542,7 @@ mod generated_pre_commit_tests {
         let hook = root.join("hook.sh");
         fs::write(
             &hook,
-            gen_pre_commit(mock_rel, &["crates"], &root.join("no-user-hook")),
+            gen_pre_commit(mock_rel, &HookLayout::of(&["crates"]), &root.join("no-user-hook")),
         )
         .unwrap();
         let out = Command::new("bash")
@@ -1561,7 +1632,7 @@ mod generated_pre_commit_tests {
         let hook = root.join("hook.sh");
         fs::write(
             &hook,
-            gen_pre_commit("mock", &["crates"], &root.join("no-user-hook")),
+            gen_pre_commit("mock", &HookLayout::of(&["crates"]), &root.join("no-user-hook")),
         )
         .unwrap();
         let out = Command::new("bash")
@@ -1677,7 +1748,7 @@ mod generated_pre_commit_tests {
         let hook = root.join("hook.sh");
         fs::write(
             &hook,
-            gen_pre_commit("mock", &["crates", "libs"], &root.join("no-user-hook")),
+            gen_pre_commit("mock", &HookLayout::of(&["crates", "libs"]), &root.join("no-user-hook")),
         )
         .unwrap();
         let out = Command::new("bash")
@@ -1748,7 +1819,7 @@ mod generated_pre_commit_tests {
         let hook = root.join("hook.sh");
         fs::write(
             &hook,
-            gen_pre_commit("mock", &["crates", "libs"], &root.join("no-user-hook")),
+            gen_pre_commit("mock", &HookLayout::of(&["crates", "libs"]), &root.join("no-user-hook")),
         )
         .unwrap();
         let out = Command::new("bash")
