@@ -1494,7 +1494,7 @@ pub fn cmd_query(cfg: &crate::config::Config, expr: &str) -> std::process::ExitC
     }
 
     let namespaces = &cfg.registry_namespaces;
-    let registry = load_registry(&cfg.mock_dir, namespaces);
+    let registry = load_registry_for_expr(&cfg.mock_dir, namespaces, expr);
     let (registry, _) = resolve_data(
         namespaces,
         &registry,
