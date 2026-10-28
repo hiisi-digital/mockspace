@@ -1208,7 +1208,7 @@ fn hook_script_writes() -> Vec<(String, usize, String, String)> {
         }
 
         for (i, line) in body.lines().enumerate() {
-            let Some(rest) = line.split_once("fs::write(").map(|(_, r)| r) else {
+            let Some(rest) = line.split_once("write_executable(").map(|(_, r)| r) else {
                 continue;
             };
             let mut parts = rest.splitn(2, ", ");
