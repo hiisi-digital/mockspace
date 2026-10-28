@@ -24,6 +24,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The one writer of an executable script, shared with the lib tests by path.
+#[path = "common/exec.rs"]
+mod exec;
+
 /// How cargo spells "no debug info" in `-C debuginfo`, or leaves it out.
 const LEAN: &[&str] = &["0", "none"];
 
@@ -168,7 +172,7 @@ impl Rig {
             t.push_str(v.home_extra);
             write(&home.join("config.toml"), &t);
         }
-        write(
+        exec::write_executable(
             &shim,
             "#!/bin/sh\n\
              name=''; level=none; prev=''\n\
@@ -182,10 +186,6 @@ impl Rig {
              [ -n \"$name\" ] && echo \"$name $level\" >> \"$MS_RUSTC_LOG\"\n\
              exec \"$@\"\n",
         );
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
-        }
         Rig {
             _tmp: tmp,
             root,

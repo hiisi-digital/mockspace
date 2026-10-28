@@ -25,7 +25,7 @@ mod common;
 use std::fs;
 use std::process::Command;
 
-use common::{Repo, write};
+use common::{Repo, write, write_executable};
 
 #[test]
 fn control_without_the_driver_the_two_documents_conflict() {
@@ -217,15 +217,10 @@ fn git_drops_what_a_pre_merge_commit_hook_stages() {
 
     let hook = |name: &str| {
         let path = root.join(".git/hooks").join(name);
-        write(
+        write_executable(
             &path,
             "#!/bin/sh\necho regenerated > gen.txt\ngit add gen.txt\n",
         );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-        }
     };
 
     // a clean merge: the hook runs and its staged change is not in the commit
