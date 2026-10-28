@@ -945,6 +945,30 @@ impl Config {
         // has already shipped one silent-empty discovery. A named directory that
         // is missing is a configuration error and says so; an absent
         // subdirectory in a walk says nothing at all.
+        // An entry that climbs out of the mock directory cannot be written as a
+        // path under it, which is how the generated hooks and the phase gates
+        // address a directory. Kept, it would match no git path and the source in
+        // it would be scoped to `infra` with nothing saying so, so it is refused.
+        let leaving: Vec<&String> = raw
+            .src_dirs
+            .iter()
+            .filter(|d| {
+                std::path::Path::new(d.as_str())
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir))
+            })
+            .collect();
+        assert!(
+            leaving.is_empty(),
+            "mockspace.toml names src_dirs that climb out of the mock dir with `..`: {}
+  
+             Every entry is relative to the mock dir ({}) and names a directory under 
+             it. The hooks and the phase gates address a directory by its path under 
+             the mock dir, so one outside it would guard nothing. Move the packages 
+             under the mock dir, or write the entry without `..`.",
+            leaving.iter().map(|d| format!("{d:?}")).collect::<Vec<_>>().join(", "),
+            mock_dir.display(),
+        );
         let src_dirs: Vec<PathBuf> = if raw.src_dirs.is_empty() {
             vec![mock_dir.join("crates")]
         } else {
@@ -2243,6 +2267,10 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
 #[cfg(test)]
 #[path = "config_clone_says_tests.rs"]
 mod clone_says_tests;
+
+#[cfg(test)]
+#[path = "config_src_dirs_tests.rs"]
+mod src_dirs_tests;
 
 #[cfg(test)]
 mod key_lists_cannot_rot {
