@@ -76,8 +76,6 @@ pub(super) fn stage(root: &Path, files: &[(&str, &str)]) {
 fn stub_bin() -> &'static Path {
     static BIN: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     BIN.get_or_init(|| {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
 
         let bin = std::env::temp_dir().join(format!("ms_hook_stubs_{}", std::process::id()));
         fs::create_dir_all(&bin).unwrap();
@@ -85,15 +83,11 @@ fn stub_bin() -> &'static Path {
         // names, and passes. The others serve the byline scan.
         for name in ["mock", "cargo-mock", "cargo"] {
             let path = bin.join(name);
-            let mut f = fs::File::create(&path).unwrap();
-            f.write_all(
+            crate::test_exec::write_executable(
+                &path,
                 b"#!/usr/bin/env bash\ncat >/dev/null\n\
                   [ -n \"$MS_STUB_ARGS\" ] && echo \"$*\" >> \"$MS_STUB_ARGS\"\nexit 0\n",
-            )
-            .unwrap();
-            f.sync_all().unwrap();
-            drop(f);
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            );
         }
         bin
     })

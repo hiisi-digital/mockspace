@@ -81,8 +81,7 @@ fn a_refused_registration_gives_the_manifest_back_as_it_was() {
     let bin = dir.join("fakebin");
     fs::create_dir_all(&bin).unwrap();
     let shook = bin.join("git-shook");
-    fs::write(&shook, "#!/bin/sh\necho no >&2\nexit 1\n").unwrap();
-    fs::set_permissions(&shook, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(&shook, "#!/bin/sh\necho no >&2\nexit 1\n");
     let hooks = dir.join("durable");
     let path = manifest_path(&dir);
 
@@ -179,8 +178,10 @@ fn adopting_shook_in_a_gated_repo_runs_the_gate_once() {
     let hooks = dir.join("durable");
     let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
     let own = dir.join(".git/hooks/pre-commit");
-    fs::write(&own, format!("#!/bin/sh\necho USER >> {}\n", log.display())).unwrap();
-    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(
+        &own,
+        format!("#!/bin/sh\necho USER >> {}\n", log.display()),
+    );
     // the repository is gated the old way, by core.hooksPath on the durable dir
     git(&dir, &["config", "--local", "core.hooksPath", hooks.to_str().unwrap()]);
     fs::write(dir.join("shook.toml"), "[hooks.pre-commit]\nrun = [\"true\"]\n").unwrap();
@@ -214,8 +215,10 @@ fn adopted_with_own_hook(tag: &str, own_before_adoption: bool) -> (PathBuf, Path
     let _ = mockspace_manifest::gate::install_durable_hooks(&hooks, HOOK_VERSION);
     let own = dir.join(".git/hooks/pre-commit");
     let write_own = || {
-        fs::write(&own, format!("#!/bin/sh\necho USER >> {}\n", log.display())).unwrap();
-        fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_exec::write_executable(
+            &own,
+            format!("#!/bin/sh\necho USER >> {}\n", log.display()),
+        );
     };
     if own_before_adoption {
         write_own();
@@ -276,12 +279,10 @@ fn a_kept_hook_that_is_not_ours_survives_registration() {
     fs::create_dir_all(&hooks).unwrap();
     for event in events() {
         let p = hooks.join(event);
-        fs::write(&p, "#!/bin/sh\ntrue\n").unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_exec::write_executable(&p, "#!/bin/sh\ntrue\n");
     }
     let own = dir.join(".git/hooks/pre-commit");
-    fs::write(&own, "#!/bin/sh\necho foreign\n").unwrap();
-    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(&own, "#!/bin/sh\necho foreign\n");
     fs::write(dir.join("shook.toml"), "[hooks.pre-commit]\nrun = [\"true\"]\n").unwrap();
     git(&dir, &["add", "shook.toml"]);
     git(&dir, &["shook", "install", "--yes"]);
@@ -338,12 +339,16 @@ fn a_hook_git_shook_declined_because_a_manifest_runs_it_is_not_chained_to_either
     let dir = repo("declined");
     let log = dir.join("tool.log");
     let tool = dir.join("tool");
-    fs::write(&tool, format!("#!/bin/sh\necho TOOL >> {}\n", log.display())).unwrap();
-    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(
+        &tool,
+        format!("#!/bin/sh\necho TOOL >> {}\n", log.display()),
+    );
     // the repository's own hook does nothing but run what the manifest declares
     let own = dir.join(".git/hooks/pre-commit");
-    fs::write(&own, format!("#!/bin/sh\nexec {} \"$@\"\n", tool.display())).unwrap();
-    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(
+        &own,
+        format!("#!/bin/sh\nexec {} \"$@\"\n", tool.display()),
+    );
     fs::write(
         dir.join("shook.toml"),
         format!("[hooks.pre-commit]\nrun = [\"{}\"]\n", tool.display()),
@@ -405,12 +410,16 @@ fn a_hook_adopted_from_another_hooks_directory_leaves_git_hooks_to_the_chain() {
     // the old hooks path holds one hook, and `.git/hooks` another
     fs::create_dir_all(dir.join(".githooks")).unwrap();
     let old = dir.join(".githooks/pre-commit");
-    fs::write(&old, format!("#!/bin/sh\necho OLDDIR >> {}\n", log.display())).unwrap();
-    fs::set_permissions(&old, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(
+        &old,
+        format!("#!/bin/sh\necho OLDDIR >> {}\n", log.display()),
+    );
     git(&dir, &["config", "core.hooksPath", ".githooks"]);
     let own = dir.join(".git/hooks/pre-commit");
-    fs::write(&own, format!("#!/bin/sh\necho GITDIR >> {}\n", log.display())).unwrap();
-    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(
+        &own,
+        format!("#!/bin/sh\necho GITDIR >> {}\n", log.display()),
+    );
     fs::write(dir.join("shook.toml"), "[hooks.pre-commit]\nrun = [\"true\"]\n").unwrap();
     git(&dir, &["add", "shook.toml"]);
     git(&dir, &["shook", "install", "--yes"]);
@@ -434,8 +443,10 @@ fn the_gate_entry_runs_before_an_entry_named_homma() {
     // the tail of the gate's entry, which makes it the mark of the gate's turn
     let (dir, log) = adopted_with_own_hook("order", false);
     let tool = dir.join("homma-stand-in");
-    fs::write(&tool, format!("#!/bin/sh\necho HOMMA >> {}\n", log.display())).unwrap();
-    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(
+        &tool,
+        format!("#!/bin/sh\necho HOMMA >> {}\n", log.display()),
+    );
     let manifests = shook_dir(&dir).join("manifests");
     fs::write(
         manifests.join("homma.toml"),
@@ -464,11 +475,15 @@ fn a_tool_run_by_a_manifest_and_by_the_hook_in_git_hooks_runs_once_after_the_gat
     let dir = repo("gateheld");
     let log = dir.join("tool.log");
     let tool = dir.join("tool");
-    fs::write(&tool, format!("#!/bin/sh\necho TOOL >> {}\n", log.display())).unwrap();
-    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(
+        &tool,
+        format!("#!/bin/sh\necho TOOL >> {}\n", log.display()),
+    );
     let own = dir.join(".git/hooks/pre-commit");
-    fs::write(&own, format!("#!/bin/sh\nexec {} \"$@\"\n", tool.display())).unwrap();
-    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(
+        &own,
+        format!("#!/bin/sh\nexec {} \"$@\"\n", tool.display()),
+    );
     fs::write(
         dir.join("shook.toml"),
         format!("[hooks.pre-commit]\nrun = [\"{}\"]\n", tool.display()),

@@ -788,26 +788,12 @@ mod check_message_tests {
         let dir = repo_root.join(format!("h{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("hook.sh");
-        std::fs::write(&script, hook_script(repo_root)).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&script).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&script, p).unwrap();
-        }
+        crate::test_exec::write_executable(&script, hook_script(repo_root));
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         if let Some(body) = launcher {
             let m = bin.join("mock");
-            std::fs::write(&m, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut p = std::fs::metadata(&m).unwrap().permissions();
-                p.set_mode(0o755);
-                std::fs::set_permissions(&m, p).unwrap();
-            }
+            crate::test_exec::write_executable(&m, body);
         }
         // A cache dir per invocation, so one test's verdict never leaks into
         // another's. The cache is a real behaviour and must not couple tests.

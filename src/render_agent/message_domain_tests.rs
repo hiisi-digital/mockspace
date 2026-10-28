@@ -27,9 +27,10 @@ use super::message_scope_tests::{bash_payload, gate_for, scratch, two_repos};
 fn fake_engine() -> std::path::PathBuf {
     let bin = scratch("fakebin");
     let f = bin.join("mock");
-    std::fs::write(&f, "#!/usr/bin/env bash\ncat >/dev/null\necho \"engine ran in $(pwd -P)\"\nexit 1\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_exec::write_executable(
+        &f,
+        "#!/usr/bin/env bash\ncat >/dev/null\necho \"engine ran in $(pwd -P)\"\nexit 1\n",
+    );
     bin
 }
 

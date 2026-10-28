@@ -33,26 +33,22 @@ fn fixture() -> Fixture {
     std::fs::create_dir_all(&bin).unwrap();
 
     let stub = bin.join("mock");
-    std::fs::write(
+    crate::test_exec::write_executable(
         &stub,
         format!(
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > {}\nexit 0\n",
             args.display()
         ),
-    )
-    .unwrap();
-    make_executable(&stub);
+    );
 
     git(&repo, &[], &["init", "-q", "-b", "main"]);
     let hooks = repo.join(".git/hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     let hook = hooks.join("commit-msg");
-    std::fs::write(
+    crate::test_exec::write_executable(
         &hook,
         gen_commit_msg(&repo.join(".git/hooks/commit-msg.own")),
-    )
-    .unwrap();
-    make_executable(&hook);
+    );
 
     Fixture {
         _tmp: tmp,
@@ -60,14 +56,6 @@ fn fixture() -> Fixture {
         bin,
         args,
     }
-}
-
-#[cfg(unix)]
-fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let mut p = std::fs::metadata(path).unwrap().permissions();
-    p.set_mode(0o755);
-    std::fs::set_permissions(path, p).unwrap();
 }
 
 /// The scrubs of a child's environment, from the one file the integration tests

@@ -616,14 +616,7 @@ mod byline_hook_tests {
     ) -> i32 {
         let dir = scratch("hook");
         let hook = dir.join("hook.sh");
-        std::fs::write(&hook, content).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&hook).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&hook, p).unwrap();
-        }
+        crate::test_exec::write_executable(&hook, content);
         let mut cmd = Command::new(&hook);
         cmd.args(args)
             .stdin(Stdio::piped())
@@ -738,14 +731,7 @@ mod byline_hook_tests {
         std::fs::create_dir_all(&bin).unwrap();
         if let Some(body) = stub {
             let mock = bin.join("mock");
-            std::fs::write(&mock, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&mock).unwrap().permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(&mock, perms).unwrap();
-            }
+            crate::test_exec::write_executable(&mock, body);
         }
         // Only the stub dir plus the bare minimum, so a real `mock` installed on
         // this machine cannot leak into the test.
@@ -833,14 +819,7 @@ mod byline_hook_tests {
             let hooks = repo.join("mock/target/hooks");
             std::fs::create_dir_all(&hooks).unwrap();
             let path = hooks.join("pre-push");
-            std::fs::write(&path, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut p = std::fs::metadata(&path).unwrap().permissions();
-                p.set_mode(0o755);
-                std::fs::set_permissions(&path, p).unwrap();
-            }
+            crate::test_exec::write_executable(&path, body);
         }
         let zero = "0".repeat(40);
         let stdin = format!("refs/heads/main {sha} refs/heads/main {zero}\n");
@@ -889,21 +868,13 @@ mod byline_hook_tests {
         let hooks = repo.join(".git/hooks");
         std::fs::create_dir_all(&hooks).unwrap();
         let path = hooks.join(name);
-        std::fs::write(
+        crate::test_exec::write_executable(
             &path,
             format!(
                 "#!/usr/bin/env bash\nlog=\"$(git rev-parse --show-toplevel)/own.log\"\n\
                  printf 'args:%s\\n' \"$*\" >> \"$log\"\ncat >> \"$log\"\nexit {code}\n"
             ),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&path).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&path, p).unwrap();
-        }
+        );
         path
     }
 
@@ -931,14 +902,7 @@ mod byline_hook_tests {
             let hooks = repo.join("mock/target/hooks");
             std::fs::create_dir_all(&hooks).unwrap();
             let path = hooks.join("pre-push");
-            std::fs::write(&path, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut p = std::fs::metadata(&path).unwrap().permissions();
-                p.set_mode(0o755);
-                std::fs::set_permissions(&path, p).unwrap();
-            }
+            crate::test_exec::write_executable(&path, body);
         }
         plant_own_hook(&repo, "pre-push", 42);
         let code = run_script(
@@ -1099,14 +1063,7 @@ mod byline_hook_tests {
             ),
         ] {
             let p = bin.join(name);
-            std::fs::write(&p, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&p).unwrap().permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(&p, perms).unwrap();
-            }
+            crate::test_exec::write_executable(&p, body);
         }
         format!("{}:{}", bin.display(), launcher_free_path())
     }
@@ -1191,18 +1148,10 @@ mod byline_hook_tests {
         let out = dir.join("stdin.bin");
         let bin = scratch("prepush_bin");
         let stub = bin.join("mock");
-        std::fs::write(
+        crate::test_exec::write_executable(
             &stub,
             format!("#!/usr/bin/env bash\ncat > {}\nexit 0\n", out.display()),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&stub).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&stub, p).unwrap();
-        }
+        );
 
         let (repo, _sha) = repo_with_commit("feat: first subject\n");
         let git = |args: &[&str]| {
@@ -1278,18 +1227,10 @@ mod byline_hook_tests {
     fn policy_stub_path() -> (PathBuf, String) {
         let bin = scratch("policy_bin");
         let stub = bin.join("mock");
-        std::fs::write(
+        crate::test_exec::write_executable(
             &stub,
             "#!/usr/bin/env bash\nif cat | tr '\\0' '\\n' | grep -q BADMSG; then exit 1; fi\nexit 0\n",
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&stub).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&stub, p).unwrap();
-        }
+        );
         let path = format!("{}:{}", bin.display(), launcher_free_path());
         (bin, path)
     }
