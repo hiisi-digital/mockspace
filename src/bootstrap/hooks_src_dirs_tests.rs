@@ -17,16 +17,16 @@ use std::process::{Command, Stdio};
 use super::*;
 
 /// The kaski shape: the default directory and a nested group beside it.
-const KASKI: &[&str] = &["crates", "applets/console/crates"];
+pub(super) const KASKI: &[&str] = &["crates", "applets/console/crates"];
 
-const CONSOLE_SRC: &str = "mock/applets/console/crates/console-core/src/x.rs";
+pub(super) const CONSOLE_SRC: &str = "mock/applets/console/crates/console-core/src/x.rs";
 
 /// Git run in `root`, with the machine's config and identity out of the way
 /// (the identity tests' own helper, so the two cannot drift apart), a set
 /// author and committer, and the repository-selecting variables a parent git
 /// leaves in the environment cleared. A failing call fails the test with its
 /// stderr in the message.
-fn git(root: &Path, args: &[&str]) -> String {
+pub(super) fn git(root: &Path, args: &[&str]) -> String {
     let path = std::env::var("PATH").unwrap_or_default();
     let mut c = super::hooks_identity_tests::git_command(
         root,
@@ -53,13 +53,13 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-fn fixture() -> tempfile::TempDir {
+pub(super) fn fixture() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     git(tmp.path(), &["init", "-q"]);
     tmp
 }
 
-fn stage(root: &Path, files: &[(&str, &str)]) {
+pub(super) fn stage(root: &Path, files: &[(&str, &str)]) {
     for (path, body) in files {
         let p = root.join(path);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -103,7 +103,7 @@ fn stub_bin() -> &'static Path {
 }
 
 /// What the hook printed, and the arguments of each `cargo` call it made.
-fn run_full(hook_text: &str, root: &Path, stdin: &str) -> (String, Vec<String>) {
+pub(super) fn run_full(hook_text: &str, root: &Path, stdin: &str) -> (String, Vec<String>) {
     let args_file = root.join("cargo.args");
     let hook = root.join("hook.sh");
     fs::write(&hook, hook_text).unwrap();
@@ -149,19 +149,15 @@ fn run_full(hook_text: &str, root: &Path, stdin: &str) -> (String, Vec<String>) 
 }
 
 /// The arguments of the call that carries the scope decision.
-fn scope_call(calls: &[String]) -> String {
+pub(super) fn scope_call(calls: &[String]) -> String {
     let found: Vec<&String> = calls.iter().filter(|c| c.contains("--lint-only")).collect();
     assert_eq!(found.len(), 1, "one scoped call, got {calls:?}");
     found[0].clone()
 }
 
-fn run(hook_text: &str, root: &Path, stdin: &str) -> String {
-    run_full(hook_text, root, stdin).0
-}
-
 /// What the pre-commit hook for `src_dirs` prints with `files` staged, and the
 /// arguments it passes to `cargo mock`.
-fn commit_run(src_dirs: &[&str], files: &[(&str, &str)]) -> (String, String) {
+pub(super) fn commit_run(src_dirs: &[&str], files: &[(&str, &str)]) -> (String, String) {
     commit_run_on(src_dirs, &[], files)
 }
 
@@ -196,7 +192,7 @@ fn commit_says(src_dirs: &[&str], files: &[(&str, &str)]) -> String {
 
 /// What the pre-push hook for `src_dirs` prints for a push of `files` on top of
 /// a base commit, and the arguments it passes to `cargo mock`.
-fn push_run(src_dirs: &[&str], files: &[(&str, &str)]) -> (String, String) {
+pub(super) fn push_run(src_dirs: &[&str], files: &[(&str, &str)]) -> (String, String) {
     push_run_on(src_dirs, &[], files)
 }
 
@@ -449,7 +445,7 @@ fn the_nuke_marker_is_the_configured_one() {
 
 /// The kaski shape on disk: the mock workspace and the console workspace, each
 /// with its manifest and lockfile and its own crates.
-const KASKI_TREE: &[(&str, &str)] = &[
+pub(super) const KASKI_TREE: &[(&str, &str)] = &[
     ("mock/Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n"),
     ("mock/Cargo.lock", "# lock 1\n"),
     ("mock/crates/kaski-sim/src/lib.rs", "fn s() {}\n"),
@@ -742,146 +738,4 @@ fn a_fixture_named_like_the_config_stays_scoped_to_its_crate() {
         args, "mock --lint-only --strict --scope console-core",
         "{out}"
     );
-}
-
-/// A project lint is compiled into the run, so a commit that edits one and no
-/// crate must not be scoped to `infra`, where the changed lint never runs.
-#[test]
-fn a_project_lint_is_a_shared_input() {
-    let (out, args) = commit_run(KASKI, &[("mock/lints/no-foo/src/lib.rs", "fn l() {}\n")]);
-    assert_eq!(args, "mock --lint-only --commit", "{out}");
-    let (out, args) = push_run(KASKI, &[
-        (CONSOLE_SRC, "fn x() {}\n"),
-        ("mock/lints/no-foo/src/lib.rs", "fn l() {}\n"),
-    ]);
-    assert_eq!(args, "mock --lint-only --strict", "{out}");
-}
-
-const PACK: &str = "mock/crates/kaski-asset-lints";
-
-fn commit_with_packs(
-    packs: &[&str],
-    base: &[(&str, &str)],
-    files: &[(&str, &str)],
-) -> (String, String) {
-    let tmp = fixture();
-    if !base.is_empty() {
-        stage(tmp.path(), base);
-        git(tmp.path(), &["commit", "-q", "-m", "base"]);
-    }
-    stage(tmp.path(), files);
-    let (printed, calls) = run_full(
-        &gen_pre_commit(
-            "mock",
-            &HookLayout::of_with_packs(KASKI, packs),
-            &tmp.path().join("no-user-hook"),
-        ),
-        tmp.path(),
-        "",
-    );
-    (printed, scope_call(&calls))
-}
-
-fn push_with_packs(packs: &[&str], files: &[(&str, &str)]) -> (String, String) {
-    let tmp = fixture();
-    let root = tmp.path();
-    stage(root, &[("README", "base\n")]);
-    git(root, &["commit", "-q", "-m", "base"]);
-    let base = git(root, &["rev-parse", "HEAD"]);
-    stage(root, files);
-    git(root, &["commit", "-q", "-m", "work"]);
-    let head = git(root, &["rev-parse", "HEAD"]);
-    let line = format!("refs/heads/m {head} refs/heads/m {base}\n");
-    let (printed, calls) = run_full(
-        &gen_pre_push(
-            "mock",
-            &HookLayout::of_with_packs(KASKI, packs),
-            &root.join("no-user-hook"),
-        ),
-        root,
-        &line,
-    );
-    (printed, scope_call(&calls))
-}
-
-/// A lint pack declared by path is code the run compiles, as a file under the mock
-/// directory's `lints/` is. One that sits under a source directory is also a crate,
-/// and the crate reading would bound the commit to it, so the changed lint would
-/// never run over the others.
-#[test]
-fn a_pack_under_a_source_directory_is_a_shared_input() {
-    let src = format!("{PACK}/src/lib.rs");
-    let manifest = format!("{PACK}/Cargo.toml");
-    for file in [&src, &manifest] {
-        let (out, args) = commit_with_packs(&[PACK], &[], &[(file, "x\n")]);
-        assert_eq!(args, "mock --lint-only --commit", "{file}: {out}");
-        let (out, args) = push_with_packs(&[PACK], &[(file, "x\n")]);
-        assert_eq!(args, "mock --lint-only --strict", "{file}: {out}");
-    }
-}
-
-/// The control: a sibling crate in the same source directory stays bounded to
-/// itself, so the arm above is about the pack and not about the directory.
-#[test]
-fn a_crate_beside_a_pack_stays_scoped_to_itself() {
-    let sibling = "mock/crates/kaski-sim/src/lib.rs";
-    let (out, args) = commit_with_packs(&[PACK], &[], &[(sibling, "fn s() {}\n")]);
-    assert_eq!(args, "mock --lint-only --commit --scope kaski-sim", "{out}");
-    let (out, args) = push_with_packs(&[PACK], &[(sibling, "fn s() {}\n")]);
-    assert_eq!(args, "mock --lint-only --strict --scope kaski-sim", "{out}");
-}
-
-/// A pack that is declared but has not been staged leaves a commit as before.
-#[test]
-fn the_same_edit_without_a_declared_pack_is_scoped_to_its_crate() {
-    let src = format!("{PACK}/src/lib.rs");
-    let (out, args) = commit_with_packs(&[], &[], &[(&src, "fn l() {}\n")]);
-    assert_eq!(args, "mock --lint-only --commit --scope kaski-asset-lints", "{out}");
-}
-
-/// A pack outside the mock directory is staged outside the surface the hook looks
-/// at, and still enters the gate with the full scope.
-#[test]
-fn a_pack_outside_the_mock_directory_enters_the_gate() {
-    let (out, args) = commit_with_packs(&["tools/packs/p"], &[], &[(
-        "tools/packs/p/src/lib.rs",
-        "fn l() {}\n",
-    )]);
-    assert_eq!(args, "mock --lint-only --commit", "{out}");
-    let (out, args) = push_with_packs(&["tools/packs/p"], &[(
-        "tools/packs/p/src/lib.rs",
-        "fn l() {}\n",
-    )]);
-    assert_eq!(args, "mock --lint-only --strict", "{out}");
-}
-
-/// The packs the layout carries are those the config declares by path, resolved the
-/// way cargo reads them: from the generated lint crate at
-/// `<mock>/target/mockspace-lints/`, and kept as repository-relative directories.
-#[test]
-fn the_layout_reads_the_path_packs_of_the_config() {
-    let tmp = fixture();
-    let root = tmp.path();
-    let mock = root.join("mock");
-    fs::create_dir_all(&mock).unwrap();
-    let config = root.join("mockspace.toml");
-    fs::write(
-        &config,
-        "[lint-crates]\n\
-         remote = { git = \"ssh://git@github.com/o/r.git\", branch = \"dev\" }\n\
-         version = \"0.1\"\n\
-         inline = { path = \"../../crates/kaski-asset-lints\" }\n\
-         outside = { path = \"../../../../elsewhere\" }\n\
-         [lint-crates.table]\n\
-         path = \"../../../tools/table-pack/\"\n",
-    )
-    .unwrap();
-    let layout = HookLayout::declared(root, &mock, &[mock.join("crates")], "m", &config);
-    assert_eq!(layout.lint_packs, vec![
-        "mock/crates/kaski-asset-lints".to_string(),
-        "tools/table-pack".to_string(),
-    ]);
-    // no config, no packs
-    let none = HookLayout::declared(root, &mock, &[], "m", &root.join("absent.toml"));
-    assert!(none.lint_packs.is_empty());
 }

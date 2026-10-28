@@ -67,6 +67,8 @@ mod hooks_identity_tests;
 #[cfg(test)]
 mod hooks_src_dirs_tests;
 #[cfg(test)]
+mod hooks_lint_packs_tests;
+#[cfg(test)]
 mod lint_crates_tests;
 
 /// Marker in generated hooks for identification and versioning.
