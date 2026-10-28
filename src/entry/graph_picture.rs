@@ -91,8 +91,11 @@ mod tests {
     }
 
     #[test]
-    fn the_stamp_of_the_same_bytes_is_the_same_across_calls() {
-        assert_eq!(stamp_of(DOT, PICTURE), stamp_of(DOT, PICTURE));
+    fn the_stamp_is_fnv_1a_of_the_picture_bytes_then_the_dot_text() {
+        // The FNV-1a offset basis for no bytes, and the known FNV-1a of "a", so the stamp is the same
+        // in every build of the engine and not only equal to itself.
+        assert_eq!(stamp_of("d", b""), "cbf29ce484222325\nd");
+        assert_eq!(stamp_of("d", b"a"), "af63dc4c8601ec8c\nd");
         assert_ne!(stamp_of(DOT, PICTURE), stamp_of(DOT, b"other"));
     }
 }
