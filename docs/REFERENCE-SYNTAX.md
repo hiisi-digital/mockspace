@@ -12,13 +12,15 @@ documents are generated.
 | `{{ reg::spike::foo }}` | a registry row | its slug, as plain text |
 | `{{ reg::spike::foo::question }}` | one field of a row | that field's value |
 | `{{ reg::spike }}` | a whole namespace | its table, inline |
+| `{{ seed::DESIGN::844 }}` | a place in a file | a line link |
 
 The registry writes no pages for now. A namespace declared `render = "page"` is
 read, validated and queried like any other, but no `<KEY>.md` is written into the
 docs directory, so a row reference has no document to link to and renders as its
 slug. A page an earlier run wrote is removed by the sweep of `docs/`. The switch is
-`REGISTRY_PAGES_ENABLED` in `src/registry/model.rs`, and nothing but it decides.
-| `{{ seed::DESIGN::844 }}` | a place in a file | a line link |
+`REGISTRY_PAGES_ENABLED` in `src/registry/model.rs`, and nothing but it decides. A
+table written into a template with `{{ reg::spike }}` or `{{registry:spike}}` is
+rendered into that template's own document, and is not governed by it.
 
 The braces are required, and they are not ceremony. They make a reference
 something the author states rather than something the renderer guesses from a
@@ -50,7 +52,7 @@ A row's whole identity is that pair, its key path. The files a registry is
 written in are no part of it: any number of `*.toml` files, under any names and
 in any directories under `registry/`, make one registry, and splitting,
 merging, renaming or moving a file changes nothing a reader, a check or a
-rendered page sees, except `pathof`, whose answer is that file. A namespace
+rendered document sees, except `pathof`, whose answer is that file. A namespace
 lists its rows by key path rather than by the order of the files holding them,
 and a grouped table orders its groups by the group value, with rows that have
 no group value last under a heading of their own. The same key path in two files is an error naming both, and a file

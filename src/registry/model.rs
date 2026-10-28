@@ -117,12 +117,18 @@ pub enum RenderMode {
 
 /// Whether the registry renders any document at all.
 ///
-/// Off by decision of the lead designer on 2026-10-28: the registry writes no
-/// generated pages until a sensible way for that to work is settled. The rows stay
-/// the one source and every tool reading them is untouched; only the rendered
-/// document goes. This is the one switch. [`RenderMode::has_page`] reads it, and
-/// both the page planner and the row-link target ask `has_page`, so no path renders a
-/// page or links to one while it is off.
+/// Off: the registry writes no generated page. The rows stay the one source and every
+/// tool reading them is untouched; only the rendered page goes. This is the one switch.
+/// [`RenderMode::has_page`] reads it, and both the page planner and the row-link target
+/// ask `has_page`, so no path renders a page or links to one while it is off. A table
+/// embedded into a template is a different path and is not governed by it.
+///
+// FIXME: pages are off until a way for the registry to render documents is settled. While
+// off, `plan_registry_pages` (src/document.rs), `registry_page_body` (src/registry/render.rs),
+// `DocIndex::registry_doc` and the registry-page section of scripts/pdf.sh are unreachable,
+// the book that script builds carries no registry, and nothing tests the link path (row links,
+// citation links, ordered page names): every test that pinned it now expects the switch off.
+// Restore those tests beside the switch when it goes back on.
 pub const REGISTRY_PAGES_ENABLED: bool = false;
 
 impl RenderMode {

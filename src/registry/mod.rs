@@ -871,31 +871,49 @@ mod tests {
         // so none of them notices when the index is built after the data has
         // already resolved against an empty one. That ordering shipped once and
         // is exactly the bug the index exists to prevent: the fallbacks name
-        // `LAW.md` where the file is written as `902_LAW.md`.
+        // `PLAN_VALIDATE.md` where the file is written as `140_PLAN_VALIDATE.md`.
+        //
+        // The reference is to a crate, because the registry writes no page for a row to
+        // link to while `REGISTRY_PAGES_ENABLED` is off, and a crate document is what
+        // the index still names.
+        let tmp = tempfile::tempdir().unwrap();
+        let crates_dir = tmp.path().join("mock").join("crates");
+        std::fs::create_dir_all(crates_dir.join("proj-plan-validate")).unwrap();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+
         let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
         cfg.ordered_docs = true;
+        cfg.src_dirs = vec![crates_dir];
+        cfg.docs_dir = docs.clone();
+        cfg.repo_root = tmp.path().to_path_buf();
+        cfg.crate_prefix = "proj".into();
         let nss = vec![ns("law", None)];
         cfg.registry_namespaces = nss.clone();
 
         let plan = vec![crate::document::Planned::computed(
-            crate::document::DocId::Registry {
-                page:  "LAW.md".into(),
-                index: 2,
+            crate::document::DocId::Crate {
+                upper:   "PLAN_VALIDATE".into(),
+                subject: "OVERVIEW".into(),
+                depth:   4,
             },
             String::new(),
         )];
         cfg.doc_index = crate::document::DocIndex::build(&plan, &cfg);
 
-        // A row whose field references another row, which is what resolve_data
+        // A row whose field references a crate document, which is what resolve_data
         // settles before any document reads it.
         let mut reg = reg_with("keys", "law", &[("statement", "closed")]);
         let row = RegistryRow {
             slug:      "derived".into(),
             namespace: "law".into(),
             source:    PathBuf::from("t.toml"),
-            fields:    [("statement".to_string(), "see {{ law::keys }}".to_string())]
-                .into_iter()
-                .collect(),
+            fields:    [(
+                "statement".to_string(),
+                "see {{ crates::plan-validate }}".to_string(),
+            )]
+            .into_iter()
+            .collect(),
         };
         let q = row.qualified();
         reg.by_namespace.get_mut("law").unwrap().push(q.clone());
@@ -905,8 +923,8 @@ mod tests {
             &nss,
             &reg,
             &BTreeMap::new(),
-            Path::new("/r"),
-            Path::new("/r/docs"),
+            tmp.path(),
+            &docs,
             &cfg,
         );
         assert!(findings.is_empty(), "{findings:?}");
@@ -914,13 +932,9 @@ mod tests {
             .get("law::derived")
             .and_then(|r| r.fields.get("statement"))
             .unwrap();
-        // No page exists to name, so the row is its slug. What this test pinned, a row
-        // linking `902_LAW.md` where the fallback would say `LAW.md`, cannot occur while
-        // `REGISTRY_PAGES_ENABLED` is off, and a crate document's link still goes through
-        // the same index (`a_crate_reference_resolves_before_its_document_is_written`).
-        assert_eq!(
-            got, "see keys",
-            "row data kept a link to a page nobody writes: {got}"
+        assert!(
+            got.contains("140_PLAN_VALIDATE.md"),
+            "row data resolved against an empty index: {got}"
         );
     }
 

@@ -132,11 +132,12 @@ fn regex_lite_replace(s: &str, from: &str, to: &str) -> String {
 /// Reconstructing it is what put `LAW.md` in a link while the file was written
 /// as `902_LAW.md`.
 fn doc_target(ns: &RegistryNamespace, row: &RegistryRow, cfg: &crate::config::Config) -> String {
-    // An embed namespace has no page, so there is nothing to link to. Empty is
-    // the signal, and `Resolved::Row` renders the slug as plain text when it
-    // sees one. Before this, a reference into an embed namespace produced a
-    // link to a file the generator never writes, which `RenderMode::Embed`'s
-    // own documentation says does not happen.
+    // A namespace with no page, an embed namespace or any namespace while
+    // `REGISTRY_PAGES_ENABLED` is off, has nothing to link to. Empty is the
+    // signal, and `Resolved::Row` renders the slug as plain text when it sees
+    // one. Before this, a reference into an embed namespace produced a link to a
+    // file the generator never writes, which `RenderMode::Embed`'s own
+    // documentation says does not happen.
     if !ns.render.has_page() {
         return String::new();
     }
