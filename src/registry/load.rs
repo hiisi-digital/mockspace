@@ -194,6 +194,7 @@ pub fn load_registry_for_expr(
         return load_registry(mock_dir, namespaces);
     }
     let keys: BTreeSet<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
+    let ref_fields = super::model::reference_fields(namespaces);
     let mut wanted: BTreeSet<String> =
         namespace_names_in(expr, &keys).into_iter().map(String::from).collect();
     loop {
@@ -208,8 +209,10 @@ pub fn load_registry_for_expr(
             }
         }
         for row in reg.rows.values() {
-            for text in row.fields.values() {
-                if text.contains("{{") {
+            let refs = ref_fields.get(&row.namespace);
+            for (field, text) in &row.fields {
+                // A `ref` field holds `namespace::slug` bare, with no `{{ }}` around it.
+                if text.contains("{{") || refs.is_some_and(|r| r.contains(field)) {
                     reach.extend(
                         namespace_names_in(text, &keys).into_iter().map(String::from),
                     );

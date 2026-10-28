@@ -27,6 +27,11 @@ name = "note"
 type = "string"
 description = "Free text, which may cite another namespace."
 
+[[registry.namespace.field]]
+name = "rests_on"
+type = "ref"
+description = "A row this one rests on, written bare as `namespace::slug`."
+
 [[registry.namespace]]
 key = "bulk"
 title = "Bulk"
@@ -93,6 +98,19 @@ fn a_cited_namespace_is_read_too() {
     let r = repo("see {{ bulk::never_parsed }}");
     let (_, _, err) = query(&r, "spike");
     assert!(err.contains(WARNS), "the cited namespace was not read:\n{err}");
+}
+
+/// A `ref` field holds its target bare, with no `{{ }}` around it, so the type is what says it
+/// names a row. Following it has to read the target's namespace as a full load would.
+#[test]
+fn a_namespace_a_ref_field_names_is_read_too() {
+    let r = repo("plain");
+    write(
+        &r.root.join("mock/registry/spike.toml"),
+        "[[spike]]\nid = \"first_one\"\nnote = \"plain\"\nrests_on = \"bulk::never_parsed\"\n",
+    );
+    let (_, _, err) = query(&r, "spike");
+    assert!(err.contains(WARNS), "the namespace a ref field names was not read:\n{err}");
 }
 
 #[test]
