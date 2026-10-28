@@ -636,15 +636,30 @@ mod byline_hook_tests {
             cmd.env("PATH", p);
         }
         let mut child = cmd.spawn().unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(stdin.as_bytes())
-            .unwrap();
+        // A hook that exits without reading its stdin closes the pipe under the
+        // write; that is the hook's answer, and its exit code is the result.
+        let mut stdin_pipe = child.stdin.take().unwrap();
+        match stdin_pipe.write_all(stdin.as_bytes()) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("{e}"),
+            _ => {},
+        }
+        drop(stdin_pipe);
         let code = child.wait().unwrap().code().unwrap_or(-1);
         let _ = std::fs::remove_dir_all(&dir);
         code
+    }
+
+    /// A hook that exits without reading its stdin is not a failure of the runner.
+    /// The write to the closed pipe is refused, and `unwrap` on it raced the exit
+    /// code: with input larger than the pipe holds, the test died on `BrokenPipe`
+    /// whenever the hook was quicker than the write.
+    #[test]
+    fn a_hook_that_exits_without_reading_its_stdin_still_returns_its_code() {
+        let big = "x".repeat(4 << 20);
+        for _ in 0 .. 5 {
+            let code = run_script("#!/bin/sh\nexit 3\n", &[], &big, None, None);
+            assert_eq!(code, 3);
+        }
     }
 
     /// A PATH with git + coreutils but WITHOUT the cargo bin, so the durable
