@@ -208,10 +208,26 @@ pub const FINDING_KINDS: &[&str] = &[
 ///
 /// Hand-kept, and constrained rather than trusted: `namespace_keys_match_the_struct`
 /// in `validate_tests.rs` reads the struct's serde keys out of `model.rs` and fails
-/// when the two disagree. `FIELD_KEYS` and `FINDING_KINDS` are held the same way,
-/// the kinds in both directions.
-const NAMESPACE_KEYS: &[&str] =
-    &["key", "title", "description", "value_field", "group_by", "field"];
+/// when the two disagree, bar the keys in `UNREAD_NAMESPACE_KEYS`. `FIELD_KEYS` and
+/// `FINDING_KINDS` are held the same way, the kinds in both directions.
+const NAMESPACE_KEYS: &[&str] = &[
+    "key",
+    "title",
+    "description",
+    "value_field",
+    "group_by",
+    "field",
+    "console_direct",
+];
+
+/// The keys in `NAMESPACE_KEYS` the struct does not carry, because a tool other
+/// than this loader reads them. `console_direct = true` lets the console commit an
+/// edit to the namespace's rows straight onto the trunk. Reporting it as discarded
+/// would be false, since something does read it, and reading it here would give
+/// the loader a field it has no use for. The test holds this list apart from the
+/// struct, so a key the struct does read cannot hide in it.
+#[cfg(test)]
+const UNREAD_NAMESPACE_KEYS: &[&str] = &["console_direct"];
 
 /// Keys a `[[registry.namespace.field]]` table may carry. Mirrors `RegistryField`.
 const FIELD_KEYS: &[&str] =

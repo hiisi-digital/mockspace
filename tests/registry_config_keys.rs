@@ -408,3 +408,52 @@ src_dirs = [\"crates\"]\n\
 /// Takes the machine's git environment out of this process before `main`.
 #[path = "common/ambient.rs"]
 mod ambient;
+
+/// The console reads `console_direct` and the loader here does not, so a namespace carrying it
+/// is accepted rather than reported as discarded, which would be false: something does read it.
+#[test]
+fn the_console_direct_key_is_accepted_on_a_namespace() {
+    let found = config_unknown_keys(
+        r#"
+[[registry.namespace]]
+key = "ticket"
+console_direct = true
+"#,
+    );
+    assert!(
+        found.is_empty(),
+        "a key the console reads was reported as discarded: {found:?}"
+    );
+}
+
+/// The control for the case above: accepting that one spelling must not turn the check off for
+/// a misspelling of it, or for the same key one table down where nothing reads it.
+#[test]
+fn only_that_spelling_of_it_is_accepted() {
+    let typo = config_unknown_keys(
+        r#"
+[[registry.namespace]]
+key = "ticket"
+console_direkt = true
+"#,
+    );
+    assert_eq!(typo.len(), 1, "{typo:?}");
+    assert!(typo[0].message.contains("console_direkt"), "{}", typo[0].message);
+
+    let on_a_field = config_unknown_keys(
+        r#"
+[[registry.namespace]]
+key = "ticket"
+
+[[registry.namespace.field]]
+name = "title"
+console_direct = true
+"#,
+    );
+    assert_eq!(on_a_field.len(), 1, "{on_a_field:?}");
+    assert!(
+        on_a_field[0].message.contains("console_direct"),
+        "{}",
+        on_a_field[0].message
+    );
+}
