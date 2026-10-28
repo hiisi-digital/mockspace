@@ -131,7 +131,9 @@ impl Refusal {
                 format!(
                     "--scope {} omits crate(s) with staged changes:\n  {}\n\
                      \n  Those crates would not be linted at all. Widen the scope to include\n  \
-                     them, or unstage them.",
+                     them, or unstage them. If mockspace.toml's src_dirs changed since\n  \
+                     the hooks were last written, they still name the old directories:\n  \
+                     run `cargo mock` once (without --lint-only) to regenerate them.",
                     scoped.join(","),
                     omitted.join("\n  ")
                 )
@@ -407,5 +409,19 @@ mod tests {
             "{r:?}"
         );
         assert_eq!(ok, None);
+    }
+
+    /// A hook written before `src_dirs` changed passes `--scope infra` over a
+    /// directory it does not know, and the hooks only run under `--lint-only`,
+    /// which never rewrites them. The refusal is the one place that can say so.
+    #[test]
+    fn the_scope_refusal_says_how_to_regenerate_the_hooks() {
+        let text = Refusal::ScopeOmitsStagedCrates {
+            omitted: vec!["console-core".into()],
+            scoped:  vec!["infra".into()],
+        }
+        .explain();
+        assert!(text.contains("src_dirs changed"), "{text}");
+        assert!(text.contains("run `cargo mock` once"), "{text}");
     }
 }
