@@ -80,13 +80,42 @@ pub(crate) fn forgives_failure(mock_dir: &Path, args: &[&str]) -> bool {
 /// The arguments of the gate's `cargo check`, bounded to the scoped packages.
 ///
 /// `scope` is the crate list `--scope` carries, by directory name, and each name
-/// is looked up under every declared source directory and turned into the
-/// package name its manifest declares, since the two need not agree. The check
-/// stays the whole workspace, never narrowed, when there is no crate list, when
-/// a shared input is staged (the registry, the config, the workspace manifest
-/// and lockfile reach every crate), and when a named crate cannot be resolved,
-/// because a bound that drops what it cannot find narrows the gate silently.
+/// is looked up under every declared source directory. The bound names only
+/// packages a bare `cargo check` already covers, which is the workspace's
+/// default members (every member when none are declared), read from
+/// `cargo metadata` rather than from the manifest's globs. A crate outside that
+/// set is left out of the list, since the whole check never covered it either:
+/// one in no workspace of the mock manifest, or one `default-members` leaves
+/// out, which `-p` would force to build.
+///
+/// The check stays the whole workspace when there is no crate list, when scope
+/// is `infra`, when a shared input is staged (the registry, the config, the
+/// workspace manifest and lockfile reach every crate), when a named crate has no
+/// directory, when cargo cannot say what the workspace holds, and when nothing
+/// scoped is covered.
 pub(crate) fn check_args(
+    mock_dir: &Path,
+    src_dirs: &[std::path::PathBuf],
+    scope: Option<&str>,
+    shared_staged: bool,
+) -> Vec<String> {
+    let metadata = cargo(mock_dir, &[
+        "metadata",
+        "--no-deps",
+        "--format-version",
+        "1",
+    ])
+    .output()
+    .ok()
+    .filter(|o| o.status.success())
+    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    check_args_from(metadata.as_deref(), src_dirs, scope, shared_staged)
+}
+
+/// [`check_args`] with the `cargo metadata` output already in hand, `None` when
+/// cargo could not produce it.
+pub(crate) fn check_args_from(
+    metadata: Option<&str>,
     src_dirs: &[std::path::PathBuf],
     scope: Option<&str>,
     shared_staged: bool,
@@ -103,32 +132,47 @@ pub(crate) fn check_args(
         .map(str::trim)
         .filter(|n| !n.is_empty())
         .collect();
-    if names.is_empty() {
+    let Some(covered) = metadata.and_then(default_member_packages) else {
         return full;
-    }
-    let mut args = full;
+    };
+    let mut args = full.clone();
     for name in names {
-        let Some(package) = package_name_of(src_dirs, name) else {
-            return vec!["check".to_string()];
+        let Some(dir) = src_dirs.iter().map(|d| d.join(name)).find(|d| d.is_dir()) else {
+            return full;
         };
-        args.push("-p".to_string());
-        args.push(package);
+        let dir = dir.canonicalize().unwrap_or(dir);
+        if let Some(package) = covered.get(&dir) {
+            args.push("-p".to_string());
+            args.push(package.clone());
+        }
     }
-    args
+    if args.len() == 1 { full } else { args }
 }
 
-/// The `[package] name` of the crate directory `dir_name` under any source directory.
-fn package_name_of(src_dirs: &[std::path::PathBuf], dir_name: &str) -> Option<String> {
-    let dir = src_dirs
+/// The default members of the workspace `cargo metadata` described, as package
+/// directory to package name. `None` when the output is not metadata.
+pub(crate) fn default_member_packages(
+    metadata: &str,
+) -> Option<std::collections::BTreeMap<std::path::PathBuf, String>> {
+    let doc: serde_json::Value = serde_json::from_str(metadata).ok()?;
+    let defaults: Vec<&str> = doc
+        .get("workspace_default_members")?
+        .as_array()?
         .iter()
-        .map(|d| d.join(dir_name))
-        .find(|d| d.is_dir())?;
-    let text = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
-    let doc = text.parse::<toml_edit::DocumentMut>().ok()?;
-    doc.get("package")?
-        .get("name")?
-        .as_str()
-        .map(str::to_string)
+        .filter_map(|v| v.as_str())
+        .collect();
+    let mut out = std::collections::BTreeMap::new();
+    for pkg in doc.get("packages")?.as_array()? {
+        let id = pkg.get("id")?.as_str()?;
+        if !defaults.contains(&id) {
+            continue;
+        }
+        let manifest = std::path::PathBuf::from(pkg.get("manifest_path")?.as_str()?);
+        let dir = manifest.parent()?;
+        let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+        out.insert(dir, pkg.get("name")?.as_str()?.to_string());
+    }
+    Some(out)
 }
 
 /// A cargo command against the mock workspace, with the inherited rustup env
@@ -297,49 +341,143 @@ mod tests {
             "a members glob matching nothing is the same pre-taxonomy state"
         );
     }
-    fn two_src_dirs() -> (tempfile::TempDir, Vec<std::path::PathBuf>) {
+    /// A mock workspace with a default member, a member `default-members`
+    /// leaves out, and a crate under a second source directory that no
+    /// workspace of the mock manifest holds.
+    fn workspace() -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        Vec<std::path::PathBuf>,
+    ) {
         let tmp = tempfile::tempdir().unwrap();
-        let a = tmp.path().join("crates");
-        let b = tmp.path().join("applets/console/crates");
-        for (dir, folder, name) in
-            [(&a, "kaski-sim", "kaski-sim"), (&b, "console-core", "kaski-console-core")]
+        let mock = tmp.path().join("mock");
+        let write = |rel: &str, body: &str| {
+            let p = mock.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        };
+        write(
+            "Cargo.toml",
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/member\", \"crates/wasm-only\"]\n\
+             default-members = [\"crates/member\"]\n",
+        );
+        for (dir, name) in
+            [("crates/member", "kaski-member"), ("crates/wasm-only", "kaski-wasm-only")]
         {
-            std::fs::create_dir_all(dir.join(folder)).unwrap();
-            std::fs::write(
-                dir.join(folder).join("Cargo.toml"),
-                format!("[package]\nname = \"{name}\"\n"),
-            )
-            .unwrap();
+            write(
+                &format!("{dir}/Cargo.toml"),
+                &format!("[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n"),
+            );
+            write(&format!("{dir}/src/lib.rs"), "");
         }
-        (tmp, vec![a, b])
+        // its own workspace, so not a member of the mock manifest
+        write(
+            "applets/console/Cargo.toml",
+            "[workspace]\nmembers = [\"crates/console-core\"]\n",
+        );
+        write(
+            "applets/console/crates/console-core/Cargo.toml",
+            "[package]\nname = \"console-core\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+        );
+        write("applets/console/crates/console-core/src/lib.rs", "");
+        let dirs = vec![mock.join("crates"), mock.join("applets/console/crates")];
+        (tmp, mock, dirs)
     }
 
     #[test]
-    fn check_is_bounded_to_the_scoped_packages_under_any_source_directory() {
-        let (_tmp, dirs) = two_src_dirs();
-        assert_eq!(check_args(&dirs, Some("console-core,kaski-sim"), false), [
+    fn a_default_member_is_named_and_the_others_are_left_out() {
+        let (_tmp, mock, dirs) = workspace();
+        assert_eq!(check_args(&mock, &dirs, Some("member"), false), [
             "check",
             "-p",
-            "kaski-console-core",
-            "-p",
-            "kaski-sim"
+            "kaski-member"
         ]);
+        // `-p kaski-wasm-only` would force a build a bare check never makes
+        assert_eq!(check_args(&mock, &dirs, Some("wasm-only"), false), [
+            "check"
+        ]);
+        // in no workspace of the mock manifest: `-p` would not match any package
+        assert_eq!(check_args(&mock, &dirs, Some("console-core"), false), [
+            "check"
+        ]);
+        assert_eq!(
+            check_args(&mock, &dirs, Some("member,console-core,wasm-only"), false),
+            ["check", "-p", "kaski-member"]
+        );
+    }
+
+    /// The control: the first version named every scoped crate by its manifest.
+    /// Cargo refuses that for a crate outside the workspace and builds the
+    /// wasm-only page for the one `default-members` leaves out, so its answer
+    /// is exactly what the assertions above reject.
+    #[test]
+    fn naming_every_scoped_crate_would_have_failed_the_assertions_above() {
+        let (_tmp, mock, dirs) = workspace();
+        let naive = |names: &[&str]| -> Vec<String> {
+            let mut args = vec!["check".to_string()];
+            for name in names {
+                let dir = dirs
+                    .iter()
+                    .map(|d| d.join(name))
+                    .find(|d| d.is_dir())
+                    .unwrap();
+                let text = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+                let pkg = text
+                    .lines()
+                    .find_map(|l| l.strip_prefix("name = "))
+                    .unwrap();
+                args.push("-p".into());
+                args.push(pkg.trim_matches('"').to_string());
+            }
+            args
+        };
+        for scope in [vec!["console-core"], vec!["wasm-only"]] {
+            let fixed = check_args(&mock, &dirs, Some(&scope.join(",")), false);
+            assert_ne!(naive(&scope), fixed, "{scope:?}");
+            assert_eq!(fixed, ["check"]);
+        }
     }
 
     #[test]
     fn check_stays_whole_without_a_crate_list_or_with_a_shared_input() {
-        let (_tmp, dirs) = two_src_dirs();
-        // each of these must differ from the bounded answer above
-        assert_eq!(check_args(&dirs, None, false), ["check"]);
-        assert_eq!(check_args(&dirs, Some("infra"), false), ["check"]);
-        assert_eq!(check_args(&dirs, Some("console-core"), true), ["check"]);
+        let (_tmp, mock, dirs) = workspace();
+        assert_eq!(check_args(&mock, &dirs, None, false), ["check"]);
+        assert_eq!(check_args(&mock, &dirs, Some("infra"), false), ["check"]);
+        assert_eq!(check_args(&mock, &dirs, Some("member"), true), ["check"]);
     }
 
     #[test]
-    fn check_is_not_narrowed_by_a_crate_it_cannot_find() {
-        let (_tmp, dirs) = two_src_dirs();
-        assert_eq!(check_args(&dirs, Some("console-core,nope"), false), [
+    fn check_is_not_narrowed_by_a_crate_with_no_directory() {
+        let (_tmp, mock, dirs) = workspace();
+        assert_eq!(check_args(&mock, &dirs, Some("member,nope"), false), [
             "check"
         ]);
+    }
+
+    #[test]
+    fn check_is_whole_when_cargo_cannot_say_what_the_workspace_holds() {
+        let (_tmp, _mock, dirs) = workspace();
+        assert_eq!(check_args_from(None, &dirs, Some("member"), false), [
+            "check"
+        ]);
+        assert_eq!(
+            check_args_from(Some("not json"), &dirs, Some("member"), false),
+            ["check"]
+        );
+    }
+
+    #[test]
+    fn the_default_members_are_read_from_the_metadata() {
+        let json = r#"{"packages":[
+            {"id":"a 0.0.0 (path+file:///w/a)","name":"a","manifest_path":"/w/a/Cargo.toml"},
+            {"id":"b 0.0.0 (path+file:///w/b)","name":"b","manifest_path":"/w/b/Cargo.toml"}],
+            "workspace_default_members":["a 0.0.0 (path+file:///w/a)"]}"#;
+        let got = default_member_packages(json).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got.get(std::path::Path::new("/w/a")).map(String::as_str),
+            Some("a")
+        );
+        assert!(default_member_packages("{}").is_none());
     }
 }

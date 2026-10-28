@@ -881,6 +881,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // Bounded to the scoped packages unless a shared input is staged; see
         // `cargo_gate::check_args`.
         let check_args = cargo_gate::check_args(
+            &cfg.mock_dir,
             &cfg.src_dirs,
             scope_arg,
             escape_hatch::shared_inputs_staged(&cfg.repo_root, &mock_rel_for_hatch),
