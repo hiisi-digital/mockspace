@@ -868,12 +868,31 @@ pub fn resolve_data(
     let mut done: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     let mut findings = Vec::new();
 
+    // What every row's resolution reads and none changes, built once. The namespace index in
+    // particular lists every row of the registry, so a copy of it per row cost rows times
+    // registry, which at eleven thousand rows was twenty-five seconds of every commit.
+    let ns_keys: BTreeSet<String> = by_key.keys().map(|k| k.to_string()).collect();
+    let namespaces: Vec<RegistryNamespace> = by_key.values().map(|n| (*n).clone()).collect();
+    // The view a row resolves against: the namespace index, and the rows it cites, put in and
+    // taken out for each row. Deliberately without the corpus-level `files_read`,
+    // `unquoted_times` and `duplicates`, which nothing reads off a per-row view.
+    let mut view = Registry {
+        rows:           BTreeMap::new(),
+        by_namespace:   reg.by_namespace.clone(),
+        duplicates:     BTreeMap::new(),
+        files_read:     Vec::new(),
+        unquoted_times: Vec::new(),
+    };
+
     for id in reg.rows.keys() {
         let mut path = Vec::new();
         resolve_row(
             id,
             reg,
             &by_key,
+            &ns_keys,
+            &namespaces,
+            &mut view,
             roots,
             repo_root,
             docs_dir,
@@ -907,6 +926,9 @@ fn resolve_row(
     id: &str,
     reg: &Registry,
     by_key: &BTreeMap<&str, &RegistryNamespace>,
+    ns_keys: &BTreeSet<String>,
+    namespaces: &[RegistryNamespace],
+    view: &mut Registry,
     roots: &BTreeMap<String, String>,
     repo_root: &Path,
     docs_dir: &Path,
@@ -934,39 +956,28 @@ fn resolve_row(
         });
         return;
     }
-    let ns_keys: BTreeSet<String> = by_key.keys().map(|k| k.to_string()).collect();
     let Some(row) = reg.get(id) else { return };
 
     // Resolve everything this row depends on first, so by the time its own
     // fields are rewritten the values they cite are final.
     path.push(id.to_string());
     for value in row.fields.values() {
-        for (dep, _) in find_registry_refs(value, &ns_keys) {
+        for (dep, _) in find_registry_refs(value, ns_keys) {
             resolve_row(
-                &dep, reg, by_key, roots, repo_root, docs_dir, cfg, done, path, findings,
+                &dep, reg, by_key, ns_keys, namespaces, view, roots, repo_root, docs_dir, cfg,
+                done, path, findings,
             );
         }
     }
     path.pop();
 
-    // Only the rows this one actually cites need to be settled, so build a view
-    // over those rather than cloning the whole registry per row. At the row
-    // counts a real registry reaches, the whole-registry clone was quadratic.
-    let mut settled = Registry {
-        rows:         BTreeMap::new(),
-        by_namespace: reg.by_namespace.clone(),
-        duplicates:   BTreeMap::new(),
-        // Deliberately empty rather than cloned. This view is built once per
-        // row, and the comment above records that cloning the whole registry
-        // here was quadratic at real row counts. Nothing reads `files_read`
-        // off a per-row view; the corpus-level answer is on the registry the
-        // loader returned.
-        files_read:   Vec::new(),
-        unquoted_times: Vec::new(),
-    };
+    // Only the rows this one actually cites need to be settled, so the shared view holds
+    // those and nothing else. The recursion above is finished with the view before this
+    // row fills it, and nothing below recurses, so one view serves every row in turn.
+    view.rows.clear();
     for value in row.fields.values() {
-        for (dep, _) in find_registry_refs(value, &ns_keys) {
-            if settled.rows.contains_key(&dep) {
+        for (dep, _) in find_registry_refs(value, ns_keys) {
+            if view.rows.contains_key(&dep) {
                 continue;
             }
             if let Some(v) = reg.get(&dep) {
@@ -974,19 +985,18 @@ fn resolve_row(
                 if let Some(f) = done.get(&dep) {
                     r.fields = f.clone();
                 }
-                settled.rows.insert(dep, r);
+                view.rows.insert(dep, r);
             }
         }
     }
 
-    let namespaces: Vec<RegistryNamespace> = by_key.values().map(|n| (*n).clone()).collect();
     let fields = row
         .fields
         .iter()
         .map(|(k, v)| {
             (
                 k.clone(),
-                resolve_once(v, &namespaces, &settled, roots, repo_root, docs_dir, cfg),
+                resolve_once(v, namespaces, view, roots, repo_root, docs_dir, cfg),
             )
         })
         .collect();
