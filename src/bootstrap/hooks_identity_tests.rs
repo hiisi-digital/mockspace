@@ -74,7 +74,7 @@ fn make_executable(path: &Path) {
 /// include too (`tests/common/ambient.rs`; see its header for why not a module).
 #[path = "../../tests/common/ambient.rs"]
 mod ambient;
-pub(super) use ambient::{clean_of_the_machine, without_ambient_identity, without_ambient_repo};
+pub(super) use ambient::clean_of_the_machine;
 
 /// Git with the machine's own config out of the way, so a global identity on
 /// whatever runs this cannot stand in for the one under test.
