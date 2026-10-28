@@ -304,15 +304,17 @@ fn manifest_for(packs: &[(String, String)], resolve: &dyn Fn(&str, &str) -> Resu
     let dir = tempfile::tempdir().unwrap();
     let cfg = crate::config::Config::from_dir(dir.path());
     let gen_dir = dir.path().join("gen");
+    // as a run does it: the tips are read once, and the manifest is made of what that gave
+    let packs =
+        crate::custom_lints::store::resolve_packs(packs, &dir.path().join("pins"), resolve);
     crate::custom_lints::write_cdylib_crate(
         &gen_dir,
         &dir.path().join("lints"),
         &[],
-        packs,
+        &packs,
         &[],
         "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"r\" }",
         &cfg,
-        resolve,
     )
     .unwrap();
     std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap()

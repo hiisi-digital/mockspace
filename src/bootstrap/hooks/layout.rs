@@ -86,7 +86,7 @@ fn lint_pack_dirs(repo_root: &Path, mock_dir: &Path, config_path: &Path) -> Vec<
         else {
             continue;
         };
-        let resolved = lexically_normal(&from.join(path));
+        let resolved = crate::build_dir::lexically_normal(&from.join(path));
         let Ok(rel) = resolved.strip_prefix(repo_root) else {
             continue;
         };
@@ -96,24 +96,6 @@ fn lint_pack_dirs(repo_root: &Path, mock_dir: &Path, config_path: &Path) -> Vec<
         }
     }
     dirs
-}
-
-/// `path` with its `.` and `..` components folded away, without touching the
-/// disk: a pack's directory is resolved the way cargo reads the path, and a
-/// symlink on the way is not followed by either side.
-fn lexically_normal(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::CurDir => {},
-            Component::ParentDir => {
-                out.pop();
-            },
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// Single-quote a word for bash.

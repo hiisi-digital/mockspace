@@ -11,11 +11,14 @@
 //! into a small cdylib and dlopens it at run time:
 //!
 //! - the repo's own `mock/lints/*.rs` compile into the cdylib, whose generated
-//!   crate lives **outside the worktree**, at a path keyed by the repo's
-//!   identity and the revs it builds against (`lints_manifest_path`), so every
-//!   worktree of one repo at the same revs is the same cargo package and
-//!   shares one build. Only `<mock>/target/mockspace-lints/shared-dir` stays
-//!   in the worktree, pointing at it;
+//!   crate lives outside the worktree, in the shared store (`store`), at a
+//!   path keyed by the repo's identity and the revs it builds against, so
+//!   every worktree of one repo at the same revs is the same cargo package and
+//!   shares its dependency builds. The store is under `CARGO_TARGET_DIR` when
+//!   one is set and under `$XDG_CACHE_HOME/mockspace/lints` otherwise. Only
+//!   `<mock>/target/mockspace-lints/shared-dir` stays in the worktree,
+//!   pointing at it. `mock clean` leaves the store alone; the engine removes
+//!   the builds nothing can come back to;
 //! - `[lint-crates]` pack dependencies resolve through cargo's normal global
 //!   cache and link in;
 //! - the cdylib exports one `extern "C"` collector that hands back the boxed
@@ -55,6 +58,8 @@ use crate::bootstrap::{
 };
 use crate::config::Config;
 
+pub(crate) mod store;
+
 /// The `extern "C"` symbol the generated cdylib exports.
 const COLLECT_SYMBOL: &[u8] = b"__mockspace_collect_lints";
 
@@ -66,16 +71,17 @@ pub struct LoadedLints {
     _lib:     libloading::Library,
 }
 
-/// Build and load this repo's custom lints, if it has any. Returns `None` when
-/// the repo declares no `mock/lints/*.rs` and no `[lint-crates]` (the common
-/// case, and a fast path). `lint_rules_dep` is the cargo dependency *value*
-/// for `mockspace-lint-rules`, pin-matched to the running engine, e.g.
-/// `{ package = "mockspace-lint-rules", git = "...", rev = "..." }`.
-pub fn load(
-    cfg: &Config,
-    config_path: &Path,
-    lint_rules_dep: &str,
-) -> Result<Option<LoadedLints>, String> {
+/// What a repo declares for the cdylib to carry.
+struct Content {
+    lints_dir:  PathBuf,
+    lint_files: Vec<String>,
+    packs:      Vec<(String, String)>,
+    tools:      Vec<ToolCrate>,
+}
+
+/// The repo's custom content, or `None` when it declares no `mock/lints/*.rs`,
+/// no `[lint-crates]` and no tool (the common case, and a fast path).
+fn discover(cfg: &Config, config_path: &Path) -> Option<Content> {
     let lints_dir = cfg.mock_dir.join("lints");
     let lint_files = discover_custom_lint_files(&lints_dir);
     let packs = parse_lint_crates(config_path);
@@ -84,70 +90,125 @@ pub fn load(
     // report an unknown subcommand in a repo that plainly declares one.
     let tools = discover_tool_crates(&cfg.mock_dir.join("tools"));
     if lint_files.is_empty() && packs.is_empty() && tools.is_empty() {
-        return Ok(None);
+        return None;
     }
+    Some(Content {
+        lints_dir,
+        lint_files,
+        packs,
+        tools,
+    })
+}
 
+/// Build and load this repo's custom lints, if it has any. Returns `None` when
+/// the repo declares none. `lint_rules_dep` is the cargo dependency *value*
+/// for `mockspace-lint-rules`, pin-matched to the running engine, e.g.
+/// `{ package = "mockspace-lint-rules", git = "...", rev = "..." }`.
+///
+/// The generated crate goes in the machine's shared store, see
+/// [`store::shared_base`].
+pub fn load(
+    cfg: &Config,
+    config_path: &Path,
+    lint_rules_dep: &str,
+) -> Result<Option<LoadedLints>, String> {
+    let Some(content) = discover(cfg, config_path) else {
+        return Ok(None);
+    };
+    let base = store::shared_base(&cfg.repo_root)?;
+    build_and_load(&base, cfg, &content, lint_rules_dep)
+}
+
+/// [`load`] against a store at `base`, for a caller that owns where the
+/// generated crate goes. The tests use it to keep every build, which is about
+/// 85 MB, inside a directory they delete.
+pub fn load_in(
+    base: &Path,
+    cfg: &Config,
+    config_path: &Path,
+    lint_rules_dep: &str,
+) -> Result<Option<LoadedLints>, String> {
+    match discover(cfg, config_path) {
+        Some(content) => build_and_load(base, cfg, &content, lint_rules_dep),
+        None => Ok(None),
+    }
+}
+
+fn build_and_load(
+    base: &Path,
+    cfg: &Config,
+    content: &Content,
+    lint_rules_dep: &str,
+) -> Result<Option<LoadedLints>, String> {
     // The generated crate lives outside the worktree, at a path keyed by the
     // repo's identity and the revs it builds against, so every worktree of one
     // repo at the same revs resolves to the same cargo package and shares one
-    // build. See `lints_manifest_path`.
-    let base = shared_base();
-    let manifest = lints_manifest_path(
-        &base,
-        cfg,
-        lint_rules_dep,
-        &packs,
+    // build. See `store::lints_manifest_path`. A branch pack is resolved to its
+    // tip once, here, and both the key and the manifest are made from that.
+    std::fs::create_dir_all(base)
+        .map_err(|e| format!("could not create {}: {e}", base.display()))?;
+    let packs = store::resolve_packs(
+        &content.packs,
+        &base.join(".pack-pins"),
         &crate::pack_pin::ls_remote_head,
     );
+    let manifest = store::lints_manifest_path(base, cfg, lint_rules_dep, &packs);
     let gen_dir = manifest
         .parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| format!("no directory for {}", manifest.display()))?;
-    std::fs::create_dir_all(&gen_dir)
-        .map_err(|e| format!("could not create {}: {e}", gen_dir.display()))?;
-    crate::build_dir::mark(&base);
+    crate::build_dir::mark(base);
     // One crate, several worktrees: each run rewrites it to point at its own
     // lint sources, so the write, the build and the load are one critical
     // section.
-    let lock = lock_dir(&gen_dir)?;
-    let packs = resolve_packs(
-        &packs,
-        &base.join(".pack-pins"),
-        &crate::pack_pin::ls_remote_head,
-    );
+    let lock = store::lock_dir(&gen_dir)?;
     write_cdylib_crate(
         &gen_dir,
-        &lints_dir,
-        &lint_files,
+        &content.lints_dir,
+        &content.lint_files,
         &packs,
-        &tools,
+        &content.tools,
         lint_rules_dep,
         cfg,
-        &crate::pack_pin::ls_remote_head,
     )?;
-    record_owner(&gen_dir, &cfg.mock_dir)?;
-    let dylib = build_cdylib(&gen_dir, &gen_crate_name(&gen_dir))?;
+    store::record_owner(&gen_dir, &cfg.mock_dir)?;
+    store::touch_used(&gen_dir)?;
+    #[cfg(test)]
+    store::knobs::pause_between_write_and_build(&gen_dir);
+    let built = build_cdylib(&gen_dir, &gen_crate_name(&gen_dir));
 
     // SAFETY: the cdylib is our own generated crate, built moments ago from
     // this repo's lint sources against the same pinned mockspace-lint-rules
     // the engine uses, so the `Lint`/`CrossCrateLint` vtable layout matches.
     // The returned boxes borrow their vtables from `lib`, so `lib` is stored
     // in `LoadedLints` and outlives them.
-    let loaded = unsafe { collect(&dylib) }.map(Some);
+    let loaded = built.and_then(|dylib| unsafe { collect(&dylib) }.map(Some));
     // Released only once the library is mapped. The mapping outlives a later
     // rebuild by another worktree, and holding the lock for the whole lint run
     // would serialise every worktree on it.
     drop(lock);
+    // After the lock, so removing a dead build does not hold up this run's
+    // peers, and for every outcome, so a failed build still clears the dead.
+    let removed = store::reap(
+        base,
+        &gen_dir,
+        std::time::SystemTime::now(),
+        store::STALE_AFTER,
+    );
+    if !removed.is_empty() {
+        eprintln!(
+            "mock: removed {} abandoned lint build(s) under {}",
+            removed.len(),
+            base.display()
+        );
+    }
     loaded
 }
 
 /// Write the generated cdylib crate (`Cargo.toml` + `src/lib.rs`). Idempotent:
 /// rewrites only when content changes, so cargo's freshness check skips a
-/// rebuild when nothing moved. `resolve` reads a branch pin's tip off its
-/// remote, and is a parameter so the manifest can be written without one.
-// Eight, since the resolver is the one thing the tests have to replace; every
-// other argument is a separate input to the manifest, not a group of one.
-#[allow(clippy::too_many_arguments)]
+/// rebuild when nothing moved. `packs` are the specs cargo is to be handed, a
+/// branch already replaced by the rev of its tip (`store::resolve_packs`).
 pub(crate) fn write_cdylib_crate(
     gen_dir: &Path,
     lints_dir: &Path,
@@ -156,7 +217,6 @@ pub(crate) fn write_cdylib_crate(
     tools: &[ToolCrate],
     lint_rules_dep: &str,
     cfg: &Config,
-    resolve: &dyn Fn(&str, &str) -> Result<String, String>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(gen_dir.join("src"))
         .map_err(|e| format!("could not create {}: {e}", gen_dir.display()))?;
@@ -172,15 +232,13 @@ pub(crate) fn write_cdylib_crate(
          [lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\n\
          mockspace = {lint_rules_dep}\n"
     );
-    // A pack pinned by branch is written at the branch's tip, or cargo would
-    // hold it at whatever the tip was on the first build. `pack_pin` says why.
-    let pins = gen_dir.join(".pack-pins");
+    // A pack pinned by branch arrives at the branch's tip, or cargo would hold
+    // it at whatever the tip was on the first build. `pack_pin` says why.
     for (name, spec) in packs {
-        let said = format!("lint pack `{name}`");
-        let spec = crate::pack_pin::spec_for_cargo(&said, spec, &pins, resolve);
         // A relative path is written as cargo reads it from
         // `<mock>/target/mockspace-lints`, and this crate no longer sits there.
-        let spec = absolutize_path_pack(&spec, &crate::build_dir::lint_crate_dir(&cfg.mock_dir));
+        let spec =
+            store::absolutize_path_pack(spec, &crate::build_dir::lint_crate_dir(&cfg.mock_dir));
         manifest.push_str(&format!("{name} = {spec}\n"));
     }
     // Tool crates are path dependencies, discovered by directory rather than
@@ -426,6 +484,16 @@ fn extract_between(s: &str, start: &str, end: &str) -> Option<String> {
 /// `extern "C"` collector that fills the caller's vecs. Mirrors the proxy's
 /// `generate_custom_lint_main`, but as a collector rather than a `main`, and
 /// against the `mockspace` package-rename so the lint files compile unchanged.
+///
+/// The `#[path]` of each lint file is the absolute path in the worktree that is
+/// running, so this text differs between worktrees and a switch recompiles the
+/// generated crate. That is deliberate. Making it identical (a symlink inside
+/// the store pointing at the running worktree's `lints/`, say) would leave
+/// cargo comparing the modification time of whatever the link points at now
+/// with the build's record of what it pointed at then, so a switch to a
+/// worktree whose lint files are older than the last build would be judged
+/// fresh and the other worktree's library loaded. What the worktrees share is
+/// the dependency graph, which is the 85 MB; the one small crate is rebuilt.
 fn gen_collect_lib(
     lints_dir: &Path,
     lint_files: &[String],
@@ -869,7 +937,6 @@ mod tests {
             std::slice::from_ref(&t),
             "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"r\" }",
             &cfg,
-            &|_: &str, _: &str| -> Result<String, String> { unreachable!("no branch pack here") },
         )
         .unwrap();
         let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();
@@ -924,7 +991,6 @@ mod tests {
             &[],
             dep,
             &cfg,
-            &|_: &str, _: &str| -> Result<String, String> { unreachable!("no branch pack here") },
         )
         .unwrap();
         let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();
@@ -1201,198 +1267,3 @@ mod tests {
         assert!(patch_section("{ path = \"../lint-rules\" }", tmp.path()).is_none());
     }
 }
-
-/// Where the shared generated lint crates live, one directory per key.
-///
-/// Under the machine's shared cargo target directory when one is set, which is
-/// where the rest of the build already is, and otherwise in the user's cache.
-pub(crate) fn shared_base() -> PathBuf {
-    if let Some(target) = crate::build_dir::inherited_target_dir() {
-        return PathBuf::from(target).join("mockspace-lints");
-    }
-    let cache = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(|| std::env::temp_dir());
-    cache.join("mockspace").join("lints")
-}
-
-/// Where the generated lint crate's manifest goes: `<base>/<key>/Cargo.toml`,
-/// outside every worktree.
-///
-/// The key is a hash of everything that makes two builds of the crate differ
-/// and nothing about where the worktree happens to sit: the repo's identity
-/// (its `origin` url, so a clone at another path shares too), the mock
-/// directory relative to the repo, the engine's lint-rules dependency, and
-/// every pack with a branch resolved to the rev of its tip. A changed rev is a
-/// new key and so a separate build; the same revs from any worktree are the
-/// same cargo package, which is the sharing. Pure apart from reading the
-/// branch tips (through `resolve`, cached) and the repo's git config.
-pub(crate) fn lints_manifest_path(
-    base: &Path,
-    cfg: &Config,
-    lint_rules_dep: &str,
-    packs: &[(String, String)],
-    resolve: &dyn Fn(&str, &str) -> Result<String, String>,
-) -> PathBuf {
-    let packs = resolve_packs(packs, &base.join(".pack-pins"), resolve);
-    let mock_rel = cfg
-        .mock_dir
-        .strip_prefix(&cfg.repo_root)
-        .unwrap_or(&cfg.mock_dir);
-    let key = lint_crate_key(
-        &repo_identity(&cfg.repo_root),
-        mock_rel,
-        lint_rules_dep,
-        &packs,
-    );
-    base.join(format!("{key:016x}")).join("Cargo.toml")
-}
-
-/// Each pack's spec with a branch replaced by the rev of its tip.
-fn resolve_packs(
-    packs: &[(String, String)],
-    pins: &Path,
-    resolve: &dyn Fn(&str, &str) -> Result<String, String>,
-) -> Vec<(String, String)> {
-    packs
-        .iter()
-        .map(|(name, spec)| {
-            let said = format!("lint pack `{name}`");
-            (
-                name.clone(),
-                crate::pack_pin::spec_for_cargo(&said, spec, pins, resolve),
-            )
-        })
-        .collect()
-}
-
-/// FNV-1a rather than std's hasher, whose output may change between releases:
-/// the key names a directory that outlives the binary that made it.
-fn lint_crate_key(
-    identity: &str,
-    mock_rel: &Path,
-    lint_rules_dep: &str,
-    packs: &[(String, String)],
-) -> u64 {
-    let mut text = format!("{identity}\n{}\n{lint_rules_dep}\n", mock_rel.display());
-    for (name, spec) in packs {
-        text.push_str(&format!("{name}={spec}\n"));
-    }
-    crate::pack_pin::fnv1a(text.as_bytes())
-}
-
-/// What names the repo across worktrees and clones: its `origin` url with the
-/// scheme, user and `.git` taken off, else the git directory every worktree of
-/// the clone shares, else the path.
-fn repo_identity(repo_root: &Path) -> String {
-    if let Some(url) = git_line(repo_root, &["config", "--get", "remote.origin.url"]) {
-        return format!("remote:{}", normalise_remote(&url));
-    }
-    if let Some(dir) = git_line(repo_root, &[
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-    ]) {
-        return format!("git-dir:{dir}");
-    }
-    format!("path:{}", repo_root.display())
-}
-
-fn git_line(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .args(args)
-        .env("LC_ALL", "C")
-        .current_dir(dir)
-        .output()
-        .ok()?;
-    let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (out.status.success() && !line.is_empty()).then_some(line)
-}
-
-/// `https://h/o/r.git`, `ssh://git@h/o/r` and `git@h:o/r.git` are one remote.
-fn normalise_remote(url: &str) -> String {
-    let mut s = url.trim().to_lowercase();
-    let mut had_scheme = false;
-    if let Some(i) = s.find("://") {
-        s = s[i + 3 ..].to_string();
-        had_scheme = true;
-    }
-    if let Some(at) = s.find('@')
-        && s.find('/').is_none_or(|slash| at < slash)
-    {
-        s = s[at + 1 ..].to_string();
-    }
-    if !had_scheme
-        && let Some(colon) = s.find(':')
-        && !s[.. colon].contains('/')
-    {
-        s.replace_range(colon ..= colon, "/");
-    }
-    s.trim_end_matches('/').trim_end_matches(".git").to_string()
-}
-
-/// A pack's `path` made absolute against `from`, where it was written to be
-/// read from. Every other spec is returned as it came.
-fn absolutize_path_pack(spec: &str, from: &Path) -> String {
-    let Ok(mut doc) = format!("p = {spec}").parse::<toml_edit::DocumentMut>() else {
-        return spec.to_string();
-    };
-    let Some(table) = doc.get_mut("p").and_then(|i| i.as_inline_table_mut()) else {
-        return spec.to_string();
-    };
-    let Some(path) = table
-        .get("path")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-    else {
-        return spec.to_string();
-    };
-    if Path::new(&path).is_absolute() {
-        return spec.to_string();
-    }
-    let abs = from.join(path).to_string_lossy().replace('\\', "/");
-    table.insert("path", toml_edit::Value::from(abs));
-    table.fmt();
-    table.to_string().trim().to_string()
-}
-
-/// Hold the shared crate for this run. Released when the file is dropped.
-fn lock_dir(gen_dir: &Path) -> Result<std::fs::File, String> {
-    let path = gen_dir.join(".lock");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| format!("could not open {}: {e}", path.display()))?;
-    file.lock()
-        .map_err(|e| format!("could not lock {}: {e}", path.display()))?;
-    Ok(file)
-}
-
-const OWNER: &str = ".owner";
-const POINTER: &str = "shared-dir";
-
-/// Record which worktree last wrote the shared crate, and where, so `mock test`
-/// in a worktree can tell the crate is its own.
-fn record_owner(gen_dir: &Path, mock_dir: &Path) -> Result<(), String> {
-    write_if_changed(&gen_dir.join(OWNER), &mock_dir.display().to_string())?;
-    let local = crate::build_dir::ensure_under_target(mock_dir, &[crate::build_dir::LINT_CRATE]);
-    write_if_changed(&local.join(POINTER), &gen_dir.display().to_string())
-}
-
-/// The shared generated crate this worktree last wrote and nobody has rewritten
-/// since, or `None`. Another worktree running the lints rewrites the crate to
-/// its own sources, and testing it from here would test theirs.
-pub(crate) fn generated_dir_of(mock_dir: &Path) -> Option<PathBuf> {
-    let pointer = crate::build_dir::lint_crate_dir(mock_dir).join(POINTER);
-    let gen_dir = PathBuf::from(std::fs::read_to_string(pointer).ok()?.trim());
-    let owner = std::fs::read_to_string(gen_dir.join(OWNER)).ok()?;
-    (gen_dir.join("Cargo.toml").is_file() && owner.trim() == mock_dir.display().to_string())
-        .then_some(gen_dir)
-}
-
-#[cfg(test)]
-#[path = "custom_lints_share_tests.rs"]
-mod share_tests;

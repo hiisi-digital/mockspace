@@ -52,6 +52,24 @@ pub fn lint_crate_dir(root: &Path) -> PathBuf {
     target_dir(root).join(LINT_CRATE)
 }
 
+/// `path` with its `.` and `..` components folded away, without touching the
+/// disk: a pack's directory is resolved the way cargo reads the path, and a
+/// symlink on the way is not followed by either side.
+pub fn lexically_normal(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {},
+            Component::ParentDir => {
+                out.pop();
+            },
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Create `dir` and take it out of the desktop index. Returns it, so a write
 /// site reads as one expression.
 ///
