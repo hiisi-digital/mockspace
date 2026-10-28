@@ -44,7 +44,8 @@ impl InstallMode {
     }
 }
 
-/// The text a nuked crate's `lib.rs` carries unless the config names another.
+/// The text a nuked crate's `lib.rs` carries. The config holds it as `nuke_marker`, and
+/// nothing in `mockspace.toml` sets it, so this default is the only value it takes.
 ///
 /// The engine's nuke detection and the generated hooks both read the marker the
 /// config resolves to, and this is the one place the default is spelled.
