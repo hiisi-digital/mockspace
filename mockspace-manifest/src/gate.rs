@@ -353,18 +353,9 @@ pub fn install_durable_hooks(dir: &Path, hook_version: u32) -> Vec<String> {
         }
 
         let final_content = content.replacen(MANAGED_MARKER, &fp_line, 1);
-        if let Err(e) = std::fs::write(&path, &final_content) {
+        if let Err(e) = crate::exec::write_executable(&path, &final_content) {
             actions.push(format!("failed to write the durable {name}: {e}"));
             continue;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = std::fs::metadata(&path) {
-                let mut perms = meta.permissions();
-                perms.set_mode(0o755);
-                let _ = std::fs::set_permissions(&path, perms);
-            }
         }
         actions.push(format!("wrote the durable {name} to {}", dir.display()));
     }
