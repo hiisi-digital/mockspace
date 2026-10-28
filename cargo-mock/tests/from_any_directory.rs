@@ -17,6 +17,28 @@
 use std::path::Path;
 use std::process::Command;
 
+/// A command for one of the binaries, with the machine's say about git taken out:
+/// the variables a hook leaves in the environment select a repository, and the
+/// launcher runs git against the root it finds. This file ships in the package, so
+/// it cannot include the repository's shared scrub from above the package root;
+/// the list is short enough to state here.
+fn command(program: &str) -> Command {
+    let mut c = Command::new(program);
+    for k in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_PREFIX",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+    ] {
+        c.env_remove(k);
+    }
+    c
+}
+
 /// A repo with a root config mapping a `mock` workspace, and a few directories
 /// deep inside it to run from.
 fn witness(dir: &Path) {
@@ -47,7 +69,7 @@ fn bin_path(bin: &str) -> &'static str {
 }
 
 fn locate_from(bin: &str, cwd: &Path) -> String {
-    let out = Command::new(bin_path(bin))
+    let out = command(bin_path(bin))
         .arg("locate")
         .current_dir(cwd)
         .env_remove("MOCK_ROOT")
@@ -168,7 +190,7 @@ fn both_installed_binaries_answer_the_same_thing() {
 
     let direct = locate_from("mock", &root.join("mock"));
 
-    let out = Command::new(bin_path("cargo-mock"))
+    let out = command(bin_path("cargo-mock"))
         .args(["mock", "locate"])
         .current_dir(root.join("mock"))
         .env_remove("MOCK_ROOT")
@@ -189,7 +211,7 @@ fn the_root_override_wins_over_the_directory_the_command_was_run_in() {
     witness(&root);
     let elsewhere = tempfile::tempdir().unwrap();
 
-    let out = Command::new(bin_path("mock"))
+    let out = command(bin_path("mock"))
         .arg("locate")
         .current_dir(elsewhere.path())
         .env("MOCK_ROOT", &root)
@@ -223,7 +245,7 @@ fn a_directory_in_no_repo_at_all_is_refused_and_the_message_names_both_reasons()
         }
     }
 
-    let out = Command::new(bin_path("mock"))
+    let out = command(bin_path("mock"))
         .arg("locate")
         .current_dir(&dir)
         .env_remove("MOCK_ROOT")
@@ -236,7 +258,7 @@ fn a_directory_in_no_repo_at_all_is_refused_and_the_message_names_both_reasons()
 
     // and with the override set and wrong, the same refusal says so instead of
     // telling the operator the variable they just exported is unset.
-    let out = Command::new(bin_path("mock"))
+    let out = command(bin_path("mock"))
         .arg("locate")
         .current_dir(&dir)
         .env("MOCK_ROOT", "/definitely/not/a/directory/xyzzy")

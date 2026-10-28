@@ -16,6 +16,11 @@
 //! Parsing those keys and acting on them is the launcher's, and the launcher's
 //! machinery is `renki`. Nothing here resolves anything.
 
+/// What these tests take out of the environment before they run.
+#[cfg(test)]
+#[path = "../../tests/common/ambient.rs"]
+mod test_ambient;
+
 mod follow_up;
 pub mod kept_ours;
 pub mod gate;
