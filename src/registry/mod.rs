@@ -920,6 +920,59 @@ mod tests {
         );
     }
 
+    /// Resolving the data of a registry costs in proportion to the rows and what each cites,
+    /// not to the rows times the registry. Each row here cites one shared row, so a per-row
+    /// view of the whole registry (its namespace index cloned for every row) is what makes
+    /// this slow: at fifteen thousand rows that is two hundred million small allocations,
+    /// where the work done is a few thousand lookups. The cost was a profile of one real registry,
+    /// an ad-hoc spike outside the bench harness: seconds a run, nothing committed that shows it.
+    #[test]
+    fn resolving_row_data_does_not_scale_with_rows_times_registry() {
+        const ROWS: usize = 15_000;
+        let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
+        let nss = vec![ns("law", None)];
+        cfg.registry_namespaces = nss.clone();
+
+        let mut reg = reg_with("base", "law", &[("statement", "closed")]);
+        for i in 0 .. ROWS {
+            let row = RegistryRow {
+                slug:      format!("row{i}"),
+                namespace: "law".into(),
+                source:    PathBuf::from("t.toml"),
+                fields:    [("statement".to_string(), "{{ law::base::statement }}".to_string())]
+                    .into_iter()
+                    .collect(),
+            };
+            let q = row.qualified();
+            reg.by_namespace.get_mut("law").unwrap().push(q.clone());
+            reg.rows.insert(q, row);
+        }
+
+        let started = std::time::Instant::now();
+        let (resolved, findings) = resolve_data(
+            &nss,
+            &reg,
+            &BTreeMap::new(),
+            Path::new("/r"),
+            Path::new("/r/docs"),
+            &cfg,
+        );
+        let took = started.elapsed();
+
+        assert!(findings.is_empty(), "{findings:?}");
+        for i in [0, ROWS / 2, ROWS - 1] {
+            let got = resolved
+                .get(&format!("law::row{i}"))
+                .and_then(|r| r.fields.get("statement"))
+                .unwrap();
+            assert_eq!(got, "closed", "row{i} did not resolve to the row it cites");
+        }
+        assert!(
+            took < std::time::Duration::from_secs(15),
+            "resolving {ROWS} rows took {took:?}: the cost grows with rows times registry"
+        );
+    }
+
     #[test]
     fn a_namespace_resolves_without_the_reg_prefix() {
         // `reg::` carried no information: slot zero is either a declared root

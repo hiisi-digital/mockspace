@@ -149,13 +149,13 @@ fn a_crates_documentation_alone_is_still_doc_only() {
 #[test]
 fn a_shared_input_beside_a_workspace_lockfile_is_not_doc_only() {
     let staged = [
-        ("mock/registry/tenets.toml", "x = 1\n"),
+        ("mock/mockspace.toml", "x = 1\n"),
         ("mock/Cargo.lock", "# lock 2\n"),
     ];
     let (out, args) = commit_run_on(KASKI, KASKI_TREE, &staged);
     assert_eq!(args, "mock --lint-only --commit", "{out}");
     // and the shared input alone, over the same tree, is doc-only
-    let alone = [("mock/registry/tenets.toml", "x = 1\n")];
+    let alone = [("mock/mockspace.toml", "x = 1\n")];
     let (out, args) = commit_run_on(KASKI, KASKI_TREE, &alone);
     assert_eq!(args, "mock --lint-only --commit --doc-only", "{out}");
 }

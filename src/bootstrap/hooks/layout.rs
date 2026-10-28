@@ -250,14 +250,18 @@ ms_nuked() {{
 # commit to it, since a changed lint has to run over every crate.
 MS_CODE=("$MOCK_DIR/lints/" ${{MS_PACKS[@]+"${{MS_PACKS[@]}}"}})
 
-# The inputs every crate shares: the registry, the code above and the config. A
-# change to one reaches all of them, so it is never bounded to the crates a
-# commit or push also touches. The config is named at the two places it lives,
-# the repo root and the mock directory, and nowhere deeper: a fixture of that
-# name under a source directory belongs to its crate. A manifest or lockfile is
-# not here: it reaches the crates of its own workspace, which `ms_ws_crates_of`
-# answers.
-MS_SHARED=("$MOCK_DIR/registry/" "${{MS_CODE[@]}}" "mockspace.toml" "$MOCK_DIR/mockspace.toml")
+# The inputs every crate shares: the code above and the config. A change to one
+# reaches all of them, so it is never bounded to the crates a commit or push
+# also touches. The config is named at the two places it lives, the repo root
+# and the mock directory, and nowhere deeper: a fixture of that name under a
+# source directory belongs to its crate. A manifest or lockfile is not here: it
+# reaches the crates of its own workspace, which `ms_ws_crates_of` answers.
+#
+# The registry is not here either. It is read by the repo lints, which every run
+# makes whatever its scope (`--scope infra` is exactly that run), and a crate or
+# workspace lint is handed crates and no registry (`LintContext` has no field for
+# it), so a registry change has nothing to say to a crate's lints.
+MS_SHARED=("${{MS_CODE[@]}}" "mockspace.toml" "$MOCK_DIR/mockspace.toml")
 "##,
         dirs = words.join(" "),
         packs = packs.join(" "),

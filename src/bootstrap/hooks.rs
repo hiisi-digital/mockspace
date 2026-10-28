@@ -401,9 +401,11 @@ STAGED_SRC=$(
     ms_src_files_of "$STAGED" "/Cargo.lock"
 )
 
-# A staged shared input (the registry, the project lints and packs, the config)
-# reaches every crate, so it is never bounded to the crates also
-# staged. Asked of the whole index, since the config may sit at the repo root.
+# A staged shared input (the project lints and packs, the config) reaches every
+# crate, so it is never bounded to the crates also staged. Asked of the whole
+# index, since the config may sit at the repo root. The registry is not one: a
+# commit staging only registry rows lands in the infrastructure arm below, which
+# runs the repo lints that read it and no crate's.
 SHARED_STAGED=0
 if ! git diff --cached --quiet -- "${{MS_SHARED[@]}}" 2>/dev/null; then
     SHARED_STAGED=1
@@ -430,8 +432,26 @@ elif [ -n "$CHANGED_CRATES" ]; then
         ARGS+=(--scope "$CHANGED_CRATES")
     fi
 else
-    echo "  infrastructure-only (no crate files staged)"
-    ARGS+=(--scope infra)
+    STAGED_NON_REGISTRY=$(printf '%s\n' "$STAGED" | grep -v -e '^$' -e "^$MOCK_DIR/registry/" || true)
+    STAGED_REGISTRY=$(printf '%s\n' "$STAGED" | grep -e "^$MOCK_DIR/registry/" || true)
+    if [ -n "$STAGED_REGISTRY" ] && [ -n "$STAGED_NON_REGISTRY" ]; then
+        # A registry row beside a file that reaches no crate keeps the full scope a staged registry row
+        # always had: a workspace lint (the writing-style one) reads whatever sits beside the row, and
+        # `--scope infra` parses no crates for it to start from.
+        echo "  registry rows beside other files: full scope"
+        if [ -z "$STAGED_SRC" ] && [ -z "$WS_CRATES" ]; then
+            ARGS+=(--doc-only)
+        fi
+    else
+        echo "  infrastructure-only (no crate files staged)"
+        ARGS+=(--scope infra)
+        # Registry rows and nothing else under the mock directory: no source is staged, which is what
+        # `--doc-only` claims, and the engine checks that claim against the staged index (`verify_doc_only`).
+        # It is the claim a staged registry row made before the registry stopped being a shared input.
+        if [ -n "$STAGED_REGISTRY" ] && [ -z "$STAGED_NON_REGISTRY" ]; then
+            ARGS+=(--doc-only)
+        fi
+    fi
 fi
 
 if ! cargo mock "${{ARGS[@]}}" 2>&1; then
@@ -501,6 +521,8 @@ echo "pre-push: running mockspace validation..."
 # through handles full-scope correctly.
 FULL_REASON=""
 CHANGED_CRATES=""
+PUSH_REPO_ONLY=""
+PUSH_NOT_REGISTRY=""
 while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     if [ -z "$local_sha" ]; then
         continue
@@ -521,8 +543,8 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
         FULL_REASON="remote sha not fetched"
         break
     fi
-    # A pushed shared input (the registry, the project lints, the config) reaches
-    # every crate, so it forces the full scope, under its own reason.
+    # A pushed shared input (the project lints, the config) reaches every crate,
+    # so it forces the full scope, under its own reason.
     if ! git diff --quiet "$remote_sha".."$local_sha" -- "${{MS_SHARED[@]}}" 2>/dev/null; then
         FULL_REASON="shared input"
         break
@@ -530,6 +552,15 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     PUSH_FILES=$(git diff --name-only --no-renames "$remote_sha".."$local_sha" -- "$MOCK_DIR/" 2>/dev/null || true)
     PUSH_CHANGED=$(ms_union "$(ms_crates_of "$PUSH_FILES")" "$(ms_ws_crates_of "$PUSH_FILES")")
     if [ -z "$PUSH_CHANGED" ]; then
+        # Registry rows are read by the repo lints and by no crate's, so a ref
+        # that changes nothing else under the mock directory is for them alone.
+        # Anything else that reaches no crate keeps the full run it always had.
+        PUSH_OTHER=$(printf '%s\n' "$PUSH_FILES" | grep -v -e '^$' -e "^$MOCK_DIR/registry/" || true)
+        if [ -n "$PUSH_FILES" ] && [ -z "$PUSH_OTHER" ]; then
+            PUSH_REPO_ONLY=1
+        else
+            PUSH_NOT_REGISTRY=1
+        fi
         continue
     fi
     if [ -z "$CHANGED_CRATES" ]; then
@@ -553,6 +584,13 @@ fi
 if ms_nuked; then
     echo "  nuked workspace: skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
+elif [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] && [ -n "$PUSH_REPO_ONLY" ] && [ -z "$PUSH_NOT_REGISTRY" ]; then
+    # No `--doc-only`: the engine skips every source-only lint under it, repo lints included, and the repo lints
+    # that read the registry (a citation of a superseded row, a catalogue ignore naming a ticket) are source-only.
+    # The flag is checked against whatever is staged when the push runs, not against the pushed commits, so it
+    # would also vouch for nothing about them.
+    echo "  scope: repo lints only (the push changes nothing a crate's lints read)"
+    ARGS=(--lint-only --strict --scope infra)
 elif [ -n "$FULL_REASON" ] || [ -z "$CHANGED_CRATES" ]; then
     echo "  scope: full project (${{FULL_REASON:-no crate changes}})"
     ARGS=(--lint-only --strict)
