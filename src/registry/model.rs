@@ -24,8 +24,9 @@ pub const CRATE_ROOT: &str = "crates";
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RegistryField {
     pub name:        String,
-    /// `string`, `integer`, `boolean`, `string[]`. Anything richer belongs in
-    /// a hand-written schema fragment rather than in a config language.
+    /// One of the scalar types `SCALAR_TYPES` lists (`ref`, `ref[]` and the
+    /// four time types among them), or the name of a declared namespace, which
+    /// holds one row of it, or several when written with a trailing `[]`.
     #[serde(default = "default_field_type")]
     pub r#type:      String,
     #[serde(default)]
