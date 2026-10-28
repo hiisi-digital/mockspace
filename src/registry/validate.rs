@@ -177,6 +177,7 @@ pub const FINDING_KINDS: &[&str] = &[
     "row-reference-to-a-value-namespace",
     "misplaced-field-bound",
     "unfit-field-value",
+    "unquoted-time",
     // The three produced by `namespace_root_collisions`, which is called from
     // the same place as `validate` and whose kinds were absent from this list
     // with nothing reporting that. The comment below used to say two were
@@ -432,8 +433,8 @@ pub fn config_unknown_keys(config_text: &str) -> Vec<RegistryFinding> {
 }
 
 /// Validate what the generated schemas cannot.
-pub fn validate(_namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<RegistryFinding> {
-    let mut out = Vec::new();
+pub fn validate(namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<RegistryFinding> {
+    let mut out = unquoted_times(namespaces, reg);
     for (id, sources) in &reg.duplicates {
         out.push(RegistryFinding {
             kind: "duplicate-id",
@@ -665,3 +666,40 @@ pub fn namespace_root_collisions(
 #[cfg(test)]
 #[path = "validate_tests.rs"]
 mod tests;
+
+/// A value in a `date`, `time`, `datetime` or `span` field that the file wrote as a TOML
+/// date or time instead of a string.
+///
+/// The types are strings held to one form. A bare `when = 2026-10-28` is a different
+/// TOML type that happens to read the same, and taplo hands a TOML date to the schema as
+/// a string, so the generated pattern passes it. Only the loader saw the difference, and
+/// it recorded it for this.
+fn unquoted_times(namespaces: &[RegistryNamespace], reg: &Registry) -> Vec<RegistryFinding> {
+    let mut out = Vec::new();
+    for u in &reg.unquoted_times {
+        let Some((ns_key, _)) = u.row.split_once("::") else {
+            continue;
+        };
+        let Some(field) = namespaces
+            .iter()
+            .filter(|n| n.key == ns_key)
+            .flat_map(|n| n.fields.iter())
+            .find(|f| f.name == u.field)
+        else {
+            continue;
+        };
+        if time_pattern(&field.r#type).is_none() {
+            continue;
+        }
+        out.push(RegistryFinding {
+            kind:    "unquoted-time",
+            message: format!(
+                "{}: `{} = {}` is a TOML date or time, not a string, and the field `{}` is a `{}`, \
+                 which holds a string in one form. Quote it: `{} = \"{}\"`.",
+                u.row, u.field, u.text, u.field, field.r#type, u.field, u.text
+            ),
+            source:  Some(u.source.clone()),
+        });
+    }
+    out
+}

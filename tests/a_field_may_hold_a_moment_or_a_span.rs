@@ -30,6 +30,11 @@ fn taplo_present() -> bool {
 /// A project with one namespace whose `when` is of type `ty`, and one row holding `value`
 /// in it, as a string.
 fn fixture(root: &Path, ty: &str, value: &str) {
+    fixture_literal(root, ty, &format!("\"{value}\""));
+}
+
+/// As `fixture`, with the row's value written as `literal` in the TOML, quotes or none.
+fn fixture_literal(root: &Path, ty: &str, literal: &str) {
     fs::create_dir_all(root.join(".git")).unwrap();
     let mock = root.join("mock");
     write(
@@ -56,7 +61,7 @@ description = "When it happened, or for how long."
     );
     write(
         &mock.join("registry/a.toml"),
-        &format!("[[event]]\nid = \"first_one\"\nwhen = \"{value}\"\n"),
+        &format!("[[event]]\nid = \"first_one\"\nwhen = {literal}\n"),
     );
 }
 
@@ -163,4 +168,48 @@ fn a_day_the_calendar_lacks_passes_the_form() {
     assert!(ok, "`2026-02-30` is in the form of a date:\n{err}");
     let (ok, _) = outcome("date", "2026-02-3");
     assert!(!ok, "`2026-02-3` is not in the form of a date");
+}
+
+fn outcome_literal(ty: &str, literal: &str) -> (bool, String) {
+    assert!(
+        taplo_present(),
+        "the form is enforced by taplo. Install taplo to run this suite."
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    fixture_literal(tmp.path(), ty, literal);
+    let out = run(tmp.path());
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// A bare TOML date, time or datetime is not a string. Taplo hands it to the schema as
+/// one, so the pattern passes it, and the loader is what refuses it, saying to quote it.
+/// The quoted spelling of each, in the same field, is the control.
+#[test]
+fn a_toml_date_or_time_is_refused_until_it_is_quoted() {
+    let cases = [
+        ("date", "2026-10-28"),
+        ("time", "18:49:05"),
+        ("datetime", "2026-10-27T18:49:00Z"),
+    ];
+    for (ty, text) in cases {
+        let (ok, err) = outcome_literal(ty, text);
+        assert!(!ok, "bare `{text}` in a {ty} field passed:\n{err}");
+        assert!(
+            err.contains("unquoted-time") && err.contains("Quote it"),
+            "`{text}` is refused without saying to quote it:\n{err}"
+        );
+        let (ok, err) = outcome_literal(ty, &format!("\"{text}\""));
+        assert!(ok, "quoted `{text}` is a {ty}:\n{err}");
+    }
+}
+
+/// The same bare date in a `string` field is a different matter: the field holds text
+/// and nothing says it is a moment.
+#[test]
+fn a_toml_date_in_a_string_field_is_left_alone() {
+    let (ok, err) = outcome_literal("string", "2026-10-28");
+    assert!(ok, "{err}");
 }

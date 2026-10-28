@@ -109,7 +109,9 @@ which the generated schema carries and the gate enforces on every row: `date` as
 `datetime` as a date and a time joined by `T` or a space with an offset (`Z`,
 `+02:00`) where the moment is fixed, and `span` as an ISO 8601 duration with at
 least one part, `P3D` or `PT1H30M`. The form is checked and the calendar is not, so
-`2026-02-30` passes.
+`2026-02-30` passes. The value is written quoted: a bare TOML date such as `when = 2026-10-28` is a different
+TOML type, which the schema cannot tell from a string, and the loader refuses it as
+`unquoted-time`.
 
 A type naming neither a builtin nor a declared namespace is reported. It used to
 become a plain string, so a misspelled type, or one naming a namespace that was

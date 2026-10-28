@@ -18,6 +18,7 @@ every row: `date` as `2026-10-28`, `time` as `18:49` (seconds and a fraction of 
 `datetime` as a date and a time joined by `T` or a space with an optional offset
 (`2026-10-27T18:49:00Z`, `2026-10-27 18:49`), and `span` as an ISO 8601 duration
 with at least one part (`P3D`, `PT1H30M`). The form is checked, not the calendar.
+Write the value quoted: a bare TOML date (`when = 2026-10-28`) is refused as `unquoted-time`.
 A namespace may not be named after any of them.
 
 The value is a bare slug, `"display"`, never `"slot::display"`: the type already
