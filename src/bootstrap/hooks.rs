@@ -432,14 +432,25 @@ elif [ -n "$CHANGED_CRATES" ]; then
         ARGS+=(--scope "$CHANGED_CRATES")
     fi
 else
-    echo "  infrastructure-only (no crate files staged)"
-    ARGS+=(--scope infra)
-    # Registry rows and nothing else under the mock directory: no source is staged, which is what
-    # `--doc-only` claims, and the engine checks that claim against the staged index (`verify_doc_only`).
-    # It is the claim a staged registry row made before the registry stopped being a shared input.
     STAGED_NON_REGISTRY=$(printf '%s\n' "$STAGED" | grep -v -e '^$' -e "^$MOCK_DIR/registry/" || true)
-    if [ -z "$STAGED_NON_REGISTRY" ]; then
-        ARGS+=(--doc-only)
+    STAGED_REGISTRY=$(printf '%s\n' "$STAGED" | grep -e "^$MOCK_DIR/registry/" || true)
+    if [ -n "$STAGED_REGISTRY" ] && [ -n "$STAGED_NON_REGISTRY" ]; then
+        # A registry row beside a file that reaches no crate keeps the full scope a staged registry row
+        # always had: a workspace lint (the writing-style one) reads whatever sits beside the row, and
+        # `--scope infra` parses no crates for it to start from.
+        echo "  registry rows beside other files: full scope"
+        if [ -z "$STAGED_SRC" ] && [ -z "$WS_CRATES" ]; then
+            ARGS+=(--doc-only)
+        fi
+    else
+        echo "  infrastructure-only (no crate files staged)"
+        ARGS+=(--scope infra)
+        # Registry rows and nothing else under the mock directory: no source is staged, which is what
+        # `--doc-only` claims, and the engine checks that claim against the staged index (`verify_doc_only`).
+        # It is the claim a staged registry row made before the registry stopped being a shared input.
+        if [ -n "$STAGED_REGISTRY" ] && [ -z "$STAGED_NON_REGISTRY" ]; then
+            ARGS+=(--doc-only)
+        fi
     fi
 fi
 
@@ -576,7 +587,8 @@ if ms_nuked; then
 elif [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] && [ -n "$PUSH_REPO_ONLY" ] && [ -z "$PUSH_NOT_REGISTRY" ]; then
     # No `--doc-only`: the engine skips every source-only lint under it, repo lints included, and the repo lints
     # that read the registry (a citation of a superseded row, a catalogue ignore naming a ticket) are source-only.
-    # The flag is also never verified for a push, whose index is empty.
+    # The flag is checked against whatever is staged when the push runs, not against the pushed commits, so it
+    # would also vouch for nothing about them.
     echo "  scope: repo lints only (the push changes nothing a crate's lints read)"
     ARGS=(--lint-only --strict --scope infra)
 elif [ -n "$FULL_REASON" ] || [ -z "$CHANGED_CRATES" ]; then

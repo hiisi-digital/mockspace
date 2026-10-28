@@ -63,9 +63,9 @@ fn the_commit_branches_pass_these_arguments() {
             "mock --lint-only --commit --scope infra --doc-only",
         ),
         (
-            "registry row beside a note: infra, and no claim that nothing else is staged",
+            "registry row beside a note: the full scope a staged registry row always had, doc-only as no source is staged",
             &[("mock/registry/tenets.toml", "x = 1\n"), ("mock/notes.md", "x\n")],
-            "mock --lint-only --commit --scope infra",
+            "mock --lint-only --commit --doc-only",
         ),
         (
             "config alone: every crate, the claim of no source kept",

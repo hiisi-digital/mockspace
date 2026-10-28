@@ -1189,17 +1189,18 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // because a graphviz that is not installed leaves the previous copy in
         // place and the sweep must not take it.
         generated.push(out.clone());
-        // The stamp is the DOT text this picture was last drawn from, written after a render that
-        // succeeded, so a run that wrote a new DOT file and then failed to draw it (no graphviz, a
-        // kill) leaves a stamp that does not match, and the next run draws. `write_generated` may add
-        // a header, so the text compared is the file as it now stands.
+        // The stamp is the DOT text and the picture bytes of the last render that succeeded
+        // (`graph_picture`), so a run that wrote a new DOT file and failed to draw it, and a git
+        // operation that replaced the tracked picture behind the untracked stamp, each leave a stamp
+        // that does not match the files on disk, and the next run draws. `write_generated` may add a
+        // header, so the text compared is the file as it now stands.
         let stamp = graph_staging.join(format!("STRUCTURE.GRAPH.{ext}.drawn-from"));
         let written_dot = fs::read_to_string(&dot_path).ok();
         if let Some(now) = written_dot.as_deref()
             && graph_picture::picture_is_current(
                 fs::read_to_string(&stamp).ok().as_deref(),
                 now,
-                out.is_file(),
+                fs::read(&out).ok().as_deref(),
             )
         {
             eprintln!("  {} (unchanged)", out.display());
@@ -1222,11 +1223,15 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         match cmd.status() {
             Ok(s) if s.success() => {
                 eprintln!("  {}", out.display());
+                // Whether `out` now holds what this render drew: a staging file that could not be
+                // read leaves the old picture in place, and a stamp over it would call it current.
+                let mut drawn = false;
                 if ext == "svg" {
                     if let Ok(svg_content) = fs::read_to_string(&staging) {
                         let svg_header = render_design::generation_header_svg(&cfg);
                         let commented = format!("{svg_header}\n{svg_content}");
                         render_design::write_generated(&out, &commented);
+                        drawn = true;
                     }
                 } else if let Ok(rendered) = fs::read(&staging) {
                     if fs::read(&out).ok().as_deref() != Some(rendered.as_slice()) {
@@ -1234,9 +1239,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                             panic!("failed to write {}: {e}", out.display())
                         });
                     }
+                    drawn = true;
                 }
-                if let Some(drawn) = fs::read_to_string(&dot_path).ok() {
-                    let _ = fs::write(&stamp, drawn);
+                if drawn
+                    && let (Ok(dot_now), Ok(picture)) =
+                        (fs::read_to_string(&dot_path), fs::read(&out))
+                {
+                    let _ = fs::write(&stamp, graph_picture::stamp_of(&dot_now, &picture));
                 }
             },
             Ok(_) => eprintln!("  dot failed for {ext} (is graphviz installed?)"),
