@@ -251,7 +251,10 @@ fn enum_member(ty: &str, value: &str) -> String {
 pub fn time_pattern(ty: &str) -> Option<&'static str> {
     // FIXME: a closed set of `values` on a time type is not checked against its form
     // at the declaration, as an integer's is, because nothing here reads a pattern; a
-    // listed value written wrong is caught only by the first row that holds it.
+    // listed value written wrong is caught only by the first row that holds it. The
+    // intended behaviour is the ignored test
+    // `a_closed_set_member_that_is_not_in_the_form_of_its_time_type_is_refused` in
+    // `bounds.rs`.
     match ty {
         "date" => Some(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"),
         "time" => Some(r"^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?$"),
