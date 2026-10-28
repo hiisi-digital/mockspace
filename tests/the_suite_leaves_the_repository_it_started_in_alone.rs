@@ -12,11 +12,12 @@
 //! HEAD moved onto test commits, fixture files were staged into the index, a
 //! branch appeared and `user.name` landed in the config.
 //!
-//! This builds a throwaway clone, runs every test that spawns git (the lib
-//! tests, every integration target that names git, and the lint pack's lib
-//! tests) as a child `cargo test` with the hook's variables pointing into the
-//! clone, and holds every byte of the clone, `.git` included, against a
-//! snapshot taken before.
+//! This builds a throwaway clone, runs every test of every workspace member as a
+//! child `cargo test` with the hook's variables pointing into the clone, and
+//! holds every byte of the clone, `.git` included, against a snapshot taken
+//! before. Which targets spawn git is not guessed from their text: a target that
+//! drives git through a helper names it nowhere, and 28 of them were missed that
+//! way.
 //!
 //! The control is that the child ran tests at all: a child that failed to start
 //! leaves the clone untouched too.
@@ -128,8 +129,10 @@ fn differences(
     out
 }
 
-/// The integration targets that spawn git: those whose source names it.
-fn targets_that_spawn_git() -> Vec<String> {
+/// Every top-level integration target of this package, bar the guard itself, by
+/// name and path. Not picked by what the source says: a target that drives git
+/// through a helper names it nowhere.
+fn top_level_targets() -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     for e in fs::read_dir(root().join("tests")).unwrap() {
         let p = e.unwrap().path();
@@ -137,12 +140,8 @@ fn targets_that_spawn_git() -> Vec<String> {
             continue;
         }
         let name = p.file_stem().unwrap().to_string_lossy().into_owned();
-        if name == SELF_TARGET {
-            continue;
-        }
-        let text = fs::read_to_string(&p).unwrap();
-        if text.contains("\"git\"") || text.contains("git_in(") || text.contains("git_init") {
-            out.push(name);
+        if name != SELF_TARGET {
+            out.push((name, p));
         }
     }
     out.sort();
@@ -176,29 +175,14 @@ fn the_suite_leaves_the_repository_it_started_in_alone() {
     let clone = clone_in(base.path());
     let before = snapshot(&clone);
 
-    let targets = targets_that_spawn_git();
+    // every test of every workspace member, this guard aside: which targets
+    // spawn git is not something to guess at from their text
+    let run = run_suite(&clone, &["--workspace"]);
     assert!(
-        targets.len() > 5,
-        "the scan found {} integration targets that name git; it is looking in the wrong place",
-        targets.len()
+        ran_tests(&run),
+        "the child ran no tests, so the clone being untouched proves nothing:\n{}",
+        String::from_utf8_lossy(&run.stderr)
     );
-    let mut root_args = vec!["--lib".to_string()];
-    for t in &targets {
-        root_args.push("--test".into());
-        root_args.push(t.clone());
-    }
-    let root_args: Vec<&str> = root_args.iter().map(String::as_str).collect();
-
-    let root_run = run_suite(&clone, &root_args);
-    let pack_run = run_suite(&clone, &["--package", "mockspace-lint-rules", "--lib"]);
-
-    for (what, out) in [("the root package", &root_run), ("the lint pack", &pack_run)] {
-        assert!(
-            ran_tests(out),
-            "{what}: the child ran no tests, so the clone being untouched proves nothing:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
 
     let after = snapshot(&clone);
     let diff = differences(&before, &after);
@@ -210,4 +194,140 @@ fn the_suite_leaves_the_repository_it_started_in_alone() {
         diff.iter().take(30).cloned().collect::<Vec<_>>().join("\n"),
         git(&clone, &["log", "-1", "--format=%h %s"]).trim()
     );
+}
+
+/// The files that make a test target say it is scrubbed: it includes the one file.
+fn declares_the_scrub(text: &str) -> bool {
+    text.contains("#[path = \"common/ambient.rs\"]")
+}
+
+/// The targets in `targets` whose source does not declare the scrub.
+fn unscrubbed(targets: &[(String, PathBuf)]) -> Vec<String> {
+    targets
+        .iter()
+        .filter(|(_, p)| !declares_the_scrub(&fs::read_to_string(p).unwrap()))
+        .map(|(n, _)| n.clone())
+        .collect()
+}
+
+#[test]
+fn every_top_level_target_declares_the_scrub() {
+    let targets = top_level_targets();
+    assert!(
+        targets.len() > 30,
+        "the scan found {} targets; it is looking in the wrong place",
+        targets.len()
+    );
+    assert_eq!(
+        unscrubbed(&targets),
+        Vec::<String>::new(),
+        "these targets spawn processes without `#[path = \"common/ambient.rs\"] mod ambient;`"
+    );
+}
+
+#[test]
+fn a_target_without_the_scrub_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let bare = dir.path().join("bare.rs");
+    fs::write(
+        &bare,
+        "#[test]\nfn t() { std::process::Command::new(\"git\"); }\n",
+    )
+    .unwrap();
+    let kept = dir.path().join("kept.rs");
+    fs::write(&kept, "#[path = \"common/ambient.rs\"]\nmod ambient;\n").unwrap();
+    assert_eq!(
+        unscrubbed(&[("bare".into(), bare), ("kept".into(), kept)]),
+        vec!["bare".to_string()]
+    );
+}
+
+/// The directories of the workspace members other than the root package, read
+/// from the root manifest's `members` list.
+fn other_members() -> Vec<PathBuf> {
+    let text = fs::read_to_string(root().join("Cargo.toml")).unwrap();
+    let list = text
+        .split("members = [")
+        .nth(1)
+        .and_then(|t| t.split(']').next())
+        .expect("the root manifest lists its members");
+    list.split(',')
+        .map(|m| m.trim().trim_matches('"'))
+        .filter(|m| !m.is_empty() && *m != ".")
+        .map(|m| root().join(m))
+        .collect()
+}
+
+/// Every `.rs` file under `dir`, `target` excluded.
+fn rust_files(dir: &Path, into: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if p.file_name().is_some_and(|n| n != "target") {
+                rust_files(&p, into);
+            }
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            into.push(p);
+        }
+    }
+}
+
+/// Members whose own sources spawn git and whose `lib.rs` does not include the
+/// scrub for its tests.
+fn members_that_spawn_git_unscrubbed(members: &[PathBuf]) -> Vec<String> {
+    let mut out = Vec::new();
+    for m in members {
+        let mut files = Vec::new();
+        rust_files(&m.join("src"), &mut files);
+        let spawns = files.iter().any(|f| {
+            fs::read_to_string(f)
+                .unwrap()
+                .contains("Command::new(\"git\")")
+        });
+        let scrubbed = fs::read_to_string(m.join("src/lib.rs"))
+            .is_ok_and(|t| t.contains("tests/common/ambient.rs"));
+        if spawns && !scrubbed {
+            out.push(m.file_name().unwrap().to_string_lossy().into_owned());
+        }
+    }
+    out
+}
+
+#[test]
+fn every_member_that_spawns_git_scrubs_its_tests() {
+    let members = other_members();
+    assert!(
+        members.len() >= 5,
+        "the scan found {} other members; it is looking in the wrong place",
+        members.len()
+    );
+    assert_eq!(
+        members_that_spawn_git_unscrubbed(&members),
+        Vec::<String>::new(),
+        "these members spawn git and their `src/lib.rs` includes no `tests/common/ambient.rs`"
+    );
+}
+
+#[test]
+fn a_member_that_spawns_git_without_the_scrub_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, lib) in [
+        ("bare", "fn f() { std::process::Command::new(\"git\"); }\n"),
+        (
+            "kept",
+            "fn f() { std::process::Command::new(\"git\"); }\n#[path = \"../../tests/common/ambient.rs\"]\nmod a;\n",
+        ),
+        ("quiet", "fn f() {}\n"),
+    ] {
+        fs::create_dir_all(dir.path().join(name).join("src")).unwrap();
+        fs::write(dir.path().join(name).join("src/lib.rs"), lib).unwrap();
+    }
+    let members: Vec<PathBuf> = ["bare", "kept", "quiet"]
+        .iter()
+        .map(|n| dir.path().join(n))
+        .collect();
+    assert_eq!(members_that_spawn_git_unscrubbed(&members), vec![
+        "bare".to_string()
+    ]);
 }
