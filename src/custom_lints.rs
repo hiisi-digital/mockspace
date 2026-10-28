@@ -10,9 +10,15 @@
 //! be statically compiled into it. Instead the engine builds the repo's lints
 //! into a small cdylib and dlopens it at run time:
 //!
-//! - the repo's own `mock/lints/*.rs` compile into the cdylib, whose build
-//!   tree lives in the **project's own `target/`** (they are project-specific
-//!   source, not shared machine content);
+//! - the repo's own `mock/lints/*.rs` compile into the cdylib, whose generated
+//!   crate lives outside the worktree, in the shared store (`store`), at a
+//!   path keyed by the repo's identity and the revs it builds against, so
+//!   every worktree of one repo at the same revs is the same cargo package and
+//!   shares its dependency builds. The store is under `CARGO_TARGET_DIR` when
+//!   one is set and under `$XDG_CACHE_HOME/mockspace/lints` otherwise. Only
+//!   `<mock>/target/mockspace-lints/shared-dir` stays in the worktree,
+//!   pointing at it. `mock clean` leaves the store alone; the engine removes
+//!   the builds nothing can come back to;
 //! - `[lint-crates]` pack dependencies resolve through cargo's normal global
 //!   cache and link in;
 //! - the cdylib exports one `extern "C"` collector that hands back the boxed
@@ -52,6 +58,8 @@ use crate::bootstrap::{
 };
 use crate::config::Config;
 
+pub(crate) mod store;
+
 /// The `extern "C"` symbol the generated cdylib exports.
 const COLLECT_SYMBOL: &[u8] = b"__mockspace_collect_lints";
 
@@ -63,16 +71,17 @@ pub struct LoadedLints {
     _lib:     libloading::Library,
 }
 
-/// Build and load this repo's custom lints, if it has any. Returns `None` when
-/// the repo declares no `mock/lints/*.rs` and no `[lint-crates]` (the common
-/// case, and a fast path). `lint_rules_dep` is the cargo dependency *value*
-/// for `mockspace-lint-rules`, pin-matched to the running engine, e.g.
-/// `{ package = "mockspace-lint-rules", git = "...", rev = "..." }`.
-pub fn load(
-    cfg: &Config,
-    config_path: &Path,
-    lint_rules_dep: &str,
-) -> Result<Option<LoadedLints>, String> {
+/// What a repo declares for the cdylib to carry.
+struct Content {
+    lints_dir:  PathBuf,
+    lint_files: Vec<String>,
+    packs:      Vec<(String, String)>,
+    tools:      Vec<ToolCrate>,
+}
+
+/// The repo's custom content, or `None` when it declares no `mock/lints/*.rs`,
+/// no `[lint-crates]` and no tool (the common case, and a fast path).
+fn discover(cfg: &Config, config_path: &Path) -> Option<Content> {
     let lints_dir = cfg.mock_dir.join("lints");
     let lint_files = discover_custom_lint_files(&lints_dir);
     let packs = parse_lint_crates(config_path);
@@ -81,38 +90,125 @@ pub fn load(
     // report an unknown subcommand in a repo that plainly declares one.
     let tools = discover_tool_crates(&cfg.mock_dir.join("tools"));
     if lint_files.is_empty() && packs.is_empty() && tools.is_empty() {
-        return Ok(None);
+        return None;
     }
+    Some(Content {
+        lints_dir,
+        lint_files,
+        packs,
+        tools,
+    })
+}
 
-    let gen_dir =
-        crate::build_dir::ensure_under_target(&cfg.mock_dir, &[crate::build_dir::LINT_CRATE]);
+/// Build and load this repo's custom lints, if it has any. Returns `None` when
+/// the repo declares none. `lint_rules_dep` is the cargo dependency *value*
+/// for `mockspace-lint-rules`, pin-matched to the running engine, e.g.
+/// `{ package = "mockspace-lint-rules", git = "...", rev = "..." }`.
+///
+/// The generated crate goes in the machine's shared store, see
+/// [`store::shared_base`].
+pub fn load(
+    cfg: &Config,
+    config_path: &Path,
+    lint_rules_dep: &str,
+) -> Result<Option<LoadedLints>, String> {
+    let Some(content) = discover(cfg, config_path) else {
+        return Ok(None);
+    };
+    let base = store::shared_base(&cfg.repo_root)?;
+    build_and_load(&base, cfg, &content, lint_rules_dep)
+}
+
+/// [`load`] against a store at `base`, for a caller that owns where the
+/// generated crate goes. The tests use it to keep every build, which is about
+/// 85 MB, inside a directory they delete.
+pub fn load_in(
+    base: &Path,
+    cfg: &Config,
+    config_path: &Path,
+    lint_rules_dep: &str,
+) -> Result<Option<LoadedLints>, String> {
+    match discover(cfg, config_path) {
+        Some(content) => build_and_load(base, cfg, &content, lint_rules_dep),
+        None => Ok(None),
+    }
+}
+
+fn build_and_load(
+    base: &Path,
+    cfg: &Config,
+    content: &Content,
+    lint_rules_dep: &str,
+) -> Result<Option<LoadedLints>, String> {
+    // The generated crate lives outside the worktree, at a path keyed by the
+    // repo's identity and the revs it builds against, so every worktree of one
+    // repo at the same revs resolves to the same cargo package and shares one
+    // build. See `store::lints_manifest_path`. A branch pack is resolved to its
+    // tip once, here, and both the key and the manifest are made from that.
+    std::fs::create_dir_all(base)
+        .map_err(|e| format!("could not create {}: {e}", base.display()))?;
+    let packs = store::resolve_packs(
+        &content.packs,
+        &base.join(".pack-pins"),
+        &crate::pack_pin::ls_remote_head,
+    );
+    let manifest = store::lints_manifest_path(base, cfg, lint_rules_dep, &packs);
+    let gen_dir = manifest
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("no directory for {}", manifest.display()))?;
+    crate::build_dir::mark(base);
+    // One crate, several worktrees: each run rewrites it to point at its own
+    // lint sources, so the write, the build and the load are one critical
+    // section.
+    let lock = store::lock_dir(&gen_dir)?;
     write_cdylib_crate(
         &gen_dir,
-        &lints_dir,
-        &lint_files,
+        &content.lints_dir,
+        &content.lint_files,
         &packs,
-        &tools,
+        &content.tools,
         lint_rules_dep,
         cfg,
-        &crate::pack_pin::ls_remote_head,
     )?;
-    let dylib = build_cdylib(&gen_dir, &gen_crate_name(&cfg.mock_dir))?;
+    store::record_owner(&gen_dir, &cfg.mock_dir)?;
+    store::touch_used(&gen_dir)?;
+    #[cfg(test)]
+    store::knobs::pause_between_write_and_build(&gen_dir);
+    let built = build_cdylib(&gen_dir, &gen_crate_name(&gen_dir));
 
     // SAFETY: the cdylib is our own generated crate, built moments ago from
     // this repo's lint sources against the same pinned mockspace-lint-rules
     // the engine uses, so the `Lint`/`CrossCrateLint` vtable layout matches.
     // The returned boxes borrow their vtables from `lib`, so `lib` is stored
     // in `LoadedLints` and outlives them.
-    unsafe { collect(&dylib) }.map(Some)
+    let loaded = built.and_then(|dylib| unsafe { collect(&dylib) }.map(Some));
+    // Released only once the library is mapped. The mapping outlives a later
+    // rebuild by another worktree, and holding the lock for the whole lint run
+    // would serialise every worktree on it.
+    drop(lock);
+    // After the lock, so removing a dead build does not hold up this run's
+    // peers, and for every outcome, so a failed build still clears the dead.
+    let removed = store::reap(
+        base,
+        &gen_dir,
+        std::time::SystemTime::now(),
+        store::STALE_AFTER,
+    );
+    if !removed.is_empty() {
+        eprintln!(
+            "mock: removed {} abandoned lint build(s) under {}",
+            removed.len(),
+            base.display()
+        );
+    }
+    loaded
 }
 
 /// Write the generated cdylib crate (`Cargo.toml` + `src/lib.rs`). Idempotent:
 /// rewrites only when content changes, so cargo's freshness check skips a
-/// rebuild when nothing moved. `resolve` reads a branch pin's tip off its
-/// remote, and is a parameter so the manifest can be written without one.
-// Eight, since the resolver is the one thing the tests have to replace; every
-// other argument is a separate input to the manifest, not a group of one.
-#[allow(clippy::too_many_arguments)]
+/// rebuild when nothing moved. `packs` are the specs cargo is to be handed, a
+/// branch already replaced by the rev of its tip (`store::resolve_packs`).
 pub(crate) fn write_cdylib_crate(
     gen_dir: &Path,
     lints_dir: &Path,
@@ -121,12 +217,11 @@ pub(crate) fn write_cdylib_crate(
     tools: &[ToolCrate],
     lint_rules_dep: &str,
     cfg: &Config,
-    resolve: &dyn Fn(&str, &str) -> Result<String, String>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(gen_dir.join("src"))
         .map_err(|e| format!("could not create {}: {e}", gen_dir.display()))?;
 
-    let crate_name = gen_crate_name(&cfg.mock_dir);
+    let crate_name = gen_crate_name(gen_dir);
     // A leading empty `[workspace]` makes this generated crate its own workspace
     // root. Without it, sitting under `<mock>/target/`, cargo treats it as a
     // member of the consumer's mock workspace and refuses to build it
@@ -137,12 +232,13 @@ pub(crate) fn write_cdylib_crate(
          [lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\n\
          mockspace = {lint_rules_dep}\n"
     );
-    // A pack pinned by branch is written at the branch's tip, or cargo would
-    // hold it at whatever the tip was on the first build. `pack_pin` says why.
-    let pins = gen_dir.join(".pack-pins");
+    // A pack pinned by branch arrives at the branch's tip, or cargo would hold
+    // it at whatever the tip was on the first build. `pack_pin` says why.
     for (name, spec) in packs {
-        let said = format!("lint pack `{name}`");
-        let spec = crate::pack_pin::spec_for_cargo(&said, spec, &pins, resolve);
+        // A relative path is written as cargo reads it from
+        // `<mock>/target/mockspace-lints`, and this crate no longer sits there.
+        let spec =
+            store::absolutize_path_pack(spec, &crate::build_dir::lint_crate_dir(&cfg.mock_dir));
         manifest.push_str(&format!("{name} = {spec}\n"));
     }
     // Tool crates are path dependencies, discovered by directory rather than
@@ -388,6 +484,16 @@ fn extract_between(s: &str, start: &str, end: &str) -> Option<String> {
 /// `extern "C"` collector that fills the caller's vecs. Mirrors the proxy's
 /// `generate_custom_lint_main`, but as a collector rather than a `main`, and
 /// against the `mockspace` package-rename so the lint files compile unchanged.
+///
+/// The `#[path]` of each lint file is the absolute path in the worktree that is
+/// running, so this text differs between worktrees and a switch recompiles the
+/// generated crate. That is deliberate. Making it identical (a symlink inside
+/// the store pointing at the running worktree's `lints/`, say) would leave
+/// cargo comparing the modification time of whatever the link points at now
+/// with the build's record of what it pointed at then, so a switch to a
+/// worktree whose lint files are older than the last build would be judged
+/// fresh and the other worktree's library loaded. What the worktrees share is
+/// the dependency graph, which is the 85 MB; the one small crate is rebuilt.
 fn gen_collect_lib(
     lints_dir: &Path,
     lint_files: &[String],
@@ -467,11 +573,19 @@ fn gen_collect_lib(
     out
 }
 
-/// Name of the generated crate. Unique per project so several of them can share
-/// one target dir without colliding, which is the point of not pinning
-/// `--target-dir` below. Run-local hash, not a persisted key.
-fn gen_crate_name(mock_dir: &Path) -> String {
-    format!("mockspace-lints-{:016x}", path_hash(mock_dir))
+/// Name of the generated crate: the name of the directory it sits in, which is
+/// the key `lints_manifest_path` derived from the repo's identity and its revs.
+/// Distinct keys are distinct packages, so several of them share one target dir
+/// without colliding; the same key from any worktree is the same package.
+fn gen_crate_name(gen_dir: &Path) -> String {
+    let key: String = gen_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '-' })
+        .collect();
+    format!("mockspace-lints-{key}")
 }
 
 /// `cargo build` the cdylib and return the built library path.
@@ -621,13 +735,6 @@ unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
         pack,
         _lib: lib,
     })
-}
-
-fn path_hash(p: &Path) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    p.hash(&mut h);
-    h.finish()
 }
 
 fn write_if_changed(path: &Path, content: &str) -> Result<(), String> {
@@ -830,7 +937,6 @@ mod tests {
             std::slice::from_ref(&t),
             "{ package = \"mockspace-lint-rules\", git = \"u\", rev = \"r\" }",
             &cfg,
-            &|_: &str, _: &str| -> Result<String, String> { unreachable!("no branch pack here") },
         )
         .unwrap();
         let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();
@@ -885,7 +991,6 @@ mod tests {
             &[],
             dep,
             &cfg,
-            &|_: &str, _: &str| -> Result<String, String> { unreachable!("no branch pack here") },
         )
         .unwrap();
         let manifest = std::fs::read_to_string(gen_dir.join("Cargo.toml")).unwrap();

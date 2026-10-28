@@ -53,18 +53,11 @@ fn fixture(root: &Path, tool: &str) -> std::path::PathBuf {
 }
 
 fn engine(mock: &Path, args: &[&str]) -> Output {
-    common::mockspace()
-        .args(args)
-        // Cleared, not inherited. The engine builds the tool cdylib by shelling
-        // out to cargo and then looks for the artifact under the fixture's own
-        // `target/`. With `CARGO_TARGET_DIR` set in the caller's environment,
-        // which is the ordinary state on a machine sharing one build directory
-        // across worktrees, cargo reports success and the artifact lands
-        // somewhere else, so the engine blocks with "cargo reported success but
-        // no lint cdylib was found". That is an artefact of the harness rather
-        // than a fact about the code, and it made two arms of this file red for
-        // a reason unrelated to what they assert.
-        .env_remove("CARGO_TARGET_DIR")
+    let mut cmd = common::mockspace();
+    // The store beside the fixture, and no inherited shared target dir, which
+    // would send the build somewhere the test does not delete.
+    lint_cache::isolate(&mut cmd, mock);
+    cmd.args(args)
         .current_dir(mock)
         .output()
         .expect("the binary runs")
@@ -214,3 +207,7 @@ fn a_pack_registering_another_name_says_mismatch() {
 /// Takes the machine's git environment out of this process before `main`.
 #[path = "common/ambient.rs"]
 mod ambient;
+
+/// Keeps the generated lint crate inside the test's own directory.
+#[path = "common/lint_cache.rs"]
+mod lint_cache;

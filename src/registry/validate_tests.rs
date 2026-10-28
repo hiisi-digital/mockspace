@@ -13,7 +13,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{FIELD_KEYS, FINDING_KINDS, NAMESPACE_KEYS};
+use super::{FIELD_KEYS, FINDING_KINDS, NAMESPACE_KEYS, UNREAD_NAMESPACE_KEYS};
 
 const MODEL: &str = include_str!("model.rs");
 
@@ -90,11 +90,21 @@ fn kinds_named(sources: &[&str]) -> BTreeSet<String> {
 
 #[test]
 fn namespace_keys_match_the_struct() {
+    let carried = serde_keys(MODEL, "RegistryNamespace");
+    let unread = listed(UNREAD_NAMESPACE_KEYS);
+    assert!(
+        unread.is_disjoint(&carried),
+        "a key the struct reads is listed as unread, which would hide it from this check: {:?}",
+        unread.intersection(&carried).collect::<Vec<_>>()
+    );
+    let mut expected = carried;
+    expected.extend(unread);
     assert_eq!(
         listed(NAMESPACE_KEYS),
-        serde_keys(MODEL, "RegistryNamespace"),
+        expected,
         "a key the struct reads and the list lacks is reported as unknown in a \
-         valid config, and one the list has and the struct lacks is accepted and dropped"
+         valid config, and one the list has and the struct lacks is accepted and dropped \
+         unless `UNREAD_NAMESPACE_KEYS` says another tool reads it"
     );
 }
 

@@ -518,6 +518,10 @@ Three sources contribute rules:
    | `pub fn message_lint()` | message | an authored commit message or PR body |
 
    `repo_lint()` is the one to reach for in a repository that has no packages, since it is the only kind whose input does not come from the package list. The engine discovers whichever are present and compiles them into one cdylib alongside the built-in lints.
+
+   The generated crate and its build are not under the worktree. They live in a store shared by every worktree of the repository: `$CARGO_TARGET_DIR/mockspace-lints/` when that variable is set (a relative value is read against the repository root), else `$XDG_CACHE_HOME/mockspace/lints/`, else `~/.cache/mockspace/lints/`. A machine where none of those can be named gets an error and not a shared temporary directory. One directory per key holds one crate, where the key is a hash of the origin url, the mock directory below the repository root, the engine's lint-rules dependency and each pack at its resolved revision. Worktrees with the same key share the dependency build and take a lock for the write, the build and the load, so two runs at once never load each other's lints; a run rewrites the crate to its own lint sources, which recompiles that one crate. `<mock>/target/mockspace-lints/shared-dir` records which directory the worktree last wrote, and `cargo mock test` tests the lint crate only while that worktree is still the one that wrote it, and fails saying so when another has rewritten it since.
+
+   `cargo mock clean` does not touch the store. Each run removes the directories whose recorded worktree no longer exists, and those unused for fourteen days; a directory a run holds the lock of is never removed. To free one by hand, delete the directory `shared-dir` names.
 3. **Config-driven rules** under `[lints.forbidden-imports]` and friends in `mockspace.toml`.
 
 Each lint has a `commit` / `build` / `push` level. Violations at `error` fail the pipeline; `warn` prints without failing; `info` is purely informational.

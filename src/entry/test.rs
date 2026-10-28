@@ -60,6 +60,7 @@ use std::process::ExitCode;
 
 use crate::build_dir::{inherited_target_dir, may_pass_target_dir as may_share};
 use crate::config::Config;
+use crate::custom_lints::store::{self, Generated};
 use crate::entry::test_benches;
 
 /// One tree, its label, and where its manifest lives.
@@ -224,22 +225,35 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     // The generated lint crate, which exists only after something generates it.
     // Not generated here: generating is the lint path's job and doing it from
     // the test path would mean two places that know how.
-    let lints_gen =
-        crate::build_dir::ensure_under_target(&cfg.mock_dir, &[crate::build_dir::LINT_CRATE]);
-    if lints_gen.join("Cargo.toml").exists() {
-        trees.push(Tree {
-            what:     "lints",
-            dir:      lints_gen,
-            because:  "generated under target/, its own workspace, never a member",
-            own_root: true,
-            members:  false,
-        });
-    } else {
-        eprintln!(
-            "note: the lint crate has not been generated, so `mock/lints/*.rs` tests are \
-             not in this run. `mock check` generates it."
-        );
-    }
+    //
+    // It is shared by every worktree of the repo at the same revs, and the last
+    // run to write it points it at its own sources, so it is tested only while
+    // it is still this worktree's. When another worktree has rewritten it the run
+    // fails rather than leaving the tree out: a green `mock test` that skipped
+    // the lints is indistinguishable from one that ran them.
+    let lints_gen = match lints_tree_for(store::generated_dir_of(&cfg.mock_dir)) {
+        Ok(Some(dir)) => {
+            trees.push(Tree {
+                what:     "lints",
+                dir:      dir.clone(),
+                because:  "generated outside the worktree, its own workspace, never a member",
+                own_root: true,
+                members:  false,
+            });
+            Some(dir)
+        },
+        Ok(None) => {
+            eprintln!(
+                "note: the lint crate has not been generated for this worktree, so \
+                 `mock/lints/*.rs` tests are not in this run. `mock check` generates it."
+            );
+            None
+        },
+        Err(why) => {
+            eprintln!("mock test: {why}");
+            return ExitCode::FAILURE;
+        },
+    };
 
     if !orphaned.is_empty() {
         eprintln!(
@@ -324,6 +338,16 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
         if !ok {
             failed.push(format!("{} at {}", t.what, t.dir.display()));
         }
+    }
+
+    // The lock is not held while the lints tree runs, since that would stop every
+    // peer's lint run for as long as the tests take. So whether a peer rewrote the
+    // crate under the run is asked afterwards, and the run is not green if one did.
+    if let Some(dir) = &lints_gen
+        && rewritten_during(dir, &store::generated_dir_of(&cfg.mock_dir))
+    {
+        eprintln!("mock test: {}", lint_crate_rewritten(dir));
+        failed.push(format!("lints at {}", dir.display()));
     }
 
     // Last, since building the members writes the workspace lockfile, which is
@@ -500,3 +524,43 @@ fn is_orphaned(crate_dir: &Path, mock_dir: &Path) -> bool {
 #[cfg(test)]
 #[path = "test_tests.rs"]
 mod tests;
+
+/// The lints tree this worktree may test, given where the shared crate stands.
+///
+/// `Ok(None)` is a crate never generated here, which is a note and not a
+/// failure. A crate another worktree has rewritten is an error: leaving the
+/// tree out would report green for a run that tested nothing of this worktree's
+/// lints.
+fn lints_tree_for(state: Generated) -> Result<Option<PathBuf>, String> {
+    match state {
+        Generated::Yours(dir) => Ok(Some(dir)),
+        Generated::Absent => Ok(None),
+        Generated::Taken {
+            dir,
+            owner,
+        } => Err(lint_crate_taken(&dir, &owner)),
+    }
+}
+
+fn lint_crate_taken(dir: &Path, owner: &str) -> String {
+    format!(
+        "the lint crate at {} was last written by {owner}, so it holds that worktree's lints \
+         and not this one's. Testing it would test theirs. Run `mock check` here to write it \
+         again, then run this again.",
+        dir.display()
+    )
+}
+
+/// Whether the crate at `dir` has stopped being this worktree's since the run began.
+fn rewritten_during(dir: &Path, now: &Generated) -> bool {
+    !matches!(now, Generated::Yours(d) if d == dir)
+}
+
+fn lint_crate_rewritten(dir: &Path) -> String {
+    format!(
+        "another worktree rewrote the lint crate at {} while its tests ran, so the result is \
+         not of this worktree's lints. Run `mock check` here to write it again, then run this \
+         again.",
+        dir.display()
+    )
+}
