@@ -6,9 +6,9 @@
 //! The generated hooks find a crate through the project's declared `src_dirs`.
 //!
 //! Each arm runs the generated bash against a fixture git repository and reads
-//! what the hook printed about the scope it chose. `cargo mock` is not on the
-//! path in these runs and the hook fails when it reaches it, which is after
-//! everything asserted here has been printed.
+//! what the hook printed about the scope it chose, and the arguments it passed
+//! to `cargo mock`. A stub `cargo` on the path records those arguments and
+//! passes, so what the hook said and what it did are both asserted.
 
 use std::fs;
 use std::path::Path;
@@ -63,11 +63,16 @@ fn stub_bin() -> &'static Path {
 
         let bin = std::env::temp_dir().join(format!("ms_hook_stubs_{}", std::process::id()));
         fs::create_dir_all(&bin).unwrap();
-        for name in ["mock", "cargo-mock"] {
+        // `cargo` records its arguments, one call to a line, in the file the run
+        // names, and passes. The others serve the byline scan.
+        for name in ["mock", "cargo-mock", "cargo"] {
             let path = bin.join(name);
             let mut f = fs::File::create(&path).unwrap();
-            f.write_all(b"#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n")
-                .unwrap();
+            f.write_all(
+                b"#!/usr/bin/env bash\ncat >/dev/null\n\
+                  [ -n \"$MS_STUB_ARGS\" ] && echo \"$*\" >> \"$MS_STUB_ARGS\"\nexit 0\n",
+            )
+            .unwrap();
             f.sync_all().unwrap();
             drop(f);
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
@@ -76,7 +81,9 @@ fn stub_bin() -> &'static Path {
     })
 }
 
-fn run(hook_text: &str, root: &Path, stdin: &str) -> String {
+/// What the hook printed, and the arguments of each `cargo` call it made.
+fn run_full(hook_text: &str, root: &Path, stdin: &str) -> (String, Vec<String>) {
+    let args_file = root.join("cargo.args");
     let hook = root.join("hook.sh");
     fs::write(&hook, hook_text).unwrap();
     let bin = stub_bin();
@@ -90,6 +97,7 @@ fn run(hook_text: &str, root: &Path, stdin: &str) -> String {
         .current_dir(root)
         .env("PATH", path)
         .env("HOME", root)
+        .env("MS_STUB_ARGS", &args_file)
         .env_remove("XDG_CONFIG_HOME")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -106,27 +114,50 @@ fn run(hook_text: &str, root: &Path, stdin: &str) -> String {
             .unwrap();
     }
     let out = child.wait_with_output().unwrap();
-    format!(
+    let printed = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
-    )
+    );
+    let calls = fs::read_to_string(&args_file)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    (printed, calls)
 }
 
-/// What the pre-commit hook for `src_dirs` prints with `files` staged.
-fn commit_says(src_dirs: &[&str], files: &[(&str, &str)]) -> String {
+/// The arguments of the call that carries the scope decision.
+fn scope_call(calls: &[String]) -> String {
+    let found: Vec<&String> = calls.iter().filter(|c| c.contains("--lint-only")).collect();
+    assert_eq!(found.len(), 1, "one scoped call, got {calls:?}");
+    found[0].clone()
+}
+
+fn run(hook_text: &str, root: &Path, stdin: &str) -> String {
+    run_full(hook_text, root, stdin).0
+}
+
+/// What the pre-commit hook for `src_dirs` prints with `files` staged, and the
+/// arguments it passes to `cargo mock`.
+fn commit_run(src_dirs: &[&str], files: &[(&str, &str)]) -> (String, String) {
     let tmp = fixture();
     stage(tmp.path(), files);
-    run(
+    let (printed, calls) = run_full(
         &gen_pre_commit("mock", src_dirs, &tmp.path().join("no-user-hook")),
         tmp.path(),
         "",
-    )
+    );
+    (printed, scope_call(&calls))
+}
+
+fn commit_says(src_dirs: &[&str], files: &[(&str, &str)]) -> String {
+    commit_run(src_dirs, files).0
 }
 
 /// What the pre-push hook for `src_dirs` prints for a push of `files` on top of
-/// a base commit.
-fn push_says(src_dirs: &[&str], files: &[(&str, &str)]) -> String {
+/// a base commit, and the arguments it passes to `cargo mock`.
+fn push_run(src_dirs: &[&str], files: &[(&str, &str)]) -> (String, String) {
     let tmp = fixture();
     let root = tmp.path();
     stage(root, &[("README", "base\n")]);
@@ -136,11 +167,16 @@ fn push_says(src_dirs: &[&str], files: &[(&str, &str)]) -> String {
     git(root, &["commit", "-q", "-m", "work"]);
     let head = git(root, &["rev-parse", "HEAD"]);
     let line = format!("refs/heads/m {head} refs/heads/m {base}\n");
-    run(
+    let (printed, calls) = run_full(
         &gen_pre_push("mock", src_dirs, &root.join("no-user-hook")),
         root,
         &line,
-    )
+    );
+    (printed, scope_call(&calls))
+}
+
+fn push_says(src_dirs: &[&str], files: &[(&str, &str)]) -> String {
+    push_run(src_dirs, files).0
 }
 
 #[test]
@@ -352,4 +388,100 @@ fn ensure_generated_hooks_writes_the_declared_directories() {
         hook.contains("SRC_DIRS=('crates' 'applets/console/crates')"),
         "{hook}"
     );
+}
+
+/// The labels the hook echoes and the arguments it hands the launcher are two
+/// things, and only the second decides what runs. Each branch is asserted on the
+/// arguments the stub `cargo` recorded.
+#[test]
+fn the_commit_branches_pass_these_arguments() {
+    let table: &[(&str, &[(&str, &str)], &str)] = &[
+        (
+            "one crate",
+            &[(CONSOLE_SRC, "fn x() {}\n")],
+            "mock --lint-only --commit --scope console-core",
+        ),
+        (
+            "doc-only crate",
+            &[(
+                "mock/applets/console/crates/console-core/DESIGN.md.tmpl",
+                "x\n",
+            )],
+            "mock --lint-only --commit --scope console-core --doc-only",
+        ),
+        (
+            "no crate",
+            &[("mock/notes.md", "x\n")],
+            "mock --lint-only --commit --scope infra",
+        ),
+        (
+            "shared input beside source",
+            &[(CONSOLE_SRC, "fn x() {}\n"), ("mock/registry/tenets.toml", "x = 1\n")],
+            "mock --lint-only --commit",
+        ),
+        (
+            "shared input alone",
+            &[("mock/registry/tenets.toml", "x = 1\n")],
+            "mock --lint-only --commit --doc-only",
+        ),
+    ];
+    for (what, files, want) in table {
+        let (out, args) = commit_run(KASKI, files);
+        assert_eq!(args, *want, "{what}: hook said:\n{out}");
+    }
+}
+
+#[test]
+fn the_push_branches_pass_these_arguments() {
+    let table: &[(&str, &[(&str, &str)], &str)] = &[
+        (
+            "one crate",
+            &[(CONSOLE_SRC, "fn x() {}\n")],
+            "mock --lint-only --strict --scope console-core",
+        ),
+        (
+            "no crate",
+            &[("README.md", "x\n")],
+            "mock --lint-only --strict",
+        ),
+        (
+            "shared input beside source",
+            &[(CONSOLE_SRC, "fn x() {}\n"), ("mock/registry/tenets.toml", "x = 1\n")],
+            "mock --lint-only --strict",
+        ),
+    ];
+    for (what, files, want) in table {
+        let (out, args) = push_run(KASKI, files);
+        assert_eq!(args, *want, "{what}: hook said:\n{out}");
+    }
+}
+
+/// A `mockspace.toml` a crate keeps as a test fixture is that crate's file, and
+/// the config is named only where it lives: the repo root and the mock directory.
+#[test]
+fn a_fixture_named_like_the_config_stays_scoped_to_its_crate() {
+    let fixture = "mock/applets/console/crates/console-core/tests/fixture/kaski/mockspace.toml";
+    let (out, args) = commit_run(KASKI, &[(CONSOLE_SRC, "fn x() {}\n"), (fixture, "x = 1\n")]);
+    assert_eq!(
+        args, "mock --lint-only --commit --scope console-core",
+        "{out}"
+    );
+    let (out, args) = push_run(KASKI, &[(CONSOLE_SRC, "fn x() {}\n"), (fixture, "x = 1\n")]);
+    assert_eq!(
+        args, "mock --lint-only --strict --scope console-core",
+        "{out}"
+    );
+}
+
+/// A project lint is compiled into the run, so a commit that edits one and no
+/// crate must not be scoped to `infra`, where the changed lint never runs.
+#[test]
+fn a_project_lint_is_a_shared_input() {
+    let (out, args) = commit_run(KASKI, &[("mock/lints/no-foo/src/lib.rs", "fn l() {}\n")]);
+    assert_eq!(args, "mock --lint-only --commit", "{out}");
+    let (out, args) = push_run(KASKI, &[
+        (CONSOLE_SRC, "fn x() {}\n"),
+        ("mock/lints/no-foo/src/lib.rs", "fn l() {}\n"),
+    ]);
+    assert_eq!(args, "mock --lint-only --strict", "{out}");
 }

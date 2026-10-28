@@ -157,10 +157,13 @@ ms_nuked() {{
     return 1
 }}
 
-# The inputs every crate shares: the registry, the config, and the mock
-# workspace's manifest and lockfile. A change to one reaches all of them, so it
-# is never bounded to the crates a commit or push also touches.
-MS_SHARED=("$MOCK_DIR/registry/" "$MOCK_DIR/Cargo.toml" "$MOCK_DIR/Cargo.lock" ':(glob)**/mockspace.toml')
+# The inputs every crate shares: the registry, the project lints, the config,
+# and the mock workspace's manifest and lockfile. A change to one reaches all of
+# them, so it is never bounded to the crates a commit or push also touches. The
+# config is named at the two places it lives, the repo root and the mock
+# directory, and nowhere deeper: a fixture of that name under a source
+# directory belongs to its crate.
+MS_SHARED=("$MOCK_DIR/registry/" "$MOCK_DIR/lints/" "$MOCK_DIR/Cargo.toml" "$MOCK_DIR/Cargo.lock" "mockspace.toml" "$MOCK_DIR/mockspace.toml")
 "##,
         dirs = words.join(" "),
     )
@@ -495,7 +498,9 @@ if [ "$SHARED_STAGED" = "1" ]; then
     # holds when nothing under a source directory is a staged `.rs` file, and
     # the engine verifies the claim against the same layout.
     echo "  shared inputs staged: full scope"
-    if [ -z "$STAGED_RS" ]; then
+    # A staged project lint is code the run has to compile and run, which
+    # `--doc-only` would skip, so it keeps the flag off.
+    if [ -z "$STAGED_RS" ] && git diff --cached --quiet -- "$MOCK_DIR/lints/" 2>/dev/null; then
         ARGS+=(--doc-only)
     fi
 elif [ -n "$CHANGED_CRATES" ]; then
@@ -1633,15 +1638,15 @@ mod generated_pre_commit_tests {
     }
 
     #[test]
-    fn a_lint_and_a_tool_staged_beside_a_doc_change_are_still_doc_only() {
-        // The same reading one directory over, twice. Neither `lints/` nor
-        // `tools/` is a declared source directory either.
+    fn a_tool_staged_beside_a_doc_change_is_still_doc_only() {
+        // The same reading one directory over. `tools/` is not a declared source
+        // directory either. `lints/` is a shared input and runs everything, which
+        // the arms in `hooks_src_dirs_tests` pin.
         let (hook, engine) = both_sides(&[
             ("mock/crates/foo/DESIGN.md.tmpl", "x\n"),
-            ("mock/lints/a_row_carries_keywords.rs", "fn lint() {}\n"),
             ("mock/tools/a-tool/src/lib.rs", "fn t() {}\n"),
         ]);
-        assert!(hook, "neither is source to any gate");
+        assert!(hook, "a tool is not source to any gate");
         assert_eq!(hook, engine, "the two sides disagree about the same tree");
     }
 
@@ -1680,7 +1685,7 @@ mod generated_pre_commit_tests {
     /// `changelist_lock` and `changelist_required` both carry arms over
     /// `["crates", "libs"]`, so the shape is real rather than hypothetical.
     #[test]
-    fn a_declared_source_directory_outside_crates_deadlocks() {
+    fn the_hook_and_the_engine_agree_on_a_declared_source_directory_outside_crates() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
@@ -1718,6 +1723,11 @@ mod generated_pre_commit_tests {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
+        assert!(
+            printed.contains("crates: bar,foo"),
+            "the hook found both crates through the declared directories, and \
+             an early exit prints nothing: {printed}"
+        );
         let hook_claims_doc_only = printed.contains(DOC_ONLY);
 
         // The project declares both, which is what makes `mock/libs/bar/src`
@@ -1737,23 +1747,16 @@ mod generated_pre_commit_tests {
         );
     }
 
-    /// The same blindness one branch over, and this one nothing refuses.
+    /// Source under a declared directory and nothing under `crates/` is scoped
+    /// to its own crate.
     ///
-    /// Where the arm above stages source under a declared directory *beside*
-    /// something under `crates/`, this one stages source under the declared
-    /// directory and nothing else. `CHANGED_CRATES` is built from the same
-    /// literal, so it comes out empty, the hook takes the
-    /// `infrastructure-only` branch and passes `--scope infra`, and the crate
-    /// lints never run over the source that was staged.
-    ///
-    /// The deadlock above is loud: the guard refuses and somebody reads the
-    /// message. This is silent, and it is the worse of the two, because green
-    /// is what it looks like.
-    ///
-    /// One threading of `src_dirs` closes both, and closing only the loud one
-    /// reads as closing the class.
+    /// `CHANGED_CRATES` is built from the declaration, so the crate is found, the
+    /// hook does not take the `infrastructure-only` branch, and the crate lints
+    /// run over the source that was staged. Scoping it to `infra` would not fail
+    /// anything: green is what that looks like, so the arm asserts the crate
+    /// named and the branch not taken.
     #[test]
-    fn source_under_a_declared_directory_alone_scopes_to_infra() {
+    fn source_under_a_declared_directory_alone_is_scoped_to_its_crate() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
@@ -1792,6 +1795,11 @@ mod generated_pre_commit_tests {
             String::from_utf8_lossy(&out.stderr)
         );
 
+        assert!(
+            printed.contains("crates: bar"),
+            "the hook found the crate through the declared directory, and an early \
+             exit prints nothing: {printed}"
+        );
         assert!(
             !printed.contains("infrastructure-only"),
             "staged source scoped to `infra`, so no crate lint ran over it: {printed}"
