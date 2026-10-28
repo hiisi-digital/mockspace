@@ -42,6 +42,7 @@ pub mod parse;
 pub mod pdf;
 pub mod registry;
 mod append_merge;
+mod registry_append;
 mod registry_merge;
 pub mod render;
 pub mod render_agent;
