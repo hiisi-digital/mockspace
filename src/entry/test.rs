@@ -224,19 +224,22 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     // The generated lint crate, which exists only after something generates it.
     // Not generated here: generating is the lint path's job and doing it from
     // the test path would mean two places that know how.
-    let lints_gen =
-        crate::build_dir::ensure_under_target(&cfg.mock_dir, &[crate::build_dir::LINT_CRATE]);
-    if lints_gen.join("Cargo.toml").exists() {
+    //
+    // It is shared by every worktree of the repo at the same revs, and the last
+    // run to write it points it at its own sources, so it is tested only while
+    // it is still this worktree's.
+    if let Some(lints_gen) = crate::custom_lints::generated_dir_of(&cfg.mock_dir) {
         trees.push(Tree {
             what:     "lints",
             dir:      lints_gen,
-            because:  "generated under target/, its own workspace, never a member",
+            because:  "generated outside the worktree, its own workspace, never a member",
             own_root: true,
             members:  false,
         });
     } else {
         eprintln!(
-            "note: the lint crate has not been generated, so `mock/lints/*.rs` tests are \
+            "note: the lint crate has not been generated for this worktree, or another \
+             worktree of the repo has regenerated it since, so `mock/lints/*.rs` tests are \
              not in this run. `mock check` generates it."
         );
     }

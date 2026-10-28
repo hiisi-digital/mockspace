@@ -135,16 +135,21 @@ fn a_tool_runs_with_cargo_target_dir_set_in_the_environment() {
 
 #[test]
 #[ignore = "runs cargo build; run with --ignored"]
-fn without_the_variable_the_artifact_lands_under_the_generated_crate() {
+fn without_the_variable_the_artifact_lands_under_the_shared_generated_crate() {
     // the control. without it, arm two above is equally consistent with an
     // engine that writes to `elsewhere` no matter what the environment says.
+    // The generated crate is outside the worktree now, in the user's cache, so
+    // that is where cargo's default puts the build.
     let tmp = tempfile::tempdir().unwrap();
     let mock = fixture(tmp.path());
+    let cache = tmp.path().join("cache");
+    let base = cache.join("mockspace").join("lints");
 
     let dep = dep_spec();
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_mockspace"))
         .args(["--mockspace-lint-rules-dep", &dep, "greet"])
         .env_remove("CARGO_TARGET_DIR")
+        .env("XDG_CACHE_HOME", &cache)
         .current_dir(&mock)
         .output()
         .expect("the binary runs");
@@ -156,16 +161,22 @@ fn without_the_variable_the_artifact_lands_under_the_generated_crate() {
 
     assert!(all.contains("the tool that actually ran"), "{all}");
     assert!(
-        cdylibs_under(&mock.join("target").join("mockspace-lints")) > 0,
-        "with no variable set, cargo's default puts it under the generated crate"
+        cdylibs_under(&base) > 0,
+        "with no variable set, cargo's default puts it under the shared generated crate"
+    );
+    assert_eq!(
+        cdylibs_under(&mock.join("target").join("mockspace-lints")),
+        0,
+        "and nothing is built inside the worktree"
     );
     // and the build tree it just made is out of the desktop index, without the
     // project having had to know the indexer exists. two throwaway trees with
     // no marker put four mdworkers and mds on the cpu at once.
-    assert!(
-        mock.join("target").join(".metadata_never_index").is_file(),
-        "the engine marks the build tree it creates"
-    );
+    let marked = fs::read_dir(&base)
+        .unwrap()
+        .flatten()
+        .any(|e| e.path().join("target").join(".metadata_never_index").is_file());
+    assert!(marked, "the engine marks the build tree it creates");
 }
 
 /// How many loadable libraries sit anywhere under `root`.
