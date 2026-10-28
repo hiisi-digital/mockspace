@@ -189,11 +189,11 @@ fn engine(mock: &Path, args: &[&str]) -> Output {
     let dep = dep_spec();
     let mut all = vec!["--mockspace-lint-rules-dep", dep.as_str()];
     all.extend_from_slice(args);
-    Command::new(env!("CARGO_BIN_EXE_mockspace"))
-        .args(&all)
-        // See `tool_not_found_messages.rs`: an inherited shared target dir
-        // sends the cdylib somewhere the engine does not look.
-        .env_remove("CARGO_TARGET_DIR")
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_mockspace"));
+    // The store beside the fixture, and no inherited shared target dir, which
+    // would send the build somewhere the test does not delete.
+    lint_cache::isolate(&mut cmd, mock);
+    cmd.args(&all)
         // Discovery stops at the fixture, so a repository above the temp
         // directory can never answer for it.
         .env("GIT_CEILING_DIRECTORIES", mock.parent().and_then(Path::parent).unwrap_or(mock))
@@ -385,3 +385,7 @@ fn a_maker_writing_where_its_argument_says_is_held_to_the_resolved_root() {
 /// Takes the machine's git environment out of this process before `main`.
 #[path = "common/ambient.rs"]
 mod ambient;
+
+/// Keeps the generated lint crate inside the test's own directory.
+#[path = "common/lint_cache.rs"]
+mod lint_cache;

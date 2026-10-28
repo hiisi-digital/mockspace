@@ -34,6 +34,10 @@ mod ambient;
 #[path = "common/exec.rs"]
 mod exec;
 
+/// Keeps the generated lint crate inside the test's own directory.
+#[path = "common/lint_cache.rs"]
+mod lint_cache;
+
 /// A lint refusing any commit whose author or committer names `Claude`.
 const PROBE: &str = r#"use mockspace::{Lint, LintError, MessageContext, MessageLint};
 
@@ -106,8 +110,9 @@ fn fixture() -> Fixture {
     exec::write_executable(
         &launcher,
         format!(
-            "#!/bin/sh\nexport MOCKSPACE_NO_AUTO_ACTIVATE=1\nexec '{}' --dir '{}' \
+            "#!/bin/sh\nexport MOCKSPACE_NO_AUTO_ACTIVATE=1\nexport XDG_CACHE_HOME='{}'\nunset CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR\nexec '{}' --dir '{}' \
              --mockspace-lint-rules-dep '{{ package = \"mockspace-lint-rules\", path = \"{}\" }}' \"$@\"\n",
+            lint_cache::cache_in(&root).display(),
             env!("CARGO_BIN_EXE_mockspace"),
             mock.display(),
             lint_rules
