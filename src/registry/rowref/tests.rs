@@ -218,7 +218,10 @@ fn a_type_naming_a_declared_namespace_is_not_reported() {
 /// the code.
 #[test]
 fn every_scalar_type_is_accepted() {
-    let literal = ["string", "string[]", "integer", "boolean", "ref", "ref[]"];
+    let literal = [
+        "string", "string[]", "integer", "boolean", "ref", "ref[]", "date", "time", "datetime",
+        "span",
+    ];
     let fields: Vec<(&str, &str)> = literal.iter().map(|t| (*t, *t)).collect();
     let nss = [ns("answer", &fields)];
     let found = unknown_field_types(&nss);
