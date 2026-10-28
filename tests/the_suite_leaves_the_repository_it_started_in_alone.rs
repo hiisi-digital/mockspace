@@ -273,8 +273,14 @@ fn rust_files(dir: &Path, into: &mut Vec<PathBuf>) {
     }
 }
 
-/// Members whose own sources spawn git and whose `lib.rs` does not include the
-/// scrub for its tests.
+/// What a member's `lib.rs` says when its tests are scrubbed: it includes the
+/// shared file, or, in a package that publishes its tests and so cannot reach
+/// above its root, it expands the scrub that package carries.
+fn lib_declares_the_scrub(lib: &str) -> bool {
+    lib.contains("tests/common/ambient.rs") || lib.contains("scrub_before_main!")
+}
+
+/// Members whose own sources spawn git and whose `lib.rs` does not scrub its tests.
 fn members_that_spawn_git_unscrubbed(members: &[PathBuf]) -> Vec<String> {
     let mut out = Vec::new();
     for m in members {
@@ -286,7 +292,7 @@ fn members_that_spawn_git_unscrubbed(members: &[PathBuf]) -> Vec<String> {
                 .contains("Command::new(\"git\")")
         });
         let scrubbed = fs::read_to_string(m.join("src/lib.rs"))
-            .is_ok_and(|t| t.contains("tests/common/ambient.rs"));
+            .is_ok_and(|t| lib_declares_the_scrub(&t));
         if spawns && !scrubbed {
             out.push(m.file_name().unwrap().to_string_lossy().into_owned());
         }
@@ -305,7 +311,7 @@ fn every_member_that_spawns_git_scrubs_its_tests() {
     assert_eq!(
         members_that_spawn_git_unscrubbed(&members),
         Vec::<String>::new(),
-        "these members spawn git and their `src/lib.rs` includes no `tests/common/ambient.rs`"
+        "these members spawn git and their `src/lib.rs` neither includes `tests/common/ambient.rs` nor expands `scrub_before_main!`"
     );
 }
 
@@ -318,12 +324,16 @@ fn a_member_that_spawns_git_without_the_scrub_is_named() {
             "kept",
             "fn f() { std::process::Command::new(\"git\"); }\n#[path = \"../../tests/common/ambient.rs\"]\nmod a;\n",
         ),
+        (
+            "inside",
+            "fn f() { std::process::Command::new(\"git\"); }\nmod s { mockspace_manifest::scrub_before_main!(); }\n",
+        ),
         ("quiet", "fn f() {}\n"),
     ] {
         fs::create_dir_all(dir.path().join(name).join("src")).unwrap();
         fs::write(dir.path().join(name).join("src/lib.rs"), lib).unwrap();
     }
-    let members: Vec<PathBuf> = ["bare", "kept", "quiet"]
+    let members: Vec<PathBuf> = ["bare", "kept", "inside", "quiet"]
         .iter()
         .map(|n| dir.path().join(n))
         .collect();

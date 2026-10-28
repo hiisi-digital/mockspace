@@ -19,23 +19,12 @@ use std::process::Command;
 
 /// A command for one of the binaries, with the machine's say about git taken out:
 /// the variables a hook leaves in the environment select a repository, and the
-/// launcher runs git against the root it finds. This file ships in the package, so
-/// it cannot include the repository's shared scrub from above the package root;
-/// the list is short enough to state here.
+/// launcher runs git against the root it finds. The list is the one the repository's
+/// tests share, from the package this one depends on, since this file ships in the
+/// package and cannot include it from above the package root.
 fn command(program: &str) -> Command {
     let mut c = Command::new(program);
-    for k in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_PREFIX",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_NAMESPACE",
-    ] {
-        c.env_remove(k);
-    }
+    mockspace_manifest::ambient::without_ambient_repo(&mut c);
     c
 }
 
