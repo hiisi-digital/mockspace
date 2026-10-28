@@ -640,8 +640,9 @@ echo "pre-commit: mockspace changes detected, running validation..."
 # Extract changed crate names from staged paths, under whichever source
 # directories the project declares.
 SRC_CRATES=$(ms_crates_of "$STAGED")
-# A staged manifest or lockfile reaches the crates of its own workspace, and a
-# changed dependency is code the run has to compile, so it counts as source.
+# A staged manifest or lockfile reaches the crates of its own workspace, since a
+# changed dependency can change what those crates' lints see and report (its
+# features, its lint table, the API a crate builds against), so their lints run.
 WS_CRATES=$(ms_ws_crates_of "$STAGED")
 CHANGED_CRATES=$(ms_union "$SRC_CRATES" "$WS_CRATES")
 # Source is a `.rs` file under a source directory, and a crate's own manifest or

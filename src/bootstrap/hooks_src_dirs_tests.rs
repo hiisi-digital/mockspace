@@ -546,7 +546,8 @@ fn the_mock_lockfile_scopes_to_the_mock_workspace_and_not_the_console() {
 
 /// The control for the arms above: a crate's own lockfile is not a workspace root,
 /// so it moves no other crate. It is that crate's source, since a changed
-/// dependency is code the run compiles, so the scope keeps the source lints on.
+/// dependency can change what that crate's lints see, so the scope keeps the source
+/// lints on.
 #[test]
 fn a_crates_own_lockfile_is_that_crates_source_and_moves_no_workspace() {
     let staged = [("mock/crates/kaski-sim/Cargo.lock", "# lock 2\n")];
@@ -576,8 +577,9 @@ fn a_crates_documentation_alone_is_still_doc_only() {
 }
 
 /// A shared input staged beside a workspace lockfile keeps `--doc-only` off: the
-/// lockfile is a dependency the run has to compile. Without the guard on the
-/// workspace crates the shared-input arm adds the flag back.
+/// lockfile is a changed dependency, which can change what the crates' lints
+/// report. Without the guard on the workspace crates the shared-input arm adds
+/// the flag back.
 #[test]
 fn a_shared_input_beside_a_workspace_lockfile_is_not_doc_only() {
     let staged = [

@@ -14,7 +14,7 @@ namespace**, and the second form makes the field hold references to rows in that
 namespace. `type = "slot"` holds one, `type = "slot[]"` holds several.
 
 The four time types are strings held to one form each, which the gate enforces on
-every row: `date` as `2026-10-28`, `time` as `18:49` (seconds optional),
+every row: `date` as `2026-10-28`, `time` as `18:49` (seconds and a fraction of one optional),
 `datetime` as a date and a time joined by `T` or a space with an optional offset
 (`2026-10-27T18:49:00Z`, `2026-10-27 18:49`), and `span` as an ISO 8601 duration
 with at least one part (`P3D`, `PT1H30M`). The form is checked, not the calendar.
