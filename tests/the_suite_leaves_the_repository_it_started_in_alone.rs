@@ -13,9 +13,15 @@
 //! branch appeared and `user.name` landed in the config.
 //!
 //! This builds a throwaway clone, runs every test of every workspace member as a
-//! child `cargo test` with the hook's variables pointing into the clone, and
-//! holds every byte of the clone, `.git` included, against a snapshot taken
-//! before. Which targets spawn git is not guessed from their text: a target that
+//! child `cargo test` with the hook's variables pointing into the clone, the
+//! ignored ones included, and holds every byte of the clone, `.git` included,
+//! against a snapshot taken before. The ignored tests are the ones that run real
+//! hooks and real `cargo build`s, which is where a write into the wrong
+//! repository is likeliest, and about two thirds of them pass; the rest are
+//! catalogued reds or need a tool or a variable the machine may lack, and a red
+//! child is no concern of this test, which reads the clone and not the results.
+//!
+//! Which targets spawn git is not guessed from their text: a target that
 //! drives git through a helper names it nowhere, and 28 of them were missed that
 //! way.
 //!
@@ -153,7 +159,7 @@ fn run_suite(clone: &Path, args: &[&str]) -> Output {
         .current_dir(root())
         .args(["test", "--no-fail-fast", "--color", "never"])
         .args(args)
-        .args(["--", "--skip", SELF_TARGET])
+        .args(["--", "--skip", SELF_TARGET, "--include-ignored"])
         .env(CHILD, "1")
         .env("GIT_DIR", clone.join(".git"))
         .env("GIT_WORK_TREE", clone)
@@ -175,8 +181,9 @@ fn the_suite_leaves_the_repository_it_started_in_alone() {
     let clone = clone_in(base.path());
     let before = snapshot(&clone);
 
-    // every test of every workspace member, this guard aside: which targets
-    // spawn git is not something to guess at from their text
+    // every test of every workspace member, this guard aside and the ignored
+    // ones with it: which targets spawn git is not something to guess at from
+    // their text
     let run = run_suite(&clone, &["--workspace"]);
     assert!(
         ran_tests(&run),
