@@ -271,3 +271,51 @@ fn the_words_after_the_separator_are_left_alone() {
         ["--", "--debug", "--debug=x", "--full"]
     );
 }
+
+// --- the generated lint crate, which another worktree can rewrite --------------
+
+#[test]
+fn a_lint_crate_this_worktree_wrote_is_a_tree_to_test() {
+    let dir = PathBuf::from("/store/0123456789abcdef");
+    assert_eq!(lints_tree_for(Generated::Yours(dir.clone())), Ok(Some(dir)));
+}
+
+#[test]
+fn a_lint_crate_never_written_here_is_a_note_and_not_a_failure() {
+    assert_eq!(lints_tree_for(Generated::Absent), Ok(None));
+}
+
+/// The case this exists for. Leaving the tree out would exit 0 having tested
+/// nothing of this worktree's lints, so it is an error that says whose they are
+/// and what to run.
+#[test]
+fn a_lint_crate_another_worktree_rewrote_fails_the_run_and_says_whose_it_holds() {
+    let err = lints_tree_for(Generated::Taken {
+        dir:   PathBuf::from("/store/0123456789abcdef"),
+        owner: "/work/other/mock".to_string(),
+    })
+    .unwrap_err();
+    assert!(err.contains("/work/other/mock"), "{err}");
+    assert!(err.contains("/store/0123456789abcdef"), "{err}");
+    assert!(err.contains("mock check"), "{err}");
+}
+
+#[test]
+fn a_crate_rewritten_during_the_run_is_noticed_and_one_left_alone_is_not() {
+    let dir = PathBuf::from("/store/0123456789abcdef");
+    assert!(
+        !rewritten_during(&dir, &Generated::Yours(dir.clone())),
+        "the control"
+    );
+    assert!(rewritten_during(&dir, &Generated::Taken {
+        dir:   dir.clone(),
+        owner: "/work/other/mock".to_string(),
+    }));
+    // removed under the run, which is no longer this worktree's either
+    assert!(rewritten_during(&dir, &Generated::Absent));
+    // and pointing at another key altogether
+    assert!(rewritten_during(
+        &dir,
+        &Generated::Yours(PathBuf::from("/store/other"))
+    ));
+}

@@ -53,7 +53,7 @@ impl CrateLint for Trivial {
     let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
     let dep = format!("{{ package = \"mockspace-lint-rules\", path = \"{lint_rules}\" }}");
 
-    let loaded = mockspace::custom_lints::load(&cfg, &mock.join("mockspace.toml"), &dep)
+    let loaded = lint_cache::load(&mock, &cfg, &mock.join("mockspace.toml"), &dep)
         .expect("load ok")
         .expect("has custom lints");
 
@@ -230,3 +230,7 @@ fn two_tables_naming_one_source_is_refused_which_is_why_they_are_deduped() {
 /// Takes the machine's git environment out of this process before `main`.
 #[path = "common/ambient.rs"]
 mod ambient;
+
+/// Keeps the generated lint crate inside the test's own directory.
+#[path = "common/lint_cache.rs"]
+mod lint_cache;

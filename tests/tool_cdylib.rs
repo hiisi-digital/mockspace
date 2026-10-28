@@ -75,7 +75,7 @@ fn project(tmp: &Path) -> std::path::PathBuf {
 
 fn load(mock: &Path) -> mockspace::custom_lints::LoadedLints {
     let cfg = mockspace::config::Config::from_dir(mock);
-    mockspace::custom_lints::load(&cfg, &mock.join("mockspace.toml"), &dep_spec())
+    lint_cache::load(mock, &cfg, &mock.join("mockspace.toml"), &dep_spec())
         .expect("the cdylib must build")
         .expect("a project with a tool has something to load")
 }
@@ -208,7 +208,7 @@ fn a_repo_whose_only_custom_content_is_a_tool_still_builds_a_cdylib() {
     write_tool(&mock.join("tools"), "only", "probe-only", "only", REPORTS);
 
     let cfg = mockspace::config::Config::from_dir(&mock);
-    let loaded = mockspace::custom_lints::load(&cfg, &mock.join("mockspace.toml"), &dep_spec())
+    let loaded = lint_cache::load(&mock, &cfg, &mock.join("mockspace.toml"), &dep_spec())
         .expect("the cdylib must build");
     assert!(loaded.is_some(), "a tool alone is something to load");
     assert_eq!(loaded.unwrap().pack.tools.len(), 1);
@@ -310,3 +310,7 @@ mockspace::lint_pack! {
 /// Takes the machine's git environment out of this process before `main`.
 #[path = "common/ambient.rs"]
 mod ambient;
+
+/// Keeps the generated lint crate inside the test's own directory.
+#[path = "common/lint_cache.rs"]
+mod lint_cache;
