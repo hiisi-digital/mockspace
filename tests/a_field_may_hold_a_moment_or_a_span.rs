@@ -186,23 +186,26 @@ fn outcome_literal(ty: &str, literal: &str) -> (bool, String) {
 
 /// A bare TOML date, time or datetime is not a string. Taplo hands it to the schema as
 /// one, so the pattern passes it, and the loader is what refuses it, saying to quote it.
-/// The quoted spelling of each, in the same field, is the control.
+/// A `span` field is refused the same way, for a bare TOML value whatever it reads as, and
+/// a span has no TOML spelling of its own, so its control is a valid span quoted. The
+/// quoted spelling of each, in the same field, is the control.
 #[test]
 fn a_toml_date_or_time_is_refused_until_it_is_quoted() {
     let cases = [
-        ("date", "2026-10-28"),
-        ("time", "18:49:05"),
-        ("datetime", "2026-10-27T18:49:00Z"),
+        ("date", "2026-10-28", "2026-10-28"),
+        ("time", "18:49:05", "18:49:05"),
+        ("datetime", "2026-10-27T18:49:00Z", "2026-10-27T18:49:00Z"),
+        ("span", "18:49:05", "PT5M"),
     ];
-    for (ty, text) in cases {
+    for (ty, text, valid) in cases {
         let (ok, err) = outcome_literal(ty, text);
         assert!(!ok, "bare `{text}` in a {ty} field passed:\n{err}");
         assert!(
             err.contains("unquoted-time") && err.contains("Quote it"),
             "`{text}` is refused without saying to quote it:\n{err}"
         );
-        let (ok, err) = outcome_literal(ty, &format!("\"{text}\""));
-        assert!(ok, "quoted `{text}` is a {ty}:\n{err}");
+        let (ok, err) = outcome_literal(ty, &format!("\"{valid}\""));
+        assert!(ok, "quoted `{valid}` is a {ty}:\n{err}");
     }
 }
 
