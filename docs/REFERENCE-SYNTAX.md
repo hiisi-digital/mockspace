@@ -18,7 +18,7 @@ The registry writes no pages for now. A namespace declared `render = "page"` is
 read, validated and queried like any other, but no `<KEY>.md` is written into the
 docs directory, so a row reference has no document to link to and renders as its
 slug. A page an earlier run wrote is removed by the sweep of `docs/`. The switch is
-`REGISTRY_PAGES_ENABLED` in `src/registry/model.rs`, and nothing but it decides. A
+`REGISTRY_PAGES_ENABLED` in `src/registry/model.rs`, and nothing else turns pages on. A
 table written into a template with `{{ reg::spike }}` or `{{registry:spike}}` is
 rendered into that template's own document, and is not governed by it.
 
@@ -190,7 +190,7 @@ reference the namespace.
 **A namespace declaring `value_field` cannot be referenced this way**, and that is
 refused at the declaration too. A reference into such a namespace renders that
 field's text rather than a link, which is right for a constant stated once and
-wrong for a relation: the reference exists to link, and the text arrives in a table
+wrong for a relation: the reference exists to link once pages are written again, and the text arrives in a table
 cell after the cell's own escaping has run, so a value carrying a pipe ends the
 column early.
 

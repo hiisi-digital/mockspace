@@ -126,9 +126,11 @@ pub enum RenderMode {
 // FIXME: pages are off until a way for the registry to render documents is settled. While
 // off, `plan_registry_pages` (src/document.rs), `registry_page_body` (src/registry/render.rs),
 // `DocIndex::registry_doc` and the registry-page section of scripts/pdf.sh are unreachable,
-// the book that script builds carries no registry, and nothing tests the link path (row links,
-// citation links, ordered page names): every test that pinned it now expects the switch off.
-// Restore those tests beside the switch when it goes back on.
+// the book that script builds carries no registry, and nothing tests the `has_page`-true branch
+// of `doc_target`, the citation links it produces, or the link control for
+// `a_reference_into_an_embed_namespace_is_plain_text`, which now matches a renderer that never
+// links. The ordered page names are still tested in src/document.rs. Restore the link tests
+// beside the switch when it goes back on.
 pub const REGISTRY_PAGES_ENABLED: bool = false;
 
 impl RenderMode {

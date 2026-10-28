@@ -113,6 +113,48 @@ fn a_page_the_registry_wrote_before_is_swept() {
     );
 }
 
+/// A reference inside a row of a page namespace that resolves to nothing used to surface
+/// through the page it was rendered into. With no page the row text reaches no document, so
+/// generation reads the resolved rows themselves: the control is the same registry with a
+/// reference that resolves, which passes.
+#[test]
+fn a_dangling_reference_in_a_page_namespace_row_still_fails_generation() {
+    let r = with_registry();
+    write(
+        &r.root.join("mock/registry/spike.toml"),
+        &row("see {{ spike::nosuch }}"),
+    );
+    let out = r
+        .cmd(common::BIN)
+        .current_dir(r.root.join("mock"))
+        .arg("--generate-only")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a row holding a reference to nothing generated cleanly:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("dangling-reference"),
+        "the failure did not name the dangling reference:\n{stderr}"
+    );
+}
+
+/// The control of the arm above: a reference that does resolve generates cleanly.
+#[test]
+fn a_resolving_reference_in_a_page_namespace_row_generates_cleanly() {
+    let r = with_registry();
+    write(
+        &r.root.join("mock/registry/spike.toml"),
+        &format!(
+            "{}\n[[spike]]\nid = \"second_one\"\nquestion = \"see {{{{ spike::first_one::question }}}}\"\n",
+            row("a")
+        ),
+    );
+    r.generate();
+}
+
 /// Takes the machine's git environment out of this process before `main`.
 #[path = "common/ambient.rs"]
 mod ambient;

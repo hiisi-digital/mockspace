@@ -1311,6 +1311,12 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     // Printed and counted by one function, shared with the commit gate.
     registry_errors += registry_gate(&cfg, &registry, &cycle_findings, mode);
 
+    // The row text of a namespace declared `render = "page"` used to reach `docs/` through its
+    // page, and the scan of the output below caught a reference in it that resolved to nothing.
+    // With no page written that text reaches no document, so the resolved rows are read here
+    // instead. A row embedded into a template is still scanned in the document it lands in.
+    registry_errors += dangling_in_page_rows(&cfg, &registry);
+
     // --- Every markdown document, through one pipeline ---
     //
     // Planned first, so the index of what will exist is complete before the
@@ -1833,6 +1839,43 @@ mod auto_commit_tests {
         assert!(auto_commit_wanted(&args(&["mock", "lock"])));
         assert!(!auto_commit_wanted(&args(&["mock", "lock", "--no-commit"])));
     }
+}
+
+/// References that resolved to nothing inside the resolved fields of rows whose namespace is
+/// declared `render = "page"`, printed and counted.
+///
+/// Only generation resolves, so the commit gate cannot run this: a template read unresolved
+/// would report every reference as dangling.
+fn dangling_in_page_rows(cfg: &Config, registry: &registry::Registry) -> usize {
+    let page_namespaces: std::collections::BTreeSet<&str> = cfg
+        .registry_namespaces
+        .iter()
+        .filter(|n| matches!(n.render, registry::RenderMode::Page))
+        .map(|n| n.key.as_str())
+        .collect();
+    let mut errors = 0usize;
+    for row in registry.rows.values() {
+        if !page_namespaces.contains(row.namespace.as_str()) {
+            continue;
+        }
+        for (field, value) in &row.fields {
+            for found in registry::unresolved_in_generated(value) {
+                if found
+                    .trim_matches(|c| c == '{' || c == '}')
+                    .contains("::")
+                {
+                    errors += 1;
+                    eprintln!(
+                        "  ERROR [dangling-reference]: `{}` field `{field}` holds `{found}`, which \
+                         resolved to nothing. A reference that resolves to nothing is worse than \
+                         prose, because it looks checked.",
+                        row.qualified()
+                    );
+                }
+            }
+        }
+    }
+    errors
 }
 
 /// Every registry finding, printed, counted, and returned as an error count.
