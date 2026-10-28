@@ -137,3 +137,17 @@ A file the driver cannot read as rows (invalid TOML, a row with no `id`, an `id`
 twice in one file) merges as text, as git does without a driver. The driver works
 inside one file: the same `id` added under two different files is two additions
 to it, and the registry's duplicate check reports it afterwards.
+
+## Adding to a list field of a row
+
+`cargo mock registry-append <namespace>::<id> <field> <value>` adds one string to a
+`string[]` field of an existing row and prints nothing. The namespace and the field
+must be declared, the row must exist, a value the field already holds is not added
+twice, and only the row's own lines change. Use it, and never a text edit of your
+own, wherever an answer, a note or a link is added to a row.
+
+A workspace may place a delegate at `.mockspace/hooks/registry-append`, in the
+repository root or any directory above it, to take the step over. It is run in the
+repository root with the same three arguments. Exit status 0 means it did the whole
+step, 3 that it leaves the step to mockspace, anything else a failure. `--local`
+skips it, which is how the delegate writes the row.
