@@ -282,29 +282,42 @@ fn a_directory_that_is_not_declared_is_not_source() {
     assert!(out.contains("infrastructure-only"), "hook said:\n{out}");
 }
 
+/// The registry is read by the repo lints, which every run makes, and a crate's
+/// lints are handed no registry, so a row beside a crate bounds to that crate.
 #[test]
-fn a_staged_registry_row_beside_a_crate_runs_everything() {
+fn a_staged_registry_row_beside_a_crate_is_bounded_to_the_crate() {
     let out = commit_says(KASKI, &[
         (CONSOLE_SRC, "fn x() {}\n"),
         ("mock/registry/tenets.toml", "[[tenet]]\nid = \"a\"\n"),
     ]);
+    assert!(out.contains("crates: console-core"), "hook said:\n{out}");
     assert!(
-        out.contains("shared inputs staged: full scope"),
-        "hook said:\n{out}"
-    );
-    assert!(
-        !out.contains("crates: console-core"),
-        "a shared input is not bounded to the crate beside it:\n{out}"
+        !out.contains("shared inputs staged"),
+        "a registry row is not a shared input of the crates:\n{out}"
     );
     assert!(!out.contains("(doc-only)"), "source is staged:\n{out}");
 }
 
+/// A commit of registry rows alone lints no crate: it is the infrastructure arm,
+/// whose run is the repo lints, the registry's schema check included.
 #[test]
-fn a_staged_registry_row_alone_runs_everything_and_not_infra() {
+fn a_staged_registry_row_alone_runs_the_repo_lints_and_no_crate() {
     let out = commit_says(KASKI, &[(
         "mock/registry/tenets.toml",
         "[[tenet]]\nid = \"a\"\n",
     )]);
+    assert!(out.contains("infrastructure-only"), "hook said:\n{out}");
+    assert!(
+        !out.contains("shared inputs staged"),
+        "a registry row alone must not run every crate:\n{out}"
+    );
+}
+
+/// The control for the arm above: a project lint is code the run compiles and
+/// reaches every crate, so it still runs everything.
+#[test]
+fn a_staged_project_lint_alone_still_runs_everything() {
+    let out = commit_says(KASKI, &[("mock/lints/a.rs", "fn x() {}\n")]);
     assert!(
         out.contains("shared inputs staged: full scope"),
         "hook said:\n{out}"
@@ -352,13 +365,24 @@ fn the_old_literal_pushes_the_console_crate_unscoped_by_name() {
 }
 
 #[test]
-fn a_push_with_a_registry_row_beside_a_crate_runs_the_full_scope() {
+fn a_push_with_a_registry_row_beside_a_crate_is_bounded_to_the_crate() {
     let out = push_says(KASKI, &[
         (CONSOLE_SRC, "fn x() {}\n"),
         ("mock/registry/tenets.toml", "[[tenet]]\nid = \"a\"\n"),
     ]);
-    assert!(out.contains("scope: full project"), "hook said:\n{out}");
-    assert!(!out.contains("scope: console-core"), "hook said:\n{out}");
+    assert!(out.contains("scope: console-core"), "hook said:\n{out}");
+    assert!(!out.contains("scope: full project"), "hook said:\n{out}");
+}
+
+/// A push of registry rows alone runs the repo lints and no crate's, and says so.
+#[test]
+fn a_push_of_registry_rows_alone_names_the_repo_lints_scope() {
+    let out = push_says(KASKI, &[(
+        "mock/registry/ticket/items/a.toml",
+        "id = \"a\"\n",
+    )]);
+    assert!(out.contains("scope: repo lints only"), "hook said:\n{out}");
+    assert!(!out.contains("scope: full project"), "hook said:\n{out}");
 }
 
 

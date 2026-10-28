@@ -166,8 +166,9 @@ fn partition_restage(
     (safe, partial)
 }
 
-/// The unique package directories the given staged files belong to. Each file
-/// resolves to its nearest ancestor directory holding a `Cargo.toml` (per
+/// The unique package directories the staged Rust files belong to; a staged file
+/// that is not Rust names no package, since the fixer has nothing to change in it.
+/// Each Rust file resolves to its nearest ancestor directory holding a `Cargo.toml` (per
 /// `has_manifest`), bounded at `repo_root`. Running a bare `cargo fmt` /
 /// `cargo clippy --fix` there scopes the fixer to that one package, so the cost
 /// is proportional to the change rather than the whole workspace. Files under no
@@ -179,7 +180,10 @@ fn changed_package_dirs(
     has_manifest: impl Fn(&Path) -> bool,
 ) -> Vec<PathBuf> {
     let mut dirs: BTreeSet<PathBuf> = BTreeSet::new();
-    for rel_file in staged {
+    // Only a Rust file is something `clippy --fix` can change. A registry row, a document
+    // or a manifest walks up to the workspace root all the same, and that sent the fixer
+    // over every crate of it for a commit with no Rust in it.
+    for rel_file in staged.iter().filter(|p| p.extension().is_some_and(|e| e == "rs")) {
         let abs = repo_root.join(rel_file);
         if let Some(dir) = package_dir_of(&abs, repo_root, &has_manifest) {
             dirs.insert(dir);
@@ -442,6 +446,33 @@ mod tests {
         let staged = vec![PathBuf::from("mock/crates/z/src/lib.rs")];
         assert_eq!(changed_package_dirs(&staged, repo, has), vec![
             PathBuf::from("/repo/mock/crates/z")
+        ]);
+    }
+
+    #[test]
+    fn a_registry_row_under_a_workspace_resolves_to_no_package() {
+        let repo = Path::new("/repo");
+        // `mock/Cargo.toml` is the workspace root every file under `mock/` walks up to, so a
+        // staged registry row used to name it and `cargo clippy --fix` ran over every crate.
+        let has = manifests(&["/repo/mock/Cargo.toml", "/repo/mock/crates/x/Cargo.toml"]);
+        let staged = vec![
+            PathBuf::from("mock/registry/ticket/items/a_ticket.toml"),
+            PathBuf::from("docs/TICKET-MOVE.md"),
+            PathBuf::from("mock/crates/x/Cargo.toml"),
+        ];
+        assert!(changed_package_dirs(&staged, repo, has).is_empty());
+    }
+
+    #[test]
+    fn a_rust_file_beside_a_registry_row_resolves_to_its_own_package_only() {
+        let repo = Path::new("/repo");
+        let has = manifests(&["/repo/mock/Cargo.toml", "/repo/mock/crates/x/Cargo.toml"]);
+        let staged = vec![
+            PathBuf::from("mock/registry/ticket/items/a_ticket.toml"),
+            PathBuf::from("mock/crates/x/src/lib.rs"),
+        ];
+        assert_eq!(changed_package_dirs(&staged, repo, has), vec![
+            PathBuf::from("/repo/mock/crates/x")
         ]);
     }
 
