@@ -279,3 +279,86 @@ fn the_builtin_rules_name_and_reach_every_declared_directory() {
         "the gate prose names the second directory"
     );
 }
+
+/// A project whose crates are in `groups/a` and `groups/b` and in no directory
+/// called `crates`: the fixture the literal cannot hide in, since `GROUPED`
+/// contains one.
+const RENAMED: &[&str] = &["groups/a", "groups/b"];
+
+fn renamed_cfg(repo: &Path) -> Config {
+    let mock = repo.join("mock");
+    fs::create_dir_all(&mock).unwrap();
+    let mut cfg = Config::from_dir(&mock);
+    cfg.repo_root = repo.to_path_buf();
+    cfg.mock_dir = mock.clone();
+    cfg.src_dirs = RENAMED.iter().map(|d| mock.join(d)).collect();
+    cfg
+}
+
+/// Every piece of text a generated rule or skill carries.
+fn generated_texts(b: &BuiltinTemplates) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for r in &b.rules {
+        out.push((format!("rule {}", r.name), r.body.clone()));
+        out.extend(
+            r.apply_to
+                .iter()
+                .map(|g| (format!("rule {} glob", r.name), g.clone())),
+        );
+    }
+    for s in &b.skills {
+        out.push((format!("skill {}", s.dir_name), s.body.clone()));
+        out.push((
+            format!("skill {} description", s.dir_name),
+            s.skill_description.clone(),
+        ));
+    }
+    out.push(("preamble".to_string(), b.preamble.clone()));
+    out.push(("postamble".to_string(), b.postamble.clone()));
+    out
+}
+
+/// Each line of `texts` that names a directory called `crates`.
+fn naming_crates_dir(texts: &[(String, String)]) -> Vec<String> {
+    texts
+        .iter()
+        .flat_map(|(what, text)| {
+            text.lines()
+                .filter(|l| l.contains("crates/"))
+                .map(move |l| format!("{what}: {}", l.trim()))
+        })
+        .collect()
+}
+
+#[test]
+fn no_generated_rule_or_skill_names_a_directory_called_crates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = renamed_cfg(tmp.path());
+    let builtins = generate_builtin_templates(&cfg, &mockspace_lint_rules::LintPack::default());
+    let texts = generated_texts(&builtins);
+    // the control: the declared directories are named, so the sweep read prose
+    // that is about them
+    let all: String = texts.iter().map(|(_, t)| t.as_str()).collect();
+    assert!(
+        all.contains("`mock/groups/a/*/`"),
+        "the declaration is not in the prose at all"
+    );
+    assert!(
+        texts.len() > 40,
+        "{} texts; the sweep is looking at too little",
+        texts.len()
+    );
+    assert_eq!(naming_crates_dir(&texts), Vec::<String>::new());
+}
+
+/// The control for the sweep above: with the default declaration the same texts
+/// are free to say `crates`, so what the sweep asserts is that the prose follows
+/// the declaration and not that the word is banned.
+#[test]
+fn the_sweep_sees_a_literal_crates_directory_when_there_is_one() {
+    let texts = vec![(
+        "skill mockup-workflow".to_string(),
+        "```\nmock/crates/<crate>/\n```\nedit `crates/<crate>/DESIGN.md.tmpl`\n".to_string(),
+    )];
+    assert_eq!(naming_crates_dir(&texts).len(), 2);
+}
