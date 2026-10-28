@@ -64,9 +64,6 @@ const COLLECT_SYMBOL: &[u8] = b"__mockspace_collect_lints";
 pub struct LoadedLints {
     pub pack: LintPack,
     _lib:     libloading::Library,
-    /// The lock on the shared generated crate, released last, so no other
-    /// worktree rewrites and rebuilds the crate while this run still loads it.
-    _lock:    std::fs::File,
 }
 
 /// Build and load this repo's custom lints, if it has any. Returns `None` when
@@ -136,7 +133,12 @@ pub fn load(
     // the engine uses, so the `Lint`/`CrossCrateLint` vtable layout matches.
     // The returned boxes borrow their vtables from `lib`, so `lib` is stored
     // in `LoadedLints` and outlives them.
-    unsafe { collect(&dylib, lock) }.map(Some)
+    let loaded = unsafe { collect(&dylib) }.map(Some);
+    // Released only once the library is mapped. The mapping outlives a later
+    // rebuild by another worktree, and holding the lock for the whole lint run
+    // would serialise every worktree on it.
+    drop(lock);
+    loaded
 }
 
 /// Write the generated cdylib crate (`Cargo.toml` + `src/lib.rs`). Idempotent:
@@ -629,7 +631,7 @@ fn cdylib_artifact(line: &str, crate_name: &str) -> Option<PathBuf> {
 /// `mockspace-lint-rules` pin (and the same toolchain) as this engine, so the
 /// `Box<dyn Lint>` vtables the collector hands back match this engine's layout.
 /// The launcher enforces this by passing the pin-matched `lint_rules_dep`.
-unsafe fn collect(dylib: &Path, lock: std::fs::File) -> Result<LoadedLints, String> {
+unsafe fn collect(dylib: &Path) -> Result<LoadedLints, String> {
     // SAFETY: loading a cdylib runs its initialisers. This is our own crate,
     // generated and built moments ago from this repo's lints, not arbitrary
     // code of unknown provenance.
@@ -664,7 +666,6 @@ unsafe fn collect(dylib: &Path, lock: std::fs::File) -> Result<LoadedLints, Stri
     Ok(LoadedLints {
         pack,
         _lib: lib,
-        _lock: lock,
     })
 }
 
