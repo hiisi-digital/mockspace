@@ -85,3 +85,74 @@ fn the_nuke_marker_is_the_configured_one() {
     );
     assert!(!out.contains("nuked workspace"), "hook said:\n{out}");
 }
+
+/// As `nuke_verdicts`, over one tree that `setup` builds on disk, so it can hold
+/// what a list of files cannot: a dot-directory, a symlink.
+fn verdicts_over_tree(setup: &dyn Fn(&std::path::Path)) -> (bool, bool) {
+    let tmp = fixture();
+    let root = tmp.path();
+    setup(root);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "base"]);
+    let base = git(root, &["rev-parse", "HEAD"]);
+    stage(root, &[("README", "work\n")]);
+    git(root, &["commit", "-q", "-m", "work"]);
+    let head = git(root, &["rev-parse", "HEAD"]);
+    let line = format!("refs/heads/m {head} refs/heads/m {base}\n");
+    let (out, _) = run_full(
+        &gen_pre_push("mock", &HookLayout::of(KASKI), &root.join("no-user-hook")),
+        root,
+        &line,
+    );
+    let mock = root.join("mock");
+    let mut cfg = crate::config::Config::from_dir(&mock);
+    cfg.src_dirs = vec![mock.join("crates"), mock.join("applets/console/crates")];
+    (
+        out.contains("nuked workspace"),
+        crate::entry::detect_nuked_workspace(&cfg),
+    )
+}
+
+fn write_lib(root: &std::path::Path, rel: &str, body: &str) {
+    let p = root.join(rel);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(p, body).unwrap();
+}
+
+/// The engine lists a dot-directory as a package, so a live crate in one makes the
+/// workspace live. The hook's glob skipped it and called the workspace nuked, which
+/// turned the source lints off over live source.
+#[test]
+fn a_live_crate_in_a_dot_directory_is_live_for_the_hook_and_the_engine() {
+    let (hook, engine) = verdicts_over_tree(&|root| {
+        write_lib(root, ENGINE_LIB, NUKED);
+        write_lib(root, "mock/crates/.hidden/src/lib.rs", "fn live() {}\n");
+    });
+    assert!(!engine, "the engine counts the dot-directory as live");
+    assert_eq!(hook, engine, "the hook and the engine disagree");
+}
+
+/// The control: a nuked crate in a dot-directory is counted too, so the arm above
+/// is about the dot-directory being listed and not about it being live.
+#[test]
+fn a_nuked_crate_in_a_dot_directory_beside_nuked_ones_is_nuked() {
+    let (hook, engine) = verdicts_over_tree(&|root| {
+        write_lib(root, ENGINE_LIB, NUKED);
+        write_lib(root, "mock/crates/.hidden/src/lib.rs", NUKED);
+    });
+    assert!(engine, "every crate is nuked");
+    assert_eq!(hook, engine, "the hook and the engine disagree");
+}
+
+/// The engine does not follow a symlinked directory, so a link to a live crate is
+/// not a package. The hook's glob followed it and called the workspace live.
+#[test]
+fn a_symlinked_crate_directory_is_not_a_crate_for_the_hook_or_the_engine() {
+    let (hook, engine) = verdicts_over_tree(&|root| {
+        write_lib(root, ENGINE_LIB, NUKED);
+        write_lib(root, "mock/elsewhere/src/lib.rs", "fn live() {}\n");
+        std::os::unix::fs::symlink("../elsewhere", root.join("mock/crates/linked")).unwrap();
+    });
+    assert!(engine, "the engine skips the link");
+    assert_eq!(hook, engine, "the hook and the engine disagree");
+}

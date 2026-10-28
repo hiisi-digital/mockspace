@@ -218,12 +218,17 @@ ms_src_files_of() {{
 
 # Whether every crate under the source directories carries the nuke marker, and
 # there is at least one. The engine's `detect_nuked_workspace` is the same
-# question: one live crate anywhere means the workspace is not nuked.
-ms_nuked() {{
+# question: one live crate anywhere means the workspace is not nuked. A crate is
+# what the engine's `package_dirs_in` lists, a directory directly under a source
+# directory that is not a symlink, with the dot-directories among them, so the
+# glob takes dot-names and a link is passed over. A subshell, so the option
+# stays local.
+ms_nuked() (
+    shopt -s dotglob
     local d c any=1
     for d in ${{SRC_DIRS[@]+"${{SRC_DIRS[@]}}"}}; do
         for c in "$MOCK_DIR/$d/"*/; do
-            if [ -d "$c" ]; then
+            if [ -d "$c" ] && [ ! -L "${{c%/}}" ]; then
                 any=0
                 if ! grep -qF -- "$NUKE_MARKER" "${{c}}src/lib.rs" 2>/dev/null; then
                     return 1
@@ -232,7 +237,7 @@ ms_nuked() {{
         done
     done
     return $any
-}}
+)
 
 # The code the run compiles besides the crates it lints: the project lints and
 # the lint packs declared by path. A pack under a source directory is also a
