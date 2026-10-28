@@ -159,3 +159,7 @@ fn a_tree_with_no_git_takes_the_files_value() {
     assert!(!load(root).auto_clippy_fix);
     assert!(load(root).auto_fmt);
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

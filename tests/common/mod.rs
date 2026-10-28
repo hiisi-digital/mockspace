@@ -15,6 +15,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// The one writer of an executable script, shared with the lib tests by path.
+#[path = "exec.rs"]
+pub mod exec;
+pub use exec::write_executable;
+
 pub const BIN: &str = env!("CARGO_BIN_EXE_mockspace");
 
 pub struct Repo {
@@ -48,21 +53,14 @@ impl Repo {
         fs::create_dir_all(&home).unwrap();
         // `cargo mock` and `mock`, both this build. A real `cargo` is never
         // reached: nothing in these hooks asks for one.
-        write(
+        write_executable(
             &shims.join("cargo"),
             "#!/bin/sh\n# MS_NO_CARGO: a hook whose PATH has no cargo. MS_OLD_ENGINE: a launcher pinned to\n# an engine that ignores the flags it does not know and exits 0.\n[ -n \"$MS_NO_CARGO\" ] && exit 127\n[ \"$1\" = mock ] && [ -n \"$MS_OLD_ENGINE\" ] && exit 0\n[ \"$1\" = mock ] && { shift; exec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"; }\n# `cargo metadata`, which the engine asks for a member graph, goes to the real one\n[ \"$1\" = metadata ] && [ -n \"$REAL_CARGO\" ] && exec \"$REAL_CARGO\" \"$@\"\nexit 127\n",
         );
-        write(
+        write_executable(
             &shims.join("mock"),
             "#!/bin/sh\nexec \"$MOCKSPACE_BIN\" --dir \"$(git rev-parse --show-toplevel)/mock\" \"$@\"\n",
         );
-        for s in ["cargo", "mock"] {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(shims.join(s), fs::Permissions::from_mode(0o755)).unwrap();
-            }
-        }
         let repo = Repo {
             _dir: dir,
             root,

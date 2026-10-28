@@ -41,6 +41,17 @@ pub fn target_dir(root: &Path) -> PathBuf {
     root.join("target")
 }
 
+/// The directory under `target/` the generated lint crate lives in. Every
+/// site that generates, builds or addresses that crate names it through this,
+/// so a move cannot leave one of them behind.
+pub const LINT_CRATE: &str = "mockspace-lints";
+
+/// Where the generated lint crate sits for the mock directory `root`:
+/// `<root>/target/mockspace-lints`. Pure: creates nothing, writes nothing.
+pub fn lint_crate_dir(root: &Path) -> PathBuf {
+    target_dir(root).join(LINT_CRATE)
+}
+
 /// Create `dir` and take it out of the desktop index. Returns it, so a write
 /// site reads as one expression.
 ///
@@ -181,6 +192,17 @@ mod tests {
         let sub = ensure_under_target(tmp.path(), &["mockspace", "registry-schemas"]);
         assert!(sub.is_dir());
         assert!(target_dir(tmp.path()).join(MARKER).is_file());
+    }
+
+    #[test]
+    fn the_lint_crate_dir_is_where_the_generators_write() {
+        // the hook reads the pure path, the lint path creates the directory;
+        // they have to be the same one.
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            lint_crate_dir(tmp.path()),
+            ensure_under_target(tmp.path(), &[LINT_CRATE])
+        );
     }
 
     #[test]

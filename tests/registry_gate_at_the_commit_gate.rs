@@ -292,3 +292,7 @@ fn the_registry_gate_runs_once_per_generation_run() {
         "expected one registry section in a generation run, got {banners}:\n{err}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

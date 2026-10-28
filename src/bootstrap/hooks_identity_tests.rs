@@ -33,26 +33,22 @@ fn fixture() -> Fixture {
     std::fs::create_dir_all(&bin).unwrap();
 
     let stub = bin.join("mock");
-    std::fs::write(
+    crate::test_exec::write_executable(
         &stub,
         format!(
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > {}\nexit 0\n",
             args.display()
         ),
-    )
-    .unwrap();
-    make_executable(&stub);
+    );
 
     git(&repo, &[], &["init", "-q", "-b", "main"]);
     let hooks = repo.join(".git/hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     let hook = hooks.join("commit-msg");
-    std::fs::write(
+    crate::test_exec::write_executable(
         &hook,
         gen_commit_msg(&repo.join(".git/hooks/commit-msg.own")),
-    )
-    .unwrap();
-    make_executable(&hook);
+    );
 
     Fixture {
         _tmp: tmp,
@@ -62,17 +58,14 @@ fn fixture() -> Fixture {
     }
 }
 
-#[cfg(unix)]
-fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let mut p = std::fs::metadata(path).unwrap().permissions();
-    p.set_mode(0o755);
-    std::fs::set_permissions(path, p).unwrap();
-}
+/// The scrubs of a child's environment, from the one file the integration tests
+/// include too (`tests/common/ambient.rs`), compiled once for the lib tests.
+use crate::test_ambient as ambient;
+pub(super) use ambient::clean_of_the_machine;
 
 /// Git with the machine's own config out of the way, so a global identity on
 /// whatever runs this cannot stand in for the one under test.
-fn git_command(repo: &Path, path: &str, envs: &[(&str, &str)], args: &[&str]) -> Command {
+pub(super) fn git_command(repo: &Path, path: &str, envs: &[(&str, &str)], args: &[&str]) -> Command {
     let mut c = Command::new("git");
     c.current_dir(repo)
         .args(args)
@@ -80,6 +73,7 @@ fn git_command(repo: &Path, path: &str, envs: &[(&str, &str)], args: &[&str]) ->
         .env("HOME", repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    clean_of_the_machine(&mut c);
     for (k, v) in envs {
         c.env(k, v);
     }
@@ -226,6 +220,7 @@ fn run_hook(fx: &Fixture, envs: &[(&str, &str)]) -> std::process::Output {
         .env("HOME", &fx.repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null");
+    clean_of_the_machine(&mut c);
     for (k, v) in envs {
         c.env(k, v);
     }

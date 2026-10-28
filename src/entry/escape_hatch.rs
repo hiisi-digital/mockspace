@@ -36,7 +36,7 @@ use mockspace_lint_rules::src_layout::SrcLayout;
 /// become a reason a commit fails.
 fn staged_paths(repo_root: &Path, mock_rel: &str) -> Vec<String> {
     let out = Command::new("git")
-        .args(["diff", "--cached", "--name-only", "--", mock_rel])
+        .args(["diff", "--cached", "--name-only", "--no-renames", "--", mock_rel])
         .current_dir(repo_root)
         .output();
     match out {
@@ -76,17 +76,14 @@ pub fn staged_source_files(repo_root: &Path, mock_rel: &str, layout: &SrcLayout)
         .collect()
 }
 
-/// The crate directory names with staged changes under `<mock>/crates/`.
+/// The package directory names with staged changes under any declared source
+/// directory, which is what `layout` holds.
 #[must_use]
-pub fn staged_crates(repo_root: &Path, mock_rel: &str) -> Vec<String> {
-    let prefix = format!("{mock_rel}/crates/");
+pub fn staged_crates(repo_root: &Path, mock_rel: &str, layout: &SrcLayout) -> Vec<String> {
+    let prefix = format!("{mock_rel}/");
     let mut v: Vec<String> = staged_paths(repo_root, mock_rel)
         .into_iter()
-        .filter_map(|p| {
-            p.strip_prefix(&prefix)
-                .and_then(|rest| rest.split('/').next())
-                .map(str::to_string)
-        })
+        .filter_map(|p| layout.package_name(p.strip_prefix(&prefix)?))
         .collect();
     v.sort_unstable();
     v.dedup();
@@ -134,7 +131,9 @@ impl Refusal {
                 format!(
                     "--scope {} omits crate(s) with staged changes:\n  {}\n\
                      \n  Those crates would not be linted at all. Widen the scope to include\n  \
-                     them, or unstage them.",
+                     them, or unstage them. If mockspace.toml's src_dirs changed since\n  \
+                     the hooks were last written, they still name the old directories:\n  \
+                     run `cargo mock` once (without --lint-only) to regenerate them.",
                     scoped.join(","),
                     omitted.join("\n  ")
                 )
@@ -160,8 +159,13 @@ pub fn verify_doc_only(repo_root: &Path, mock_rel: &str, layout: &SrcLayout) -> 
 /// `infra` is not a crate list and means "no crate files staged", so it is
 /// verified by the same staged-crates check rather than by name comparison.
 #[must_use]
-pub fn verify_scope(repo_root: &Path, mock_rel: &str, scope: &str) -> Option<Refusal> {
-    let staged = staged_crates(repo_root, mock_rel);
+pub fn verify_scope(
+    repo_root: &Path,
+    mock_rel: &str,
+    layout: &SrcLayout,
+    scope: &str,
+) -> Option<Refusal> {
+    let staged = staged_crates(repo_root, mock_rel, layout);
     if staged.is_empty() {
         return None;
     }
@@ -310,7 +314,7 @@ mod tests {
             ("mock/crates/foo/src/lib.rs", "fn a() {}"),
             ("mock/crates/bar/src/lib.rs", "fn b() {}"),
         ]);
-        let r = verify_scope(&repo, "mock", "foo,bar");
+        let r = verify_scope(&repo, "mock", &default_layout(&repo), "foo,bar");
         let _ = std::fs::remove_dir_all(&repo);
         assert_eq!(r, None);
     }
@@ -322,7 +326,7 @@ mod tests {
             ("mock/crates/foo/src/lib.rs", "fn a() {}"),
             ("mock/crates/bar/src/lib.rs", "fn b() {}"),
         ]);
-        let r = verify_scope(&repo, "mock", "foo");
+        let r = verify_scope(&repo, "mock", &default_layout(&repo), "foo");
         let _ = std::fs::remove_dir_all(&repo);
         match r {
             Some(Refusal::ScopeOmitsStagedCrates {
@@ -340,7 +344,7 @@ mod tests {
         // `--scope infra` asserts no crate files are staged, so it is the same
         // claim as --doc-only and gets the same verification.
         let repo = repo_with_staged(&[("mock/crates/foo/src/lib.rs", "fn a() {}")]);
-        let r = verify_scope(&repo, "mock", "infra");
+        let r = verify_scope(&repo, "mock", &default_layout(&repo), "infra");
         let _ = std::fs::remove_dir_all(&repo);
         assert!(matches!(r, Some(Refusal::ScopeOmitsStagedCrates { .. })));
     }
@@ -348,7 +352,7 @@ mod tests {
     #[test]
     fn infra_scope_passes_when_no_crate_files_are_staged() {
         let repo = repo_with_staged(&[("mock/mockspace.toml", "x = 1")]);
-        let r = verify_scope(&repo, "mock", "infra");
+        let r = verify_scope(&repo, "mock", &default_layout(&repo), "infra");
         let _ = std::fs::remove_dir_all(&repo);
         assert_eq!(r, None);
     }
@@ -362,7 +366,62 @@ mod tests {
         let mock = nowhere.join("mock");
         let layout = SrcLayout::new(&mock, &[mock.join("crates")]);
         assert_eq!(verify_doc_only(&nowhere, "mock", &layout), None);
-        assert_eq!(verify_scope(&nowhere, "mock", "foo"), None);
+        assert_eq!(verify_scope(&nowhere, "mock", &layout, "foo"), None);
         let _ = std::fs::remove_dir_all(&nowhere);
+    }
+
+    fn grouped_layout(repo: &std::path::Path) -> SrcLayout {
+        let mock = repo.join("mock");
+        SrcLayout::new(&mock, &[
+            mock.join("crates"),
+            mock.join("applets/console/crates"),
+        ])
+    }
+
+    #[test]
+    fn a_crate_under_the_second_source_directory_is_a_staged_crate() {
+        let repo = repo_with_staged(&[(
+            "mock/applets/console/crates/console-core/src/x.rs",
+            "fn a() {}",
+        )]);
+        let got = staged_crates(&repo, "mock", &grouped_layout(&repo));
+        // the control: the default layout does not hold the directory at all
+        let default = staged_crates(&repo, "mock", &default_layout(&repo));
+        let _ = std::fs::remove_dir_all(&repo);
+        assert_eq!(got, vec!["console-core".to_string()]);
+        assert!(
+            default.is_empty(),
+            "the declaration is what makes it a crate: {default:?}"
+        );
+    }
+
+    #[test]
+    fn scope_infra_is_refused_over_a_crate_under_the_second_source_directory() {
+        let repo = repo_with_staged(&[(
+            "mock/applets/console/crates/console-core/src/x.rs",
+            "fn a() {}",
+        )]);
+        let r = verify_scope(&repo, "mock", &grouped_layout(&repo), "infra");
+        let ok = verify_scope(&repo, "mock", &grouped_layout(&repo), "console-core");
+        let _ = std::fs::remove_dir_all(&repo);
+        assert!(
+            matches!(r, Some(Refusal::ScopeOmitsStagedCrates { .. })),
+            "{r:?}"
+        );
+        assert_eq!(ok, None);
+    }
+
+    /// A hook written before `src_dirs` changed passes `--scope infra` over a
+    /// directory it does not know, and the hooks only run under `--lint-only`,
+    /// which never rewrites them. The refusal is the one place that can say so.
+    #[test]
+    fn the_scope_refusal_says_how_to_regenerate_the_hooks() {
+        let text = Refusal::ScopeOmitsStagedCrates {
+            omitted: vec!["console-core".into()],
+            scoped:  vec!["infra".into()],
+        }
+        .explain();
+        assert!(text.contains("src_dirs changed"), "{text}");
+        assert!(text.contains("run `cargo mock` once"), "{text}");
     }
 }

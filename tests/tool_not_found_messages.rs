@@ -210,3 +210,7 @@ fn a_pack_registering_another_name_says_mismatch() {
         "and it names what did register, so the reader can see the mismatch:\n{err}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

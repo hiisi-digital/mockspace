@@ -650,3 +650,7 @@ fn the_drop_detection_sees_a_plain_table_where_an_array_was_meant() {
          disagree with it; got {found:?}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

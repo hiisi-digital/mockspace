@@ -218,7 +218,10 @@ fn a_type_naming_a_declared_namespace_is_not_reported() {
 /// the code.
 #[test]
 fn every_scalar_type_is_accepted() {
-    let literal = ["string", "string[]", "integer", "boolean", "ref", "ref[]"];
+    let literal = [
+        "string", "string[]", "integer", "boolean", "ref", "ref[]", "date", "time", "datetime",
+        "span",
+    ];
     let fields: Vec<(&str, &str)> = literal.iter().map(|t| (*t, *t)).collect();
     let nss = [ns("answer", &fields)];
     let found = unknown_field_types(&nss);
@@ -230,13 +233,30 @@ fn every_scalar_type_is_accepted() {
     );
 }
 
+/// Every scalar type shadows, by a literal list as above: the scalar is checked
+/// first, so a namespace sharing the name is unreachable by any field. The
+/// calendar types were added after `string` and were not covered.
 #[test]
 fn a_namespace_named_after_a_scalar_type_is_refused() {
-    let nss = [ns("string", &[]), ns("answer", &[])];
-    assert_eq!(kinds(&namespace_type_collisions(&nss)), [
-        "namespace-shadows-type"
-    ]);
-    assert!(namespace_type_collisions(&[ns("slot", &[])]).is_empty());
+    for name in ["string", "integer", "boolean", "ref", "date", "time", "datetime", "span"] {
+        let nss = [ns(name, &[]), ns("answer", &[])];
+        assert_eq!(
+            kinds(&namespace_type_collisions(&nss)),
+            ["namespace-shadows-type"],
+            "`{name}` shadows the scalar of that name"
+        );
+    }
+}
+
+/// The control: names that only resemble a scalar type are namespaces.
+#[test]
+fn a_namespace_resembling_a_scalar_type_is_not_refused() {
+    for name in ["slot", "dates", "spans", "timestamp", "datetimes"] {
+        assert!(
+            namespace_type_collisions(&[ns(name, &[])]).is_empty(),
+            "`{name}` is not a scalar type"
+        );
+    }
 }
 
 #[test]

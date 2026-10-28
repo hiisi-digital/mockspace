@@ -82,6 +82,7 @@ fn cfg_at(repo_root: &std::path::Path) -> Config {
     c.project_name = "fodder".to_string();
     c.repo_root = repo_root.to_path_buf();
     c.mock_dir = repo_root.join("mock");
+    c.src_dirs = vec![repo_root.join("mock/crates")];
     c
 }
 

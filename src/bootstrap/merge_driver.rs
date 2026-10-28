@@ -161,15 +161,7 @@ fn ensure_driver_script(path: &Path) -> bool {
     if fs::read_to_string(path).is_ok_and(|current| current == script) {
         return false;
     }
-    let written = path
-        .parent()
-        .is_some_and(|dir| fs::create_dir_all(dir).is_ok())
-        && fs::write(path, script).is_ok();
-    #[cfg(unix)]
-    if written {
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o755));
-    }
-    written
+    write_executable(path, script).is_ok()
 }
 
 fn quoted(path: &Path) -> String {

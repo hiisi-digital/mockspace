@@ -37,6 +37,8 @@ mod help_for;
 mod message;
 #[cfg(test)]
 mod message_identity_tests;
+#[cfg(test)]
+mod escape_hatch_move_tests;
 pub(crate) use dispatch::*;
 mod nuke;
 pub(crate) use nuke::*;

@@ -362,6 +362,7 @@ pub(crate) fn builtin_write_guard(cfg: &Config) -> String {
         .unwrap_or(&cfg.mock_dir)
         .to_string_lossy()
         .to_string();
+    let src_grep = super::helpers::ere_group(&super::helpers::src_dirs_from_mock(cfg));
     format!(
         r##"#!/usr/bin/env bash
 # Built-in mockspace hook: phase gate enforcement
@@ -473,7 +474,7 @@ else
     PHASE="TOPIC"
 fi
 DIRTY_DOCS=$(git -C "$REPO_ROOT" diff --name-only 2>/dev/null \
-    | grep -E "^${{MOCK_ROOT}}/crates/.*\.(md\.tmpl|md)$" | head -1) || true
+    | grep -E "^${{MOCK_ROOT}}/{src_grep}/.*\.(md\.tmpl|md)$" | head -1) || true
 # Whether this edit to a committed file only adds to it. A Write has to begin
 # with the whole committed text; an Edit, and every edit of a MultiEdit, has to
 # keep its old string at the start of its new one, which inserts after it and
@@ -586,7 +587,7 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
     allow
 fi
 # --- Crate files are phase-gated ---
-if echo "$REL_PATH" | grep -qE '^crates/'; then
+if echo "$REL_PATH" | grep -qE '^{src_grep}/'; then
     if echo "$REL_PATH" | grep -qE '(^|/)SHAME\.md\.tmpl$'; then allow; fi
     if echo "$REL_PATH" | grep -qE '\.(md\.tmpl|md)$'; then
         if [[ "$PHASE" != "DOC" ]]; then
@@ -787,26 +788,12 @@ mod check_message_tests {
         let dir = repo_root.join(format!("h{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("hook.sh");
-        std::fs::write(&script, hook_script(repo_root)).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&script).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&script, p).unwrap();
-        }
+        crate::test_exec::write_executable(&script, hook_script(repo_root));
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         if let Some(body) = launcher {
             let m = bin.join("mock");
-            std::fs::write(&m, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut p = std::fs::metadata(&m).unwrap().permissions();
-                p.set_mode(0o755);
-                std::fs::set_permissions(&m, p).unwrap();
-            }
+            crate::test_exec::write_executable(&m, body);
         }
         // A cache dir per invocation, so one test's verdict never leaks into
         // another's. The cache is a real behaviour and must not couple tests.

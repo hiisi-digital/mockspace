@@ -111,8 +111,7 @@ mod tests {
     }
 
     fn executable(path: &Path, body: &str) {
-        fs::write(path, body).unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_exec::write_executable(path, body);
     }
 
     fn rig(hook_text: impl Fn(&Path) -> String, cargo_exit: i32) -> Rig {

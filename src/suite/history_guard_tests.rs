@@ -202,3 +202,35 @@ fn the_drop_rule_over_every_triple_decides_a_merge_null() {
         }
     }
 }
+
+/// A file moved out of one member into another changes both, so the member it
+/// left is not judged untouched. With git's rename detection on, the listing
+/// names the destination alone.
+#[test]
+fn a_file_moved_out_of_a_member_lists_the_member_it_left() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(root)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    run(&["init", "-q"]);
+    let body = "pub fn a() -> u32 {\n    let x = 1;\n    let y = 2;\n    x + y\n}\n\npub fn b() {}\n";
+    std::fs::create_dir_all(root.join("mock/crates/app/src")).unwrap();
+    std::fs::create_dir_all(root.join("mock/crates/core/src")).unwrap();
+    std::fs::write(root.join("mock/crates/app/src/x.rs"), body).unwrap();
+    run(&["add", "-A"]);
+    run(&["commit", "-q", "-m", "base"]);
+    run(&["mv", "mock/crates/app/src/x.rs", "mock/crates/core/src/x.rs"]);
+    // the control: git does read this as a rename
+    let status = git(root, &["diff", "--cached", "--name-status", "-M", "HEAD"]).unwrap();
+    assert!(String::from_utf8_lossy(&status).starts_with("R100"), "not a rename");
+    let mut got = staged_changes(root, "mock/test-history");
+    got.sort();
+    assert_eq!(got, changed(&["mock/crates/app/src/x.rs", "mock/crates/core/src/x.rs"]));
+}

@@ -12,8 +12,22 @@ pub(crate) fn generated_hooks_dir(mock_dir: &Path) -> PathBuf {
     crate::build_dir::target_dir(mock_dir).join("hooks")
 }
 
-pub(crate) fn ensure_generated_hooks(repo_root: &Path, mock_dir: &Path, actions: &mut Vec<String>) {
+/// Write the generated hooks.
+///
+/// `src_dirs` are the declared source directories, absolute as the config carries
+/// them. The hooks decide which crate a staged path belongs to from them, so a
+/// project declaring a directory other than `crates` is scoped by its own
+/// declaration rather than by a literal.
+pub(crate) fn ensure_generated_hooks(
+    repo_root: &Path,
+    mock_dir: &Path,
+    src_dirs: &[PathBuf],
+    nuke_marker: &str,
+    config_path: &Path,
+    actions: &mut Vec<String>,
+) {
     let out_dir = crate::build_dir::ensure_under_target(mock_dir, &["hooks"]);
+    let layout = HookLayout::declared(repo_root, mock_dir, src_dirs, nuke_marker, config_path);
 
     let mock_rel = mock_dir
         .strip_prefix(repo_root)
@@ -29,7 +43,7 @@ pub(crate) fn ensure_generated_hooks(repo_root: &Path, mock_dir: &Path, actions:
         let path = out_dir.join(hook_name);
         let user_hook = user_hooks_dir.join(hook_name);
 
-        let content = gen_hook(hook_name, &mock_rel, &user_hook);
+        let content = gen_hook(hook_name, &mock_rel, &layout, &user_hook);
         let fingerprint = content_fingerprint(&content);
         let fp_line = format!("{MANAGED_MARKER} v{HOOK_VERSION} fp:{fingerprint:016x}");
 
@@ -44,28 +58,27 @@ pub(crate) fn ensure_generated_hooks(repo_root: &Path, mock_dir: &Path, actions:
 
         let final_content = content.replacen(MANAGED_MARKER, &fp_line, 1);
 
-        if let Err(e) = fs::write(&path, &final_content) {
+        if let Err(e) = write_executable(&path, &final_content) {
             actions.push(format!("failed to write {hook_name} hook: {e}"));
             continue;
-        }
-
-        #[cfg(unix)]
-        {
-            if let Ok(meta) = fs::metadata(&path) {
-                let mut perms = meta.permissions();
-                perms.set_mode(0o755);
-                let _ = fs::set_permissions(&path, perms);
-            }
         }
 
         actions.push(format!("generated {hook_name} hook"));
     }
 }
 
-pub(crate) fn gen_hook(name: &str, mock_rel: &str, user_hook: &Path) -> String {
+mod layout;
+pub(crate) use layout::*;
+
+pub(crate) fn gen_hook(
+    name: &str,
+    mock_rel: &str,
+    layout: &HookLayout,
+    user_hook: &Path,
+) -> String {
     match name {
-        "pre-commit" => gen_pre_commit(mock_rel, user_hook),
-        "pre-push" => gen_pre_push(mock_rel, user_hook),
+        "pre-commit" => gen_pre_commit(mock_rel, layout, user_hook),
+        "pre-push" => gen_pre_push(mock_rel, layout, user_hook),
         "commit-msg" => gen_commit_msg(user_hook),
         "post-merge" => gen_post_merge(user_hook),
         "post-rewrite" => gen_post_rewrite(user_hook),
@@ -300,8 +313,9 @@ ms_chain() {{
     )
 }
 
-pub(crate) fn gen_pre_commit(mock_rel: &str, user_hook: &Path) -> String {
+pub(crate) fn gen_pre_commit(mock_rel: &str, layout: &HookLayout, user_hook: &Path) -> String {
     let chain = chain_user_hook(user_hook, false);
+    let layout = src_layout_shell(layout);
 
     format!(
         r##"#!/usr/bin/env bash
@@ -312,6 +326,8 @@ set -e
 
 {chain}
 MOCK_DIR="{mock_rel}"
+
+{layout}
 
 # A merge concluding here stopped on something that was not a generated file,
 # since generated files merge without conflict, or was a squash, which stops
@@ -352,7 +368,7 @@ if ! git diff --cached --quiet -- "$MOCK_DIR/test-history" 2>/dev/null; then
 fi
 
 # Only run mockspace validation when staged files touch the design surface.
-STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
+STAGED=$(git diff --cached --name-only --no-renames -- "$MOCK_DIR" 2>/dev/null || true)
 
 # The config counts as the surface, wherever it sits. `mockspace.toml` may live
 # at the repository root rather than inside the mock directory, and that is its
@@ -361,58 +377,52 @@ STAGED=$(git diff --cached --name-only -- "$MOCK_DIR" 2>/dev/null || true)
 # every row in the registry at once, and it was the one commit that ran no
 # validation at all. The durable hook already checked both; this one did not.
 if [ -z "$STAGED" ]; then
-    STAGED=$(git diff --cached --name-only -- '*mockspace.toml' 2>/dev/null || true)
+    STAGED=$(git diff --cached --name-only --no-renames -- '*mockspace.toml' ${{MS_PACKS[@]+"${{MS_PACKS[@]}}"}} 2>/dev/null || true)
 fi
 
 [ -z "$STAGED" ] && ms_chain "$@"
 
 echo "pre-commit: mockspace changes detected, running validation..."
 
-# Extract changed crate names from staged paths.
-CHANGED_CRATES=$(echo "$STAGED" \
-    | grep "^$MOCK_DIR/crates/" \
-    | sed "s|^$MOCK_DIR/crates/||" \
-    | cut -d/ -f1 \
-    | sort -u \
-    | tr '\n' ',' \
-    | sed 's/,$//' \
-    || true)
+# Extract changed crate names from staged paths, under whichever source
+# directories the project declares.
+SRC_CRATES=$(ms_crates_of "$STAGED")
+# A staged manifest or lockfile reaches the crates of its own workspace, since a
+# changed dependency can change what those crates' lints see and report (its
+# features, its lint table, the API a crate builds against), so their lints run.
+WS_CRATES=$(ms_ws_crates_of "$STAGED")
+CHANGED_CRATES=$(ms_union "$SRC_CRATES" "$WS_CRATES")
+# Source is a `.rs` file under a source directory, and a crate's own manifest or
+# lockfile: a `[features]` or `[lints]` edit changes what the source lints see,
+# which a `--doc-only` run skips.
+STAGED_SRC=$(
+    ms_src_files_of "$STAGED" ".rs"
+    ms_src_files_of "$STAGED" "/Cargo.toml"
+    ms_src_files_of "$STAGED" "/Cargo.lock"
+)
+
+# A staged shared input (the registry, the project lints and packs, the config)
+# reaches every crate, so it is never bounded to the crates also
+# staged. Asked of the whole index, since the config may sit at the repo root.
+SHARED_STAGED=0
+if ! git diff --cached --quiet -- "${{MS_SHARED[@]}}" 2>/dev/null; then
+    SHARED_STAGED=1
+fi
 
 ARGS=(--lint-only --commit)
 
-if [ -n "$CHANGED_CRATES" ]; then
-    # `crates/` rather than the whole mock tree. The phase gates ask
-    # `SrcLayout::holds`, which answers for the declared source directories, and
-    # `crates` is what `src_dirs` defaults to, so on a project that leaves it
-    # alone this is the same question. A probe under `research/`, a lint under
-    # `lints/` and a tool's own source are all `.rs` and none is source to any
-    # gate, so staging one cannot turn a doc commit into a source commit.
-    #
-    # FIXME: this is the default and not the declaration, and it is a class
-    # rather than this line. `gen_pre_commit` and `gen_pre_push` are handed
-    # `mock_rel` and nothing else, so neither can read `src_dirs`, and the
-    # generated hooks write `crates` as a literal in six places: the two that
-    # build `CHANGED_CRATES` above, this one, the two that build
-    # `PUSH_CHANGED` in the pre-push hook, and the nuke scan under it.
-    #
-    # The two above fail worse than this one and fail silently. On a project
-    # whose `src_dirs` names another directory, staging source under it leaves
-    # `CHANGED_CRATES` empty, the hook takes the `infrastructure-only` branch
-    # and passes `--scope infra`, so the crate lints never run at all. Nothing
-    # refuses and nothing says so. This line's failure is the loud one: the
-    # hook claims `--doc-only` over source the engine's guard then refuses,
-    # which is the deadlock this whole change removed for the default case, and
-    # `a_declared_source_directory_outside_crates_deadlocks` catches it,
-    # ignored below.
-    #
-    # Threading `src_dirs` down through `ensure_gate` and
-    # `ensure_generated_hooks` closes all six. Closing this one alone reads as
-    # closing the class and does not.
-    STAGED_RS=$(echo "$STAGED" \
-        | grep "^$MOCK_DIR/crates/.*\.rs$" \
-        || true)
-
-    if [ -z "$STAGED_RS" ]; then
+if [ "$SHARED_STAGED" = "1" ]; then
+    # No `--scope`: every crate and every repo lint runs. `--doc-only` still
+    # holds when nothing under a source directory is staged source, and the
+    # engine verifies the claim against the same layout.
+    echo "  shared inputs staged: full scope"
+    # A staged project lint or lint pack is code the run has to compile and run,
+    # which `--doc-only` would skip, so it keeps the flag off.
+    if [ -z "$STAGED_SRC" ] && [ -z "$WS_CRATES" ] && git diff --cached --quiet -- "${{MS_CODE[@]}}" 2>/dev/null; then
+        ARGS+=(--doc-only)
+    fi
+elif [ -n "$CHANGED_CRATES" ]; then
+    if [ -z "$STAGED_SRC" ] && [ -z "$WS_CRATES" ]; then
         echo "  crates: $CHANGED_CRATES (doc-only)"
         ARGS+=(--scope "$CHANGED_CRATES" --doc-only)
     else
@@ -436,8 +446,9 @@ ms_chain "$@"
     )
 }
 
-pub(crate) fn gen_pre_push(mock_rel: &str, user_hook: &Path) -> String {
+pub(crate) fn gen_pre_push(mock_rel: &str, layout: &HookLayout, user_hook: &Path) -> String {
     let chain = chain_user_hook(user_hook, true);
+    let layout = src_layout_shell(layout);
     let byline = message_prepush_scan_body();
 
     format!(
@@ -449,6 +460,8 @@ set -e
 
 {chain}
 MOCK_DIR="{mock_rel}"
+
+{layout}
 
 # Git feeds `<local-ref> <local-sha> <remote-ref> <remote-sha>` lines on
 # stdin. Capture once so both the byline scan and the crate-diff loop below
@@ -486,7 +499,7 @@ echo "pre-push: running mockspace validation..."
 # Empty stdin (no refs piped, rare with `push --tags` variants on some
 # git versions) → the loop simply does not run; the post-loop fall-
 # through handles full-scope correctly.
-NEW_BRANCH=0
+FULL_REASON=""
 CHANGED_CRATES=""
 while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     if [ -z "$local_sha" ]; then
@@ -497,7 +510,7 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
         continue
     fi
     if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
-        NEW_BRANCH=1
+        FULL_REASON="new branch"
         break
     fi
     # Unknown remote_sha (we never fetched the remote, or it's a stale
@@ -505,16 +518,17 @@ while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
     # Treat as new-branch-equivalent and force full scope; otherwise
     # `git diff` would fail closed and silently drop this ref's changes.
     if ! git cat-file -e "$remote_sha" 2>/dev/null; then
-        NEW_BRANCH=1
+        FULL_REASON="remote sha not fetched"
         break
     fi
-    PUSH_CHANGED=$(git diff --name-only "$remote_sha".."$local_sha" -- "$MOCK_DIR/crates/" 2>/dev/null \
-        | sed "s|^$MOCK_DIR/crates/||" \
-        | cut -d/ -f1 \
-        | sort -u \
-        | tr '\n' ',' \
-        | sed 's/,$//' \
-        || true)
+    # A pushed shared input (the registry, the project lints, the config) reaches
+    # every crate, so it forces the full scope, under its own reason.
+    if ! git diff --quiet "$remote_sha".."$local_sha" -- "${{MS_SHARED[@]}}" 2>/dev/null; then
+        FULL_REASON="shared input"
+        break
+    fi
+    PUSH_FILES=$(git diff --name-only --no-renames "$remote_sha".."$local_sha" -- "$MOCK_DIR/" 2>/dev/null || true)
+    PUSH_CHANGED=$(ms_union "$(ms_crates_of "$PUSH_FILES")" "$(ms_ws_crates_of "$PUSH_FILES")")
     if [ -z "$PUSH_CHANGED" ]; then
         continue
     fi
@@ -536,11 +550,11 @@ if [ -n "$CHANGED_CRATES" ]; then
         | sed 's/,$//')
 fi
 
-if grep -rq "Nuked by" "$MOCK_DIR/crates/"*/src/lib.rs 2>/dev/null; then
+if ms_nuked; then
     echo "  nuked workspace: skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
-elif [ "$NEW_BRANCH" = "1" ] || [ -z "$CHANGED_CRATES" ]; then
-    echo "  scope: full project ($([ "$NEW_BRANCH" = "1" ] && echo "new branch" || echo "no crate changes"))"
+elif [ -n "$FULL_REASON" ] || [ -z "$CHANGED_CRATES" ]; then
+    echo "  scope: full project (${{FULL_REASON:-no crate changes}})"
     ARGS=(--lint-only --strict)
 else
     echo "  scope: $CHANGED_CRATES"
@@ -593,14 +607,7 @@ mod byline_hook_tests {
     ) -> i32 {
         let dir = scratch("hook");
         let hook = dir.join("hook.sh");
-        std::fs::write(&hook, content).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&hook).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&hook, p).unwrap();
-        }
+        crate::test_exec::write_executable(&hook, content);
         let mut cmd = Command::new(&hook);
         cmd.args(args)
             .stdin(Stdio::piped())
@@ -613,15 +620,30 @@ mod byline_hook_tests {
             cmd.env("PATH", p);
         }
         let mut child = cmd.spawn().unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(stdin.as_bytes())
-            .unwrap();
+        // A hook that exits without reading its stdin closes the pipe under the
+        // write; that is the hook's answer, and its exit code is the result.
+        let mut stdin_pipe = child.stdin.take().unwrap();
+        match stdin_pipe.write_all(stdin.as_bytes()) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => panic!("{e}"),
+            _ => {},
+        }
+        drop(stdin_pipe);
         let code = child.wait().unwrap().code().unwrap_or(-1);
         let _ = std::fs::remove_dir_all(&dir);
         code
+    }
+
+    /// A hook that exits without reading its stdin is not a failure of the runner.
+    /// The write to the closed pipe is refused, and `unwrap` on it raced the exit
+    /// code: with input larger than the pipe holds, the test died on `BrokenPipe`
+    /// whenever the hook was quicker than the write.
+    #[test]
+    fn a_hook_that_exits_without_reading_its_stdin_still_returns_its_code() {
+        let big = "x".repeat(4 << 20);
+        for _ in 0 .. 5 {
+            let code = run_script("#!/bin/sh\nexit 3\n", &[], &big, None, None);
+            assert_eq!(code, 3);
+        }
     }
 
     /// A PATH with git + coreutils but WITHOUT the cargo bin, so the durable
@@ -700,14 +722,7 @@ mod byline_hook_tests {
         std::fs::create_dir_all(&bin).unwrap();
         if let Some(body) = stub {
             let mock = bin.join("mock");
-            std::fs::write(&mock, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&mock).unwrap().permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(&mock, perms).unwrap();
-            }
+            crate::test_exec::write_executable(&mock, body);
         }
         // Only the stub dir plus the bare minimum, so a real `mock` installed on
         // this machine cannot leak into the test.
@@ -795,14 +810,7 @@ mod byline_hook_tests {
             let hooks = repo.join("mock/target/hooks");
             std::fs::create_dir_all(&hooks).unwrap();
             let path = hooks.join("pre-push");
-            std::fs::write(&path, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut p = std::fs::metadata(&path).unwrap().permissions();
-                p.set_mode(0o755);
-                std::fs::set_permissions(&path, p).unwrap();
-            }
+            crate::test_exec::write_executable(&path, body);
         }
         let zero = "0".repeat(40);
         let stdin = format!("refs/heads/main {sha} refs/heads/main {zero}\n");
@@ -851,21 +859,13 @@ mod byline_hook_tests {
         let hooks = repo.join(".git/hooks");
         std::fs::create_dir_all(&hooks).unwrap();
         let path = hooks.join(name);
-        std::fs::write(
+        crate::test_exec::write_executable(
             &path,
             format!(
                 "#!/usr/bin/env bash\nlog=\"$(git rev-parse --show-toplevel)/own.log\"\n\
                  printf 'args:%s\\n' \"$*\" >> \"$log\"\ncat >> \"$log\"\nexit {code}\n"
             ),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&path).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&path, p).unwrap();
-        }
+        );
         path
     }
 
@@ -893,14 +893,7 @@ mod byline_hook_tests {
             let hooks = repo.join("mock/target/hooks");
             std::fs::create_dir_all(&hooks).unwrap();
             let path = hooks.join("pre-push");
-            std::fs::write(&path, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut p = std::fs::metadata(&path).unwrap().permissions();
-                p.set_mode(0o755);
-                std::fs::set_permissions(&path, p).unwrap();
-            }
+            crate::test_exec::write_executable(&path, body);
         }
         plant_own_hook(&repo, "pre-push", 42);
         let code = run_script(
@@ -1023,7 +1016,7 @@ mod byline_hook_tests {
         // nothing on the design surface leaves; the own hook runs there too.
         let (repo, _) = repo_with_commit("fix: whatever");
         let own = plant_own_hook(&repo, "pre-commit", 42);
-        let hook = gen_pre_commit("mock", &own);
+        let hook = gen_pre_commit("mock", &HookLayout::of(&["crates"]), &own);
         let code = run_script(&hook, &[], "", Some(&repo), Some(&launcher_free_path()));
         assert_eq!(code, 42, "the own hook's exit is the commit's");
         assert!(
@@ -1061,14 +1054,7 @@ mod byline_hook_tests {
             ),
         ] {
             let p = bin.join(name);
-            std::fs::write(&p, body).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&p).unwrap().permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(&p, perms).unwrap();
-            }
+            crate::test_exec::write_executable(&p, body);
         }
         format!("{}:{}", bin.display(), launcher_free_path())
     }
@@ -1082,7 +1068,7 @@ mod byline_hook_tests {
         let (repo, sha) = repo_with_commit("fix: whatever");
         std::fs::write(repo.join("mockspace.toml"), "mock_dir = \"mock\"\n").unwrap();
         let own = plant_own_hook(&repo, "pre-push", 0);
-        let hook = gen_pre_push("mock", &own);
+        let hook = gen_pre_push("mock", &HookLayout::of(&["crates"]), &own);
         let path = stubbed_path(&repo);
         let code = run_script(&hook, &[], &refs_line(&sha), Some(&repo), Some(&path));
         let log = own_log(&repo).unwrap_or_default();
@@ -1125,7 +1111,7 @@ mod byline_hook_tests {
     fn the_generated_pre_push_hook_pipes_messages_to_the_launcher() {
         // Asserted on the generated text rather than by running it: the body
         // needs a real repo with pushable refs, which the durable tests cover.
-        let h = gen_pre_push("mock", std::path::Path::new("/dev/null"));
+        let h = gen_pre_push("mock", &HookLayout::of(&["crates"]), std::path::Path::new("/dev/null"));
         assert!(h.contains("check-message"));
         assert!(h.contains("--domain commit-message"));
         assert!(h.contains("--gate push"));
@@ -1153,18 +1139,10 @@ mod byline_hook_tests {
         let out = dir.join("stdin.bin");
         let bin = scratch("prepush_bin");
         let stub = bin.join("mock");
-        std::fs::write(
+        crate::test_exec::write_executable(
             &stub,
             format!("#!/usr/bin/env bash\ncat > {}\nexit 0\n", out.display()),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&stub).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&stub, p).unwrap();
-        }
+        );
 
         let (repo, _sha) = repo_with_commit("feat: first subject\n");
         let git = |args: &[&str]| {
@@ -1240,18 +1218,10 @@ mod byline_hook_tests {
     fn policy_stub_path() -> (PathBuf, String) {
         let bin = scratch("policy_bin");
         let stub = bin.join("mock");
-        std::fs::write(
+        crate::test_exec::write_executable(
             &stub,
             "#!/usr/bin/env bash\nif cat | tr '\\0' '\\n' | grep -q BADMSG; then exit 1; fi\nexit 0\n",
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut p = std::fs::metadata(&stub).unwrap().permissions();
-            p.set_mode(0o755);
-            std::fs::set_permissions(&stub, p).unwrap();
-        }
+        );
         let path = format!("{}:{}", bin.display(), launcher_free_path());
         (bin, path)
     }
@@ -1373,7 +1343,11 @@ mod generated_pre_commit_tests {
             git(&["add", path]);
         }
         let hook = root.join("hook.sh");
-        fs::write(&hook, gen_pre_commit(mock_rel, &root.join("no-user-hook"))).unwrap();
+        fs::write(
+            &hook,
+            gen_pre_commit(mock_rel, &HookLayout::of(&["crates"]), &root.join("no-user-hook")),
+        )
+        .unwrap();
         let out = Command::new("bash")
             .arg(&hook)
             .current_dir(root)
@@ -1459,7 +1433,11 @@ mod generated_pre_commit_tests {
             git(&["add", path]);
         }
         let hook = root.join("hook.sh");
-        fs::write(&hook, gen_pre_commit("mock", &root.join("no-user-hook"))).unwrap();
+        fs::write(
+            &hook,
+            gen_pre_commit("mock", &HookLayout::of(&["crates"]), &root.join("no-user-hook")),
+        )
+        .unwrap();
         let out = Command::new("bash")
             .arg(&hook)
             .current_dir(root)
@@ -1501,15 +1479,15 @@ mod generated_pre_commit_tests {
     }
 
     #[test]
-    fn a_lint_and_a_tool_staged_beside_a_doc_change_are_still_doc_only() {
-        // The same reading one directory over, twice. Neither `lints/` nor
-        // `tools/` is a declared source directory either.
+    fn a_tool_staged_beside_a_doc_change_is_still_doc_only() {
+        // The same reading one directory over. `tools/` is not a declared source
+        // directory either. `lints/` is a shared input and runs everything, which
+        // the arms in `hooks_src_dirs_tests` pin.
         let (hook, engine) = both_sides(&[
             ("mock/crates/foo/DESIGN.md.tmpl", "x\n"),
-            ("mock/lints/a_row_carries_keywords.rs", "fn lint() {}\n"),
             ("mock/tools/a-tool/src/lib.rs", "fn t() {}\n"),
         ]);
-        assert!(hook, "neither is source to any gate");
+        assert!(hook, "a tool is not source to any gate");
         assert_eq!(hook, engine, "the two sides disagree about the same tree");
     }
 
@@ -1534,27 +1512,21 @@ mod generated_pre_commit_tests {
         assert_eq!(hook, engine, "the two sides disagree about the same tree");
     }
 
-    /// The gap the fix left, written down as the arm that will catch it.
+    /// The hook and the engine agree on a declared source directory other than
+    /// `crates`.
     ///
     /// `src_dirs` defaults to `crates`, and every repository here leaves it
-    /// alone, so the hook's literal `crates/` and the engine's declared layout
-    /// ask one question in practice. They stop agreeing the moment a project
-    /// declares another source directory: the hook cannot see the declaration,
-    /// claims `--doc-only` over source under it, and the guard refuses. That is
-    /// the same deadlock this change removed for the default case, surviving in
-    /// a shape nothing here reaches.
+    /// alone, so a hook that wrote `crates/` as a literal and the engine's
+    /// declared layout asked one question in practice. They stopped agreeing the
+    /// moment a project declared another source directory: the hook claimed
+    /// `--doc-only` over source under it and the guard refused, the deadlock the
+    /// default case had already lost. The hook is now generated from the
+    /// declaration, so both read the same list.
     ///
     /// `changelist_lock` and `changelist_required` both carry arms over
     /// `["crates", "libs"]`, so the shape is real rather than hypothetical.
-    ///
-    /// Red until `src_dirs` is threaded through `ensure_gate` and
-    /// `ensure_generated_hooks` into `gen_pre_commit`. `both_sides` hardcodes
-    /// the default layout too and moves with it.
     #[test]
-    #[ignore = "catalogue: the generated hook cannot read `src_dirs`, so it claims \
-                `--doc-only` over source under a declared directory the guard refuses; \
-                threading `src_dirs` into `gen_pre_commit` closes it"]
-    fn a_declared_source_directory_outside_crates_deadlocks() {
+    fn the_hook_and_the_engine_agree_on_a_declared_source_directory_outside_crates() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
@@ -1577,7 +1549,11 @@ mod generated_pre_commit_tests {
             git(&["add", path]);
         }
         let hook = root.join("hook.sh");
-        fs::write(&hook, gen_pre_commit("mock", &root.join("no-user-hook"))).unwrap();
+        fs::write(
+            &hook,
+            gen_pre_commit("mock", &HookLayout::of(&["crates", "libs"]), &root.join("no-user-hook")),
+        )
+        .unwrap();
         let out = Command::new("bash")
             .arg(&hook)
             .current_dir(root)
@@ -1587,6 +1563,11 @@ mod generated_pre_commit_tests {
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            printed.contains("crates: bar,foo"),
+            "the hook found both crates through the declared directories, and \
+             an early exit prints nothing: {printed}"
         );
         let hook_claims_doc_only = printed.contains(DOC_ONLY);
 
@@ -1607,27 +1588,16 @@ mod generated_pre_commit_tests {
         );
     }
 
-    /// The same blindness one branch over, and this one nothing refuses.
+    /// Source under a declared directory and nothing under `crates/` is scoped
+    /// to its own crate.
     ///
-    /// Where the arm above stages source under a declared directory *beside*
-    /// something under `crates/`, this one stages source under the declared
-    /// directory and nothing else. `CHANGED_CRATES` is built from the same
-    /// literal, so it comes out empty, the hook takes the
-    /// `infrastructure-only` branch and passes `--scope infra`, and the crate
-    /// lints never run over the source that was staged.
-    ///
-    /// The deadlock above is loud: the guard refuses and somebody reads the
-    /// message. This is silent, and it is the worse of the two, because green
-    /// is what it looks like.
-    ///
-    /// One threading of `src_dirs` closes both, and closing only the loud one
-    /// reads as closing the class.
+    /// `CHANGED_CRATES` is built from the declaration, so the crate is found, the
+    /// hook does not take the `infrastructure-only` branch, and the crate lints
+    /// run over the source that was staged. Scoping it to `infra` would not fail
+    /// anything: green is what that looks like, so the arm asserts the crate
+    /// named and the branch not taken.
     #[test]
-    #[ignore = "catalogue: the generated hook builds `CHANGED_CRATES` from a literal \
-                `crates/`, so source under another declared source directory scopes \
-                to `infra` and its crate lints never run; threading `src_dirs` into \
-                `gen_pre_commit` closes it"]
-    fn source_under_a_declared_directory_alone_scopes_to_infra() {
+    fn source_under_a_declared_directory_alone_is_scoped_to_its_crate() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let git = |args: &[&str]| {
@@ -1650,7 +1620,11 @@ mod generated_pre_commit_tests {
             git(&["add", path]);
         }
         let hook = root.join("hook.sh");
-        fs::write(&hook, gen_pre_commit("mock", &root.join("no-user-hook"))).unwrap();
+        fs::write(
+            &hook,
+            gen_pre_commit("mock", &HookLayout::of(&["crates", "libs"]), &root.join("no-user-hook")),
+        )
+        .unwrap();
         let out = Command::new("bash")
             .arg(&hook)
             .current_dir(root)
@@ -1662,6 +1636,11 @@ mod generated_pre_commit_tests {
             String::from_utf8_lossy(&out.stderr)
         );
 
+        assert!(
+            printed.contains("crates: bar"),
+            "the hook found the crate through the declared directory, and an early \
+             exit prints nothing: {printed}"
+        );
         assert!(
             !printed.contains("infrastructure-only"),
             "staged source scoped to `infra`, so no crate lint ran over it: {printed}"

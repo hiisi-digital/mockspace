@@ -553,3 +553,7 @@ fn the_publish_scan_reaches_every_member_including_this_one() {
     .expect("unwritable");
     assert_eq!(workspace_members(d.path()), vec![".", "a/b/c"]);
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

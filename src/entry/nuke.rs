@@ -1017,11 +1017,6 @@ mod what_the_nuke_will_not_reach {
         let d = tempfile::tempdir().unwrap();
         let mock = d.path().join("repo/mock");
         fs::create_dir_all(&mock).unwrap();
-        fs::write(
-            mock.join("mockspace.toml"),
-            "src_dirs = [\"../../outside\"]\n",
-        )
-        .unwrap();
         fs::create_dir_all(d.path().join("repo/.git")).unwrap();
 
         let outside = d.path().join("outside/beta/src");
@@ -1034,7 +1029,10 @@ mod what_the_nuke_will_not_reach {
         fs::write(outside.join("lib.rs"), "pub mod y;\n").unwrap();
         fs::write(outside.join("other.rs"), "pub fn other() {}\n").unwrap();
 
-        let cfg = Config::from_dir(&mock);
+        // `Config::from_dir` refuses a `..` entry, so the declaration is set on the
+        // config directly: the nuke guard stands behind the refusal, not in place of it.
+        let mut cfg = Config::from_dir(&mock);
+        cfg.src_dirs = vec![mock.join("../../outside")];
         let plan = plan_nuke(&cfg, NukeTier::Src);
 
         let named: Vec<&PathBuf> = plan.crates.iter().flat_map(|c| c.files.iter()).collect();
@@ -1173,11 +1171,6 @@ mod what_the_nuke_will_not_write {
         let mock = d.path().join("repo/mock");
         fs::create_dir_all(&mock).unwrap();
         fs::create_dir_all(d.path().join("repo/.git")).unwrap();
-        fs::write(
-            mock.join("mockspace.toml"),
-            "src_dirs = [\"../../outside\"]\n",
-        )
-        .unwrap();
 
         let outside = d.path().join("outside/beta/src");
         fs::create_dir_all(&outside).unwrap();
@@ -1189,7 +1182,10 @@ mod what_the_nuke_will_not_write {
         fs::write(outside.join("lib.rs"), "pub mod y;\n").unwrap();
         fs::write(outside.join("other.rs"), "pub fn other() {}\n").unwrap();
 
-        let cfg = Config::from_dir(&mock);
+        // `Config::from_dir` refuses a `..` entry, so the declaration is set on the
+        // config directly: the nuke guard stands behind the refusal, not in place of it.
+        let mut cfg = Config::from_dir(&mock);
+        cfg.src_dirs = vec![mock.join("../../outside")];
         let plan = plan_nuke(&cfg, NukeTier::Src);
         assert!(plan.all_escaped(), "the plan should say everything escaped");
         apply(&plan, &cfg);

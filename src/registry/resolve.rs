@@ -890,6 +890,7 @@ pub fn resolve_data(
         duplicates:   reg.duplicates.clone(),
         // The same corpus, resolved, so it was read from the same files.
         files_read:   reg.files_read.clone(),
+        unquoted_times: reg.unquoted_times.clone(),
     };
     for (id, row) in &reg.rows {
         let mut r = row.clone();
@@ -961,6 +962,7 @@ fn resolve_row(
         // off a per-row view; the corpus-level answer is on the registry the
         // loader returned.
         files_read:   Vec::new(),
+        unquoted_times: Vec::new(),
     };
     for value in row.fields.values() {
         for (dep, _) in find_registry_refs(value, &ns_keys) {

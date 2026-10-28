@@ -95,6 +95,14 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
                 };
                 let mut fields = BTreeMap::new();
                 for (fk, fv) in table.iter() {
+                    if let toml_edit::Item::Value(toml_edit::Value::Datetime(d)) = fv {
+                        reg.unquoted_times.push(UnquotedTime {
+                            row:    format!("{key}::{slug}"),
+                            field:  fk.to_string(),
+                            text:   d.value().to_string(),
+                            source: path.clone(),
+                        });
+                    }
                     fields.insert(fk.to_string(), value_to_string(fv));
                 }
                 let row = RegistryRow {

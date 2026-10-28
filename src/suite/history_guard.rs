@@ -261,6 +261,27 @@ pub fn staged_nulls(repo_root: &Path, history_dir: &str) -> Vec<Nulled> {
     out
 }
 
+/// Every path the index changes against `HEAD`, bar the history files themselves.
+///
+/// Without renames, so that a file moved out of a member lists the member it left
+/// as well as the one it went to. Git's rename detection names only the
+/// destination, and the member that lost the file would be judged untouched.
+fn staged_changes(repo_root: &Path, history_dir: &str) -> Vec<String> {
+    git(repo_root, &[
+        "diff",
+        "--cached",
+        "--name-only",
+        "--no-renames",
+        "-z",
+        "HEAD",
+    ])
+    .map(lines)
+    .unwrap_or_default()
+    .into_iter()
+    .filter(|p| !p.starts_with(&format!("{history_dir}/")))
+    .collect()
+}
+
 /// `mock check-test-history`: exit 0 when the staged commit nulls no green record
 /// it should not, 1 when it does, naming each member.
 pub fn run(repo_root: &Path, mock_dir: &Path) -> ExitCode {
@@ -273,18 +294,7 @@ pub fn run(repo_root: &Path, mock_dir: &Path) -> ExitCode {
     if nulled.is_empty() {
         return ExitCode::SUCCESS;
     }
-    let changed = git(repo_root, &[
-        "diff",
-        "--cached",
-        "--name-only",
-        "-z",
-        "HEAD",
-    ])
-    .map(lines)
-    .unwrap_or_default()
-    .into_iter()
-    .filter(|p| !p.starts_with(&format!("{history_dir}/")))
-    .collect::<Vec<_>>();
+    let changed = staged_changes(repo_root, &history_dir);
     match judge(&nulled, &changed, &mut || Inputs::read(repo_root, mock_dir)) {
         Ok(refusals) if refusals.is_empty() => ExitCode::SUCCESS,
         Ok(refusals) => {

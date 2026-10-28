@@ -206,3 +206,7 @@ fn an_ordinary_merge_leaves_no_record() {
         "regenerated and checked, so nothing to refuse"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

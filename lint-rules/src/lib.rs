@@ -94,6 +94,11 @@ pub mod tool;
 pub mod type_scanner;
 mod undocumented_type;
 
+/// What these tests take out of the environment before they run.
+#[cfg(test)]
+#[path = "../../tests/common/ambient.rs"]
+mod test_ambient;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 

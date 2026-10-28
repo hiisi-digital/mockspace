@@ -339,3 +339,7 @@ fn publish_as_a_registry_list_naming_crates_io_still_publishes() {
     );
     assert!(offenders.is_empty(), "{offenders:#?}");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

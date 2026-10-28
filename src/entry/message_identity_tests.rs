@@ -481,18 +481,10 @@ fn what_the_push_scan_sends(repo: &Path, head: &str) -> Vec<u8> {
     let stub_dir = tempfile::tempdir().unwrap();
     let sent: PathBuf = stub_dir.path().join("stdin.bin");
     let stub = stub_dir.path().join("mock");
-    std::fs::write(
+    crate::test_exec::write_executable(
         &stub,
         format!("#!/usr/bin/env bash\ncat > {}\nexit 0\n", sent.display()),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut p = std::fs::metadata(&stub).unwrap().permissions();
-        p.set_mode(0o755);
-        std::fs::set_permissions(&stub, p).unwrap();
-    }
+    );
 
     let script = format!(
         "#!/usr/bin/env bash\nset -u\nPREPUSH_STDIN=$(cat)\n{}",

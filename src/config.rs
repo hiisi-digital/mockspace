@@ -44,6 +44,13 @@ impl InstallMode {
     }
 }
 
+/// The text a nuked crate's `lib.rs` carries. The config holds it as `nuke_marker`, and
+/// nothing in `mockspace.toml` sets it, so this default is the only value it takes.
+///
+/// The engine's nuke detection and the generated hooks both read the marker the
+/// config resolves to, and this is the one place the default is spelled.
+pub const DEFAULT_NUKE_MARKER: &str = "Nuked by `cargo mock --nuke`";
+
 /// Mockspace workspace configuration.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -934,16 +941,45 @@ impl Config {
         let project_name = raw.project_name.unwrap_or_else(|| "project".into());
         let crate_prefix = raw.crate_prefix.unwrap_or_else(|| project_name.clone());
 
+        // An entry is refused unless it is written the way git reports a path:
+        // plain components joined by `/`, relative to the mock directory. The
+        // entry is used verbatim as a path under the mock directory, which is how
+        // the generated hooks and the phase gates address a directory, and any
+        // other spelling matches no git path. Kept, the source under it would be
+        // scoped to `infra` with nothing saying so, and `.` or an empty entry
+        // would make discovery treat every directory under the mock dir as a
+        // package. Refusing here, rather than folding the spelling in `SrcLayout`,
+        // keeps discovery, the renderers and the hooks reading one string.
+        let misspelt: Vec<String> = raw
+            .src_dirs
+            .iter()
+            .filter_map(|d| {
+                mockspace_lint_rules::src_layout::src_dir_fault(d)
+                    .map(|why| format!("{d:?} ({why})"))
+            })
+            .collect();
+        assert!(
+            misspelt.is_empty(),
+            "mockspace.toml names src_dirs that are not a plain relative path: {}\n  \
+             Every entry is relative to the mock dir ({}) and is written as the \
+             path of a directory under it, with plain components joined by `/`. \
+             The hooks and the phase gates match a directory by that path, and \
+             any other spelling matches none, so the entry would guard nothing. \
+             Write it that way, and move the packages under the mock dir if they \
+             are outside it.",
+            misspelt.join(", "),
+            mock_dir.display(),
+        );
         // A declared list rather than a walked tree, because a walk cannot tell
         // an empty group from a directory that is not a group, and this project
-        // has already shipped one silent-empty discovery. A named directory that
-        // is missing is a configuration error and says so; an absent
-        // subdirectory in a walk says nothing at all.
+        // has already shipped one silent-empty discovery.
         let src_dirs: Vec<PathBuf> = if raw.src_dirs.is_empty() {
             vec![mock_dir.join("crates")]
         } else {
             raw.src_dirs.iter().map(|d| mock_dir.join(d)).collect()
         };
+        // A named directory that is missing is a configuration error and says
+        // so; an absent subdirectory in a walk says nothing at all.
         if raw.src_dirs.is_empty() {
             // The default is allowed not to exist: a project with no packages
             // yet is ordinary, and discovery yields nothing without complaint.
@@ -1083,7 +1119,7 @@ impl Config {
             module_crates: raw.module_crates,
             unprefixed_crates: raw.unprefixed_crates,
             abi_version: raw.abi_version.unwrap_or(1),
-            nuke_marker: "Nuked by `cargo mock --nuke`".to_string(),
+            nuke_marker: DEFAULT_NUKE_MARKER.to_string(),
             registry_namespaces: crate::registry::with_builtins(
                 &raw.registry.map(|r| r.namespace).unwrap_or_default(),
             ),
@@ -2237,6 +2273,10 @@ mod a_malformed_lint_table_is_not_dropped_in_silence {
 #[cfg(test)]
 #[path = "config_clone_says_tests.rs"]
 mod clone_says_tests;
+
+#[cfg(test)]
+#[path = "config_src_dirs_tests.rs"]
+mod src_dirs_tests;
 
 #[cfg(test)]
 mod key_lists_cannot_rot {

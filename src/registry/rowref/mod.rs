@@ -13,7 +13,13 @@ use super::*;
 /// row reference resolve against different things and fail in different ways,
 /// so one word for both would make every finding ambiguous about which was
 /// intended.
-pub const SCALAR_TYPES: &[&str] = &["string", "string[]", "integer", "boolean", "ref", "ref[]"];
+///
+/// `date`, `time`, `datetime` and `span` are strings on the wire too, held to
+/// the form `render::time_pattern` gives each, so the gate refuses one written
+/// wrong.
+pub const SCALAR_TYPES: &[&str] = &[
+    "string", "string[]", "integer", "boolean", "ref", "ref[]", "date", "time", "datetime", "span",
+];
 
 /// The namespace a field type names, and whether the field holds many.
 ///

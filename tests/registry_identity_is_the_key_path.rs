@@ -319,3 +319,7 @@ text = \"late\"
     assert!(at("b_none") > at("c_late"), "no-group rows are not rendered last:\n{out}");
     assert!(at("a_real") < at("### zzz"), "the real group lost its row:\n{out}");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;
