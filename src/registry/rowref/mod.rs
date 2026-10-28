@@ -15,8 +15,8 @@ use super::*;
 /// intended.
 ///
 /// `date`, `time`, `datetime` and `span` are strings on the wire too, held to
-/// the form `render::time_pattern` gives each, so an editor knows the field
-/// holds a moment or a length of time and the gate refuses one written wrong.
+/// the form `render::time_pattern` gives each, so the gate refuses one written
+/// wrong.
 pub const SCALAR_TYPES: &[&str] = &[
     "string", "string[]", "integer", "boolean", "ref", "ref[]", "date", "time", "datetime", "span",
 ];

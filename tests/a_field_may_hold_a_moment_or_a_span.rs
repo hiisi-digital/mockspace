@@ -153,3 +153,14 @@ fn the_same_text_in_a_string_field_passes() {
         }
     }
 }
+
+/// The form is checked and the calendar is not, which the reference states as a limit. The
+/// second value is the control: a day written in the wrong form is refused, so the first
+/// passing is the calendar going unchecked and not the pattern accepting anything.
+#[test]
+fn a_day_the_calendar_lacks_passes_the_form() {
+    let (ok, err) = outcome("date", "2026-02-30");
+    assert!(ok, "`2026-02-30` is in the form of a date:\n{err}");
+    let (ok, _) = outcome("date", "2026-02-3");
+    assert!(!ok, "`2026-02-3` is not in the form of a date");
+}
