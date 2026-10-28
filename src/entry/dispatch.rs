@@ -1173,6 +1173,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     let dot_path = cfg
         .docs_dir
         .join(render_design::ordered_doc_name("STRUCTURE.GRAPH.dot", &cfg));
+    // Read before it is written over: the pictures below are drawn from it, and one drawn from
+    // the same text is already there.
+    let previous_dot = fs::read_to_string(&dot_path).ok();
     render_design::write_generated(&dot_path, &dot);
     generated.push(dot_path.clone());
     eprintln!("  {}", dot_path.display());
@@ -1188,6 +1191,15 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // because a graphviz that is not installed leaves the previous copy in
         // place and the sweep must not take it.
         generated.push(out.clone());
+        // `write_generated` may add a header, so the text compared is the file as it now stands,
+        // against the file as it stood.
+        let written_dot = fs::read_to_string(&dot_path).ok();
+        if let Some(now) = written_dot.as_deref()
+            && graph_picture::picture_is_current(previous_dot.as_deref(), now, out.is_file())
+        {
+            eprintln!("  {} (unchanged)", out.display());
+            continue;
+        }
         // `dot -o` writes whatever it is given, so it renders to a file under
         // `<mock>/target`, out of `docs/` so that a killed run leaves nothing for
         // the sweep to miss, and the target is replaced only when the bytes
