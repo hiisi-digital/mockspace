@@ -23,6 +23,10 @@
 
 use std::path::{Path, PathBuf};
 
+/// The scrubs of a child's environment, shared with the lib tests by path.
+#[path = "common/ambient.rs"]
+mod ambient;
+
 /// The spellings that give a file its execute bit, or any mode at all.
 const SPELLINGS: &[&str] = &[
     "set_permissions",
