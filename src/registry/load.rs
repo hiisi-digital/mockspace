@@ -55,6 +55,19 @@ fn value_to_string(v: &toml_edit::Item) -> String {
 /// project may keep unrelated TOML in the tree, and refusing to start over an
 /// unknown key would be the wrong failure.
 pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Registry {
+    load_registry_of(mock_dir, namespaces, None)
+}
+
+/// Load the rows of the namespaces in `wanted` only, or every row when it is `None`.
+///
+/// A file whose text never writes a `[[key]]` header of a wanted namespace is not parsed at
+/// all, which is where the time goes on a registry holding one very large namespace. Such a
+/// file is also left out of `files_read`, because it was not read as registry data.
+pub fn load_registry_of(
+    mock_dir: &Path,
+    namespaces: &[RegistryNamespace],
+    wanted: Option<&BTreeSet<String>>,
+) -> Registry {
     let mut reg = Registry::default();
     if namespaces.is_empty() {
         return reg;
@@ -67,19 +80,32 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
 
     let mut files = Vec::new();
     collect_toml_files(&root, &mut files);
-    reg.files_read = files.clone();
+    let all_files = files.clone();
+    let mut read = Vec::new();
+    let needles: Vec<String> = wanted
+        .map(|w| w.iter().map(|k| format!("[[{k}]]")).collect())
+        .unwrap_or_default();
 
     for path in files {
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
+        // A header written with inner spaces (`[[ key ]]`) is valid TOML and the needle does
+        // not find it, so such a file is parsed rather than skipped.
+        if wanted.is_some()
+            && !needles.iter().any(|n| text.contains(n.as_str()))
+            && !text.contains("[[ ")
+        {
+            continue;
+        }
+        read.push(path.clone());
         let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
             eprintln!("  registry: {} is not valid TOML, skipped", path.display());
             continue;
         };
 
         for (key, item) in doc.iter() {
-            if !known.contains(key) {
+            if !known.contains(key) || wanted.is_some_and(|w| !w.contains(key)) {
                 continue;
             }
             let Some(tables) = item.as_array_of_tables() else {
@@ -137,5 +163,65 @@ pub fn load_registry(mock_dir: &Path, namespaces: &[RegistryNamespace]) -> Regis
     for ids in reg.by_namespace.values_mut() {
         ids.sort();
     }
+    // Unfiltered, the population is every file the walk met, readable or not.
+    reg.files_read = if wanted.is_none() { all_files } else { read };
     reg
+}
+
+/// The names in `text` that are declared namespace keys.
+///
+/// A name runs over letters, digits, `_` and `-`, so a key such as `ikiuni-renderer` is one
+/// name. Anything else ends it.
+fn namespace_names_in<'a>(text: &'a str, keys: &BTreeSet<&str>) -> BTreeSet<&'a str> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        .filter(|t| keys.contains(t))
+        .collect()
+}
+
+/// Load only what the reference expression `expr` can read, which is the namespaces it names
+/// and every namespace those reach.
+///
+/// Reaching is followed to a fixed point, over two edges: a field typed as another namespace,
+/// and a name of a declared namespace written in the text of a loaded row, where a reference
+/// to it would sit. An expression asking what refers to or rests on a row (`refsto`,
+/// `sourcesof`) can be answered by any row, so it loads all of them.
+pub fn load_registry_for_expr(
+    mock_dir: &Path,
+    namespaces: &[RegistryNamespace],
+    expr: &str,
+) -> Registry {
+    if expr.contains("refsto") || expr.contains("sourcesof") {
+        return load_registry(mock_dir, namespaces);
+    }
+    let keys: BTreeSet<&str> = namespaces.iter().map(|n| n.key.as_str()).collect();
+    let ref_fields = super::model::reference_fields(namespaces);
+    let mut wanted: BTreeSet<String> =
+        namespace_names_in(expr, &keys).into_iter().map(String::from).collect();
+    loop {
+        let reg = load_registry_of(mock_dir, namespaces, Some(&wanted));
+        let mut reach: BTreeSet<String> = BTreeSet::new();
+        for ns in namespaces.iter().filter(|n| wanted.contains(&n.key)) {
+            for f in &ns.fields {
+                let target = f.r#type.trim_end_matches("[]");
+                if keys.contains(target) {
+                    reach.insert(target.to_string());
+                }
+            }
+        }
+        for row in reg.rows.values() {
+            let refs = ref_fields.get(&row.namespace);
+            for (field, text) in &row.fields {
+                // A `ref` field holds `namespace::slug` bare, with no `{{ }}` around it.
+                if text.contains("{{") || refs.is_some_and(|r| r.contains(field)) {
+                    reach.extend(
+                        namespace_names_in(text, &keys).into_iter().map(String::from),
+                    );
+                }
+            }
+        }
+        if reach.is_subset(&wanted) {
+            return reg;
+        }
+        wanted.extend(reach);
+    }
 }

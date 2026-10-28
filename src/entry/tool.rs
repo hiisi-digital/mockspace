@@ -343,7 +343,7 @@ pub(crate) fn run(
                 // reading even when the exit code says the run was fine.
                 eprintln!("{}", examined_nothing_message(name));
             } else {
-                eprintln!("{name}: clean, {examined} examined.");
+                eprintln!("{}", read_message(name, *examined));
             }
             ExitCode::SUCCESS
         },
@@ -398,6 +398,15 @@ fn wrote_message(name: &str, wrote: &[String]) -> String {
         s.push('\n');
     }
     s
+}
+
+/// The closing line of a tool that read something and found nothing to report.
+///
+/// It says what the run read and no more. A tool is asked a question and answers
+/// with a report, so ending on a verdict word claims a judgement the run never
+/// made; the count is the one thing the line knows to be true.
+fn read_message(name: &str, examined: usize) -> String {
+    format!("{name}: read {examined}, nothing to report.")
 }
 
 /// The message printed for a clean verdict over zero, alongside the
