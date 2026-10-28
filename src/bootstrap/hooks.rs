@@ -135,10 +135,10 @@ impl HookLayout {
 /// relative to `repo_root`.
 ///
 /// A path is written as cargo reads it from the generated lint crate, which
-/// sits at `<mock_dir>/target/mockspace-lints/`, so it is resolved from there.
+/// sits at `build_dir::lint_crate_dir`, so it is resolved from there.
 /// A pack outside the repository cannot be staged and is left out.
 fn lint_pack_dirs(repo_root: &Path, mock_dir: &Path, config_path: &Path) -> Vec<String> {
-    let from = mock_dir.join("target").join("mockspace-lints");
+    let from = crate::build_dir::lint_crate_dir(mock_dir);
     let mut dirs = Vec::new();
     for (name, spec) in super::lints::parse_lint_crates(config_path) {
         // `parse_lint_crates` re-emits each dependency as the value cargo reads, so
