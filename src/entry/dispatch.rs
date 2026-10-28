@@ -35,7 +35,14 @@ fn arg_value(args: &[String], flag: &str) -> Option<String> {
 /// them would leave the repo with no route out. Everything else gates, so
 /// everything else blocks.
 fn is_recovery_command(args: &[String]) -> bool {
-    const RECOVERY: &[&str] = &["clean", "activate", "deactivate", "status", "migrate"];
+    const RECOVERY: &[&str] = &[
+        "clean",
+        "activate",
+        "deactivate",
+        "status",
+        "migrate",
+        "registry-append",
+    ];
     args.iter().skip(1).any(|a| RECOVERY.contains(&a.as_str()))
 }
 
@@ -602,6 +609,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                     crate::lint_catalogue::render_table(&listings, &absent)
                 );
                 return ExitCode::SUCCESS;
+            },
+            "registry-append" => {
+                return crate::registry_append::run(&cfg, &subcommand_args(&args, "registry-append"));
             },
             "query" => {
                 // The argument after the subcommand, not a fixed position:
@@ -1302,13 +1312,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             body,
         ));
     }
-    document::plan_registry_pages(
-        &mut plan,
-        &cfg.registry_namespaces,
-        &registry,
-        &cfg.mock_dir,
-        &cfg,
-    );
     let mut cfg = cfg;
     cfg.doc_index = document::DocIndex::build(&plan, &cfg);
     let cfg = cfg;

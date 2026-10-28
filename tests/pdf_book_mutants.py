@@ -36,13 +36,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "pdf.sh"
 SUITE = "tests/pdf_book_test.sh"
 
-MARKER_GREP = (
-    """    grep -q '^[0-9][0-9]* rows\\. Identifiers are permanent:'"""
-    """ "$page" && files+=("$page")"""
-)
-KEY_SED = (
-    """s/^[[:space:]]*key[[:space:]]*=[[:space:]]*"\\([a-z_]*\\)"[[:space:]]*$/\\1/p"""
-)
 
 # name -> (what to break, what to break it to, which arms must then fail)
 MUTANTS = {
@@ -55,39 +48,6 @@ MUTANTS = {
         """ || true)\n[[ -z "$PROJECT_NAME" ]]""",
         """)\n[[ -z "$PROJECT_NAME" ]]""",
         {"it_falls_back_to_the_directory_name_when_the_graph_names_nothing"},
-    ),
-    "only the config is read": (
-        MARKER_GREP,
-        """    false && files+=("$page")""",
-        {"it_carries_a_registry_page_the_config_never_names"},
-    ),
-    "only the sweep is read": (
-        f'''    done < <(sed -n '{KEY_SED}' "$CONFIG")''',
-        """    done < <(true)""",
-        {
-            "it_carries_the_declared_registry_pages_in_declaration_order",
-            "it_carries_a_registry_page_the_config_never_names",
-            "it_carries_a_page_that_is_both_declared_and_found_only_once",
-            "it_reads_a_key_line_the_config_indents",
-        },
-    ),
-    "the sweep takes every markdown file": (
-        MARKER_GREP,
-        """    true && files+=("$page")""",
-        {
-            "it_does_not_carry_a_document_that_is_neither_declared_nor_a_registry_page",
-            "it_opens_with_the_design_document_and_closes_with_the_addenda",
-        },
-    ),
-    "a declared page is taken without checking it exists": (
-        """        [[ -f "$DOCS_DIR/${upper}.md" ]] && files+=("$DOCS_DIR/${upper}.md")""",
-        """        files+=("$DOCS_DIR/${upper}.md")""",
-        {"it_carries_nothing_registry_shaped_when_there_are_no_registry_pages"},
-    ),
-    "the key line must not be indented": (
-        KEY_SED,
-        """s/^key = "\\([a-z_]*\\)"$/\\1/p""",
-        {"it_reads_a_key_line_the_config_indents"},
     ),
 }
 

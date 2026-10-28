@@ -31,8 +31,8 @@ Three things are reported rather than passed:
   list does.
 - **A type naming neither a builtin nor a namespace**, rather than quietly
   becoming a string field that constrains nothing.
-- **A target declaring `value_field`**, which renders a value rather than a link
-  and so cannot carry a relation.
+- **A target declaring `value_field`**, which renders a value rather than the
+  slug and so cannot carry a relation.
 
 ## The values a field takes
 
@@ -106,7 +106,7 @@ any of those silently repoints every reference to it.
 A row is `namespace::slug`, and that is all of its identity. Any number of
 `*.toml` files, under any names and in any directories under `registry/`, make
 one registry, so splitting, merging, renaming or moving a file changes nothing a
-reference, a check or a rendered page sees, except `pathof`, whose answer is that
+reference, a check or a rendered document sees, except `pathof`, whose answer is that
 file. A namespace lists its rows by key path, not by the order of the files
 holding them. A grouped table orders its groups by the group value, and rows
 with no group value come last under a heading of their own. The same key path
@@ -137,3 +137,17 @@ A file the driver cannot read as rows (invalid TOML, a row with no `id`, an `id`
 twice in one file) merges as text, as git does without a driver. The driver works
 inside one file: the same `id` added under two different files is two additions
 to it, and the registry's duplicate check reports it afterwards.
+
+## Adding to a list field of a row
+
+`cargo mock registry-append <namespace>::<id> <field> <value>` adds one string to a
+`string[]` field of an existing row and prints nothing. The namespace and the field
+must be declared, the row must exist, a value the field already holds is not added
+twice, and only the row's own lines change. Use it, and never a text edit of your
+own, wherever an answer, a note or a link is added to a row.
+
+A workspace may place a delegate at `.mockspace/hooks/registry-append`, in the
+repository root or any directory above it, to take the step over. It is run in the
+repository root with the same three arguments. Exit status 0 means it did the whole
+step, 3 that it leaves the step to mockspace, anything else a failure. `--local`
+skips it, which is how the delegate writes the row.

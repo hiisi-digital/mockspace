@@ -189,6 +189,24 @@ const COMMANDS: &[Cmd] = &[
                   absent one queries nothing.",
     },
     Cmd {
+        name:    "registry-append",
+        summary: "add one string to a list field of a registry row",
+        args:    &[],
+        help:    "Takes `<namespace>::<id> <field> <value> [--local]` and adds the value \
+                  to the row's `string[]` field, which is made where the row has none. The \
+                  namespace and the field must be declared, the row must exist, and a \
+                  value the field already holds is not added twice. Only the row's own \
+                  lines change; the rest of the file is as it was. It prints nothing on \
+                  success. A workspace may place a delegate at \
+                  `.mockspace/hooks/registry-append` in the repository root or any \
+                  directory above it, the nearest winning; it is run in the repository \
+                  root as `registry-append <namespace>::<id> <field> <value>` with \
+                  MOCKSPACE_REPO_ROOT and MOCKSPACE_MOCK_DIR set, and exit status 0 \
+                  means it did the whole step, 3 that it leaves the step to mockspace, \
+                  anything else a failure. `--local` skips the delegate, which is how \
+                  the delegate writes the row itself.",
+    },
+    Cmd {
         name:    "merge-registry",
         summary: "merge registry TOML by row, as git's merge driver",
         args:    &[],

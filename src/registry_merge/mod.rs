@@ -24,7 +24,7 @@
 //! to it and the registry's duplicate check is what reports it.
 
 mod merge;
-mod scan;
+pub(crate) mod scan;
 
 use std::path::Path;
 use std::process::{Command, ExitCode};

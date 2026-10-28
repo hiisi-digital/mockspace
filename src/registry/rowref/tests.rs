@@ -17,7 +17,6 @@ pub(super) fn ns(key: &str, fields: &[(&str, &str)]) -> RegistryNamespace {
         title:       None,
         description: None,
         value_field: None,
-        render:      RenderMode::Page,
         group_by:    None,
         fields:      fields
             .iter()
