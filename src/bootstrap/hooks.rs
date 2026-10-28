@@ -1375,48 +1375,18 @@ mod byline_hook_tests {
         };
         git_in(&remote, &["init", "-q", "--bare", "-b", "main"]);
         git_in(&clone, &["init", "-q", "-b", "main"]);
-        git_in(&clone, &[
-            "remote",
-            "add",
-            "origin",
-            remote.to_str().unwrap(),
-        ]);
-        git_in(&clone, &[
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "chore: root",
-        ]);
+        git_in(&clone, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        git_in(&clone, &["commit", "-q", "--allow-empty", "-m", "chore: root"]);
         git_in(&clone, &["push", "-q", "origin", "main"]);
         git_in(&clone, &["switch", "-q", "-c", "feature"]);
-        git_in(&clone, &[
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "feat: first",
-        ]);
+        git_in(&clone, &["commit", "-q", "--allow-empty", "-m", "feat: first"]);
         git_in(&clone, &["push", "-q", "origin", "feature"]);
         let pushed = git_in(&clone, &["rev-parse", "HEAD"]);
         git_in(&clone, &["switch", "-q", "main"]);
-        git_in(&clone, &[
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "BADMSG trunk",
-        ]);
+        git_in(&clone, &["commit", "-q", "--allow-empty", "-m", "BADMSG trunk"]);
         git_in(&clone, &["push", "-q", "origin", "main"]);
         git_in(&clone, &["switch", "-q", "feature"]);
-        git_in(&clone, &[
-            "merge",
-            "-q",
-            "--no-ff",
-            "-m",
-            "chore: merge main",
-            "main",
-        ]);
+        git_in(&clone, &["merge", "-q", "--no-ff", "-m", "chore: merge main", "main"]);
         let tip = git_in(&clone, &["rev-parse", "HEAD"]);
         (clone, remote, pushed, tip)
     }
@@ -1458,10 +1428,7 @@ mod byline_hook_tests {
         .to_string();
         let line = format!("refs/heads/feature {new_tip} refs/heads/feature {pushed}");
         let code = run_script(&script, &[], &line, Some(&clone), Some(&path));
-        assert_eq!(
-            code, 1,
-            "a commit this push publishes for the first time is still validated"
-        );
+        assert_eq!(code, 1, "a commit this push publishes for the first time is still validated");
 
         for d in [&clone, &remote, &bin] {
             let _ = std::fs::remove_dir_all(d);
