@@ -232,3 +232,7 @@ fn the_benches_tree_runs_when_it_moved_or_is_asked_and_not_otherwise() {
         assert!(!t.contains(RAN), "{flag} beside -p ran the benches:\n{t}");
     }
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

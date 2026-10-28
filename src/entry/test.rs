@@ -224,7 +224,8 @@ pub fn run(cfg: &Config, args: &[&str]) -> ExitCode {
     // The generated lint crate, which exists only after something generates it.
     // Not generated here: generating is the lint path's job and doing it from
     // the test path would mean two places that know how.
-    let lints_gen = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-lints"]);
+    let lints_gen =
+        crate::build_dir::ensure_under_target(&cfg.mock_dir, &[crate::build_dir::LINT_CRATE]);
     if lints_gen.join("Cargo.toml").exists() {
         trees.push(Tree {
             what:     "lints",

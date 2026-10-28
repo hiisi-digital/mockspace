@@ -415,3 +415,7 @@ fn a_conflict_in_a_crlf_file_has_crlf_markers() {
         "a marker line ended in a bare LF: {text:?}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

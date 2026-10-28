@@ -110,15 +110,18 @@ pub(crate) fn generate_lint_derived_content(
         return 0;
     }
 
-    let mock_rel = cfg
-        .mock_dir
-        .strip_prefix(&cfg.repo_root)
-        .unwrap_or(&cfg.mock_dir)
-        .to_string_lossy()
-        .replace('\\', "/");
-
+    let src_dirs_repo = src_dirs_from_repo(cfg);
+    let dirs_grep = ere_group(&src_dirs_repo);
     for (scope, rules) in &by_scope {
-        let apply_to_glob = format!("{mock_rel}/crates/{scope}/**");
+        let apply_to_globs: Vec<String> = src_dirs_repo
+            .iter()
+            .map(|d| format!("{d}/{scope}/**"))
+            .collect();
+        let apply_to_list = apply_to_globs
+            .iter()
+            .map(|g| format!("\"{g}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         // the scope is a glob and this becomes a filename, so the characters
         // a filename cannot carry are spelled out rather than dropped.
@@ -150,8 +153,8 @@ pub(crate) fn generate_lint_derived_content(
             "\nDo NOT write code that uses any of these. Check before writing."
         );
 
-        let claude_fm = format!("---\napply_to: [\"{apply_to_glob}\"]\n---\n\n");
-        let copilot_fm = format!("---\napplyTo: [\"{apply_to_glob}\"]\n---\n\n");
+        let claude_fm = format!("---\napply_to: [{apply_to_list}]\n---\n\n");
+        let copilot_fm = format!("---\napplyTo: [{apply_to_list}]\n---\n\n");
 
         let rule_name = format!("lint-forbidden-{slug}");
         let claude_content = format!("{claude_fm}{header_md}\n{preamble}\n\n{body}\n{postamble}");
@@ -205,7 +208,7 @@ pub(crate) fn generate_lint_derived_content(
              CONTENT=$(_extract \"new_string\")\n\
              if [[ -z \"$CONTENT\" ]]; then CONTENT=$(_extract \"content\"); fi\n\
              # Only check crates matching scope\n\
-             if ! echo \"$TARGET\" | grep -qE \"{mock_rel}/crates/({scope_grep})/\"; then allow; fi\n\
+             if ! echo \"$TARGET\" | grep -qE \"{dirs_grep}/({scope_grep})/\"; then allow; fi\n\
              # Check for forbidden patterns\n\
              for PAT in {patterns_grep}; do\n\
                  if echo \"$CONTENT\" | grep -qF \"$PAT\"; then\n\
@@ -229,14 +232,10 @@ pub(crate) fn generate_lint_derived_content(
         );
 
         let claude_hook_path = claude_hooks_dir.join(&hook_name);
-        fs::write(&claude_hook_path, &claude_hook).ok();
-        #[cfg(unix)]
-        set_executable(&claude_hook_path);
+        write_executable(&claude_hook_path, &claude_hook).ok();
 
         let copilot_hook_path = copilot_hooks_dir.join(&hook_name);
-        fs::write(&copilot_hook_path, &copilot_hook).ok();
-        #[cfg(unix)]
-        set_executable(&copilot_hook_path);
+        write_executable(&copilot_hook_path, &copilot_hook).ok();
         count += 2;
     }
 
@@ -295,7 +294,7 @@ pub(crate) fn sweep_orphan_generated_files(
 /// short summary of what the crate is, `DESIGN.md.tmpl` is the long form, and
 /// `DEEPDIVE_*.md.tmpl` are the internals. The README is therefore already
 /// exactly the right size and shape for an always-loaded rule, so anyone
-/// working inside `crates/<name>/` picks up that crate's own summary
+/// working inside that crate's directory picks up that crate's own summary
 /// implicitly, without a second hand-written copy that would drift from it.
 ///
 /// Deriving it means the README stays the single source: edit the README and
@@ -357,14 +356,7 @@ pub(crate) fn generate_crate_readme_rules(
 ) -> usize {
     use std::collections::BTreeSet as Set;
 
-    let mock_rel = cfg
-        .mock_dir
-        .strip_prefix(&cfg.repo_root)
-        .unwrap_or(&cfg.mock_dir)
-        .to_string_lossy()
-        .replace('\\', "/");
-
-    // An unreadable or absent crates/ yields no crates, and therefore an empty
+    // An unreadable or absent source directory yields no crates, and therefore an empty
     // active set. It must NOT return early: the sweep below still has to run,
     // or removing the last crate would strand every rule it had written.
     // Every source directory: a grouped project would otherwise write per-crate
@@ -396,7 +388,7 @@ pub(crate) fn generate_crate_readme_rules(
         // documents it links to live under `docs/`, so a bare filename would
         // point at a sibling that is not there.
         let body = render_agent_body(&raw, vars, cfg, registry);
-        let apply_to = vec![format!("{mock_rel}/crates/{crate_name}/**")];
+        let apply_to = vec![format!("{}/**", repo_relative(cfg, &entry))];
 
         active.insert(crate_name.clone());
         let rule_name = format!("crate-readme-{crate_name}");

@@ -131,12 +131,7 @@ mod tests {
     }
 
     fn executable(path: &Path, body: &str) {
-        std::fs::write(path, body).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::test_exec::write_executable(path, body);
     }
 
     impl Rig {

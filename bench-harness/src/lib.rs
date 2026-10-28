@@ -33,6 +33,11 @@
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+/// What these tests take out of the environment before they run.
+#[cfg(test)]
+#[path = "../../tests/common/ambient.rs"]
+mod test_ambient;
+
 pub use mockspace_bench_core as core;
 
 pub mod analysis;

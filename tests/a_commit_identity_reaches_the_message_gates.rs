@@ -26,6 +26,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// The scrubs of a child's environment, shared with the lib tests by path.
+#[path = "common/ambient.rs"]
+mod ambient;
+
+/// The one writer of an executable script, shared with the lib tests by path.
+#[path = "common/exec.rs"]
+mod exec;
+
 /// A lint refusing any commit whose author or committer names `Claude`.
 const PROBE: &str = r#"use mockspace::{Lint, LintError, MessageContext, MessageLint};
 
@@ -95,7 +103,7 @@ fn fixture() -> Fixture {
     // not this fixture's.
     let lint_rules = concat!(env!("CARGO_MANIFEST_DIR"), "/lint-rules");
     let launcher = bin.join("mock");
-    fs::write(
+    exec::write_executable(
         &launcher,
         format!(
             "#!/bin/sh\nexport MOCKSPACE_NO_AUTO_ACTIVATE=1\nexec '{}' --dir '{}' \
@@ -104,25 +112,20 @@ fn fixture() -> Fixture {
             mock.display(),
             lint_rules
         ),
-    )
-    .unwrap();
+    );
 
     // The generated pre-push hook ends in `cargo mock --lint-only --strict`,
     // which is the crate lints and has nothing to say about a message. Standing
     // it down leaves the message scan, which runs first, as the only thing that
     // can refuse a push here; anything else `cargo` is asked goes to the real one.
     let cargo = bin.join("cargo");
-    fs::write(
+    exec::write_executable(
         &cargo,
         format!(
             "#!/bin/sh\nif [ \"$1\" = mock ]; then exit 0; fi\nexec '{}' \"$@\"\n",
             real_cargo()
         ),
-    )
-    .unwrap();
-    for f in [&launcher, &cargo] {
-        make_executable(f);
-    }
+    );
 
     fs::create_dir_all(&repo).unwrap();
     let fx = Fixture {
@@ -145,14 +148,6 @@ fn fixture() -> Fixture {
     )
     .assert_ok();
     fx
-}
-
-#[cfg(unix)]
-fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let mut p = fs::metadata(path).unwrap().permissions();
-    p.set_mode(0o755);
-    fs::set_permissions(path, p).unwrap();
 }
 
 trait Outcome {
@@ -190,6 +185,7 @@ fn git_env(fx: &Fixture, args: &[&str], who: (&str, &str), envs: &[(&str, &str)]
         std::env::var("PATH").unwrap_or_default()
     );
     let mut c = Command::new("git");
+    ambient::clean_of_the_machine(&mut c);
     c.current_dir(&fx.repo)
         .args(args)
         .env("PATH", path)
@@ -226,7 +222,9 @@ fn commits_on_head(fx: &Fixture) -> usize {
 fn install_the_gate(fx: &Fixture) {
     let msg = fx.repo.join("MSG");
     fs::write(&msg, "feat: add a thing\n").unwrap();
-    let out = Command::new(fx.bin.join("mock"))
+    let mut engine = Command::new(fx.bin.join("mock"));
+    ambient::clean_of_the_machine(&mut engine);
+    let out = engine
         .current_dir(&fx.repo)
         .env("HOME", &fx.repo)
         .env(

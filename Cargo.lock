@@ -264,6 +264,7 @@ version = "0.0.0"
 dependencies = [
  "libloading",
  "mockspace-bench-core",
+ "mockspace-manifest",
  "serde",
  "toml",
 ]
@@ -292,6 +293,7 @@ dependencies = [
 name = "mockspace-lint-rules"
 version = "0.0.0"
 dependencies = [
+ "mockspace-manifest",
  "tempfile",
  "toml",
  "tree-sitter",

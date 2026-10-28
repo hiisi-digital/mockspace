@@ -125,3 +125,7 @@ fn escalating_it_blocks_the_command() {
     );
     assert_eq!(out.status.code(), Some(1), "{stderr}");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

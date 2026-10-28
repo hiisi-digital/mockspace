@@ -23,7 +23,7 @@ A list of `mod` lines, a table of strings, a log of known gaps: each changes by 
 Mockspace names each source package's `SHAME.md.tmpl` and `BACKLOG.md.tmpl`. A project names the rest in `mockspace.toml`:
 
 ```toml
-append_only = ["content/strings/en.toml", "{mock_dir}/crates/*/src/tests/mod.rs"]
+append_only = ["content/strings/en.toml", "<crate directory>/src/tests/mod.rs"]
 ```
 
 Each entry is a `.gitattributes` pattern relative to the repository root, as narrow as the file it names. A directory is not an entry: a pattern ending in `/` governs nothing, because attributes are not inherited by what is inside a directory (`git check-attr` gives `unspecified` for every file in it), so `cargo mock` drops it with a warning. Name the files. Run `cargo mock` once and the lines and the driver are written; an entry taken out of the list takes its line out of `.gitattributes` on the next run. Any line there ending `merge=mockspace-append` is the driver's block, a hand-written one included, and is rewritten with it.

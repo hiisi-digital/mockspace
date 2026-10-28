@@ -357,3 +357,7 @@ fn a_reference_beside_a_placeholder_still_fails() {
          distinction has been drawn by ignoring both"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

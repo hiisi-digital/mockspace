@@ -84,7 +84,8 @@ pub fn load(
         return Ok(None);
     }
 
-    let gen_dir = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["mockspace-lints"]);
+    let gen_dir =
+        crate::build_dir::ensure_under_target(&cfg.mock_dir, &[crate::build_dir::LINT_CRATE]);
     write_cdylib_crate(
         &gen_dir,
         &lints_dir,

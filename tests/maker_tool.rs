@@ -381,3 +381,7 @@ fn a_maker_writing_where_its_argument_says_is_held_to_the_resolved_root() {
     assert!(err.contains("`gen/linked`, which is a symlink"), "{err}");
     assert!(!outside.join("a.md").exists(), "the maker must not have run:\n{err}");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

@@ -152,3 +152,7 @@ fn a_field_declaring_no_set_takes_anything() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

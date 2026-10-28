@@ -52,7 +52,7 @@ impl Lint for CanonNotWhilePanelOpen {
 /// a NUL terminator and no quoting at all.
 pub fn staged_paths(repo_root: &Path) -> Option<Vec<String>> {
     let out = Command::new("git")
-        .args(["diff", "--cached", "--name-only", "-z"])
+        .args(["diff", "--cached", "--name-only", "--no-renames", "-z"])
         .current_dir(repo_root)
         .output()
         .ok()?;
@@ -271,6 +271,23 @@ mod tests {
             authored_canon(&staged, &canon, |_| false),
             Some(vec![CANON.to_string()])
         );
+    }
+
+    /// A canon file moved to a path outside the canon is a change to the canon.
+    /// With git's rename detection on, the staged listing names the destination
+    /// alone, which is outside every canon glob, and the panel is not stopped.
+    #[test]
+    fn canon_moved_out_of_the_canon_is_still_a_canon_change() {
+        let tmp = init();
+        let root = tmp.path();
+        write(root, "one\ntwo\nthree\nfour\nfive\n");
+        must(root, &["add", "-A"]);
+        must(root, &["commit", "-q", "-m", "base"]);
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        must(root, &["mv", CANON, "docs/a.md"]);
+        let staged = staged_paths(root).unwrap();
+        assert!(staged.contains(&CANON.to_string()), "the source is a deletion: {staged:?}");
+        assert!(!findings(root).is_empty(), "the move changed the canon");
     }
 
     #[test]
