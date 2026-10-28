@@ -924,8 +924,8 @@ mod tests {
     /// not to the rows times the registry. Each row here cites one shared row, so a per-row
     /// view of the whole registry (its namespace index cloned for every row) is what makes
     /// this slow: at fifteen thousand rows that is two hundred million small allocations,
-    /// half a minute, where the work done is a few thousand lookups. A real registry of
-    /// eleven thousand rows spent twenty-five seconds there on every commit and landing.
+    /// where the work done is a few thousand lookups. The cost was a profile of one real registry,
+    /// an ad-hoc spike outside the bench harness: seconds a run, nothing committed that shows it.
     #[test]
     fn resolving_row_data_does_not_scale_with_rows_times_registry() {
         const ROWS: usize = 15_000;

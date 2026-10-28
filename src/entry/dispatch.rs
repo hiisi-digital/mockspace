@@ -1173,12 +1173,10 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     let dot_path = cfg
         .docs_dir
         .join(render_design::ordered_doc_name("STRUCTURE.GRAPH.dot", &cfg));
-    // Read before it is written over: the pictures below are drawn from it, and one drawn from
-    // the same text is already there.
-    let previous_dot = fs::read_to_string(&dot_path).ok();
     render_design::write_generated(&dot_path, &dot);
     generated.push(dot_path.clone());
     eprintln!("  {}", dot_path.display());
+    let graph_staging = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["graph-staging"]);
 
     // Generate PNG and SVG from DOT
     for (ext, extra) in [("png", vec!["-Gdpi=150"]), ("svg", vec![])] {
@@ -1191,11 +1189,18 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // because a graphviz that is not installed leaves the previous copy in
         // place and the sweep must not take it.
         generated.push(out.clone());
-        // `write_generated` may add a header, so the text compared is the file as it now stands,
-        // against the file as it stood.
+        // The stamp is the DOT text this picture was last drawn from, written after a render that
+        // succeeded, so a run that wrote a new DOT file and then failed to draw it (no graphviz, a
+        // kill) leaves a stamp that does not match, and the next run draws. `write_generated` may add
+        // a header, so the text compared is the file as it now stands.
+        let stamp = graph_staging.join(format!("STRUCTURE.GRAPH.{ext}.drawn-from"));
         let written_dot = fs::read_to_string(&dot_path).ok();
         if let Some(now) = written_dot.as_deref()
-            && graph_picture::picture_is_current(previous_dot.as_deref(), now, out.is_file())
+            && graph_picture::picture_is_current(
+                fs::read_to_string(&stamp).ok().as_deref(),
+                now,
+                out.is_file(),
+            )
         {
             eprintln!("  {} (unchanged)", out.display());
             continue;
@@ -1205,8 +1210,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         // the sweep to miss, and the target is replaced only when the bytes
         // differ. Rendering straight to the target moved its mtime on every run, which
         // for the svg was then "restored" by writing it again.
-        let staging = crate::build_dir::ensure_under_target(&cfg.mock_dir, &["graph-staging"])
-            .join(format!("STRUCTURE.GRAPH.{ext}"));
+        let staging = graph_staging.join(format!("STRUCTURE.GRAPH.{ext}"));
         let mut cmd = Command::new("dot");
         cmd.arg(format!("-T{ext}"))
             .arg(&dot_path)
@@ -1230,6 +1234,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
                             panic!("failed to write {}: {e}", out.display())
                         });
                     }
+                }
+                if let Some(drawn) = fs::read_to_string(&dot_path).ok() {
+                    let _ = fs::write(&stamp, drawn);
                 }
             },
             Ok(_) => eprintln!("  dot failed for {ext} (is graphviz installed?)"),

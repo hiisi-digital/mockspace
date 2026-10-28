@@ -870,7 +870,7 @@ pub fn resolve_data(
 
     // What every row's resolution reads and none changes, built once. The namespace index in
     // particular lists every row of the registry, so a copy of it per row cost rows times
-    // registry, which at eleven thousand rows was twenty-five seconds of every commit.
+    // registry. An ad-hoc spike on a real registry (outside the bench harness, no committed artifact) put it at seconds a run.
     let ns_keys: BTreeSet<String> = by_key.keys().map(|k| k.to_string()).collect();
     let namespaces: Vec<RegistryNamespace> = by_key.values().map(|n| (*n).clone()).collect();
     // The view a row resolves against: the namespace index, and the rows it cites, put in and

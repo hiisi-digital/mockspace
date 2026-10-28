@@ -434,9 +434,9 @@ elif [ -n "$CHANGED_CRATES" ]; then
 else
     echo "  infrastructure-only (no crate files staged)"
     ARGS+=(--scope infra)
-    # Registry rows and nothing else under the mock directory: no source is staged, so the
-    # repo lints' source half has nothing to look at, and the engine checks that claim
-    # against the same layout. Without the flag every repo lint reads every source file.
+    # Registry rows and nothing else under the mock directory: no source is staged, which is what
+    # `--doc-only` claims, and the engine checks that claim against the staged index (`verify_doc_only`).
+    # It is the claim a staged registry row made before the registry stopped being a shared input.
     STAGED_NON_REGISTRY=$(printf '%s\n' "$STAGED" | grep -v -e '^$' -e "^$MOCK_DIR/registry/" || true)
     if [ -z "$STAGED_NON_REGISTRY" ]; then
         ARGS+=(--doc-only)
@@ -574,8 +574,11 @@ if ms_nuked; then
     echo "  nuked workspace: skipping source checks"
     ARGS=(--lint-only --strict --doc-only)
 elif [ -z "$FULL_REASON" ] && [ -z "$CHANGED_CRATES" ] && [ -n "$PUSH_REPO_ONLY" ] && [ -z "$PUSH_NOT_REGISTRY" ]; then
+    # No `--doc-only`: the engine skips every source-only lint under it, repo lints included, and the repo lints
+    # that read the registry (a citation of a superseded row, a catalogue ignore naming a ticket) are source-only.
+    # The flag is also never verified for a push, whose index is empty.
     echo "  scope: repo lints only (the push changes nothing a crate's lints read)"
-    ARGS=(--lint-only --strict --scope infra --doc-only)
+    ARGS=(--lint-only --strict --scope infra)
 elif [ -n "$FULL_REASON" ] || [ -z "$CHANGED_CRATES" ]; then
     echo "  scope: full project (${{FULL_REASON:-no crate changes}})"
     ARGS=(--lint-only --strict)
