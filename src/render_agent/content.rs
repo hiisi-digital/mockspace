@@ -232,14 +232,10 @@ pub(crate) fn generate_lint_derived_content(
         );
 
         let claude_hook_path = claude_hooks_dir.join(&hook_name);
-        fs::write(&claude_hook_path, &claude_hook).ok();
-        #[cfg(unix)]
-        set_executable(&claude_hook_path);
+        write_executable(&claude_hook_path, &claude_hook).ok();
 
         let copilot_hook_path = copilot_hooks_dir.join(&hook_name);
-        fs::write(&copilot_hook_path, &copilot_hook).ok();
-        #[cfg(unix)]
-        set_executable(&copilot_hook_path);
+        write_executable(&copilot_hook_path, &copilot_hook).ok();
         count += 2;
     }
 

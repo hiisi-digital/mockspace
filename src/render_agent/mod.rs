@@ -6,11 +6,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use mockspace_lint_rules::LintPack;
+use mockspace_manifest::write_executable;
 
 use crate::config::Config;
 use crate::model::*;
@@ -351,14 +350,14 @@ pub fn generate_agent_rules(
                 if let Some(parent) = dest.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
-                if fs::write(&dest, &file.contents).is_err() {
+                let written = if file.executable {
+                    write_executable(&dest, &file.contents)
+                } else {
+                    fs::write(&dest, &file.contents)
+                };
+                if written.is_err() {
                     eprintln!("  warning: could not write {}", dest.display());
                     continue;
-                }
-                #[cfg(unix)]
-                if file.executable {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(0o755));
                 }
                 eprintln!("  {} (builtin)", dest.display());
                 count += 1;
@@ -571,10 +570,8 @@ pub fn generate_agent_rules(
                 .replace("{{HOOK_HELPERS}}", CLAUDE_HOOK_HELPERS)
                 .replace("{{REPO_ROOT}}", &repo_root_str);
             let claude_path = claude_hooks_dir.join(out_name);
-            fs::write(&claude_path, wire::with_generated_marker(&claude_content))
+            write_executable(&claude_path, wire::with_generated_marker(&claude_content))
                 .expect("failed to write claude hook");
-            #[cfg(unix)]
-            set_executable(&claude_path);
             eprintln!("  {}", claude_path.display());
             count += 1;
 
@@ -583,10 +580,8 @@ pub fn generate_agent_rules(
                 .replace("{{HOOK_HELPERS}}", COPILOT_HOOK_HELPERS)
                 .replace("{{REPO_ROOT}}", &repo_root_str);
             let copilot_path = copilot_hooks_dir.join(out_name);
-            fs::write(&copilot_path, wire::with_generated_marker(&copilot_content))
+            write_executable(&copilot_path, wire::with_generated_marker(&copilot_content))
                 .expect("failed to write copilot hook");
-            #[cfg(unix)]
-            set_executable(&copilot_path);
             eprintln!("  {}", copilot_path.display());
             count += 1;
 

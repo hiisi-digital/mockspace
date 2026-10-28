@@ -155,16 +155,6 @@ _scope_or_allow() {
 }
 # --- End platform helpers ---"##;
 
-/// Set the executable bit on a file.
-#[cfg(unix)]
-pub(crate) fn set_executable(path: &Path) {
-    if let Ok(meta) = fs::metadata(path) {
-        let mut perms = meta.permissions();
-        perms.set_mode(0o755);
-        let _ = fs::set_permissions(path, perms);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Hook metadata for settings generation (Phase 7)
 // ---------------------------------------------------------------------------

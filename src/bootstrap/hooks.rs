@@ -58,18 +58,9 @@ pub(crate) fn ensure_generated_hooks(
 
         let final_content = content.replacen(MANAGED_MARKER, &fp_line, 1);
 
-        if let Err(e) = fs::write(&path, &final_content) {
+        if let Err(e) = write_executable(&path, &final_content) {
             actions.push(format!("failed to write {hook_name} hook: {e}"));
             continue;
-        }
-
-        #[cfg(unix)]
-        {
-            if let Ok(meta) = fs::metadata(&path) {
-                let mut perms = meta.permissions();
-                perms.set_mode(0o755);
-                let _ = fs::set_permissions(&path, perms);
-            }
         }
 
         actions.push(format!("generated {hook_name} hook"));

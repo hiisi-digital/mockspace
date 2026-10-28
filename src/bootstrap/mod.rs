@@ -28,11 +28,11 @@
 //! In-tree lint files under `{mock_dir}/lints/` and external packs declared
 //! under `[lint-crates]` in `mockspace.toml` are discovered here and compiled
 //! by the engine into one cdylib (see `custom_lints`).
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
+
+use mockspace_manifest::write_executable;
 
 mod follow_up_hooks;
 pub(crate) use follow_up_hooks::*;
