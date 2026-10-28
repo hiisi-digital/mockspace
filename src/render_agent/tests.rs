@@ -776,12 +776,20 @@ fn write_guard_shame_carve_out_matches_a_whole_path_component() {
 /// Returns true when the hook allowed the write.
 #[cfg(unix)]
 fn write_guard_allows(target_rel: &str) -> bool {
+    write_guard_allows_in(target_rel, &[])
+}
+
+/// As `write_guard_allows`, with the project declaring `src_dirs` (relative to the
+/// mock directory) instead of the default.
+#[cfg(unix)]
+pub(super) fn write_guard_allows_in(target_rel: &str, src_dirs: &[&str]) -> bool {
     use std::os::unix::fs::PermissionsExt;
     use std::process::{Command, Stdio};
 
     let repo = std::env::temp_dir().join(format!(
-        "wg-{}-{}",
+        "wg-{}-{}-{}",
         std::process::id(),
+        src_dirs.len(),
         target_rel.replace('/', "_")
     ));
     let _ = std::fs::remove_dir_all(&repo);
@@ -809,7 +817,10 @@ fn write_guard_allows(target_rel: &str) -> bool {
             .unwrap();
     }
 
-    let cfg = Config::from_dir(&repo.join("mock"));
+    let mut cfg = Config::from_dir(&repo.join("mock"));
+    if !src_dirs.is_empty() {
+        cfg.src_dirs = src_dirs.iter().map(|d| repo.join("mock").join(d)).collect();
+    }
     let script = repo.join("guard.sh");
     let body = builtin_write_guard(&cfg)
         .replace("{{HOOK_HELPERS}}", crate::render_agent::CLAUDE_HOOK_HELPERS)

@@ -362,6 +362,7 @@ pub(crate) fn builtin_write_guard(cfg: &Config) -> String {
         .unwrap_or(&cfg.mock_dir)
         .to_string_lossy()
         .to_string();
+    let src_grep = super::helpers::ere_group(&super::helpers::src_dirs_from_mock(cfg));
     format!(
         r##"#!/usr/bin/env bash
 # Built-in mockspace hook: phase gate enforcement
@@ -473,7 +474,7 @@ else
     PHASE="TOPIC"
 fi
 DIRTY_DOCS=$(git -C "$REPO_ROOT" diff --name-only 2>/dev/null \
-    | grep -E "^${{MOCK_ROOT}}/crates/.*\.(md\.tmpl|md)$" | head -1) || true
+    | grep -E "^${{MOCK_ROOT}}/{src_grep}/.*\.(md\.tmpl|md)$" | head -1) || true
 # Whether this edit to a committed file only adds to it. A Write has to begin
 # with the whole committed text; an Edit, and every edit of a MultiEdit, has to
 # keep its old string at the start of its new one, which inserts after it and
@@ -586,7 +587,7 @@ if echo "$REL_PATH" | grep -qE '^design_rounds/'; then
     allow
 fi
 # --- Crate files are phase-gated ---
-if echo "$REL_PATH" | grep -qE '^crates/'; then
+if echo "$REL_PATH" | grep -qE '^{src_grep}/'; then
     if echo "$REL_PATH" | grep -qE '(^|/)SHAME\.md\.tmpl$'; then allow; fi
     if echo "$REL_PATH" | grep -qE '\.(md\.tmpl|md)$'; then
         if [[ "$PHASE" != "DOC" ]]; then
