@@ -878,18 +878,9 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             }
         );
     } else {
-        // Bounded to the scoped packages unless a shared input is staged; see
-        // `cargo_gate::check_args`.
-        let check_args = cargo_gate::check_args(
-            &cfg.mock_dir,
-            &cfg.src_dirs,
-            scope_arg,
-            escape_hatch::shared_inputs_staged(&cfg.repo_root, &mock_rel_for_hatch),
-        );
-        let check_args: Vec<&str> = check_args.iter().map(String::as_str).collect();
-        eprintln!("--- cargo {} ---", check_args.join(" "));
+        eprintln!("--- cargo check ---");
         // `cargo_gate::cargo` owns the rustup env stripping; see its docs.
-        let status = cargo_gate::cargo(&cfg.mock_dir, &check_args)
+        let status = cargo_gate::cargo(&cfg.mock_dir, &["check"])
             .status()
             .expect("failed to run cargo check");
 
@@ -898,7 +889,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             // workspace members, which cargo cannot check at all. Forgiven only
             // on cargo's own no-members diagnostic against a confirmed
             // memberless manifest; every other failure still fails the gate.
-            if cargo_gate::forgives_failure(&cfg.mock_dir, &check_args) {
+            if cargo_gate::forgives_failure(&cfg.mock_dir, &["check"]) {
                 eprintln!("--- cargo check skipped (workspace has no members yet) ---");
             } else {
                 eprintln!("cargo check failed");

@@ -161,7 +161,7 @@ Common flags:
 |---------------------|--------------------------------------------------------------|
 | `--lint-only`       | Run lints only; skip generation and dylib checks             |
 | `--doc-only`        | Skip source lints; run only doc-related checks               |
-| `--scope <csv>`     | Restrict lints, and a full run's `cargo check`, to named crates (comma-separated, by directory name under any `src_dirs` entry) |
+| `--scope <csv>`     | Restrict lints to named crates (comma-separated, by directory name under any `src_dirs` entry) |
 | `--scope infra`     | Infrastructure-only mode (no crate check, no crate lints)    |
 | `--commit`          | Lint mode: `Commit` (typically most permissive gate)         |
 | `--strict`          | Lint mode: `Push` (strictest gate)                           |

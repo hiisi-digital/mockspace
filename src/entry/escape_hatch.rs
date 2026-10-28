@@ -90,35 +90,6 @@ pub fn staged_crates(repo_root: &Path, mock_rel: &str, layout: &SrcLayout) -> Ve
     v
 }
 
-/// The pathspecs, relative to the repo root, of the inputs every crate shares.
-///
-/// The registry, the config and the mock workspace's manifest and lockfile
-/// reach every crate, so a change to one is not bounded by the crate directories
-/// a commit also touches. `:(glob)**/mockspace.toml` matches the config at the
-/// repo root and inside the mock directory alike.
-#[must_use]
-pub fn shared_pathspecs(mock_rel: &str) -> Vec<String> {
-    vec![
-        format!("{mock_rel}/registry/"),
-        format!("{mock_rel}/Cargo.toml"),
-        format!("{mock_rel}/Cargo.lock"),
-        ":(glob)**/mockspace.toml".to_string(),
-    ]
-}
-
-/// Whether the commit stages any shared input.
-///
-/// A git error reads as "no", for the reason `staged_paths` gives.
-#[must_use]
-pub fn shared_inputs_staged(repo_root: &Path, mock_rel: &str) -> bool {
-    let out = Command::new("git")
-        .args(["diff", "--cached", "--name-only", "--"])
-        .args(shared_pathspecs(mock_rel))
-        .current_dir(repo_root)
-        .output();
-    matches!(out, Ok(o) if o.status.success() && !o.stdout.iter().all(u8::is_ascii_whitespace))
-}
-
 /// Why a narrowing flag was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
@@ -436,21 +407,5 @@ mod tests {
             "{r:?}"
         );
         assert_eq!(ok, None);
-    }
-
-    #[test]
-    fn shared_inputs_are_detected_and_a_crate_is_not_one() {
-        let shared = repo_with_staged(&[("mock/registry/a.toml", "x = 1")]);
-        let config = repo_with_staged(&[("mockspace.toml", "x = 1")]);
-        let krate = repo_with_staged(&[("mock/crates/foo/src/lib.rs", "fn a() {}")]);
-        let got = (
-            shared_inputs_staged(&shared, "mock"),
-            shared_inputs_staged(&config, "mock"),
-            shared_inputs_staged(&krate, "mock"),
-        );
-        for r in [&shared, &config, &krate] {
-            let _ = std::fs::remove_dir_all(r);
-        }
-        assert_eq!(got, (true, true, false));
     }
 }
