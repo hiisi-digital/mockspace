@@ -92,7 +92,6 @@ mod tests {
             title:       None,
             description: None,
             value_field: value_field.map(|s| s.to_string()),
-            render:      RenderMode::Page,
             group_by:    None,
             fields:      vec![],
         }
@@ -129,10 +128,10 @@ mod tests {
     }
 
     #[test]
-    fn a_row_reference_becomes_a_link() {
+    fn a_row_reference_is_its_slug() {
         let reg = reg_with("xpbd", "vocab", &[]);
         let out = r_all("see {{ reg::vocab::xpbd }} now", &[ns("vocab", None)], &reg);
-        assert_eq!(out, "see [xpbd](VOCAB.md#xpbd) now");
+        assert_eq!(out, "see xpbd now");
     }
 
     #[test]
@@ -214,7 +213,7 @@ mod tests {
                 &cfg,
             )
         };
-        assert_eq!(r("{{ reg::vocab::xpbd }}"), "[xpbd](VOCAB.md#xpbd)");
+        assert_eq!(r("{{ reg::vocab::xpbd }}"), "xpbd");
         assert_eq!(r("{{ reg::vocab::xpbd::what }}"), "constraint projection");
         // The id cell carries the row's anchor inline, so a reference lands on
         // the row itself rather than on a restatement of it below the table.
@@ -414,10 +413,10 @@ mod tests {
             .insert("reference".into(), vec![row.qualified()]);
         reg.rows.insert(row.qualified(), row);
         // Short by default: it has to fit a table cell beside hundreds of
-        // others, and the full form is one click away.
+        // others, and the full form is one reference away.
         assert_eq!(
             r_all("{{ reference::burns_hunt }}", &with_builtins(&[]), &reg),
-            "[Burns and Hunt 2013](REFERENCE.md#burns-hunt)"
+            "Burns and Hunt 2013"
         );
         // The full form on request, for prose that wants the title.
         assert_eq!(
@@ -426,7 +425,7 @@ mod tests {
                 &with_builtins(&[]),
                 &reg
             ),
-            "[Burns and Hunt, The Visibility Buffer (JCGT 2013)](REFERENCE.md#burns-hunt)"
+            "Burns and Hunt, The Visibility Buffer (JCGT 2013)"
         );
         // A real field is still a real field.
         assert_eq!(
@@ -766,7 +765,7 @@ mod tests {
             !out.contains("{{ reg::law::keys }}"),
             "the reference rendered literally: {out}"
         );
-        assert!(out.contains("LAW.md#keys"), "no link to the row: {out}");
+        assert!(out.contains("Bound by keys."), "the row did not render as its slug: {out}");
     }
 
     #[test]
@@ -871,31 +870,49 @@ mod tests {
         // so none of them notices when the index is built after the data has
         // already resolved against an empty one. That ordering shipped once and
         // is exactly the bug the index exists to prevent: the fallbacks name
-        // `LAW.md` where the file is written as `902_LAW.md`.
+        // `PLAN_VALIDATE.md` where the file is written as `140_PLAN_VALIDATE.md`.
+        //
+        // The reference is to a crate, because the registry writes no page for a row to
+        // link to, and a crate document is what
+        // the index still names.
+        let tmp = tempfile::tempdir().unwrap();
+        let crates_dir = tmp.path().join("mock").join("crates");
+        std::fs::create_dir_all(crates_dir.join("proj-plan-validate")).unwrap();
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+
         let mut cfg = crate::config::Config::from_dir(Path::new("/nonexistent"));
         cfg.ordered_docs = true;
+        cfg.src_dirs = vec![crates_dir];
+        cfg.docs_dir = docs.clone();
+        cfg.repo_root = tmp.path().to_path_buf();
+        cfg.crate_prefix = "proj".into();
         let nss = vec![ns("law", None)];
         cfg.registry_namespaces = nss.clone();
 
         let plan = vec![crate::document::Planned::computed(
-            crate::document::DocId::Registry {
-                page:  "LAW.md".into(),
-                index: 2,
+            crate::document::DocId::Crate {
+                upper:   "PLAN_VALIDATE".into(),
+                subject: "OVERVIEW".into(),
+                depth:   4,
             },
             String::new(),
         )];
         cfg.doc_index = crate::document::DocIndex::build(&plan, &cfg);
 
-        // A row whose field references another row, which is what resolve_data
+        // A row whose field references a crate document, which is what resolve_data
         // settles before any document reads it.
         let mut reg = reg_with("keys", "law", &[("statement", "closed")]);
         let row = RegistryRow {
             slug:      "derived".into(),
             namespace: "law".into(),
             source:    PathBuf::from("t.toml"),
-            fields:    [("statement".to_string(), "see {{ law::keys }}".to_string())]
-                .into_iter()
-                .collect(),
+            fields:    [(
+                "statement".to_string(),
+                "see {{ crates::plan-validate }}".to_string(),
+            )]
+            .into_iter()
+            .collect(),
         };
         let q = row.qualified();
         reg.by_namespace.get_mut("law").unwrap().push(q.clone());
@@ -905,8 +922,8 @@ mod tests {
             &nss,
             &reg,
             &BTreeMap::new(),
-            Path::new("/r"),
-            Path::new("/r/docs"),
+            tmp.path(),
+            &docs,
             &cfg,
         );
         assert!(findings.is_empty(), "{findings:?}");
@@ -915,7 +932,7 @@ mod tests {
             .and_then(|r| r.fields.get("statement"))
             .unwrap();
         assert!(
-            got.contains("902_LAW.md#keys"),
+            got.contains("140_PLAN_VALIDATE.md"),
             "row data resolved against an empty index: {got}"
         );
     }
@@ -1379,7 +1396,6 @@ mod tests {
         let r = Resolved::Row {
             namespace: "law".into(),
             slug:      "keys".into(),
-            target:    "902_LAW.md#keys".into(),
             fields:    vec![(
                 "crates".into(),
                 "[world](120_WORLD.md), [store](130_STORE.md)".into(),

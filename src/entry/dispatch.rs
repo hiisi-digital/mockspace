@@ -1302,13 +1302,6 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
             body,
         ));
     }
-    document::plan_registry_pages(
-        &mut plan,
-        &cfg.registry_namespaces,
-        &registry,
-        &cfg.mock_dir,
-        &cfg,
-    );
     let mut cfg = cfg;
     cfg.doc_index = document::DocIndex::build(&plan, &cfg);
     let cfg = cfg;

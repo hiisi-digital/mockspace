@@ -31,8 +31,8 @@ Three things are reported rather than passed:
   list does.
 - **A type naming neither a builtin nor a namespace**, rather than quietly
   becoming a string field that constrains nothing.
-- **A target declaring `value_field`**, which renders a value rather than a link
-  and so cannot carry a relation.
+- **A target declaring `value_field`**, which renders a value rather than the
+  slug and so cannot carry a relation.
 
 ## The values a field takes
 
@@ -106,7 +106,7 @@ any of those silently repoints every reference to it.
 A row is `namespace::slug`, and that is all of its identity. Any number of
 `*.toml` files, under any names and in any directories under `registry/`, make
 one registry, so splitting, merging, renaming or moving a file changes nothing a
-reference, a check or a rendered page sees, except `pathof`, whose answer is that
+reference, a check or a rendered document sees, except `pathof`, whose answer is that
 file. A namespace lists its rows by key path, not by the order of the files
 holding them. A grouped table orders its groups by the group value, and rows
 with no group value come last under a heading of their own. The same key path

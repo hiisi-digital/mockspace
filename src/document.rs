@@ -51,12 +51,6 @@ pub enum DocId {
         subject: String,
         depth:   usize,
     },
-    /// A registry namespace's table. Sorts by declaration order, which is the
-    /// order the project chose to present its own vocabulary in.
-    Registry {
-        page:  String,
-        index: usize,
-    },
     /// Everything else. Sorts last, as supplementary material.
     Supplementary {
         stem: String,
@@ -125,26 +119,6 @@ impl DocId {
                     format!("{stem}.md")
                 }
             },
-            DocId::Registry {
-                page,
-                index,
-            } => {
-                let (stem, ext) = split_ext(page);
-                if !cfg.ordered_docs {
-                    return page.clone();
-                }
-                if cfg
-                    .primary_docs
-                    .iter()
-                    .any(|p| p.eq_ignore_ascii_case(stem))
-                {
-                    return format!("000_{stem}.{ext}");
-                }
-                // Three digits leave the registry band room for as many
-                // namespaces as a project declares, without spilling into the
-                // supplementary one.
-                format!("{}_{stem}.{ext}", 900 + (*index).min(98))
-            },
             DocId::Supplementary {
                 stem,
                 ext,
@@ -160,8 +134,8 @@ impl DocId {
 
     /// How a reference names this document, when one can.
     ///
-    /// `Some` for the things a project links to by name: a crate and a registry
-    /// namespace. `None` for a document nothing refers to symbolically.
+    /// `Some` for the thing a project links to by name: a crate. `None` for a
+    /// document nothing refers to symbolically.
     fn link_key(&self) -> Option<LinkKey> {
         match self {
             DocId::Crate {
@@ -169,13 +143,6 @@ impl DocId {
                 subject,
                 depth: _,
             } if subject == "OVERVIEW" => Some(LinkKey::Crate(normalize_crate_key(upper))),
-            DocId::Registry {
-                page,
-                ..
-            } => {
-                let (stem, _) = split_ext(page);
-                Some(LinkKey::Registry(stem.to_lowercase().replace('-', "_")))
-            },
             _ => None,
         }
     }
@@ -185,7 +152,6 @@ impl DocId {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum LinkKey {
     Crate(String),
-    Registry(String),
 }
 
 /// Where a document's content comes from.
@@ -249,13 +215,6 @@ impl DocIndex {
     pub fn crate_doc(&self, short: &str) -> Option<&str> {
         self.entries
             .get(&LinkKey::Crate(normalize_crate_key(short)))
-            .map(String::as_str)
-    }
-
-    /// The document for a registry namespace, by its key.
-    pub fn registry_doc(&self, key: &str) -> Option<&str> {
-        self.entries
-            .get(&LinkKey::Registry(key.to_string()))
             .map(String::as_str)
     }
 
@@ -752,18 +711,19 @@ mod tests {
     #[test]
     fn one_function_names_a_document_and_a_link_to_it() {
         // The drift this replaces: a writer and a link builder each computing
-        // the name, and disagreeing. A link said LAW.md while the file was
-        // 902_LAW.md, so every reference into the registry pointed at nothing.
+        // the name, and disagreeing. A link said PLAN_VALIDATE.md while the file
+        // was 140_PLAN_VALIDATE.md, so every reference into it pointed at nothing.
         let cfg = cfg_ordered();
-        let reg = DocId::Registry {
-            page:  "LAW.md".into(),
-            index: 2,
+        let id = DocId::Crate {
+            upper:   "PLAN_VALIDATE".into(),
+            subject: "OVERVIEW".into(),
+            depth:   4,
         };
-        let planned = vec![Planned::computed(reg.clone(), String::new())];
+        let planned = vec![Planned::computed(id.clone(), String::new())];
         let index = DocIndex::build(&planned, &cfg);
 
-        assert_eq!(reg.file_name(&cfg), "902_LAW.md");
-        assert_eq!(index.registry_doc("law"), Some("902_LAW.md"));
+        assert_eq!(id.file_name(&cfg), "140_PLAN_VALIDATE.md");
+        assert_eq!(index.crate_doc("plan-validate"), Some("140_PLAN_VALIDATE.md"));
     }
 
     #[test]
@@ -812,16 +772,11 @@ mod tests {
             depth:   0,
         }
         .file_name(&cfg);
-        let registry = DocId::Registry {
-            page:  "LAW.md".into(),
-            index: 0,
-        }
-        .file_name(&cfg);
         let supplementary = DocId::root("NOTES.md", &cfg).file_name(&cfg);
 
-        let mut order = vec![&supplementary, &registry, &crate_doc, &primary];
+        let mut order = vec![&supplementary, &crate_doc, &primary];
         order.sort();
-        assert_eq!(order, vec![&primary, &crate_doc, &registry, &supplementary]);
+        assert_eq!(order, vec![&primary, &crate_doc, &supplementary]);
     }
 
     #[test]
@@ -829,14 +784,6 @@ mod tests {
         let mut cfg = cfg_ordered();
         cfg.ordered_docs = false;
         assert_eq!(DocId::root("DESIGN.md", &cfg).file_name(&cfg), "DESIGN.md");
-        assert_eq!(
-            DocId::Registry {
-                page:  "LAW.md".into(),
-                index: 2,
-            }
-            .file_name(&cfg),
-            "LAW.md"
-        );
     }
 
     #[test]
@@ -983,45 +930,3 @@ pub fn design_templates(cfg: &Config) -> Vec<DesignTemplate> {
     out
 }
 
-/// Add the registry tables to a plan.
-///
-/// Separate from [`plan`] only because the registry is loaded later; the pages
-/// are documents like any other and go through the same render.
-pub fn plan_registry_pages(
-    plan: &mut Vec<Planned>,
-    namespaces: &[crate::registry::RegistryNamespace],
-    reg: &crate::registry::Registry,
-    mock_dir: &Path,
-    cfg: &Config,
-) {
-    for (index, ns) in namespaces
-        .iter()
-        .filter(|n| n.render.has_page())
-        .enumerate()
-    {
-        if reg.by_namespace.get(&ns.key).is_none() {
-            continue;
-        }
-        // A namespace named `catalogue` would otherwise generate over the
-        // document rendered from a hand-authored `CATALOGUE.md.tmpl`, silently.
-        // The template is what claims the name, so its presence is the
-        // collision.
-        let claimed = mock_dir.join(format!("{}.tmpl", ns.page_name()));
-        if claimed.is_file() {
-            eprintln!(
-                "  ERROR: namespace `{}` would generate {} over the document rendered from {}. Rename the namespace or the template.",
-                ns.key,
-                ns.page_name(),
-                claimed.display()
-            );
-            continue;
-        }
-        plan.push(Planned::computed(
-            DocId::Registry {
-                page: ns.page_name(),
-                index,
-            },
-            crate::registry::registry_page_body(ns, reg, cfg),
-        ));
-    }
-}

@@ -22,7 +22,6 @@ key = "law"
 title = "Laws"
 description = "what holds"
 value_field = "statement"
-render = "page"
 group_by = "domain"
 
 [[registry.namespace.field]]
@@ -60,6 +59,22 @@ prefix = "LAW"
         "the report names the key but not which namespace carries it: {}",
         found[0].message
     );
+}
+
+/// The registry writes no page, so `render` names nothing. A namespace still carrying it
+/// is reported rather than silently ignored, which is what stops a project believing the
+/// key does work.
+#[test]
+fn the_removed_render_key_is_reported() {
+    let found = config_unknown_keys(
+        r#"
+[[registry.namespace]]
+key = "law"
+render = "embed"
+"#,
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].message.contains("render"), "{}", found[0].message);
 }
 
 #[test]
@@ -246,7 +261,6 @@ fn every_field_a_real_instance_carries_is_a_known_key() {
         title:       Some("Laws".into()),
         description: Some("what holds".into()),
         value_field: Some("statement".into()),
-        render:      mockspace::registry::RenderMode::Page,
         group_by:    Some("domain".into()),
         fields:      vec![mockspace::registry::RegistryField {
             name:        "statement".into(),

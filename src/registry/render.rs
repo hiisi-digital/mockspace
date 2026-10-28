@@ -465,11 +465,10 @@ fn render_rows(
                     return format!("<a id=\"{}\"></a>{}", row.anchor(), row.slug);
                 }
                 // A row reference is stored as a bare slug and rendered as a
-                // reference, which the pass that follows turns into a link to
-                // the target row. Emitting the reference rather than the link
-                // keeps one implementation of what a row link is, including
-                // the document-index lookup and the embed-mode case where a
-                // link has no target.
+                // reference, which the pass that follows turns into the row's slug.
+                // Emitting the reference rather than the slug keeps one
+                // implementation of what a row reference renders as, and a
+                // reference to a missing row stays visibly unresolved.
                 if let Some(target) = row_refs.get(c.as_str()) {
                     let cell = row
                         .fields
@@ -498,55 +497,12 @@ fn render_rows(
     out
 }
 
-/// One registry page's body, without the generation header.
-///
-/// Separated from writing so the page goes through the same render as every
-/// other document: the header, the placeholders, the references, and the write
-/// all happen in one place rather than once per generation path.
-pub fn registry_page_body(
-    ns: &RegistryNamespace,
-    reg: &Registry,
-    cfg: &crate::config::Config,
-) -> String {
-    let count = reg.by_namespace.get(&ns.key).map(Vec::len).unwrap_or(0);
-    let mut body = format!("# {}\n\n", ns.title());
-    if let Some(d) = &ns.description {
-        body.push_str(d);
-        body.push_str("\n\n");
-    }
-    body.push_str(&format!(
-        "{count} rows. Identifiers are permanent: assigned once, never reused, never renumbered.\n\n"
-    ));
-    body.push_str(&render_table(ns, reg, cfg));
-    body
-}
-
-/// Expand `{{registry:<key>}}` placeholders into that namespace's table.
-///
-/// This is what makes `embed` mode useful: a project drops the placeholder in
-/// whatever document the table belongs in, rather than accepting a generated
-/// page it then has to link to from somewhere.
-pub fn expand_embeds(
-    text: &str,
-    namespaces: &[RegistryNamespace],
-    reg: &Registry,
-    cfg: &crate::config::Config,
-) -> String {
-    let mut out = text.to_string();
-    for ns in namespaces {
-        let token = format!("{{{{registry:{}}}}}", ns.key);
-        if out.contains(&token) {
-            out = out.replace(&token, &render_table(ns, reg, cfg));
-        }
-    }
-    out
-}
 
 /// The short form: who and when, enough to recognise the work.
 ///
 /// What a reader needs at a glance, and what fits in a table cell beside four
-/// hundred others. The full citation is one click away, which is the whole
-/// reason the short form is safe.
+/// hundred others. The full citation is one reference away, `::citation`, which is
+/// the whole reason the short form is safe.
 pub fn short_citation(row: &RegistryRow) -> String {
     let f = |k: &str| row.fields.get(k).filter(|v| !v.is_empty()).cloned();
     match (f("authors"), f("year")) {
@@ -605,7 +561,7 @@ mod closed_value_set_placement {
     //! tested on `string` alone, where the placement happens to be right: one
     //! of six shapes, and the five untested ones were the broken ones.
     use super::*;
-    use crate::registry::{FieldVisibility, RegistryField, RegistryNamespace, RenderMode};
+    use crate::registry::{FieldVisibility, RegistryField, RegistryNamespace};
 
     fn schema_for(ty: &str, values: &[&str]) -> String {
         schema_with(ty, values, None, None)
@@ -617,7 +573,6 @@ mod closed_value_set_placement {
             title:       None,
             description: None,
             value_field: None,
-            render:      RenderMode::Page,
             group_by:    None,
             fields:      vec![RegistryField {
                 name: "f".into(),
