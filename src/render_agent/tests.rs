@@ -1533,3 +1533,19 @@ fn the_unescaped_form_is_what_breaks_it() {
         "the unescaped emitter produced valid json, so this test proves nothing:\n{out}"
     );
 }
+
+/// The `reference-syntax` skill says what the `time` pattern accepts: the seconds
+/// and the fraction of one that `time_pattern` allows, not only the seconds.
+#[test]
+fn the_reference_syntax_skill_states_the_time_form_the_pattern_holds() {
+    let skill = include_str!("skills/reference-syntax/SKILL.md");
+    assert!(
+        skill.contains("seconds and a fraction of one optional"),
+        "the skill leaves out the fraction of a second the pattern allows"
+    );
+    let pattern = crate::registry::time_pattern("time").unwrap();
+    assert!(
+        pattern.contains(r"(\.[0-9]+)?"),
+        "the pattern no longer allows a fraction, so the skill's words are stale: {pattern}"
+    );
+}
