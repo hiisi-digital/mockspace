@@ -69,6 +69,21 @@ fn the_zero_examined_message_never_claims_a_failure() {
 }
 
 #[test]
+fn the_closing_line_says_what_was_read_and_claims_no_verdict() {
+    // The case that must fail: the old line was "{name}: clean, {n} examined.",
+    // a verdict word on a tool that is asked a question and answers with a
+    // report. The count has to be in the line and the verdict word out of it.
+    let line = read_message("canon", 42);
+    assert!(line.contains("canon"), "{line:?}");
+    assert!(line.contains("42"), "the count is the one thing it knows: {line:?}");
+    assert!(
+        !line.to_lowercase().contains("clean"),
+        "a closing line must not pass a verdict: {line:?}"
+    );
+    assert_ne!(line, read_message("canon", 43), "the count must show in the line");
+}
+
+#[test]
 fn a_name_that_merely_starts_with_a_builtin_is_allowed() {
     // `checkers` is not `check`. A prefix match here would refuse real
     // tool names for no reason, and the suggestion machinery already
