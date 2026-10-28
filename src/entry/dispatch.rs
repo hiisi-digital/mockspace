@@ -290,7 +290,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
     if !args.iter().any(|a| a == "--lint-only")
         && !args.iter().any(|a| a == "activate" || a == "deactivate")
     {
-        bootstrap::ensure_gate(&cfg.repo_root, &cfg.mock_dir);
+        bootstrap::ensure_gate(
+            &cfg.repo_root,
+            &cfg.mock_dir,
+            &cfg.src_dirs,
+            &cfg.nuke_marker,
+            &cfg.config_path,
+        );
     }
 
     // Effective custom lints. The old proxy statically links them in and passes
@@ -835,14 +841,13 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         .strip_prefix(&cfg.repo_root)
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "mock".to_string());
+    // The same layout the phase gates read, so a flag's claim is checked against
+    // what they call source rather than against every `.rs` under the mock tree.
+    let layout = mockspace_lint_rules::src_layout::SrcLayout::new(&cfg.mock_dir, &cfg.src_dirs);
     // Only the explicit flag is verified. A nuked workspace derives doc-only
     // internally below, and that derivation is the engine's own, not a claim a
     // caller made about what is staged.
     if doc_only {
-        // The same layout the phase gates read, so the flag's claim is checked
-        // against what they call source rather than against every `.rs` under
-        // the mock tree.
-        let layout = mockspace_lint_rules::src_layout::SrcLayout::new(&cfg.mock_dir, &cfg.src_dirs);
         if let Some(r) = escape_hatch::verify_doc_only(&cfg.repo_root, &mock_rel_for_hatch, &layout)
         {
             eprintln!("BLOCKED: {}", r.explain());
@@ -850,7 +855,7 @@ pub(crate) fn run_inner(pack: &LintPack) -> ExitCode {
         }
     }
     if let Some(s) = scope_arg {
-        if let Some(r) = escape_hatch::verify_scope(&cfg.repo_root, &mock_rel_for_hatch, s) {
+        if let Some(r) = escape_hatch::verify_scope(&cfg.repo_root, &mock_rel_for_hatch, &layout, s) {
             eprintln!("BLOCKED: {}", r.explain());
             return ExitCode::FAILURE;
         }

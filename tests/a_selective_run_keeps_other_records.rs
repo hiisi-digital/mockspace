@@ -254,3 +254,7 @@ fn a_run_leaves_its_own_members_files_in_other_flavours() {
         Some(empty.as_str())
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

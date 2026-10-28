@@ -295,11 +295,7 @@ fn the_agent_gate_holds_where_git_shook_has_the_key_registered_whatever_the_path
     };
     git(&["init", "-q"]);
     let validator = clone.join("mock/target/hooks/pre-commit");
-    std::fs::write(&validator, "#!/bin/sh\n").unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&validator, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    crate::test_exec::write_executable(&validator, "#!/bin/sh\n");
     let common = clone.canonicalize().unwrap().join(".git");
     let hooks = common.join("shook/hooks");
     git(&["config", "--local", "core.hooksPath", hooks.to_str().unwrap()]);
@@ -776,12 +772,19 @@ fn write_guard_shame_carve_out_matches_a_whole_path_component() {
 /// Returns true when the hook allowed the write.
 #[cfg(unix)]
 fn write_guard_allows(target_rel: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt;
+    write_guard_allows_in(target_rel, &[])
+}
+
+/// As `write_guard_allows`, with the project declaring `src_dirs` (relative to the
+/// mock directory) instead of the default.
+#[cfg(unix)]
+pub(super) fn write_guard_allows_in(target_rel: &str, src_dirs: &[&str]) -> bool {
     use std::process::{Command, Stdio};
 
     let repo = std::env::temp_dir().join(format!(
-        "wg-{}-{}",
+        "wg-{}-{}-{}",
         std::process::id(),
+        src_dirs.len(),
         target_rel.replace('/', "_")
     ));
     let _ = std::fs::remove_dir_all(&repo);
@@ -809,15 +812,15 @@ fn write_guard_allows(target_rel: &str) -> bool {
             .unwrap();
     }
 
-    let cfg = Config::from_dir(&repo.join("mock"));
+    let mut cfg = Config::from_dir(&repo.join("mock"));
+    if !src_dirs.is_empty() {
+        cfg.src_dirs = src_dirs.iter().map(|d| repo.join("mock").join(d)).collect();
+    }
     let script = repo.join("guard.sh");
     let body = builtin_write_guard(&cfg)
         .replace("{{HOOK_HELPERS}}", crate::render_agent::CLAUDE_HOOK_HELPERS)
         .replace("{{REPO_ROOT}}", &repo.display().to_string());
-    std::fs::write(&script, body).unwrap();
-    let mut perm = std::fs::metadata(&script).unwrap().permissions();
-    perm.set_mode(0o755);
-    std::fs::set_permissions(&script, perm).unwrap();
+    crate::test_exec::write_executable(&script, body);
 
     let payload = format!(
         r#"{{"tool_name":"Write","tool_input":{{"file_path":"{}/mock/{}"}}}}"#,
@@ -1205,7 +1208,7 @@ fn hook_script_writes() -> Vec<(String, usize, String, String)> {
         }
 
         for (i, line) in body.lines().enumerate() {
-            let Some(rest) = line.split_once("fs::write(").map(|(_, r)| r) else {
+            let Some(rest) = line.split_once("write_executable(").map(|(_, r)| r) else {
                 continue;
             };
             let mut parts = rest.splitn(2, ", ");
@@ -1531,5 +1534,21 @@ fn the_unescaped_form_is_what_breaks_it() {
     assert!(
         serde_json::from_str::<serde_json::Value>(out.trim()).is_err(),
         "the unescaped emitter produced valid json, so this test proves nothing:\n{out}"
+    );
+}
+
+/// The `reference-syntax` skill says what the `time` pattern accepts: the seconds
+/// and the fraction of one that `time_pattern` allows, not only the seconds.
+#[test]
+fn the_reference_syntax_skill_states_the_time_form_the_pattern_holds() {
+    let skill = include_str!("skills/reference-syntax/SKILL.md");
+    assert!(
+        skill.contains("seconds and a fraction of one optional"),
+        "the skill leaves out the fraction of a second the pattern allows"
+    );
+    let pattern = crate::registry::time_pattern("time").unwrap();
+    assert!(
+        pattern.contains(r"(\.[0-9]+)?"),
+        "the pattern no longer allows a fraction, so the skill's words are stale: {pattern}"
     );
 }

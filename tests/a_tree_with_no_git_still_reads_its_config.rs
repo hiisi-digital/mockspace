@@ -173,3 +173,7 @@ fn the_path_a_load_records_is_a_file_that_exists() {
         cfg.config_path.display()
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

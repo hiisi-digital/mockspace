@@ -84,3 +84,7 @@ fn a_description_with_no_variable_is_unchanged() {
         "an ordinary description was rewritten:\n{out}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

@@ -217,4 +217,36 @@ mod tests {
             assert!(f.message.contains(&format!("`{name}`")), "{}", f.message);
         }
     }
+
+    #[test]
+    fn a_closed_set_of_well_formed_time_values_passes() {
+        // the control for the catalogued arm below: it is red because of what is
+        // refused, never because a well-formed value is
+        let found = unfit_values(&ns(vec![
+            field(0, "date", &["2026-10-28"], None, None),
+            field(1, "time", &["18:49", "18:49:07"], None, None),
+            field(2, "datetime", &["2026-10-27T18:49:00Z", "2026-10-27 18:49"], None, None),
+            field(3, "span", &["P3D", "PT1H30M"], None, None),
+        ]));
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    #[ignore = "catalogue: a closed set's listed value on a time type is not checked against \
+                its form at the declaration, so a value no row can hold is found only by \
+                the first row that holds it; see the FIXME on `time_pattern`"]
+    fn a_closed_set_member_that_is_not_in_the_form_of_its_time_type_is_refused() {
+        // Asserting the intended behaviour, red until the declaration reads the
+        // form: each of these is a value no row of its field can hold, as `+5`
+        // is on an integer.
+        let found = unfit_values(&ns(vec![
+            field(0, "date", &["tomorrow"], None, None),
+            field(1, "date", &["2026-13-45"], None, None),
+            field(2, "time", &["25:00"], None, None),
+            field(3, "datetime", &["yesterday"], None, None),
+            field(4, "span", &["3 days"], None, None),
+        ]));
+        assert_eq!(found.len(), 5, "{found:?}");
+        assert!(found.iter().all(|f| f.kind == "unfit-field-value"));
+    }
 }

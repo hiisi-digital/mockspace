@@ -316,3 +316,7 @@ fn a_plan_where_everything_was_refused_fails_rather_than_reporting_nothing_to_do
     // stub is refused is dropped whole rather than gutted.
     assert!(d.path().join("mock/crates/alpha/src/other.rs").exists());
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

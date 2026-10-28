@@ -16,9 +16,22 @@
 //! Parsing those keys and acting on them is the launcher's, and the launcher's
 //! machinery is `renki`. Nothing here resolves anything.
 
+/// What a test takes out of the environment, and the lists it is made from.
+pub mod ambient;
+/// The one writer of an executable file.
+pub mod exec;
 mod follow_up;
 pub mod kept_ours;
 pub mod gate;
+
+pub use exec::write_executable;
+
+/// What these tests take out of the environment before they run, from inside
+/// the package: the tests ship in the tarball and a path out of it does not.
+#[cfg(test)]
+mod scrubbed {
+    crate::scrub_before_main!();
+}
 
 use serde::Deserialize;
 

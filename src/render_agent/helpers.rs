@@ -155,16 +155,6 @@ _scope_or_allow() {
 }
 # --- End platform helpers ---"##;
 
-/// Set the executable bit on a file.
-#[cfg(unix)]
-pub(crate) fn set_executable(path: &Path) {
-    if let Ok(meta) = fs::metadata(path) {
-        let mut perms = meta.permissions();
-        perms.set_mode(0o755);
-        let _ = fs::set_permissions(path, perms);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Hook metadata for settings generation (Phase 7)
 // ---------------------------------------------------------------------------
@@ -222,4 +212,53 @@ pub(crate) fn parse_hook_matchers(template: &str) -> Option<Vec<String>> {
 pub(crate) fn agent_mode_var(project_name: &str) -> String {
     let upper = project_name.to_uppercase().replace('-', "_");
     format!("{upper}_AGENT_MODE")
+}
+
+/// The declared source directories as the repository root sees them, with `/`
+/// separators and no trailing slash. A directory outside the repository has no
+/// glob to give an agent rule and is left out.
+pub(crate) fn src_dirs_from_repo(cfg: &Config) -> Vec<String> {
+    cfg.src_dirs
+        .iter()
+        .filter_map(|d| d.strip_prefix(&cfg.repo_root).ok())
+        .map(|d| d.to_string_lossy().replace('\\', "/").trim_end_matches('/').to_string())
+        .collect()
+}
+
+/// The declared source directories as the mock directory sees them: the strings
+/// `SrcLayout` holds, which the phase gates and the generated hooks address a
+/// crate by.
+pub(crate) fn src_dirs_from_mock(cfg: &Config) -> Vec<String> {
+    mockspace_lint_rules::src_layout::SrcLayout::new(&cfg.mock_dir, &cfg.src_dirs)
+        .dirs()
+        .to_vec()
+}
+
+/// `dirs` as one ERE group, each directory taken literally. An empty list is a
+/// group that matches nothing, since an empty alternative would match every path.
+pub(crate) fn ere_group(dirs: &[String]) -> String {
+    if dirs.is_empty() {
+        return "($^)".to_string();
+    }
+    let alts: Vec<String> = dirs
+        .iter()
+        .map(|d| {
+            d.chars()
+                .flat_map(|c| {
+                    let special = ".[]{}()*+?|^$\\".contains(c);
+                    special.then_some('\\').into_iter().chain(Some(c))
+                })
+                .collect()
+        })
+        .collect();
+    format!("({})", alts.join("|"))
+}
+
+/// `path` as the repository root sees it, with `/` separators. A path outside the
+/// repository is returned as it stands.
+pub(crate) fn repo_relative(cfg: &Config, path: &Path) -> String {
+    path.strip_prefix(&cfg.repo_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }

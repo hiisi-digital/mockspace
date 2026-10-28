@@ -97,11 +97,21 @@ required = true
 description = "The question the spike answers, in one line."
 ```
 
-A field's `type` is `string`, `integer`, `boolean`, `string[]`, **`ref` and
-`ref[]` for a field that holds citations**, or **the name of a namespace, for a
-field that holds rows of it**. A citation and a row reference are both strings on
-the wire, so both validate as strings; what the type adds is meaning, and it is
-what makes the field get checked at all.
+A field's `type` is `string`, `integer`, `boolean`, `string[]`, `date`, `time`,
+`datetime`, `span`, **`ref` and `ref[]` for a field that holds citations**, or
+**the name of a namespace, for a field that holds rows of it**. A citation and a
+row reference are both strings on the wire, so both validate as strings; what the
+type adds is meaning, and it is what makes the field get checked at all.
+
+Four builtins hold a moment or a length of time, each a string held to one form,
+which the generated schema carries and the gate enforces on every row: `date` as
+`2026-10-28`, `time` as `18:49` with seconds and a fraction of one where wanted,
+`datetime` as a date and a time joined by `T` or a space with an offset (`Z`,
+`+02:00`) where the moment is fixed, and `span` as an ISO 8601 duration with at
+least one part, `P3D` or `PT1H30M`. The form is checked and the calendar is not, so
+`2026-02-30` passes. The value is written quoted: a bare TOML date such as `when = 2026-10-28` is a different
+TOML type, which the schema cannot tell from a string, and the loader refuses it as
+`unquoted-time`.
 
 A type naming neither a builtin nor a declared namespace is reported. It used to
 become a plain string, so a misspelled type, or one naming a namespace that was

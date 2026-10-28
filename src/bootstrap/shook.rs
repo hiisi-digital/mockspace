@@ -195,3 +195,7 @@ pub(crate) fn unregister(repo_root: &Path) -> Result<(), String> {
 #[cfg(test)]
 #[path = "shook_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shook_chain_tests.rs"]
+mod chain_tests;

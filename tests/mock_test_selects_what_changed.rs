@@ -794,3 +794,7 @@ fn a_run_narrowed_to_one_target_leaves_the_others_owed() {
         "two changed and never ran:\n{t}"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

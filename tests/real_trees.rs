@@ -170,3 +170,7 @@ fn every_real_bench_tree_loads_and_resolves_through_the_benchspace_path() {
 
     eprintln!("total: {total_cells} cells, {composed_member_cells} from members");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

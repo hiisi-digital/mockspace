@@ -138,3 +138,7 @@ fn an_aborted_rebase_leaves_the_branch_where_it_was() {
     assert_eq!(r.git(&["rev-parse", "HEAD"]), before);
     assert_eq!(r.status(), "");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

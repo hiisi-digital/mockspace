@@ -28,11 +28,11 @@
 //! In-tree lint files under `{mock_dir}/lints/` and external packs declared
 //! under `[lint-crates]` in `mockspace.toml` are discovered here and compiled
 //! by the engine into one cdylib (see `custom_lints`).
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
+
+use mockspace_manifest::write_executable;
 
 mod follow_up_hooks;
 pub(crate) use follow_up_hooks::*;
@@ -64,6 +64,18 @@ pub(crate) use durable::*;
 mod gitignore_tests;
 #[cfg(test)]
 mod hooks_identity_tests;
+#[cfg(test)]
+mod hooks_src_dirs_tests;
+#[cfg(test)]
+mod hooks_src_dirs_branch_tests;
+#[cfg(test)]
+mod hooks_src_dirs_nuke_tests;
+#[cfg(test)]
+mod hooks_src_dirs_move_tests;
+#[cfg(test)]
+mod hooks_src_dirs_workspace_tests;
+#[cfg(test)]
+mod hooks_lint_packs_tests;
 #[cfg(test)]
 mod lint_crates_tests;
 
@@ -116,7 +128,13 @@ pub fn bootstrap_from_buildscript() {
 /// Best-effort and quiet: setup failures never block the command the user
 /// actually ran. Idempotent and cheap on the common path (fingerprint-guarded
 /// hook writes, a single `git config` read).
-pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
+pub fn ensure_gate(
+    repo_root: &Path,
+    mock_dir: &Path,
+    src_dirs: &[PathBuf],
+    nuke_marker: &str,
+    config_path: &Path,
+) {
     let mut actions = Vec::new();
 
     // The engine is the generated validator's only writer now that the
@@ -124,7 +142,14 @@ pub fn ensure_gate(repo_root: &Path, mock_dir: &Path) {
     // validator and blocks while it is missing, telling the user to run
     // `cargo mock`; if that run did not materialise the validator, the
     // guidance would loop forever.
-    ensure_generated_hooks(repo_root, mock_dir, &mut actions);
+    ensure_generated_hooks(
+        repo_root,
+        mock_dir,
+        src_dirs,
+        nuke_marker,
+        config_path,
+        &mut actions,
+    );
 
     // Generated files merge without conflict: the driver `.gitattributes` names
     // lives in the clone's config, so it is registered with the hooks.

@@ -24,8 +24,9 @@ pub const CRATE_ROOT: &str = "crates";
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RegistryField {
     pub name:        String,
-    /// `string`, `integer`, `boolean`, `string[]`. Anything richer belongs in
-    /// a hand-written schema fragment rather than in a config language.
+    /// One of the scalar types `SCALAR_TYPES` lists (`ref`, `ref[]` and the
+    /// four time types among them), or the name of a declared namespace, which
+    /// holds one row of it, or several when written with a trailing `[]`.
     #[serde(default = "default_field_type")]
     pub r#type:      String,
     #[serde(default)]
@@ -202,6 +203,22 @@ impl RegistryRow {
     }
 }
 
+/// A field whose value the file wrote as a TOML date or time rather than a string.
+///
+/// The loader stores every value as text, so `when = 2026-10-28` and
+/// `when = "2026-10-28"` load alike. Taplo reads a TOML date as a string too, so the
+/// generated schema cannot tell them apart either, and the loader is the one place the
+/// difference is still visible.
+#[derive(Debug, Clone)]
+pub struct UnquotedTime {
+    /// `namespace::slug` of the row.
+    pub row:    String,
+    pub field:  String,
+    /// The value as the file wrote it.
+    pub text:   String,
+    pub source: PathBuf,
+}
+
 /// Every row the project declares, indexed for lookup.
 #[derive(Debug, Default)]
 pub struct Registry {
@@ -234,6 +251,10 @@ pub struct Registry {
     /// array-of-tables key, so any model built from path shape disagrees with
     /// it on a nested file and on a file whose name does not match its rows.
     pub files_read:   Vec<PathBuf>,
+    /// Every value a file wrote as a TOML date or time. Populated by `load_registry`,
+    /// carried to the resolved view, and empty on the per-row view for the reason
+    /// `files_read` is.
+    pub unquoted_times: Vec<UnquotedTime>,
 }
 
 impl Registry {

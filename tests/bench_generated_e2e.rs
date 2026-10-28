@@ -426,3 +426,7 @@ master_seed = 7
 
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

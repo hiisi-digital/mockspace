@@ -674,3 +674,7 @@ fn a_squash_that_nulls_a_green_over_a_changed_member_is_accepted() {
     let g = guard(&r);
     assert!(g.status.success(), "{}", Repo::failure(&g));
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

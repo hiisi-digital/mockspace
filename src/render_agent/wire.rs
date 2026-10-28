@@ -22,9 +22,7 @@ pub(crate) fn write_builtin_hook(
             .replace("{{REPO_ROOT}}", repo_root),
     );
     let claude_path = claude_hooks_dir.join(name);
-    fs::write(&claude_path, &claude_content).expect("failed to write builtin claude hook");
-    #[cfg(unix)]
-    set_executable(&claude_path);
+    write_executable(&claude_path, &claude_content).expect("failed to write builtin claude hook");
     eprintln!("  {} (builtin)", claude_path.display());
     *count += 1;
 
@@ -34,9 +32,7 @@ pub(crate) fn write_builtin_hook(
             .replace("{{REPO_ROOT}}", repo_root),
     );
     let copilot_path = copilot_hooks_dir.join(name);
-    fs::write(&copilot_path, &copilot_content).expect("failed to write builtin copilot hook");
-    #[cfg(unix)]
-    set_executable(&copilot_path);
+    write_executable(&copilot_path, &copilot_content).expect("failed to write builtin copilot hook");
     eprintln!("  {} (builtin)", copilot_path.display());
     *count += 1;
 

@@ -113,7 +113,18 @@ pub fn generate_schemas(
                 // the string means, so validation can find it without knowing
                 // what the project called the field.
                 (None, "string[]") | (None, "ref[]") => member("\"type\": \"string\""),
-                _ => scalar("\"type\": \"string\""),
+                // A moment or a length of time is a string held to its form.
+                (None, t) => {
+                    match time_pattern(t) {
+                        Some(p) => {
+                            scalar(&format!(
+                                "\"type\": \"string\", \"pattern\": {}",
+                                json_string(p)
+                            ))
+                        },
+                        None => scalar("\"type\": \"string\""),
+                    }
+                },
             };
             // An internal field stays in the schema: it is valid data, checked
             // like any other, and only its rendering differs. Saying so in the
@@ -224,6 +235,40 @@ fn enum_member(ty: &str, value: &str) -> String {
         },
         "boolean" if value == "true" || value == "false" => value.to_string(),
         _ => json_string(value),
+    }
+}
+
+/// The form a value of a time type is written in, as the pattern the generated schema
+/// holds it to, and `None` for any other type. Each is written once, here, and taplo
+/// enforces it on every row.
+///
+/// - `date`: `2026-10-28`.
+/// - `time`: `18:49`, with seconds and a fraction of one where wanted.
+/// - `datetime`: a date and a time joined by `T` or a space, and an offset, `Z` or
+///   `+02:00`, where the moment is fixed: `2026-10-27T18:49:00Z`, `2026-10-27 18:49`.
+/// - `span`: an ISO 8601 duration with at least one part, and a `T` only before a
+///   part of the day: `P3D`, `PT1H30M`, `P1W`.
+pub fn time_pattern(ty: &str) -> Option<&'static str> {
+    // FIXME: a closed set of `values` on a time type is not checked against its form
+    // at the declaration, as an integer's is, because nothing here reads a pattern; a
+    // listed value written wrong is caught only by the first row that holds it. The
+    // intended behaviour is the ignored test
+    // `a_closed_set_member_that_is_not_in_the_form_of_its_time_type_is_refused` in
+    // `bounds.rs`.
+    match ty {
+        "date" => Some(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"),
+        "time" => Some(r"^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?$"),
+        "datetime" => {
+            Some(
+                r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[T ]([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9](\.[0-9]+)?)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])?$",
+            )
+        },
+        "span" => {
+            Some(
+                r"^P(([0-9]+Y([0-9]+M)?([0-9]+W)?([0-9]+D)?|[0-9]+M([0-9]+W)?([0-9]+D)?|[0-9]+W([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\.[0-9]+)?S)?|[0-9]+M([0-9]+(\.[0-9]+)?S)?|[0-9]+(\.[0-9]+)?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\.[0-9]+)?S)?|[0-9]+M([0-9]+(\.[0-9]+)?S)?|[0-9]+(\.[0-9]+)?S))$",
+            )
+        },
+        _ => None,
     }
 }
 

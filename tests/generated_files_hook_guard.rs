@@ -80,16 +80,7 @@ fn a_hook_that_is_not_ours_does_not_count() {
     let r = Repo::new();
     r.two_sides();
     let hooks = r.root.join("other-hooks");
-    common::write(&hooks.join("post-merge"), "#!/bin/sh\nexit 0\n");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(
-            hooks.join("post-merge"),
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
-    }
+    common::write_executable(&hooks.join("post-merge"), "#!/bin/sh\nexit 0\n");
     let merged = r.git_out(&[
         "-c",
         &format!("core.hooksPath={}", hooks.display()),
@@ -178,12 +169,7 @@ fn a_merge_on_a_branch_with_another_mock_directory_conflicts_as_plain_git_does()
     let leftover = r.root.join("mock/target/hooks");
     fs::create_dir_all(&leftover).unwrap();
     for hook in ["post-merge", "post-rewrite"] {
-        common::write(&leftover.join(hook), "#!/bin/sh\nexit 0\n");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(leftover.join(hook), fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        common::write_executable(&leftover.join(hook), "#!/bin/sh\nexit 0\n");
     }
     fs::remove_dir_all(r.root.join("linux/target/hooks")).ok();
 
@@ -196,3 +182,7 @@ fn a_merge_on_a_branch_with_another_mock_directory_conflicts_as_plain_git_does()
     );
     assert!(!r.kept_ours().exists(), "nothing was promised");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

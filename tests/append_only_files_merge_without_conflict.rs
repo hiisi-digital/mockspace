@@ -201,3 +201,7 @@ fn an_edit_and_an_append_in_apart_hunks_are_taken_as_git_would() {
         "\"a\" = \"one, edited on a\"\n\"b\" = \"two\"\n\"from-dev\" = \"y\"\n"
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

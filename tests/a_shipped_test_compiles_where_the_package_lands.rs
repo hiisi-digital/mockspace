@@ -15,6 +15,11 @@
 //! usual one, since `readme = "../README.md"` puts a copy at the package root
 //! and makes the checkout path look harmless.
 //!
+//! A `#[path = "..."]` on a module in `src` is the third. It is the same read of
+//! a file above the package root, and it breaks the unpacked crate's own library
+//! tests, since a test module that includes a helper from the repository around
+//! the package builds in a checkout and cannot read the file anywhere else.
+//!
 //! An import of a dev-dependency declared by path alone resolves in a checkout
 //! and nowhere else, because cargo strips a path-only dev-dependency whole.
 
@@ -119,10 +124,11 @@ fn shipped_tests(manifest: &Path, text: &str) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
-/// Every path an `include*!` macro in `text` names.
+/// Every path an `include*!` macro or a `#[path = "..."]` attribute in `text`
+/// names.
 fn included_paths(text: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for macro_name in ["include_str!", "include_bytes!", "include!"] {
+    for macro_name in ["include_str!", "include_bytes!", "include!", "#[path"] {
         let mut rest = text;
         while let Some(at) = rest.find(macro_name) {
             let after = &rest[at + macro_name.len() ..];
@@ -134,6 +140,34 @@ fn included_paths(text: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Every Rust source file under a publishing crate's `src`, all of which ship.
+fn shipped_sources(manifest: &Path) -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&manifest.parent().expect("a manifest has a directory").join("src"), &mut out);
+    out.sort();
+    out
+}
+
+/// The paths in `body` that leave the package, for a file `depth` directories
+/// below the package root. Each leading `../` climbs one level, so more of them
+/// than the file sits deep means the path leaves it.
+fn escaping_paths(depth: usize, body: &str) -> Vec<String> {
+    included_paths(body).into_iter().filter(|p| p.matches("../").count() > depth).collect()
 }
 
 /// Dev-dependency names cargo strips on publish: declared by path, with no
@@ -180,33 +214,34 @@ fn no_shipped_test_reads_a_file_above_the_package_root() {
                 continue;
             },
         };
-        for test in tests {
-            checked += 1;
-            let body = std::fs::read_to_string(&test).expect("test reads");
-            let dir_depth = test
+        // The sources ship too, and a test module in one is a test that ships.
+        let sources = shipped_sources(manifest);
+        for file in tests.iter().chain(&sources) {
+            let is_test = tests.contains(file);
+            checked += usize::from(is_test);
+            let body = std::fs::read_to_string(file).expect("file reads");
+            let dir_depth = file
                 .strip_prefix(manifest.parent().unwrap())
-                .expect("a test sits under its own crate")
+                .expect("a shipped file sits under its own crate")
                 .components()
                 .count()
                 - 1;
-            for path in included_paths(&body) {
-                // Each leading `../` climbs one level. More of them than the
-                // file sits deep in the package means the path leaves it.
-                let ups = path.matches("../").count();
-                if ups > dir_depth {
-                    problems.push(format!(
-                        "{name}: {} includes `{path}`, which climbs out of the \
-                         package and is not in the tarball",
-                        test.display()
-                    ));
-                }
+            for path in escaping_paths(dir_depth, &body) {
+                problems.push(format!(
+                    "{name}: {} names `{path}`, which climbs out of the package and is not \
+                     in the tarball",
+                    file.display()
+                ));
+            }
+            if !is_test {
+                continue;
             }
             for dep in stripped_dev_deps(&text) {
                 if body.contains(&format!("use {dep}")) || body.contains(&format!("{dep}::")) {
                     problems.push(format!(
                         "{name}: {} names `{dep}`, a dev-dependency declared by \
                          path alone, which cargo strips on publish",
-                        test.display()
+                        file.display()
                     ));
                 }
             }
@@ -246,3 +281,20 @@ fn the_check_recognises_both_shapes_it_is_for() {
         "a path dep with a version is not stripped"
     );
 }
+
+#[test]
+fn a_path_attribute_in_a_published_source_is_caught() {
+    // The control: how `mockspace-manifest/src/lib.rs` included the scrub before
+    // it moved into the package, from `src/`, one directory below the root.
+    let old = "#[cfg(test)]\n#[path = \"../../tests/common/ambient.rs\"]\nmod test_ambient;\n";
+    assert_eq!(escaping_paths(1, old), vec!["../../tests/common/ambient.rs".to_string()]);
+    // a helper inside the package is fine, and so is a climb that stops at the root
+    assert!(escaping_paths(1, "#[path = \"tests/x.rs\"]\nmod x;\n").is_empty());
+    assert!(escaping_paths(2, old).is_empty(), "two levels down, two climbs reach the root and stop");
+    // an `include*!` is read the same way
+    assert_eq!(escaping_paths(1, r#"include_str!("../../README.md")"#).len(), 1);
+}
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

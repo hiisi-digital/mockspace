@@ -44,3 +44,7 @@ fn help_for_a_builtin_outside_a_project_describes_that_builtin() {
     assert!(stdout.contains("mock lock"), "{stdout}");
     assert!(!stdout.contains("SUBCOMMANDS"), "{stdout}");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

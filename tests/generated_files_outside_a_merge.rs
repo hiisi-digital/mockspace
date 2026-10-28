@@ -102,3 +102,7 @@ fn checking_out_with_merge_over_a_generated_document_change_conflicts_and_drops_
     assert!(switched.status.success(), "{}", Repo::failure(&switched));
     assert!(r.doc().contains("<<<<<<<"), "{}", r.doc());
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

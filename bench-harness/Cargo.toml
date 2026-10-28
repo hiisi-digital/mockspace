@@ -26,3 +26,7 @@ default = []
 # perf_event_open). Off by default; opt in via
 # `cargo build --features mockspace-bench-harness/perf-counters`.
 perf-counters = []
+
+[dev-dependencies]
+# The scrub of the environment a test runs in, the one copy of it.
+mockspace-manifest = { path = "../mockspace-manifest" }

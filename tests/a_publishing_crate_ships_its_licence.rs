@@ -228,3 +228,7 @@ fn the_check_catches_both_ways_a_licence_goes_missing() {
         Some(Why::IncludedLicenceMissing("LICENCE-NOPE".to_string()))
     );
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

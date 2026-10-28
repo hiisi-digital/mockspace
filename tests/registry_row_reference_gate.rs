@@ -274,3 +274,7 @@ fn the_view_built_from_a_real_directory_carries_the_edges() {
     );
     assert_eq!(view.field("answer::niri", "slot"), Some("display"));
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;

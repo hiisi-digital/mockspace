@@ -390,3 +390,7 @@ src_dirs = [\"crates\"]\n\
     let f = config_unknown_keys(real);
     assert!(f.is_empty(), "a real config must be clean: {f:?}");
 }
+
+/// Takes the machine's git environment out of this process before `main`.
+#[path = "common/ambient.rs"]
+mod ambient;
